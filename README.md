@@ -6,7 +6,7 @@ Billing workspace for CY-BM. Deployed at **https://cybills.cy-bm.sg**.
 
 - **Frontend:** Vite + React (JS) + Tailwind, shadcn-style component conventions
   (`components.json`), path alias `@ -> src/`.
-- **Backend:** TypeScript Express server in `server/` (port 3003).
+- **Backend:** TypeScript Express server in `server/` (port 3004).
 - **Deploy:** pull-based auto-deploy on the VPS (see `deploy/README.md`).
 
 ## Layout
@@ -24,11 +24,11 @@ scripts/        deploy.sh, auto-deploy-poll.sh, nginx conf, installers
 ## Local development
 
 ```bash
-# frontend (http://localhost:5173, proxies /api -> :3003)
+# frontend (http://localhost:5173, proxies /api -> :3004)
 npm install
 npm run dev
 
-# backend (http://localhost:3003)
+# backend (http://localhost:3004)
 cd server
 cp .env.example .env
 npm install

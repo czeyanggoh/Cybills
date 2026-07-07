@@ -44,5 +44,5 @@ journalctl -u cybills-autodeploy.service -f   # watch a deploy happen
 ```
 
 - **Public host:** cybills.cy-bm.sg
-- **Backend port:** 3003 (cyworkspace=3001, rejs=3002)
+- **Backend port:** 3004 (cyworkspace=3001, rejs=3003)
 - **App dir:** /opt/cybills

@@ -8,8 +8,8 @@
 - Subdirs: `src/` (frontend), `server/` (backend), `scripts/`, `deploy/`
 - Default branch: `main`
 - Remote: `https://github.com/czeyanggoh/Cybills`
-- Public host: `cybills.cy-bm.sg`; backend port `3003`
-  (cyworkspace=3001, rejs=3002)
+- Public host: `cybills.cy-bm.sg`; backend port `3004`
+  (cyworkspace=3001, rejs=3003)
 
 ## ALWAYS sync with origin before editing
 

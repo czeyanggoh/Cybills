@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/cybills/server
 Environment=NODE_ENV=production
-Environment=PORT=3003
+Environment=PORT=3004
 EnvironmentFile=-/opt/cybills/server/.env
 ExecStart=/usr/bin/node dist/index.js
 Restart=on-failure

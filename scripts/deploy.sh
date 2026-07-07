@@ -6,7 +6,7 @@ set -euo pipefail
 
 APP_DIR=/opt/cybills
 PUBLIC_HOST=cybills.cy-bm.sg
-BACKEND_PORT=3003
+BACKEND_PORT=3004
 cd "$APP_DIR"
 
 # Serialize deploys across every trigger so two can't build/restart at once.
