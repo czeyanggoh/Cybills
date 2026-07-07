@@ -1,0 +1,4 @@
+# Files that run on the Linux VPS must always use LF, even when edited on
+# Windows — CRLF would break the shell shebang and systemd unit parsing.
+*.sh text eol=lf
+deploy/systemd/* text eol=lf

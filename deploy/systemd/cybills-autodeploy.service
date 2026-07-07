@@ -1,0 +1,16 @@
+[Unit]
+Description=CYBills pull-based auto-deploy daemon (polls origin/main, deploys on change)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/cybills
+# Cadence between polls (seconds); the daemon is silent unless it deploys.
+Environment=POLL_INTERVAL=60
+ExecStart=/bin/bash /opt/cybills/scripts/auto-deploy-poll.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=CYBills Express backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/cybills/server
+Environment=NODE_ENV=production
+Environment=PORT=3003
+EnvironmentFile=-/opt/cybills/server/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+import express from 'express';
+import cors from 'cors';
+import morgan from 'morgan';
+import { env } from './env.js';
+
+const app = express();
+
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(morgan('tiny'));
+
+// Health check — nginx proxies /api/* here, and deploy.sh curls this to
+// confirm the backend came back up after a restart.
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', service: 'cybills-server', ts: new Date().toISOString() });
+});
+
+app.listen(env.PORT, () => {
+  console.log(`[cybills] server listening on :${env.PORT} (${env.NODE_ENV})`);
+});
