@@ -27,6 +27,12 @@ const NAV = [
   { to: '/vault', label: 'Vault', icon: Archive },
 ];
 
+// Right-aligned top-bar tabs (support channels).
+const TOP_TABS = [
+  { to: '/support', label: 'Support Desk' },
+  { to: '/features', label: 'Feature Requests' },
+];
+
 const BOTTOM = [
   { label: 'Get started', icon: Rocket },
   { label: 'Users', icon: Users },
@@ -158,6 +164,24 @@ export default function AppShell({ subnav = null, children }) {
               </button>
             </div>
             <div className="ml-auto flex items-center gap-3">
+              <nav className="flex items-center gap-1">
+                {TOP_TABS.map(({ to, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    className={({ isActive }) =>
+                      cn(
+                        'rounded-md px-3 py-1.5 text-sm transition-colors',
+                        isActive
+                          ? 'bg-muted font-medium text-foreground'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      )
+                    }
+                  >
+                    {label}
+                  </NavLink>
+                ))}
+              </nav>
               <button
                 type="button"
                 className="text-muted-foreground transition-colors hover:text-foreground"
