@@ -4,6 +4,7 @@ import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import { env } from './env.js';
 import { authRouter } from './auth.js';
+import { extractRouter } from './extract.js';
 
 const app = express();
 
@@ -20,6 +21,9 @@ app.get('/api/health', (_req, res) => {
 
 // Google sign-in (auth code flow). No-ops until credentials are configured.
 app.use('/api/auth', authRouter);
+
+// Claude Vision receipt extraction. 503s until ANTHROPIC_API_KEY is set.
+app.use('/api/costs', extractRouter);
 
 app.listen(env.PORT, () => {
   console.log(`[cybills] server listening on :${env.PORT} (${env.NODE_ENV})`);

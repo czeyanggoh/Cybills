@@ -27,6 +27,13 @@ export const env = {
   // Optional: restrict sign-in to a single Google Workspace domain (e.g.
   // "cy-bm.sg"). Empty = any Google account allowed.
   ALLOWED_HOSTED_DOMAIN: process.env.ALLOWED_HOSTED_DOMAIN ?? '',
+
+  // --- Claude Vision (receipt extraction) -----------------------------------
+  // Set ANTHROPIC_API_KEY to switch on the /api/costs/extract endpoint. Model
+  // defaults to Opus 4.8; set ANTHROPIC_MODEL=claude-sonnet-5 for a cheaper/
+  // faster option.
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
+  ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
 };
 
 // Real Google sign-in is only enabled once the client credentials AND a session
@@ -34,3 +41,6 @@ export const env = {
 export const googleEnabled = Boolean(
   env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.SESSION_SECRET
 );
+
+// Claude Vision receipt extraction is enabled once an Anthropic API key is set.
+export const visionEnabled = Boolean(env.ANTHROPIC_API_KEY);

@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 import jwt from 'jsonwebtoken';
-import { env, googleEnabled } from './env.js';
+import { env, googleEnabled, visionEnabled } from './env.js';
 
 // Real Google OAuth 2.0 (authorization-code flow), server-side. The whole router
 // no-ops with 503 until credentials are configured (see `googleEnabled`), so it
@@ -54,9 +54,10 @@ function readSession(req: Request): SessionUser | null {
 
 export const authRouter = Router();
 
-// Lets the frontend decide whether to start real OAuth or fall back to its mock.
+// Capability probe: real OAuth vs mock sign-in, and whether Claude Vision
+// receipt extraction is available. Fetched once by the frontend AuthProvider.
 authRouter.get('/status', (_req, res) => {
-  res.json({ googleEnabled });
+  res.json({ googleEnabled, visionEnabled });
 });
 
 // Who am I? Reads the session cookie. 401 when signed out.

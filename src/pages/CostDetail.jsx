@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeft,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
+import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { cn } from '@/lib/utils';
 
@@ -32,32 +33,30 @@ function TopButton({ children, onClick = () => {}, subtle = false }) {
   );
 }
 
-// A labelled field: label on the left, control on the right (Dext-style).
-function Field({ label, children, sub = null }) {
+function Field({ label, children }) {
   return (
     <div className="flex items-start gap-4 py-2">
-      <div className="w-40 shrink-0 pt-2">
-        <span className="text-sm text-muted-foreground">{label}</span>
-        {sub && <div className="mt-1 text-xs text-foreground/70">{sub}</div>}
-      </div>
+      <div className="w-40 shrink-0 pt-2 text-sm text-muted-foreground">{label}</div>
       <div className="flex-1">{children}</div>
     </div>
   );
 }
 
-function Input({ value, readOnly = false }) {
+function Input({ value, onChange = null, readOnly = false }) {
   return (
     <input
-      defaultValue={value}
-      readOnly={readOnly}
+      value={value}
+      readOnly={readOnly || !onChange}
+      onChange={onChange ? (e) => onChange(e.target.value) : undefined}
       className={cn(
         'h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        readOnly ? 'bg-muted text-muted-foreground' : 'bg-background'
+        readOnly || !onChange ? 'bg-muted text-muted-foreground' : 'bg-background'
       )}
     />
   );
 }
 
+// Read-only dropdown-styled display of an extracted value.
 function Select({ value }) {
   return (
     <div className="flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 text-sm">
@@ -75,8 +74,16 @@ function SectionHeading({ children }) {
   );
 }
 
-// Monochrome stand-in for the uploaded receipt image/screenshot.
-function ReceiptPreview({ doc }) {
+// Left panel: the uploaded image once one exists, else a monochrome stand-in.
+function ReceiptPreview({ doc, imageUrl }) {
+  if (imageUrl) {
+    return (
+      <div className="overflow-hidden rounded-lg border bg-background">
+        <div className="border-b px-4 py-3 text-sm font-medium">Uploaded receipt</div>
+        <img src={imageUrl} alt="Uploaded receipt" className="max-h-[560px] w-full object-contain" />
+      </div>
+    );
+  }
   return (
     <div className="overflow-hidden rounded-lg border bg-background">
       <div className="border-b px-4 py-3 text-sm">
@@ -94,30 +101,10 @@ function ReceiptPreview({ doc }) {
           </div>
           <div className="ml-auto text-xs text-muted-foreground">31.88 km · 47 min</div>
         </div>
-
-        {/* Faux route/map block */}
         <div className="relative flex h-40 items-center justify-center rounded-md border bg-muted/40">
           <MapPin className="h-6 w-6 text-muted-foreground" />
           <span className="absolute bottom-2 right-2 text-[10px] text-muted-foreground">Map preview</span>
         </div>
-
-        <div className="space-y-2 text-sm">
-          <div className="flex gap-2">
-            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-foreground" />
-            <div>
-              <div>432D Yishun Ave 1, Vista Spring</div>
-              <div className="text-xs text-muted-foreground">8:00 AM</div>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full border border-foreground" />
-            <div>
-              <div>Pickup/Drop-off Point, Tuas Naval Base</div>
-              <div className="text-xs text-muted-foreground">8:48 AM</div>
-            </div>
-          </div>
-        </div>
-
         <div className="flex items-center justify-between border-t pt-3 text-sm">
           <span className="text-muted-foreground">Total</span>
           <span className="font-semibold">
@@ -125,27 +112,77 @@ function ReceiptPreview({ doc }) {
           </span>
         </div>
       </div>
-
-      {/* Zoom / tools bar */}
       <div className="flex items-center justify-center gap-3 border-t p-2 text-muted-foreground">
-        <RotateCw className="h-4 w-4 cursor-pointer hover:text-foreground" />
+        <RotateCw className="h-4 w-4" />
         <span className="text-xs">100%</span>
-        <Download className="h-4 w-4 cursor-pointer hover:text-foreground" />
-        <Printer className="h-4 w-4 cursor-pointer hover:text-foreground" />
-        <Maximize2 className="h-4 w-4 cursor-pointer hover:text-foreground" />
+        <Download className="h-4 w-4" />
+        <Printer className="h-4 w-4" />
+        <Maximize2 className="h-4 w-4" />
       </div>
     </div>
   );
 }
 
+// Reads a File into a bare base64 string (no data-URL prefix).
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result);
+      resolve(result.slice(result.indexOf(',') + 1));
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+const EXTRACT_ERRORS = {
+  vision_not_configured: 'Vision extraction isn’t configured on the server yet.',
+  invalid_image: 'That file type isn’t supported — use a PNG, JPG, or WebP.',
+  refused: 'Claude declined to read that image.',
+  no_data: 'Couldn’t read fields from that image — try a clearer photo.',
+};
+
+function initialData(doc) {
+  return {
+    user: doc.user,
+    type: doc.type,
+    date: doc.date,
+    supplier: doc.supplier,
+    po: '',
+    ref: '',
+    category: doc.category,
+    currency: doc.currency,
+    total: doc.total,
+    tax: doc.tax,
+    description: '',
+  };
+}
+
 export default function CostDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { visionEnabled } = useAuth();
+  const fileInputRef = useRef(null);
+
   const [tab, setTab] = useState('details');
+  const [data, setData] = useState(() => initialData(getDoc(id) ?? {}));
+  const [imageUrl, setImageUrl] = useState('');
+  const [extracting, setExtracting] = useState(false);
+  const [aiError, setAiError] = useState('');
   const [aiNote, setAiNote] = useState(false);
 
   const doc = getDoc(id);
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
+
+  // Reset the form when navigating between documents (Prev/Next).
+  useEffect(() => {
+    const d = getDoc(id);
+    if (d) setData(initialData(d));
+    setImageUrl('');
+    setAiError('');
+    setAiNote(false);
+  }, [id]);
 
   if (!doc) {
     return (
@@ -155,9 +192,53 @@ export default function CostDetail() {
     );
   }
 
+  const set = (key, value) => setData((d) => ({ ...d, [key]: value }));
   const go = (delta) => {
     const next = DOCS[index + delta];
     if (next) navigate(`/costs/${next.id}`);
+  };
+
+  const onAiClick = () => {
+    setAiError('');
+    if (visionEnabled) fileInputRef.current?.click();
+    else setAiNote(true);
+  };
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setAiError('');
+    setExtracting(true);
+    setImageUrl(URL.createObjectURL(file));
+    try {
+      const imageBase64 = await fileToBase64(file);
+      const res = await fetch('/api/costs/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64, mediaType: file.type }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setAiError(EXTRACT_ERRORS[body.error] ?? 'Extraction failed — please try again.');
+        return;
+      }
+      const { data: ex } = await res.json();
+      setData((d) => ({
+        ...d,
+        supplier: ex.supplier || d.supplier,
+        date: ex.date || d.date,
+        type: ex.documentType || d.type,
+        currency: ex.currency || d.currency,
+        category: ex.category || d.category,
+        total: ex.total != null ? String(ex.total) : d.total,
+        tax: ex.tax != null ? String(ex.tax) : d.tax,
+      }));
+    } catch {
+      setAiError('Could not read that file.');
+    } finally {
+      setExtracting(false);
+    }
   };
 
   return (
@@ -197,8 +278,8 @@ export default function CostDetail() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Left: document preview */}
-        <ReceiptPreview doc={doc} />
+        {/* Left: preview */}
+        <ReceiptPreview doc={doc} imageUrl={imageUrl} />
 
         {/* Right: extracted fields */}
         <div>
@@ -220,38 +301,49 @@ export default function CostDetail() {
                 </button>
               ))}
             </div>
-            <span className="mb-2 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-              Viewed
-            </span>
+            <span className="mb-2 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">Viewed</span>
           </div>
 
           {tab === 'details' && (
             <div>
-              {/* AI auto-fill — stub for the Claude Vision integration */}
+              {/* Real Claude Vision auto-fill */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={onFile}
+              />
               <button
                 type="button"
-                onClick={() => setAiNote(true)}
-                className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                onClick={onAiClick}
+                disabled={extracting}
+                className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
               >
                 <Sparkles className="h-4 w-4" strokeWidth={2} />
-                Auto-fill from receipt with Claude
+                {extracting ? 'Reading receipt…' : 'Auto-fill from receipt with Claude'}
               </button>
-              {aiNote && (
+              {aiError && (
+                <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
+                  {aiError}
+                </p>
+              )}
+              {aiNote && !visionEnabled && (
                 <p className="mb-2 rounded-md border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
-                  Vision extraction isn’t wired up yet — this button will call the backend to
-                  read the receipt and fill these fields automatically.
+                  Vision extraction isn’t configured yet — set an <span className="font-mono">ANTHROPIC_API_KEY</span> on
+                  the server to enable it.
                 </p>
               )}
 
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={doc.itemId} readOnly /></Field>
-              <Field label="Document owner"><Select value={doc.user} /></Field>
-              <Field label="Type"><Select value={doc.type} /></Field>
-              <Field label="Date"><Input value={doc.date} /></Field>
-              <Field label="Supplier"><Select value={doc.supplier} /></Field>
-              <Field label="Purchase order number"><Input value="" /></Field>
-              <Field label="Document reference"><Input value="" /></Field>
-              <Field label="Category"><Select value={doc.category} /></Field>
+              <Field label="Document owner"><Select value={data.user} /></Field>
+              <Field label="Type"><Select value={data.type} /></Field>
+              <Field label="Date"><Input value={data.date} onChange={(v) => set('date', v)} /></Field>
+              <Field label="Supplier"><Select value={data.supplier} /></Field>
+              <Field label="Purchase order number"><Input value={data.po} onChange={(v) => set('po', v)} /></Field>
+              <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
+              <Field label="Category"><Select value={data.category} /></Field>
 
               <SectionHeading>Allocation</SectionHeading>
               <Field label="Customer"><Select value="ST Engineering Info-Security Pte. Ltd." /></Field>
@@ -259,16 +351,18 @@ export default function CostDetail() {
               <Field label="Description">
                 <textarea
                   rows={2}
+                  value={data.description}
+                  onChange={(e) => set('description', e.target.value)}
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </Field>
 
               <SectionHeading>Amount</SectionHeading>
-              <Field label="Currency"><Select value={`${doc.currency} — Singapore, Dollars`} /></Field>
-              <Field label="Total amount"><Input value={doc.total} /></Field>
+              <Field label="Currency"><Select value={data.currency} /></Field>
+              <Field label="Total amount"><Input value={data.total} onChange={(v) => set('total', v)} /></Field>
               <Field label="Tax"><Select value="Extracted amount" /></Field>
-              <Field label="Tax amount"><Input value={doc.tax} /></Field>
-              <Field label="Net amount"><Input value={doc.total} readOnly /></Field>
+              <Field label="Tax amount"><Input value={data.tax} onChange={(v) => set('tax', v)} /></Field>
+              <Field label="Net amount"><Input value={data.total} readOnly /></Field>
 
               <SectionHeading>Payment</SectionHeading>
               <Field label="Paid">
@@ -281,7 +375,6 @@ export default function CostDetail() {
               </Field>
               <Field label="Payment method"><Select value="—" /></Field>
 
-              {/* Bottom actions */}
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 <button type="button" className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
                   Move to ready

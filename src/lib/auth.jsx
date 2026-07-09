@@ -7,6 +7,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [visionEnabled, setVisionEnabled] = useState(false);
   const [user, setUser] = useState(null);
 
   const refresh = useCallback(async () => {
@@ -18,11 +19,13 @@ export function AuthProvider({ children }) {
       if (statusRes.ok) {
         const s = await statusRes.json();
         setGoogleEnabled(Boolean(s.googleEnabled));
+        setVisionEnabled(Boolean(s.visionEnabled));
       }
       setUser(meRes.ok ? (await meRes.json()).user : null);
     } catch {
       // Backend unreachable — treat as signed-out, mock mode.
       setGoogleEnabled(false);
+      setVisionEnabled(false);
       setUser(null);
     } finally {
       setLoading(false);
@@ -42,7 +45,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ loading, googleEnabled, user, refresh, signOut }}>
+    <AuthContext.Provider value={{ loading, googleEnabled, visionEnabled, user, refresh, signOut }}>
       {children}
     </AuthContext.Provider>
   );
