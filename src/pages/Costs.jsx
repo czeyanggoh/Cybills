@@ -10,7 +10,7 @@ import {
   Filter,
   Settings2,
 } from 'lucide-react';
-import AppShell, { useAppShell } from '@/components/AppShell';
+import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import { DOCS } from '@/data/docs';
 import { cn } from '@/lib/utils';
@@ -56,7 +56,6 @@ function ToolbarButton({ children, disabled = false, dropdown = false }) {
 }
 
 export default function Costs() {
-  const { openAddDocuments } = useAppShell();
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
@@ -85,14 +84,7 @@ export default function Costs() {
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold tracking-tight">Costs inbox</h1>
-        <button
-          type="button"
-          onClick={openAddDocuments}
-          className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
-        >
-          <Plus className="h-4 w-4" strokeWidth={2} />
-          Add documents
-        </button>
+        <AddDocumentsButton />
       </div>
 
       {/* Tabs */}

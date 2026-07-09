@@ -40,6 +40,23 @@ export function useAppShell() {
   return useContext(AppShellContext) ?? { openAddDocuments: () => {} };
 }
 
+// Header "Add documents" button. Must be rendered *inside* an AppShell's
+// children so it reads the live context (not the no-op fallback) — page
+// components render above the provider and can't wire the opener themselves.
+export function AddDocumentsButton() {
+  const { openAddDocuments } = useAppShell();
+  return (
+    <button
+      type="button"
+      onClick={openAddDocuments}
+      className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+    >
+      <Plus className="h-4 w-4" strokeWidth={2} />
+      Add documents
+    </button>
+  );
+}
+
 function initialsFrom(user) {
   const source = user?.name || user?.email;
   if (!source) return 'AY';
