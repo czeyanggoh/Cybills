@@ -145,16 +145,49 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               </label>
             )}
 
+            {tab === 'Vault' && (
+              <div className="mb-4 flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Upload destination</span>
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-medium">📁 Red Alpha Cybersecurity</span>
+                  <button
+                    type="button"
+                    className="rounded-md border px-3 py-1 text-xs font-medium transition-colors hover:bg-muted"
+                  >
+                    Change
+                  </button>
+                </div>
+              </div>
+            )}
+
             <Dropzone
               hint={
                 tab === 'Bank'
                   ? '50MB, minimum 200dpi scans'
                   : tab === 'Supplier statements'
                     ? '6MB for images, 40MB for PDFs'
-                    : '6MB for images and PDFs, 100MB for ZIPs'
+                    : tab === 'Vault'
+                      ? '100MB max per file'
+                      : '6MB for images and PDFs, 100MB for ZIPs'
               }
             />
           </div>
+
+          {tab === 'Vault' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="mb-1 text-sm font-medium">Vault storage usage</h3>
+                <p className="mb-2 text-xs text-muted-foreground">Used 1 MB of 500 MB</p>
+                <div className="h-1.5 w-full rounded-full bg-muted">
+                  <div className="h-full w-[1%] rounded-full bg-foreground" />
+                </div>
+              </div>
+              <div>
+                <h3 className="mb-1 text-sm font-medium">Vault AI credits usage</h3>
+                <p className="text-xs text-muted-foreground">Used 0 of 5 credits</p>
+              </div>
+            </div>
+          )}
 
           {isUpload && (
             <div>

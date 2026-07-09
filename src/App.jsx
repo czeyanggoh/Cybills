@@ -4,6 +4,7 @@ import { AuthProvider } from '@/lib/auth';
 import RequireAuth from '@/components/RequireAuth';
 import Login from './pages/Login';
 import Costs from './pages/Costs';
+import CostDetail from './pages/CostDetail';
 import ComingSoon from './pages/ComingSoon';
 
 const queryClient = new QueryClient();
@@ -22,6 +23,7 @@ function App() {
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<Login />} />
             <Route path="/costs" element={<Protected><Costs /></Protected>} />
+            <Route path="/costs/:id" element={<Protected><CostDetail /></Protected>} />
             <Route path="/sales" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/bank" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/vault" element={<Protected><ComingSoon /></Protected>} />
