@@ -24,8 +24,7 @@ function App() {
             <Route path="/costs" element={<Protected><Costs /></Protected>} />
             <Route path="/sales" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/bank" element={<Protected><ComingSoon /></Protected>} />
-            <Route path="/suppliers" element={<Protected><ComingSoon /></Protected>} />
-            <Route path="/reports" element={<Protected><ComingSoon /></Protected>} />
+            <Route path="/vault" element={<Protected><ComingSoon /></Protected>} />
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
         </Router>
