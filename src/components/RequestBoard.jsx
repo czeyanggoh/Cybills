@@ -26,11 +26,14 @@ function fileToDataUrl(file) {
 
 const FILTERS = ['all', 'open', 'done', 'closed'];
 
-export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, storageKey }) {
+const UNASSIGNED = '';
+
+export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, storageKey, viewToggle = null }) {
   const { user } = useAuth();
   const author = user?.name || user?.email || '';
 
   const [tickets, setTickets] = useState([]);
+  const [assignees, setAssignees] = useState([]); // [{ id, email, name }]
   const [input, setInput] = useState('');
   const [pendingImgs, setPendingImgs] = useState([]); // [{ url, name }]
   const [drafts, setDrafts] = useState({});
@@ -49,6 +52,23 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
       setTickets([]);
     }
   }, [storageKey]);
+
+  // Load the assignable-user roster (any signed-in user may read it). Best
+  // effort — the dropdown just falls back to "Unassigned" if it can't load.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/org/assignees');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (alive && Array.isArray(data.assignees)) setAssignees(data.assignees);
+      } catch {
+        // Backend unreachable — leave the roster empty.
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   // Close the lightbox on Escape.
   useEffect(() => {
@@ -130,6 +150,33 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
     persist(tickets.filter((t) => t.id !== id));
   }
 
+  // Assign an item to a user (or clear it). Stored inline on the item — no
+  // schema migration since items are a JSON blob.
+  function setAssignee(id, assigneeId) {
+    const picked = assigneeId ? assignees.find((a) => a.id === assigneeId) : null;
+    persist(
+      tickets.map((t) => {
+        if (t.id !== id) return t;
+        if (!picked) {
+          // Preserve an already-set assignee that's missing from the roster.
+          if (assigneeId && t.assignee?.id === assigneeId) return t;
+          return { ...t, assignee: null };
+        }
+        return { ...t, assignee: { id: picked.id, name: picked.name } };
+      })
+    );
+  }
+
+  // Options for a given item: the roster, plus the item's current assignee if
+  // they're no longer in the roster (so the value isn't silently dropped).
+  function optionsFor(t) {
+    const cur = t.assignee;
+    if (cur?.id && !assignees.some((a) => a.id === cur.id)) {
+      return [{ id: cur.id, name: cur.name || cur.id }, ...assignees];
+    }
+    return assignees;
+  }
+
   function addComment(t) {
     const text = (drafts[t.id] ?? '').trim();
     const imgs = commentImgs[t.id] ?? [];
@@ -153,6 +200,7 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
         <span className="text-sm text-muted-foreground">{openCount} open</span>
       </div>
       <div className="mb-4 mt-2 h-0.5 w-10 bg-foreground" />
+      {viewToggle && <div className="mb-4">{viewToggle}</div>}
       <p className="mb-4 text-sm text-muted-foreground">{intro}</p>
 
       {quotaError && (
@@ -211,11 +259,25 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
                   ))}
                 </div>
               )}
-              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                 <span>{t.author || '—'}{t.created_at ? ` · ${fmtTime(t.created_at)}` : ''}</span>
                 {t.status === 'closed' && (
                   <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">Closed</span>
                 )}
+                <label className="flex items-center gap-1">
+                  <span className="sr-only">Assignee</span>
+                  <select
+                    value={t.assignee?.id ?? UNASSIGNED}
+                    onChange={(e) => setAssignee(t.id, e.target.value)}
+                    title="Assign to a colleague"
+                    className="rounded-md border bg-background px-1.5 py-0.5 text-xs text-foreground focus:border-foreground/40 focus:outline-none"
+                  >
+                    <option value={UNASSIGNED}>Unassigned</option>
+                    {optionsFor(t).map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               {/* Comment thread */}

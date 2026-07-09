@@ -27,10 +27,10 @@ const NAV = [
   { to: '/vault', label: 'Vault', icon: Archive },
 ];
 
-// Right-aligned top-bar tabs (support channels).
+// Right-aligned top-bar tabs (support channels). Feature Requests now lives as
+// a toggle inside the Support Desk board, so it no longer needs its own tab.
 const TOP_TABS = [
   { to: '/support', label: 'Support Desk' },
-  { to: '/features', label: 'Feature Requests' },
 ];
 
 const BOTTOM = [

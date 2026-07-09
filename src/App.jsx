@@ -6,7 +6,6 @@ import Login from './pages/Login';
 import Costs from './pages/Costs';
 import CostDetail from './pages/CostDetail';
 import SupportDesk from './pages/SupportDesk';
-import FeatureRequests from './pages/FeatureRequests';
 import ComingSoon from './pages/ComingSoon';
 
 const queryClient = new QueryClient();
@@ -30,7 +29,8 @@ function App() {
             <Route path="/bank" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/vault" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/support" element={<Protected><SupportDesk /></Protected>} />
-            <Route path="/features" element={<Protected><FeatureRequests /></Protected>} />
+            {/* Feature Requests merged into Support Desk — keep old links working. */}
+            <Route path="/features" element={<Navigate to="/support" replace />} />
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
         </Router>

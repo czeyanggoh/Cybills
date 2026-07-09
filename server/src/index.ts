@@ -4,6 +4,7 @@ import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import { env } from './env.js';
 import { authRouter } from './auth.js';
+import { orgRouter } from './org.js';
 import { extractRouter } from './extract.js';
 
 const app = express();
@@ -21,6 +22,9 @@ app.get('/api/health', (_req, res) => {
 
 // Google sign-in (auth code flow). No-ops until credentials are configured.
 app.use('/api/auth', authRouter);
+
+// Org directory — assignable users for the Support Desk "Assignee" dropdown.
+app.use('/api/org', orgRouter);
 
 // Claude Vision receipt extraction. 503s until ANTHROPIC_API_KEY is set.
 app.use('/api/costs', extractRouter);

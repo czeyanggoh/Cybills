@@ -34,6 +34,13 @@ export const env = {
   // faster option.
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
   ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
+
+  // --- Org roster (assignable users) ----------------------------------------
+  // Optional comma-separated roster of org members for the Support Desk
+  // "Assignee" dropdown. Each entry is `email` or `email:Display Name`, e.g.
+  // "ada@cy-bm.sg:Ada Lim,grace@cy-bm.sg". Falls back to a built-in seed roster
+  // (see org.ts) when unset. The signed-in user is always included.
+  ORG_MEMBERS: process.env.ORG_MEMBERS ?? '',
 };
 
 // Real Google sign-in is only enabled once the client credentials AND a session

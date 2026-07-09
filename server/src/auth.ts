@@ -8,11 +8,11 @@ import { env, googleEnabled, visionEnabled } from './env.js';
 // no-ops with 503 until credentials are configured (see `googleEnabled`), so it
 // is safe to ship before the boss provides a Google Cloud OAuth client.
 
-const SESSION_COOKIE = 'cyb_session';
+export const SESSION_COOKIE = 'cyb_session';
 const STATE_COOKIE = 'cyb_oauth_state';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
-type SessionUser = {
+export type SessionUser = {
   sub: string;
   email: string;
   name?: string;
@@ -41,7 +41,7 @@ function setSession(res: Response, user: SessionUser) {
   res.cookie(SESSION_COOKIE, token, { ...baseCookieOpts(), maxAge: SESSION_TTL_SECONDS * 1000 });
 }
 
-function readSession(req: Request): SessionUser | null {
+export function readSession(req: Request): SessionUser | null {
   const token = req.cookies?.[SESSION_COOKIE];
   if (!token) return null;
   try {
