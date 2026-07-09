@@ -38,7 +38,7 @@ function StatusCell({ status }) {
   );
 }
 
-function Th({ children, className }) {
+function Th({ children, className = '' }) {
   return (
     <th className={cn('px-4 py-2.5 text-left font-medium text-muted-foreground', className)}>
       {children}
@@ -46,7 +46,7 @@ function Th({ children, className }) {
   );
 }
 
-function Td({ children, className }) {
+function Td({ children, className = '' }) {
   return <td className={cn('px-4 py-3 align-middle', className)}>{children}</td>;
 }
 

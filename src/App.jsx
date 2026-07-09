@@ -1,27 +1,35 @@
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
-import Home from './pages/Home';
+import { AuthProvider } from '@/lib/auth';
+import RequireAuth from '@/components/RequireAuth';
 import Login from './pages/Login';
 import Costs from './pages/Costs';
 import ComingSoon from './pages/ComingSoon';
 
 const queryClient = new QueryClient();
 
+// Wraps the signed-in pages in the auth guard.
+function Protected({ children }) {
+  return <RequireAuth>{children}</RequireAuth>;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Router>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/costs" element={<Costs />} />
-          <Route path="/sales" element={<ComingSoon />} />
-          <Route path="/bank" element={<ComingSoon />} />
-          <Route path="/suppliers" element={<ComingSoon />} />
-          <Route path="/reports" element={<ComingSoon />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Router>
+      <AuthProvider>
+        <Router>
+          <Routes>
+            <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/costs" element={<Protected><Costs /></Protected>} />
+            <Route path="/sales" element={<Protected><ComingSoon /></Protected>} />
+            <Route path="/bank" element={<Protected><ComingSoon /></Protected>} />
+            <Route path="/suppliers" element={<Protected><ComingSoon /></Protected>} />
+            <Route path="/reports" element={<Protected><ComingSoon /></Protected>} />
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </Router>
+      </AuthProvider>
     </QueryClientProvider>
   )
 }

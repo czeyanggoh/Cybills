@@ -1,6 +1,7 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Receipt } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 
 // Google "G" rendered monochrome to fit the black & white house style (the
 // four-colour mark would break the minimalist aesthetic).
@@ -12,11 +13,29 @@ function GoogleIcon({ className }) {
   );
 }
 
-// Login screen. Auth isn't wired yet, so both actions just route into the app
-// (mock sign-in) — swap for real Google OAuth / email flows later.
+// Maps the ?error= codes the OAuth callback may redirect back with.
+const ERROR_MESSAGES = {
+  bad_state: 'Sign-in session expired. Please try again.',
+  domain_not_allowed: 'That account isn’t allowed to sign in here.',
+  email_unverified: 'Your Google email isn’t verified.',
+  exchange_failed: 'Google sign-in failed. Please try again.',
+  google_oauth_not_configured: 'Google sign-in isn’t configured yet.',
+};
+
 export default function Login() {
   const navigate = useNavigate();
-  const signIn = () => navigate('/costs');
+  const { googleEnabled } = useAuth();
+  const [params] = useSearchParams();
+  const error = params.get('error');
+
+  // Real OAuth when configured; otherwise a mock sign-in straight into the app.
+  const continueWithGoogle = () => {
+    if (googleEnabled) {
+      window.location.href = '/api/auth/google';
+    } else {
+      navigate('/costs');
+    }
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-6">
@@ -27,16 +46,20 @@ export default function Login() {
           </div>
           <div>
             <h1 className="text-lg font-semibold tracking-tight">Sign in to CYBills</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Your billing workspace
-            </p>
+            <p className="mt-1 text-sm text-muted-foreground">Your billing workspace</p>
           </div>
         </div>
+
+        {error && (
+          <p className="mb-4 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
+            {ERROR_MESSAGES[error] ?? 'Something went wrong. Please try again.'}
+          </p>
+        )}
 
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            signIn();
+            navigate('/costs');
           }}
           className="flex flex-col gap-3"
         >
@@ -65,7 +88,7 @@ export default function Login() {
 
         <button
           type="button"
-          onClick={signIn}
+          onClick={continueWithGoogle}
           className={cn(
             'flex h-10 w-full items-center justify-center gap-2.5 rounded-md border',
             'bg-background text-sm font-medium transition-colors hover:bg-muted'
