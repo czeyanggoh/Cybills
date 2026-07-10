@@ -13,6 +13,10 @@ const receiptJsonSchema = {
     supplier: { type: 'string', description: 'Merchant / supplier name, e.g. "Grab"' },
     date: { type: 'string', description: 'Document date, ISO YYYY-MM-DD when determinable' },
     documentType: { type: 'string', enum: ['Receipt', 'Invoice', 'Other'] },
+    invoiceNumber: {
+      type: 'string',
+      description: 'Invoice / receipt number as printed; empty string if none shown',
+    },
     currency: { type: 'string', description: '3-letter ISO currency code, e.g. SGD' },
     total: { type: 'number', description: 'Grand total amount' },
     tax: { type: 'number', description: 'Tax / GST amount; 0 if none shown' },
@@ -31,7 +35,17 @@ const receiptJsonSchema = {
       },
     },
   },
-  required: ['supplier', 'date', 'documentType', 'currency', 'total', 'tax', 'category', 'lineItems'],
+  required: [
+    'supplier',
+    'date',
+    'documentType',
+    'invoiceNumber',
+    'currency',
+    'total',
+    'tax',
+    'category',
+    'lineItems',
+  ],
 } as const;
 
 // Validates the model's JSON before we trust it.
@@ -39,6 +53,7 @@ const ReceiptSchema = z.object({
   supplier: z.string(),
   date: z.string(),
   documentType: z.enum(['Receipt', 'Invoice', 'Other']),
+  invoiceNumber: z.string(),
   currency: z.string(),
   total: z.number(),
   tax: z.number(),
@@ -81,6 +96,7 @@ extractRouter.post('/extract', async (req, res) => {
               text:
                 'Extract the purchase/expense details from this receipt or invoice image. ' +
                 'Use the values printed on the document; infer a sensible expense category. ' +
+                'Capture the invoice/receipt number exactly as printed when present. ' +
                 'If a field is not present, use an empty string or 0.',
             },
           ],

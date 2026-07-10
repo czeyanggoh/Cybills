@@ -16,6 +16,7 @@ import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
+import { fetchBills, billToDoc, billFileUrl } from '@/lib/bills';
 import { cn } from '@/lib/utils';
 
 function TopButton({ children, onClick = () => {}, subtle = false }) {
@@ -74,13 +75,17 @@ function SectionHeading({ children }) {
   );
 }
 
-// Left panel: the uploaded image once one exists, else a monochrome stand-in.
-function ReceiptPreview({ doc, imageUrl }) {
+// Left panel: the uploaded file once one exists, else a monochrome stand-in.
+function ReceiptPreview({ doc, imageUrl, previewType }) {
   if (imageUrl) {
     return (
       <div className="overflow-hidden rounded-lg border bg-background">
         <div className="border-b px-4 py-3 text-sm font-medium">Uploaded receipt</div>
-        <img src={imageUrl} alt="Uploaded receipt" className="max-h-[560px] w-full object-contain" />
+        {previewType === 'pdf' ? (
+          <iframe src={imageUrl} title="Uploaded document" className="h-[560px] w-full" />
+        ) : (
+          <img src={imageUrl} alt="Uploaded receipt" className="max-h-[560px] w-full object-contain" />
+        )}
       </div>
     );
   }
@@ -150,7 +155,7 @@ function initialData(doc) {
     date: doc.date,
     supplier: doc.supplier,
     po: '',
-    ref: '',
+    ref: doc.invoiceNumber ?? '',
     category: doc.category,
     currency: doc.currency,
     total: doc.total,
@@ -165,29 +170,60 @@ export default function CostDetail() {
   const { visionEnabled } = useAuth();
   const fileInputRef = useRef(null);
 
+  const mockDoc = getDoc(id);
   const [tab, setTab] = useState('details');
-  const [data, setData] = useState(() => initialData(getDoc(id) ?? {}));
+  const [persisted, setPersisted] = useState(null);
+  const [loading, setLoading] = useState(!mockDoc);
+  const [data, setData] = useState(() => initialData(mockDoc ?? {}));
   const [imageUrl, setImageUrl] = useState('');
+  const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);
   const [aiError, setAiError] = useState('');
   const [aiNote, setAiNote] = useState(false);
 
-  const doc = getDoc(id);
+  const doc = mockDoc ?? persisted;
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
 
-  // Reset the form when navigating between documents (Prev/Next).
+  // Reset the form when navigating between documents. Sample docs resolve from
+  // the in-memory mock; uploaded bills are fetched by id from the store.
   useEffect(() => {
-    const d = getDoc(id);
-    if (d) setData(initialData(d));
     setImageUrl('');
     setAiError('');
     setAiNote(false);
+    const d = getDoc(id);
+    if (d) {
+      setData(initialData(d));
+      setPersisted(null);
+      setLoading(false);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    fetchBills().then((bills) => {
+      if (!alive) return;
+      const match = bills.find((b) => b.id === id);
+      const pd = match ? billToDoc(match) : null;
+      setPersisted(pd);
+      if (pd) {
+        setData(initialData(pd));
+        if (pd.hasFile) {
+          setImageUrl(billFileUrl(pd.id));
+          setPreviewType(pd.contentType.includes('pdf') ? 'pdf' : 'image');
+        }
+      }
+      setLoading(false);
+    });
+    return () => {
+      alive = false;
+    };
   }, [id]);
 
   if (!doc) {
     return (
       <AppShell subnav={<CostsSubnav />}>
-        <p className="text-sm text-muted-foreground">Document not found.</p>
+        <p className="text-sm text-muted-foreground">
+          {loading ? 'Loading document…' : 'Document not found.'}
+        </p>
       </AppShell>
     );
   }
@@ -210,6 +246,7 @@ export default function CostDetail() {
     if (!file) return;
     setAiError('');
     setExtracting(true);
+    setPreviewType('image');
     setImageUrl(URL.createObjectURL(file));
     try {
       const imageBase64 = await fileToBase64(file);
@@ -229,6 +266,7 @@ export default function CostDetail() {
         supplier: ex.supplier || d.supplier,
         date: ex.date || d.date,
         type: ex.documentType || d.type,
+        ref: ex.invoiceNumber || d.ref,
         currency: ex.currency || d.currency,
         category: ex.category || d.category,
         total: ex.total != null ? String(ex.total) : d.total,
@@ -279,7 +317,7 @@ export default function CostDetail() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Left: preview */}
-        <ReceiptPreview doc={doc} imageUrl={imageUrl} />
+        <ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} />
 
         {/* Right: extracted fields */}
         <div>

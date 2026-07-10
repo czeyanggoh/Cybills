@@ -41,6 +41,24 @@ export const env = {
   // "ada@cy-bm.sg:Ada Lim,grace@cy-bm.sg". Falls back to a built-in seed roster
   // (see org.ts) when unset. The signed-in user is always included.
   ORG_MEMBERS: process.env.ORG_MEMBERS ?? '',
+
+  // --- Bills store ----------------------------------------------------------
+  // Directory for the persisted-bills JSON file (uploaded cost documents +
+  // duplicate-detection index). Empty = default to server/.data (gitignored, so
+  // it survives the deploy's `git reset --hard`). Set to an absolute path to
+  // store data outside the repo checkout.
+  BILLS_DATA_DIR: process.env.BILLS_DATA_DIR ?? '',
+
+  // --- Cloudflare R2 (original bill files) ----------------------------------
+  // Object storage for the uploaded file bytes (the JSON store only keeps
+  // metadata + a hash). All four must be set for file storage to switch on (see
+  // `r2Enabled`); until then uploads still persist metadata + dedup, just
+  // without a retrievable original. R2 exposes an S3-compatible API at
+  // https://<account-id>.r2.cloudflarestorage.com.
+  R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID ?? '',
+  R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID ?? '',
+  R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY ?? '',
+  R2_BUCKET: process.env.R2_BUCKET ?? '',
 };
 
 // Real Google sign-in is only enabled once the client credentials AND a session
@@ -51,3 +69,9 @@ export const googleEnabled = Boolean(
 
 // Claude Vision receipt extraction is enabled once an Anthropic API key is set.
 export const visionEnabled = Boolean(env.ANTHROPIC_API_KEY);
+
+// R2 file storage switches on once the account, bucket, and credentials are all
+// configured. Until then uploads persist metadata + dedup only (no stored file).
+export const r2Enabled = Boolean(
+  env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY && env.R2_BUCKET
+);

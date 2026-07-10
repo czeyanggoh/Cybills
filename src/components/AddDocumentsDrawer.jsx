@@ -1,9 +1,20 @@
-import { useState } from 'react';
-import { X, Copy } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { X, Copy, FileText, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
+import {
+  sha256Hex,
+  fileToBase64,
+  fetchExtract,
+  addBill,
+  notifyBillsChanged,
+  describeDuplicate,
+  VISION_MEDIA,
+} from '@/lib/bills';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
-// Upload is a stub (no backend wiring yet) — the dropzone and options are UI.
+// Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
+// extract) → duplicate check → persist. The other tabs remain UI-only.
 const TABS = ['Costs', 'Sales', 'Bank', 'Supplier statements', 'Vault'];
 
 const MODES = [
@@ -12,13 +23,50 @@ const MODES = [
   { key: 'split', title: 'Auto-splitting', hint: 'PDF files only (up to 1 hour)' },
 ];
 
-function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs' }) {
+let uid = 0;
+
+function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles }) {
+  const inputRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+
+  const take = (fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length) onFiles(files);
+  };
+
   return (
-    <div className="rounded-lg border-2 border-dashed border-border p-8 text-center">
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        take(e.dataTransfer.files);
+      }}
+      className={cn(
+        'rounded-lg border-2 border-dashed p-8 text-center transition-colors',
+        dragging ? 'border-foreground bg-muted' : 'border-border'
+      )}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+        className="hidden"
+        onChange={(e) => {
+          take(e.target.files);
+          e.target.value = '';
+        }}
+      />
       <p className="text-sm font-medium">Drag &amp; drop files to upload</p>
       <p className="my-2 text-xs text-muted-foreground">or</p>
       <button
         type="button"
+        onClick={() => inputRef.current?.click()}
         className="rounded-md border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
       >
         Select files
@@ -26,6 +74,68 @@ function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs' }) {
       <p className="mt-4 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">File limits</span> · {hint}
       </p>
+    </div>
+  );
+}
+
+// One row per uploaded file, reflecting its place in the pipeline.
+function UploadItem({ item, onForce, onSkip }) {
+  const { status, file, error, duplicate } = item;
+  return (
+    <div className="rounded-md border p-3">
+      <div className="flex items-center gap-3">
+        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-sm">{file.name}</span>
+        {status === 'extracting' && (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading…
+          </span>
+        )}
+        {status === 'uploading' && (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…
+          </span>
+        )}
+        {status === 'added' && (
+          <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+            <CheckCircle2 className="h-3.5 w-3.5" /> Added
+          </span>
+        )}
+        {status === 'skipped' && <span className="text-xs text-muted-foreground">Skipped</span>}
+        {status === 'error' && (
+          <span className="flex items-center gap-1.5 text-xs text-foreground">
+            <AlertTriangle className="h-3.5 w-3.5" /> {error || 'Failed'}
+          </span>
+        )}
+      </div>
+
+      {status === 'duplicate' && (
+        <div className="mt-2 rounded-md border border-foreground/30 bg-muted px-3 py-2">
+          <p className="flex items-start gap-2 text-xs text-foreground">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              <span className="font-medium">Possible duplicate. </span>
+              {describeDuplicate(duplicate)}
+            </span>
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => onForce(item.id)}
+              className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Add anyway
+            </button>
+            <button
+              type="button"
+              onClick={() => onSkip(item.id)}
+              className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-background"
+            >
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -43,22 +153,100 @@ function EmailRow({ label, value }) {
 }
 
 export default function AddDocumentsDrawer({ open, onClose }) {
+  const { visionEnabled } = useAuth();
   const [tab, setTab] = useState('Costs');
   const [mode, setMode] = useState('file');
+  const [items, setItems] = useState([]);
 
   if (!open) return null;
 
   const isUpload = tab === 'Costs' || tab === 'Sales';
 
+  const patch = (id, next) =>
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...next } : it)));
+
+  // Per file: hash → optional Vision extract → duplicate check → persist. The
+  // extracted fields are kept on the item so "Add anyway" can reuse them without
+  // re-running extraction.
+  const onFiles = (files) => {
+    const created = files.map((file) => ({ id: ++uid, file, status: 'pending', fields: {} }));
+    setItems((prev) => [...created, ...prev]);
+
+    created.forEach((it) => {
+      void (async () => {
+        try {
+          const fileHash = await sha256Hex(it.file);
+          const fileBase64 = await fileToBase64(it.file);
+          let fields = {};
+          if (visionEnabled && VISION_MEDIA.includes(it.file.type)) {
+            patch(it.id, { status: 'extracting' });
+            try {
+              const ex = await fetchExtract(fileBase64, it.file.type);
+              if (ex) fields = ex;
+            } catch {
+              // Extraction is best-effort — still store + dedup-check the file.
+            }
+          }
+
+          const payload = {
+            fileHash,
+            fileName: it.file.name,
+            fileBase64,
+            mediaType: it.file.type,
+            ...fields,
+          };
+          patch(it.id, { status: 'uploading', payload });
+          const result = await addBill(payload);
+          if (result.duplicate) {
+            patch(it.id, { status: 'duplicate', duplicate: result.duplicate });
+          } else {
+            patch(it.id, { status: 'added', bill: result.bill });
+            notifyBillsChanged();
+          }
+        } catch {
+          patch(it.id, { status: 'error', error: 'Upload failed' });
+        }
+      })();
+    });
+  };
+
+  const onForce = async (id) => {
+    const it = items.find((x) => x.id === id);
+    if (!it) return;
+    patch(id, { status: 'uploading' });
+    try {
+      // Reuse the payload built on the first attempt (hash, bytes, fields) so
+      // "Add anyway" doesn't re-hash or re-extract.
+      const payload = it.payload ?? {
+        fileHash: await sha256Hex(it.file),
+        fileName: it.file.name,
+        fileBase64: await fileToBase64(it.file),
+        mediaType: it.file.type,
+      };
+      const result = await addBill(payload, { force: true });
+      patch(id, { status: 'added', bill: result.bill });
+      notifyBillsChanged();
+    } catch {
+      patch(id, { status: 'error', error: 'Upload failed' });
+    }
+  };
+
+  const onSkip = (id) => patch(id, { status: 'skipped' });
+
+  const close = () => {
+    setItems([]);
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-foreground/20" onClick={close} aria-hidden="true" />
       <div className="absolute right-0 top-0 flex h-full w-full max-w-xl flex-col bg-background shadow-xl">
         <div className="flex h-14 shrink-0 items-center justify-between border-b px-6">
           <h2 className="text-base font-semibold tracking-tight">Add documents</h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={close}
             className="text-muted-foreground transition-colors hover:text-foreground"
             aria-label="Close"
           >
@@ -160,18 +348,49 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               </div>
             )}
 
-            <Dropzone
-              hint={
-                tab === 'Bank'
-                  ? '50MB, minimum 200dpi scans'
-                  : tab === 'Supplier statements'
-                    ? '6MB for images, 40MB for PDFs'
-                    : tab === 'Vault'
-                      ? '100MB max per file'
-                      : '6MB for images and PDFs, 100MB for ZIPs'
-              }
-            />
+            {isUpload ? (
+              <Dropzone onFiles={onFiles} />
+            ) : (
+              <Dropzone
+                onFiles={() => {}}
+                hint={
+                  tab === 'Bank'
+                    ? '50MB, minimum 200dpi scans'
+                    : tab === 'Supplier statements'
+                      ? '6MB for images, 40MB for PDFs'
+                      : '100MB max per file'
+                }
+              />
+            )}
+
+            {isUpload && !visionEnabled && (
+              <p className="mt-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                Field extraction is off (no <span className="font-mono">ANTHROPIC_API_KEY</span>). Files
+                are still stored and checked for exact-file duplicates.
+              </p>
+            )}
+
+            {isUpload && items.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {items.map((it) => (
+                  <UploadItem key={it.id} item={it} onForce={onForce} onSkip={onSkip} />
+                ))}
+              </div>
+            )}
           </div>
+
+          {isUpload && (
+            <div>
+              <h3 className="mb-1 text-sm font-medium">Extract by Email</h3>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Send digital documents to your dedicated extraction email address.
+              </p>
+              <div className="space-y-2 rounded-md border p-3">
+                <EmailRow label="One document per file" value="astrid.yang.cybm@dext.cc" />
+                <EmailRow label="One document per page" value="astrid.yang.cybm@multiple.dext.cc" />
+              </div>
+            </div>
+          )}
 
           {tab === 'Vault' && (
             <div className="space-y-4">
@@ -185,19 +404,6 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               <div>
                 <h3 className="mb-1 text-sm font-medium">Vault AI credits usage</h3>
                 <p className="text-xs text-muted-foreground">Used 0 of 5 credits</p>
-              </div>
-            </div>
-          )}
-
-          {isUpload && (
-            <div>
-              <h3 className="mb-1 text-sm font-medium">Extract by Email</h3>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Send digital documents to your dedicated extraction email address.
-              </p>
-              <div className="space-y-2 rounded-md border p-3">
-                <EmailRow label="One document per file" value="astrid.yang.cybm@dext.cc" />
-                <EmailRow label="One document per page" value="astrid.yang.cybm@multiple.dext.cc" />
               </div>
             </div>
           )}

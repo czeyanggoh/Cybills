@@ -6,6 +6,7 @@ import { env } from './env.js';
 import { authRouter } from './auth.js';
 import { orgRouter } from './org.js';
 import { extractRouter } from './extract.js';
+import { billsRouter } from './bills.js';
 
 const app = express();
 
@@ -28,6 +29,9 @@ app.use('/api/org', orgRouter);
 
 // Claude Vision receipt extraction. 503s until ANTHROPIC_API_KEY is set.
 app.use('/api/costs', extractRouter);
+
+// Persisted bills + duplicate detection (works without a Vision key).
+app.use('/api/costs', billsRouter);
 
 app.listen(env.PORT, () => {
   console.log(`[cybills] server listening on :${env.PORT} (${env.NODE_ENV})`);

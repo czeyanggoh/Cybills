@@ -1,0 +1,155 @@
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import { env } from './env.js';
+
+// Tiny persistent JSON store for uploaded bills. Deliberately dependency-free:
+// the VPS deploys with `npm ci` and recompiles native modules on every pull, so
+// a JSON file (atomic write + in-memory cache) is the lowest-risk way to add
+// persistence at the app's current scale. The dedup logic below is identical to
+// what a real DB would run, so swapping the backing store later is mechanical.
+
+export type Bill = {
+  id: string;
+  orgId: string;
+  fileHash: string; // sha256 hex of the raw upload; exact-file dedup key
+  fileName: string;
+  supplier: string;
+  invoiceNumber: string;
+  documentType: string;
+  currency: string;
+  total: number;
+  tax: number;
+  date: string; // as extracted, ISO YYYY-MM-DD when determinable
+  category: string;
+  createdAt: string; // ISO timestamp
+  createdBy: string; // signed-in email, or '' in mock mode
+  storageKey: string; // R2 object key for the original file, or '' if not stored
+  contentType: string; // MIME type of the stored file, or ''
+};
+
+// What the caller knows about an incoming upload before it is stored.
+export type Candidate = {
+  fileHash: string;
+  supplier: string;
+  invoiceNumber: string;
+  total: number;
+  date: string;
+};
+
+export type DuplicateMatch = {
+  // exact_file    — byte-identical file already stored (highest confidence)
+  // same_invoice  — same supplier + invoice number + amount (different scan)
+  // likely_dup    — same supplier + amount + date, no invoice number to key on
+  type: 'exact_file' | 'same_invoice' | 'likely_duplicate';
+  bill: Bill;
+};
+
+// --- Normalization: make fuzzy human/OCR values comparable -------------------
+export function normSupplier(s: string): string {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+export function normInvoice(s: string): string {
+  return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+// Coerce "SGD 1,240.00" / "1240" / 1240 → 1240 (0 when unparseable).
+export function parseAmount(v: unknown): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+// --- Persistence ------------------------------------------------------------
+// Default under server/.data (gitignored) so `git reset --hard` on deploy never
+// clobbers it; override with BILLS_DATA_DIR. Resolves the same in dev (tsx from
+// src/) and prod (compiled dist/) because it is relative to this module.
+const DATA_DIR = env.BILLS_DATA_DIR || fileURLToPath(new URL('../.data', import.meta.url));
+const DATA_FILE = `${DATA_DIR}/bills.json`;
+
+let cache: Bill[] | null = null;
+
+function load(): Bill[] {
+  if (cache) return cache;
+  try {
+    if (existsSync(DATA_FILE)) {
+      const parsed = JSON.parse(readFileSync(DATA_FILE, 'utf8'));
+      cache = Array.isArray(parsed?.bills) ? (parsed.bills as Bill[]) : [];
+    } else {
+      cache = [];
+    }
+  } catch (err) {
+    console.error('[store] could not read bills file; starting empty', err);
+    cache = [];
+  }
+  return cache;
+}
+
+// Atomic write: tmp file + rename, so a crash mid-write can't truncate the data.
+function persist(bills: Bill[]): void {
+  mkdirSync(DATA_DIR, { recursive: true });
+  const tmp = `${DATA_FILE}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ bills }, null, 2));
+  renameSync(tmp, DATA_FILE);
+}
+
+// --- Public API -------------------------------------------------------------
+export function listBills(orgId: string): Bill[] {
+  return load()
+    .filter((b) => b.orgId === orgId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function getBillById(orgId: string, id: string): Bill | null {
+  return load().find((b) => b.orgId === orgId && b.id === id) ?? null;
+}
+
+// First (highest-confidence) duplicate for `cand`, or null. Cheapest checks
+// first; each tier requires the fields it keys on to actually be present.
+export function findDuplicate(orgId: string, cand: Candidate): DuplicateMatch | null {
+  const bills = load().filter((b) => b.orgId === orgId);
+
+  if (cand.fileHash) {
+    const hit = bills.find((b) => b.fileHash && b.fileHash === cand.fileHash);
+    if (hit) return { type: 'exact_file', bill: hit };
+  }
+
+  const supplier = normSupplier(cand.supplier);
+  const invoice = normInvoice(cand.invoiceNumber);
+  const total = parseAmount(cand.total);
+
+  if (supplier && invoice) {
+    const hit = bills.find(
+      (b) =>
+        normSupplier(b.supplier) === supplier &&
+        normInvoice(b.invoiceNumber) === invoice &&
+        Math.abs(b.total - total) < 0.01
+    );
+    if (hit) return { type: 'same_invoice', bill: hit };
+  }
+
+  if (supplier && total > 0 && cand.date) {
+    const hit = bills.find(
+      (b) =>
+        normSupplier(b.supplier) === supplier &&
+        Math.abs(b.total - total) < 0.01 &&
+        b.date === cand.date
+    );
+    if (hit) return { type: 'likely_duplicate', bill: hit };
+  }
+
+  return null;
+}
+
+export type BillInput = Omit<Bill, 'id' | 'createdAt'>;
+
+export function insertBill(input: BillInput): Bill {
+  const bills = load();
+  const bill: Bill = {
+    ...input,
+    id: `bill_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`,
+    createdAt: new Date().toISOString(),
+  };
+  bills.push(bill);
+  persist(bills);
+  return bill;
+}

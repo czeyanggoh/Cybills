@@ -35,3 +35,6 @@ dist-ssr
 
 # Backend build output
 server/dist/
+
+# Persisted bills store (uploaded cost documents + dedup index)
+server/.data/

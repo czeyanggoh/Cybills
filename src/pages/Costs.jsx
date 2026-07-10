@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -13,6 +13,7 @@ import {
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import { DOCS } from '@/data/docs';
+import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { cn } from '@/lib/utils';
 
 const TABS = [
@@ -59,9 +60,22 @@ export default function Costs() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
+  const [uploaded, setUploaded] = useState([]);
+
+  // Load persisted (uploaded) bills, and refetch whenever an upload completes.
+  const loadUploaded = useCallback(async () => {
+    setUploaded((await fetchBills()).map(billToDoc));
+  }, []);
+  useEffect(() => {
+    loadUploaded();
+    window.addEventListener(BILLS_CHANGED_EVENT, loadUploaded);
+    return () => window.removeEventListener(BILLS_CHANGED_EVENT, loadUploaded);
+  }, [loadUploaded]);
 
   const rowsFor = (key) => {
-    if (key === 'inbox') return DOCS.filter((d) => d.status === 'new' || d.status === 'viewed');
+    // Uploaded bills land in the inbox, newest first, above the sample rows.
+    if (key === 'inbox')
+      return [...uploaded, ...DOCS.filter((d) => d.status === 'new' || d.status === 'viewed')];
     if (key === 'ready') return DOCS.filter((d) => d.status === 'ready');
     if (key === 'review') return DOCS.filter((d) => d.status === 'review');
     return [];
