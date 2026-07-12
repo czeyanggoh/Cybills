@@ -9,6 +9,7 @@ import {
   Search,
   Filter,
   Settings2,
+  ListChecks,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -17,13 +18,24 @@ import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { cn } from '@/lib/utils';
 
 const TABS = [
-  { key: 'inbox', label: 'Inbox', count: 78 },
+  { key: 'inbox', label: 'Inbox', count: 89 },
   { key: 'processing', label: 'Processing' },
-  { key: 'review', label: 'To review', count: 23 },
+  { key: 'review', label: 'To review', count: 34 },
   { key: 'ready', label: 'Ready', count: 55 },
   { key: 'approvals', label: 'Approvals' },
-  { key: 'archive', label: 'Archive' },
+  { key: 'archive', label: 'Archive', count: '7k' },
 ];
+
+// Display total per tab — mirrors Dext's paginated counts (rows shown ≠ total).
+const TAB_TOTALS = { inbox: 89, review: 34, ready: 55, archive: 7474 };
+
+function rowsFor(key) {
+  if (key === 'inbox') return DOCS.filter((d) => d.status === 'new' || d.status === 'viewed');
+  if (key === 'review') return DOCS.filter((d) => d.status === 'review');
+  if (key === 'ready') return DOCS.filter((d) => d.status === 'ready');
+  if (key === 'archive') return DOCS.filter((d) => d.status === 'expenseclaim');
+  return [];
+}
 
 function StatusBadge({ status }) {
   const map = {
@@ -31,10 +43,17 @@ function StatusBadge({ status }) {
     viewed: 'bg-muted text-muted-foreground',
     ready: 'bg-foreground text-background',
     review: 'border border-dashed border-foreground text-foreground',
+    expenseclaim: 'bg-muted text-muted-foreground',
   };
-  const label = { new: 'New', viewed: 'Viewed', ready: 'Ready', review: 'To review' }[status];
+  const label = {
+    new: 'New',
+    viewed: 'Viewed',
+    ready: 'Ready',
+    review: 'To review',
+    expenseclaim: 'In expense claim',
+  }[status];
   return (
-    <span className={cn('inline-flex rounded px-2 py-0.5 text-xs', map[status] ?? map.viewed)}>
+    <span className={cn('inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs', map[status] ?? map.viewed)}>
       {label}
     </span>
   );
@@ -56,6 +75,137 @@ function ToolbarButton({ children, disabled = false, dropdown = false }) {
   );
 }
 
+// Left-hand toolbar actions differ per tab (mirrors Dext).
+function ToolbarActions({ tab, hasSelection }) {
+  if (tab === 'review' || tab === 'ready') {
+    return (
+      <>
+        <ToolbarButton>Export all</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection}>
+          {tab === 'review' ? 'Move to ready' : 'Move to review'}
+        </ToolbarButton>
+        <ToolbarButton disabled={!hasSelection}>Archive</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection}>Add to expense claim</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection} dropdown>Move to</ToolbarButton>
+        <ToolbarButton dropdown>Actions</ToolbarButton>
+      </>
+    );
+  }
+  if (tab === 'archive') {
+    return (
+      <>
+        <ToolbarButton>Export all</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection}>Unarchive</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection} dropdown>Move to</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection}>Delete</ToolbarButton>
+        <ToolbarButton>See submission history</ToolbarButton>
+      </>
+    );
+  }
+  if (tab === 'processing') {
+    return <ToolbarButton>Export all</ToolbarButton>;
+  }
+  // inbox
+  return (
+    <>
+      <ToolbarButton>Export all</ToolbarButton>
+      <ToolbarButton disabled={!hasSelection}>Archive</ToolbarButton>
+      <ToolbarButton disabled={!hasSelection}>Add to expense claim</ToolbarButton>
+      <ToolbarButton disabled={!hasSelection} dropdown>Move to</ToolbarButton>
+      <ToolbarButton dropdown>Tools</ToolbarButton>
+    </>
+  );
+}
+
+function SearchAndTools() {
+  return (
+    <>
+      <div className="relative ml-auto hidden sm:block">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search"
+          className="h-8 w-52 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        <button
+          type="button"
+          className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          Advanced <ChevronDown className="h-3 w-3" />
+        </button>
+      </div>
+      <button
+        type="button"
+        className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        aria-label="Filter"
+      >
+        <Filter className="h-4 w-4" strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        aria-label="Table settings"
+      >
+        <Settings2 className="h-4 w-4" strokeWidth={1.75} />
+      </button>
+    </>
+  );
+}
+
+// Approvals has its own toolbar + empty state.
+function ApprovalsPanel() {
+  const [scope, setScope] = useState('me');
+  return (
+    <>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <ToolbarButton disabled dropdown>Approve</ToolbarButton>
+        <ToolbarButton disabled>Reject</ToolbarButton>
+        <ToolbarButton disabled dropdown>Actions</ToolbarButton>
+        <ToolbarButton disabled>Archive</ToolbarButton>
+        <div className="ml-auto inline-flex overflow-hidden rounded-md border text-sm">
+          {[
+            { key: 'me', label: 'Assigned to me' },
+            { key: 'all', label: 'All items' },
+          ].map((s) => (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => setScope(s.key)}
+              className={cn(
+                'px-3 py-1.5 transition-colors',
+                scope === s.key ? 'bg-foreground text-background' : 'hover:bg-muted'
+              )}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <SearchAndTools />
+      </div>
+
+      <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-xl border">
+          <ListChecks className="h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
+        </div>
+        <p className="text-lg font-semibold tracking-tight">
+          {scope === 'me' ? 'No documents assigned to you' : 'No documents awaiting approval'}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Documents that need your approval will appear here.
+        </p>
+        <div className="mt-2 flex gap-2">
+          <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
+            View all approvals
+          </button>
+          <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
+            Go to approvals settings
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Costs() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
@@ -72,15 +222,9 @@ export default function Costs() {
     return () => window.removeEventListener(BILLS_CHANGED_EVENT, loadUploaded);
   }, [loadUploaded]);
 
-  const rowsFor = (key) => {
-    // Uploaded bills land in the inbox, newest first, above the sample rows.
-    if (key === 'inbox')
-      return [...uploaded, ...DOCS.filter((d) => d.status === 'new' || d.status === 'viewed')];
-    if (key === 'ready') return DOCS.filter((d) => d.status === 'ready');
-    if (key === 'review') return DOCS.filter((d) => d.status === 'review');
-    return [];
-  };
-  const rows = rowsFor(tab);
+  // Uploaded bills land in the inbox, newest first, above the sample rows.
+  const baseRows = rowsFor(tab);
+  const rows = tab === 'inbox' ? [...uploaded, ...baseRows] : baseRows;
   const hasSelection = selected.size > 0;
 
   const toggle = (id) =>
@@ -136,124 +280,104 @@ export default function Costs() {
         })}
       </div>
 
-      {/* Toolbar */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <ToolbarButton>Export all</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>Archive</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>Add to expense claim</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection} dropdown>
-          Move to
-        </ToolbarButton>
-        <ToolbarButton dropdown>Tools</ToolbarButton>
-        <div className="relative ml-auto hidden sm:block">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search"
-            className="h-8 w-52 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          <button
-            type="button"
-            className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground"
-          >
-            Advanced <ChevronDown className="h-3 w-3" />
-          </button>
-        </div>
-        <button
-          type="button"
-          className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="Filter"
-        >
-          <Filter className="h-4 w-4" strokeWidth={1.75} />
-        </button>
-        <button
-          type="button"
-          className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="Table settings"
-        >
-          <Settings2 className="h-4 w-4" strokeWidth={1.75} />
-        </button>
-      </div>
+      {tab === 'approvals' ? (
+        <ApprovalsPanel />
+      ) : (
+        <>
+          {/* Toolbar */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <ToolbarActions tab={tab} hasSelection={hasSelection} />
+            <SearchAndTools />
+          </div>
 
-      {/* Table */}
-      <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[880px] text-sm">
-          <thead className="border-b bg-muted/40 text-left">
-            <tr className="text-muted-foreground">
-              <th className="w-24 px-3 py-2.5">
-                <input
-                  type="checkbox"
-                  checked={rows.length > 0 && selected.size === rows.length}
-                  onChange={toggleAll}
-                  className="h-4 w-4 accent-black"
-                />
-              </th>
-              <th className="px-3 py-2.5 font-medium">Status</th>
-              <th className="px-3 py-2.5 font-medium">User</th>
-              <th className="px-3 py-2.5 font-medium">Date</th>
-              <th className="px-3 py-2.5 font-medium">Supplier</th>
-              <th className="px-3 py-2.5 font-medium">Category</th>
-              <th className="px-3 py-2.5 text-right font-medium">Total</th>
-              <th className="px-3 py-2.5 text-right font-medium">Tax</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((d) => (
-              <tr
-                key={d.id}
-                onClick={() => navigate(`/costs/${d.id}`)}
-                className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
-              >
-                <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={cn('h-2 w-2 rounded-full', d.unread ? 'bg-foreground' : 'bg-transparent')}
-                    />
+          {/* Table */}
+          <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full min-w-[1000px] text-sm">
+              <thead className="border-b bg-muted/40 text-left">
+                <tr className="text-muted-foreground">
+                  <th className="w-24 px-3 py-2.5">
                     <input
                       type="checkbox"
-                      checked={selected.has(d.id)}
-                      onChange={() => toggle(d.id)}
+                      checked={rows.length > 0 && selected.size === rows.length}
+                      onChange={toggleAll}
                       className="h-4 w-4 accent-black"
                     />
-                    <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
-                    <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
-                  </div>
-                </td>
-                <td className="px-3 py-3"><StatusBadge status={d.status} /></td>
-                <td className={cn('px-3 py-3', d.unread && 'font-semibold')}>{d.user}</td>
-                <td className="px-3 py-3 tabular-nums text-muted-foreground">{d.date}</td>
-                <td className={cn('px-3 py-3', d.unread && 'font-semibold')}>{d.supplier}</td>
-                <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                  <div className="inline-flex w-48 items-center justify-between rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground">
-                    <span className="truncate">{d.category}</span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                  </div>
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                  <span className="text-xs text-muted-foreground">SGD </span>
-                  <span className={cn(d.unread && 'font-semibold')}>{d.total}</span>
-                </td>
-                <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{d.tax}</td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={8} className="px-4 py-16 text-center text-sm text-muted-foreground">
-                  <Plus className="mx-auto mb-2 h-5 w-5" strokeWidth={1.5} />
-                  Nothing in {TABS.find((t) => t.key === tab)?.label} — add documents to get started.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+                  </th>
+                  <th className="px-3 py-2.5 font-medium">Status</th>
+                  <th className="px-3 py-2.5 font-medium">User</th>
+                  <th className="px-3 py-2.5 font-medium">Date</th>
+                  <th className="px-3 py-2.5 font-medium">Supplier</th>
+                  <th className="px-3 py-2.5 font-medium">Category</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Total</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Tax</th>
+                  <th className="px-3 py-2.5 font-medium">Tax rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((d) => (
+                  <tr
+                    key={d.id}
+                    onClick={() => navigate(`/costs/${d.id}`)}
+                    className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
+                  >
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn('h-2 w-2 rounded-full', d.unread ? 'bg-foreground' : 'bg-transparent')} />
+                        <input
+                          type="checkbox"
+                          checked={selected.has(d.id)}
+                          onChange={() => toggle(d.id)}
+                          className="h-4 w-4 accent-black"
+                        />
+                        <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                        <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                      </div>
+                    </td>
+                    <td className="px-3 py-3"><StatusBadge status={d.status} /></td>
+                    <td className={cn('whitespace-nowrap px-3 py-3', d.unread && 'font-semibold')}>{d.user}</td>
+                    <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{d.date}</td>
+                    <td className={cn('px-3 py-3', d.unread && 'font-semibold')}>{d.supplier}</td>
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="inline-flex w-44 items-center justify-between rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground">
+                        <span className="truncate">{d.category || 'Uncategorised'}</span>
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
+                      <span className="text-xs text-muted-foreground">SGD </span>
+                      <span className={cn(d.unread && 'font-semibold')}>{d.total}</span>
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{d.tax}</td>
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="inline-flex w-36 items-center justify-between rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground">
+                        <span className="truncate">Extracted amount</span>
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                      <Plus className="mx-auto mb-2 h-5 w-5" strokeWidth={1.5} />
+                      {tab === 'processing'
+                        ? 'Nothing processing right now.'
+                        : `Nothing in ${TABS.find((t) => t.key === tab)?.label} — add documents to get started.`}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
 
-      {rows.length > 0 && (
-        <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-          <SlidersHorizontal className="h-3.5 w-3.5" />
-          {selected.size > 0 ? `${selected.size} selected · ` : ''}
-          Showing {rows.length} of {tab === 'inbox' ? 78 : rows.length} documents
-        </p>
+          {rows.length > 0 && (
+            <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              {selected.size > 0 ? `${selected.size} selected · ` : ''}
+              Showing {rows.length} of {TAB_TOTALS[tab] ?? rows.length} documents
+            </p>
+          )}
+        </>
       )}
     </AppShell>
   );
