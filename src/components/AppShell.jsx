@@ -37,7 +37,7 @@ const BOTTOM = [
   { label: 'Get started', icon: Rocket },
   { label: 'Users', icon: Users },
   { label: 'Submission history', icon: History },
-  { label: 'Business settings', icon: Settings },
+  { label: 'Business settings', icon: Settings, to: '/settings' },
 ];
 
 // Lets any page open the "Add documents" drawer (e.g. the Costs header button).
@@ -131,6 +131,7 @@ export default function AppShell({ subnav = null, children }) {
               <button
                 key={item.label}
                 type="button"
+                onClick={item.to ? () => navigate(item.to) : undefined}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 <item.icon className="h-4 w-4" strokeWidth={1.75} />
