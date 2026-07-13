@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Image, Download, FileCheck, Search, ChevronDown } from 'lucide-react';
+import { Image, Download, FileClock, Search, ChevronDown } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import HistoryModal from '@/components/HistoryModal';
 import { SUBMISSIONS } from '@/data/submissions';
+import { VAULT_SUBMISSIONS } from '@/data/vaultSubmissions';
 import { cn } from '@/lib/utils';
 
 const TABS = ['Costs and sales', 'Supplier statements', 'Vault'];
@@ -17,10 +19,31 @@ function StatusBadge({ status }) {
   return <span className={cn('inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs', map[status] ?? map.expenseclaim)}>{label}</span>;
 }
 
+// Row action icons; the history (clock) icon opens the timeline modal.
+function RowActions({ onHistory }) {
+  return (
+    <div className="flex items-center gap-2 text-muted-foreground/60">
+      <Image className="h-3.5 w-3.5" strokeWidth={1.75} />
+      <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+      <button
+        type="button"
+        onClick={onHistory}
+        className="transition-colors hover:text-foreground"
+        aria-label="View history"
+      >
+        <FileClock className="h-3.5 w-3.5" strokeWidth={1.75} />
+      </button>
+    </div>
+  );
+}
+
 export default function SubmissionHistory() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('Costs and sales');
-  const rows = tab === 'Costs and sales' ? SUBMISSIONS : [];
+  const [historyItem, setHistoryItem] = useState(null);
+
+  const isVault = tab === 'Vault';
+  const rows = tab === 'Costs and sales' ? SUBMISSIONS : isVault ? VAULT_SUBMISSIONS : [];
 
   return (
     <AppShell>
@@ -43,9 +66,11 @@ export default function SubmissionHistory() {
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button type="button" className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted">
-          Export history
-        </button>
+        {!isVault && (
+          <button type="button" className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted">
+            Export history
+          </button>
+        )}
         <div className="relative ml-auto hidden sm:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input type="text" placeholder="Search" className="h-8 w-52 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
@@ -56,68 +81,97 @@ export default function SubmissionHistory() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[1300px] text-sm">
-          <thead className="border-b bg-muted/40 text-left">
-            <tr className="text-muted-foreground">
-              <th className="w-24 px-3 py-2.5"><span className="sr-only">Actions</span></th>
-              <th className="px-3 py-2.5 font-medium">Status</th>
-              <th className="px-3 py-2.5 font-medium">Item ID</th>
-              <th className="px-3 py-2.5 font-medium">Submitted at</th>
-              <th className="px-3 py-2.5 font-medium">Submitted by</th>
-              <th className="px-3 py-2.5 font-medium">Submission method</th>
-              <th className="px-3 py-2.5 font-medium">Owned by</th>
-              <th className="px-3 py-2.5 font-medium">Date</th>
-              <th className="px-3 py-2.5 font-medium">Supplier</th>
-              <th className="px-3 py-2.5 font-medium">Customer</th>
-              <th className="px-3 py-2.5 text-right font-medium">Total amount</th>
-              <th className="px-3 py-2.5 font-medium">Workspace</th>
-              <th className="px-3 py-2.5 text-right font-medium">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((s) => (
-              <tr key={s.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
-                <td className="px-3 py-3">
-                  <div className="flex items-center gap-2 text-muted-foreground/60">
-                    <Image className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    <FileCheck className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  </div>
-                </td>
-                <td className="px-3 py-3"><StatusBadge status={s.status} /></td>
-                <td className="whitespace-nowrap px-3 py-3 tabular-nums">{s.id}</td>
-                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{s.submittedAt}</td>
-                <td className="whitespace-nowrap px-3 py-3">{s.submittedBy}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{s.method}</td>
-                <td className="whitespace-nowrap px-3 py-3">{s.ownedBy}</td>
-                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{s.date}</td>
-                <td className="whitespace-nowrap px-3 py-3">{s.supplier}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{s.customer}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                  <span className="text-xs text-muted-foreground">SGD </span>{s.total}
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{s.workspace}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-right">
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/costs/${s.id}`)}
-                    className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
-                  >
-                    Show
-                  </button>
-                </td>
+        {isVault ? (
+          <table className="w-full min-w-[1000px] text-sm">
+            <thead className="border-b bg-muted/40 text-left">
+              <tr className="text-muted-foreground">
+                <th className="w-24 px-3 py-2.5"><span className="sr-only">Actions</span></th>
+                <th className="px-3 py-2.5 font-medium">File ID</th>
+                <th className="px-3 py-2.5 font-medium">Submitted at</th>
+                <th className="px-3 py-2.5 font-medium">Submitted by</th>
+                <th className="px-3 py-2.5 font-medium">Submission method</th>
+                <th className="px-3 py-2.5 font-medium">File name</th>
+                <th className="px-3 py-2.5 font-medium">Tags</th>
+                <th className="px-3 py-2.5 font-medium">Due date</th>
               </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={13} className="px-4 py-16 text-center text-sm text-muted-foreground">No submissions in {tab}.</td>
+            </thead>
+            <tbody>
+              {rows.map((s) => (
+                <tr key={s.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
+                  <td className="px-3 py-3"><RowActions onHistory={() => setHistoryItem(s)} /></td>
+                  <td className="whitespace-nowrap px-3 py-3 tabular-nums">{s.id}</td>
+                  <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{s.submittedAt}</td>
+                  <td className="whitespace-nowrap px-3 py-3">{s.submittedBy}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{s.method}</td>
+                  <td className="max-w-[220px] truncate px-3 py-3">{s.fileName}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
+                    {s.tags === '—' ? '—' : <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-foreground">{s.tags}</span>}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{s.dueDate}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <table className="w-full min-w-[1300px] text-sm">
+            <thead className="border-b bg-muted/40 text-left">
+              <tr className="text-muted-foreground">
+                <th className="w-24 px-3 py-2.5"><span className="sr-only">Actions</span></th>
+                <th className="px-3 py-2.5 font-medium">Status</th>
+                <th className="px-3 py-2.5 font-medium">Item ID</th>
+                <th className="px-3 py-2.5 font-medium">Submitted at</th>
+                <th className="px-3 py-2.5 font-medium">Submitted by</th>
+                <th className="px-3 py-2.5 font-medium">Submission method</th>
+                <th className="px-3 py-2.5 font-medium">Owned by</th>
+                <th className="px-3 py-2.5 font-medium">Date</th>
+                <th className="px-3 py-2.5 font-medium">Supplier</th>
+                <th className="px-3 py-2.5 font-medium">Customer</th>
+                <th className="px-3 py-2.5 text-right font-medium">Total amount</th>
+                <th className="px-3 py-2.5 font-medium">Workspace</th>
+                <th className="px-3 py-2.5 text-right font-medium">Action</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((s) => (
+                <tr key={s.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
+                  <td className="px-3 py-3"><RowActions onHistory={() => setHistoryItem(s)} /></td>
+                  <td className="px-3 py-3"><StatusBadge status={s.status} /></td>
+                  <td className="whitespace-nowrap px-3 py-3 tabular-nums">{s.id}</td>
+                  <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{s.submittedAt}</td>
+                  <td className="whitespace-nowrap px-3 py-3">{s.submittedBy}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{s.method}</td>
+                  <td className="whitespace-nowrap px-3 py-3">{s.ownedBy}</td>
+                  <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{s.date}</td>
+                  <td className="whitespace-nowrap px-3 py-3">{s.supplier}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{s.customer}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
+                    <span className="text-xs text-muted-foreground">SGD </span>{s.total}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{s.workspace}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/costs/${s.id}`)}
+                      className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+                    >
+                      Show
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={13} className="px-4 py-16 text-center text-sm text-muted-foreground">No submissions in {tab}.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>}
+
+      <HistoryModal open={Boolean(historyItem)} onClose={() => setHistoryItem(null)} item={historyItem} />
     </AppShell>
   );
 }
