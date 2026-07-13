@@ -154,6 +154,41 @@ function CopyRow({ label, value }) {
   );
 }
 
+function CheckRow({ label, defaultChecked = false }) {
+  const [on, setOn] = useState(defaultChecked);
+  return (
+    <label className="flex items-center gap-2 text-sm">
+      <input type="checkbox" checked={on} onChange={() => setOn((v) => !v)} className="h-4 w-4 accent-black" />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function MiniSelect({ defaultValue, options }) {
+  return (
+    <select
+      defaultValue={defaultValue}
+      className="h-8 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {options.map((o) => (
+        <option key={o} value={o}>{o}</option>
+      ))}
+    </select>
+  );
+}
+
+function SaveBar() {
+  return (
+    <div className="flex justify-end">
+      <button type="button" className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+        Save changes
+      </button>
+    </div>
+  );
+}
+
+const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
+
 // --- Sections ---------------------------------------------------------------
 function BusinessProfile() {
   return (
@@ -403,6 +438,7 @@ function Automation() {
 function Approvals() {
   const [view, setView] = useState('list');
   const [tab, setTab] = useState('Costs');
+  const [stages, setStages] = useState([{}]);
 
   if (view === 'create') {
     return (
@@ -432,6 +468,52 @@ function Approvals() {
           <Row label="Suppliers"><SelectBox defaultValue="All suppliers" options={['All suppliers']} /></Row>
           <Row label="Customers"><SelectBox defaultValue="All customers" options={['All customers']} /></Row>
           <Row label="Categories"><SelectBox defaultValue="All categories" options={['All categories']} /></Row>
+
+          <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Create approval flow
+          </p>
+          <div className="overflow-x-auto rounded-md border">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="border-b bg-muted/40 text-left text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Stage</th>
+                  <th className="px-3 py-2 font-medium">Approver type</th>
+                  <th className="px-3 py-2 font-medium">Approver(s)</th>
+                  <th className="px-3 py-2 font-medium">Condition</th>
+                  <th className="px-3 py-2 font-medium">Amount (SGD)</th>
+                  <th className="px-3 py-2 font-medium">Can edit?</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stages.map((_, i) => (
+                  <tr key={i} className="border-b last:border-0">
+                    <td className="whitespace-nowrap px-3 py-2">{ORDINALS[i] ?? `${i + 1}th`}</td>
+                    <td className="px-3 py-2"><MiniSelect defaultValue="Specific user" options={['Specific user', 'Manager', 'Any admin']} /></td>
+                    <td className="px-3 py-2"><MiniSelect defaultValue="Select user(s)" options={['Select user(s)', 'Sean Tan', 'Astrid Yang']} /></td>
+                    <td className="px-3 py-2"><MiniSelect defaultValue="Always" options={['Always', 'Amount is over']} /></td>
+                    <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">Any amount</td>
+                    <td className="px-3 py-2"><MiniSelect defaultValue="No" options={['No', 'Yes']} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStages((s) => [...s, {}])}
+            className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
+          >
+            + Add stage
+          </button>
+
+          <div className="space-y-4 border-t pt-4">
+            <Row label="Switch workflow on" hint="This workflow will apply to current and future documents once saved.">
+              <Toggle defaultOn />
+            </Row>
+            <Row label="Allow self-approval" hint="Whether approvers can approve their own documents.">
+              <Toggle />
+            </Row>
+          </div>
         </Card>
         <div className="flex justify-end gap-2">
           <button
@@ -442,7 +524,7 @@ function Approvals() {
             Cancel
           </button>
           <button type="button" className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
-            Create workflow
+            Save
           </button>
         </div>
       </div>
@@ -498,6 +580,61 @@ function Approvals() {
   );
 }
 
+const EXPORT_COLUMNS = [
+  'Receipt ID', 'Invoice number', 'Type', 'Status', 'Owner', 'Date', 'Due date', 'Supplier',
+  'Customer', 'Description', 'Category', 'Product/Service', 'Project 1', 'Payment method',
+  'Currency', 'Tax rate', 'Quantity (line items)', 'Unit price (net)', 'Unit price (total)',
+  'Net amount', 'Tax amount', 'Total amount', 'Net with currency', 'Tax with currency',
+  'Total with currency', 'Base net amount', 'Base total amount', 'Note', 'Image', 'Project 2',
+];
+const EXPORT_DEFAULTS = new Set(['Receipt ID', 'Description', 'Net amount', 'Tax amount', 'Total amount']);
+
+function Exports() {
+  return (
+    <div className="space-y-6">
+      <Card title="CSV Exports">
+        <p className="text-sm text-muted-foreground">Choose how the data in CSV file exports gets formatted.</p>
+        <Row label="Receipts and invoices"><SelectBox defaultValue="Dext Default" options={['Dext Default', 'Custom CSV', 'Xero', 'QuickBooks']} /></Row>
+        <Row label="Bank statements"><SelectBox defaultValue="Standard Dext Excel" options={['Standard Dext Excel', 'Custom']} /></Row>
+        <Row label="Sales documents"><SelectBox defaultValue="Dext Sales Default" options={['Dext Sales Default', 'Custom']} /></Row>
+        <Row label="Expense reports"><SelectBox defaultValue="Dext Default" options={['Dext Default', 'Custom']} /></Row>
+        <Row label="Show net amount" hint="Include the net value field in CSV exports."><Toggle /></Row>
+      </Card>
+
+      <Card title="CSV Custom Exports">
+        <p className="text-sm text-muted-foreground">Choose how the data in Custom CSV file exports gets formatted.</p>
+        <Row label="Decimal separator"><SelectBox defaultValue="Dot (.)" options={['Dot (.)', 'Comma (,)']} /></Row>
+        <Row label="Date format">
+          <SelectBox defaultValue="DD-Mon-YYYY (e.g. 20-Sep-2025)" options={['DD-Mon-YYYY (e.g. 20-Sep-2025)', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY']} />
+        </Row>
+        <Row label="Show item header in line items export"><Toggle /></Row>
+        <div>
+          <p className="mb-1 text-sm font-medium">Custom CSV Export columns</p>
+          <p className="mb-3 text-xs text-muted-foreground">Choose the columns to include in the Custom CSV export.</p>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
+            {EXPORT_COLUMNS.map((c) => (
+              <CheckRow key={c} label={c} defaultChecked={EXPORT_DEFAULTS.has(c)} />
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      <Card title="PDF Exports">
+        <Row label="Item headers in PDF exports" hint="A page is generated before each item with the item ID.">
+          <Toggle />
+        </Row>
+        <Row label="Order of items" hint="Order of items in the PDF export.">
+          <SelectBox defaultValue="Date (old to new)" options={['Date (old to new)', 'Date (new to old)', 'Supplier']} />
+        </Row>
+        <Row label="Hide Project in expense claim PDFs"><Toggle /></Row>
+        <Row label="Hide Project 2 in expense claim PDFs"><Toggle /></Row>
+      </Card>
+
+      <SaveBar />
+    </div>
+  );
+}
+
 function Placeholder({ label }) {
   return (
     <div className="flex h-[50vh] flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center">
@@ -523,6 +660,8 @@ export default function Settings() {
         <Automation />
       ) : section === 'approvals' ? (
         <Approvals />
+      ) : section === 'exports' ? (
+        <Exports />
       ) : (
         <Placeholder label={TITLES[section]} />
       )}

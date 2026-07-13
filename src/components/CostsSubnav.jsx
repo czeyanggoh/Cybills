@@ -1,42 +1,53 @@
+import { useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
-// Left sub-nav column for the Costs workspace (shared by the inbox + detail).
+// Left sub-nav column for the Costs workspace (shared by the inbox, detail, and
+// expense claims). Items with a `to` navigate; active state follows the route.
 const SUBNAV = [
-  { label: 'Costs inbox', count: 78, active: true },
-  { label: 'Expense claims', count: 62 },
+  { label: 'Costs inbox', count: 78, to: '/costs' },
+  { label: 'Expense claims', count: 62, to: '/expense-claims' },
   { label: 'Supplier statements' },
 ];
 
 export default function CostsSubnav() {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const isActive = (item) =>
+    item.to === '/costs' ? pathname.startsWith('/costs') : pathname === item.to;
+
   return (
     <div className="flex flex-col p-3 text-sm">
       <p className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Costs
       </p>
-      {SUBNAV.map((item) => (
-        <button
-          key={item.label}
-          type="button"
-          className={cn(
-            'flex items-center justify-between rounded-md px-3 py-2 text-left transition-colors',
-            item.active
-              ? 'bg-muted font-medium text-foreground'
-              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-          )}
-        >
-          {item.label}
-          {item.count != null && (
-            <span
-              className={cn(
-                'rounded-full px-1.5 text-xs',
-                item.active ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'
-              )}
-            >
-              {item.count}
-            </span>
-          )}
-        </button>
-      ))}
+      {SUBNAV.map((item) => {
+        const active = Boolean(item.to) && isActive(item);
+        return (
+          <button
+            key={item.label}
+            type="button"
+            onClick={item.to ? () => navigate(item.to) : undefined}
+            className={cn(
+              'flex items-center justify-between rounded-md px-3 py-2 text-left transition-colors',
+              active
+                ? 'bg-muted font-medium text-foreground'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            )}
+          >
+            {item.label}
+            {item.count != null && (
+              <span
+                className={cn(
+                  'rounded-full px-1.5 text-xs',
+                  active ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'
+                )}
+              >
+                {item.count}
+              </span>
+            )}
+          </button>
+        );
+      })}
       <div className="my-2 h-px bg-border" />
       <button
         type="button"

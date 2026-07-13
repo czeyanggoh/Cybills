@@ -5,6 +5,7 @@ import RequireAuth from '@/components/RequireAuth';
 import Login from './pages/Login';
 import Costs from './pages/Costs';
 import CostDetail from './pages/CostDetail';
+import ExpenseClaims from './pages/ExpenseClaims';
 import Settings from './pages/Settings';
 import SupportDesk from './pages/SupportDesk';
 import ComingSoon from './pages/ComingSoon';
@@ -29,6 +30,7 @@ function App() {
             <Route path="/sales" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/bank" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/vault" element={<Protected><ComingSoon /></Protected>} />
+            <Route path="/expense-claims" element={<Protected><ExpenseClaims /></Protected>} />
             <Route path="/settings" element={<Protected><Settings /></Protected>} />
             <Route path="/support" element={<Protected><SupportDesk /></Protected>} />
             {/* Feature Requests merged into Support Desk — keep old links working. */}
