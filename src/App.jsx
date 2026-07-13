@@ -6,6 +6,9 @@ import Login from './pages/Login';
 import Costs from './pages/Costs';
 import CostDetail from './pages/CostDetail';
 import ExpenseClaims from './pages/ExpenseClaims';
+import Suppliers from './pages/Suppliers';
+import SupplierStatements from './pages/SupplierStatements';
+import Sales from './pages/Sales';
 import Settings from './pages/Settings';
 import SupportDesk from './pages/SupportDesk';
 import ComingSoon from './pages/ComingSoon';
@@ -27,10 +30,12 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/costs" element={<Protected><Costs /></Protected>} />
             <Route path="/costs/:id" element={<Protected><CostDetail /></Protected>} />
-            <Route path="/sales" element={<Protected><ComingSoon /></Protected>} />
+            <Route path="/sales" element={<Protected><Sales /></Protected>} />
             <Route path="/bank" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/vault" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/expense-claims" element={<Protected><ExpenseClaims /></Protected>} />
+            <Route path="/supplier-statements" element={<Protected><SupplierStatements /></Protected>} />
+            <Route path="/suppliers" element={<Protected><Suppliers /></Protected>} />
             <Route path="/settings" element={<Protected><Settings /></Protected>} />
             <Route path="/support" element={<Protected><SupportDesk /></Protected>} />
             {/* Feature Requests merged into Support Desk — keep old links working. */}

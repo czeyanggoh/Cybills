@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Flag, Image, ChevronDown, Search, Filter, Settings2 } from 'lucide-react';
+import { Plus, Flag, Image, ChevronDown, Search, Filter, Settings2, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import { CLAIMS } from '@/data/claims';
@@ -14,6 +14,7 @@ const TABS = [
 export default function ExpenseClaims() {
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
+  const [showCreate, setShowCreate] = useState(false);
 
   const rows = tab === 'inbox' ? CLAIMS : [];
   const hasSelection = selected.size > 0;
@@ -35,6 +36,7 @@ export default function ExpenseClaims() {
         <h1 className="text-xl font-semibold tracking-tight">Expense claims</h1>
         <button
           type="button"
+          onClick={() => setShowCreate(true)}
           className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
         >
           <Plus className="h-4 w-4" strokeWidth={2} />
@@ -175,6 +177,46 @@ export default function ExpenseClaims() {
 
       {rows.length > 0 && (
         <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of 69 items</p>
+      )}
+
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-foreground/20" onClick={() => setShowCreate(false)} aria-hidden="true" />
+          <div className="relative w-full max-w-md rounded-lg border bg-background shadow-xl">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <h2 className="text-base font-semibold tracking-tight">Create expense claim</h2>
+              <button type="button" onClick={() => setShowCreate(false)} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4 p-5">
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">Claim for <span className="text-destructive">*</span></span>
+                <select className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <option>Astrid Yang</option>
+                  <option>Sean Tan</option>
+                  <option>Clara Lee</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">End date <span className="text-destructive">*</span></span>
+                <input type="date" className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">Claim name</span>
+                <input type="text" placeholder="Add claim name" className="h-9 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 border-t px-5 py-4">
+              <button type="button" onClick={() => setShowCreate(false)} className="rounded-md border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted">
+                Cancel
+              </button>
+              <button type="button" onClick={() => setShowCreate(false)} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </AppShell>
   );
