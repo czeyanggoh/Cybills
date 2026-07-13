@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 // Left sub-nav column for the Sales workspace.
 const SUBNAV = [
   { label: 'Sales inbox', count: 2, to: '/sales' },
-  { label: 'Customers' },
+  { label: 'Customers', to: '/customers' },
 ];
 
 export default function SalesSubnav() {

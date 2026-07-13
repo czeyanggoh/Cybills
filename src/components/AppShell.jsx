@@ -35,8 +35,8 @@ const TOP_TABS = [
 
 const BOTTOM = [
   { label: 'Get started', icon: Rocket },
-  { label: 'Users', icon: Users },
-  { label: 'Submission history', icon: History },
+  { label: 'Users', icon: Users, to: '/users' },
+  { label: 'Submission history', icon: History, to: '/submission-history' },
   { label: 'Business settings', icon: Settings, to: '/settings' },
 ];
 
