@@ -4,6 +4,7 @@ import {
   findDuplicate,
   insertBill,
   updateBill,
+  setBillFile,
   listBills,
   getBillById,
   parseAmount,
@@ -45,6 +46,31 @@ billsRouter.get('/bills/:id/file', async (req, res) => {
   res.setHeader('Content-Disposition', `inline; filename="${bill.fileName || bill.id}"`);
   obj.body.on('error', () => res.destroy());
   obj.body.pipe(res);
+});
+
+// POST /api/costs/bills/:id/file — attach/replace the original file on an
+// existing bill (e.g. one uploaded before file storage worked). Body:
+// { fileBase64, mediaType }.
+billsRouter.post('/bills/:id/file', async (req, res) => {
+  const orgId = orgIdFor(req);
+  const bill = getBillById(orgId, req.params.id);
+  if (!bill) return res.status(404).json({ error: 'not_found' });
+
+  const b = req.body ?? {};
+  if (typeof b.fileBase64 !== 'string' || !b.fileBase64) {
+    return res.status(400).json({ error: 'invalid_image' });
+  }
+  try {
+    const bytes = Buffer.from(b.fileBase64, 'base64');
+    const keyHash = bill.fileHash || bill.id;
+    const stored = await putBillFile(orgId, keyHash, String(b.mediaType ?? ''), bytes);
+    const updated = setBillFile(orgId, bill.id, stored.storageKey, stored.contentType);
+    if (!updated) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
+  } catch (err) {
+    console.error('[bills] attach file failed', err);
+    res.status(500).json({ error: 'store_failed' });
+  }
 });
 
 // PATCH /api/costs/bills/:id — update editable fields (e.g. category) or the

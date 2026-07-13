@@ -168,6 +168,23 @@ const EDITABLE: (keyof Bill)[] = [
   'status',
 ];
 
+// Attach (or replace) the stored file on an existing bill. Returns null if not
+// found.
+export function setBillFile(
+  orgId: string,
+  id: string,
+  storageKey: string,
+  contentType: string
+): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  bill.storageKey = storageKey;
+  bill.contentType = contentType;
+  persist(bills);
+  return bill;
+}
+
 // Update an existing bill's editable fields in place. Returns null if not found.
 export function updateBill(orgId: string, id: string, patch: Partial<Bill>): Bill | null {
   const bills = load();

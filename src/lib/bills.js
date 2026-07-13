@@ -95,6 +95,18 @@ export function billFileUrl(id) {
   return `/api/costs/bills/${id}/file`;
 }
 
+// Attach/replace the original file on an existing bill. Returns the updated
+// bill; throws on failure.
+export async function uploadBillFile(id, fileBase64, mediaType) {
+  const res = await fetch(`/api/costs/bills/${id}/file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileBase64, mediaType }),
+  });
+  if (!res.ok) throw new Error('attach_failed');
+  return res.json();
+}
+
 // Update an existing bill's editable fields / workflow status. Returns the
 // updated bill; throws on failure.
 export async function updateBill(id, patch) {

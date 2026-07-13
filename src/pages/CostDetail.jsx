@@ -19,7 +19,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { CATEGORIES } from '@/data/categories';
-import { fetchBills, billToDoc, billFileUrl, updateBill, notifyBillsChanged } from '@/lib/bills';
+import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged } from '@/lib/bills';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { cn } from '@/lib/utils';
 
@@ -324,12 +324,22 @@ export default function CostDetail() {
     // Always attach + show the uploaded image, regardless of AI availability.
     setPreviewType('image');
     setImageUrl(URL.createObjectURL(file));
+    const imageBase64 = await fileToBase64(file);
+    // Persist the file onto a real bill so it survives reload (fixes docs that
+    // were uploaded before file storage worked).
+    if (doc.persisted) {
+      try {
+        await uploadBillFile(doc.id, imageBase64, file.type);
+        notifyBillsChanged();
+      } catch {
+        // non-fatal — image still shows locally this session
+      }
+    }
     // Only run Claude Vision auto-fill when it's configured; otherwise the user
     // fills the (editable) fields manually.
     if (!visionEnabled) return;
     setExtracting(true);
     try {
-      const imageBase64 = await fileToBase64(file);
       const res = await fetch('/api/costs/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -63,7 +63,22 @@ export async function getBill(
 // endpoint knows which backend to read.
 const FILES_DIR = `${env.BILLS_DATA_DIR || fileURLToPath(new URL('../.data', import.meta.url))}/files`;
 
+function putBillLocal(
+  orgId: string,
+  fileHash: string,
+  ext: string,
+  bytes: Buffer,
+  contentType: string
+): { storageKey: string; contentType: string } {
+  mkdirSync(FILES_DIR, { recursive: true });
+  const name = `${orgId}_${fileHash}${ext ? `.${ext}` : ''}`.replace(/[^a-zA-Z0-9._-]/g, '_');
+  writeFileSync(`${FILES_DIR}/${name}`, bytes);
+  return { storageKey: `local:${name}`, contentType };
+}
+
 // Store the uploaded bytes; returns the prefixed storageKey + resolved MIME type.
+// Prefers R2 when configured, but falls back to local disk if R2 is disabled OR
+// the R2 write fails (misconfigured creds/bucket) — so a receipt is never lost.
 export async function putBillFile(
   orgId: string,
   fileHash: string,
@@ -73,14 +88,15 @@ export async function putBillFile(
   const ext = extFor(mediaType);
   const contentType = mediaType || 'application/octet-stream';
   if (r2Enabled) {
-    const key = `bills/${orgId}/${fileHash}${ext ? `.${ext}` : ''}`;
-    await putBill(key, bytes, contentType);
-    return { storageKey: `r2:${key}`, contentType };
+    try {
+      const key = `bills/${orgId}/${fileHash}${ext ? `.${ext}` : ''}`;
+      await putBill(key, bytes, contentType);
+      return { storageKey: `r2:${key}`, contentType };
+    } catch (err) {
+      console.error('[storage] R2 put failed; falling back to local disk', err);
+    }
   }
-  mkdirSync(FILES_DIR, { recursive: true });
-  const name = `${orgId}_${fileHash}${ext ? `.${ext}` : ''}`.replace(/[^a-zA-Z0-9._-]/g, '_');
-  writeFileSync(`${FILES_DIR}/${name}`, bytes);
-  return { storageKey: `local:${name}`, contentType };
+  return putBillLocal(orgId, fileHash, ext, bytes, contentType);
 }
 
 // Read a stored file back, routing on the storageKey prefix. `contentTypeHint`
