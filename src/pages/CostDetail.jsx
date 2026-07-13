@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Flag,
   Sparkles,
+  Upload,
   ChevronDown,
   RotateCw,
   Download,
@@ -179,7 +180,6 @@ export default function CostDetail() {
   const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);
   const [aiError, setAiError] = useState('');
-  const [aiNote, setAiNote] = useState(false);
 
   const doc = mockDoc ?? persisted;
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
@@ -189,7 +189,6 @@ export default function CostDetail() {
   useEffect(() => {
     setImageUrl('');
     setAiError('');
-    setAiNote(false);
     const d = getDoc(id);
     if (d) {
       setData(initialData(d));
@@ -234,10 +233,9 @@ export default function CostDetail() {
     if (next) navigate(`/costs/${next.id}`);
   };
 
-  const onAiClick = () => {
+  const onUploadClick = () => {
     setAiError('');
-    if (visionEnabled) fileInputRef.current?.click();
-    else setAiNote(true);
+    fileInputRef.current?.click();
   };
 
   const onFile = async (e) => {
@@ -245,9 +243,13 @@ export default function CostDetail() {
     e.target.value = '';
     if (!file) return;
     setAiError('');
-    setExtracting(true);
+    // Always attach + show the uploaded image, regardless of AI availability.
     setPreviewType('image');
     setImageUrl(URL.createObjectURL(file));
+    // Only run Claude Vision auto-fill when it's configured; otherwise the user
+    // fills the (editable) fields manually.
+    if (!visionEnabled) return;
+    setExtracting(true);
     try {
       const imageBase64 = await fileToBase64(file);
       const res = await fetch('/api/costs/extract', {
@@ -344,7 +346,7 @@ export default function CostDetail() {
 
           {tab === 'details' && (
             <div>
-              {/* Real Claude Vision auto-fill */}
+              {/* Upload a receipt image (always) + Claude Vision auto-fill (when on) */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -354,34 +356,37 @@ export default function CostDetail() {
               />
               <button
                 type="button"
-                onClick={onAiClick}
+                onClick={onUploadClick}
                 disabled={extracting}
                 className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
               >
-                <Sparkles className="h-4 w-4" strokeWidth={2} />
-                {extracting ? 'Reading receipt…' : 'Auto-fill from receipt with Claude'}
+                {visionEnabled ? <Sparkles className="h-4 w-4" strokeWidth={2} /> : <Upload className="h-4 w-4" strokeWidth={2} />}
+                {extracting
+                  ? 'Reading receipt…'
+                  : visionEnabled
+                    ? 'Upload receipt & auto-fill with Claude'
+                    : 'Upload receipt'}
               </button>
               {aiError && (
                 <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
                   {aiError}
                 </p>
               )}
-              {aiNote && !visionEnabled && (
+              {imageUrl && !visionEnabled && (
                 <p className="mb-2 rounded-md border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
-                  Vision extraction isn’t configured yet — set an <span className="font-mono">ANTHROPIC_API_KEY</span> on
-                  the server to enable it.
+                  Receipt attached. AI auto-fill is off — fill in the fields below manually.
                 </p>
               )}
 
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={doc.itemId} readOnly /></Field>
-              <Field label="Document owner"><Select value={data.user} /></Field>
-              <Field label="Type"><Select value={data.type} /></Field>
+              <Field label="Document owner"><Input value={data.user} onChange={(v) => set('user', v)} /></Field>
+              <Field label="Type"><Input value={data.type} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date"><Input value={data.date} onChange={(v) => set('date', v)} /></Field>
-              <Field label="Supplier"><Select value={data.supplier} /></Field>
+              <Field label="Supplier"><Input value={data.supplier} onChange={(v) => set('supplier', v)} /></Field>
               <Field label="Purchase order number"><Input value={data.po} onChange={(v) => set('po', v)} /></Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
-              <Field label="Category"><Select value={data.category} /></Field>
+              <Field label="Category"><Input value={data.category} onChange={(v) => set('category', v)} /></Field>
 
               <SectionHeading>Allocation</SectionHeading>
               <Field label="Customer"><Select value="ST Engineering Info-Security Pte. Ltd." /></Field>
@@ -396,7 +401,7 @@ export default function CostDetail() {
               </Field>
 
               <SectionHeading>Amount</SectionHeading>
-              <Field label="Currency"><Select value={data.currency} /></Field>
+              <Field label="Currency"><Input value={data.currency} onChange={(v) => set('currency', v)} /></Field>
               <Field label="Total amount"><Input value={data.total} onChange={(v) => set('total', v)} /></Field>
               <Field label="Tax"><Select value="Extracted amount" /></Field>
               <Field label="Tax amount"><Input value={data.tax} onChange={(v) => set('tax', v)} /></Field>
