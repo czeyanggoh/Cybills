@@ -16,6 +16,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import { DOCS } from '@/data/docs';
 import { CATEGORIES } from '@/data/categories';
 import { fetchBills, billToDoc, updateBill, BILLS_CHANGED_EVENT } from '@/lib/bills';
+import { getDocOverrides, setDocOverride, applyOverride, DOC_OVERRIDES_EVENT } from '@/lib/docOverrides';
 import { cn } from '@/lib/utils';
 
 // Native (working) category dropdown styled to match the row cells.
@@ -47,11 +48,11 @@ const TABS = [
 // Display total per tab — mirrors Dext's paginated counts (rows shown ≠ total).
 const TAB_TOTALS = { inbox: 89, review: 34, ready: 55, archive: 7474 };
 
-function rowsFor(key) {
-  if (key === 'inbox') return DOCS.filter((d) => d.status === 'new' || d.status === 'viewed');
-  if (key === 'review') return DOCS.filter((d) => d.status === 'review');
-  if (key === 'ready') return DOCS.filter((d) => d.status === 'ready');
-  if (key === 'archive') return DOCS.filter((d) => d.status === 'expenseclaim');
+function rowsFor(docs, key) {
+  if (key === 'inbox') return docs.filter((d) => d.status === 'new' || d.status === 'viewed');
+  if (key === 'review') return docs.filter((d) => d.status === 'review');
+  if (key === 'ready') return docs.filter((d) => d.status === 'ready');
+  if (key === 'archive') return docs.filter((d) => d.status === 'expenseclaim' || d.status === 'archived');
   return [];
 }
 
@@ -62,6 +63,7 @@ function StatusBadge({ status }) {
     ready: 'bg-foreground text-background',
     review: 'border border-dashed border-foreground text-foreground',
     expenseclaim: 'bg-muted text-muted-foreground',
+    archived: 'bg-muted text-muted-foreground',
   };
   const label = {
     new: 'New',
@@ -69,6 +71,7 @@ function StatusBadge({ status }) {
     ready: 'Ready',
     review: 'To review',
     expenseclaim: 'In expense claim',
+    archived: 'Archived',
   }[status];
   return (
     <span className={cn('inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs', map[status] ?? map.viewed)}>
@@ -229,7 +232,7 @@ export default function Costs() {
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
   const [uploaded, setUploaded] = useState([]);
-  const [catOverrides, setCatOverrides] = useState({});
+  const [overrides, setOverrides] = useState(() => getDocOverrides());
 
   // Load persisted (uploaded) bills, and refetch whenever an upload completes.
   const loadUploaded = useCallback(async () => {
@@ -241,22 +244,31 @@ export default function Costs() {
     return () => window.removeEventListener(BILLS_CHANGED_EVENT, loadUploaded);
   }, [loadUploaded]);
 
-  // Uploaded bills land in the inbox (or Ready once moved), above the samples.
+  // Keep local sample-doc edits in sync (category, status moves, field edits).
+  useEffect(() => {
+    const sync = () => setOverrides(getDocOverrides());
+    window.addEventListener(DOC_OVERRIDES_EVENT, sync);
+    return () => window.removeEventListener(DOC_OVERRIDES_EVENT, sync);
+  }, []);
+
+  // Sample docs with any local edits applied; uploaded bills route by status.
+  const sampleDocs = DOCS.map((d) => applyOverride(d, overrides));
   const uploadedFor =
     tab === 'inbox'
-      ? uploaded.filter((d) => d.status !== 'ready')
+      ? uploaded.filter((d) => d.status === 'new')
       : tab === 'ready'
         ? uploaded.filter((d) => d.status === 'ready')
-        : [];
-  const rows = [...uploadedFor, ...rowsFor(tab)].map((d) =>
-    catOverrides[d.id] != null ? { ...d, category: catOverrides[d.id] } : d
-  );
+        : tab === 'archive'
+          ? uploaded.filter((d) => d.status === 'expenseclaim' || d.status === 'archived')
+          : [];
+  const rows = [...uploadedFor, ...rowsFor(sampleDocs, tab)];
   const hasSelection = selected.size > 0;
 
-  // Change a row's category — persists for uploaded bills, local for samples.
+  // Change a row's category — persists for uploaded bills (server) and samples
+  // (localStorage).
   const changeCategory = (d, value) => {
-    setCatOverrides((o) => ({ ...o, [d.id]: value }));
     if (d.persisted) updateBill(d.id, { category: value }).then(loadUploaded).catch(() => {});
+    else setDocOverride(d.id, { category: value });
   };
 
   const toggle = (id) =>

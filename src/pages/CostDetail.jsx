@@ -12,6 +12,7 @@ import {
   Printer,
   Maximize2,
   MapPin,
+  FileText,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -19,6 +20,7 @@ import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { CATEGORIES } from '@/data/categories';
 import { fetchBills, billToDoc, billFileUrl, updateBill, notifyBillsChanged } from '@/lib/bills';
+import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { cn } from '@/lib/utils';
 
 function TopButton({ children, onClick = () => {}, subtle = false }) {
@@ -111,6 +113,20 @@ function ReceiptPreview({ doc, imageUrl, previewType }) {
       </div>
     );
   }
+  // Real uploaded bill with no stored file — neutral placeholder (not the
+  // sample "Grab receipt" mock, which is only for the seeded demo rows).
+  if (doc.persisted) {
+    return (
+      <div className="overflow-hidden rounded-lg border bg-background">
+        <div className="border-b px-4 py-3 text-sm font-medium">{doc.supplier || 'Document'}</div>
+        <div className="flex h-80 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
+          <FileText className="h-8 w-8" strokeWidth={1.5} />
+          <p className="text-sm">No file preview for this document.</p>
+          <p className="text-xs">Use “Upload receipt” to attach the original.</p>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="overflow-hidden rounded-lg border bg-background">
       <div className="border-b px-4 py-3 text-sm">
@@ -176,13 +192,13 @@ function initialData(doc) {
     type: doc.type,
     date: doc.date,
     supplier: doc.supplier,
-    po: '',
-    ref: doc.invoiceNumber ?? '',
+    po: doc.po ?? '',
+    ref: doc.ref ?? doc.invoiceNumber ?? '',
     category: doc.category,
     currency: doc.currency,
     total: doc.total,
     tax: doc.tax,
-    description: '',
+    description: doc.description ?? '',
   };
 }
 
@@ -192,7 +208,9 @@ export default function CostDetail() {
   const { visionEnabled } = useAuth();
   const fileInputRef = useRef(null);
 
-  const mockDoc = getDoc(id);
+  // Sample docs carry any local (localStorage) edits applied on top.
+  const rawMock = getDoc(id);
+  const mockDoc = rawMock ? { ...rawMock, ...(getDocOverrides()[id] || {}) } : null;
   const [tab, setTab] = useState('details');
   const [persisted, setPersisted] = useState(null);
   const [loading, setLoading] = useState(!mockDoc);
@@ -210,9 +228,9 @@ export default function CostDetail() {
   useEffect(() => {
     setImageUrl('');
     setAiError('');
-    const d = getDoc(id);
-    if (d) {
-      setData(initialData(d));
+    const raw = getDoc(id);
+    if (raw) {
+      setData(initialData({ ...raw, ...(getDocOverrides()[id] || {}) }));
       setPersisted(null);
       setLoading(false);
       return;
@@ -254,12 +272,13 @@ export default function CostDetail() {
     if (next) navigate(`/costs/${next.id}`);
   };
 
-  // Persist edits + mark ready (for uploaded bills), then return to the inbox.
-  const saveAndReady = async () => {
+  // Persist the current edits + set a workflow status, then return to the list.
+  // Uploaded bills save server-side; sample docs save to localStorage.
+  const saveWithStatus = async (status) => {
     if (doc.persisted) {
       try {
         await updateBill(doc.id, {
-          status: 'ready',
+          status,
           supplier: data.supplier,
           date: data.date,
           documentType: data.type,
@@ -273,6 +292,21 @@ export default function CostDetail() {
       } catch {
         // best-effort; still navigate back
       }
+    } else {
+      setDocOverride(id, {
+        status,
+        user: data.user,
+        type: data.type,
+        date: data.date,
+        supplier: data.supplier,
+        po: data.po,
+        ref: data.ref,
+        category: data.category,
+        currency: data.currency,
+        total: data.total,
+        tax: data.tax,
+        description: data.description,
+      });
     }
     navigate('/costs');
   };
@@ -333,10 +367,10 @@ export default function CostDetail() {
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        <TopButton onClick={saveAndReady}>Move to ready</TopButton>
-        <TopButton>Add to expense claim</TopButton>
+        <TopButton onClick={() => saveWithStatus('ready')}>Move to ready</TopButton>
+        <TopButton onClick={() => saveWithStatus('expenseclaim')}>Add to expense claim</TopButton>
         <TopButton>Split</TopButton>
-        <TopButton>Archive</TopButton>
+        <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
         <TopButton>
           Move to <ChevronDown className="h-3.5 w-3.5" />
         </TopButton>
@@ -467,13 +501,13 @@ export default function CostDetail() {
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 <button
                   type="button"
-                  onClick={saveAndReady}
+                  onClick={() => saveWithStatus('ready')}
                   className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
                 >
                   Move to ready
                 </button>
-                <TopButton>Add to expense claim</TopButton>
-                <TopButton>Archive</TopButton>
+                <TopButton onClick={() => saveWithStatus('expenseclaim')}>Add to expense claim</TopButton>
+                <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
                 <TopButton>
                   More <ChevronDown className="h-3.5 w-3.5" />
                 </TopButton>
