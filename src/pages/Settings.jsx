@@ -13,6 +13,7 @@ import {
   LayoutGrid,
   ImagePlus,
   Copy,
+  ListChecks,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { cn } from '@/lib/utils';
@@ -299,9 +300,198 @@ function Extraction() {
         <Row label="Credit notes"><SelectBox defaultValue="Not paid" options={['Not paid', 'Paid']} /></Row>
       </Card>
 
+      <Card title="Bank statements">
+        <p className="text-sm text-muted-foreground">Choose if we should notify you about missing bank statement data.</p>
+        <Row label="Missing period" hint="Display notifications for missing bank data between bank statements.">
+          <Toggle defaultOn />
+        </Row>
+      </Card>
+
+      <Card title="Email notifications">
+        <Row
+          label="When a document doesn’t have an owner"
+          hint="Who to notify by email when a costs or sales document has no owner."
+        >
+          <SelectBox defaultValue="— None —" options={['— None —', 'Account admins', 'Document uploader']} />
+        </Row>
+      </Card>
+
       <div className="flex justify-end">
         <button type="button" className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
           Save changes
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Automation() {
+  return (
+    <div className="space-y-6">
+      <Card title="Categorisation">
+        <p className="text-sm text-muted-foreground">Specify how categories are applied to your costs items.</p>
+        <Row label="Auto-categorisation" hint="Automatically apply categories to new documents.">
+          <SelectBox defaultValue="Always" options={['Always', 'When confident', 'Never']} />
+        </Row>
+        <Row label="Default category" hint="Applied when there’s no supplier rule and no better match.">
+          <SelectBox defaultValue="— None —" options={['— None —', 'Transport - Taxi', 'Meals & Entertainment', 'Others']} />
+        </Row>
+        <Row label="Category display">
+          <SelectBox defaultValue="Code and name" options={['Code and name', 'Name only', 'Code only']} />
+        </Row>
+        <Row label="Category sort">
+          <SelectBox defaultValue="Code" options={['Code', 'Name']} />
+        </Row>
+      </Card>
+
+      <Card title="Smart Suggestions">
+        <Row
+          label="Display Smart Suggestions?"
+          hint="Generate suggestions under certain fields; you choose to accept or ignore them."
+        >
+          <Toggle defaultOn />
+        </Row>
+        <Row label="Auto-apply for projects"><Toggle /></Row>
+        <Row label="Auto-apply for description of items"><Toggle /></Row>
+      </Card>
+
+      <Card title="Line item grouping">
+        <Row
+          label="Group uncategorised lines"
+          hint="Group together line items that don’t match any group in your list."
+        >
+          <Toggle />
+        </Row>
+      </Card>
+
+      <Card title="Auto Expense claims">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-4 text-sm">
+            <div>
+              <p className="mb-1 font-medium">Summary</p>
+              <div className="grid grid-cols-[150px_1fr] gap-y-1 text-muted-foreground">
+                <span>Current claim end</span><span className="text-foreground">26 Jul 2026</span>
+                <span>Frequency</span><span className="text-foreground">Monthly</span>
+              </div>
+            </div>
+            <div>
+              <p className="mb-1 font-medium">Created for</p>
+              <div className="rounded-md border px-3 py-2 text-foreground">Sean Tan</div>
+            </div>
+          </div>
+          <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
+            Edit
+          </button>
+        </div>
+      </Card>
+
+      <Card title="Archive">
+        <p className="text-sm text-muted-foreground">Archive items after you complete these actions.</p>
+        <Row label="Archive after adding to expense claim"><Toggle defaultOn /></Row>
+        <Row label="Archive after exporting to CSV"><Toggle defaultOn /></Row>
+      </Card>
+
+      <div className="flex justify-end">
+        <button type="button" className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+          Save changes
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Approvals() {
+  const [view, setView] = useState('list');
+  const [tab, setTab] = useState('Costs');
+
+  if (view === 'create') {
+    return (
+      <div className="space-y-6">
+        <button
+          type="button"
+          onClick={() => setView('list')}
+          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          ← Approval workflows
+        </button>
+        <Card title="Approval workflow creator">
+          <Row label="Workflow name" required><TextInput /></Row>
+          <Row label="Description">
+            <textarea
+              rows={3}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </Row>
+          <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Apply approvals to
+          </p>
+          <Row label="Item type"><SelectBox defaultValue="Costs" options={['Costs', 'Sales', 'Expense claims']} /></Row>
+          <Row label="Documents"><SelectBox defaultValue="All documents" options={['All documents', 'Receipts', 'Invoices']} /></Row>
+          <Row label="Document owners"><SelectBox defaultValue="All document owners" options={['All document owners']} /></Row>
+          <Row label="Project"><SelectBox defaultValue="All projects" options={['All projects']} /></Row>
+          <Row label="Suppliers"><SelectBox defaultValue="All suppliers" options={['All suppliers']} /></Row>
+          <Row label="Customers"><SelectBox defaultValue="All customers" options={['All customers']} /></Row>
+          <Row label="Categories"><SelectBox defaultValue="All categories" options={['All categories']} /></Row>
+        </Card>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setView('list')}
+            className="rounded-md border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
+          >
+            Cancel
+          </button>
+          <button type="button" className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+            Create workflow
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-6 border-b">
+          {['Costs', 'Sales', 'Expense claims'].map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTab(t)}
+              className={cn(
+                '-mb-px border-b-2 pb-3 pt-1 text-sm transition-colors',
+                tab === t
+                  ? 'border-foreground font-medium text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setView('create')}
+          className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
+        >
+          Create workflow
+        </button>
+      </div>
+      <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-xl border">
+          <ListChecks className="h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
+        </div>
+        <p className="text-lg font-semibold tracking-tight">Welcome to your approvals workspace</p>
+        <p className="max-w-md text-sm text-muted-foreground">
+          Set up approval workflows to automatically route {tab.toLowerCase()} items to managers or
+          specific people.
+        </p>
+        <button
+          type="button"
+          onClick={() => setView('create')}
+          className="mt-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+        >
+          Create workflow
         </button>
       </div>
     </div>
@@ -329,6 +519,10 @@ export default function Settings() {
         <BusinessProfile />
       ) : section === 'extraction' ? (
         <Extraction />
+      ) : section === 'automation' ? (
+        <Automation />
+      ) : section === 'approvals' ? (
+        <Approvals />
       ) : (
         <Placeholder label={TITLES[section]} />
       )}
