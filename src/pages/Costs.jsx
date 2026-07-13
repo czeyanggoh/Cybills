@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -13,10 +13,10 @@ import {
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { DOCS } from '@/data/docs';
 import { CATEGORIES } from '@/data/categories';
-import { fetchBills, billToDoc, updateBill, BILLS_CHANGED_EVENT } from '@/lib/bills';
-import { getDocOverrides, setDocOverride, applyOverride, DOC_OVERRIDES_EVENT } from '@/lib/docOverrides';
+import { updateBill } from '@/lib/bills';
+import { setDocOverride } from '@/lib/docOverrides';
+import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { cn } from '@/lib/utils';
 
 // Native (working) category dropdown styled to match the row cells.
@@ -36,25 +36,16 @@ function CategorySelect({ value, onChange }) {
   );
 }
 
+// Tabs whose badge shows a live count of their rows. Processing/Approvals have
+// no count badge (they render their own panels).
 const TABS = [
-  { key: 'inbox', label: 'Inbox', count: 89 },
+  { key: 'inbox', label: 'Inbox', counted: true },
   { key: 'processing', label: 'Processing' },
-  { key: 'review', label: 'To review', count: 34 },
-  { key: 'ready', label: 'Ready', count: 55 },
+  { key: 'review', label: 'To review', counted: true },
+  { key: 'ready', label: 'Ready', counted: true },
   { key: 'approvals', label: 'Approvals' },
-  { key: 'archive', label: 'Archive', count: '7k' },
+  { key: 'archive', label: 'Archive', counted: true },
 ];
-
-// Display total per tab — mirrors Dext's paginated counts (rows shown ≠ total).
-const TAB_TOTALS = { inbox: 89, review: 34, ready: 55, archive: 7474 };
-
-function rowsFor(docs, key) {
-  if (key === 'inbox') return docs.filter((d) => d.status === 'new' || d.status === 'viewed');
-  if (key === 'review') return docs.filter((d) => d.status === 'review');
-  if (key === 'ready') return docs.filter((d) => d.status === 'ready');
-  if (key === 'archive') return docs.filter((d) => d.status === 'expenseclaim' || d.status === 'archived');
-  return [];
-}
 
 function StatusBadge({ status }) {
   const map = {
@@ -231,43 +222,24 @@ export default function Costs() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
-  const [uploaded, setUploaded] = useState([]);
-  const [overrides, setOverrides] = useState(() => getDocOverrides());
 
-  // Load persisted (uploaded) bills, and refetch whenever an upload completes.
-  const loadUploaded = useCallback(async () => {
-    setUploaded((await fetchBills()).map(billToDoc));
-  }, []);
-  useEffect(() => {
-    loadUploaded();
-    window.addEventListener(BILLS_CHANGED_EVENT, loadUploaded);
-    return () => window.removeEventListener(BILLS_CHANGED_EVENT, loadUploaded);
-  }, [loadUploaded]);
+  // Combined document set (persisted bills + sample docs with local edits).
+  const { allDocs, reload } = useCostsDocs();
 
-  // Keep local sample-doc edits in sync (category, status moves, field edits).
-  useEffect(() => {
-    const sync = () => setOverrides(getDocOverrides());
-    window.addEventListener(DOC_OVERRIDES_EVENT, sync);
-    return () => window.removeEventListener(DOC_OVERRIDES_EVENT, sync);
-  }, []);
-
-  // Sample docs with any local edits applied; uploaded bills route by status.
-  const sampleDocs = DOCS.map((d) => applyOverride(d, overrides));
-  const uploadedFor =
-    tab === 'inbox'
-      ? uploaded.filter((d) => d.status === 'new')
-      : tab === 'ready'
-        ? uploaded.filter((d) => d.status === 'ready')
-        : tab === 'archive'
-          ? uploaded.filter((d) => d.status === 'expenseclaim' || d.status === 'archived')
-          : [];
-  const rows = [...uploadedFor, ...rowsFor(sampleDocs, tab)];
+  // Every tab's rows, so its badge count ties to what the tab actually shows.
+  const rowsByTab = {
+    inbox: rowsFor(allDocs, 'inbox'),
+    review: rowsFor(allDocs, 'review'),
+    ready: rowsFor(allDocs, 'ready'),
+    archive: rowsFor(allDocs, 'archive'),
+  };
+  const rows = rowsByTab[tab] ?? [];
   const hasSelection = selected.size > 0;
 
   // Change a row's category — persists for uploaded bills (server) and samples
   // (localStorage).
   const changeCategory = (d, value) => {
-    if (d.persisted) updateBill(d.id, { category: value }).then(loadUploaded).catch(() => {});
+    if (d.persisted) updateBill(d.id, { category: value }).then(reload).catch(() => {});
     else setDocOverride(d.id, { category: value });
   };
 
@@ -293,6 +265,7 @@ export default function Costs() {
       <div className="mb-4 flex items-center gap-6 overflow-x-auto border-b">
         {TABS.map((t) => {
           const active = tab === t.key;
+          const count = t.counted ? (rowsByTab[t.key]?.length ?? 0) : null;
           return (
             <button
               key={t.key}
@@ -309,14 +282,14 @@ export default function Costs() {
               )}
             >
               {t.label}
-              {t.count != null && (
+              {count != null && (
                 <span
                   className={cn(
                     'rounded-full px-1.5 text-xs',
                     active ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'
                   )}
                 >
-                  {t.count}
+                  {count}
                 </span>
               )}
             </button>
@@ -418,7 +391,7 @@ export default function Costs() {
             <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
               <SlidersHorizontal className="h-3.5 w-3.5" />
               {selected.size > 0 ? `${selected.size} selected · ` : ''}
-              Showing {rows.length} of {TAB_TOTALS[tab] ?? rows.length} documents
+              Showing {rows.length} of {rows.length} documents
             </p>
           )}
         </>

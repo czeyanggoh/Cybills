@@ -6,7 +6,7 @@ import { CLAIMS } from '@/data/claims';
 import { cn } from '@/lib/utils';
 
 const TABS = [
-  { key: 'inbox', label: 'Inbox', count: 69 },
+  { key: 'inbox', label: 'Inbox', count: CLAIMS.length },
   { key: 'approvals', label: 'Approvals' },
   { key: 'archive', label: 'Archive' },
 ];

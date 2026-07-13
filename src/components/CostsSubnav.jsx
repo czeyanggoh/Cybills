@@ -1,19 +1,20 @@
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useCostsCounts } from '@/lib/costsData';
 import { cn } from '@/lib/utils';
-
-// Left sub-nav column for the Costs workspace (shared by the inbox, detail, and
-// expense claims). Items with a `to` navigate; active state follows the route.
-const SUBNAV = [
-  { label: 'Costs inbox', count: 78, to: '/costs' },
-  { label: 'Expense claims', count: 62, to: '/expense-claims' },
-  { label: 'Supplier statements', to: '/supplier-statements' },
-];
 
 export default function CostsSubnav() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const counts = useCostsCounts();
   const isActive = (item) =>
     item.to === '/costs' ? pathname.startsWith('/costs') : pathname === item.to;
+
+  // Live counts so the subnav badges match the inbox tab + expense claims list.
+  const SUBNAV = [
+    { label: 'Costs inbox', count: counts.inbox, to: '/costs' },
+    { label: 'Expense claims', count: counts.expenseClaims, to: '/expense-claims' },
+    { label: 'Supplier statements', to: '/supplier-statements' },
+  ];
 
   return (
     <div className="flex flex-col p-3 text-sm">
