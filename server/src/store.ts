@@ -24,8 +24,9 @@ export type Bill = {
   category: string;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
-  storageKey: string; // R2 object key for the original file, or '' if not stored
+  storageKey: string; // storage key for the original file (r2:/local: prefixed), or ''
   contentType: string; // MIME type of the stored file, or ''
+  status: string; // workflow state: 'new' (inbox) | 'ready' | 'archived'
 };
 
 // What the caller knows about an incoming upload before it is stored.
@@ -150,6 +151,33 @@ export function insertBill(input: BillInput): Bill {
     createdAt: new Date().toISOString(),
   };
   bills.push(bill);
+  persist(bills);
+  return bill;
+}
+
+// Fields a client is allowed to edit on an existing bill.
+const EDITABLE: (keyof Bill)[] = [
+  'supplier',
+  'invoiceNumber',
+  'documentType',
+  'currency',
+  'total',
+  'tax',
+  'date',
+  'category',
+  'status',
+];
+
+// Update an existing bill's editable fields in place. Returns null if not found.
+export function updateBill(orgId: string, id: string, patch: Partial<Bill>): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  for (const key of EDITABLE) {
+    if (key in patch && patch[key] !== undefined) {
+      (bill as Record<string, unknown>)[key] = patch[key];
+    }
+  }
   persist(bills);
   return bill;
 }

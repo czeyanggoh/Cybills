@@ -1,4 +1,6 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { mkdirSync, writeFileSync, createReadStream, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { Readable } from 'node:stream';
 import { env, r2Enabled } from './env.js';
 
@@ -52,4 +54,47 @@ export async function getBill(
     console.error('[storage] R2 get failed', err);
     return null;
   }
+}
+
+// --- Local-disk fallback ----------------------------------------------------
+// When R2 isn't configured, keep the original bytes on disk under the bills data
+// dir (gitignored, survives `git reset --hard` on deploy) so uploaded receipts
+// are still viewable. `storageKey` is prefixed (`r2:` / `local:`) so the file
+// endpoint knows which backend to read.
+const FILES_DIR = `${env.BILLS_DATA_DIR || fileURLToPath(new URL('../.data', import.meta.url))}/files`;
+
+// Store the uploaded bytes; returns the prefixed storageKey + resolved MIME type.
+export async function putBillFile(
+  orgId: string,
+  fileHash: string,
+  mediaType: string,
+  bytes: Buffer
+): Promise<{ storageKey: string; contentType: string }> {
+  const ext = extFor(mediaType);
+  const contentType = mediaType || 'application/octet-stream';
+  if (r2Enabled) {
+    const key = `bills/${orgId}/${fileHash}${ext ? `.${ext}` : ''}`;
+    await putBill(key, bytes, contentType);
+    return { storageKey: `r2:${key}`, contentType };
+  }
+  mkdirSync(FILES_DIR, { recursive: true });
+  const name = `${orgId}_${fileHash}${ext ? `.${ext}` : ''}`.replace(/[^a-zA-Z0-9._-]/g, '_');
+  writeFileSync(`${FILES_DIR}/${name}`, bytes);
+  return { storageKey: `local:${name}`, contentType };
+}
+
+// Read a stored file back, routing on the storageKey prefix. `contentTypeHint`
+// is the MIME persisted with the bill (used for local files).
+export async function getBillFile(
+  storageKey: string,
+  contentTypeHint = ''
+): Promise<{ body: Readable; contentType: string } | null> {
+  if (storageKey.startsWith('local:')) {
+    const path = `${FILES_DIR}/${storageKey.slice('local:'.length)}`;
+    if (!existsSync(path)) return null;
+    return { body: createReadStream(path), contentType: contentTypeHint || 'application/octet-stream' };
+  }
+  // `r2:`-prefixed, or a legacy bare key (only ever created under R2).
+  const key = storageKey.startsWith('r2:') ? storageKey.slice('r2:'.length) : storageKey;
+  return getBill(key);
 }

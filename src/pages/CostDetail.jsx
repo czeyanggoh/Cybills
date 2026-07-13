@@ -17,7 +17,8 @@ import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
-import { fetchBills, billToDoc, billFileUrl } from '@/lib/bills';
+import { CATEGORIES } from '@/data/categories';
+import { fetchBills, billToDoc, billFileUrl, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { cn } from '@/lib/utils';
 
 function TopButton({ children, onClick = () => {}, subtle = false }) {
@@ -64,6 +65,26 @@ function Select({ value }) {
     <div className="flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 text-sm">
       <span className="truncate">{value}</span>
       <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+    </div>
+  );
+}
+
+// Editable dropdown (native select) for pick-from-a-list fields like Category.
+function EditableSelect({ value, options, onChange }) {
+  const known = options.includes(value);
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {!known && <option value={value}>{value}</option>}
+        {options.map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
     </div>
   );
 }
@@ -233,6 +254,29 @@ export default function CostDetail() {
     if (next) navigate(`/costs/${next.id}`);
   };
 
+  // Persist edits + mark ready (for uploaded bills), then return to the inbox.
+  const saveAndReady = async () => {
+    if (doc.persisted) {
+      try {
+        await updateBill(doc.id, {
+          status: 'ready',
+          supplier: data.supplier,
+          date: data.date,
+          documentType: data.type,
+          category: data.category,
+          currency: data.currency,
+          total: data.total,
+          tax: data.tax,
+          invoiceNumber: data.ref,
+        });
+        notifyBillsChanged();
+      } catch {
+        // best-effort; still navigate back
+      }
+    }
+    navigate('/costs');
+  };
+
   const onUploadClick = () => {
     setAiError('');
     fileInputRef.current?.click();
@@ -289,7 +333,7 @@ export default function CostDetail() {
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        <TopButton>Move to ready</TopButton>
+        <TopButton onClick={saveAndReady}>Move to ready</TopButton>
         <TopButton>Add to expense claim</TopButton>
         <TopButton>Split</TopButton>
         <TopButton>Archive</TopButton>
@@ -386,7 +430,9 @@ export default function CostDetail() {
               <Field label="Supplier"><Input value={data.supplier} onChange={(v) => set('supplier', v)} /></Field>
               <Field label="Purchase order number"><Input value={data.po} onChange={(v) => set('po', v)} /></Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
-              <Field label="Category"><Input value={data.category} onChange={(v) => set('category', v)} /></Field>
+              <Field label="Category">
+                <EditableSelect value={data.category} options={CATEGORIES} onChange={(v) => set('category', v)} />
+              </Field>
 
               <SectionHeading>Allocation</SectionHeading>
               <Field label="Customer"><Select value="ST Engineering Info-Security Pte. Ltd." /></Field>
@@ -419,7 +465,11 @@ export default function CostDetail() {
               <Field label="Payment method"><Select value="—" /></Field>
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
-                <button type="button" className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+                <button
+                  type="button"
+                  onClick={saveAndReady}
+                  className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                >
                   Move to ready
                 </button>
                 <TopButton>Add to expense claim</TopButton>

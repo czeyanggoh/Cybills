@@ -74,8 +74,8 @@ export function billToDoc(b) {
     id: b.id,
     persisted: true,
     itemId: b.id,
-    unread: true,
-    status: 'new',
+    unread: b.status !== 'ready',
+    status: b.status === 'ready' ? 'ready' : 'new',
     user: b.createdBy ? b.createdBy.split('@')[0] : 'You',
     date: b.date || '—',
     supplier: b.supplier || 'Unknown supplier',
@@ -90,9 +90,21 @@ export function billToDoc(b) {
   };
 }
 
-// URL that streams a persisted bill's original file from the server (R2).
+// URL that streams a persisted bill's original file from the server.
 export function billFileUrl(id) {
   return `/api/costs/bills/${id}/file`;
+}
+
+// Update an existing bill's editable fields / workflow status. Returns the
+// updated bill; throws on failure.
+export async function updateBill(id, patch) {
+  const res = await fetch(`/api/costs/bills/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error('update_failed');
+  return res.json();
 }
 
 // Human summary of a duplicate match, e.g. for a warning banner.

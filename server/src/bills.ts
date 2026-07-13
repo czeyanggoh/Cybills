@@ -1,7 +1,15 @@
 import { Router, type Request } from 'express';
 import { readSession } from './auth.js';
-import { findDuplicate, insertBill, listBills, getBillById, parseAmount, type Candidate } from './store.js';
-import { r2Enabled, putBill, getBill, extFor } from './storage.js';
+import {
+  findDuplicate,
+  insertBill,
+  updateBill,
+  listBills,
+  getBillById,
+  parseAmount,
+  type Candidate,
+} from './store.js';
+import { putBillFile, getBillFile } from './storage.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -24,19 +32,35 @@ billsRouter.get('/bills', (req, res) => {
   res.json({ bills });
 });
 
-// GET /api/costs/bills/:id/file — stream the original file from R2. 404 when the
-// bill has no stored file (e.g. it was uploaded before R2 was configured).
+// GET /api/costs/bills/:id/file — stream the original file (R2 or local disk).
+// 404 when the bill has no stored file.
 billsRouter.get('/bills/:id/file', async (req, res) => {
   const bill = getBillById(orgIdFor(req), req.params.id);
   if (!bill || !bill.storageKey) return res.status(404).json({ error: 'no_file' });
 
-  const obj = await getBill(bill.storageKey);
+  const obj = await getBillFile(bill.storageKey, bill.contentType);
   if (!obj) return res.status(502).json({ error: 'file_unavailable' });
 
-  res.setHeader('Content-Type', obj.contentType);
+  res.setHeader('Content-Type', bill.contentType || obj.contentType);
   res.setHeader('Content-Disposition', `inline; filename="${bill.fileName || bill.id}"`);
   obj.body.on('error', () => res.destroy());
   obj.body.pipe(res);
+});
+
+// PATCH /api/costs/bills/:id — update editable fields (e.g. category) or the
+// workflow status ('ready' moves it out of the inbox).
+billsRouter.patch('/bills/:id', (req, res) => {
+  const b = req.body ?? {};
+  const patch: Record<string, unknown> = {};
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'status']) {
+    if (typeof b[k] === 'string') patch[k] = b[k];
+  }
+  if (b.total != null) patch.total = parseAmount(b.total);
+  if (b.tax != null) patch.tax = parseAmount(b.tax);
+
+  const updated = updateBill(orgIdFor(req), req.params.id, patch);
+  if (!updated) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
 });
 
 // POST /api/costs/bills — persist an uploaded bill after a duplicate check.
@@ -61,20 +85,19 @@ billsRouter.post('/bills', async (req, res) => {
     return res.status(409).json({ error: 'duplicate', duplicate: dup });
   }
 
-  // Store the original bytes in R2 (best-effort — a storage failure must not
-  // lose the metadata/dedup record, so we log and persist without a file).
+  // Store the original bytes (R2 when configured, else local disk). Best-effort:
+  // a storage failure must not lose the metadata/dedup record.
   let storageKey = '';
   let contentType = '';
   const mediaType = String(b.mediaType ?? '');
-  if (r2Enabled && typeof b.fileBase64 === 'string' && b.fileBase64) {
+  if (typeof b.fileBase64 === 'string' && b.fileBase64) {
     try {
       const bytes = Buffer.from(b.fileBase64, 'base64');
-      const ext = extFor(mediaType);
-      storageKey = `bills/${orgId}/${candidate.fileHash}${ext ? `.${ext}` : ''}`;
-      contentType = mediaType || 'application/octet-stream';
-      await putBill(storageKey, bytes, contentType);
+      const stored = await putBillFile(orgId, candidate.fileHash, mediaType, bytes);
+      storageKey = stored.storageKey;
+      contentType = stored.contentType;
     } catch (err) {
-      console.error('[bills] R2 upload failed; storing metadata only', err);
+      console.error('[bills] file store failed; storing metadata only', err);
       storageKey = '';
       contentType = '';
     }
@@ -96,6 +119,7 @@ billsRouter.post('/bills', async (req, res) => {
     createdBy: me?.email ?? '',
     storageKey,
     contentType,
+    status: 'new',
   });
 
   // Echo the overridden match back so the client can note "added despite dup".

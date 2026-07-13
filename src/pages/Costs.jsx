@@ -14,8 +14,26 @@ import {
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import { DOCS } from '@/data/docs';
-import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
+import { CATEGORIES } from '@/data/categories';
+import { fetchBills, billToDoc, updateBill, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { cn } from '@/lib/utils';
+
+// Native (working) category dropdown styled to match the row cells.
+function CategorySelect({ value, onChange }) {
+  const known = CATEGORIES.includes(value);
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-44 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {!known && <option value={value}>{value}</option>}
+      {CATEGORIES.map((c) => (
+        <option key={c} value={c}>{c}</option>
+      ))}
+    </select>
+  );
+}
 
 const TABS = [
   { key: 'inbox', label: 'Inbox', count: 89 },
@@ -211,6 +229,7 @@ export default function Costs() {
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
   const [uploaded, setUploaded] = useState([]);
+  const [catOverrides, setCatOverrides] = useState({});
 
   // Load persisted (uploaded) bills, and refetch whenever an upload completes.
   const loadUploaded = useCallback(async () => {
@@ -222,10 +241,23 @@ export default function Costs() {
     return () => window.removeEventListener(BILLS_CHANGED_EVENT, loadUploaded);
   }, [loadUploaded]);
 
-  // Uploaded bills land in the inbox, newest first, above the sample rows.
-  const baseRows = rowsFor(tab);
-  const rows = tab === 'inbox' ? [...uploaded, ...baseRows] : baseRows;
+  // Uploaded bills land in the inbox (or Ready once moved), above the samples.
+  const uploadedFor =
+    tab === 'inbox'
+      ? uploaded.filter((d) => d.status !== 'ready')
+      : tab === 'ready'
+        ? uploaded.filter((d) => d.status === 'ready')
+        : [];
+  const rows = [...uploadedFor, ...rowsFor(tab)].map((d) =>
+    catOverrides[d.id] != null ? { ...d, category: catOverrides[d.id] } : d
+  );
   const hasSelection = selected.size > 0;
+
+  // Change a row's category — persists for uploaded bills, local for samples.
+  const changeCategory = (d, value) => {
+    setCatOverrides((o) => ({ ...o, [d.id]: value }));
+    if (d.persisted) updateBill(d.id, { category: value }).then(loadUploaded).catch(() => {});
+  };
 
   const toggle = (id) =>
     setSelected((prev) => {
@@ -338,10 +370,10 @@ export default function Costs() {
                     <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{d.date}</td>
                     <td className={cn('px-3 py-3', d.unread && 'font-semibold')}>{d.supplier}</td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <div className="inline-flex w-44 items-center justify-between rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground">
-                        <span className="truncate">{d.category || 'Uncategorised'}</span>
-                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                      </div>
+                      <CategorySelect
+                        value={d.category || 'Uncategorised'}
+                        onChange={(v) => changeCategory(d, v)}
+                      />
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
                       <span className="text-xs text-muted-foreground">SGD </span>
