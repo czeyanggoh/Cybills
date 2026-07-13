@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
+import SplitItemModal from '@/components/SplitItemModal';
+import AddToClaimModal from '@/components/AddToClaimModal';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { CATEGORIES } from '@/data/categories';
@@ -207,6 +209,9 @@ export default function CostDetail() {
   const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);
   const [aiError, setAiError] = useState('');
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [claimOpen, setClaimOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
 
   const doc = mockDoc ?? persisted;
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
@@ -260,9 +265,9 @@ export default function CostDetail() {
     if (next) navigate(`/costs/${next.id}`);
   };
 
-  // Persist the current edits + set a workflow status, then return to the list.
-  // Uploaded bills save server-side; sample docs save to localStorage.
-  const saveWithStatus = async (status) => {
+  // Persist the current edits + set a workflow status. Uploaded bills save
+  // server-side; sample docs save to localStorage.
+  const persistStatus = async (status) => {
     if (doc.persisted) {
       try {
         await updateBill(doc.id, {
@@ -296,7 +301,29 @@ export default function CostDetail() {
         description: data.description,
       });
     }
-    navigate('/costs');
+  };
+
+  // Save + set status, then return to the inbox (default) or a given route.
+  const saveWithStatus = async (status, to = '/costs') => {
+    await persistStatus(status);
+    navigate(to);
+  };
+
+  // "Move to" another workspace — takes the item out of the Costs inbox and
+  // lands on that workspace. Persist an archived status so it leaves the list.
+  const MOVE_DESTS = [
+    { label: 'Sales', to: '/sales' },
+    { label: 'Supplier statements', to: '/supplier-statements' },
+    { label: 'Vault', to: '/vault' },
+  ];
+  const moveTo = (dest) => {
+    setMoveOpen(false);
+    saveWithStatus('archived', dest.to);
+  };
+
+  const deleteDoc = () => {
+    if (!window.confirm('Delete this document? This removes it from your Costs inbox.')) return;
+    saveWithStatus('archived');
   };
 
   const onUploadClick = () => {
@@ -365,18 +392,37 @@ export default function CostDetail() {
   return (
     <AppShell subnav={<CostsSubnav />}>
       {/* Action bar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <TopButton subtle onClick={() => navigate('/costs')}>
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
         <TopButton onClick={() => saveWithStatus('ready')}>Move to ready</TopButton>
-        <TopButton onClick={() => saveWithStatus('expenseclaim')}>Add to expense claim</TopButton>
-        <TopButton>Split</TopButton>
+        <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>
+        <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
         <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
-        <TopButton>
-          Move to <ChevronDown className="h-3.5 w-3.5" />
-        </TopButton>
+        <div className="relative">
+          <TopButton onClick={() => setMoveOpen((o) => !o)}>
+            Move to <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', moveOpen && 'rotate-180')} />
+          </TopButton>
+          {moveOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setMoveOpen(false)} aria-hidden="true" />
+              <div className="absolute left-0 z-20 mt-1 w-48 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                {MOVE_DESTS.map((dest) => (
+                  <button
+                    key={dest.label}
+                    type="button"
+                    onClick={() => moveTo(dest)}
+                    className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                  >
+                    {dest.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <div className="ml-auto flex items-center gap-3 text-sm">
           <button
             type="button"
@@ -386,7 +432,9 @@ export default function CostDetail() {
           >
             <ChevronLeft className="h-4 w-4" /> Previous
           </button>
-          <span className="tabular-nums text-muted-foreground">{index + 1} / 78</span>
+          <span className="tabular-nums text-muted-foreground">
+            {index >= 0 ? index + 1 : '–'} / {DOCS.length}
+          </span>
           <button
             type="button"
             onClick={() => go(1)}
@@ -396,6 +444,15 @@ export default function CostDetail() {
             Next <ChevronRight className="h-4 w-4" />
           </button>
         </div>
+      </div>
+      <div className="mb-4">
+        <button
+          type="button"
+          onClick={deleteDoc}
+          className="inline-flex h-8 items-center rounded-md border px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          Delete
+        </button>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -509,11 +566,9 @@ export default function CostDetail() {
                 >
                   Move to ready
                 </button>
-                <TopButton onClick={() => saveWithStatus('expenseclaim')}>Add to expense claim</TopButton>
+                <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>
                 <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
-                <TopButton>
-                  More <ChevronDown className="h-3.5 w-3.5" />
-                </TopButton>
+                <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
               </div>
             </div>
           )}
@@ -544,6 +599,23 @@ export default function CostDetail() {
           )}
         </div>
       </div>
+
+      <SplitItemModal
+        open={splitOpen}
+        onClose={() => setSplitOpen(false)}
+        onSplit={() => setSplitOpen(false)}
+        imageUrl={imageUrl}
+        previewType={previewType}
+        current={{ category: data.category, total: data.total, tax: data.tax }}
+      />
+      <AddToClaimModal
+        open={claimOpen}
+        onClose={() => setClaimOpen(false)}
+        onAdd={() => {
+          setClaimOpen(false);
+          saveWithStatus('expenseclaim');
+        }}
+      />
     </AppShell>
   );
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Image, Download, FileCheck, Search, ChevronDown } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { SUBMISSIONS } from '@/data/submissions';
@@ -17,6 +18,7 @@ function StatusBadge({ status }) {
 }
 
 export default function SubmissionHistory() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState('Costs and sales');
   const rows = tab === 'Costs and sales' ? SUBMISSIONS : [];
 
@@ -54,7 +56,7 @@ export default function SubmissionHistory() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[1000px] text-sm">
+        <table className="w-full min-w-[1300px] text-sm">
           <thead className="border-b bg-muted/40 text-left">
             <tr className="text-muted-foreground">
               <th className="w-24 px-3 py-2.5"><span className="sr-only">Actions</span></th>
@@ -66,6 +68,10 @@ export default function SubmissionHistory() {
               <th className="px-3 py-2.5 font-medium">Owned by</th>
               <th className="px-3 py-2.5 font-medium">Date</th>
               <th className="px-3 py-2.5 font-medium">Supplier</th>
+              <th className="px-3 py-2.5 font-medium">Customer</th>
+              <th className="px-3 py-2.5 text-right font-medium">Total amount</th>
+              <th className="px-3 py-2.5 font-medium">Workspace</th>
+              <th className="px-3 py-2.5 text-right font-medium">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -86,18 +92,32 @@ export default function SubmissionHistory() {
                 <td className="whitespace-nowrap px-3 py-3">{s.ownedBy}</td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{s.date}</td>
                 <td className="whitespace-nowrap px-3 py-3">{s.supplier}</td>
+                <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{s.customer}</td>
+                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
+                  <span className="text-xs text-muted-foreground">SGD </span>{s.total}
+                </td>
+                <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{s.workspace}</td>
+                <td className="whitespace-nowrap px-3 py-3 text-right">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/costs/${s.id}`)}
+                    className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+                  >
+                    Show
+                  </button>
+                </td>
               </tr>
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-16 text-center text-sm text-muted-foreground">No submissions in {tab}.</td>
+                <td colSpan={13} className="px-4 py-16 text-center text-sm text-muted-foreground">No submissions in {tab}.</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of 8120 items</p>}
+      {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>}
     </AppShell>
   );
 }
