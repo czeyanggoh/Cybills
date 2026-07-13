@@ -11,7 +11,9 @@ import { billsRouter } from './bills.js';
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+// Bills are uploaded as base64 in the JSON body; allow room for larger scans
+// and PDFs (the client also downscales images before sending).
+app.use(express.json({ limit: '25mb' }));
 app.use(cookieParser());
 app.use(morgan('tiny'));
 

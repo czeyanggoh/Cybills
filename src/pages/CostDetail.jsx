@@ -21,6 +21,7 @@ import { DOCS, getDoc } from '@/data/docs';
 import { CATEGORIES } from '@/data/categories';
 import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged } from '@/lib/bills';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
+import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
 
 function TopButton({ children, onClick = () => {}, subtle = false }) {
@@ -166,19 +167,6 @@ function ReceiptPreview({ doc, imageUrl, previewType }) {
   );
 }
 
-// Reads a File into a bare base64 string (no data-URL prefix).
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result);
-      resolve(result.slice(result.indexOf(',') + 1));
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 const EXTRACT_ERRORS = {
   vision_not_configured: 'Vision extraction isn’t configured on the server yet.',
   invalid_image: 'That file type isn’t supported — use a PNG, JPG, or WebP.',
@@ -321,18 +309,23 @@ export default function CostDetail() {
     e.target.value = '';
     if (!file) return;
     setAiError('');
+    // Downscale large photos so the base64 payload stays under the server body
+    // limit (a raw phone photo can exceed it once encoded, which silently failed
+    // the attach and lost the image on reload).
+    const { base64: imageBase64, mediaType, previewUrl } = await prepareUpload(file);
     // Always attach + show the uploaded image, regardless of AI availability.
-    setPreviewType('image');
-    setImageUrl(URL.createObjectURL(file));
-    const imageBase64 = await fileToBase64(file);
+    setPreviewType(mediaType.includes('pdf') ? 'pdf' : 'image');
+    setImageUrl(previewUrl);
     // Persist the file onto a real bill so it survives reload (fixes docs that
     // were uploaded before file storage worked).
     if (doc.persisted) {
       try {
-        await uploadBillFile(doc.id, imageBase64, file.type);
+        await uploadBillFile(doc.id, imageBase64, mediaType);
         notifyBillsChanged();
       } catch {
-        // non-fatal — image still shows locally this session
+        // Surface it — a swallowed failure here is exactly why the image used to
+        // vanish on reload.
+        setAiError('Could not save the receipt to this document. Please try uploading again.');
       }
     }
     // Only run Claude Vision auto-fill when it's configured; otherwise the user
@@ -343,7 +336,7 @@ export default function CostDetail() {
       const res = await fetch('/api/costs/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64, mediaType: file.type }),
+        body: JSON.stringify({ imageBase64, mediaType }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));

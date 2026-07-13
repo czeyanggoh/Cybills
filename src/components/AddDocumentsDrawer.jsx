@@ -4,13 +4,13 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import {
   sha256Hex,
-  fileToBase64,
   fetchExtract,
   addBill,
   notifyBillsChanged,
   describeDuplicate,
   VISION_MEDIA,
 } from '@/lib/bills';
+import { prepareUpload } from '@/lib/image';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
 // Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
@@ -175,13 +175,15 @@ export default function AddDocumentsDrawer({ open, onClose }) {
     created.forEach((it) => {
       void (async () => {
         try {
+          // Dedup on the ORIGINAL file bytes; store a downscaled copy so large
+          // photos stay under the server body limit.
           const fileHash = await sha256Hex(it.file);
-          const fileBase64 = await fileToBase64(it.file);
+          const { base64: fileBase64, mediaType } = await prepareUpload(it.file);
           let fields = {};
-          if (visionEnabled && VISION_MEDIA.includes(it.file.type)) {
+          if (visionEnabled && VISION_MEDIA.includes(mediaType)) {
             patch(it.id, { status: 'extracting' });
             try {
-              const ex = await fetchExtract(fileBase64, it.file.type);
+              const ex = await fetchExtract(fileBase64, mediaType);
               if (ex) fields = ex;
             } catch {
               // Extraction is best-effort — still store + dedup-check the file.
@@ -192,7 +194,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             fileHash,
             fileName: it.file.name,
             fileBase64,
-            mediaType: it.file.type,
+            mediaType,
             ...fields,
           };
           patch(it.id, { status: 'uploading', payload });
@@ -217,12 +219,10 @@ export default function AddDocumentsDrawer({ open, onClose }) {
     try {
       // Reuse the payload built on the first attempt (hash, bytes, fields) so
       // "Add anyway" doesn't re-hash or re-extract.
-      const payload = it.payload ?? {
-        fileHash: await sha256Hex(it.file),
-        fileName: it.file.name,
-        fileBase64: await fileToBase64(it.file),
-        mediaType: it.file.type,
-      };
+      const payload = it.payload ?? (await (async () => {
+        const { base64, mediaType } = await prepareUpload(it.file);
+        return { fileHash: await sha256Hex(it.file), fileName: it.file.name, fileBase64: base64, mediaType };
+      })());
       const result = await addBill(payload, { force: true });
       patch(id, { status: 'added', bill: result.bill });
       notifyBillsChanged();
