@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Plus, Flag, Image, ChevronDown, Search, Filter, Settings2, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -12,6 +13,7 @@ const TABS = [
 ];
 
 export default function ExpenseClaims() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
   const [showCreate, setShowCreate] = useState(false);
@@ -137,8 +139,12 @@ export default function ExpenseClaims() {
           </thead>
           <tbody>
             {rows.map((c) => (
-              <tr key={c.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
-                <td className="px-3 py-3">
+              <tr
+                key={c.id}
+                onClick={() => navigate(`/expense-claims/${c.id}`)}
+                className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
+              >
+                <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-1.5">
                     <input
                       type="checkbox"
@@ -176,7 +182,7 @@ export default function ExpenseClaims() {
       </div>
 
       {rows.length > 0 && (
-        <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of 69 items</p>
+        <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>
       )}
 
       {showCreate && (

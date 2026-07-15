@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Costs from './pages/Costs';
 import CostDetail from './pages/CostDetail';
 import ExpenseClaims from './pages/ExpenseClaims';
+import ExpenseClaimDetail from './pages/ExpenseClaimDetail';
 import Suppliers from './pages/Suppliers';
 import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
@@ -39,6 +40,7 @@ function App() {
             <Route path="/bank" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/vault" element={<Protected><Vault /></Protected>} />
             <Route path="/expense-claims" element={<Protected><ExpenseClaims /></Protected>} />
+            <Route path="/expense-claims/:id" element={<Protected><ExpenseClaimDetail /></Protected>} />
             <Route path="/supplier-statements" element={<Protected><SupplierStatements /></Protected>} />
             <Route path="/suppliers" element={<Protected><Suppliers /></Protected>} />
             <Route path="/users" element={<Protected><UsersPage /></Protected>} />
