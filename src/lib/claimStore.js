@@ -19,6 +19,7 @@ function prettyActor(name) {
 
 const ITEMS_KEY = 'cybills.claims.items.v1';
 const CREATED_KEY = 'cybills.claims.created.v1';
+const EVENTS_KEY = 'cybills.claims.events.v1';
 export const CLAIMS_EVENT = 'cybills:claims-changed';
 
 function read(key) {
@@ -40,15 +41,20 @@ export function getAddedItems() {
 export function getCreatedClaims() {
   return read(CREATED_KEY) || [];
 }
+// Extra activity events (e.g. approval submissions), stored per claim.
+export function getClaimEvents() {
+  return read(EVENTS_KEY) || {};
+}
 
 function rollups(txns) {
   const sum = (k) => txns.reduce((n, t) => n + Number(t[k] || 0), 0).toFixed(2);
   return { net: sum('net'), tax: sum('tax'), total: sum('total') };
 }
 
-// Fold any attached items into a claim, recompute its net/tax/total, and add a
-// history entry per attached item so the History tab + PDF stay accurate.
-function withItems(claim, itemsMap) {
+// Fold any attached items + logged events into a claim, recompute its
+// net/tax/total, and add a history entry per attached item so the History tab +
+// PDF stay accurate.
+function withItems(claim, itemsMap, eventsMap) {
   const extra = itemsMap[claim.id] || [];
   const seen = new Set(claim.transactions.map((t) => t.itemId));
   const fresh = extra.filter((t) => !seen.has(t.itemId));
@@ -63,17 +69,19 @@ function withItems(claim, itemsMap) {
     by: prettyActor(t.addedBy),
     at: 'Just now',
   }));
+  const loggedEvents = (eventsMap[claim.id] || []).map((e) => ({ ...e, by: prettyActor(e.by) }));
   return {
     ...claim,
     transactions,
-    history: [...addedEvents, ...(claim.history || [])],
+    history: [...loggedEvents, ...addedEvents, ...(claim.history || [])],
     ...rollups(transactions),
   };
 }
 
 export function getAllClaims() {
   const itemsMap = getAddedItems();
-  return [...BASE, ...getCreatedClaims()].map((c) => withItems(c, itemsMap));
+  const eventsMap = getClaimEvents();
+  return [...BASE, ...getCreatedClaims()].map((c) => withItems(c, itemsMap, eventsMap));
 }
 
 export function getClaimById(id) {
@@ -88,6 +96,22 @@ export function addItemToClaim(claimId, txn) {
     map[claimId] = [...list, txn];
     write(ITEMS_KEY, map);
   }
+}
+
+// Log an activity event onto a claim (newest first).
+export function addClaimEvent(claimId, event) {
+  const map = getClaimEvents();
+  map[claimId] = [event, ...(map[claimId] || [])];
+  write(EVENTS_KEY, map);
+}
+
+// Record a submit-for-approval action against a claim.
+export function submitForApproval(claimId, approver, actor) {
+  addClaimEvent(claimId, {
+    text: `This claim was submitted for approval to ${approver}`,
+    by: actor || 'Astrid Yang',
+    at: 'Just now',
+  });
 }
 
 // Create a new (empty) claim and return it.

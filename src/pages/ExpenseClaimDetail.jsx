@@ -13,7 +13,11 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { useClaims } from '@/lib/claimStore';
+import ClaimExportModal from '@/components/ClaimExportModal';
+import ClaimEmailModal from '@/components/ClaimEmailModal';
+import ClaimApprovalModal from '@/components/ClaimApprovalModal';
+import { useClaims, submitForApproval } from '@/lib/claimStore';
+import { useAuth } from '@/lib/auth';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf } from '@/lib/claimPdf';
 import { cn } from '@/lib/utils';
@@ -80,10 +84,15 @@ function CategorySelect({ value, onChange }) {
 export default function ExpenseClaimDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const claims = useClaims();
   const claim = claims.find((c) => String(c.id) === String(id)) || null;
   const [tab, setTab] = useState('details');
   const [catOverrides, setCatOverrides] = useState({});
+  const [exportMenu, setExportMenu] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [approvalOpen, setApprovalOpen] = useState(false);
 
   const index = claims.findIndex((c) => String(c.id) === String(id));
   const go = (delta) => {
@@ -114,8 +123,32 @@ export default function ExpenseClaimDetail() {
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
+        <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>
         <TopButton onClick={() => navigate('/expense-claims')}>Archive</TopButton>
-        <TopButton dropdown>Export</TopButton>
+        <div className="relative">
+          <TopButton onClick={() => setExportMenu((o) => !o)} dropdown>Export</TopButton>
+          {exportMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setExportMenu(false)} aria-hidden="true" />
+              <div className="absolute left-0 z-20 mt-1 w-44 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => { setExportMenu(false); setExportOpen(true); }}
+                  className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                >
+                  Export
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setExportMenu(false); setEmailOpen(true); }}
+                  className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                >
+                  Send by email
+                </button>
+              </div>
+            </>
+          )}
+        </div>
         <TopButton danger onClick={() => navigate('/expense-claims')}>Delete claim</TopButton>
         <div className="ml-auto flex items-center gap-3 text-sm">
           <button
@@ -322,6 +355,27 @@ export default function ExpenseClaimDetail() {
           )}
         </div>
       </div>
+
+      <ClaimExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        claim={{ ...claim, transactions: rows }}
+        onExported={() => navigate('/expense-claims')}
+      />
+      <ClaimEmailModal
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        defaultName={user?.name || 'Astrid Yang'}
+      />
+      <ClaimApprovalModal
+        open={approvalOpen}
+        onClose={() => setApprovalOpen(false)}
+        onSubmit={(approver) => {
+          submitForApproval(claim.id, approver, user?.name || 'Astrid Yang');
+          setApprovalOpen(false);
+          setTab('history');
+        }}
+      />
     </AppShell>
   );
 }
