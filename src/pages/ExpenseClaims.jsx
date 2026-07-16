@@ -3,22 +3,23 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Flag, Image, ChevronDown, Search, Filter, Settings2, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { CLAIMS } from '@/data/claims';
+import { useClaims } from '@/lib/claimStore';
 import { cn } from '@/lib/utils';
-
-const TABS = [
-  { key: 'inbox', label: 'Inbox', count: CLAIMS.length },
-  { key: 'approvals', label: 'Approvals' },
-  { key: 'archive', label: 'Archive' },
-];
 
 export default function ExpenseClaims() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
   const [showCreate, setShowCreate] = useState(false);
+  const claims = useClaims();
 
-  const rows = tab === 'inbox' ? CLAIMS : [];
+  const TABS = [
+    { key: 'inbox', label: 'Inbox', count: claims.length },
+    { key: 'approvals', label: 'Approvals' },
+    { key: 'archive', label: 'Archive' },
+  ];
+
+  const rows = tab === 'inbox' ? claims : [];
   const hasSelection = selected.size > 0;
 
   const toggle = (id) =>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { DOCS } from '@/data/docs';
-import { CLAIMS } from '@/data/claims';
+import { useClaims } from '@/lib/claimStore';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { getDocOverrides, applyOverride, DOC_OVERRIDES_EVENT } from '@/lib/docOverrides';
 
@@ -46,11 +46,12 @@ export function useCostsDocs() {
 // Live counts for every Costs tab + the subnav badges, derived from real rows.
 export function useCostsCounts() {
   const { allDocs } = useCostsDocs();
+  const claims = useClaims();
   return {
     inbox: rowsFor(allDocs, 'inbox').length,
     review: rowsFor(allDocs, 'review').length,
     ready: rowsFor(allDocs, 'ready').length,
     archive: rowsFor(allDocs, 'archive').length,
-    expenseClaims: CLAIMS.length,
+    expenseClaims: claims.length,
   };
 }

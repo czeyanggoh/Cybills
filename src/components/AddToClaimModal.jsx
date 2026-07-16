@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
-import { CLAIMS } from '@/data/claims';
+import { useClaims } from '@/lib/claimStore';
 import { cn } from '@/lib/utils';
 
 // "Add item to expense claim" dialog — add to an existing claim or spin up a
@@ -9,6 +9,7 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
   const [mode, setMode] = useState('existing');
   const [claim, setClaim] = useState('');
   const [newClaim, setNewClaim] = useState({ claimFor: '', name: '', endDate: '' });
+  const claims = useClaims();
 
   if (!open) return null;
 
@@ -63,7 +64,7 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
                   className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="">Select a claim</option>
-                  {CLAIMS.map((c) => (
+                  {claims.map((c) => (
                     <option key={c.id} value={c.id}>{c.name} · {c.claimFor}</option>
                   ))}
                 </select>

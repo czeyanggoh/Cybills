@@ -18,6 +18,7 @@ import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
 import AddToClaimModal from '@/components/AddToClaimModal';
+import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { CATEGORIES } from '@/data/categories';
@@ -611,8 +612,12 @@ export default function CostDetail() {
       <AddToClaimModal
         open={claimOpen}
         onClose={() => setClaimOpen(false)}
-        onAdd={() => {
+        onAdd={({ claimId, newClaim }) => {
           setClaimOpen(false);
+          // Link this cost to the chosen (or newly created) claim so it shows
+          // up as a line item there, then mark it as in an expense claim.
+          const targetId = newClaim ? createClaim(newClaim).id : claimId;
+          if (targetId) addItemToClaim(targetId, docToClaimTxn(doc, data));
           saveWithStatus('expenseclaim');
         }}
       />

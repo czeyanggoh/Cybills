@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { CLAIMS, getClaim } from '@/data/claims';
+import { useClaims } from '@/lib/claimStore';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf } from '@/lib/claimPdf';
 import { cn } from '@/lib/utils';
@@ -80,13 +80,14 @@ function CategorySelect({ value, onChange }) {
 export default function ExpenseClaimDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const claim = getClaim(id);
+  const claims = useClaims();
+  const claim = claims.find((c) => String(c.id) === String(id)) || null;
   const [tab, setTab] = useState('details');
-  const [rows, setRows] = useState(() => claim?.transactions ?? []);
+  const [catOverrides, setCatOverrides] = useState({});
 
-  const index = CLAIMS.findIndex((c) => String(c.id) === String(id));
+  const index = claims.findIndex((c) => String(c.id) === String(id));
   const go = (delta) => {
-    const next = CLAIMS[index + delta];
+    const next = claims[index + delta];
     if (next) navigate(`/expense-claims/${next.id}`);
   };
 
@@ -98,8 +99,12 @@ export default function ExpenseClaimDetail() {
     );
   }
 
+  // Apply any in-session category tweaks on top of the stored line items.
+  const rows = claim.transactions.map((t) =>
+    catOverrides[t.itemId] ? { ...t, category: catOverrides[t.itemId] } : t
+  );
   const setRowCategory = (itemId, category) =>
-    setRows((prev) => prev.map((r) => (r.itemId === itemId ? { ...r, category } : r)));
+    setCatOverrides((o) => ({ ...o, [itemId]: category }));
 
   return (
     <AppShell subnav={<CostsSubnav />}>
@@ -122,12 +127,12 @@ export default function ExpenseClaimDetail() {
             <ChevronLeft className="h-4 w-4" /> Previous
           </button>
           <span className="tabular-nums text-muted-foreground">
-            {index >= 0 ? index + 1 : '–'} / {CLAIMS.length}
+            {index >= 0 ? index + 1 : '–'} / {claims.length}
           </span>
           <button
             type="button"
             onClick={() => go(1)}
-            disabled={index >= CLAIMS.length - 1}
+            disabled={index >= claims.length - 1}
             className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
           >
             Next <ChevronRight className="h-4 w-4" />
