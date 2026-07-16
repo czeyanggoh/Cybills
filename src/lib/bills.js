@@ -90,6 +90,18 @@ export function billToDoc(b) {
   };
 }
 
+// A clean, Dext-style numeric item id for display. Seed docs already use
+// numeric ids (returned as-is); persisted bills use an internal "bill_…" id, so
+// we derive a stable 11-digit number from it (same id → same number) rather
+// than surfacing the raw storage key in reports.
+export function displayItemId(id) {
+  const s = String(id ?? '');
+  if (/^\d+$/.test(s)) return s;
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return String(21000000000 + (h % 1000000000));
+}
+
 // URL that streams a persisted bill's original file from the server.
 export function billFileUrl(id) {
   return `/api/costs/bills/${id}/file`;

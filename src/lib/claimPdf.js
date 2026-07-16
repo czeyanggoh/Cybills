@@ -145,7 +145,7 @@ export function buildClaimDoc(claim) {
     doc.setTextColor(60);
     doc.text(t.date, tc.date, y);
     doc.setTextColor(LINK[0], LINK[1], LINK[2]);
-    doc.text(String(t.itemId), tc.item, y);
+    doc.text(String(t.displayId || t.itemId), tc.item, y);
     doc.setTextColor(60);
     doc.text(doc.splitTextToSize(t.supplier, tc.category - tc.supplier - 6)[0], tc.supplier, y);
     doc.text(t.category, tc.category, y);

@@ -196,7 +196,7 @@ function initialData(doc) {
 export default function CostDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { visionEnabled } = useAuth();
+  const { visionEnabled, user } = useAuth();
   const fileInputRef = useRef(null);
 
   // Sample docs carry any local (localStorage) edits applied on top.
@@ -617,7 +617,8 @@ export default function CostDetail() {
           // Link this cost to the chosen (or newly created) claim so it shows
           // up as a line item there, then mark it as in an expense claim.
           const targetId = newClaim ? createClaim(newClaim).id : claimId;
-          if (targetId) addItemToClaim(targetId, docToClaimTxn(doc, data));
+          const actor = user?.name || 'Astrid Yang';
+          if (targetId) addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
           saveWithStatus('expenseclaim');
         }}
       />

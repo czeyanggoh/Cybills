@@ -1,5 +1,15 @@
 import { useState, useEffect } from 'react';
 import { CLAIMS as BASE } from '@/data/claims';
+import { displayItemId } from '@/lib/bills';
+
+// Older stored items recorded the actor as an email handle (e.g. "astridy2004").
+// Map known handles back to display names; pass full names through unchanged.
+const ACTOR_ALIASES = { astridy2004: 'Astrid Yang' };
+function prettyActor(name) {
+  if (!name) return 'Astrid Yang';
+  if (name.includes(' ')) return name;
+  return ACTOR_ALIASES[name.toLowerCase()] || name;
+}
 
 // Client-side persistence for expense claims. The seeded claims live in
 // src/data/claims.js; this layer adds (a) cost items the user attaches to a
@@ -42,10 +52,15 @@ function withItems(claim, itemsMap) {
   const extra = itemsMap[claim.id] || [];
   const seen = new Set(claim.transactions.map((t) => t.itemId));
   const fresh = extra.filter((t) => !seen.has(t.itemId));
-  const transactions = [...claim.transactions, ...fresh];
+  // Attach a clean display id to every row (seed ids pass through; bill ids get
+  // a numeric form) so reports never show the raw "bill_…" storage key.
+  const transactions = [...claim.transactions, ...fresh].map((t) => ({
+    ...t,
+    displayId: displayItemId(t.itemId),
+  }));
   const addedEvents = fresh.map((t) => ({
-    text: `Item ${t.itemId} was added to the expense claim`,
-    by: t.addedBy || 'Astrid Yang',
+    text: `Item ${displayItemId(t.itemId)} was added to the expense claim`,
+    by: prettyActor(t.addedBy),
     at: 'Just now',
   }));
   return {
@@ -98,8 +113,9 @@ export function createClaim({ claimFor, name, endDate }) {
   return claim;
 }
 
-// Build a claim transaction row from a cost document's edited fields.
-export function docToClaimTxn(doc, data) {
+// Build a claim transaction row from a cost document's edited fields. `actor`
+// is who performed the action (the signed-in user's display name).
+export function docToClaimTxn(doc, data, actor) {
   const total = Number(data.total) || 0;
   const tax = Number(data.tax) || 0;
   return {
@@ -112,7 +128,7 @@ export function docToClaimTxn(doc, data) {
     tax: tax.toFixed(2),
     total: total.toFixed(2),
     status: 'ready',
-    addedBy: data.user || 'Astrid Yang',
+    addedBy: actor || 'Astrid Yang',
   };
 }
 
