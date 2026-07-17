@@ -17,8 +17,7 @@ import PublishToXeroModal from '@/components/PublishToXeroModal';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
-import { CATEGORIES } from '@/data/categories';
-import { XERO_ACCOUNTS } from '@/data/xeroAccounts';
+import { getExtractionAccounts, useCategoryOptions } from '@/lib/organisations';
 import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged } from '@/lib/bills';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -158,6 +157,7 @@ export default function CostDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { visionEnabled, user } = useAuth();
+  const categoryOptions = useCategoryOptions();
   const fileInputRef = useRef(null);
 
   // Sample docs carry any local (localStorage) edits applied on top.
@@ -334,10 +334,12 @@ export default function CostDetail() {
     if (!visionEnabled) return;
     setExtracting(true);
     try {
+      // Classify into the connected org's live Xero chart (bundled fallback).
+      const accounts = await getExtractionAccounts();
       const res = await fetch('/api/costs/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64, mediaType, accounts: XERO_ACCOUNTS }),
+        body: JSON.stringify({ imageBase64, mediaType, accounts }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -507,7 +509,7 @@ export default function CostDetail() {
               <Field label="Purchase order number"><Input value={data.po} onChange={(v) => set('po', v)} /></Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
-                <EditableSelect value={data.category} options={CATEGORIES} onChange={(v) => set('category', v)} />
+                <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} />
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>

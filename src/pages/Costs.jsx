@@ -13,15 +13,16 @@ import {
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { CATEGORIES } from '@/data/categories';
+import { useCategoryOptions } from '@/lib/organisations';
 import { updateBill } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { cn } from '@/lib/utils';
 
-// Native (working) category dropdown styled to match the row cells.
-function CategorySelect({ value, onChange }) {
-  const known = CATEGORIES.includes(value);
+// Native (working) category dropdown styled to match the row cells. `options`
+// is the active org's live Xero chart (bundled fallback).
+function CategorySelect({ value, onChange, options }) {
+  const known = options.includes(value);
   return (
     <select
       value={value}
@@ -29,7 +30,7 @@ function CategorySelect({ value, onChange }) {
       className="w-44 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       {!known && <option value={value}>{value}</option>}
-      {CATEGORIES.map((c) => (
+      {options.map((c) => (
         <option key={c} value={c}>{c}</option>
       ))}
     </select>
@@ -225,6 +226,7 @@ export default function Costs() {
 
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
+  const categoryOptions = useCategoryOptions();
 
   // Every tab's rows, so its badge count ties to what the tab actually shows.
   const rowsByTab = {
@@ -358,6 +360,7 @@ export default function Costs() {
                       <CategorySelect
                         value={d.category || 'Uncategorised'}
                         onChange={(v) => changeCategory(d, v)}
+                        options={categoryOptions}
                       />
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">

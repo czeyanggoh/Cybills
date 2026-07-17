@@ -11,7 +11,7 @@ import {
   VISION_MEDIA,
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
-import { XERO_ACCOUNTS } from '@/data/xeroAccounts';
+import { getExtractionAccounts } from '@/lib/organisations';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
 // Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
@@ -184,6 +184,10 @@ export default function AddDocumentsDrawer({ open, onClose }) {
     const created = files.map((file) => ({ id: ++uid, file, status: 'pending', fields: {} }));
     setItems((prev) => [...created, ...prev]);
 
+    // Resolve the categorisation chart once for the whole batch (live Xero
+    // accounts when connected, else the bundled standard chart).
+    const accountsPromise = getExtractionAccounts();
+
     created.forEach((it) => {
       void (async () => {
         try {
@@ -195,7 +199,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           if (visionEnabled && VISION_MEDIA.includes(mediaType)) {
             patch(it.id, { status: 'extracting' });
             try {
-              const ex = await fetchExtract(fileBase64, mediaType, XERO_ACCOUNTS);
+              const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise);
               if (ex) fields = ex;
             } catch {
               // Extraction is best-effort — still store + dedup-check the file.

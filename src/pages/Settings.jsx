@@ -702,8 +702,9 @@ function Lists() {
       )
     : accounts;
 
-  const configError = error?.code === 'xero_not_configured';
-  const notConnected = error?.status === 502 || error?.code === 'relay_unreachable';
+  const err = /** @type {any} */ (error);
+  const configError = err?.code === 'xero_not_configured';
+  const notConnected = err?.status === 502 || err?.code === 'relay_unreachable';
 
   if (orgsLoading) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;

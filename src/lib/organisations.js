@@ -1,9 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
 
 // Client helpers for organisations (client entities linked to a Xero tenant in
 // cyworkspace) and the Xero endpoints that publish bills through the relay.
 
 const ACTIVE_KEY = 'cybills:active-organisation';
+
+// Supplier bills post to expense-type accounts, so those drive categorisation.
+const isExpenseType = (t) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(String(t || '').toUpperCase());
 
 export function getActiveOrganisationId() {
   try {
@@ -95,6 +99,58 @@ export function useXeroAccounts(organisationId) {
 
 export function fetchXeroTaxRates(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/taxrates`).then((b) => b.taxRates ?? []);
+}
+
+// The org whose chart drives categorisation: the active org, else the first
+// linked one. Returns '' when none are linked / Xero isn't configured.
+async function resolveCategorisationOrgId() {
+  try {
+    const orgs = (await getJson('/api/organisations')).organisations ?? [];
+    if (!orgs.length) return '';
+    const active = getActiveOrganisationId();
+    return (orgs.find((o) => o.id === active) || orgs[0]).id;
+  } catch {
+    return '';
+  }
+}
+
+// Accounts to classify OCR'd expenses into: the connected org's LIVE Xero
+// expense accounts (code/name/description, pulled through the relay), falling
+// back to the bundled standard chart when Xero isn't connected. Used at upload
+// time, so it must never throw — any failure yields the fallback.
+export async function getExtractionAccounts() {
+  const orgId = await resolveCategorisationOrgId();
+  if (!orgId) return XERO_ACCOUNTS;
+  try {
+    const accounts = await fetchXeroAccounts(orgId);
+    const expense = accounts.filter((a) => isExpenseType(a.type));
+    const list = (expense.length ? expense : accounts).map((a) => ({
+      code: a.code,
+      name: a.name,
+      description: a.description || '',
+    }));
+    return list.length ? list : XERO_ACCOUNTS;
+  } catch {
+    return XERO_ACCOUNTS;
+  }
+}
+
+// Category-dropdown options for the active org's live chart (expense accounts),
+// with the bundled standard chart as fallback. 'Uncategorised' is always first.
+export function useCategoryOptions() {
+  const { data: organisations = [] } = useOrganisations();
+  const active = getActiveOrganisationId();
+  const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  const { data } = useQuery({
+    queryKey: ['xero-accounts', orgId],
+    queryFn: () => fetchXeroAccounts(orgId),
+    enabled: Boolean(orgId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  const expense = (data ?? []).filter((a) => isExpenseType(a.type));
+  const labels = expense.length ? expense.map(accountLabel) : XERO_ACCOUNTS.map(accountLabel);
+  return ['Uncategorised', ...labels];
 }
 
 // Publish a stored bill to Xero as an ACCPAY supplier bill. Resolves with
