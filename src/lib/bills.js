@@ -54,8 +54,10 @@ export async function fetchBills() {
   return Array.isArray(bills) ? bills : [];
 }
 
-// Persist a bill. Returns { ok, bill } on success, or { duplicate } when the
-// server flags a duplicate (HTTP 409) and `force` was not set. Throws on error.
+// Persist a bill. Returns { ok, bill } on success, or { duplicate, rejected }
+// when the server flags a duplicate (HTTP 409). `rejected:true` means a
+// byte-identical file already exists and cannot be added even with force.
+// Throws on error.
 export async function addBill(payload, { force = false } = {}) {
   const res = await fetch('/api/costs/bills', {
     method: 'POST',
@@ -64,7 +66,7 @@ export async function addBill(payload, { force = false } = {}) {
   });
   if (res.status === 409) {
     const body = await res.json().catch(() => ({}));
-    return { duplicate: body.duplicate ?? null };
+    return { duplicate: body.duplicate ?? null, rejected: Boolean(body.rejected) };
   }
   if (!res.ok) throw new Error('add_failed');
   return res.json();

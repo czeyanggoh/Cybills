@@ -107,6 +107,11 @@ billsRouter.post('/bills', async (req, res) => {
   };
 
   const dup = findDuplicate(orgId, candidate);
+  // A byte-identical file already in this account is never allowed — not even
+  // with force. Fuzzy matches (same invoice / likely dup) can still be forced.
+  if (dup && dup.type === 'exact_file') {
+    return res.status(409).json({ error: 'duplicate', duplicate: dup, rejected: true });
+  }
   if (dup && b.force !== true) {
     return res.status(409).json({ error: 'duplicate', duplicate: dup });
   }

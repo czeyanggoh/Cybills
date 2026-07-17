@@ -103,12 +103,23 @@ function UploadItem({ item, onForce, onSkip }) {
           </span>
         )}
         {status === 'skipped' && <span className="text-xs text-muted-foreground">Skipped</span>}
+        {status === 'rejected' && (
+          <span className="flex items-center gap-1.5 text-xs font-medium text-destructive">
+            <AlertTriangle className="h-3.5 w-3.5" /> Rejected
+          </span>
+        )}
         {status === 'error' && (
           <span className="flex items-center gap-1.5 text-xs text-foreground">
             <AlertTriangle className="h-3.5 w-3.5" /> {error || 'Failed'}
           </span>
         )}
       </div>
+
+      {status === 'rejected' && (
+        <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-foreground">
+          This item was rejected as this file already exists within this account.
+        </p>
+      )}
 
       {status === 'duplicate' && (
         <div className="mt-2 rounded-md border border-foreground/30 bg-muted px-3 py-2">
@@ -200,7 +211,10 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           };
           patch(it.id, { status: 'uploading', payload });
           const result = await addBill(payload);
-          if (result.duplicate) {
+          if (result.rejected) {
+            // Byte-identical file already in the account — hard reject, no override.
+            patch(it.id, { status: 'rejected', duplicate: result.duplicate });
+          } else if (result.duplicate) {
             patch(it.id, { status: 'duplicate', duplicate: result.duplicate });
           } else {
             patch(it.id, { status: 'added', bill: result.bill });
@@ -225,8 +239,12 @@ export default function AddDocumentsDrawer({ open, onClose }) {
         return { fileHash: await sha256Hex(it.file), fileName: it.file.name, fileBase64: base64, mediaType };
       })());
       const result = await addBill(payload, { force: true });
-      patch(id, { status: 'added', bill: result.bill });
-      notifyBillsChanged();
+      if (result.rejected) {
+        patch(id, { status: 'rejected', duplicate: result.duplicate });
+      } else {
+        patch(id, { status: 'added', bill: result.bill });
+        notifyBillsChanged();
+      }
     } catch {
       patch(id, { status: 'error', error: 'Upload failed' });
     }

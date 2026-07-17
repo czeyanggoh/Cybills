@@ -7,11 +7,6 @@ import {
   Sparkles,
   Upload,
   ChevronDown,
-  RotateCw,
-  Download,
-  Printer,
-  Maximize2,
-  MapPin,
   FileText,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -117,54 +112,18 @@ function ReceiptPreview({ doc, imageUrl, previewType }) {
       </div>
     );
   }
-  // Real uploaded bill with no stored file — neutral placeholder (not the
-  // sample "Grab receipt" mock, which is only for the seeded demo rows).
-  if (doc.persisted) {
-    return (
-      <div className="overflow-hidden rounded-lg border bg-background">
-        <div className="border-b px-4 py-3 text-sm font-medium">{doc.supplier || 'Document'}</div>
-        <div className="flex h-80 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
-          <FileText className="h-8 w-8" strokeWidth={1.5} />
-          <p className="text-sm">No file preview for this document.</p>
-          <p className="text-xs">Use “Upload receipt” to attach the original.</p>
-        </div>
-      </div>
-    );
-  }
+  // No stored file yet — neutral placeholder for every document (no seeded
+  // "Grab receipt" mock). Use "Upload receipt" to attach the original.
   return (
     <div className="overflow-hidden rounded-lg border bg-background">
       <div className="border-b px-4 py-3 text-sm">
-        <span className="font-medium">{doc.supplier}</span>
-        <span className="ml-2 text-muted-foreground">· {doc.date}</span>
+        <span className="font-medium">{doc.supplier || 'Document'}</span>
+        {doc.date && doc.date !== '—' && <span className="ml-2 text-muted-foreground">· {doc.date}</span>}
       </div>
-      <div className="space-y-3 p-4">
-        <div className="flex items-center gap-3 rounded-md border p-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-xs font-medium">
-            NB
-          </div>
-          <div className="text-sm">
-            <div className="font-medium">Ng Boon Ann</div>
-            <div className="text-xs text-muted-foreground">Standard · Car or taxi</div>
-          </div>
-          <div className="ml-auto text-xs text-muted-foreground">31.88 km · 47 min</div>
-        </div>
-        <div className="relative flex h-40 items-center justify-center rounded-md border bg-muted/40">
-          <MapPin className="h-6 w-6 text-muted-foreground" />
-          <span className="absolute bottom-2 right-2 text-[10px] text-muted-foreground">Map preview</span>
-        </div>
-        <div className="flex items-center justify-between border-t pt-3 text-sm">
-          <span className="text-muted-foreground">Total</span>
-          <span className="font-semibold">
-            {doc.currency} {doc.total}
-          </span>
-        </div>
-      </div>
-      <div className="flex items-center justify-center gap-3 border-t p-2 text-muted-foreground">
-        <RotateCw className="h-4 w-4" />
-        <span className="text-xs">100%</span>
-        <Download className="h-4 w-4" />
-        <Printer className="h-4 w-4" />
-        <Maximize2 className="h-4 w-4" />
+      <div className="flex h-80 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
+        <FileText className="h-8 w-8" strokeWidth={1.5} />
+        <p className="text-sm">No file preview for this document.</p>
+        <p className="text-xs">Use “Upload receipt” to attach the original.</p>
       </div>
     </div>
   );
