@@ -111,7 +111,13 @@ xeroRouter.get('/organisations/:id/accounts', async (req, res) => {
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const accounts = (result.data?.Accounts ?? [])
     .filter((a: any) => a.Code)
-    .map((a: any) => ({ code: a.Code, name: a.Name, type: a.Type, taxType: a.TaxType ?? '' }));
+    .map((a: any) => ({
+      code: a.Code,
+      name: a.Name,
+      type: a.Type,
+      taxType: a.TaxType ?? '',
+      description: a.Description ?? '',
+    }));
   res.json({ accounts });
 });
 

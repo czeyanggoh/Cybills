@@ -32,15 +32,15 @@ export function fileToBase64(file) {
 export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
 
 // Run a receipt image or PDF invoice through the Claude extract endpoint.
-// `categories` is the org's Category list so the model classifies into a value
-// that maps to a real dropdown option. Returns the extracted fields object, or
-// null if extraction is unavailable/failed (best-effort — the file is still
-// stored + dedup-checked).
-export async function fetchExtract(imageBase64, mediaType, categories) {
+// `accounts` is the Xero chart of accounts (code/name/description) so the model
+// classifies each expense into the account it should post to, using the
+// descriptions. Returns the extracted fields object, or null if extraction is
+// unavailable/failed (best-effort — the file is still stored + dedup-checked).
+export async function fetchExtract(imageBase64, mediaType, accounts) {
   const res = await fetch('/api/costs/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageBase64, mediaType, categories }),
+    body: JSON.stringify({ imageBase64, mediaType, accounts }),
   });
   if (!res.ok) return null;
   const { data } = await res.json();

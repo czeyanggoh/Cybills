@@ -7,6 +7,7 @@ import {
   fetchXeroTaxRates,
   publishBillToXero,
 } from '@/lib/organisations';
+import { accountCodeFromCategory } from '@/data/xeroAccounts';
 
 // "Publish to Xero" dialog — posts a stored cost document to the linked Xero
 // organisation as a supplier bill (ACCPAY), through the cyworkspace relay.
@@ -53,6 +54,15 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
         if (!alive) return;
         setAccounts(acc);
         setTaxRates(rates);
+        // Preselect the Xero account the OCR categorised this bill into (its
+        // category is a "<code> - <name>" chart-of-accounts label), and default
+        // the tax rate to that account's own default.
+        const code = accountCodeFromCategory(bill?.category);
+        const match = code ? acc.find((a) => a.code === code) : null;
+        if (match) {
+          setAccountCode(match.code);
+          if (match.taxType && rates.some((t) => t.taxType === match.taxType)) setTaxType(match.taxType);
+        }
       })
       .catch((err) => {
         if (!alive) return;

@@ -81,9 +81,28 @@ type ImageMedia = (typeof IMAGE_MEDIA)[number];
 
 export const extractRouter = Router();
 
-// POST /api/costs/extract — body: { imageBase64, mediaType, categories? }. Runs
-// the receipt image OR PDF invoice through Claude and returns the extracted +
-// categorised fields. 503 until an ANTHROPIC_API_KEY is configured.
+type AccountRef = { code: string; name: string; description: string };
+
+// Parse the optional Xero chart-of-accounts from the request body. Each account
+// contributes a "<code> - <name>" category label; its description guides the
+// model's classification.
+function parseAccounts(raw: unknown): AccountRef[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AccountRef[] = [];
+  for (const a of raw) {
+    const code = typeof a?.code === 'string' ? a.code.trim() : '';
+    const name = typeof a?.name === 'string' ? a.name.trim() : '';
+    if (!code || !name) continue;
+    out.push({ code, name, description: typeof a?.description === 'string' ? a.description.trim() : '' });
+  }
+  return out;
+}
+
+// POST /api/costs/extract — body: { imageBase64, mediaType, accounts?, categories? }.
+// Runs the receipt image OR PDF invoice through Claude and returns the extracted
+// fields, classified into the Xero chart of accounts (when `accounts` is given,
+// using each account's description) or a plain category list. 503 until an
+// ANTHROPIC_API_KEY is configured.
 extractRouter.post('/extract', async (req, res) => {
   if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
 
@@ -93,15 +112,28 @@ extractRouter.post('/extract', async (req, res) => {
     return res.status(400).json({ error: 'invalid_image' });
   }
 
-  // Allowed categories from the client, always including an "Uncategorised" escape.
+  // Prefer a Xero chart of accounts (with descriptions); otherwise fall back to
+  // a plain category list. Either way, always include an "Uncategorised" escape.
+  const accounts = parseAccounts(req.body?.accounts);
   const rawCats: unknown = req.body?.categories;
   const bodyCats = Array.isArray(rawCats)
     ? rawCats.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
     : [];
-  const categories = bodyCats.length
-    ? Array.from(new Set([...bodyCats, 'Uncategorised']))
+  const accountLabels = accounts.map((a) => `${a.code} - ${a.name}`);
+  const source = accountLabels.length ? accountLabels : bodyCats;
+  const categories = source.length
+    ? Array.from(new Set([...source, 'Uncategorised']))
     : DEFAULT_CATEGORIES;
   const categorySet = new Set(categories);
+
+  // A description-annotated guide so the model classifies by what each Xero
+  // account is for, not just its name.
+  const accountsGuide = accounts.length
+    ? '\n\nClassify `category` into exactly one of these Xero accounts, choosing by the description that best matches what was purchased:\n' +
+      accounts
+        .map((a) => `- "${a.code} - ${a.name}"${a.description ? `: ${a.description}` : ''}`)
+        .join('\n')
+    : '';
 
   const isPdf = mediaType === PDF_MEDIA;
   const fileBlock: Anthropic.ContentBlockParam = isPdf
@@ -125,7 +157,8 @@ extractRouter.post('/extract', async (req, res) => {
                 'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
                 'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
                 'pick "Uncategorised" only when none reasonably fit. ' +
-                'If a field is not present, use an empty string or 0.',
+                'If a field is not present, use an empty string or 0.' +
+                accountsGuide,
             },
           ],
         },

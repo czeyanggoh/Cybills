@@ -11,7 +11,7 @@ import {
   VISION_MEDIA,
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
-import { CATEGORIES } from '@/data/categories';
+import { XERO_ACCOUNTS } from '@/data/xeroAccounts';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
 // Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
@@ -195,7 +195,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           if (visionEnabled && VISION_MEDIA.includes(mediaType)) {
             patch(it.id, { status: 'extracting' });
             try {
-              const ex = await fetchExtract(fileBase64, mediaType, CATEGORIES);
+              const ex = await fetchExtract(fileBase64, mediaType, XERO_ACCOUNTS);
               if (ex) fields = ex;
             } catch {
               // Extraction is best-effort — still store + dedup-check the file.

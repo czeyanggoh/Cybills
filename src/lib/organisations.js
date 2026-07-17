@@ -26,7 +26,7 @@ async function getJson(url) {
   const res = await fetch(url);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(body.message || body.error || `Request failed (${res.status})`);
+    const err = /** @type {any} */ (new Error(body.message || body.error || `Request failed (${res.status})`));
     err.code = body.error || `http_${res.status}`;
     err.status = res.status;
     throw err;
@@ -60,11 +60,11 @@ export async function createOrganisation({ name, tenantId, tenantName }) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(
+    const err = /** @type {any} */ (new Error(
       body.error === 'already_linked'
         ? `"${body.organisation?.name}" is already linked to that Xero organisation.`
         : body.message || 'Could not add the organisation.'
-    );
+    ));
     err.code = body.error;
     throw err;
   }
@@ -95,9 +95,9 @@ export async function publishBillToXero(organisationId, payload) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(
+    const err = /** @type {any} */ (new Error(
       Array.isArray(body.messages) ? body.messages.join(' ') : body.message || 'Publish failed.'
-    );
+    ));
     err.code = body.error;
     throw err;
   }

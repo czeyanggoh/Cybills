@@ -18,6 +18,7 @@ import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { CATEGORIES } from '@/data/categories';
+import { XERO_ACCOUNTS } from '@/data/xeroAccounts';
 import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged } from '@/lib/bills';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -336,7 +337,7 @@ export default function CostDetail() {
       const res = await fetch('/api/costs/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64, mediaType, categories: CATEGORIES }),
+        body: JSON.stringify({ imageBase64, mediaType, accounts: XERO_ACCOUNTS }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
