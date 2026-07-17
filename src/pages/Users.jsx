@@ -1,18 +1,30 @@
 import { useState } from 'react';
 import { Search, ChevronDown, Settings2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
-import { USERS } from '@/data/users';
+import AddUserModal from '@/components/AddUserModal';
+import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
+import { useUsers, addUser, addUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 export default function Users() {
   const [tab, setTab] = useState('active');
-  const rows = tab === 'active' ? USERS : [];
+  const [query, setQuery] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const [multiOpen, setMultiOpen] = useState(false);
+  const users = useUsers();
+
+  const filtered = users.filter(
+    (u) =>
+      u.name.toLowerCase().includes(query.toLowerCase()) ||
+      u.email.toLowerCase().includes(query.toLowerCase())
+  );
+  const rows = tab === 'active' ? filtered : [];
 
   return (
     <AppShell>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold tracking-tight">Users</h1>
-        <button type="button" className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
+        <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
           Add a user
         </button>
       </div>
@@ -34,12 +46,12 @@ export default function Users() {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <button type="button" className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted">
+          <button type="button" onClick={() => setMultiOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted">
             Add multiple users
           </button>
           <div className="relative hidden sm:block">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input type="text" placeholder="Search" className="h-8 w-48 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+            <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="h-8 w-48 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
           </div>
           <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Settings">
             <Settings2 className="h-4 w-4" strokeWidth={1.75} />
@@ -83,7 +95,10 @@ export default function Users() {
         </table>
       </div>
 
-      {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of 190 items</p>}
+      {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>}
+
+      <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} onAdd={addUser} />
+      <AddMultipleUsersModal open={multiOpen} onClose={() => setMultiOpen(false)} onAdd={addUsers} />
     </AppShell>
   );
 }
