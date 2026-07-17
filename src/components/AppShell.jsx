@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Rocket,
   Users,
+  User,
   History,
   Settings,
   LogOut,
@@ -96,6 +97,7 @@ export default function AppShell({ subnav = null, children }) {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [addOpen, setAddOpen] = useState(false);
+  const [userMenu, setUserMenu] = useState(false);
 
   const handleSignOut = async () => {
     await signOut();
@@ -190,13 +192,49 @@ export default function AppShell({ subnav = null, children }) {
               >
                 <HelpCircle className="h-5 w-5" strokeWidth={1.75} />
               </button>
-              <button type="button" className="flex items-center gap-2 text-sm">
-                <span className="flex h-7 w-7 items-center justify-center rounded-full border text-xs font-medium">
-                  {initialsFrom(user)}
-                </span>
-                <span className="hidden sm:inline">{user?.name || user?.email || 'Astrid Yang'}</span>
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setUserMenu((o) => !o)}
+                  className="flex items-center gap-2 text-sm"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full border text-xs font-medium">
+                    {initialsFrom(user)}
+                  </span>
+                  <span className="hidden sm:inline">{user?.name || user?.email || 'Astrid Yang'}</span>
+                  <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', userMenu && 'rotate-180')} />
+                </button>
+                {userMenu && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setUserMenu(false)} aria-hidden="true" />
+                    <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                      <button
+                        type="button"
+                        onClick={() => { setUserMenu(false); navigate('/profile'); }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                      >
+                        <User className="h-4 w-4" strokeWidth={1.75} /> Profile
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setUserMenu(false); navigate('/settings'); }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                      >
+                        <Settings className="h-4 w-4" strokeWidth={1.75} /> Business settings
+                      </button>
+                      {user && (
+                        <button
+                          type="button"
+                          onClick={() => { setUserMenu(false); handleSignOut(); }}
+                          className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                        >
+                          <LogOut className="h-4 w-4" strokeWidth={1.75} /> Sign out
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </header>
 

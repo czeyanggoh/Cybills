@@ -15,6 +15,7 @@ import Vault from './pages/Vault';
 import UsersPage from './pages/Users';
 import SubmissionHistory from './pages/SubmissionHistory';
 import Settings from './pages/Settings';
+import Profile from './pages/Profile';
 import SupportDesk from './pages/SupportDesk';
 import ComingSoon from './pages/ComingSoon';
 
@@ -46,6 +47,7 @@ function App() {
             <Route path="/users" element={<Protected><UsersPage /></Protected>} />
             <Route path="/submission-history" element={<Protected><SubmissionHistory /></Protected>} />
             <Route path="/settings" element={<Protected><Settings /></Protected>} />
+            <Route path="/profile" element={<Protected><Profile /></Protected>} />
             <Route path="/support" element={<Protected><SupportDesk /></Protected>} />
             {/* Feature Requests merged into Support Desk — keep old links working. */}
             <Route path="/features" element={<Navigate to="/support" replace />} />
