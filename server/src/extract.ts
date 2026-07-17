@@ -3,50 +3,63 @@ import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { env, visionEnabled } from './env.js';
 
-// JSON schema handed to Claude via output_config.format so the model returns
-// strictly-shaped JSON (structured outputs). additionalProperties:false +
-// required on every object is mandatory for strict structured outputs.
-const receiptJsonSchema = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    supplier: { type: 'string', description: 'Merchant / supplier name, e.g. "Grab"' },
-    date: { type: 'string', description: 'Document date, ISO YYYY-MM-DD when determinable' },
-    documentType: { type: 'string', enum: ['Receipt', 'Invoice', 'Other'] },
-    invoiceNumber: {
-      type: 'string',
-      description: 'Invoice / receipt number as printed; empty string if none shown',
-    },
-    currency: { type: 'string', description: '3-letter ISO currency code, e.g. SGD' },
-    total: { type: 'number', description: 'Grand total amount' },
-    tax: { type: 'number', description: 'Tax / GST amount; 0 if none shown' },
-    category: { type: 'string', description: 'Best-guess expense category, e.g. "Transport - Taxi"' },
-    lineItems: {
-      type: 'array',
-      description: 'Individual line items if present; empty array if none',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          description: { type: 'string' },
-          amount: { type: 'number' },
+// Categories are provided per-request by the client (the org's Category list) so
+// the model classifies into a value that actually exists in the UI. These are
+// the fallback set if the client doesn't send any.
+const DEFAULT_CATEGORIES = ['Uncategorised', 'Others'];
+
+// Build the structured-output JSON schema. `category` is an enum of the allowed
+// categories so the model must return one that maps to a real dropdown value.
+// additionalProperties:false + required on every field is mandatory for strict
+// structured outputs.
+function buildSchema(categories: string[]) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      supplier: { type: 'string', description: 'Merchant / supplier name, e.g. "Grab"' },
+      date: { type: 'string', description: 'Document date, ISO YYYY-MM-DD when determinable' },
+      documentType: { type: 'string', enum: ['Receipt', 'Invoice', 'Other'] },
+      invoiceNumber: {
+        type: 'string',
+        description: 'Invoice / receipt number as printed; empty string if none shown',
+      },
+      currency: { type: 'string', description: '3-letter ISO currency code, e.g. SGD' },
+      total: { type: 'number', description: 'Grand total amount' },
+      tax: { type: 'number', description: 'Tax / GST amount; 0 if none shown' },
+      category: {
+        type: 'string',
+        enum: categories,
+        description:
+          'The single best-matching expense category from the allowed list. Use "Uncategorised" only if none fit.',
+      },
+      lineItems: {
+        type: 'array',
+        description: 'Individual line items if present; empty array if none',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            description: { type: 'string' },
+            amount: { type: 'number' },
+          },
+          required: ['description', 'amount'],
         },
-        required: ['description', 'amount'],
       },
     },
-  },
-  required: [
-    'supplier',
-    'date',
-    'documentType',
-    'invoiceNumber',
-    'currency',
-    'total',
-    'tax',
-    'category',
-    'lineItems',
-  ],
-} as const;
+    required: [
+      'supplier',
+      'date',
+      'documentType',
+      'invoiceNumber',
+      'currency',
+      'total',
+      'tax',
+      'category',
+      'lineItems',
+    ],
+  };
+}
 
 // Validates the model's JSON before we trust it.
 const ReceiptSchema = z.object({
@@ -61,22 +74,39 @@ const ReceiptSchema = z.object({
   lineItems: z.array(z.object({ description: z.string(), amount: z.number() })),
 });
 
-const ALLOWED_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
-type MediaType = (typeof ALLOWED_MEDIA)[number];
+const IMAGE_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
+const PDF_MEDIA = 'application/pdf';
+const ALLOWED_MEDIA = [...IMAGE_MEDIA, PDF_MEDIA];
+type ImageMedia = (typeof IMAGE_MEDIA)[number];
 
 export const extractRouter = Router();
 
-// POST /api/costs/extract — body: { imageBase64, mediaType }. Runs the image
-// through Claude vision and returns the extracted fields. 503 until an
-// ANTHROPIC_API_KEY is configured.
+// POST /api/costs/extract — body: { imageBase64, mediaType, categories? }. Runs
+// the receipt image OR PDF invoice through Claude and returns the extracted +
+// categorised fields. 503 until an ANTHROPIC_API_KEY is configured.
 extractRouter.post('/extract', async (req, res) => {
   if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
 
   const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
   const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
-  if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType as MediaType)) {
+  if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType)) {
     return res.status(400).json({ error: 'invalid_image' });
   }
+
+  // Allowed categories from the client, always including an "Uncategorised" escape.
+  const rawCats: unknown = req.body?.categories;
+  const bodyCats = Array.isArray(rawCats)
+    ? rawCats.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+    : [];
+  const categories = bodyCats.length
+    ? Array.from(new Set([...bodyCats, 'Uncategorised']))
+    : DEFAULT_CATEGORIES;
+  const categorySet = new Set(categories);
+
+  const isPdf = mediaType === PDF_MEDIA;
+  const fileBlock: Anthropic.ContentBlockParam = isPdf
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: imageBase64 } }
+    : { type: 'image', source: { type: 'base64', media_type: mediaType as ImageMedia, data: imageBase64 } };
 
   try {
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
@@ -87,22 +117,20 @@ extractRouter.post('/extract', async (req, res) => {
         {
           role: 'user',
           content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: mediaType as MediaType, data: imageBase64 },
-            },
+            fileBlock,
             {
               type: 'text',
               text:
-                'Extract the purchase/expense details from this receipt or invoice image. ' +
-                'Use the values printed on the document; infer a sensible expense category. ' +
-                'Capture the invoice/receipt number exactly as printed when present. ' +
+                `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. ` +
+                'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
+                'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
+                'pick "Uncategorised" only when none reasonably fit. ' +
                 'If a field is not present, use an empty string or 0.',
             },
           ],
         },
       ],
-      output_config: { format: { type: 'json_schema', schema: receiptJsonSchema } },
+      output_config: { format: { type: 'json_schema', schema: buildSchema(categories) } },
     });
 
     if (message.stop_reason === 'refusal') {
@@ -115,7 +143,9 @@ extractRouter.post('/extract', async (req, res) => {
     if (!parsed.success) {
       return res.status(502).json({ error: 'no_data' });
     }
-    return res.json({ ok: true, data: parsed.data });
+    // Belt-and-suspenders: snap to a known category if the model somehow strays.
+    const data = { ...parsed.data, category: categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised' };
+    return res.json({ ok: true, data });
   } catch (err) {
     console.error('[extract] failed', err);
     return res.status(500).json({ error: 'extraction_failed' });

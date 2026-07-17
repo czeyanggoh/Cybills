@@ -364,7 +364,7 @@ export default function CostDetail() {
       const res = await fetch('/api/costs/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64, mediaType }),
+        body: JSON.stringify({ imageBase64, mediaType, categories: CATEGORIES }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -489,7 +489,7 @@ export default function CostDetail() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/png,image/jpeg,image/webp"
+                accept="image/png,image/jpeg,image/webp,application/pdf"
                 className="hidden"
                 onChange={onFile}
               />
