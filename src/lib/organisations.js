@@ -80,6 +80,19 @@ export async function deleteOrganisation(id) {
 export function fetchXeroAccounts(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/accounts`).then((b) => b.accounts ?? []);
 }
+
+// The linked organisation's Xero chart of accounts (account codes), fetched
+// live through the cyworkspace relay. Only runs once an organisation is picked.
+export function useXeroAccounts(organisationId) {
+  return useQuery({
+    queryKey: ['xero-accounts', organisationId],
+    queryFn: () => fetchXeroAccounts(organisationId),
+    enabled: Boolean(organisationId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
 export function fetchXeroTaxRates(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/taxrates`).then((b) => b.taxRates ?? []);
 }
