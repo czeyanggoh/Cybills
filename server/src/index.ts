@@ -7,6 +7,8 @@ import { authRouter } from './auth.js';
 import { orgRouter } from './org.js';
 import { extractRouter } from './extract.js';
 import { billsRouter } from './bills.js';
+import { organisationsRouter } from './organisations.js';
+import { xeroRouter } from './xero.js';
 
 const app = express();
 
@@ -34,6 +36,12 @@ app.use('/api/costs', extractRouter);
 
 // Persisted bills + duplicate detection (works without a Vision key).
 app.use('/api/costs', billsRouter);
+
+// Organisations linked to Xero tenants (via the cyworkspace relay).
+app.use('/api/organisations', organisationsRouter);
+
+// Xero, spoken through cyworkspace's relay. 503s until CYWORKSPACE_API_KEY set.
+app.use('/api/xero', xeroRouter);
 
 app.listen(env.PORT, () => {
   console.log(`[cybills] server listening on :${env.PORT} (${env.NODE_ENV})`);

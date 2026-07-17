@@ -91,6 +91,10 @@ export function billToDoc(b) {
     invoiceNumber: b.invoiceNumber || '',
     hasFile: Boolean(b.hasFile),
     contentType: b.contentType || '',
+    // Xero provenance (set once published through the cyworkspace relay).
+    xeroInvoiceId: b.xeroInvoiceId || '',
+    xeroTenantName: b.xeroTenantName || '',
+    xeroPostedAt: b.xeroPostedAt || '',
   };
 }
 

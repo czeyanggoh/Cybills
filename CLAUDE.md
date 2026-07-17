@@ -31,6 +31,20 @@ Then act based on result:
   `git diff`) before overwriting.
 - **Diverged** → STOP and let the user choose rebase/merge/discard.
 
+## Xero via the cyworkspace relay
+
+CYBills never holds Xero credentials. All Xero traffic goes through
+cyworkspace's authenticated relay
+(`ANY /api/webhooks/xero-relay/<XeroPath>?tenant_id=<UUID>`, `X-API-Key`
+header) — cyworkspace owns the OAuth client, token refresh, and 429 retries.
+Server-side consumer lives in `server/src/xero.ts`; organisations (client
+entities linked to a Xero tenant) in `server/src/organisations.ts`.
+
+Env (server/.env): `CYWORKSPACE_RELAY_URL` (on the VPS use
+`http://127.0.0.1:3001` — both apps share the box) and `CYWORKSPACE_API_KEY`
+(same value as cyworkspace's `WEBHOOK_API_KEY`). Xero endpoints 503 until the
+key is set, so deploys are safe before the env is configured.
+
 ## Push policy: auto-deploy enabled
 
 The operator has granted standing authorization to push to `main` after each

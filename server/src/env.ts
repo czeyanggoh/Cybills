@@ -49,6 +49,16 @@ export const env = {
   // store data outside the repo checkout.
   BILLS_DATA_DIR: process.env.BILLS_DATA_DIR ?? '',
 
+  // --- Xero (via the cyworkspace relay) --------------------------------------
+  // CYBills never talks to Xero or holds Xero tokens directly. All Xero calls
+  // go through cyworkspace's authenticated relay, which owns the OAuth client,
+  // token refresh, and rate-limit retries. Set the relay origin (on the VPS
+  // both apps share a box, so http://127.0.0.1:3001 avoids the public round
+  // trip) and the shared webhook API key. Xero features 503 until the key is
+  // set (see `xeroEnabled`).
+  CYWORKSPACE_RELAY_URL: process.env.CYWORKSPACE_RELAY_URL ?? 'https://cyworkspace.cy-bm.sg',
+  CYWORKSPACE_API_KEY: process.env.CYWORKSPACE_API_KEY ?? '',
+
   // --- Cloudflare R2 (original bill files) ----------------------------------
   // Object storage for the uploaded file bytes (the JSON store only keeps
   // metadata + a hash). All four must be set for file storage to switch on (see
@@ -69,6 +79,10 @@ export const googleEnabled = Boolean(
 
 // Claude Vision receipt extraction is enabled once an Anthropic API key is set.
 export const visionEnabled = Boolean(env.ANTHROPIC_API_KEY);
+
+// Xero (via the cyworkspace relay) switches on once the shared webhook API key
+// is configured. Until then the Xero endpoints return 503 xero_not_configured.
+export const xeroEnabled = Boolean(env.CYWORKSPACE_API_KEY);
 
 // R2 file storage switches on once the account, bucket, and credentials are all
 // configured. Until then uploads persist metadata + dedup only (no stored file).

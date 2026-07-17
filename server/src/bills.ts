@@ -19,7 +19,8 @@ import { putBillFile, getBillFile } from './storage.js';
 
 // Single-tenant for now: scope by the signed-in user's email domain, else a
 // shared default. Gives real separation once OAuth is on without a tenant model.
-function orgIdFor(req: Request): string {
+// (Exported for the organisations + xero routers, which scope the same way.)
+export function orgIdFor(req: Request): string {
   const me = readSession(req);
   const domain = me?.email?.split('@')[1]?.toLowerCase();
   return domain || 'cybills';

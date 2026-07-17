@@ -27,6 +27,12 @@ export type Bill = {
   storageKey: string; // storage key for the original file (r2:/local: prefixed), or ''
   contentType: string; // MIME type of the stored file, or ''
   status: string; // workflow state: 'new' (inbox) | 'ready' | 'archived'
+  // Set once the bill has been published to Xero (via the cyworkspace relay).
+  // A non-empty xeroInvoiceId means "already posted" and blocks re-publishing.
+  xeroInvoiceId?: string;
+  xeroTenantId?: string;
+  xeroTenantName?: string;
+  xeroPostedAt?: string; // ISO timestamp
 };
 
 // What the caller knows about an incoming upload before it is stored.
@@ -181,6 +187,24 @@ export function setBillFile(
   if (!bill) return null;
   bill.storageKey = storageKey;
   bill.contentType = contentType;
+  persist(bills);
+  return bill;
+}
+
+// Record a successful publish to Xero. Separate from updateBill so the Xero
+// provenance fields can never be edited through the generic PATCH endpoint.
+export function markBillPosted(
+  orgId: string,
+  id: string,
+  info: { xeroInvoiceId: string; xeroTenantId: string; xeroTenantName: string }
+): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  bill.xeroInvoiceId = info.xeroInvoiceId;
+  bill.xeroTenantId = info.xeroTenantId;
+  bill.xeroTenantName = info.xeroTenantName;
+  bill.xeroPostedAt = new Date().toISOString();
   persist(bills);
   return bill;
 }

@@ -13,6 +13,7 @@ import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
 import AddToClaimModal from '@/components/AddToClaimModal';
+import PublishToXeroModal from '@/components/PublishToXeroModal';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
@@ -172,6 +173,7 @@ export default function CostDetail() {
   const [splitOpen, setSplitOpen] = useState(false);
   const [claimOpen, setClaimOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
 
   const doc = mockDoc ?? persisted;
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
@@ -286,6 +288,17 @@ export default function CostDetail() {
     saveWithStatus('archived');
   };
 
+  // Publish to Xero (persisted bills only — the server posts the SAVED bill,
+  // so flush any on-screen edits first, keeping the current workflow status).
+  const openPublish = async () => {
+    await persistStatus(persisted?.status ?? 'new');
+    setPublishOpen(true);
+  };
+  const onPublished = ({ bill }) => {
+    if (bill) setPersisted(billToDoc({ ...bill, hasFile: Boolean(bill.storageKey) }));
+    notifyBillsChanged();
+  };
+
   const onUploadClick = () => {
     setAiError('');
     fileInputRef.current?.click();
@@ -358,6 +371,14 @@ export default function CostDetail() {
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
         <TopButton onClick={() => saveWithStatus('ready')}>Move to ready</TopButton>
+        {doc.persisted &&
+          (doc.xeroInvoiceId ? (
+            <span className="inline-flex h-8 items-center gap-1 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700">
+              Posted to {doc.xeroTenantName || 'Xero'}
+            </span>
+          ) : (
+            <TopButton onClick={openPublish}>Publish to Xero</TopButton>
+          ))}
         <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>
         <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
         <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
@@ -580,6 +601,12 @@ export default function CostDetail() {
           if (targetId) addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
           saveWithStatus('expenseclaim');
         }}
+      />
+      <PublishToXeroModal
+        open={publishOpen}
+        onClose={() => setPublishOpen(false)}
+        bill={{ id: doc.id, supplier: data.supplier, total: data.total, currency: data.currency, date: data.date }}
+        onPublished={onPublished}
       />
     </AppShell>
   );

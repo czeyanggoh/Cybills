@@ -15,10 +15,18 @@ import {
   History,
   Settings,
   LogOut,
+  Check,
+  Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import {
+  useOrganisations,
+  getActiveOrganisationId,
+  setActiveOrganisationId,
+} from '@/lib/organisations';
 import AddDocumentsDrawer from './AddDocumentsDrawer';
+import AddOrganisationModal from './AddOrganisationModal';
 
 // Primary workspaces (matches Dext's left rail: Costs / Sales / Bank / Vault).
 const NAV = [
@@ -91,6 +99,89 @@ function SidebarLink({ to, label, icon: Icon }) {
   );
 }
 
+// Workspace switcher (top-left). Lists the organisations linked to Xero
+// tenants in cyworkspace, marks the active one (persisted in localStorage —
+// it's the default destination when publishing to Xero), and hosts the
+// "Add organisation" entry point.
+function OrganisationSwitcher() {
+  const { data: organisations = [] } = useOrganisations();
+  const [open, setOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [activeId, setActiveId] = useState(getActiveOrganisationId);
+
+  const active = organisations.find((o) => o.id === activeId) ?? null;
+  const label = active?.name || 'CYBM Workspace';
+
+  const select = (id) => {
+    setActiveOrganisationId(id);
+    setActiveId(id);
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative flex items-center gap-2">
+      <span className="flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold">
+        {label.slice(0, 1).toUpperCase()}
+      </span>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 text-sm font-medium"
+      >
+        {label}
+        <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div className="absolute left-0 top-full z-20 mt-1 w-72 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+            {organisations.length === 0 && (
+              <p className="px-3 py-2 text-sm text-muted-foreground">
+                No organisations yet. Link one to a Xero organisation to start publishing bills.
+              </p>
+            )}
+            {organisations.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => select(o.id)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+              >
+                <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{o.name}</span>
+                  {o.tenantName && o.tenantName !== o.name && (
+                    <span className="block truncate text-xs text-muted-foreground">{o.tenantName}</span>
+                  )}
+                </span>
+                {o.id === activeId && <Check className="h-4 w-4 shrink-0" />}
+              </button>
+            ))}
+            <div className="mt-1 border-t pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setAddOpen(true);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+              >
+                <Plus className="h-4 w-4 text-muted-foreground" strokeWidth={2} />
+                Add organisation
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+      <AddOrganisationModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onAdded={(o) => setActiveId(o.id)}
+      />
+    </div>
+  );
+}
+
 // App chrome for the signed-in experience. `subnav` renders an optional second
 // column (used by Costs for its inbox/expense-claims/suppliers list).
 export default function AppShell({ subnav = null, children }) {
@@ -157,15 +248,7 @@ export default function AppShell({ subnav = null, children }) {
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Global top bar: workspace switcher + help + user */}
           <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4 md:px-6">
-            <div className="flex items-center gap-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold">
-                C
-              </span>
-              <button type="button" className="flex items-center gap-1 text-sm font-medium">
-                CYBM Workspace
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              </button>
-            </div>
+            <OrganisationSwitcher />
             <div className="ml-auto flex items-center gap-3">
               <nav className="flex items-center gap-1">
                 {TOP_TABS.map(({ to, label }) => (
