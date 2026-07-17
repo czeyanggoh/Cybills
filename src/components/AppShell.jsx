@@ -17,6 +17,7 @@ import {
   LogOut,
   Check,
   Building2,
+  Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -27,6 +28,7 @@ import {
 } from '@/lib/organisations';
 import AddDocumentsDrawer from './AddDocumentsDrawer';
 import AddOrganisationModal from './AddOrganisationModal';
+import RemoveOrganisationModal from './RemoveOrganisationModal';
 
 // Primary workspaces (matches Dext's left rail: Costs / Sales / Bank / Vault).
 const NAV = [
@@ -107,6 +109,7 @@ function OrganisationSwitcher() {
   const { data: organisations = [] } = useOrganisations();
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState(null);
   const [activeId, setActiveId] = useState(getActiveOrganisationId);
 
   const active = organisations.find((o) => o.id === activeId) ?? null;
@@ -116,6 +119,15 @@ function OrganisationSwitcher() {
     setActiveOrganisationId(id);
     setActiveId(id);
     setOpen(false);
+  };
+
+  // After an organisation is unlinked, drop it as the active selection and fall
+  // back to whichever one remains (or none) so the switcher label stays valid.
+  const handleRemoved = (removed) => {
+    if (removed.id !== activeId) return;
+    const next = organisations.find((o) => o.id !== removed.id) ?? null;
+    setActiveOrganisationId(next?.id ?? '');
+    setActiveId(next?.id ?? '');
   };
 
   return (
@@ -141,21 +153,37 @@ function OrganisationSwitcher() {
               </p>
             )}
             {organisations.map((o) => (
-              <button
+              <div
                 key={o.id}
-                type="button"
-                onClick={() => select(o.id)}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                className="group flex items-center gap-1 px-1 transition-colors hover:bg-muted"
               >
-                <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{o.name}</span>
-                  {o.tenantName && o.tenantName !== o.name && (
-                    <span className="block truncate text-xs text-muted-foreground">{o.tenantName}</span>
-                  )}
-                </span>
-                {o.id === activeId && <Check className="h-4 w-4 shrink-0" />}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => select(o.id)}
+                  className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-sm"
+                >
+                  <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{o.name}</span>
+                    {o.tenantName && o.tenantName !== o.name && (
+                      <span className="block truncate text-xs text-muted-foreground">{o.tenantName}</span>
+                    )}
+                  </span>
+                  {o.id === activeId && <Check className="h-4 w-4 shrink-0" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    setRemoveTarget(o);
+                  }}
+                  className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-colors hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                  aria-label={`Remove ${o.name}`}
+                  title="Remove organisation"
+                >
+                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                </button>
+              </div>
             ))}
             <div className="mt-1 border-t pt-1">
               <button
@@ -177,6 +205,12 @@ function OrganisationSwitcher() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onAdded={(o) => setActiveId(o.id)}
+      />
+      <RemoveOrganisationModal
+        open={Boolean(removeTarget)}
+        organisation={removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        onRemoved={handleRemoved}
       />
     </div>
   );
