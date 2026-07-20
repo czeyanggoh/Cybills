@@ -167,6 +167,7 @@ function SearchAndTools() {
 
 // Approvals has its own toolbar + empty state.
 function ApprovalsPanel() {
+  const navigate = useNavigate();
   const [scope, setScope] = useState('me');
   return (
     <>
@@ -210,7 +211,11 @@ function ApprovalsPanel() {
           <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
             View all approvals
           </button>
-          <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
+          <button
+            type="button"
+            onClick={() => navigate('/settings?section=approvals')}
+            className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
+          >
             Go to approvals settings
           </button>
         </div>

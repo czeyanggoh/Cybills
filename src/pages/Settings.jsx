@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Building2,
   Share2,
@@ -852,10 +853,19 @@ function Placeholder({ label }) {
 const TITLES = Object.fromEntries(NAV.flatMap((s) => s.items).map((i) => [i.key, i.label]));
 
 export default function Settings() {
-  const [section, setSection] = useState('business');
+  // Deep-link support: /settings?section=approvals opens that section directly.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get('section');
+  const [section, setSection] = useState(() => (requested && TITLES[requested] ? requested : 'business'));
+
+  const selectSection = (key) => {
+    setSection(key);
+    // Reflect the choice in the URL (replace, so back doesn't step through tabs).
+    setSearchParams(key === 'business' ? {} : { section: key }, { replace: true });
+  };
 
   return (
-    <AppShell subnav={<SettingsNav active={section} onSelect={setSection} />}>
+    <AppShell subnav={<SettingsNav active={section} onSelect={selectSection} />}>
       <h1 className="mb-6 text-xl font-semibold tracking-tight">{TITLES[section]}</h1>
       {section === 'business' ? (
         <BusinessProfile />
