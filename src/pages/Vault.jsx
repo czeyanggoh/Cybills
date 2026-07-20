@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Flag, FileText, ChevronDown, Filter, Settings2, LayoutGrid, Folder } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import VaultSubnav from '@/components/VaultSubnav';
-import { VAULT_FILES } from '@/data/vaultFiles';
+import { useVaultFiles, fileTypeBadge } from '@/lib/vaultStore';
 import { cn } from '@/lib/utils';
 
 const TABS = [
@@ -31,7 +31,7 @@ export default function Vault() {
   const [tab, setTab] = useState('folders');
   const [selected, setSelected] = useState(() => new Set());
 
-  const rows = VAULT_FILES;
+  const rows = useVaultFiles();
   const hasSelection = selected.size > 0;
 
   const toggle = (id) =>
@@ -121,7 +121,7 @@ export default function Vault() {
                   <div className="flex items-center gap-2">
                     <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggle(f.id)} className="h-4 w-4 accent-black" />
                     <Flag className={cn('h-3.5 w-3.5', f.flagged ? 'fill-foreground text-foreground' : 'text-muted-foreground/60')} strokeWidth={1.75} />
-                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-semibold text-muted-foreground">PDF</span>
+                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-semibold text-muted-foreground">{fileTypeBadge(f.name)}</span>
                   </div>
                 </td>
                 <td className="flex items-center gap-2 px-3 py-3">

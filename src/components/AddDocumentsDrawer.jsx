@@ -12,6 +12,7 @@ import {
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts } from '@/lib/organisations';
+import { addVaultFiles } from '@/lib/vaultStore';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
 // Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
@@ -26,7 +27,7 @@ const MODES = [
 
 let uid = 0;
 
-function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles }) {
+function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, accept = 'image/png,image/jpeg,image/webp,image/gif,application/pdf' }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
 
@@ -56,7 +57,7 @@ function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles })
         ref={inputRef}
         type="file"
         multiple
-        accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+        accept={accept || undefined}
         className="hidden"
         onChange={(e) => {
           take(e.target.files);
@@ -169,8 +170,16 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const [tab, setTab] = useState('Costs');
   const [mode, setMode] = useState('file');
   const [items, setItems] = useState([]);
+  const [vaultItems, setVaultItems] = useState([]);
 
   if (!open) return null;
+
+  // Vault stores any file (metadata) client-side — no OCR / dedup, just save it
+  // so it shows in the Vault list.
+  const onVaultFiles = (files) => {
+    const added = addVaultFiles(files);
+    setVaultItems((prev) => [...added.map((f) => ({ id: f.id, name: f.name })), ...prev]);
+  };
 
   const isUpload = tab === 'Costs' || tab === 'Sales';
 
@@ -373,17 +382,32 @@ export default function AddDocumentsDrawer({ open, onClose }) {
 
             {isUpload ? (
               <Dropzone onFiles={onFiles} />
+            ) : tab === 'Vault' ? (
+              // Vault accepts any file type (store anything for safekeeping).
+              <Dropzone onFiles={onVaultFiles} accept="" hint="100MB max per file" />
             ) : (
               <Dropzone
                 onFiles={() => {}}
                 hint={
                   tab === 'Bank'
                     ? '50MB, minimum 200dpi scans'
-                    : tab === 'Supplier statements'
-                      ? '6MB for images, 40MB for PDFs'
-                      : '100MB max per file'
+                    : '6MB for images, 40MB for PDFs'
                 }
               />
+            )}
+
+            {tab === 'Vault' && vaultItems.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {vaultItems.map((it) => (
+                  <div key={it.id} className="flex items-center gap-3 rounded-md border p-3">
+                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate text-sm">{it.name}</span>
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Added to Vault
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
 
             {isUpload && !visionEnabled && (
