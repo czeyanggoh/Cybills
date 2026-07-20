@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, ChevronDown, Flag, Copy, Star } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Flag, Sparkles, Upload, FileText } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
+import { useAuth } from '@/lib/auth';
 import { SALES, getSale } from '@/data/sales';
-import { useCategoryOptions } from '@/lib/organisations';
+import { useCategoryOptions, getExtractionAccounts } from '@/lib/organisations';
+import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
 
 function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false }) {
@@ -78,48 +80,42 @@ function SectionHeading({ children }) {
   );
 }
 
-// Left panel: a compact ride-receipt-style preview of the sales document.
-function SalesPreview({ sale }) {
+// Left panel: the uploaded invoice/receipt once one exists, else a neutral
+// placeholder prompting an upload.
+function ReceiptPreview({ sale, imageUrl, previewType }) {
+  if (imageUrl) {
+    return (
+      <div className="overflow-hidden rounded-lg border bg-background">
+        <div className="border-b px-4 py-3 text-sm font-medium">Uploaded document</div>
+        {previewType === 'pdf' ? (
+          <iframe src={imageUrl} title="Uploaded document" className="h-[560px] w-full" />
+        ) : (
+          <img src={imageUrl} alt="Uploaded document" className="max-h-[560px] w-full object-contain" />
+        )}
+      </div>
+    );
+  }
   return (
     <div className="overflow-hidden rounded-lg border bg-background">
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <span className="text-sm font-medium">{sale.date}{sale.time ? `, ${sale.time}` : ''}</span>
-        <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{sale.type}</span>
+      <div className="border-b px-4 py-3 text-sm">
+        <span className="font-medium">{sale.customer || 'Sales invoice'}</span>
+        {sale.date && <span className="ml-2 text-muted-foreground">· {sale.date}</span>}
       </div>
-      <div className="space-y-3 p-4">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Booking ID</span>
-          <span className="flex items-center gap-2 font-mono text-xs">
-            {sale.ref}
-            <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-          </span>
-        </div>
-        <div className="rounded-md border p-3 text-center text-sm">
-          <p className="text-muted-foreground">Rate this ride</p>
-          <div className="mt-2 flex justify-center gap-1 text-muted-foreground/40">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <Star key={i} className="h-5 w-5" strokeWidth={1.5} />
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center gap-3 rounded-md border p-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-xs font-medium">
-            {sale.payer.split(' ').map((w) => w[0]).slice(0, 2).join('')}
-          </div>
-          <span className="text-sm font-medium">{sale.payer}</span>
-        </div>
-        <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-          <span className="text-muted-foreground">{sale.card}</span>
-          <span className="text-xs text-muted-foreground">Personal</span>
-        </div>
-        <div className="flex items-center justify-between border-t pt-3 text-sm">
-          <span className="text-muted-foreground">Total</span>
-          <span className="font-semibold">S${sale.total}</span>
-        </div>
+      <div className="flex h-80 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
+        <FileText className="h-8 w-8" strokeWidth={1.5} />
+        <p className="text-sm">No file preview for this document.</p>
+        <p className="text-xs">Use “Upload document” to attach the original.</p>
       </div>
     </div>
   );
 }
+
+const EXTRACT_ERRORS = {
+  vision_not_configured: 'Vision extraction isn’t configured on the server yet.',
+  invalid_image: 'That file type isn’t supported — use a PNG, JPG, WebP or PDF.',
+  refused: 'Claude declined to read that document.',
+  no_data: 'Couldn’t read fields from that document — try a clearer file.',
+};
 
 function initialData(s) {
   return {
@@ -142,12 +138,18 @@ function initialData(s) {
 export default function SalesDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { visionEnabled } = useAuth();
   const categoryOptions = useCategoryOptions();
+  const fileInputRef = useRef(null);
   const sale = getSale(id);
   const [tab, setTab] = useState('details');
   const [moveOpen, setMoveOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const [paid, setPaid] = useState(false);
+  const [imageUrl, setImageUrl] = useState('');
+  const [previewType, setPreviewType] = useState('image');
+  const [extracting, setExtracting] = useState(false);
+  const [aiError, setAiError] = useState('');
   const [data, setData] = useState(() => initialData(sale ?? {}));
 
   const index = SALES.findIndex((s) => String(s.id) === String(id));
@@ -164,6 +166,52 @@ export default function SalesDetail() {
   const go = (delta) => {
     const next = SALES[index + delta];
     if (next) navigate(`/sales/${next.id}`);
+  };
+
+  const onUploadClick = () => {
+    setAiError('');
+    fileInputRef.current?.click();
+  };
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setAiError('');
+    const { base64: imageBase64, mediaType, previewUrl } = await prepareUpload(file);
+    setPreviewType(mediaType.includes('pdf') ? 'pdf' : 'image');
+    setImageUrl(previewUrl);
+    // Auto-fill from the uploaded document when Claude Vision is configured.
+    if (!visionEnabled) return;
+    setExtracting(true);
+    try {
+      const accounts = await getExtractionAccounts();
+      const res = await fetch('/api/costs/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64, mediaType, accounts }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setAiError(EXTRACT_ERRORS[body.error] ?? 'Extraction failed — please try again.');
+        return;
+      }
+      const { data: ex } = await res.json();
+      setData((d) => ({
+        ...d,
+        date: ex.date || d.date,
+        ref: ex.invoiceNumber || d.ref,
+        category: ex.category || d.category,
+        total: ex.total != null ? String(ex.total) : d.total,
+        tax: ex.tax != null ? String(ex.tax) : d.tax,
+        // Fill the customer from the extracted party only if it's still blank.
+        customer: d.customer || ex.supplier || '',
+      }));
+    } catch {
+      setAiError('Could not read that file.');
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const MOVE_DESTS = [
@@ -235,8 +283,8 @@ export default function SalesDetail() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Left: preview */}
-        <SalesPreview sale={sale} />
+        {/* Left: uploaded document preview */}
+        <ReceiptPreview sale={sale} imageUrl={imageUrl} previewType={previewType} />
 
         {/* Right: details */}
         <div>
@@ -263,6 +311,38 @@ export default function SalesDetail() {
 
           {tab === 'details' && (
             <div>
+              {/* Upload an invoice/receipt image or PDF + Claude auto-fill. */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,application/pdf"
+                className="hidden"
+                onChange={onFile}
+              />
+              <button
+                type="button"
+                onClick={onUploadClick}
+                disabled={extracting}
+                className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+              >
+                {visionEnabled ? <Sparkles className="h-4 w-4" strokeWidth={2} /> : <Upload className="h-4 w-4" strokeWidth={2} />}
+                {extracting
+                  ? 'Reading document…'
+                  : visionEnabled
+                    ? 'Upload document & auto-fill with Claude'
+                    : 'Upload document'}
+              </button>
+              {aiError && (
+                <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
+                  {aiError}
+                </p>
+              )}
+              {imageUrl && !visionEnabled && (
+                <p className="mb-2 rounded-md border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
+                  Document attached. AI auto-fill is off — fill in the fields below manually.
+                </p>
+              )}
+
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={sale.itemId} readOnly /></Field>
               <Field label="Document owner"><Input value={data.user} onChange={(v) => set('user', v)} /></Field>
@@ -279,7 +359,7 @@ export default function SalesDetail() {
 
               <SectionHeading>Allocation</SectionHeading>
               <Field label="Project"><Input value={data.project} onChange={(v) => set('project', v)} /></Field>
-              <Field label="Description" hint={`Use ${sale.payer}`}>
+              <Field label="Description">
                 <textarea
                   rows={2}
                   value={data.description}
@@ -350,8 +430,8 @@ export default function SalesDetail() {
         open={splitOpen}
         onClose={() => setSplitOpen(false)}
         onSplit={() => setSplitOpen(false)}
-        imageUrl=""
-        previewType="image"
+        imageUrl={imageUrl}
+        previewType={previewType}
         current={{ category: data.category, total: data.total, tax: data.tax }}
       />
     </AppShell>
