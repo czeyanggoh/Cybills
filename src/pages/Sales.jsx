@@ -1,9 +1,10 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Flag, Image, ChevronDown, Search, Filter, Settings2 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
 import { SALES } from '@/data/sales';
-import { CATEGORIES } from '@/data/categories';
+import { useCategoryOptions } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 const TABS = [
@@ -32,8 +33,10 @@ function ToolbarButton({ children, disabled = false, dropdown = false }) {
 }
 
 export default function Sales() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
+  const categoryOptions = useCategoryOptions();
 
   const rows = tab === 'inbox' ? SALES : [];
   const hasSelection = selected.size > 0;
@@ -126,8 +129,12 @@ export default function Sales() {
           </thead>
           <tbody>
             {rows.map((d) => (
-              <tr key={d.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
-                <td className="px-3 py-3">
+              <tr
+                key={d.id}
+                onClick={() => navigate(`/sales/${d.id}`)}
+                className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
+              >
+                <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-1.5">
                     <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggle(d.id)} className="h-4 w-4 accent-black" />
                     <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
@@ -140,10 +147,10 @@ export default function Sales() {
                 <td className="whitespace-nowrap px-3 py-3">{d.user}</td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{d.date}</td>
                 <td className="px-3 py-3">{d.customer}</td>
-                <td className="px-3 py-3">
+                <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                   <select defaultValue={d.category} className="w-44 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    {!CATEGORIES.includes(d.category) && <option value={d.category}>{d.category}</option>}
-                    {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {!categoryOptions.includes(d.category) && <option value={d.category}>{d.category}</option>}
+                    {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-muted-foreground">{d.ref}</td>

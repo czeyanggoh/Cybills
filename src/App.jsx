@@ -10,6 +10,7 @@ import ExpenseClaimDetail from './pages/ExpenseClaimDetail';
 import Suppliers from './pages/Suppliers';
 import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
+import SalesDetail from './pages/SalesDetail';
 import Customers from './pages/Customers';
 import Vault from './pages/Vault';
 import UsersPage from './pages/Users';
@@ -37,6 +38,7 @@ function App() {
             <Route path="/costs" element={<Protected><Costs /></Protected>} />
             <Route path="/costs/:id" element={<Protected><CostDetail /></Protected>} />
             <Route path="/sales" element={<Protected><Sales /></Protected>} />
+            <Route path="/sales/:id" element={<Protected><SalesDetail /></Protected>} />
             <Route path="/customers" element={<Protected><Customers /></Protected>} />
             <Route path="/bank" element={<Protected><ComingSoon /></Protected>} />
             <Route path="/vault" element={<Protected><Vault /></Protected>} />
