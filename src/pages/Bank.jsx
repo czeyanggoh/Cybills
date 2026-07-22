@@ -100,8 +100,9 @@ export default function Bank({ view = 'transactions' }) {
           <table className="w-full min-w-[640px] text-sm">
             <thead className="border-b bg-muted/40 text-left text-muted-foreground">
               <tr>
-                <th className="px-3 py-2.5 font-medium">Name</th>
-                <th className="px-3 py-2.5 font-medium">Account number</th>
+                <th className="px-3 py-2.5 font-medium">Bank</th>
+                <th className="px-3 py-2.5 font-medium">Account name</th>
+                <th className="px-3 py-2.5 font-medium">Reference</th>
                 <th className="px-3 py-2.5 font-medium">Currency</th>
                 <th className="w-12" />
               </tr>
@@ -109,8 +110,9 @@ export default function Bank({ view = 'transactions' }) {
             <tbody>
               {accounts.map((a) => (
                 <tr key={a.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
+                  <td className="px-3 py-3">{a.bank || '—'}</td>
                   <td className="px-3 py-3 font-medium">{a.name}</td>
-                  <td className="px-3 py-3 tabular-nums text-muted-foreground">{a.number || '—'}</td>
+                  <td className="px-3 py-3 tabular-nums text-muted-foreground">{a.reference || '—'}</td>
                   <td className="px-3 py-3">{a.currency}</td>
                   <td className="px-2 py-3 text-center">
                     <button
