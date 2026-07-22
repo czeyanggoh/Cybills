@@ -852,6 +852,99 @@ function Placeholder({ label }) {
 
 const TITLES = Object.fromEntries(NAV.flatMap((s) => s.items).map((i) => [i.key, i.label]));
 
+// Business settings → Connections. Accounting software is the live one (CYBills
+// posts to Xero through the cyworkspace relay); Back up and Cost connections are
+// shown for parity with Dext but not yet wired.
+function Connections() {
+  const { data: organisations = [] } = useOrganisations();
+  const linked = organisations.filter((o) => o.xeroTenantId || o.xeroTenantName);
+
+  return (
+    <div className="space-y-5">
+      <Card title="Accounting software">
+        <div className="rounded-lg border p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="font-medium">Connect and manage software for bookkeeping</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Retrieve data from your accounting software and publish transactions directly to it.
+              </p>
+            </div>
+            <a
+              href="#"
+              onClick={(e) => e.preventDefault()}
+              className="pointer-events-none inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium text-muted-foreground"
+            >
+              {linked.length ? 'Connected' : 'Connect'}
+            </a>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {/* Xero is the only supported provider today; the rest are shown greyed for parity. */}
+            <span className="inline-flex h-8 items-center rounded-md border border-foreground/30 bg-muted px-3 text-sm font-medium">
+              Xero
+            </span>
+            {['QuickBooks', 'Sage', 'KashFlow', 'FreeAgent'].map((p) => (
+              <span key={p} className="inline-flex h-8 items-center rounded-md border px-3 text-sm text-muted-foreground/60">
+                {p}
+              </span>
+            ))}
+            <span className="inline-flex h-8 items-center rounded-md bg-muted px-3 text-xs text-muted-foreground">+22 more</span>
+          </div>
+          {linked.length > 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              Linked to Xero:{' '}
+              <span className="font-medium text-foreground">
+                {linked.map((o) => o.xeroTenantName || o.name).join(', ')}
+              </span>
+              .
+            </p>
+          ) : (
+            <p className="mt-4 text-sm text-muted-foreground">
+              Only Xero is available right now. Link a Xero organisation from the workspace menu
+              (top-left) to publish bills through the relay.
+            </p>
+          )}
+        </div>
+      </Card>
+
+      <Card title="Back up">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-medium">Backup your paperwork</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Connect CYBills to a cloud storage provider to back up all your Costs and Sales
+              documents automatically or on demand.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2 text-sm text-muted-foreground/60">
+              {['Dropbox', 'Google Drive', 'OneDrive', 'Everial'].map((p) => (
+                <span key={p} className="inline-flex h-8 items-center rounded-md border px-3">{p}</span>
+              ))}
+            </div>
+          </div>
+          <button type="button" className="inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium text-muted-foreground" disabled>
+            Connect
+          </button>
+        </div>
+      </Card>
+
+      <Card title="Cost connections">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-medium">Fetch bills automatically</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Automatically collect your new bills and invoices from these apps or websites. Find the
+              collected documents in your Costs inbox.
+            </p>
+          </div>
+          <button type="button" className="inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium text-muted-foreground" disabled>
+            Connect
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function Settings() {
   // Deep-link support: /settings?section=approvals opens that section directly.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -869,6 +962,8 @@ export default function Settings() {
       <h1 className="mb-6 text-xl font-semibold tracking-tight">{TITLES[section]}</h1>
       {section === 'business' ? (
         <BusinessProfile />
+      ) : section === 'connections' ? (
+        <Connections />
       ) : section === 'extraction' ? (
         <Extraction />
       ) : section === 'automation' ? (

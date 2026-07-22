@@ -12,13 +12,13 @@ import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
 import SalesDetail from './pages/SalesDetail';
 import Customers from './pages/Customers';
+import Bank from './pages/Bank';
 import Vault from './pages/Vault';
 import UsersPage from './pages/Users';
 import SubmissionHistory from './pages/SubmissionHistory';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
 import SupportDesk from './pages/SupportDesk';
-import ComingSoon from './pages/ComingSoon';
 
 const queryClient = new QueryClient();
 
@@ -40,7 +40,9 @@ function App() {
             <Route path="/sales" element={<Protected><Sales /></Protected>} />
             <Route path="/sales/:id" element={<Protected><SalesDetail /></Protected>} />
             <Route path="/customers" element={<Protected><Customers /></Protected>} />
-            <Route path="/bank" element={<Protected><ComingSoon /></Protected>} />
+            <Route path="/bank" element={<Protected><Bank view="transactions" /></Protected>} />
+            <Route path="/bank/statements" element={<Protected><Bank view="statements" /></Protected>} />
+            <Route path="/bank/accounts" element={<Protected><Bank view="accounts" /></Protected>} />
             <Route path="/vault" element={<Protected><Vault /></Protected>} />
             <Route path="/expense-claims" element={<Protected><ExpenseClaims /></Protected>} />
             <Route path="/expense-claims/:id" element={<Protected><ExpenseClaimDetail /></Protected>} />

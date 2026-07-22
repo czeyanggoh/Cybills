@@ -1,23 +1,37 @@
 import { useState } from 'react';
-import { Search, Filter, ChevronDown } from 'lucide-react';
+import { Search, Filter } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
+import SearchSelect from '@/components/SearchSelect';
 import { CUSTOMERS } from '@/data/customers';
+import { useCategoryOptions } from '@/lib/organisations';
+import { getCustomerRule, saveCustomerRule, PROJECTS } from '@/lib/customerRules';
 import { cn } from '@/lib/utils';
-
-function DropCell() {
-  return (
-    <div className="inline-flex w-full items-center justify-between rounded-md border bg-background px-2.5 py-1.5 text-xs text-muted-foreground">
-      <span className="truncate">—</span>
-      <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-    </div>
-  );
-}
 
 export default function Customers() {
   const [selected, setSelected] = useState(() => new Set());
-  const rows = CUSTOMERS;
+  const [query, setQuery] = useState('');
+  const categoryOptions = useCategoryOptions();
+  // Per-customer Category/Project, seeded from any saved customer rule. Editing a
+  // cell writes back to that customer's rule so it also applies to new uploads.
+  const [assign, setAssign] = useState(() => {
+    const init = {};
+    for (const c of CUSTOMERS) {
+      const rule = getCustomerRule(c.name);
+      init[c.id] = { category: rule?.category || '', project: rule?.project || '' };
+    }
+    return init;
+  });
+
+  const q = query.trim().toLowerCase();
+  const rows = CUSTOMERS.filter((c) => !q || c.name.toLowerCase().includes(q));
   const hasSelection = selected.size > 0;
+
+  const setField = (customer, field, value) => {
+    setAssign((a) => ({ ...a, [customer.id]: { ...a[customer.id], [field]: value } }));
+    const rule = getCustomerRule(customer.name) || {};
+    saveCustomerRule(customer.name, { ...rule, [field]: value });
+  };
 
   const toggle = (id) =>
     setSelected((prev) => {
@@ -40,14 +54,20 @@ export default function Customers() {
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <button type="button" disabled={!hasSelection} className={cn('inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors', hasSelection ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/50')}>
-          Actions <ChevronDown className="h-3.5 w-3.5" />
+          Actions
         </button>
         <button type="button" className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted">
           Import from CSV
         </button>
         <div className="relative ml-auto hidden sm:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input type="text" placeholder="Filter by name" className="h-8 w-52 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter by name"
+            className="h-8 w-52 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          />
         </div>
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Filter">
           <Filter className="h-4 w-4" strokeWidth={1.75} />
@@ -73,10 +93,31 @@ export default function Customers() {
                   <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggle(c.id)} className="h-4 w-4 accent-black" />
                 </td>
                 <td className="px-3 py-3 font-medium">{c.name}</td>
-                <td className="px-3 py-3"><DropCell /></td>
-                <td className="px-3 py-3"><DropCell /></td>
+                <td className="px-3 py-3">
+                  <SearchSelect
+                    compact
+                    value={assign[c.id]?.category || ''}
+                    options={categoryOptions}
+                    onChange={(v) => setField(c, 'category', v)}
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <SearchSelect
+                    compact
+                    value={assign[c.id]?.project || ''}
+                    options={PROJECTS}
+                    onChange={(v) => setField(c, 'project', v)}
+                  />
+                </td>
               </tr>
             ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                  No customers match “{query}”.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
