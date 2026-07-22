@@ -5,7 +5,10 @@ import AppShell from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
 import CustomerRulesModal from '@/components/CustomerRulesModal';
+import AddCategoryModal from '@/components/AddCategoryModal';
+import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { currencyLabel } from '@/lib/customerRules';
+import { usePaymentMethods } from '@/lib/paymentMethods';
 import { useAuth } from '@/lib/auth';
 import { SALES, getSale } from '@/data/sales';
 import { useCategoryOptions, getExtractionAccounts } from '@/lib/organisations';
@@ -225,7 +228,10 @@ export default function SalesDetail() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [catModalOpen, setCatModalOpen] = useState(false);
+  const [pmModalOpen, setPmModalOpen] = useState(false);
   const [paid, setPaid] = useState(false);
+  const paymentMethods = usePaymentMethods();
   const [imageUrl, setImageUrl] = useState('');
   const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);
@@ -504,6 +510,13 @@ export default function SalesDetail() {
               <Field label="Due date"><Input value={data.dueDate} onChange={(v) => set('dueDate', v)} /></Field>
               <Field label="Category">
                 <EditableSelect value={data.category} options={categoryOptions} onChange={setCategory} />
+                <button
+                  type="button"
+                  onClick={() => setCatModalOpen(true)}
+                  className="mt-1 text-xs font-medium text-emerald-600 hover:underline"
+                >
+                  Add category
+                </button>
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>
@@ -532,7 +545,20 @@ export default function SalesDetail() {
                   <span className="text-sm text-muted-foreground">{paid ? 'Yes' : 'No'}</span>
                 </button>
               </Field>
-              <Field label="Payment method"><Input value={data.paymentMethod} onChange={(v) => set('paymentMethod', v)} /></Field>
+              <Field label="Payment method">
+                <EditableSelect
+                  value={data.paymentMethod}
+                  options={paymentMethods.map((p) => p.label)}
+                  onChange={(v) => set('paymentMethod', v)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setPmModalOpen(true)}
+                  className="mt-1 text-xs font-medium text-emerald-600 hover:underline"
+                >
+                  Add payment method
+                </button>
+              </Field>
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 <button
@@ -575,6 +601,18 @@ export default function SalesDetail() {
         categoryOptions={categoryOptions}
         onClose={() => setRulesOpen(false)}
         onApply={applyRuleToForm}
+      />
+
+      <AddCategoryModal
+        open={catModalOpen}
+        onClose={() => setCatModalOpen(false)}
+        onAdded={(label) => setCategory(label)}
+      />
+
+      <AddPaymentMethodModal
+        open={pmModalOpen}
+        onClose={() => setPmModalOpen(false)}
+        onAdded={(pm) => set('paymentMethod', pm.label)}
       />
     </AppShell>
   );
