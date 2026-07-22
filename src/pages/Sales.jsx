@@ -13,7 +13,15 @@ import {
   notifyBillsChanged,
   BILLS_CHANGED_EVENT,
 } from '@/lib/bills';
+import { recordMove } from '@/lib/salesEvents';
 import { cn } from '@/lib/utils';
+
+// How many of the six key fields Claude managed to extract, Dext-style.
+function extractedCount(d) {
+  const present = (v) => v != null && v !== '' && v !== '—' && v !== 'Unknown supplier' && v !== 'Uncategorised';
+  const fields = [d.customer, d.date, d.ref, d.category, d.total, d.currency];
+  return fields.filter(present).length;
+}
 
 // Shape a persisted sales bill (kind==='sales') into the row form this table
 // renders. The sales table keys on "customer"/"ref" where a bill carries
@@ -22,9 +30,10 @@ function billToSalesRow(d) {
   return {
     id: d.id,
     persisted: true,
-    itemId: d.itemId,
+    itemId: displayItemId(d.id),
     status: d.status,
     user: d.user,
+    fileName: d.fileName,
     date: d.date,
     customer: d.supplier,
     category: d.category,
@@ -142,6 +151,7 @@ export default function Sales() {
   const statusOf = (s) => (s.persisted ? s.status || 'new' : statusMap[s.id] || 'viewed');
   const matchTab = (key, st) => {
     if (key === 'inbox') return st === 'viewed' || st === 'new';
+    if (key === 'processing') return st === 'processing';
     if (key === 'review') return st === 'review';
     if (key === 'ready') return st === 'ready';
     if (key === 'archive') return st === 'archived';
@@ -153,7 +163,10 @@ export default function Sales() {
   const rows = allSales.filter(inTab).filter(
     (d) => !q || [d.user, d.customer, d.category, d.ref, d.date].some((v) => String(v || '').toLowerCase().includes(q))
   );
+  const processingRows = allSales.filter((s) => statusOf(s) === 'processing');
   const hasSelection = selected.size > 0;
+
+  const DEST_LABELS = { new: 'Inbox', review: 'To review', ready: 'Ready', archived: 'Archive' };
 
   const moveSelected = (status) => {
     const byId = new Map(allSales.map((s) => [s.id, s]));
@@ -165,10 +178,23 @@ export default function Sales() {
       return next;
     });
     if (persistedIds.length) {
-      Promise.all(persistedIds.map((id) => updateBill(id, { status }).catch(() => {})))
-        .then(() => notifyBillsChanged());
+      Promise.all(persistedIds.map((id) => updateBill(id, { status }).catch(() => {}))).then(() =>
+        notifyBillsChanged()
+      );
+      for (const id of persistedIds) recordMove(id, DEST_LABELS[status] || status, byId.get(id)?.user);
     }
     setSelected(new Set());
+  };
+
+  // Move processing uploads into the inbox (Dext's "Move to inbox" step).
+  const moveToInbox = (ids) => {
+    const list = ids ?? processingRows.map((s) => s.id);
+    if (!list.length) return;
+    Promise.all(list.map((id) => updateBill(id, { status: 'new' }).catch(() => {}))).then(() =>
+      notifyBillsChanged()
+    );
+    const byId = new Map(allSales.map((s) => [s.id, s]));
+    for (const id of list) recordMove(id, 'Inbox', byId.get(id)?.user);
   };
   const exportCsv = () => exportSalesCsv(rows, `sales-${tab}.csv`);
 
@@ -190,7 +216,9 @@ export default function Sales() {
       <div className="mb-4 flex items-center gap-6 overflow-x-auto border-b">
         {TABS.map((t) => {
           const active = tab === t.key;
-          const count = ['inbox', 'review', 'ready', 'archive'].includes(t.key) ? countFor(t.key) : null;
+          const count = ['inbox', 'processing', 'review', 'ready', 'archive'].includes(t.key)
+            ? countFor(t.key)
+            : null;
           return (
             <button
               key={t.key}
@@ -222,6 +250,14 @@ export default function Sales() {
         })}
       </div>
 
+      {tab === 'processing' ? (
+        <ProcessingView
+          rows={processingRows}
+          onMoveOne={(id) => moveToInbox([id])}
+          onMoveAll={() => moveToInbox()}
+        />
+      ) : (
+      <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <ToolbarButton onClick={exportCsv}>Export all</ToolbarButton>
         <ToolbarButton disabled={!hasSelection} onClick={() => moveSelected('archived')}>Archive</ToolbarButton>
@@ -285,6 +321,7 @@ export default function Sales() {
               >
                 <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-1.5">
+                    <span className={cn('h-2 w-2 shrink-0 rounded-full', statusOf(d) === 'new' ? 'bg-emerald-500' : 'bg-transparent')} />
                     <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggle(d.id)} className="h-4 w-4 accent-black" />
                     <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
                     <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
@@ -319,6 +356,85 @@ export default function Sales() {
       </div>
 
       {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>}
+      </>
+      )}
     </AppShell>
+  );
+}
+
+// Processing tab: freshly-uploaded sales documents that are still being read,
+// shown with their extraction progress and a "Move to inbox" step (Dext-style).
+function ProcessingView({ rows, onMoveOne, onMoveAll }) {
+  return (
+    <>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <ToolbarButton disabled={rows.length === 0} onClick={onMoveAll}>
+          Move all items to inbox
+        </ToolbarButton>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[900px] text-sm">
+          <thead className="border-b bg-muted/40 text-left">
+            <tr className="text-muted-foreground">
+              <th className="w-16 px-3 py-2.5"><span className="sr-only">Flag</span></th>
+              <th className="px-3 py-2.5 font-medium">Item ID</th>
+              <th className="px-3 py-2.5 font-medium">User</th>
+              <th className="px-3 py-2.5 font-medium">File name</th>
+              <th className="px-3 py-2.5 font-medium">Submission method</th>
+              <th className="px-3 py-2.5 font-medium">Extraction process</th>
+              <th className="px-3 py-2.5 text-right font-medium">Move to inbox</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((d) => {
+              const done = extractedCount(d);
+              return (
+                <tr key={d.id} className="group border-b last:border-0">
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-1.5">
+                      <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                      <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-muted-foreground">{d.itemId}</td>
+                  <td className="whitespace-nowrap px-3 py-3">{d.user}</td>
+                  <td className="px-3 py-3">{d.fileName || '—'}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">Via web</td>
+                  <td className="px-3 py-3">
+                    <div className="w-56">
+                      <div className="mb-1 text-xs text-muted-foreground">{done} out of 6 fields extracted</div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-foreground transition-all" style={{ width: `${(done / 6) * 100}%` }} />
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => onMoveOne(d.id)}
+                      className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted"
+                    >
+                      Move to inbox
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                  Nothing is processing.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {rows.length > 0 && (
+        <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>
+      )}
+    </>
   );
 }

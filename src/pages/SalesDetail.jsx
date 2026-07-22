@@ -7,7 +7,14 @@ import SplitItemModal from '@/components/SplitItemModal';
 import { useAuth } from '@/lib/auth';
 import { SALES, getSale } from '@/data/sales';
 import { useCategoryOptions, getExtractionAccounts } from '@/lib/organisations';
-import { fetchBills, billToDoc, billFileUrl, displayItemId } from '@/lib/bills';
+import { fetchBills, billToDoc, billFileUrl, displayItemId, updateBill, notifyBillsChanged } from '@/lib/bills';
+import {
+  getSalesHistory,
+  recordViewed,
+  recordCategory,
+  recordMove,
+  useSalesEvents,
+} from '@/lib/salesEvents';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +25,7 @@ function billDocToSale(d) {
     id: d.id,
     persisted: true,
     itemId: displayItemId(d.id),
+    createdAt: d.createdAt,
     user: d.user,
     type: d.type,
     date: d.date,
@@ -159,6 +167,48 @@ function initialData(s) {
   };
 }
 
+// Format an ISO timestamp the way Dext's activity feed does: same-day events
+// read "Today at HH:MM", older ones show the date.
+function formatEventTime(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  const isToday = d.toDateString() === new Date().toDateString();
+  return isToday ? `Today at ${time}` : `${d.toLocaleDateString()} at ${time}`;
+}
+
+const EVENT_DOT = {
+  upload: 'bg-emerald-500',
+  processing: 'bg-foreground',
+  viewed: 'bg-foreground',
+  category: 'bg-amber-500',
+  move: 'bg-emerald-500',
+};
+
+// "Recent activity" timeline for a sales document (upload → processing → the
+// user's own edits), mirroring Dext's History tab.
+function HistoryTimeline({ sale }) {
+  const events = getSalesHistory(sale);
+  return (
+    <div>
+      <h3 className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent activity</h3>
+      <ol className="space-y-5">
+        {events.map((e) => (
+          <li key={e.id} className="flex gap-3">
+            <span className={cn('mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full', EVENT_DOT[e.type] || 'bg-muted-foreground')} />
+            <div>
+              <p className="text-sm">
+                {e.text} <span className="text-muted-foreground">by {e.actor}</span>
+              </p>
+              <p className="text-xs text-muted-foreground">{formatEventTime(e.at)}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 export default function SalesDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -180,6 +230,12 @@ export default function SalesDetail() {
   const [data, setData] = useState(() => initialData(mockSale ?? {}));
 
   const sale = mockSale ?? persistedSale;
+  useSalesEvents(); // re-render when this document's activity log changes
+
+  // Log the first view of this document (idempotent), once it has resolved.
+  useEffect(() => {
+    if (sale?.id) recordViewed(sale.id, sale.user);
+  }, [sale?.id, sale?.user]);
 
   // Resolve a persisted sales upload by id, prefill its fields, and show its
   // stored file. Runs only when this id isn't one of the sample rows.
@@ -218,9 +274,26 @@ export default function SalesDetail() {
   }
 
   const set = (k, v) => setData((d) => ({ ...d, [k]: v }));
+  // Category changes are logged to the activity timeline (Dext-style).
+  const setCategory = (v) => {
+    recordCategory(sale.id, data.category, v, sale.user);
+    set('category', v);
+  };
   const go = (delta) => {
     const next = SALES[index + delta];
     if (next) navigate(`/sales/${next.id}`);
+  };
+
+  // Move this document to a workflow state. Persisted uploads update on the
+  // server + log the move; then we return to the list.
+  const moveTo = (status, label) => {
+    if (sale.persisted) {
+      updateBill(sale.id, { status })
+        .catch(() => {})
+        .then(() => notifyBillsChanged());
+      recordMove(sale.id, label, sale.user);
+    }
+    navigate('/sales');
   };
 
   const onUploadClick = () => {
@@ -285,9 +358,9 @@ export default function SalesDetail() {
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        <TopButton onClick={() => navigate('/sales')}>Move to ready</TopButton>
+        <TopButton onClick={() => moveTo('ready', 'Ready')}>Move to ready</TopButton>
         <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
-        <TopButton onClick={() => navigate('/sales')}>Archive</TopButton>
+        <TopButton onClick={() => moveTo('archived', 'Archive')}>Archive</TopButton>
         <div className="relative">
           <TopButton onClick={() => setMoveOpen((o) => !o)} dropdown>Move to</TopButton>
           {moveOpen && (
@@ -409,7 +482,7 @@ export default function SalesDetail() {
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Due date"><Input value={data.dueDate} onChange={(v) => set('dueDate', v)} /></Field>
               <Field label="Category">
-                <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} />
+                <EditableSelect value={data.category} options={categoryOptions} onChange={setCategory} />
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>
@@ -443,12 +516,12 @@ export default function SalesDetail() {
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 <button
                   type="button"
-                  onClick={() => navigate('/sales')}
+                  onClick={() => moveTo('ready', 'Ready')}
                   className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
                 >
                   Move to ready
                 </button>
-                <TopButton onClick={() => navigate('/sales')}>Archive</TopButton>
+                <TopButton onClick={() => moveTo('archived', 'Archive')}>Archive</TopButton>
                 <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
               </div>
             </div>
@@ -462,22 +535,7 @@ export default function SalesDetail() {
             />
           )}
 
-          {tab === 'history' && (
-            <ul className="space-y-3 text-sm">
-              <li className="flex justify-between border-b pb-2">
-                <span>Uploaded by {sale.user}</span>
-                <span className="text-muted-foreground">{sale.date}</span>
-              </li>
-              <li className="flex justify-between border-b pb-2">
-                <span>Data extracted</span>
-                <span className="text-muted-foreground">{sale.date}</span>
-              </li>
-              <li className="flex justify-between">
-                <span>Viewed by Astrid Yang</span>
-                <span className="text-muted-foreground">{sale.date}</span>
-              </li>
-            </ul>
-          )}
+          {tab === 'history' && <HistoryTimeline sale={sale} />}
         </div>
       </div>
 

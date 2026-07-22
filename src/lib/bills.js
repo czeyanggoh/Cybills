@@ -80,8 +80,12 @@ export function billToDoc(b) {
     kind: b.kind || 'cost',
     itemId: b.id,
     unread: !b.status || b.status === 'new',
-    status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted'].includes(b.status) ? b.status : 'new',
+    status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted', 'processing'].includes(b.status)
+      ? b.status
+      : 'new',
     user: b.createdBy ? b.createdBy.split('@')[0] : 'You',
+    fileName: b.fileName || '',
+    createdAt: b.createdAt || '',
     date: b.date || '—',
     supplier: b.supplier || 'Unknown supplier',
     type: b.documentType || 'Document',
