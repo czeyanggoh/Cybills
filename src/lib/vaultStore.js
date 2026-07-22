@@ -1,20 +1,21 @@
 import { useState, useEffect } from 'react';
 import { VAULT_FILES } from '@/data/vaultFiles';
+import { putVaultBlob, deleteVaultBlob } from '@/lib/vaultBlobs';
 
 // Client-side store for the Vault (uploads, folders, deletes, moves). The seeded
-// files live in src/data/vaultFiles.js; everything the user does is recorded in
-// localStorage (metadata only — there's no Vault backend yet) and layered on top
-// of the seed list.
+// files live in src/data/vaultFiles.js; metadata is recorded in localStorage and
+// layered on top of the seed list, while uploaded file bytes go to IndexedDB
+// (see vaultBlobs.js) so the detail page can preview them.
 const KEY = 'cybills.vault.v2';
 export const VAULT_CHANGED_EVENT = 'cybills:vault-changed';
 
 function read() {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (Array.isArray(raw)) return { uploaded: raw, folders: [], hidden: [], moves: {} }; // v1 migrate
-    return { uploaded: [], folders: [], hidden: [], moves: {}, ...(raw || {}) };
+    if (Array.isArray(raw)) return { uploaded: raw, folders: [], hidden: [], moves: {}, overrides: {} }; // v1 migrate
+    return { uploaded: [], folders: [], hidden: [], moves: {}, overrides: {}, ...(raw || {}) };
   } catch {
-    return { uploaded: [], folders: [], hidden: [], moves: {} };
+    return { uploaded: [], folders: [], hidden: [], moves: {}, overrides: {} };
   }
 }
 function write(state) {
@@ -41,10 +42,14 @@ export function addVaultFiles(files, { creator = 'Astrid Yang', access = 'Practi
   const now = today();
   const added = files.map((f) => {
     seq += 1;
+    const id = `uvf_${Date.now()}_${seq}`;
+    // Persist the actual bytes so the file can be previewed / copied later.
+    void putVaultBlob(id, f);
     return {
-      id: `uvf_${Date.now()}_${seq}`,
+      id,
       name: f.name,
       size: f.size,
+      type: f.type || '',
       dateAdded: now,
       creator,
       access,
@@ -56,15 +61,30 @@ export function addVaultFiles(files, { creator = 'Astrid Yang', access = 'Practi
   return added;
 }
 
-// All files, seed + uploaded, with deletes removed and moves applied.
+// --- Per-file overrides (editable detail fields, flag, access) --------------
+export function getVaultOverride(id) {
+  return read().overrides?.[id] || {};
+}
+export function setVaultOverride(id, patch) {
+  const state = read();
+  const overrides = { ...(state.overrides || {}) };
+  overrides[id] = { ...(overrides[id] || {}), ...patch };
+  write({ ...state, overrides });
+}
+
+// A single file (seed or uploaded) with its override + current folder applied.
+export function getVaultFileById(id) {
+  const file = getVaultFiles().find((f) => f.id === id);
+  return file || null;
+}
+
+// All files, seed + uploaded, with deletes removed and moves + overrides applied.
 export function getVaultFiles() {
-  const { uploaded, hidden, moves } = read();
+  const { uploaded, hidden, moves, overrides = {} } = read();
   const hiddenSet = new Set(hidden);
-  const seed = VAULT_FILES.filter((f) => !hiddenSet.has(f.id)).map((f) => ({
-    ...f,
-    folder: moves[f.id] ?? f.folder ?? '',
-  }));
-  return [...uploaded.map((f) => ({ ...f, folder: moves[f.id] ?? f.folder ?? '' })), ...seed];
+  const apply = (f) => ({ ...f, folder: moves[f.id] ?? f.folder ?? '', ...overrides[f.id] });
+  const seed = VAULT_FILES.filter((f) => !hiddenSet.has(f.id)).map(apply);
+  return [...uploaded.map(apply), ...seed];
 }
 
 export function getVaultFolders() {
@@ -83,7 +103,9 @@ export function removeVaultFiles(ids) {
   const state = read();
   const uploaded = state.uploaded.filter((f) => !set.has(f.id));
   const seedRemoved = VAULT_FILES.filter((f) => set.has(f.id)).map((f) => f.id);
-  write({ ...state, uploaded, hidden: [...new Set([...state.hidden, ...seedRemoved])] });
+  const overrides = { ...(state.overrides || {}) };
+  for (const id of ids) { delete overrides[id]; void deleteVaultBlob(id); }
+  write({ ...state, uploaded, overrides, hidden: [...new Set([...state.hidden, ...seedRemoved])] });
 }
 
 export function moveVaultFiles(ids, folder) {

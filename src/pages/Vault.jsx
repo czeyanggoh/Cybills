@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Flag, FileText, ChevronDown, Filter, Settings2, LayoutGrid, Folder, ChevronLeft } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import VaultSubnav from '@/components/VaultSubnav';
@@ -101,6 +102,7 @@ function downloadManifest(files, name) {
 }
 
 export default function Vault() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState('folders');
   const [selected, setSelected] = useState(() => new Set());
   const [currentFolder, setCurrentFolder] = useState('');
@@ -266,8 +268,12 @@ export default function Vault() {
                 </tr>
               ))}
             {fileRows.map((f) => (
-              <tr key={f.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
-                <td className="px-3 py-3">
+              <tr
+                key={f.id}
+                onClick={() => navigate(`/vault/${f.id}`)}
+                className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
+              >
+                <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-2">
                     <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggle(f.id)} className="h-4 w-4 accent-black" />
                     <Flag className={cn('h-3.5 w-3.5', f.flagged ? 'fill-foreground text-foreground' : 'text-muted-foreground/60')} strokeWidth={1.75} />
@@ -282,7 +288,7 @@ export default function Vault() {
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{f.dateAdded}</td>
                 <td className="whitespace-nowrap px-3 py-3">{f.creator}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{f.access}</td>
-                <td className="px-3 py-3">
+                <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                   <Dropdown
                     small
                     label="Actions"

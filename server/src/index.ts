@@ -5,7 +5,7 @@ import cookieParser from 'cookie-parser';
 import { env } from './env.js';
 import { authRouter } from './auth.js';
 import { orgRouter } from './org.js';
-import { extractRouter } from './extract.js';
+import { extractRouter, vaultRouter } from './extract.js';
 import { billsRouter } from './bills.js';
 import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
@@ -36,6 +36,9 @@ app.use('/api/costs', extractRouter);
 
 // Persisted bills + duplicate detection (works without a Vision key).
 app.use('/api/costs', billsRouter);
+
+// Vault document summariser (Claude auto-fill for stored documents).
+app.use('/api/vault', vaultRouter);
 
 // Organisations linked to Xero tenants (via the cyworkspace relay).
 app.use('/api/organisations', organisationsRouter);

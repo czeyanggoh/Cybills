@@ -184,3 +184,73 @@ extractRouter.post('/extract', async (req, res) => {
     return res.status(500).json({ error: 'extraction_failed' });
   }
 });
+
+// --- Vault document summariser ----------------------------------------------
+// POST /api/vault/summarize — body: { imageBase64, mediaType }. Returns a short
+// Subject line + a few-sentence Summary for a stored Vault document (Dext's
+// document auto-fill). 503 until an ANTHROPIC_API_KEY is configured.
+const SummarySchema = z.object({ subject: z.string(), summary: z.string() });
+
+export const vaultRouter = Router();
+
+vaultRouter.post('/summarize', async (req, res) => {
+  if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+
+  const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
+  const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
+  if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType)) {
+    return res.status(400).json({ error: 'invalid_image' });
+  }
+
+  const isPdf = mediaType === PDF_MEDIA;
+  const fileBlock: Anthropic.ContentBlockParam = isPdf
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: imageBase64 } }
+    : { type: 'image', source: { type: 'base64', media_type: mediaType as ImageMedia, data: imageBase64 } };
+
+  try {
+    const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+    const message = await client.messages.create({
+      model: env.ANTHROPIC_EXTRACT_MODEL,
+      max_tokens: 512,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            fileBlock,
+            {
+              type: 'text',
+              text:
+                'Summarise this document. Return a concise "subject" line (like an email subject, ' +
+                'under 12 words) and a "summary" of 2–4 sentences describing what the document is, ' +
+                'who it is from, and the key figures or purpose.',
+            },
+          ],
+        },
+      ],
+      output_config: {
+        format: {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              subject: { type: 'string', description: 'Short subject line' },
+              summary: { type: 'string', description: '2–4 sentence summary' },
+            },
+            required: ['subject', 'summary'],
+          },
+        },
+      },
+    });
+
+    if (message.stop_reason === 'refusal') return res.status(422).json({ error: 'refused' });
+    const textBlock = message.content.find((b) => b.type === 'text');
+    const raw = textBlock && textBlock.type === 'text' ? textBlock.text : '';
+    const parsed = SummarySchema.safeParse(raw ? JSON.parse(raw) : null);
+    if (!parsed.success) return res.status(502).json({ error: 'no_data' });
+    return res.json({ ok: true, data: parsed.data });
+  } catch (err) {
+    console.error('[vault summarize] failed', err);
+    return res.status(500).json({ error: 'summarize_failed' });
+  }
+});
