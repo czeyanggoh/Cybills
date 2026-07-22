@@ -1,24 +1,68 @@
 import { useState } from 'react';
-import { Search, ChevronDown, Settings2 } from 'lucide-react';
+import { Search, ChevronDown, Settings2, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
 import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
-import { useUsers, addUser, addUsers } from '@/lib/userStore';
+import EditUserModal from '@/components/EditUserModal';
+import { useUsers, addUser, addUsers, setUserActive, removeUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
+
+// Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
+// (de)activate, remove).
+function ManageMenu({ user, onEdit, onToast }) {
+  const [open, setOpen] = useState(false);
+  const item = 'flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted';
+  const run = (fn) => { setOpen(false); fn(); };
+
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-muted">
+        Manage <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div className="absolute right-0 z-20 mt-1 w-52 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+            <button type="button" className={item} onClick={() => run(() => onEdit('details'))}>Edit user details</button>
+            <button type="button" className={item} onClick={() => run(() => onEdit('privileges'))}>Edit privileges</button>
+            <button type="button" className={item} onClick={() => run(() => onToast(`Invitation resent to ${user.email || user.name}.`))}>Resend Invitation</button>
+            <button type="button" className={item} onClick={() => run(() => onToast(`Password reset link sent to ${user.email || user.name}.`))}>Reset Password</button>
+            {user.deactivated ? (
+              <button type="button" className={cn(item, 'text-emerald-600')} onClick={() => run(() => { setUserActive(user.id, true); onToast(`${user.name} reactivated.`); })}>Reactivate user</button>
+            ) : (
+              <button type="button" className={cn(item, 'text-destructive')} onClick={() => run(() => { setUserActive(user.id, false); onToast(`${user.name} deactivated.`); })}>Deactivate user</button>
+            )}
+            <button
+              type="button"
+              className={cn(item, 'text-destructive')}
+              onClick={() => run(() => { if (window.confirm(`Remove ${user.name}?`)) { removeUser(user.id); onToast(`${user.name} removed.`); } })}
+            >
+              Remove user
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function Users() {
   const [tab, setTab] = useState('active');
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [multiOpen, setMultiOpen] = useState(false);
+  const [edit, setEdit] = useState(null); // { user, mode }
+  const [toast, setToast] = useState('');
   const users = useUsers();
+
+  const showToast = (msg) => setToast(msg);
 
   const filtered = users.filter(
     (u) =>
       u.name.toLowerCase().includes(query.toLowerCase()) ||
-      u.email.toLowerCase().includes(query.toLowerCase())
+      (u.email || '').toLowerCase().includes(query.toLowerCase())
   );
-  const rows = tab === 'active' ? filtered : [];
+  const rows = filtered.filter((u) => (tab === 'active' ? !u.deactivated : u.deactivated));
 
   return (
     <AppShell>
@@ -28,6 +72,13 @@ export default function Users() {
           Add a user
         </button>
       </div>
+
+      {toast && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4" /> {toast}
+          <button type="button" onClick={() => setToast('')} className="ml-auto text-emerald-700/70 hover:text-emerald-700">Dismiss</button>
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="inline-flex overflow-hidden rounded-md border text-sm">
@@ -75,20 +126,20 @@ export default function Users() {
             {rows.map((u) => (
               <tr key={u.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{u.name}</td>
-                <td className="px-3 py-3 text-muted-foreground">{u.email}</td>
+                <td className="px-3 py-3 text-muted-foreground">{u.email || '—'}</td>
                 <td className="px-3 py-3">{u.login}</td>
                 <td className="whitespace-nowrap px-3 py-3">{u.role}</td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{u.lastLogin}</td>
                 <td className="px-3 py-3">
-                  <button type="button" className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-muted">
-                    Manage <ChevronDown className="h-3.5 w-3.5" />
-                  </button>
+                  <ManageMenu user={u} onEdit={(mode) => setEdit({ user: u, mode })} onToast={showToast} />
                 </td>
               </tr>
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-16 text-center text-sm text-muted-foreground">No deactivated users.</td>
+                <td colSpan={6} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                  {tab === 'deactivated' ? 'No deactivated users.' : 'No users found.'}
+                </td>
               </tr>
             )}
           </tbody>
@@ -99,6 +150,13 @@ export default function Users() {
 
       <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} onAdd={addUser} />
       <AddMultipleUsersModal open={multiOpen} onClose={() => setMultiOpen(false)} onAdd={addUsers} />
+      <EditUserModal
+        key={edit ? `${edit.user.id}-${edit.mode}` : 'closed'}
+        open={Boolean(edit)}
+        mode={edit?.mode}
+        user={edit?.user}
+        onClose={() => setEdit(null)}
+      />
     </AppShell>
   );
 }

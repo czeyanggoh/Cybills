@@ -1,0 +1,141 @@
+import { useState } from 'react';
+import { X, ChevronDown, HelpCircle } from 'lucide-react';
+import { ROLES, ROLE_INFO, updateUser } from '@/lib/userStore';
+import { cn } from '@/lib/utils';
+
+function Toggle({ on, onToggle }) {
+  return (
+    <button type="button" onClick={onToggle} className="flex items-center gap-2">
+      <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', on ? 'justify-end bg-foreground' : 'justify-start border')}>
+        <span className={cn('h-4 w-4 rounded-full', on ? 'bg-background' : 'bg-muted-foreground/50')} />
+      </span>
+      <span className="text-sm text-muted-foreground">{on ? 'Yes' : 'No'}</span>
+    </button>
+  );
+}
+
+// Splits a combined display name into first / last for editing.
+function splitName(user) {
+  if (user.firstName || user.lastName) return { first: user.firstName || '', last: user.lastName || '' };
+  const parts = String(user.name || '').trim().split(/\s+/);
+  return { first: parts.shift() || '', last: parts.join(' ') };
+}
+
+// Edit an existing user's details or privileges (Manage → Edit user details /
+// Edit privileges). `mode` is 'details' or 'privileges'.
+export default function EditUserModal({ open, mode, user, onClose }) {
+  const seed = user ? splitName(user) : { first: '', last: '' };
+  const [firstName, setFirstName] = useState(seed.first);
+  const [lastName, setLastName] = useState(seed.last);
+  const [login, setLogin] = useState(user?.login === 'Yes');
+  const [email, setEmail] = useState(user?.email || '');
+  const [role, setRole] = useState(user?.role || 'Standard');
+  const [priv, setPriv] = useState(user?.privileges || { accessAll: false, createClaims: false, canPublish: false });
+
+  if (!open || !user) return null;
+
+  const input = 'h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
+  const isDetails = mode === 'details';
+  const emailValid = !login || /.+@.+\..+/.test(email.trim());
+  const canSave = isDetails ? firstName.trim() && lastName.trim() && emailValid : true;
+
+  const save = () => {
+    if (isDetails) {
+      updateUser(user.id, { firstName, lastName, login: login ? 'Yes' : 'No', email: login ? email : '' });
+    } else {
+      updateUser(user.id, { role, privileges: priv });
+    }
+    onClose();
+  };
+  const setP = (k, v) => setPriv((p) => ({ ...p, [k]: v }));
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
+      <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-lg bg-background shadow-xl">
+        <div className="flex items-center justify-between border-b px-6 py-4">
+          <h2 className="text-base font-semibold tracking-tight">{isDetails ? 'Edit user details' : 'Edit privileges'}</h2>
+          <button type="button" onClick={onClose} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-auto p-6">
+          {isDetails ? (
+            <div className="space-y-5">
+              <label className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
+                <span>First name <span className="text-destructive">*</span></span>
+                <input value={firstName} onChange={(e) => setFirstName(e.target.value)} className={input} />
+              </label>
+              <label className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
+                <span>Last name <span className="text-destructive">*</span></span>
+                <input value={lastName} onChange={(e) => setLastName(e.target.value)} className={input} />
+              </label>
+              <div className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
+                <span className="flex items-center gap-1">Login access <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" /></span>
+                <Toggle on={login} onToggle={() => setLogin((v) => !v)} />
+              </div>
+              {login ? (
+                <label className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
+                  <span>Email <span className="text-destructive">*</span></span>
+                  <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className={input} />
+                </label>
+              ) : (
+                <p className="rounded-md border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
+                  Without login access this user can’t sign in — no email is required.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-5">
+              <label className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
+                <span>Role</span>
+                <div className="relative">
+                  <select value={role} onChange={(e) => setRole(e.target.value)} className="h-10 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                </div>
+              </label>
+              <div className="text-sm">
+                <p className="font-medium">{role} users can:</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
+                  {(ROLE_INFO[role] || []).map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              </div>
+              {role === 'Standard' && (
+                <div className="space-y-4">
+                  <p className="text-sm font-medium">and optionally:</p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Access all documents</span>
+                    <Toggle on={priv.accessAll} onToggle={() => setP('accessAll', !priv.accessAll)} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Create expense claims</span>
+                    <Toggle on={priv.createClaims} onToggle={() => setP('createClaims', !priv.createClaims)} />
+                  </div>
+                  <div>
+                    <p className="mb-2 text-sm font-medium">Publishing permissions</p>
+                    <label className="mb-2 flex items-center gap-2 text-sm">
+                      <input type="radio" name="epub" checked={!priv.canPublish} onChange={() => setP('canPublish', false)} className="accent-black" />
+                      Can’t publish to accounting software
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="radio" name="epub" checked={priv.canPublish} onChange={() => setP('canPublish', true)} className="accent-black" />
+                      Can publish items and expense claims to an accounting software
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t px-6 py-4">
+          <button type="button" onClick={onClose} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">Cancel</button>
+          <button type="button" onClick={save} disabled={!canSave} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
