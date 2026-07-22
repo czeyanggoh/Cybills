@@ -23,7 +23,8 @@ export function useCostsDocs() {
   const [overrides, setOverrides] = useState(() => getDocOverrides());
 
   const reload = useCallback(async () => {
-    setUploaded((await fetchBills()).map(billToDoc));
+    // Only cost-workspace bills belong in Costs; sales uploads have kind==='sales'.
+    setUploaded((await fetchBills()).map(billToDoc).filter((d) => d.kind !== 'sales'));
   }, []);
 
   useEffect(() => {

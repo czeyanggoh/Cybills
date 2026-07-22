@@ -34,6 +34,9 @@ export const env = {
   // faster option.
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
   ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
+  // Receipt/invoice extraction is a fast, structured task — use Haiku by default
+  // so "Reading…" returns in ~1–2s instead of Opus's many seconds.
+  ANTHROPIC_EXTRACT_MODEL: process.env.ANTHROPIC_EXTRACT_MODEL ?? 'claude-haiku-4-5-20251001',
 
   // --- Org roster (assignable users) ----------------------------------------
   // Optional comma-separated roster of org members for the Support Desk

@@ -143,7 +143,7 @@ extractRouter.post('/extract', async (req, res) => {
   try {
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     const message = await client.messages.create({
-      model: env.ANTHROPIC_MODEL,
+      model: env.ANTHROPIC_EXTRACT_MODEL,
       max_tokens: 1024,
       messages: [
         {

@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { X, Copy, FileText, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -165,12 +166,27 @@ function EmailRow({ label, value }) {
   );
 }
 
+// Which drawer tab matches the workspace the user opened the drawer from.
+const TAB_FOR_PATH = { '/sales': 'Sales', '/customers': 'Sales', '/bank': 'Bank', '/vault': 'Vault' };
+function tabForPath(pathname) {
+  if (pathname.startsWith('/supplier-statements')) return 'Supplier statements';
+  const key = Object.keys(TAB_FOR_PATH).find((p) => pathname.startsWith(p));
+  return key ? TAB_FOR_PATH[key] : 'Costs';
+}
+
 export default function AddDocumentsDrawer({ open, onClose }) {
   const { visionEnabled } = useAuth();
+  const { pathname } = useLocation();
   const [tab, setTab] = useState('Costs');
   const [mode, setMode] = useState('file');
   const [items, setItems] = useState([]);
   const [vaultItems, setVaultItems] = useState([]);
+
+  // Default the tab to the workspace the drawer was opened from (Sales page →
+  // Sales tab, etc.) each time it opens.
+  useEffect(() => {
+    if (open) setTab(tabForPath(pathname));
+  }, [open, pathname]);
 
   if (!open) return null;
 
@@ -220,6 +236,8 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             fileName: it.file.name,
             fileBase64,
             mediaType,
+            // Route the upload to the workspace inbox the drawer was opened in.
+            kind: tab === 'Sales' ? 'sales' : 'cost',
             ...fields,
           };
           patch(it.id, { status: 'uploading', payload });

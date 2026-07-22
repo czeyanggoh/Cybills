@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ChevronDown, Flag, Sparkles, Upload, FileText } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -7,8 +7,32 @@ import SplitItemModal from '@/components/SplitItemModal';
 import { useAuth } from '@/lib/auth';
 import { SALES, getSale } from '@/data/sales';
 import { useCategoryOptions, getExtractionAccounts } from '@/lib/organisations';
+import { fetchBills, billToDoc, billFileUrl, displayItemId } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
+
+// Map a persisted sales upload (billToDoc shape) into the sale record this page
+// renders — the same fields getSale() returns for a sample row.
+function billDocToSale(d) {
+  return {
+    id: d.id,
+    persisted: true,
+    itemId: displayItemId(d.id),
+    user: d.user,
+    type: d.type,
+    date: d.date,
+    customer: d.supplier,
+    ref: d.invoiceNumber || displayItemId(d.id),
+    dueDate: '',
+    category: d.category,
+    project: '',
+    currency: d.currency,
+    total: d.total,
+    tax: d.tax,
+    hasFile: d.hasFile,
+    contentType: d.contentType,
+  };
+}
 
 function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false }) {
   return (
@@ -141,7 +165,10 @@ export default function SalesDetail() {
   const { visionEnabled } = useAuth();
   const categoryOptions = useCategoryOptions();
   const fileInputRef = useRef(null);
-  const sale = getSale(id);
+  const mockSale = getSale(id);
+  const [persistedSale, setPersistedSale] = useState(null);
+  // Only sample rows resolve synchronously; persisted uploads are fetched.
+  const [resolving, setResolving] = useState(!mockSale);
   const [tab, setTab] = useState('details');
   const [moveOpen, setMoveOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
@@ -150,14 +177,42 @@ export default function SalesDetail() {
   const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);
   const [aiError, setAiError] = useState('');
-  const [data, setData] = useState(() => initialData(sale ?? {}));
+  const [data, setData] = useState(() => initialData(mockSale ?? {}));
+
+  const sale = mockSale ?? persistedSale;
+
+  // Resolve a persisted sales upload by id, prefill its fields, and show its
+  // stored file. Runs only when this id isn't one of the sample rows.
+  useEffect(() => {
+    if (mockSale) return;
+    let live = true;
+    (async () => {
+      const doc = (await fetchBills()).map(billToDoc).find((b) => b.id === id);
+      if (!live) return;
+      if (doc) {
+        const mapped = billDocToSale(doc);
+        setPersistedSale(mapped);
+        setData(initialData(mapped));
+        if (mapped.hasFile) {
+          setImageUrl(billFileUrl(mapped.id));
+          setPreviewType(String(mapped.contentType).includes('pdf') ? 'pdf' : 'image');
+        }
+      }
+      setResolving(false);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [id, mockSale]);
 
   const index = SALES.findIndex((s) => String(s.id) === String(id));
 
   if (!sale) {
     return (
       <AppShell subnav={<SalesSubnav />}>
-        <p className="text-sm text-muted-foreground">Sales document not found.</p>
+        <p className="text-sm text-muted-foreground">
+          {resolving ? 'Loading…' : 'Sales document not found.'}
+        </p>
       </AppShell>
     );
   }
@@ -274,7 +329,7 @@ export default function SalesDetail() {
           <button
             type="button"
             onClick={() => go(1)}
-            disabled={index >= SALES.length - 1}
+            disabled={index < 0 || index >= SALES.length - 1}
             className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
           >
             Next <ChevronRight className="h-4 w-4" />

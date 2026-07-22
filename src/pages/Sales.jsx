@@ -1,11 +1,56 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Flag, Image, ChevronDown, Search, Filter, Settings2 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
 import { SALES } from '@/data/sales';
 import { useCategoryOptions } from '@/lib/organisations';
+import {
+  fetchBills,
+  billToDoc,
+  displayItemId,
+  updateBill,
+  notifyBillsChanged,
+  BILLS_CHANGED_EVENT,
+} from '@/lib/bills';
 import { cn } from '@/lib/utils';
+
+// Shape a persisted sales bill (kind==='sales') into the row form this table
+// renders. The sales table keys on "customer"/"ref" where a bill carries
+// "supplier"/"invoiceNumber".
+function billToSalesRow(d) {
+  return {
+    id: d.id,
+    persisted: true,
+    itemId: d.itemId,
+    status: d.status,
+    user: d.user,
+    date: d.date,
+    customer: d.supplier,
+    category: d.category,
+    ref: d.invoiceNumber || displayItemId(d.id),
+    total: d.total,
+    currency: d.currency,
+  };
+}
+
+// Loads persisted sales uploads and keeps them in sync with upload/edit events.
+function useSalesBills() {
+  const [bills, setBills] = useState([]);
+  const reload = useCallback(async () => {
+    const rows = (await fetchBills())
+      .map(billToDoc)
+      .filter((d) => d.kind === 'sales')
+      .map(billToSalesRow);
+    setBills(rows);
+  }, []);
+  useEffect(() => {
+    reload();
+    window.addEventListener(BILLS_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(BILLS_CHANGED_EVENT, reload);
+  }, [reload]);
+  return bills;
+}
 
 const TABS = [
   { key: 'inbox', label: 'Inbox', count: 2 },
@@ -85,11 +130,16 @@ export default function Sales() {
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
   const [query, setQuery] = useState('');
-  // In-session workflow status per sales doc (id -> status). Defaults to inbox.
+  // In-session workflow status per SAMPLE sales doc (id -> status). Persisted
+  // uploads carry their own status from the server.
   const [statusMap, setStatusMap] = useState({});
   const categoryOptions = useCategoryOptions();
+  const salesBills = useSalesBills();
 
-  const statusOf = (s) => statusMap[s.id] || 'viewed';
+  // Persisted uploads first (newest work), then the sample rows.
+  const allSales = [...salesBills, ...SALES];
+
+  const statusOf = (s) => (s.persisted ? s.status || 'new' : statusMap[s.id] || 'viewed');
   const matchTab = (key, st) => {
     if (key === 'inbox') return st === 'viewed' || st === 'new';
     if (key === 'review') return st === 'review';
@@ -98,19 +148,26 @@ export default function Sales() {
     return false;
   };
   const inTab = (s) => matchTab(tab, statusOf(s));
-  const countFor = (key) => SALES.filter((s) => matchTab(key, statusOf(s))).length;
+  const countFor = (key) => allSales.filter((s) => matchTab(key, statusOf(s))).length;
   const q = query.trim().toLowerCase();
-  const rows = SALES.filter(inTab).filter(
+  const rows = allSales.filter(inTab).filter(
     (d) => !q || [d.user, d.customer, d.category, d.ref, d.date].some((v) => String(v || '').toLowerCase().includes(q))
   );
   const hasSelection = selected.size > 0;
 
   const moveSelected = (status) => {
+    const byId = new Map(allSales.map((s) => [s.id, s]));
+    const persistedIds = [...selected].filter((id) => byId.get(id)?.persisted);
+    // Persisted uploads update on the server; sample rows use the in-session map.
     setStatusMap((m) => {
       const next = { ...m };
-      for (const id of selected) next[id] = status;
+      for (const id of selected) if (!byId.get(id)?.persisted) next[id] = status;
       return next;
     });
+    if (persistedIds.length) {
+      Promise.all(persistedIds.map((id) => updateBill(id, { status }).catch(() => {})))
+        .then(() => notifyBillsChanged());
+    }
     setSelected(new Set());
   };
   const exportCsv = () => exportSalesCsv(rows, `sales-${tab}.csv`);
@@ -234,7 +291,9 @@ export default function Sales() {
                   </div>
                 </td>
                 <td className="px-3 py-3">
-                  <span className="inline-flex rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">Viewed</span>
+                  <span className="inline-flex rounded bg-muted px-2 py-0.5 text-xs capitalize text-muted-foreground">
+                    {statusOf(d) === 'new' ? 'New' : statusOf(d) === 'viewed' ? 'Viewed' : statusOf(d)}
+                  </span>
                 </td>
                 <td className="whitespace-nowrap px-3 py-3">{d.user}</td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{d.date}</td>

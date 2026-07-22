@@ -27,6 +27,7 @@ export type Bill = {
   storageKey: string; // storage key for the original file (r2:/local: prefixed), or ''
   contentType: string; // MIME type of the stored file, or ''
   status: string; // workflow state: 'new' (inbox) | 'ready' | 'archived'
+  kind: string; // 'cost' (default) | 'sales' — which workspace inbox it belongs to
   // Set once the bill has been published to Xero (via the cyworkspace relay).
   // A non-empty xeroInvoiceId means "already posted" and blocks re-publishing.
   xeroInvoiceId?: string;

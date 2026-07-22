@@ -152,6 +152,7 @@ billsRouter.post('/bills', async (req, res) => {
     storageKey,
     contentType,
     status: 'new',
+    kind: b.kind === 'sales' ? 'sales' : 'cost',
   });
 
   // Echo the overridden match back so the client can note "added despite dup".

@@ -77,6 +77,7 @@ export function billToDoc(b) {
   return {
     id: b.id,
     persisted: true,
+    kind: b.kind || 'cost',
     itemId: b.id,
     unread: !b.status || b.status === 'new',
     status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted'].includes(b.status) ? b.status : 'new',
