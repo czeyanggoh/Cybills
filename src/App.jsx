@@ -15,6 +15,8 @@ import Customers from './pages/Customers';
 import Bank from './pages/Bank';
 import Vault from './pages/Vault';
 import VaultDetail from './pages/VaultDetail';
+import VaultTags from './pages/VaultTags';
+import VaultDownloads from './pages/VaultDownloads';
 import UsersPage from './pages/Users';
 import SubmissionHistory from './pages/SubmissionHistory';
 import Settings from './pages/Settings';
@@ -45,6 +47,8 @@ function App() {
             <Route path="/bank/statements" element={<Protected><Bank view="statements" /></Protected>} />
             <Route path="/bank/accounts" element={<Protected><Bank view="accounts" /></Protected>} />
             <Route path="/vault" element={<Protected><Vault /></Protected>} />
+            <Route path="/vault/tags" element={<Protected><VaultTags /></Protected>} />
+            <Route path="/vault/downloads" element={<Protected><VaultDownloads /></Protected>} />
             <Route path="/vault/:id" element={<Protected><VaultDetail /></Protected>} />
             <Route path="/expense-claims" element={<Protected><ExpenseClaims /></Protected>} />
             <Route path="/expense-claims/:id" element={<Protected><ExpenseClaimDetail /></Protected>} />

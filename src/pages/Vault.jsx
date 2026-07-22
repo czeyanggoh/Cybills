@@ -11,6 +11,7 @@ import {
   removeVaultFiles,
   moveVaultFiles,
 } from '@/lib/vaultStore';
+import { recordVaultDownload } from '@/lib/vaultDownloads';
 import { cn } from '@/lib/utils';
 
 const TABS = [
@@ -151,7 +152,11 @@ export default function Vault() {
     moveVaultFiles([...selected], folder);
     clear();
   };
-  const download = () => downloadManifest(selectedFiles, 'vault-files.csv');
+  const download = () => {
+    downloadManifest(selectedFiles, 'vault-files.csv');
+    // Dext keeps the generated archives in the Downloads tab.
+    recordVaultDownload({ name: `vault-export-${selectedFiles.length}-files.zip`, count: selectedFiles.length });
+  };
 
   const moveItems = [
     ...folders.map((f) => ({ label: `📁 ${f}`, onClick: () => move(f) })),

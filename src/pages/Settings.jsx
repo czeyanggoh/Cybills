@@ -945,6 +945,75 @@ function Connections() {
   );
 }
 
+// Business settings → Vault. Flagging (auto-flag files N days before due) and
+// Vault sync (cloud storage the Vault mirrors to).
+function VaultSettings() {
+  const [days, setDays] = useState(() => localStorage.getItem('cybills.vault.flagdays.v1') || '14');
+  const [platform, setPlatform] = useState(() => localStorage.getItem('cybills.vault.syncplatform.v1') || '');
+
+  const saveDays = (v) => {
+    const n = v.replace(/[^0-9]/g, '');
+    setDays(n);
+    localStorage.setItem('cybills.vault.flagdays.v1', n);
+  };
+  const pick = (p) => {
+    setPlatform(p);
+    localStorage.setItem('cybills.vault.syncplatform.v1', p);
+  };
+
+  const PLATFORMS = ['Dropbox', 'Google Drive', 'OneDrive'];
+
+  return (
+    <div className="space-y-5">
+      <Card title="Flagging files">
+        <div>
+          <p className="font-medium">Flag by due date</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Flagged files appear in the To review section. Files with due dates are automatically
+            flagged a set number of days before they’re due. Files with due dates more than a month in
+            the past will not be flagged.
+          </p>
+        </div>
+        <Row label="Days before due date" hint="Change how many days in advance files are flagged.">
+          <input
+            value={days}
+            onChange={(e) => saveDays(e.target.value)}
+            inputMode="numeric"
+            className="h-10 w-40 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </Row>
+      </Card>
+
+      <Card title="Vault sync">
+        <p className="text-sm text-muted-foreground">Select a storage platform, then sign in to connect with Vault.</p>
+        <div className="space-y-3">
+          {PLATFORMS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => pick(p)}
+              className={cn(
+                'flex w-full items-center gap-3 rounded-lg border px-4 py-3.5 text-left text-sm transition-colors',
+                platform === p ? 'border-foreground bg-muted/40' : 'hover:bg-muted/40'
+              )}
+            >
+              <span className={cn('flex h-4 w-4 items-center justify-center rounded-full border-2', platform === p ? 'border-foreground' : 'border-muted-foreground/50')}>
+                {platform === p && <span className="h-2 w-2 rounded-full bg-foreground" />}
+              </span>
+              <span className="font-medium">{p}</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex justify-end">
+          <button type="button" disabled={!platform} className="inline-flex h-9 items-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">
+            Connect
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function Settings() {
   // Deep-link support: /settings?section=approvals opens that section directly.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -974,6 +1043,8 @@ export default function Settings() {
         <Exports />
       ) : section === 'lists' ? (
         <Lists />
+      ) : section === 'vault' ? (
+        <VaultSettings />
       ) : (
         <Placeholder label={TITLES[section]} />
       )}
