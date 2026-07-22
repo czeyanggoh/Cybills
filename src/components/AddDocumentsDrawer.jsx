@@ -13,6 +13,7 @@ import {
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts } from '@/lib/organisations';
+import { getCustomerRule } from '@/lib/customerRules';
 import { addVaultFiles } from '@/lib/vaultStore';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
@@ -231,6 +232,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             }
           }
 
+          /** @type {any} */
           const payload = {
             fileHash,
             fileName: it.file.name,
@@ -240,6 +242,14 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             kind: tab === 'Sales' ? 'sales' : 'cost',
             ...fields,
           };
+          // Apply the customer's saved rule (currency / category) to sales uploads.
+          if (tab === 'Sales') {
+            const rule = getCustomerRule(fields.supplier);
+            if (rule) {
+              if (rule.currency) payload.currency = rule.currency;
+              if (rule.category) payload.category = rule.category;
+            }
+          }
           patch(it.id, { status: 'uploading', payload });
           const result = await addBill(payload);
           if (result.rejected) {

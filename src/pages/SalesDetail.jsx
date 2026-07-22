@@ -4,6 +4,8 @@ import { ChevronLeft, ChevronRight, ChevronDown, Flag, Sparkles, Upload, FileTex
 import AppShell from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
+import CustomerRulesModal from '@/components/CustomerRulesModal';
+import { currencyLabel } from '@/lib/customerRules';
 import { useAuth } from '@/lib/auth';
 import { SALES, getSale } from '@/data/sales';
 import { useCategoryOptions, getExtractionAccounts } from '@/lib/organisations';
@@ -222,6 +224,7 @@ export default function SalesDetail() {
   const [tab, setTab] = useState('details');
   const [moveOpen, setMoveOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [paid, setPaid] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
   const [previewType, setPreviewType] = useState('image');
@@ -278,6 +281,17 @@ export default function SalesDetail() {
   const setCategory = (v) => {
     recordCategory(sale.id, data.category, v, sale.user);
     set('category', v);
+  };
+  // Reflect a saved customer rule on the document currently open.
+  const applyRuleToForm = (rule) => {
+    setData((d) => ({
+      ...d,
+      currency: rule.currency ? currencyLabel(rule.currency) : d.currency,
+      category: rule.category || d.category,
+      project: rule.project || d.project,
+      description: rule.description || d.description,
+    }));
+    if (rule.category) recordCategory(sale.id, data.category, rule.category, sale.user);
   };
   const go = (delta) => {
     const next = SALES[index + delta];
@@ -476,8 +490,15 @@ export default function SalesDetail() {
               <Field label="Document owner"><Input value={data.user} onChange={(v) => set('user', v)} /></Field>
               <Field label="Type"><Input value={data.type} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date"><Input value={data.date} onChange={(v) => set('date', v)} /></Field>
-              <Field label="Customer" hint="Set customer rules">
+              <Field label="Customer">
                 <Input value={data.customer} onChange={(v) => set('customer', v)} />
+                <button
+                  type="button"
+                  onClick={() => setRulesOpen(true)}
+                  className="mt-1 text-xs font-medium text-emerald-600 hover:underline"
+                >
+                  Set customer rules
+                </button>
               </Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Due date"><Input value={data.dueDate} onChange={(v) => set('dueDate', v)} /></Field>
@@ -546,6 +567,14 @@ export default function SalesDetail() {
         imageUrl={imageUrl}
         previewType={previewType}
         current={{ category: data.category, total: data.total, tax: data.tax }}
+      />
+
+      <CustomerRulesModal
+        open={rulesOpen}
+        customer={data.customer}
+        categoryOptions={categoryOptions}
+        onClose={() => setRulesOpen(false)}
+        onApply={applyRuleToForm}
       />
     </AppShell>
   );
