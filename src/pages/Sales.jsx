@@ -16,11 +16,12 @@ const TABS = [
   { key: 'archive', label: 'Archive' },
 ];
 
-function ToolbarButton({ children, disabled = false, dropdown = false }) {
+function ToolbarButton({ children, disabled = false, dropdown = false, onClick = () => {} }) {
   return (
     <button
       type="button"
       disabled={disabled}
+      onClick={onClick}
       className={cn(
         'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
         disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted'
@@ -32,14 +33,87 @@ function ToolbarButton({ children, disabled = false, dropdown = false }) {
   );
 }
 
+// Small toolbar dropdown menu.
+function Dropdown({ label, disabled = false, items }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <ToolbarButton disabled={disabled} dropdown onClick={() => !disabled && setOpen((o) => !o)}>
+        {label}
+      </ToolbarButton>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div className="absolute left-0 z-20 mt-1 w-44 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+            {items.map((it) => (
+              <button
+                key={it.label}
+                type="button"
+                onClick={() => { setOpen(false); it.onClick(); }}
+                className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+              >
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Download the given sales rows as a CSV.
+function exportSalesCsv(rows, name) {
+  const esc = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ['User', 'Date', 'Customer', 'Category', 'Document reference', 'Total'];
+  const lines = [header, ...rows.map((d) => [d.user, d.date, d.customer, d.category, d.ref, d.total])];
+  const url = URL.createObjectURL(new Blob([[...lines].map((r) => r.map(esc).join(',')).join('\n')], { type: 'text/csv;charset=utf-8;' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function Sales() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
+  const [query, setQuery] = useState('');
+  // In-session workflow status per sales doc (id -> status). Defaults to inbox.
+  const [statusMap, setStatusMap] = useState({});
   const categoryOptions = useCategoryOptions();
 
-  const rows = tab === 'inbox' ? SALES : [];
+  const statusOf = (s) => statusMap[s.id] || 'viewed';
+  const matchTab = (key, st) => {
+    if (key === 'inbox') return st === 'viewed' || st === 'new';
+    if (key === 'review') return st === 'review';
+    if (key === 'ready') return st === 'ready';
+    if (key === 'archive') return st === 'archived';
+    return false;
+  };
+  const inTab = (s) => matchTab(tab, statusOf(s));
+  const countFor = (key) => SALES.filter((s) => matchTab(key, statusOf(s))).length;
+  const q = query.trim().toLowerCase();
+  const rows = SALES.filter(inTab).filter(
+    (d) => !q || [d.user, d.customer, d.category, d.ref, d.date].some((v) => String(v || '').toLowerCase().includes(q))
+  );
   const hasSelection = selected.size > 0;
+
+  const moveSelected = (status) => {
+    setStatusMap((m) => {
+      const next = { ...m };
+      for (const id of selected) next[id] = status;
+      return next;
+    });
+    setSelected(new Set());
+  };
+  const exportCsv = () => exportSalesCsv(rows, `sales-${tab}.csv`);
 
   const toggle = (id) =>
     setSelected((prev) => {
@@ -59,6 +133,7 @@ export default function Sales() {
       <div className="mb-4 flex items-center gap-6 overflow-x-auto border-b">
         {TABS.map((t) => {
           const active = tab === t.key;
+          const count = ['inbox', 'review', 'ready', 'archive'].includes(t.key) ? countFor(t.key) : null;
           return (
             <button
               key={t.key}
@@ -75,14 +150,14 @@ export default function Sales() {
               )}
             >
               {t.label}
-              {t.count != null && (
+              {count != null && (
                 <span
                   className={cn(
                     'rounded-full px-1.5 text-xs',
                     active ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'
                   )}
                 >
-                  {t.count}
+                  {count}
                 </span>
               )}
             </button>
@@ -91,14 +166,31 @@ export default function Sales() {
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <ToolbarButton>Export all</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>Archive</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection} dropdown>Move to</ToolbarButton>
-        <ToolbarButton dropdown>Actions</ToolbarButton>
+        <ToolbarButton onClick={exportCsv}>Export all</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection} onClick={() => moveSelected('archived')}>Archive</ToolbarButton>
+        <Dropdown
+          label="Move to"
+          disabled={!hasSelection}
+          items={[
+            { label: 'To review', onClick: () => moveSelected('review') },
+            { label: 'Ready', onClick: () => moveSelected('ready') },
+            { label: 'Archive', onClick: () => moveSelected('archived') },
+          ]}
+        />
+        <Dropdown
+          label="Actions"
+          disabled={!hasSelection}
+          items={[
+            { label: 'Move to ready', onClick: () => moveSelected('ready') },
+            { label: 'Archive', onClick: () => moveSelected('archived') },
+          ]}
+        />
         <div className="relative ml-auto hidden sm:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Search"
             className="h-8 w-52 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
           />
