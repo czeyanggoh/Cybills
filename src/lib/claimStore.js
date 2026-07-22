@@ -20,6 +20,7 @@ function prettyActor(name) {
 const ITEMS_KEY = 'cybills.claims.items.v1';
 const CREATED_KEY = 'cybills.claims.created.v1';
 const EVENTS_KEY = 'cybills.claims.events.v1';
+const STATE_KEY = 'cybills.claims.state.v1'; // { archived: [ids], deleted: [ids] }
 export const CLAIMS_EVENT = 'cybills:claims-changed';
 
 function read(key) {
@@ -78,10 +79,34 @@ function withItems(claim, itemsMap, eventsMap) {
   };
 }
 
+// Archive / delete state (client-side).
+function getState() {
+  return { archived: [], deleted: [], ...(read(STATE_KEY) || {}) };
+}
+function setState(next) {
+  write(STATE_KEY, next);
+}
+
 export function getAllClaims() {
   const itemsMap = getAddedItems();
   const eventsMap = getClaimEvents();
-  return [...BASE, ...getCreatedClaims()].map((c) => withItems(c, itemsMap, eventsMap));
+  const { archived, deleted } = getState();
+  const archivedSet = new Set(archived);
+  const deletedSet = new Set(deleted);
+  return [...BASE, ...getCreatedClaims()]
+    .filter((c) => !deletedSet.has(c.id))
+    .map((c) => ({ ...withItems(c, itemsMap, eventsMap), archived: archivedSet.has(c.id) }));
+}
+
+export function archiveClaims(ids, archived = true) {
+  const s = getState();
+  const set = new Set(s.archived);
+  for (const id of ids) (archived ? set.add(id) : set.delete(id));
+  setState({ ...s, archived: [...set] });
+}
+export function deleteClaims(ids) {
+  const s = getState();
+  setState({ ...s, deleted: [...new Set([...s.deleted, ...ids])] });
 }
 
 export function getClaimById(id) {

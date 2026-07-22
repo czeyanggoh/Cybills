@@ -3,24 +3,85 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Flag, Image, ChevronDown, Search, Filter, Settings2, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { useClaims } from '@/lib/claimStore';
+import { useClaims, archiveClaims, deleteClaims } from '@/lib/claimStore';
 import { cn } from '@/lib/utils';
+
+// Bulk "Actions" dropdown for the claims list.
+function ClaimsActions({ disabled, tab, onArchive, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const items = [
+    { label: tab === 'archive' ? 'Unarchive' : 'Archive', onClick: onArchive },
+    { label: 'Delete', onClick: onDelete, danger: true },
+  ];
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((o) => !o)}
+        className={cn(
+          'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
+          disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted'
+        )}
+      >
+        Actions <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div className="absolute left-0 z-20 mt-1 w-40 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+            {items.map((it) => (
+              <button
+                key={it.label}
+                type="button"
+                onClick={() => { setOpen(false); it.onClick(); }}
+                className={cn('flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted', it.danger && 'text-destructive')}
+              >
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function ExpenseClaims() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
   const [showCreate, setShowCreate] = useState(false);
+  const [query, setQuery] = useState('');
   const claims = useClaims();
 
+  const inbox = claims.filter((c) => !c.archived);
+  const archived = claims.filter((c) => c.archived);
+
   const TABS = [
-    { key: 'inbox', label: 'Inbox', count: claims.length },
+    { key: 'inbox', label: 'Inbox', count: inbox.length },
     { key: 'approvals', label: 'Approvals' },
-    { key: 'archive', label: 'Archive' },
+    { key: 'archive', label: 'Archive', count: archived.length || null },
   ];
 
-  const rows = tab === 'inbox' ? claims : [];
+  const base = tab === 'inbox' ? inbox : tab === 'archive' ? archived : [];
+  const q = query.trim().toLowerCase();
+  const rows = q
+    ? base.filter((c) => [c.claimFor, c.name, c.type].some((v) => String(v || '').toLowerCase().includes(q)))
+    : base;
   const hasSelection = selected.size > 0;
+
+  const clear = () => setSelected(new Set());
+  const doArchive = (on) => {
+    archiveClaims([...selected], on);
+    clear();
+  };
+  const doDelete = () => {
+    if (selected.size && window.confirm(`Delete ${selected.size} claim(s)?`)) {
+      deleteClaims([...selected]);
+      clear();
+    }
+  };
 
   const toggle = (id) =>
     setSelected((prev) => {
@@ -87,20 +148,26 @@ export default function ExpenseClaims() {
         <button
           type="button"
           disabled={!hasSelection}
+          onClick={() => doArchive(tab !== 'archive')}
           className={cn(
             'inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors',
             hasSelection ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/50'
           )}
         >
-          Archive
+          {tab === 'archive' ? 'Unarchive' : 'Archive'}
         </button>
-        <button type="button" className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-muted">
-          Actions <ChevronDown className="h-3.5 w-3.5" />
-        </button>
+        <ClaimsActions
+          disabled={!hasSelection}
+          tab={tab}
+          onArchive={() => doArchive(tab !== 'archive')}
+          onDelete={doDelete}
+        />
         <div className="relative ml-auto hidden sm:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Search"
             className="h-8 w-52 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
           />

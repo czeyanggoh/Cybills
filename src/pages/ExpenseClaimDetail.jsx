@@ -208,7 +208,12 @@ export default function ExpenseClaimDetail() {
 
           {/* Line-item toolbar */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <button type="button" className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+            <button
+              type="button"
+              onClick={() => navigate('/costs')}
+              title="Open the Costs inbox, then use “Add to expense claim” on the items you want"
+              className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
               <Plus className="h-3.5 w-3.5" /> Add items
             </button>
             <button type="button" className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm text-muted-foreground/60" disabled>
