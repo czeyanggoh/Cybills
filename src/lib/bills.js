@@ -79,7 +79,7 @@ export function billToDoc(b) {
     persisted: true,
     itemId: b.id,
     unread: !b.status || b.status === 'new',
-    status: ['ready', 'expenseclaim', 'archived'].includes(b.status) ? b.status : 'new',
+    status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted'].includes(b.status) ? b.status : 'new',
     user: b.createdBy ? b.createdBy.split('@')[0] : 'You',
     date: b.date || '—',
     supplier: b.supplier || 'Unknown supplier',

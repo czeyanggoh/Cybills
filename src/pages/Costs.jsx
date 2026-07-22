@@ -13,11 +13,33 @@ import {
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
+import AddToClaimModal from '@/components/AddToClaimModal';
 import { useCategoryOptions } from '@/lib/organisations';
-import { updateBill } from '@/lib/bills';
+import { useAuth } from '@/lib/auth';
+import { updateBill, notifyBillsChanged } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
+import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { cn } from '@/lib/utils';
+
+// Download the given rows as a CSV.
+function exportRowsCsv(rows, name) {
+  const esc = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ['Status', 'User', 'Date', 'Supplier', 'Category', 'Total', 'Tax'];
+  const lines = [header, ...rows.map((d) => [d.status, d.user, d.date, d.supplier, d.category, d.total, d.tax])];
+  const csv = lines.map((r) => r.map(esc).join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 // Native (working) category dropdown styled to match the row cells. `options`
 // is the active org's live Xero chart (bundled fallback).
@@ -72,11 +94,12 @@ function StatusBadge({ status }) {
   );
 }
 
-function ToolbarButton({ children, disabled = false, dropdown = false }) {
+function ToolbarButton({ children, disabled = false, dropdown = false, onClick = () => {} }) {
   return (
     <button
       type="button"
       disabled={disabled}
+      onClick={onClick}
       className={cn(
         'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
         disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted'
@@ -88,55 +111,112 @@ function ToolbarButton({ children, disabled = false, dropdown = false }) {
   );
 }
 
-// Left-hand toolbar actions differ per tab (mirrors Dext).
-function ToolbarActions({ tab, hasSelection }) {
+// A small toolbar dropdown menu.
+function Dropdown({ label, disabled = false, items }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <ToolbarButton disabled={disabled} dropdown onClick={() => !disabled && setOpen((o) => !o)}>
+        {label}
+      </ToolbarButton>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div className="absolute left-0 z-20 mt-1 w-48 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+            {items.map((it, i) =>
+              it.divider ? (
+                <div key={`d${i}`} className="my-1 h-px bg-border" />
+              ) : (
+                <button
+                  key={it.label}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    it.onClick();
+                  }}
+                  className={cn(
+                    'flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted',
+                    it.danger && 'text-destructive'
+                  )}
+                >
+                  {it.label}
+                </button>
+              )
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Left-hand toolbar actions differ per tab (mirrors Dext). `a` holds the wired
+// bulk-action handlers; all operate on the current selection.
+function ToolbarActions({ tab, hasSelection, a }) {
+  const moveTo = [
+    { label: 'To review', onClick: () => a.move('review') },
+    { label: 'Ready', onClick: () => a.move('ready') },
+    { divider: true },
+    { label: 'Archive', onClick: () => a.move('archived') },
+  ];
+  const actions = [
+    { label: 'Move to review', onClick: () => a.move('review') },
+    { label: 'Move to ready', onClick: () => a.move('ready') },
+    { label: 'Add to expense claim', onClick: a.addClaim },
+    { divider: true },
+    { label: 'Archive', onClick: () => a.move('archived') },
+    { label: 'Delete', onClick: a.del, danger: true },
+  ];
+
   if (tab === 'review' || tab === 'ready') {
     return (
       <>
-        <ToolbarButton>Export all</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>
+        <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection} onClick={() => a.move(tab === 'review' ? 'ready' : 'review')}>
           {tab === 'review' ? 'Move to ready' : 'Move to review'}
         </ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>Archive</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>Add to expense claim</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection} dropdown>Move to</ToolbarButton>
-        <ToolbarButton dropdown>Actions</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
+        <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
+        <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
       </>
     );
   }
   if (tab === 'archive') {
     return (
       <>
-        <ToolbarButton>Export all</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>Unarchive</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection} dropdown>Move to</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>Delete</ToolbarButton>
-        <ToolbarButton>See submission history</ToolbarButton>
+        <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('new')}>Unarchive</ToolbarButton>
+        <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
+        <ToolbarButton disabled={!hasSelection} onClick={a.del}>Delete</ToolbarButton>
+        <ToolbarButton onClick={() => a.navigate('/submission-history')}>See submission history</ToolbarButton>
       </>
     );
   }
   if (tab === 'processing') {
-    return <ToolbarButton>Export all</ToolbarButton>;
+    return <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>;
   }
   // inbox
   return (
     <>
-      <ToolbarButton>Export all</ToolbarButton>
-      <ToolbarButton disabled={!hasSelection}>Archive</ToolbarButton>
-      <ToolbarButton disabled={!hasSelection}>Add to expense claim</ToolbarButton>
-      <ToolbarButton disabled={!hasSelection} dropdown>Move to</ToolbarButton>
-      <ToolbarButton dropdown>Tools</ToolbarButton>
+      <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>
+      <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
+      <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
+      <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
+      <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
     </>
   );
 }
 
-function SearchAndTools() {
+function SearchAndTools({ query, setQuery }) {
   return (
     <>
       <div className="relative ml-auto hidden sm:block">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input
           type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
           placeholder="Search"
           className="h-8 w-52 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
         />
@@ -169,6 +249,7 @@ function SearchAndTools() {
 function ApprovalsPanel() {
   const navigate = useNavigate();
   const [scope, setScope] = useState('me');
+  const [q, setQ] = useState('');
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -194,7 +275,7 @@ function ApprovalsPanel() {
             </button>
           ))}
         </div>
-        <SearchAndTools />
+        <SearchAndTools query={q} setQuery={setQ} />
       </div>
 
       <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
@@ -226,8 +307,11 @@ function ApprovalsPanel() {
 
 export default function Costs() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
+  const [query, setQuery] = useState('');
+  const [claimOpen, setClaimOpen] = useState(false);
 
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
@@ -240,7 +324,13 @@ export default function Costs() {
     ready: rowsFor(allDocs, 'ready'),
     archive: rowsFor(allDocs, 'archive'),
   };
-  const rows = rowsByTab[tab] ?? [];
+  const allRows = rowsByTab[tab] ?? [];
+  const q = query.trim().toLowerCase();
+  const rows = q
+    ? allRows.filter((d) =>
+        [d.supplier, d.user, d.category, d.date].some((v) => String(v || '').toLowerCase().includes(q))
+      )
+    : allRows;
   const hasSelection = selected.size > 0;
 
   // Change a row's category — persists for uploaded bills (server) and samples
@@ -248,6 +338,48 @@ export default function Costs() {
   const changeCategory = (d, value) => {
     if (d.persisted) updateBill(d.id, { category: value }).then(reload).catch(() => {});
     else setDocOverride(d.id, { category: value });
+  };
+
+  // Move every selected document to a workflow status (the pipeline step) —
+  // persisted bills via the server, sample docs via localStorage overrides.
+  const moveSelected = async (status) => {
+    const byId = new Map(allRows.map((r) => [r.id, r]));
+    await Promise.all(
+      [...selected].map((id) => {
+        const d = byId.get(id);
+        if (!d) return null;
+        if (d.persisted) return updateBill(d.id, { status }).catch(() => {});
+        setDocOverride(d.id, { status });
+        return null;
+      })
+    );
+    notifyBillsChanged();
+    setSelected(new Set());
+  };
+
+  const deleteSelected = () => {
+    if (selected.size && window.confirm(`Delete ${selected.size} item(s)? They leave every tab.`)) {
+      moveSelected('deleted');
+    }
+  };
+
+  // Add the selected docs to a chosen expense claim, then mark them accordingly.
+  const addSelectedToClaim = (targetId) => {
+    const actor = user?.name || 'Astrid Yang';
+    const byId = new Map(allRows.map((r) => [r.id, r]));
+    for (const id of selected) {
+      const d = byId.get(id);
+      if (d) addItemToClaim(targetId, docToClaimTxn(d, d, actor));
+    }
+    moveSelected('expenseclaim');
+  };
+
+  const actions = {
+    move: moveSelected,
+    del: deleteSelected,
+    addClaim: () => hasSelection && setClaimOpen(true),
+    exportCsv: () => exportRowsCsv(rows, `costs-${tab}.csv`),
+    navigate,
   };
 
   const toggle = (id) =>
@@ -310,8 +442,8 @@ export default function Costs() {
         <>
           {/* Toolbar */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <ToolbarActions tab={tab} hasSelection={hasSelection} />
-            <SearchAndTools />
+            <ToolbarActions tab={tab} hasSelection={hasSelection} a={actions} />
+            <SearchAndTools query={query} setQuery={setQuery} />
           </div>
 
           {/* Table */}
@@ -404,6 +536,17 @@ export default function Costs() {
           )}
         </>
       )}
+
+      <AddToClaimModal
+        open={claimOpen}
+        onClose={() => setClaimOpen(false)}
+        count={selected.size}
+        onAdd={({ claimId, newClaim }) => {
+          setClaimOpen(false);
+          const targetId = newClaim ? createClaim(newClaim).id : claimId;
+          if (targetId) addSelectedToClaim(targetId);
+        }}
+      />
     </AppShell>
   );
 }
