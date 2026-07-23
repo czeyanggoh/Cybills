@@ -14,6 +14,7 @@ import {
   BILLS_CHANGED_EVENT,
 } from '@/lib/bills';
 import { recordMove } from '@/lib/salesEvents';
+import DocsExportModal from '@/components/DocsExportModal';
 import { cn } from '@/lib/utils';
 
 // How many of the six key fields Claude managed to extract, Dext-style.
@@ -116,24 +117,6 @@ function Dropdown({ label, disabled = false, items }) {
   );
 }
 
-// Download the given sales rows as a CSV.
-function exportSalesCsv(rows, name) {
-  const esc = (v) => {
-    const s = String(v ?? '');
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const header = ['User', 'Date', 'Customer', 'Category', 'Document reference', 'Total'];
-  const lines = [header, ...rows.map((d) => [d.user, d.date, d.customer, d.category, d.ref, d.total])];
-  const url = URL.createObjectURL(new Blob([[...lines].map((r) => r.map(esc).join(',')).join('\n')], { type: 'text/csv;charset=utf-8;' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 export default function Sales() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
@@ -196,7 +179,7 @@ export default function Sales() {
     const byId = new Map(allSales.map((s) => [s.id, s]));
     for (const id of list) recordMove(id, 'Inbox', byId.get(id)?.user);
   };
-  const exportCsv = () => exportSalesCsv(rows, `sales-${tab}.csv`);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const toggle = (id) =>
     setSelected((prev) => {
@@ -259,7 +242,7 @@ export default function Sales() {
       ) : (
       <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <ToolbarButton onClick={exportCsv}>Export all</ToolbarButton>
+        <ToolbarButton onClick={() => setExportOpen(true)}>Export all</ToolbarButton>
         <ToolbarButton disabled={!hasSelection} onClick={() => moveSelected('archived')}>Archive</ToolbarButton>
         <Dropdown
           label="Move to"
@@ -358,6 +341,8 @@ export default function Sales() {
       {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>}
       </>
       )}
+
+      <DocsExportModal open={exportOpen} kind="sales" rows={rows} onClose={() => setExportOpen(false)} />
     </AppShell>
   );
 }

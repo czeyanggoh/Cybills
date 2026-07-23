@@ -12,6 +12,7 @@ import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
 import SalesDetail from './pages/SalesDetail';
 import Customers from './pages/Customers';
+import Exports from './pages/Exports';
 import Bank from './pages/Bank';
 import Vault from './pages/Vault';
 import VaultDetail from './pages/VaultDetail';
@@ -39,8 +40,10 @@ function App() {
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<Login />} />
             <Route path="/costs" element={<Protected><Costs /></Protected>} />
+            <Route path="/costs/exports" element={<Protected><Exports workspace="costs" /></Protected>} />
             <Route path="/costs/:id" element={<Protected><CostDetail /></Protected>} />
             <Route path="/sales" element={<Protected><Sales /></Protected>} />
+            <Route path="/sales/exports" element={<Protected><Exports workspace="sales" /></Protected>} />
             <Route path="/sales/:id" element={<Protected><SalesDetail /></Protected>} />
             <Route path="/customers" element={<Protected><Customers /></Protected>} />
             <Route path="/bank" element={<Protected><Bank view="transactions" /></Protected>} />

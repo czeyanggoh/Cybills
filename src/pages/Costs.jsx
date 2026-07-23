@@ -14,6 +14,7 @@ import {
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import AddToClaimModal from '@/components/AddToClaimModal';
+import DocsExportModal from '@/components/DocsExportModal';
 import { useCategoryOptions } from '@/lib/organisations';
 import { useAuth } from '@/lib/auth';
 import { updateBill, notifyBillsChanged } from '@/lib/bills';
@@ -21,25 +22,6 @@ import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { cn } from '@/lib/utils';
-
-// Download the given rows as a CSV.
-function exportRowsCsv(rows, name) {
-  const esc = (v) => {
-    const s = String(v ?? '');
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const header = ['Status', 'User', 'Date', 'Supplier', 'Category', 'Total', 'Tax'];
-  const lines = [header, ...rows.map((d) => [d.status, d.user, d.date, d.supplier, d.category, d.total, d.tax])];
-  const csv = lines.map((r) => r.map(esc).join(',')).join('\n');
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
 
 // Native (working) category dropdown styled to match the row cells. `options`
 // is the active org's live Xero chart (bundled fallback).
@@ -312,6 +294,7 @@ export default function Costs() {
   const [selected, setSelected] = useState(() => new Set());
   const [query, setQuery] = useState('');
   const [claimOpen, setClaimOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
@@ -378,7 +361,7 @@ export default function Costs() {
     move: moveSelected,
     del: deleteSelected,
     addClaim: () => hasSelection && setClaimOpen(true),
-    exportCsv: () => exportRowsCsv(rows, `costs-${tab}.csv`),
+    exportCsv: () => setExportOpen(true),
     navigate,
   };
 
@@ -547,6 +530,8 @@ export default function Costs() {
           if (targetId) addSelectedToClaim(targetId);
         }}
       />
+
+      <DocsExportModal open={exportOpen} kind="costs" rows={rows} onClose={() => setExportOpen(false)} />
     </AppShell>
   );
 }

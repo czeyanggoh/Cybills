@@ -7,13 +7,16 @@ export default function CostsSubnav() {
   const { pathname } = useLocation();
   const counts = useCostsCounts();
   const isActive = (item) =>
-    item.to === '/costs' ? pathname.startsWith('/costs') : pathname === item.to;
+    item.to === '/costs'
+      ? pathname === '/costs' || (pathname.startsWith('/costs/') && pathname !== '/costs/exports')
+      : pathname === item.to;
 
   // Live counts so the subnav badges match the inbox tab + expense claims list.
   const SUBNAV = [
     { label: 'Costs inbox', count: counts.inbox, to: '/costs' },
     { label: 'Expense claims', count: counts.expenseClaims, to: '/expense-claims' },
     { label: 'Supplier statements', to: '/supplier-statements' },
+    { label: 'Exports', to: '/costs/exports' },
   ];
 
   return (

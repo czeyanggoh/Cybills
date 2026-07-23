@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 const SUBNAV = [
   { label: 'Sales inbox', count: 2, to: '/sales' },
   { label: 'Customers', to: '/customers' },
+  { label: 'Exports', to: '/sales/exports' },
 ];
 
 export default function SalesSubnav() {
