@@ -1,8 +1,12 @@
 import { useState } from 'react';
-import { Search, Filter, Settings2, ChevronDown } from 'lucide-react';
+import { Search, Filter, Settings2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
+import SearchSelect from '@/components/SearchSelect';
 import { SUPPLIERS } from '@/data/suppliers';
+import { CUSTOMERS } from '@/data/customers';
+import { useCategoryOptions } from '@/lib/organisations';
+import { getSupplierRule, setSupplierRule, useSupplierRules } from '@/lib/supplierRules';
 import { cn } from '@/lib/utils';
 
 // Small b&w toggle used per-row.
@@ -37,6 +41,9 @@ export default function Suppliers() {
   const [selected, setSelected] = useState(() => new Set());
   const rows = SUPPLIERS;
   const hasSelection = selected.size > 0;
+  const categoryOptions = useCategoryOptions();
+  const customerOptions = CUSTOMERS.map((c) => c.name);
+  useSupplierRules(); // re-render when a supplier's category/customer changes
 
   const toggle = (id) =>
     setSelected((prev) => {
@@ -92,15 +99,23 @@ export default function Suppliers() {
                 <td className="px-3 py-3"><RowToggle defaultOn={s.extractLines} /></td>
                 <td className="px-3 py-3"><RowToggle defaultOn={s.extractStatements} /></td>
                 <td className="px-3 py-3">
-                  <div className="inline-flex w-40 items-center justify-between rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground">
-                    <span className="truncate">—</span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                  <div className="w-40">
+                    <SearchSelect
+                      compact
+                      value={getSupplierRule(s.id).category || ''}
+                      options={categoryOptions}
+                      onChange={(v) => setSupplierRule(s.id, { category: v })}
+                    />
                   </div>
                 </td>
                 <td className="px-3 py-3">
-                  <div className="inline-flex w-40 items-center justify-between rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground">
-                    <span className="truncate">—</span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                  <div className="w-40">
+                    <SearchSelect
+                      compact
+                      value={getSupplierRule(s.id).customer || ''}
+                      options={customerOptions}
+                      onChange={(v) => setSupplierRule(s.id, { customer: v })}
+                    />
                   </div>
                 </td>
               </tr>

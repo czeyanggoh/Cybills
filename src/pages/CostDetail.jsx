@@ -20,6 +20,8 @@ import { DOCS, getDoc } from '@/data/docs';
 import { getExtractionAccounts, useCategoryOptions } from '@/lib/organisations';
 import { useProjectOptions } from '@/lib/listsStore';
 import { CUSTOMERS } from '@/data/customers';
+import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
+import { usePaymentMethods } from '@/lib/paymentMethods';
 import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged } from '@/lib/bills';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -162,6 +164,8 @@ export default function CostDetail() {
   const categoryOptions = useCategoryOptions();
   const projectOptions = useProjectOptions();
   const customerOptions = CUSTOMERS.map((c) => c.name);
+  const paymentMethods = usePaymentMethods();
+  const [pmModalOpen, setPmModalOpen] = useState(false);
   const fileInputRef = useRef(null);
 
   // Sample docs carry any local (localStorage) edits applied on top.
@@ -537,14 +541,27 @@ export default function CostDetail() {
 
               <SectionHeading>Payment</SectionHeading>
               <Field label="Paid">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-5 w-9 items-center rounded-full border p-0.5">
-                    <span className="h-4 w-4 rounded-full bg-muted-foreground/50" />
+                <button type="button" onClick={() => set('paid', !data.paid)} className="flex items-center gap-2 pt-1">
+                  <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', data.paid ? 'justify-end bg-foreground' : 'justify-start border')}>
+                    <span className={cn('h-4 w-4 rounded-full', data.paid ? 'bg-background' : 'bg-muted-foreground/50')} />
                   </span>
-                  <span className="text-sm text-muted-foreground">No</span>
-                </div>
+                  <span className="text-sm text-muted-foreground">{data.paid ? 'Yes' : 'No'}</span>
+                </button>
               </Field>
-              <Field label="Payment method"><Select value="—" /></Field>
+              <Field label="Payment method">
+                <EditableSelect
+                  value={data.paymentMethod || ''}
+                  options={paymentMethods.map((p) => p.label)}
+                  onChange={(v) => set('paymentMethod', v)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setPmModalOpen(true)}
+                  className="mt-1 text-xs font-medium text-emerald-600 hover:underline"
+                >
+                  Add payment method
+                </button>
+              </Field>
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 <button
@@ -614,6 +631,12 @@ export default function CostDetail() {
         onClose={() => setPublishOpen(false)}
         bill={{ id: doc.id, supplier: data.supplier, total: data.total, currency: data.currency, date: data.date }}
         onPublished={onPublished}
+      />
+
+      <AddPaymentMethodModal
+        open={pmModalOpen}
+        onClose={() => setPmModalOpen(false)}
+        onAdded={(pm) => set('paymentMethod', pm.label)}
       />
     </AppShell>
   );

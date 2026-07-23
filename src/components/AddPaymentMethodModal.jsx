@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
-import { addPaymentMethod, BANK_ACCOUNTS } from '@/lib/paymentMethods';
+import { addPaymentMethod } from '@/lib/paymentMethods';
+import { useXeroBankAccounts } from '@/lib/organisations';
 
 // "Add payment method" dialog — mirrors Dext's. Name is required; Reference
-// (e.g. last 4 card digits) and Bank account are optional.
+// (e.g. last 4 card digits) and Bank account are optional. Bank accounts are
+// synced from the connected Xero organisation.
 export default function AddPaymentMethodModal({ open, onClose, onAdded }) {
   const [name, setName] = useState('');
   const [reference, setReference] = useState('');
   const [bankAccount, setBankAccount] = useState('');
+  const bankAccounts = useXeroBankAccounts();
   if (!open) return null;
 
   const add = () => {
@@ -60,7 +63,7 @@ export default function AddPaymentMethodModal({ open, onClose, onAdded }) {
                 className="h-10 w-full appearance-none rounded-md border bg-background px-3 pr-9 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="">Select</option>
-                {BANK_ACCOUNTS.map((b) => <option key={b} value={b}>{b}</option>)}
+                {bankAccounts.map((b) => <option key={b} value={b}>{b}</option>)}
               </select>
               <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             </div>

@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
 import { useCustomCategories } from '@/lib/customCategories';
 import { useCategoryListOptions } from '@/lib/listsStore';
+import { useBankAccounts } from '@/lib/bankAccounts';
+import { BANK_ACCOUNTS } from '@/lib/paymentMethods';
 
 // Client helpers for organisations (client entities linked to a Xero tenant in
 // cyworkspace) and the Xero endpoints that publish bills through the relay.
@@ -157,6 +159,29 @@ export function useCategoryOptions() {
   const listCats = useCategoryListOptions();
   const custom = useCustomCategories().map((c) => c.label);
   return Array.from(new Set(['Uncategorised', ...labels, ...listCats, ...custom]));
+}
+
+// Bank-account dropdown options: the linked org's Xero BANK accounts (live via
+// the relay) plus any manually-added accounts, falling back to the built-in
+// list when Xero isn't connected.
+export function useXeroBankAccounts() {
+  const { data: organisations = [] } = useOrganisations();
+  const active = getActiveOrganisationId();
+  const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  const { data } = useQuery({
+    queryKey: ['xero-accounts', orgId],
+    queryFn: () => fetchXeroAccounts(orgId),
+    enabled: Boolean(orgId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  const manual = useBankAccounts().map((a) => a.name).filter(Boolean);
+  const xero = (data ?? [])
+    .filter((a) => String(a.type).toUpperCase() === 'BANK')
+    .map((a) => a.name || a.code)
+    .filter(Boolean);
+  const merged = Array.from(new Set([...xero, ...manual]));
+  return merged.length ? merged : BANK_ACCOUNTS;
 }
 
 // Publish a stored bill to Xero as an ACCPAY supplier bill. Resolves with

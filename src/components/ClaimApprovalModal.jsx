@@ -79,7 +79,9 @@ export default function ClaimApprovalModal({ open, onClose, onSubmit }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
       <div className="relative w-full max-w-md overflow-visible rounded-lg bg-background shadow-xl">
-        <div className="flex items-center justify-between border-b px-6 py-4">
+        {/* z-30 keeps the header (and its close button) above the approver
+            dropdown's click-away overlay, so the cross always closes the modal. */}
+        <div className="relative z-30 flex items-center justify-between border-b bg-background px-6 py-4">
           <h2 className="text-base font-semibold tracking-tight">Submit for approval</h2>
           <button type="button" onClick={onClose} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
             <X className="h-5 w-5" />
