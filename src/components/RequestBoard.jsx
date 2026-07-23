@@ -28,9 +28,12 @@ const FILTERS = ['all', 'open', 'done', 'closed'];
 
 const UNASSIGNED = '';
 
-export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, storageKey, viewToggle = null }) {
+export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, storageKey, viewToggle = null, seed = [] }) {
   const { user } = useAuth();
   const author = user?.name || user?.email || '';
+  // Capture the seed once so the load effect can pre-populate an empty board
+  // without re-running when the parent re-renders.
+  const seedRef = useRef(seed);
 
   const [tickets, setTickets] = useState([]);
   const [assignees, setAssignees] = useState([]); // [{ id, email, name }]
@@ -43,11 +46,30 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
   const [quotaError, setQuotaError] = useState(false);
   const fileRef = useRef(null);
 
-  // Load persisted tickets once.
+  // Load persisted tickets once. If the board is empty and a seed was provided
+  // (the Testing checklist), pre-populate it — but only the first time, so
+  // deleting seeded items doesn't bring them back.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(storageKey);
-      setTickets(raw ? JSON.parse(raw) : []);
+      if (raw) { setTickets(JSON.parse(raw)); return; }
+      const items = seedRef.current;
+      if (items.length && !localStorage.getItem(`${storageKey}.seeded`)) {
+        const seeded = items.map((text) => ({
+          id: crypto.randomUUID(),
+          text,
+          screenshots: [],
+          status: 'open',
+          author: '',
+          created_at: new Date().toISOString(),
+          comments: [],
+        }));
+        localStorage.setItem(storageKey, JSON.stringify(seeded));
+        localStorage.setItem(`${storageKey}.seeded`, '1');
+        setTickets(seeded);
+      } else {
+        setTickets([]);
+      }
     } catch {
       setTickets([]);
     }
