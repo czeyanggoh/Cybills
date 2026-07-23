@@ -18,6 +18,8 @@ import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { getExtractionAccounts, useCategoryOptions } from '@/lib/organisations';
+import { useProjectOptions } from '@/lib/listsStore';
+import { CUSTOMERS } from '@/data/customers';
 import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged } from '@/lib/bills';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -158,6 +160,8 @@ export default function CostDetail() {
   const navigate = useNavigate();
   const { visionEnabled, user } = useAuth();
   const categoryOptions = useCategoryOptions();
+  const projectOptions = useProjectOptions();
+  const customerOptions = CUSTOMERS.map((c) => c.name);
   const fileInputRef = useRef(null);
 
   // Sample docs carry any local (localStorage) edits applied on top.
@@ -513,8 +517,8 @@ export default function CostDetail() {
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>
-              <Field label="Customer"><Select value="ST Engineering Info-Security Pte. Ltd." /></Field>
-              <Field label="Project"><Select value="Red Alpha LLC" /></Field>
+              <Field label="Customer"><EditableSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
+              <Field label="Project"><EditableSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} /></Field>
               <Field label="Description">
                 <textarea
                   rows={2}

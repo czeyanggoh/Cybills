@@ -5,13 +5,15 @@ import SalesSubnav from '@/components/SalesSubnav';
 import SearchSelect from '@/components/SearchSelect';
 import { CUSTOMERS } from '@/data/customers';
 import { useCategoryOptions } from '@/lib/organisations';
-import { getCustomerRule, saveCustomerRule, PROJECTS } from '@/lib/customerRules';
+import { getCustomerRule, saveCustomerRule } from '@/lib/customerRules';
+import { useProjectOptions } from '@/lib/listsStore';
 import { cn } from '@/lib/utils';
 
 export default function Customers() {
   const [selected, setSelected] = useState(() => new Set());
   const [query, setQuery] = useState('');
   const categoryOptions = useCategoryOptions();
+  const PROJECTS = useProjectOptions();
   // Per-customer Category/Project, seeded from any saved customer rule. Editing a
   // cell writes back to that customer's rule so it also applies to new uploads.
   const [assign, setAssign] = useState(() => {

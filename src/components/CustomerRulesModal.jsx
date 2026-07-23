@@ -7,8 +7,8 @@ import {
   CURRENCIES,
   DUE_DATE_OPTIONS,
   GROUP_BY_OPTIONS,
-  PROJECTS,
 } from '@/lib/customerRules';
+import { useProjectOptions } from '@/lib/listsStore';
 import { cn } from '@/lib/utils';
 
 function FieldLabel({ children }) {
@@ -218,6 +218,7 @@ function SmartSplitModal({ open, customer, value, categoryOptions, onClose, onDo
 export default function CustomerRulesModal({ open, customer, categoryOptions = [], onClose, onApply }) {
   const [rule, setRule] = useState(() => ({ ...emptyRule(), ...(getCustomerRule(customer) || {}) }));
   const [splitOpen, setSplitOpen] = useState(false);
+  const PROJECTS = useProjectOptions();
   if (!open) return null;
 
   const set = (k, v) => setRule((r) => ({ ...r, [k]: v }));

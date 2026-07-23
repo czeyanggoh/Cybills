@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
 import { useCustomCategories } from '@/lib/customCategories';
+import { useCategoryListOptions } from '@/lib/listsStore';
 
 // Client helpers for organisations (client entities linked to a Xero tenant in
 // cyworkspace) and the Xero endpoints that publish bills through the relay.
@@ -151,9 +152,11 @@ export function useCategoryOptions() {
   });
   const expense = (data ?? []).filter((a) => isExpenseType(a.type));
   const labels = expense.length ? expense.map(accountLabel) : XERO_ACCOUNTS.map(accountLabel);
-  // User-added categories are appended and available in every dropdown.
+  // Business-settings Lists categories (seeded from the client's CSV) + any
+  // categories added on the fly are appended on top of the Xero chart.
+  const listCats = useCategoryListOptions();
   const custom = useCustomCategories().map((c) => c.label);
-  return Array.from(new Set(['Uncategorised', ...labels, ...custom]));
+  return Array.from(new Set(['Uncategorised', ...labels, ...listCats, ...custom]));
 }
 
 // Publish a stored bill to Xero as an ACCPAY supplier bill. Resolves with

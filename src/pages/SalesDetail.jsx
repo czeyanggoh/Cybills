@@ -8,6 +8,8 @@ import CustomerRulesModal from '@/components/CustomerRulesModal';
 import AddCategoryModal from '@/components/AddCategoryModal';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { currencyLabel } from '@/lib/customerRules';
+import { useProjectOptions } from '@/lib/listsStore';
+import { CUSTOMERS } from '@/data/customers';
 import { usePaymentMethods } from '@/lib/paymentMethods';
 import { useAuth } from '@/lib/auth';
 import { SALES, getSale } from '@/data/sales';
@@ -219,6 +221,8 @@ export default function SalesDetail() {
   const navigate = useNavigate();
   const { visionEnabled } = useAuth();
   const categoryOptions = useCategoryOptions();
+  const projectOptions = useProjectOptions();
+  const customerOptions = CUSTOMERS.map((c) => c.name);
   const fileInputRef = useRef(null);
   const mockSale = getSale(id);
   const [persistedSale, setPersistedSale] = useState(null);
@@ -497,7 +501,7 @@ export default function SalesDetail() {
               <Field label="Type"><Input value={data.type} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date"><Input value={data.date} onChange={(v) => set('date', v)} /></Field>
               <Field label="Customer">
-                <Input value={data.customer} onChange={(v) => set('customer', v)} />
+                <EditableSelect value={data.customer} options={customerOptions} onChange={(v) => set('customer', v)} />
                 <button
                   type="button"
                   onClick={() => setRulesOpen(true)}
@@ -520,7 +524,7 @@ export default function SalesDetail() {
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>
-              <Field label="Project"><Input value={data.project} onChange={(v) => set('project', v)} /></Field>
+              <Field label="Project"><EditableSelect value={data.project} options={projectOptions} onChange={(v) => set('project', v)} /></Field>
               <Field label="Description">
                 <textarea
                   rows={2}

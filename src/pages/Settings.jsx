@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Building2,
@@ -15,15 +15,12 @@ import {
   ImagePlus,
   Copy,
   ListChecks,
-  ChevronDown,
-  RefreshCw,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import ListsSettings from '@/components/ListsSettings';
 import { cn } from '@/lib/utils';
 import {
   useOrganisations,
-  getActiveOrganisationId,
-  useXeroAccounts,
 } from '@/lib/organisations';
 
 const NAV = [
@@ -643,203 +640,6 @@ function Exports() {
   );
 }
 
-// Human labels for Xero's account Type enum (kept short for the table cell).
-const ACCOUNT_TYPE_LABELS = {
-  EXPENSE: 'Expense',
-  OVERHEADS: 'Overheads',
-  DIRECTCOSTS: 'Direct costs',
-  REVENUE: 'Revenue',
-  SALES: 'Sales',
-  OTHERINCOME: 'Other income',
-  CURRENT: 'Current asset',
-  FIXED: 'Fixed asset',
-  INVENTORY: 'Inventory',
-  NONCURRENT: 'Non-current asset',
-  CURRLIAB: 'Current liability',
-  LIABILITY: 'Liability',
-  TERMLIAB: 'Non-current liability',
-  EQUITY: 'Equity',
-  BANK: 'Bank',
-  PREPAYMENT: 'Prepayment',
-};
-
-function typeLabel(type) {
-  return ACCOUNT_TYPE_LABELS[type] || (type ? type[0] + type.slice(1).toLowerCase() : '—');
-}
-
-// Lists → Chart of accounts. Pulls the linked Xero organisation's account codes
-// live through the cyworkspace relay (GET /api/xero/organisations/:id/accounts).
-function Lists() {
-  const { data: organisations = [], isLoading: orgsLoading } = useOrganisations();
-  const [organisationId, setOrganisationId] = useState('');
-  const [query, setQuery] = useState('');
-
-  // Preselect the active organisation (falling back to the first) once the
-  // linked organisations have loaded.
-  useEffect(() => {
-    if (!organisations.length) return;
-    setOrganisationId((current) => {
-      if (current && organisations.some((o) => o.id === current)) return current;
-      const active = getActiveOrganisationId();
-      return organisations.some((o) => o.id === active) ? active : organisations[0].id;
-    });
-  }, [organisations]);
-
-  const {
-    data: accounts = [],
-    isLoading: accountsLoading,
-    isFetching,
-    error,
-    refetch,
-  } = useXeroAccounts(organisationId);
-
-  const q = query.trim().toLowerCase();
-  const filtered = q
-    ? accounts.filter(
-        (a) =>
-          a.code.toLowerCase().includes(q) ||
-          (a.name ?? '').toLowerCase().includes(q) ||
-          typeLabel(a.type).toLowerCase().includes(q)
-      )
-    : accounts;
-
-  const err = /** @type {any} */ (error);
-  const configError = err?.code === 'xero_not_configured';
-  const notConnected = err?.status === 502 || err?.code === 'relay_unreachable';
-
-  if (orgsLoading) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
-  }
-
-  if (!organisations.length) {
-    return (
-      <Card title="Chart of accounts">
-        <p className="text-sm text-muted-foreground">
-          No organisation is linked to Xero yet. Add one from the workspace menu (top left) to pull
-          in its account codes.
-        </p>
-      </Card>
-    );
-  }
-
-  const selectClass =
-    'h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60';
-
-  return (
-    <div className="space-y-6">
-      <Card title="Chart of accounts">
-        <p className="text-sm text-muted-foreground">
-          Account codes pulled live from Xero through the cyworkspace relay. These are the active
-          accounts bills can be published to.
-        </p>
-
-        <div className="flex flex-wrap items-end gap-3">
-          {organisations.length > 1 && (
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs font-medium text-muted-foreground">Organisation</span>
-              <div className="relative">
-                <select
-                  value={organisationId}
-                  onChange={(e) => setOrganisationId(e.target.value)}
-                  className={cn(selectClass, 'w-56')}
-                >
-                  {organisations.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              </div>
-            </label>
-          )}
-
-          <label className="flex flex-1 flex-col gap-1 text-sm">
-            <span className="text-xs font-medium text-muted-foreground">Search</span>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter by code, name or type"
-              className="h-9 w-full min-w-48 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={() => refetch()}
-            disabled={isFetching}
-            className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-60"
-          >
-            <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} strokeWidth={1.75} />
-            Refresh
-          </button>
-        </div>
-
-        {error ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
-            <p className="font-medium text-destructive">Could not load account codes from Xero</p>
-            <p className="mt-1 text-muted-foreground">
-              {configError
-                ? 'The cyworkspace relay is not configured on this server yet (CYWORKSPACE_API_KEY).'
-                : notConnected
-                  ? 'The cyworkspace relay could not be reached. Check that the connection is up and try again.'
-                  : error.message}
-            </p>
-          </div>
-        ) : accountsLoading ? (
-          <p className="text-sm text-muted-foreground">Loading account codes from Xero…</p>
-        ) : accounts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            This Xero organisation has no active accounts.
-          </p>
-        ) : (
-          <>
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full min-w-[640px] text-sm">
-                <thead className="border-b bg-muted/40 text-left text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">Code</th>
-                    <th className="px-3 py-2 font-medium">Name</th>
-                    <th className="px-3 py-2 font-medium">Type</th>
-                    <th className="px-3 py-2 font-medium">Tax</th>
-                    <th className="px-3 py-2 font-medium">Description</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((a) => (
-                    <tr key={a.code} className="border-b last:border-0">
-                      <td className="whitespace-nowrap px-3 py-2 font-mono">{a.code}</td>
-                      <td className="px-3 py-2">{a.name}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                        {typeLabel(a.type)}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                        {a.taxType || '—'}
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">{a.description || '—'}</td>
-                    </tr>
-                  ))}
-                  {filtered.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
-                        No accounts match “{query}”.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {filtered.length === accounts.length
-                ? `${accounts.length} account${accounts.length === 1 ? '' : 's'}`
-                : `${filtered.length} of ${accounts.length} accounts`}
-            </p>
-          </>
-        )}
-      </Card>
-    </div>
-  );
-}
 
 function Placeholder({ label }) {
   return (
@@ -1042,7 +842,7 @@ export default function Settings() {
       ) : section === 'exports' ? (
         <Exports />
       ) : section === 'lists' ? (
-        <Lists />
+        <ListsSettings />
       ) : section === 'vault' ? (
         <VaultSettings />
       ) : (
