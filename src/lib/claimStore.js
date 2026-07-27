@@ -21,6 +21,7 @@ const ITEMS_KEY = 'cybills.claims.items.v1';
 const CREATED_KEY = 'cybills.claims.created.v1';
 const EVENTS_KEY = 'cybills.claims.events.v1';
 const STATE_KEY = 'cybills.claims.state.v1'; // { archived: [ids], deleted: [ids] }
+const APPROVALS_KEY = 'cybills.claims.approvals.v1'; // { [claimId]: { approvalStatus, approver, decidedBy, decidedAt } }
 export const CLAIMS_EVENT = 'cybills:claims-changed';
 
 function read(key) {
@@ -87,15 +88,31 @@ function setState(next) {
   write(STATE_KEY, next);
 }
 
+// Approval state per claim (client-side). approvalStatus is one of
+// 'awaiting_approval' | 'approved' | 'rejected' (absent = not submitted).
+export function getApprovals() {
+  return read(APPROVALS_KEY) || {};
+}
+function setApproval(claimId, patch) {
+  const map = getApprovals();
+  map[claimId] = { ...(map[claimId] || {}), ...patch };
+  write(APPROVALS_KEY, map);
+}
+
 export function getAllClaims() {
   const itemsMap = getAddedItems();
   const eventsMap = getClaimEvents();
   const { archived, deleted } = getState();
+  const approvals = getApprovals();
   const archivedSet = new Set(archived);
   const deletedSet = new Set(deleted);
   return [...BASE, ...getCreatedClaims()]
     .filter((c) => !deletedSet.has(c.id))
-    .map((c) => ({ ...withItems(c, itemsMap, eventsMap), archived: archivedSet.has(c.id) }));
+    .map((c) => ({
+      ...withItems(c, itemsMap, eventsMap),
+      archived: archivedSet.has(c.id),
+      ...(approvals[c.id] || {}),
+    }));
 }
 
 export function archiveClaims(ids, archived = true) {
@@ -130,13 +147,28 @@ export function addClaimEvent(claimId, event) {
   write(EVENTS_KEY, map);
 }
 
-// Record a submit-for-approval action against a claim.
+// Submit a claim for approval: marks it "awaiting approval", records the chosen
+// approver, and logs a history event.
 export function submitForApproval(claimId, approver, actor) {
+  setApproval(claimId, { approvalStatus: 'awaiting_approval', approver, decidedBy: '', decidedAt: '' });
   addClaimEvent(claimId, {
     text: `This claim was submitted for approval to ${approver}`,
     by: actor || 'Astrid Yang',
     at: 'Just now',
   });
+}
+
+// Approve / reject a claim awaiting approval. `actor` is whoever decides (for
+// solo testing this is the signed-in user).
+export function approveClaim(claimId, actor) {
+  const who = prettyActor(actor);
+  setApproval(claimId, { approvalStatus: 'approved', decidedBy: who, decidedAt: 'Just now' });
+  addClaimEvent(claimId, { text: `This claim was approved by ${who}`, by: who, at: 'Just now' });
+}
+export function rejectClaim(claimId, actor) {
+  const who = prettyActor(actor);
+  setApproval(claimId, { approvalStatus: 'rejected', decidedBy: who, decidedAt: 'Just now' });
+  addClaimEvent(claimId, { text: `This claim was rejected by ${who}`, by: who, at: 'Just now' });
 }
 
 // Create a new (empty) claim and return it.

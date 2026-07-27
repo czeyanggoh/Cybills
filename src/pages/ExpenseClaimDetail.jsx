@@ -16,7 +16,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
-import { useClaims, submitForApproval } from '@/lib/claimStore';
+import { useClaims, submitForApproval, approveClaim, rejectClaim } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf } from '@/lib/claimPdf';
@@ -123,7 +123,24 @@ export default function ExpenseClaimDetail() {
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>
+        {claim.approvalStatus === 'awaiting_approval' ? (
+          <>
+            <span className="inline-flex h-8 items-center rounded-md border border-dashed border-foreground px-3 text-sm">Awaiting approval</span>
+            <TopButton onClick={() => approveClaim(claim.id, user?.name || 'Astrid Yang')}>Approve</TopButton>
+            <TopButton danger onClick={() => { if (window.confirm('Reject this claim?')) rejectClaim(claim.id, user?.name || 'Astrid Yang'); }}>Reject</TopButton>
+          </>
+        ) : claim.approvalStatus === 'approved' ? (
+          <span className="inline-flex h-8 items-center gap-1 rounded-md bg-foreground px-3 text-sm font-medium text-background">
+            Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
+          </span>
+        ) : claim.approvalStatus === 'rejected' ? (
+          <>
+            <span className="inline-flex h-8 items-center rounded-md border border-destructive px-3 text-sm text-destructive">Rejected</span>
+            <TopButton onClick={() => setApprovalOpen(true)}>Re-submit for approval</TopButton>
+          </>
+        ) : (
+          <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>
+        )}
         <TopButton onClick={() => navigate('/expense-claims')}>Archive</TopButton>
         <div className="relative">
           <TopButton onClick={() => setExportMenu((o) => !o)} dropdown>Export</TopButton>
