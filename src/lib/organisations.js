@@ -1,7 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
 import { useCustomCategories } from '@/lib/customCategories';
-import { useCategoryListOptions } from '@/lib/listsStore';
 import { useBankAccounts } from '@/lib/bankAccounts';
 import { BANK_ACCOUNTS } from '@/lib/paymentMethods';
 
@@ -154,11 +153,11 @@ export function useCategoryOptions() {
   });
   const expense = (data ?? []).filter((a) => isExpenseType(a.type));
   const labels = expense.length ? expense.map(accountLabel) : XERO_ACCOUNTS.map(accountLabel);
-  // Business-settings Lists categories (seeded from the client's CSV) + any
-  // categories added on the fly are appended on top of the Xero chart.
-  const listCats = useCategoryListOptions();
+  // The category dropdown always follows the Xero chart of accounts. Only
+  // categories the user explicitly adds via "Add category" are appended; the
+  // Business-settings Lists categories no longer feed this dropdown.
   const custom = useCustomCategories().map((c) => c.label);
-  return Array.from(new Set(['Uncategorised', ...labels, ...listCats, ...custom]));
+  return Array.from(new Set(['Uncategorised', ...labels, ...custom]));
 }
 
 // Bank-account dropdown options: the linked org's Xero BANK accounts (live via
