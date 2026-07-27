@@ -108,13 +108,12 @@ billsRouter.post('/bills', async (req, res) => {
   };
 
   const dup = findDuplicate(orgId, candidate);
-  // A byte-identical file already in this account is never allowed — not even
-  // with force. Fuzzy matches (same invoice / likely dup) can still be forced.
-  if (dup && dup.type === 'exact_file') {
-    return res.status(409).json({ error: 'duplicate', duplicate: dup, rejected: true });
-  }
+  // Block duplicates by default, but let an explicit `force` ("Add anyway")
+  // override any match — including a byte-identical file — so the user is never
+  // stuck unable to add a receipt. `rejected` flags the exact-file case so the
+  // client can label it, but it's still forceable.
   if (dup && b.force !== true) {
-    return res.status(409).json({ error: 'duplicate', duplicate: dup });
+    return res.status(409).json({ error: 'duplicate', duplicate: dup, rejected: dup.type === 'exact_file' });
   }
 
   // Store the original bytes (R2 when configured, else local disk). Best-effort:

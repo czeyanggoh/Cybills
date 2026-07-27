@@ -119,9 +119,28 @@ function UploadItem({ item, onForce, onSkip }) {
       </div>
 
       {status === 'rejected' && (
-        <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-foreground">
-          This item was rejected as this file already exists within this account.
-        </p>
+        <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+          <p className="flex items-start gap-2 text-xs text-foreground">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>This exact file already exists in this account. Add it anyway to put a fresh copy in the inbox, or skip it.</span>
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => onForce(item.id)}
+              className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Add anyway
+            </button>
+            <button
+              type="button"
+              onClick={() => onSkip(item.id)}
+              className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-background"
+            >
+              Skip
+            </button>
+          </div>
+        </div>
       )}
 
       {status === 'duplicate' && (
