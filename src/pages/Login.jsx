@@ -56,41 +56,11 @@ export default function Login() {
           </p>
         )}
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            navigate('/costs');
-          }}
-          className="flex flex-col gap-3"
-        >
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium">Email</span>
-            <input
-              type="email"
-              required
-              placeholder="you@company.com"
-              className="h-10 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
-          <button
-            type="submit"
-            className="h-10 rounded-md bg-primary text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-          >
-            Continue
-          </button>
-        </form>
-
-        <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
-          <span className="h-px flex-1 bg-border" />
-          or
-          <span className="h-px flex-1 bg-border" />
-        </div>
-
         <button
           type="button"
           onClick={continueWithGoogle}
           className={cn(
-            'flex h-10 w-full items-center justify-center gap-2.5 rounded-md border',
+            'flex h-11 w-full items-center justify-center gap-2.5 rounded-md border',
             'bg-background text-sm font-medium transition-colors hover:bg-muted'
           )}
         >

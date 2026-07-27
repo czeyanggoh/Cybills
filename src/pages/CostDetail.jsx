@@ -8,6 +8,7 @@ import {
   Upload,
   ChevronDown,
   FileText,
+  CheckCircle2,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -22,7 +23,7 @@ import { useProjectOptions } from '@/lib/listsStore';
 import { CUSTOMERS } from '@/data/customers';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { usePaymentMethods } from '@/lib/paymentMethods';
-import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged } from '@/lib/bills';
+import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill } from '@/lib/bills';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
@@ -180,6 +181,7 @@ export default function CostDetail() {
   const [extracting, setExtracting] = useState(false);
   const [aiError, setAiError] = useState('');
   const [splitOpen, setSplitOpen] = useState(false);
+  const [splitNote, setSplitNote] = useState('');
   const [claimOpen, setClaimOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -308,6 +310,61 @@ export default function CostDetail() {
     notifyBillsChanged();
   };
 
+  // Grab the current receipt's bytes (so the split's new item shares the image).
+  const receiptToUpload = async () => {
+    if (!imageUrl) return null;
+    try {
+      const resp = await fetch(imageUrl);
+      const blob = await resp.blob();
+      const type = blob.type || (previewType === 'pdf' ? 'application/pdf' : 'image/jpeg');
+      const file = new File([blob], doc.fileName || 'receipt', { type });
+      return await prepareUpload(file);
+    } catch {
+      return null;
+    }
+  };
+
+  // Split: keep the current item (updated amounts/category) and create a second
+  // line item from the SAME receipt with the new item's amounts/category.
+  const doSplit = async ({ current, next }) => {
+    setSplitOpen(false);
+    // 1) apply the "current item" values to this document.
+    const curPatch = { category: current.category, total: current.total, tax: current.tax };
+    setData((d) => ({ ...d, ...curPatch }));
+    if (doc.persisted) await updateBill(doc.id, curPatch).catch(() => {});
+    else setDocOverride(doc.id, curPatch);
+
+    // 2) create the new line item as a persisted cost, sharing the receipt image.
+    const rec = await receiptToUpload();
+    /** @type {any} */
+    const payload = {
+      fileHash: `split_${doc.id}_${Date.now()}`,
+      fileName: doc.fileName || `${data.supplier || 'receipt'}`,
+      supplier: data.supplier,
+      invoiceNumber: data.invoiceNumber || '',
+      documentType: data.type || 'Receipt',
+      date: data.date,
+      currency: 'SGD',
+      category: next.category,
+      total: next.total,
+      tax: next.tax,
+      kind: 'cost',
+    };
+    if (rec) { payload.fileBase64 = rec.base64; payload.mediaType = rec.mediaType; }
+    try {
+      const result = await addBill(payload, { force: true });
+      // Put the split item in the same pipeline tab as the current one.
+      const status = doc.persisted ? doc.status : (getDocOverrides()[doc.id]?.status || doc.status);
+      if (result?.bill?.id && status && status !== 'new') {
+        await updateBill(result.bill.id, { status }).catch(() => {});
+      }
+      notifyBillsChanged();
+      setSplitNote(`Split done — a new item for ${data.supplier || 'this receipt'} was created.`);
+    } catch {
+      setSplitNote('Could not create the split item. Please try again.');
+    }
+  };
+
   const onUploadClick = () => {
     setAiError('');
     fileInputRef.current?.click();
@@ -375,6 +432,12 @@ export default function CostDetail() {
 
   return (
     <AppShell subnav={<CostsSubnav />}>
+      {splitNote && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4" /> {splitNote}
+          <button type="button" onClick={() => setSplitNote('')} className="ml-auto text-emerald-700/70 hover:text-emerald-700">Dismiss</button>
+        </div>
+      )}
       {/* Action bar */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <TopButton subtle onClick={() => navigate('/costs')}>
@@ -608,7 +671,7 @@ export default function CostDetail() {
       <SplitItemModal
         open={splitOpen}
         onClose={() => setSplitOpen(false)}
-        onSplit={() => setSplitOpen(false)}
+        onSplit={doSplit}
         imageUrl={imageUrl}
         previewType={previewType}
         current={{ category: data.category, total: data.total, tax: data.tax }}

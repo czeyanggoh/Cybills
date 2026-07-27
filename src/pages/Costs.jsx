@@ -227,6 +227,106 @@ function SearchAndTools({ query, setQuery }) {
   );
 }
 
+// Sortable table header cell: click to sort, with an up/down arrow.
+function SortTh({ label, sortKey, sort, setSort, align = 'left' }) {
+  const active = sort.key === sortKey;
+  const arrow = !active ? '↕' : sort.dir === 'asc' ? '↑' : '↓';
+  return (
+    <th className={cn('px-3 py-2.5 font-medium', align === 'right' && 'text-right')}>
+      <button
+        type="button"
+        onClick={() => setSort((s) => (s.key === sortKey ? { key: sortKey, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: sortKey, dir: 'asc' }))}
+        className={cn('inline-flex items-center gap-1 hover:text-foreground', align === 'right' && 'flex-row-reverse', active ? 'text-foreground' : 'text-muted-foreground')}
+      >
+        {label}
+        <span className={cn('text-[11px]', active ? 'text-foreground' : 'text-muted-foreground/50')}>{arrow}</span>
+      </button>
+    </th>
+  );
+}
+
+// Search + Filter popover + Advanced-search popover for the Costs table.
+function CostsToolbar({ query, setQuery, flagFilter, setFlagFilter, adv, setAdv }) {
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [advOpen, setAdvOpen] = useState(false);
+  const chip = (on) => cn('rounded-md border px-3 py-1 text-sm transition-colors', on ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted');
+  const field = 'h-8 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+  return (
+    <>
+      <div className="relative ml-auto hidden sm:block">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="h-8 w-52 rounded-md border bg-background pl-8 pr-20 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+        <button type="button" onClick={() => { setAdvOpen((o) => !o); setFilterOpen(false); }} className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground">
+          Advanced <ChevronDown className="h-3 w-3" />
+        </button>
+        {advOpen && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setAdvOpen(false)} aria-hidden="true" />
+            <div className="absolute right-0 z-20 mt-1 w-80 rounded-lg border bg-background p-4 shadow-lg">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Advanced search</p>
+              <div className="space-y-3 text-sm">
+                <div>
+                  <span className="mb-1 block text-muted-foreground">Amount (SGD)</span>
+                  <div className="flex items-center gap-2">
+                    <input inputMode="decimal" value={adv.min} onChange={(e) => setAdv((a) => ({ ...a, min: e.target.value }))} placeholder="min" className={field} />
+                    <span className="text-muted-foreground">to</span>
+                    <input inputMode="decimal" value={adv.max} onChange={(e) => setAdv((a) => ({ ...a, max: e.target.value }))} placeholder="max" className={field} />
+                  </div>
+                </div>
+                <div>
+                  <span className="mb-1 block text-muted-foreground">Date</span>
+                  <div className="flex items-center gap-2">
+                    <input type="date" value={adv.from} onChange={(e) => setAdv((a) => ({ ...a, from: e.target.value }))} className={field} />
+                    <span className="text-muted-foreground">to</span>
+                    <input type="date" value={adv.to} onChange={(e) => setAdv((a) => ({ ...a, to: e.target.value }))} className={field} />
+                  </div>
+                </div>
+                <label className="block">
+                  <span className="mb-1 block text-muted-foreground">Supplier</span>
+                  <input value={adv.supplier} onChange={(e) => setAdv((a) => ({ ...a, supplier: e.target.value }))} placeholder="Contains…" className={field} />
+                </label>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button type="button" onClick={() => setAdv({ min: '', max: '', from: '', to: '', supplier: '' })} className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Reset</button>
+                <button type="button" onClick={() => setAdvOpen(false)} className="inline-flex h-8 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">Apply</button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="relative">
+        <button type="button" onClick={() => { setFilterOpen((o) => !o); setAdvOpen(false); }} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Filter">
+          <Filter className={cn('h-4 w-4', flagFilter !== 'all' && 'text-foreground')} strokeWidth={1.75} />
+        </button>
+        {filterOpen && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setFilterOpen(false)} aria-hidden="true" />
+            <div className="absolute right-0 z-20 mt-1 w-64 rounded-lg border bg-background p-4 shadow-lg">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filter</p>
+              <div className="grid grid-cols-[60px_1fr] items-center gap-2 text-sm">
+                <span>Flag</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setFlagFilter(flagFilter === 'flagged' ? 'all' : 'flagged')} className={chip(flagFilter === 'flagged')}>Flagged</button>
+                  <button type="button" onClick={() => setFlagFilter(flagFilter === 'unflagged' ? 'all' : 'unflagged')} className={chip(flagFilter === 'unflagged')}>Unflagged</button>
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button type="button" onClick={() => setFlagFilter('all')} className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Reset</button>
+                <button type="button" onClick={() => setFilterOpen(false)} className="inline-flex h-8 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">Apply</button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+      <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Table settings">
+        <Settings2 className="h-4 w-4" strokeWidth={1.75} />
+      </button>
+    </>
+  );
+}
+
 // Approvals has its own toolbar + empty state.
 function ApprovalsPanel() {
   const navigate = useNavigate();
@@ -295,6 +395,9 @@ export default function Costs() {
   const [query, setQuery] = useState('');
   const [claimOpen, setClaimOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [sort, setSort] = useState({ key: '', dir: 'asc' });
+  const [flagFilter, setFlagFilter] = useState('all'); // all | flagged | unflagged
+  const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', supplier: '' });
 
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
@@ -309,11 +412,33 @@ export default function Costs() {
   };
   const allRows = rowsByTab[tab] ?? [];
   const q = query.trim().toLowerCase();
-  const rows = q
+  const toNum = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
+  const toTime = (v) => { const t = new Date(v).getTime(); return Number.isNaN(t) ? 0 : t; };
+
+  let rows = q
     ? allRows.filter((d) =>
         [d.supplier, d.user, d.category, d.date].some((v) => String(v || '').toLowerCase().includes(q))
       )
     : allRows;
+  // Filter popover (flag) + Advanced search (amount / date / supplier).
+  if (flagFilter === 'flagged') rows = rows.filter((d) => d.flagged);
+  if (flagFilter === 'unflagged') rows = rows.filter((d) => !d.flagged);
+  if (adv.min) rows = rows.filter((d) => toNum(d.total) >= toNum(adv.min));
+  if (adv.max) rows = rows.filter((d) => toNum(d.total) <= toNum(adv.max));
+  if (adv.from) rows = rows.filter((d) => toTime(d.date) >= toTime(adv.from));
+  if (adv.to) rows = rows.filter((d) => toTime(d.date) <= toTime(adv.to));
+  if (adv.supplier.trim()) {
+    const s = adv.supplier.trim().toLowerCase();
+    rows = rows.filter((d) => String(d.supplier || '').toLowerCase().includes(s));
+  }
+  if (sort.key) {
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    rows = [...rows].sort((a, b) => {
+      if (sort.key === 'total' || sort.key === 'tax') return (toNum(a[sort.key]) - toNum(b[sort.key])) * dir;
+      if (sort.key === 'date') return (toTime(a.date) - toTime(b.date)) * dir;
+      return String(a[sort.key] || '').localeCompare(String(b[sort.key] || '')) * dir;
+    });
+  }
   const hasSelection = selected.size > 0;
 
   // Change a row's category — persists for uploaded bills (server) and samples
@@ -426,7 +551,14 @@ export default function Costs() {
           {/* Toolbar */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <ToolbarActions tab={tab} hasSelection={hasSelection} a={actions} />
-            <SearchAndTools query={query} setQuery={setQuery} />
+            <CostsToolbar
+              query={query}
+              setQuery={setQuery}
+              flagFilter={flagFilter}
+              setFlagFilter={setFlagFilter}
+              adv={adv}
+              setAdv={setAdv}
+            />
           </div>
 
           {/* Table */}
@@ -442,13 +574,13 @@ export default function Costs() {
                       className="h-4 w-4 accent-black"
                     />
                   </th>
-                  <th className="px-3 py-2.5 font-medium">Status</th>
-                  <th className="px-3 py-2.5 font-medium">User</th>
-                  <th className="px-3 py-2.5 font-medium">Date</th>
-                  <th className="px-3 py-2.5 font-medium">Supplier</th>
-                  <th className="px-3 py-2.5 font-medium">Category</th>
-                  <th className="px-3 py-2.5 text-right font-medium">Total</th>
-                  <th className="px-3 py-2.5 text-right font-medium">Tax</th>
+                  <SortTh label="Status" sortKey="status" sort={sort} setSort={setSort} />
+                  <SortTh label="User" sortKey="user" sort={sort} setSort={setSort} />
+                  <SortTh label="Date" sortKey="date" sort={sort} setSort={setSort} />
+                  <SortTh label="Supplier" sortKey="supplier" sort={sort} setSort={setSort} />
+                  <SortTh label="Category" sortKey="category" sort={sort} setSort={setSort} />
+                  <SortTh label="Total" sortKey="total" sort={sort} setSort={setSort} align="right" />
+                  <SortTh label="Tax" sortKey="tax" sort={sort} setSort={setSort} align="right" />
                   <th className="px-3 py-2.5 font-medium">Tax rate</th>
                 </tr>
               </thead>
