@@ -7,6 +7,7 @@ import {
   setBillFile,
   listBills,
   getBillById,
+  getBillByIdAny,
   parseAmount,
   type Candidate,
 } from './store.js';
@@ -41,7 +42,10 @@ billsRouter.get('/bills', (req, res) => {
 // GET /api/costs/bills/:id/file — stream the original file (R2 or local disk).
 // 404 when the bill has no stored file.
 billsRouter.get('/bills/:id/file', async (req, res) => {
-  const bill = getBillById(orgIdFor(req), req.params.id);
+  // Prefer the caller's org, but fall back to a global by-id lookup so exported
+  // CSV image links open even from a browser that isn't signed in (the bill id
+  // is an unguessable capability token). Same model as Dext's receipt links.
+  const bill = getBillById(orgIdFor(req), req.params.id) || getBillByIdAny(req.params.id);
   if (!bill || !bill.storageKey) return res.status(404).json({ error: 'no_file' });
 
   const obj = await getBillFile(bill.storageKey, bill.contentType);

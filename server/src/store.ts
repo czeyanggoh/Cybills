@@ -111,6 +111,14 @@ export function getBillById(orgId: string, id: string): Bill | null {
   return load().find((b) => b.orgId === orgId && b.id === id) ?? null;
 }
 
+// Look up a bill by id alone, across every org. The bill id is a long,
+// unguessable random token, so this is used as a capability URL for serving a
+// receipt file when the caller's session/org can't be resolved (e.g. an
+// exported CSV link opened in a browser that isn't signed in).
+export function getBillByIdAny(id: string): Bill | null {
+  return load().find((b) => b.id === id) ?? null;
+}
+
 // First (highest-confidence) duplicate for `cand`, or null. Cheapest checks
 // first; each tier requires the fields it keys on to actually be present.
 export function findDuplicate(orgId: string, cand: Candidate): DuplicateMatch | null {
