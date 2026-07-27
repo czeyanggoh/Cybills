@@ -23,6 +23,7 @@ import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { useCyhrEnabled, submitManyToCyhr } from '@/lib/cyhr';
+import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
 // Native (working) category dropdown styled to match the row cells. `options`
@@ -734,7 +735,7 @@ export default function Costs() {
                     </td>
                     <td className="px-3 py-3"><StatusBadge status={d.status} /></td>
                     <td className={cn('whitespace-nowrap px-3 py-3', d.unread && 'font-semibold')}>{d.user}</td>
-                    <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{d.date}</td>
+                    <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{formatDate(d.date)}</td>
                     <td className={cn('px-3 py-3', d.unread && 'font-semibold')}>{d.supplier}</td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <CategorySelect

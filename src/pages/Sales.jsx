@@ -15,6 +15,7 @@ import {
 } from '@/lib/bills';
 import { recordMove } from '@/lib/salesEvents';
 import DocsExportModal from '@/components/DocsExportModal';
+import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
 // How many of the six key fields Claude managed to extract, Dext-style.
@@ -317,7 +318,7 @@ export default function Sales() {
                   </span>
                 </td>
                 <td className="whitespace-nowrap px-3 py-3">{d.user}</td>
-                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{d.date}</td>
+                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{formatDate(d.date)}</td>
                 <td className="px-3 py-3">{d.customer}</td>
                 <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                   <select defaultValue={d.category} className="w-44 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
