@@ -72,6 +72,18 @@ export const env = {
   R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID ?? '',
   R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY ?? '',
   R2_BUCKET: process.env.R2_BUCKET ?? '',
+
+  // --- CYHR handoff (signed deep links) -------------------------------------
+  // CYBills captures the receipt + Xero category, then deep-links the employee
+  // into CYHR where the claim lands prefilled for them to submit and the admin
+  // to approve. The link is HMAC-SHA256 signed with a secret shared with CYHR
+  // (same value on both sides) so the params can't be altered en route. The
+  // secret is used ONLY on the server to compute the signature — it never
+  // reaches the browser. Both must be set for the handoff to switch on (see
+  // `cyhrEnabled`); until then the "Submit to CYHR" action is disabled.
+  // CYHR_BASE_URL is the full form URL, e.g. https://cyhr.cy-bm.sg/claims/new
+  CYHR_BASE_URL: process.env.CYHR_BASE_URL ?? '',
+  CYHR_SIGNING_SECRET: process.env.CYHR_SIGNING_SECRET ?? '',
 };
 
 // Real Google sign-in is only enabled once the client credentials AND a session
@@ -92,3 +104,8 @@ export const xeroEnabled = Boolean(env.CYWORKSPACE_API_KEY);
 export const r2Enabled = Boolean(
   env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY && env.R2_BUCKET
 );
+
+// The CYHR handoff switches on once the target URL AND the shared signing
+// secret are configured. Until then /api/cyhr/claim-link returns 503 and the
+// client disables the "Submit to CYHR" action.
+export const cyhrEnabled = Boolean(env.CYHR_BASE_URL && env.CYHR_SIGNING_SECRET);
