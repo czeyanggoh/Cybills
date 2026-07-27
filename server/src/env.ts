@@ -83,7 +83,11 @@ export const env = {
   // `cyhrEnabled`); until then the "Submit to CYHR" action is disabled.
   // CYHR_BASE_URL is the full claim-form URL; defaults to CYHR's confirmed
   // expenses form so only the secret has to be set on the VPS to switch on.
-  CYHR_BASE_URL: process.env.CYHR_BASE_URL ?? 'https://hr.cy-bm.sg/claims/expenses/new',
+  // `||`, not `??`: a .env copied from .env.example carries a literal
+  // `CYHR_BASE_URL=`, which is an empty string rather than undefined. `??`
+  // would keep that empty value, leaving cyhrEnabled false however correct the
+  // pasted secret is. Treat blank as "unset" so the default actually applies.
+  CYHR_BASE_URL: process.env.CYHR_BASE_URL || 'https://hr.cy-bm.sg/claims/expenses/new',
   CYHR_SIGNING_SECRET: process.env.CYHR_SIGNING_SECRET ?? '',
 };
 
