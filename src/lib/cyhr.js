@@ -22,8 +22,9 @@ export function useCyhrEnabled() {
 
 // Ask the server for a signed CYHR deep link for a cost document. Persisted
 // bills go by id (server reads the stored fields); sample rows send their
-// fields explicitly. Returns the URL, or throws with a code.
-export async function createCyhrClaimLink(doc) {
+// fields explicitly. `employee` is the person the claim is for (the logged-in
+// user) — CYHR requires it on the link. Returns the URL, or throws with a code.
+export async function createCyhrClaimLink(doc, employee = '') {
   const body = doc.persisted
     ? { billId: doc.id }
     : {
@@ -37,6 +38,7 @@ export async function createCyhrClaimLink(doc) {
           documentType: doc.type || '',
         },
       };
+  if (employee) body.employee = employee;
   const res = await fetch('/api/cyhr/claim-link', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -55,10 +57,10 @@ export async function createCyhrClaimLink(doc) {
 // Build the signed link and open CYHR in a new tab so the logged-in employee
 // lands on their prefilled claim. Opens the tab synchronously (before the async
 // fetch) so pop-up blockers treat it as user-initiated.
-export async function submitToCyhr(doc) {
+export async function submitToCyhr(doc, employee = '') {
   const tab = window.open('', '_blank');
   try {
-    const url = await createCyhrClaimLink(doc);
+    const url = await createCyhrClaimLink(doc, employee);
     if (tab) tab.location.href = url;
     else window.open(url, '_blank');
     return url;
@@ -71,13 +73,13 @@ export async function submitToCyhr(doc) {
 // Bulk handoff (one signed link per selected cost). Pre-opens a tab for each doc
 // synchronously within the click so pop-up blockers treat them as user-initiated,
 // then fills each once its link resolves. Throws if any link fails.
-export async function submitManyToCyhr(docs) {
+export async function submitManyToCyhr(docs, employee = '') {
   const tabs = docs.map(() => window.open('', '_blank'));
   await Promise.all(
     docs.map(async (doc, i) => {
       const tab = tabs[i];
       try {
-        const url = await createCyhrClaimLink(doc);
+        const url = await createCyhrClaimLink(doc, employee);
         if (tab) tab.location.href = url;
       } catch (err) {
         if (tab) tab.close();

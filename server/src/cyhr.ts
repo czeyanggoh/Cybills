@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import { env, cyhrEnabled } from './env.js';
 import { getBillById } from './store.js';
 import { orgIdFor } from './bills.js';
+import { readSession } from './auth.js';
 
 // CYHR handoff: turn a captured cost into a signed deep link that drops the
 // employee onto their prefilled claim in CYHR (they must already be logged into
@@ -17,11 +18,11 @@ import { orgIdFor } from './bills.js';
 export const cyhrRouter = Router();
 
 // ---------------------------------------------------------------------------
-// The one place the CYHR param contract lives. If CYHR uses different key names
-// (or wants an employee identifier / a separate glCode), adjust here only.
+// The one place the CYHR param contract lives (confirmed with the CYHR side).
 // `source` powers CYHR's "Imported from CYBills" banner. Amount is the captured
 // receipt total; `category` is the Xero account/category (amounts/accounts come
-// from Xero per the agreed contract).
+// from Xero). `employee` is the person the claim is for — CYHR matches it to the
+// employee record and requires it on the link. All non-empty params are signed.
 // ---------------------------------------------------------------------------
 type Billish = {
   total?: number | string;
@@ -33,7 +34,7 @@ type Billish = {
   documentType?: string;
 };
 
-function paramsForBill(b: Billish): Record<string, string> {
+function paramsForBill(b: Billish, employee: string): Record<string, string> {
   return {
     source: 'cybills',
     amount: b.total != null ? String(b.total) : '',
@@ -43,6 +44,7 @@ function paramsForBill(b: Billish): Record<string, string> {
     date: b.date ?? '',
     ref: b.invoiceNumber ?? '',
     description: b.documentType ?? '',
+    employee, // CYHR matches this to the employee record
     // glCode: '',  // reserved — add here if CYHR wants the GL code carried separately
   };
 }
@@ -78,16 +80,29 @@ cyhrRouter.post('/claim-link', (req, res) => {
   if (!cyhrEnabled) return res.status(503).json({ error: 'cyhr_not_configured' });
 
   const body = req.body ?? {};
-  let params: Record<string, string> | null = null;
+  const session = readSession(req);
+  let base: (Billish & { employee?: string }) | null = null;
+  let createdBy = '';
 
   if (typeof body.billId === 'string' && body.billId) {
     const bill = getBillById(orgIdFor(req), body.billId);
     if (!bill) return res.status(404).json({ error: 'not_found' });
-    params = paramsForBill(bill);
+    base = bill;
+    createdBy = bill.createdBy;
   } else if (body.fields && typeof body.fields === 'object') {
-    params = paramsForBill(body.fields as Billish);
+    base = body.fields as Billish & { employee?: string };
   }
 
-  if (!params) return res.status(400).json({ error: 'missing_bill' });
-  res.json({ url: signClaimUrl(params) });
+  if (!base) return res.status(400).json({ error: 'missing_bill' });
+
+  // The employee the claim is for: an explicit value from the client wins
+  // (the logged-in user), then the signed-in session, then the bill's uploader.
+  const employee =
+    (typeof body.employee === 'string' && body.employee) ||
+    base.employee ||
+    session?.email ||
+    createdBy ||
+    '';
+
+  res.json({ url: signClaimUrl(paramsForBill(base, employee)) });
 });

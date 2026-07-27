@@ -81,8 +81,9 @@ export const env = {
   // secret is used ONLY on the server to compute the signature — it never
   // reaches the browser. Both must be set for the handoff to switch on (see
   // `cyhrEnabled`); until then the "Submit to CYHR" action is disabled.
-  // CYHR_BASE_URL is the full form URL, e.g. https://cyhr.cy-bm.sg/claims/new
-  CYHR_BASE_URL: process.env.CYHR_BASE_URL ?? '',
+  // CYHR_BASE_URL is the full claim-form URL; defaults to CYHR's confirmed
+  // expenses form so only the secret has to be set on the VPS to switch on.
+  CYHR_BASE_URL: process.env.CYHR_BASE_URL ?? 'https://hr.cy-bm.sg/claims/expenses/new',
   CYHR_SIGNING_SECRET: process.env.CYHR_SIGNING_SECRET ?? '',
 };
 

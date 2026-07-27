@@ -446,16 +446,19 @@ export default function CostDetail() {
     }
     setCyhrNote('');
     try {
-      await submitToCyhr({
-        persisted: false,
-        total: data.total,
-        currency: data.currency,
-        category: data.category,
-        supplier: data.supplier,
-        date: data.date,
-        invoiceNumber: data.ref,
-        type: data.type,
-      });
+      await submitToCyhr(
+        {
+          persisted: false,
+          total: data.total,
+          currency: data.currency,
+          category: data.category,
+          supplier: data.supplier,
+          date: data.date,
+          invoiceNumber: data.ref,
+          type: data.type,
+        },
+        user?.email || user?.name || ''
+      );
     } catch {
       setCyhrNote('Could not create the CYHR link. Check the server logs.');
     }

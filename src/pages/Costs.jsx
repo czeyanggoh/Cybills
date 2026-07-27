@@ -590,7 +590,7 @@ export default function Costs() {
     const byId = new Map(allRows.map((r) => [r.id, r]));
     const docs = [...selected].map((id) => byId.get(id)).filter(Boolean);
     try {
-      await submitManyToCyhr(docs);
+      await submitManyToCyhr(docs, user?.email || user?.name || '');
     } catch {
       setCyhrNote('Could not create one or more CYHR links. Check the server logs.');
     }
