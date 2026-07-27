@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Flag, Image, ChevronDown, Search, Filter, Settings2, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { useClaims, archiveClaims, deleteClaims } from '@/lib/claimStore';
+import { useClaims, archiveClaims, deleteClaims, createClaim } from '@/lib/claimStore';
 import { cn } from '@/lib/utils';
 
 // Bulk "Actions" dropdown for the claims list.
@@ -52,7 +52,27 @@ export default function ExpenseClaims() {
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
   const [showCreate, setShowCreate] = useState(false);
+  const [newClaim, setNewClaim] = useState({ claimFor: 'Astrid Yang', endDate: '', name: '' });
   const [query, setQuery] = useState('');
+
+  // "2026-07-27" → "27 Jul 2026" to match the rest of the list.
+  const fmtEnd = (iso) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+    if (!m) return iso || '';
+    const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${m[3]} ${MON[Number(m[2]) - 1]} ${m[1]}`;
+  };
+
+  const submitCreate = () => {
+    createClaim({
+      claimFor: newClaim.claimFor,
+      endDate: fmtEnd(newClaim.endDate),
+      name: newClaim.name.trim() || 'Expense claim',
+    });
+    setShowCreate(false);
+    setNewClaim({ claimFor: 'Astrid Yang', endDate: '', name: '' });
+    setTab('inbox');
+  };
   const claims = useClaims();
 
   const inbox = claims.filter((c) => !c.archived);
@@ -266,7 +286,11 @@ export default function ExpenseClaims() {
             <div className="space-y-4 p-5">
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium">Claim for <span className="text-destructive">*</span></span>
-                <select className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <select
+                  value={newClaim.claimFor}
+                  onChange={(e) => setNewClaim((c) => ({ ...c, claimFor: e.target.value }))}
+                  className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
                   <option>Astrid Yang</option>
                   <option>Sean Tan</option>
                   <option>Clara Lee</option>
@@ -274,18 +298,34 @@ export default function ExpenseClaims() {
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium">End date <span className="text-destructive">*</span></span>
-                <input type="date" className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                <input
+                  type="date"
+                  value={newClaim.endDate}
+                  onChange={(e) => setNewClaim((c) => ({ ...c, endDate: e.target.value }))}
+                  className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium">Claim name</span>
-                <input type="text" placeholder="Add claim name" className="h-9 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+                <input
+                  type="text"
+                  value={newClaim.name}
+                  onChange={(e) => setNewClaim((c) => ({ ...c, name: e.target.value }))}
+                  placeholder="Add claim name"
+                  className="h-9 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                />
               </label>
             </div>
             <div className="flex justify-end gap-2 border-t px-5 py-4">
               <button type="button" onClick={() => setShowCreate(false)} className="rounded-md border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted">
                 Cancel
               </button>
-              <button type="button" onClick={() => setShowCreate(false)} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+              <button
+                type="button"
+                onClick={submitCreate}
+                disabled={!newClaim.claimFor || !newClaim.endDate}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
                 Create
               </button>
             </div>
