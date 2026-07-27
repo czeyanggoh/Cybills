@@ -24,7 +24,7 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
   };
 
   const TABS = [{ key: 'csv', label: 'CSV' }, { key: 'pdf', label: 'PDF' }, { key: 'zip', label: 'ZIP' }];
-  const blurb = { csv: 'Export your data as a CSV file.', pdf: 'Export your items as a formatted PDF, with a submission-history page at the back.', zip: 'Export a ZIP bundle containing the CSV and the PDF report.' };
+  const blurb = { csv: 'Export your data as a CSV file.', pdf: 'Export a PDF containing every receipt image (one document per page).', zip: 'Export a ZIP of every receipt file (each document) plus the CSV.' };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

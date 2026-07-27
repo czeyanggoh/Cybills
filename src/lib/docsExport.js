@@ -1,4 +1,4 @@
-import { jsPDF } from 'jspdf';
+import { PDFDocument } from 'pdf-lib';
 import { displayItemId, billFileUrl } from '@/lib/bills';
 import { recordEvent } from '@/lib/salesEvents';
 import { recordExport } from '@/lib/exportsStore';
@@ -72,133 +72,143 @@ function buildCostCsv(rows) {
   return csvLines([COST_COLS, ...body]);
 }
 
-// --- PDF --------------------------------------------------------------------
-const W = 595.28;
-const H = 841.89;
-const M = 32;
-const RIGHT = W - M;
-const BOTTOM = H - 56;
+// --- PDF (merged receipt documents, Dext-style) -----------------------------
+// The Costs/Sales PDF export is a concatenation of the actual receipt files:
+// each image receipt becomes a page; each multi-page PDF receipt keeps its
+// native pages. Built with pdf-lib so existing PDF pages can be copied in.
+const A4 = { w: 595.28, h: 841.89 };
 
-function buildDocsPdf(rows, { kind }) {
-  const isSales = kind === 'sales';
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const title = (isSales ? 'Sales export' : 'Costs export').toUpperCase();
-  const totalTag = '{tp}';
-  let page = 0;
-  let y = 0;
-
-  const chrome = () => {
-    page += 1;
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
-    doc.setTextColor(20);
-    doc.text(title, RIGHT, 44, { align: 'right' });
-    doc.setDrawColor(170);
-    doc.setLineWidth(0.7);
-    doc.line(M, 54, RIGHT, 54);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(140);
-    doc.text('Powered by CYBills', M, H - 28);
-    doc.text(`Page ${page} / ${totalTag}`, RIGHT, H - 28, { align: 'right' });
-    doc.setTextColor(20);
-    y = 80;
-  };
-  const nextPage = () => { doc.addPage(); chrome(); };
-  const ensure = (need) => { if (y + need > BOTTOM) nextPage(); };
-  const section = (label) => {
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.5);
-    doc.setTextColor(70);
-    doc.text(label, M, y);
-    doc.setTextColor(20);
-    y += 18;
-  };
-
-  chrome();
-  doc.setFontSize(9.5);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(90);
-  doc.text(`${rows.length} item${rows.length === 1 ? '' : 's'} · generated ${fmtDate(new Date().toISOString())}`, M, y);
-  doc.setTextColor(20);
-  y += 26;
-
-  section('ITEMS');
-  const partyLabel = isSales ? 'Customer' : 'Supplier';
-  const c = { date: M, id: 92, party: 168, category: 320, tax: 470, total: RIGHT };
-  const header = () => {
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(20);
-    doc.text('Date', c.date, y);
-    doc.text('Item ID', c.id, y);
-    doc.text(partyLabel, c.party, y);
-    doc.text('Category', c.category, y);
-    doc.text('Tax', c.tax, y, { align: 'right' });
-    doc.text('Total', c.total, y, { align: 'right' });
-    y += 16;
-  };
-  header();
-  doc.setFont('helvetica', 'normal');
-  let totTax = 0;
-  let totAmt = 0;
-  for (const d of rows) {
-    ensure(18);
-    if (y === 80) header();
-    doc.setTextColor(60);
-    doc.text(fmtDate(d.date) || '—', c.date, y);
-    doc.text(String(idOf(d)), c.id, y);
-    const party = isSales ? d.customer : d.supplier;
-    doc.text(doc.splitTextToSize(party || '—', c.category - c.party - 6)[0], c.party, y);
-    doc.text(doc.splitTextToSize(d.category || '—', c.tax - c.category - 40)[0], c.category, y);
-    doc.text(n2(d.tax), c.tax, y, { align: 'right' });
-    doc.text(n2(d.total), c.total, y, { align: 'right' });
-    totTax += num(d.tax);
-    totAmt += num(d.total);
-    y += 16;
+// Fetch a row's original receipt bytes + content type from the file endpoint.
+async function fetchReceipt(d) {
+  const id = d.id ?? d.itemId;
+  if (!d.hasFile || !id) return null;
+  try {
+    const res = await fetch(billFileUrl(id));
+    if (!res.ok) return null;
+    const buf = new Uint8Array(await res.arrayBuffer());
+    const type = (res.headers.get('content-type') || d.contentType || '').toLowerCase();
+    return { buf, type };
+  } catch {
+    return null;
   }
-  doc.setDrawColor(220);
-  doc.setLineWidth(0.5);
-  doc.line(M, y - 10, RIGHT, y - 10);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(20);
-  doc.text('Total (SGD)', M, y);
-  doc.text(totTax.toFixed(2), c.tax, y, { align: 'right' });
-  doc.text(totAmt.toFixed(2), c.total, y, { align: 'right' });
+}
 
-  // ---- Submission history (added page) --------------------------------
-  nextPage();
-  section('SUBMISSION HISTORY');
-  y += 4;
-  const when = new Date().toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
-  rows.forEach((d) => {
-    ensure(46);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.5);
-    doc.setTextColor(20);
-    doc.text(`Item ${idOf(d)} — ${(isSales ? d.customer : d.supplier) || '—'}`, M, y);
-    y += 14;
-    const line = (text, sub) => {
-      doc.setFillColor(30, 30, 30);
-      doc.circle(M + 3, y - 3, 2, 'F');
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      doc.setTextColor(60);
-      doc.text(text, M + 14, y);
-      doc.setFontSize(8.5);
-      doc.setTextColor(150);
-      doc.text(sub, RIGHT, y, { align: 'right' });
-      doc.setTextColor(20);
-      y += 15;
-    };
-    line(`Uploaded via web by ${d.user || d.owner || 'Astrid Yang'}`, fmtDate(d.date) || '');
-    line('Processing completed by CYBills', fmtDate(d.date) || '');
-    line(`Exported by Astrid Yang`, when);
-    y += 10;
-  });
+// Re-encode any browser-decodable image (webp/gif/…) to PNG bytes so pdf-lib
+// (which only embeds JPG/PNG) can place it.
+async function toPngBytes(buf, type) {
+  const url = URL.createObjectURL(new Blob([buf], { type: type || 'image/png' }));
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = reject;
+      im.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+    const b64 = canvas.toDataURL('image/png').split(',')[1];
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+    return out;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
-  doc.putTotalPages(totalTag);
-  return doc;
+const isPdfBytes = (b) => b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46; // %PDF
+
+// Merge every selected receipt into one PDF. Returns { bytes, added, missing }.
+async function buildReceiptsPdf(rows) {
+  const out = await PDFDocument.create();
+  let added = 0;
+  let missing = 0;
+  for (const d of rows) {
+    // eslint-disable-next-line no-await-in-loop
+    const rec = await fetchReceipt(d);
+    if (!rec) { missing += 1; continue; }
+    try {
+      if (rec.type.includes('pdf') || isPdfBytes(rec.buf)) {
+        // eslint-disable-next-line no-await-in-loop
+        const src = await PDFDocument.load(rec.buf, { ignoreEncryption: true });
+        // eslint-disable-next-line no-await-in-loop
+        const pages = await out.copyPages(src, src.getPageIndices());
+        pages.forEach((p) => out.addPage(p));
+      } else {
+        let img;
+        if (rec.type.includes('jpg') || rec.type.includes('jpeg')) img = await out.embedJpg(rec.buf);
+        else if (rec.type.includes('png')) img = await out.embedPng(rec.buf);
+        else img = await out.embedPng(await toPngBytes(rec.buf, rec.type));
+        const page = out.addPage([A4.w, A4.h]);
+        const m = 24;
+        const scale = Math.min((A4.w - m * 2) / img.width, (A4.h - m * 2) / img.height, 1);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        page.drawImage(img, { x: (A4.w - w) / 2, y: (A4.h - h) / 2, width: w, height: h });
+      }
+      added += 1;
+    } catch {
+      missing += 1;
+    }
+  }
+  if (added === 0) {
+    const page = out.addPage([A4.w, A4.h]);
+    page.drawText('No receipt images available for the selected items.', { x: 40, y: A4.h - 80, size: 12 });
+  }
+  const bytes = await out.save();
+  return { bytes, added, missing };
+}
+
+// --- ZIP (individual receipt files, Dext-style) -----------------------------
+const ymd = (d) => {
+  if (!d || d === '—') return '';
+  const dt = new Date(String(d).trim());
+  return Number.isNaN(dt.getTime()) ? '' : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+};
+function extFor(type, fileName) {
+  const t = (type || '').toLowerCase();
+  if (t.includes('pdf')) return 'pdf';
+  if (t.includes('png')) return 'png';
+  if (t.includes('webp')) return 'webp';
+  if (t.includes('gif')) return 'gif';
+  if (t.includes('jpeg') || t.includes('jpg')) return 'jpg';
+  const m = /\.([a-z0-9]+)$/i.exec(fileName || '');
+  return m ? m[1].toLowerCase() : 'bin';
+}
+const sanitizeName = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+// Dext-style receipt filename: "<Supplier> - <YYYY-MM-DD> - <id>.<ext>".
+function receiptName(d, type) {
+  const party = sanitizeName(d.supplier || d.customer || d.type || '');
+  const stem = [party, ymd(d.date), displayItemId(d.id ?? d.itemId)].filter(Boolean).join(' - ');
+  return `${stem}.${extFor(type, d.fileName)}`;
+}
+
+// ZIP of every receipt's original file plus the CSV — matching Dext's receipt
+// export (a folder of the individual documents). Returns { blob, added }.
+async function buildReceiptsZip(rows, { csvText, base }) {
+  const files = [{ name: `${base}.csv`, data: new TextEncoder().encode(csvText) }];
+  const used = new Set([`${base}.csv`]);
+  let added = 0;
+  for (const d of rows) {
+    // eslint-disable-next-line no-await-in-loop
+    const rec = await fetchReceipt(d);
+    if (!rec) continue;
+    let name = receiptName(d, rec.type);
+    if (used.has(name)) {
+      const dot = name.lastIndexOf('.');
+      let i = 2;
+      let cand;
+      do { cand = `${name.slice(0, dot)} (${i})${name.slice(dot)}`; i += 1; } while (used.has(cand));
+      name = cand;
+    }
+    used.add(name);
+    files.push({ name, data: rec.buf });
+    added += 1;
+  }
+  return { blob: makeZip(files), added };
 }
 
 function triggerDownload(blob, filename) {
@@ -232,16 +242,13 @@ export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvForm
     filename = `${base}.csv`;
     fmtLabel = 'CSV';
   } else if (format === 'pdf') {
-    blob = buildDocsPdf(rows, { kind: wKind }).output('blob');
+    const { bytes } = await buildReceiptsPdf(rows);
+    blob = new Blob([/** @type {any} */ (bytes)], { type: 'application/pdf' });
     filename = `${base}.pdf`;
     fmtLabel = 'PDF';
   } else {
-    const enc = new TextEncoder();
-    const pdfBytes = new Uint8Array(buildDocsPdf(rows, { kind: wKind }).output('arraybuffer'));
-    blob = makeZip([
-      { name: `${base}.csv`, data: enc.encode(csvText) },
-      { name: `${base}.pdf`, data: pdfBytes },
-    ]);
+    const res = await buildReceiptsZip(rows, { csvText, base });
+    blob = res.blob;
     filename = `${base}.zip`;
     fmtLabel = 'ZIP';
   }
