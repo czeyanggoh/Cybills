@@ -272,6 +272,9 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             mediaType,
             // Route the upload to the workspace inbox the drawer was opened in.
             kind: tab === 'Sales' ? 'sales' : 'cost',
+            // Drawer uploads show the Dext-style "Processing" step, then
+            // auto-advance to the inbox (scheduleMoveToInbox).
+            status: 'processing',
             ...fields,
           };
           // Apply the customer's saved rule (currency / category) to sales uploads.

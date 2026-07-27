@@ -26,6 +26,10 @@ export function orgIdFor(req: Request): string {
   return domain || 'cybills';
 }
 
+// Workflow statuses a client may set at creation time. Anything else (or
+// omitted) falls back to 'new' (the inbox).
+const ALLOWED_STATUSES = ['new', 'processing', 'review', 'ready', 'archived'];
+
 export const billsRouter = Router();
 
 // GET /api/costs/bills — persisted bills for the caller's org, newest first.
@@ -150,10 +154,11 @@ billsRouter.post('/bills', async (req, res) => {
     createdBy: me?.email ?? '',
     storageKey,
     contentType,
-    // Dext-style for BOTH workspaces: uploads land in "Processing" first (fields
-    // being read), then advance into the inbox. The client auto-advances them a
-    // moment after upload; the Processing tab's "Move to inbox" is the fallback.
-    status: 'processing',
+    // Default to the inbox ('new'). The Add-Documents drawer opts into
+    // 'processing' (Dext-style "reading" step) and auto-advances to the inbox a
+    // moment later; other creators (Vault "Copy to Costs/Sales", Split) omit
+    // status so their items land straight in the inbox, as their UI promises.
+    status: ALLOWED_STATUSES.includes(String(b.status)) ? String(b.status) : 'new',
     kind: b.kind === 'sales' ? 'sales' : 'cost',
   });
 

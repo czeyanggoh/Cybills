@@ -100,6 +100,7 @@ export default function VaultDetail() {
   const [extracting, setExtracting] = useState(false);
   const [aiError, setAiError] = useState('');
   const [copied, setCopied] = useState('');
+  const [copying, setCopying] = useState(''); // 'cost' | 'sales' while a copy runs
   const [accessOpen, setAccessOpen] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
   const summarisedRef = useRef('');
@@ -176,7 +177,10 @@ export default function VaultDetail() {
   // Copy this document into the Costs or Sales inbox (auto-extracting when the
   // original bytes are available and Vision is on).
   const copyTo = async (kind) => {
+    if (copying) return;
     setCopied('');
+    setCopying(kind);
+    try {
     const rec = await getVaultBlob(id);
     /** @type {any} */
     const payload = { fileName: file.name, kind };
@@ -199,7 +203,6 @@ export default function VaultDetail() {
     } else {
       payload.fileHash = `vault_${id}_${kind}`;
     }
-    try {
       const result = await addBill(payload, { force: true });
       if (result?.ok || result?.bill) {
         notifyBillsChanged();
@@ -209,6 +212,8 @@ export default function VaultDetail() {
       }
     } catch {
       setCopied('Could not copy this file.');
+    } finally {
+      setCopying('');
     }
   };
 
@@ -237,8 +242,12 @@ export default function VaultDetail() {
         >
           <Flag className={cn('h-4 w-4', file.flagged ? 'fill-foreground text-foreground' : 'text-muted-foreground')} />
         </button>
-        <TopButton onClick={() => copyTo('cost')}>Copy to Costs</TopButton>
-        <TopButton onClick={() => copyTo('sales')}>Copy to Sales</TopButton>
+        <TopButton disabled={!!copying} onClick={() => copyTo('cost')}>
+          {copying === 'cost' ? 'Copying…' : 'Copy to Costs'}
+        </TopButton>
+        <TopButton disabled={!!copying} onClick={() => copyTo('sales')}>
+          {copying === 'sales' ? 'Copying…' : 'Copy to Sales'}
+        </TopButton>
         <TopButton onClick={() => setAccessOpen(true)}>Manage access</TopButton>
         <TopButton danger onClick={del}>Delete</TopButton>
         <div className="ml-auto flex items-center gap-3 text-sm">
