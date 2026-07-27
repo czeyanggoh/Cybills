@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
 import { useClaims } from '@/lib/claimStore';
+import { useUsers } from '@/lib/userStore';
+import SearchSelect from '@/components/SearchSelect';
 import { cn } from '@/lib/utils';
 
 // "Add item to expense claim" dialog — add to an existing claim or spin up a
@@ -10,10 +12,11 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
   const [claim, setClaim] = useState('');
   const [newClaim, setNewClaim] = useState({ claimFor: '', name: '', endDate: '' });
   const claims = useClaims();
+  const userNames = useUsers().map((u) => u.name);
 
   if (!open) return null;
 
-  const canAdd = mode === 'existing' ? Boolean(claim) : Boolean(newClaim.name.trim());
+  const canAdd = mode === 'existing' ? Boolean(claim) : Boolean(newClaim.claimFor);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -73,14 +76,17 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
             </label>
           ) : (
             <div className="space-y-3">
-              <label className="flex items-center gap-3 text-sm">
-                <span className="w-28 shrink-0 text-muted-foreground">Claim for</span>
-                <input
-                  value={newClaim.claimFor}
-                  onChange={(e) => setNewClaim((s) => ({ ...s, claimFor: e.target.value }))}
-                  className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </label>
+              <div className="flex items-center gap-3 text-sm">
+                <span className="w-28 shrink-0 text-muted-foreground">Claim for <span className="text-destructive">*</span></span>
+                <div className="flex-1">
+                  <SearchSelect
+                    value={newClaim.claimFor}
+                    options={userNames}
+                    placeholder="Select a person"
+                    onChange={(v) => setNewClaim((s) => ({ ...s, claimFor: v }))}
+                  />
+                </div>
+              </div>
               <label className="flex items-center gap-3 text-sm">
                 <span className="w-28 shrink-0 text-muted-foreground">Claim name</span>
                 <input
