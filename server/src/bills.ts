@@ -150,9 +150,10 @@ billsRouter.post('/bills', async (req, res) => {
     createdBy: me?.email ?? '',
     storageKey,
     contentType,
-    // Sales uploads mimic Dext: they land in "Processing" first, then the user
-    // moves them into the inbox. Cost uploads go straight to the inbox.
-    status: b.kind === 'sales' ? 'processing' : 'new',
+    // Dext-style for BOTH workspaces: uploads land in "Processing" first (fields
+    // being read), then advance into the inbox. The client auto-advances them a
+    // moment after upload; the Processing tab's "Move to inbox" is the fallback.
+    status: 'processing',
     kind: b.kind === 'sales' ? 'sales' : 'cost',
   });
 

@@ -17,7 +17,7 @@ import AddToClaimModal from '@/components/AddToClaimModal';
 import DocsExportModal from '@/components/DocsExportModal';
 import { useCategoryOptions } from '@/lib/organisations';
 import { useAuth } from '@/lib/auth';
-import { updateBill, notifyBillsChanged } from '@/lib/bills';
+import { updateBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
@@ -45,7 +45,7 @@ function CategorySelect({ value, onChange, options }) {
 // no count badge (they render their own panels).
 const TABS = [
   { key: 'inbox', label: 'Inbox', counted: true },
-  { key: 'processing', label: 'Processing' },
+  { key: 'processing', label: 'Processing', counted: true },
   { key: 'review', label: 'To review', counted: true },
   { key: 'ready', label: 'Ready', counted: true },
   { key: 'approvals', label: 'Approvals' },
@@ -387,6 +387,88 @@ function ApprovalsPanel() {
   );
 }
 
+// Processing tab: freshly-uploaded cost documents still being read, shown with
+// extraction progress and a manual "Move to inbox" step (they also auto-advance
+// to the inbox a moment after upload). Mirrors the Sales processing view.
+function CostProcessingView({ rows, onMoveOne, onMoveAll }) {
+  const doneCount = (d) => {
+    const present = (v) => v != null && v !== '' && v !== '—' && v !== 'Unknown supplier' && v !== 'Uncategorised';
+    return [d.supplier, d.date, d.invoiceNumber, d.category, d.total, d.currency].filter(present).length;
+  };
+  return (
+    <>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <ToolbarButton disabled={rows.length === 0} onClick={onMoveAll}>
+          Move all items to inbox
+        </ToolbarButton>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[900px] text-sm">
+          <thead className="border-b bg-muted/40 text-left">
+            <tr className="text-muted-foreground">
+              <th className="w-16 px-3 py-2.5"><span className="sr-only">Flag</span></th>
+              <th className="px-3 py-2.5 font-medium">Item ID</th>
+              <th className="px-3 py-2.5 font-medium">User</th>
+              <th className="px-3 py-2.5 font-medium">File name</th>
+              <th className="px-3 py-2.5 font-medium">Submission method</th>
+              <th className="px-3 py-2.5 font-medium">Extraction process</th>
+              <th className="px-3 py-2.5 text-right font-medium">Move to inbox</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((d) => {
+              const done = doneCount(d);
+              return (
+                <tr key={d.id} className="group border-b last:border-0">
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-1.5">
+                      <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                      <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-muted-foreground">{displayItemId(d.id)}</td>
+                  <td className="whitespace-nowrap px-3 py-3">{d.user}</td>
+                  <td className="px-3 py-3">{d.fileName || '—'}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">Via web</td>
+                  <td className="px-3 py-3">
+                    <div className="w-56">
+                      <div className="mb-1 text-xs text-muted-foreground">{done} out of 6 fields extracted</div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-foreground transition-all" style={{ width: `${(done / 6) * 100}%` }} />
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => onMoveOne(d.id)}
+                      className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted"
+                    >
+                      Move to inbox
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                  Nothing is processing.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {rows.length > 0 && (
+        <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>
+      )}
+    </>
+  );
+}
+
 export default function Costs() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -405,6 +487,7 @@ export default function Costs() {
 
   // Every tab's rows, so its badge count ties to what the tab actually shows.
   const rowsByTab = {
+    processing: rowsFor(allDocs, 'processing'),
     inbox: rowsFor(allDocs, 'inbox'),
     review: rowsFor(allDocs, 'review'),
     ready: rowsFor(allDocs, 'ready'),
@@ -463,6 +546,15 @@ export default function Costs() {
     );
     notifyBillsChanged();
     setSelected(new Set());
+  };
+
+  // Advance processing uploads into the inbox (Dext's "Move to inbox" step) —
+  // the manual fallback to the drawer's automatic advance.
+  const moveToInbox = async (ids) => {
+    const list = ids ?? rowsByTab.processing.map((d) => d.id);
+    if (!list.length) return;
+    await Promise.all(list.map((id) => updateBill(id, { status: 'new' }).catch(() => {})));
+    notifyBillsChanged();
   };
 
   const deleteSelected = () => {
@@ -546,6 +638,12 @@ export default function Costs() {
 
       {tab === 'approvals' ? (
         <ApprovalsPanel />
+      ) : tab === 'processing' ? (
+        <CostProcessingView
+          rows={rowsByTab.processing}
+          onMoveOne={(id) => moveToInbox([id])}
+          onMoveAll={() => moveToInbox()}
+        />
       ) : (
         <>
           {/* Toolbar */}

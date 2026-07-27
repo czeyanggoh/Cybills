@@ -133,7 +133,8 @@ export default function Sales() {
 
   const statusOf = (s) => (s.persisted ? s.status || 'new' : statusMap[s.id] || 'viewed');
   const matchTab = (key, st) => {
-    if (key === 'inbox') return st === 'viewed' || st === 'new';
+    // Inbox is the whole not-ready pool; "To review" is a filter within it.
+    if (key === 'inbox') return st === 'viewed' || st === 'new' || st === 'review';
     if (key === 'processing') return st === 'processing';
     if (key === 'review') return st === 'review';
     if (key === 'ready') return st === 'ready';

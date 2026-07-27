@@ -9,7 +9,11 @@ import { getDocOverrides, applyOverride, DOC_OVERRIDES_EVENT } from '@/lib/docOv
 // 'review'. Used for both the visible rows and the tab/subnav count badges so
 // the numbers always tie to the actual line items.
 export function rowsFor(docs, key) {
-  if (key === 'inbox') return docs.filter((d) => d.status === 'new' || d.status === 'viewed');
+  // Dext-style: the Inbox is the whole "not ready for export" pool, and
+  // "To review" is a FILTER within it (items flagged for a human to check) —
+  // not a separate bucket. So review items stay counted/shown in the Inbox.
+  if (key === 'processing') return docs.filter((d) => d.status === 'processing');
+  if (key === 'inbox') return docs.filter((d) => d.status === 'new' || d.status === 'viewed' || d.status === 'review');
   if (key === 'review') return docs.filter((d) => d.status === 'review');
   if (key === 'ready') return docs.filter((d) => d.status === 'ready');
   if (key === 'archive') return docs.filter((d) => d.status === 'expenseclaim' || d.status === 'archived');

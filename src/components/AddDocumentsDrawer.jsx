@@ -7,6 +7,7 @@ import {
   sha256Hex,
   fetchExtract,
   addBill,
+  updateBill,
   notifyBillsChanged,
   describeDuplicate,
   VISION_MEDIA,
@@ -28,6 +29,18 @@ const MODES = [
 ];
 
 let uid = 0;
+
+// After an upload is saved it sits in "Processing" (fields being read); a moment
+// later it auto-advances into the inbox — Dext-style, for both Costs and Sales.
+// Module-scoped so the timer still fires if the drawer is closed meanwhile.
+function scheduleMoveToInbox(bill) {
+  if (!bill?.id) return;
+  window.setTimeout(() => {
+    updateBill(bill.id, { status: 'new' })
+      .then(() => notifyBillsChanged())
+      .catch(() => {});
+  }, 1500);
+}
 
 function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, accept = 'image/png,image/jpeg,image/webp,image/gif,application/pdf' }) {
   const inputRef = useRef(null);
@@ -279,6 +292,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           } else {
             patch(it.id, { status: 'added', bill: result.bill });
             notifyBillsChanged();
+            scheduleMoveToInbox(result.bill);
           }
         } catch {
           patch(it.id, { status: 'error', error: 'Upload failed' });
@@ -304,6 +318,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       } else {
         patch(id, { status: 'added', bill: result.bill });
         notifyBillsChanged();
+        scheduleMoveToInbox(result.bill);
       }
     } catch {
       patch(id, { status: 'error', error: 'Upload failed' });
