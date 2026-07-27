@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { displayItemId } from '@/lib/bills';
+import { displayItemId, billFileUrl } from '@/lib/bills';
 import { recordEvent } from '@/lib/salesEvents';
 import { recordExport } from '@/lib/exportsStore';
 import { makeZip } from '@/lib/zip';
@@ -40,13 +40,23 @@ const csvLines = (rows) => rows.map((r) => r.map(esc).join(',')).join('\n');
 
 const idOf = (d) => displayItemId(d.id ?? d.itemId);
 
+// Absolute, clickable link to the receipt's original file (Dext puts a link in
+// the Image column). Persisted bills stream from the file endpoint; fall back to
+// any imageUrl the row carries. Absolute so it stays clickable in Excel/Numbers.
+const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
+function imageUrlFor(d) {
+  if (d.hasFile && (d.id ?? d.itemId)) return `${ORIGIN}${billFileUrl(d.id ?? d.itemId)}`;
+  if (d.imageUrl) return /^https?:\/\//.test(d.imageUrl) ? d.imageUrl : `${ORIGIN}${d.imageUrl}`;
+  return '';
+}
+
 // --- CSV --------------------------------------------------------------------
 const SALES_COLS = ['Item ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Customer', 'Category', 'Project', 'Tax', 'Total', 'Currency', 'Tax (SGD)', 'Total (SGD)', 'Note', 'Description', 'Image'];
 function buildSalesCsv(rows) {
   const body = rows.map((d) => [
     idOf(d), d.type || 'Sales invoice', fmtDate(d.date), fmtDate(d.dueDate), d.ref || d.invoiceNumber || '',
     d.customer || '', d.category || '', d.project || '', n2(d.tax), n2(d.total), d.currency || 'SGD',
-    n2(d.tax), n2(d.total), d.note || '', d.description || '', d.imageUrl || '',
+    n2(d.tax), n2(d.total), d.note || '', d.description || '', imageUrlFor(d),
   ]);
   return csvLines([SALES_COLS, ...body]);
 }
@@ -57,7 +67,7 @@ function buildCostCsv(rows) {
     idOf(d), d.type || 'Receipt', fmtDate(d.date), fmtDate(d.dueDate), d.invoiceNumber || '',
     d.supplier || '', d.category || '', d.customer || '', d.project || '', d.paymentMethod || '', d.bankAccount || '',
     n2(d.tax), n2(d.total), d.currency || 'SGD', n2(d.tax), n2(d.total),
-    d.status === 'ready' ? 'processed' : d.status || 'processed', d.user || d.owner || '', d.note || '', d.description || '', d.imageUrl || '',
+    d.status === 'ready' ? 'processed' : d.status || 'processed', d.user || d.owner || '', d.note || '', d.description || '', imageUrlFor(d),
   ]);
   return csvLines([COST_COLS, ...body]);
 }
