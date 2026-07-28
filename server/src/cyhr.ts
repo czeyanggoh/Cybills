@@ -56,10 +56,10 @@ function paramsForBill(b: Billish, employee: string): Record<string, string> {
   };
 }
 
-// Build the canonical string + signature, then the final signed URL.
-export function signClaimUrl(params: Record<string, string>): string {
-  // Only non-empty params take part in the signature, keys sorted for a stable
-  // canonical form on both sides. RAW (unencoded) values, matching CYHR.
+// Sign a param set and append it to a base URL. Only non-empty params take part
+// in the signature, keys sorted for a stable canonical form on both sides, RAW
+// (unencoded) values — matching CYHR's verifier byte-for-byte.
+export function buildSignedUrl(baseUrl: string, params: Record<string, string>): string {
   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '');
   const canonical = entries
     .map(([k, v]) => [k, String(v)] as const)
@@ -70,8 +70,39 @@ export function signClaimUrl(params: Record<string, string>): string {
 
   const query = entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
   query.push(`sig=${sig}`);
-  const sep = env.CYHR_BASE_URL.includes('?') ? '&' : '?';
-  return `${env.CYHR_BASE_URL}${sep}${query.join('&')}`;
+  const sep = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${sep}${query.join('&')}`;
+}
+
+// Back-compat wrapper for the (Model A) create-expense deep link.
+export function signClaimUrl(params: Record<string, string>): string {
+  return buildSignedUrl(env.CYHR_BASE_URL, params);
+}
+
+// --- Model B: route an APPROVED claim's payable to CYHR for payment ---------
+// The expense claim is created + approved in CYBills; only the amount to pay is
+// handed to CYHR. `type=expense_payment` tells CYHR this is a payable to record,
+// not an expense to create. Same signing recipe + shared secret.
+type ClaimPayment = {
+  claimId?: string | number;
+  claimName?: string;
+  total?: number | string;
+  currency?: string;
+  date?: string;
+  approvedBy?: string;
+};
+function paramsForPayment(c: ClaimPayment, employee: string): Record<string, string> {
+  return {
+    source: 'cybills',
+    type: 'expense_payment',
+    claimId: c.claimId != null ? String(c.claimId) : '',
+    claimName: c.claimName ?? '',
+    amount: c.total != null ? String(c.total) : '',
+    currency: c.currency ?? '',
+    date: c.date ?? '',
+    approvedBy: c.approvedBy ?? '',
+    employee, // who gets paid — matched to the CYHR employee record by email
+  };
 }
 
 // GET /api/cyhr/status — lets the client show/enable the "Submit to CYHR" action
@@ -109,4 +140,23 @@ cyhrRouter.post('/claim-link', (req, res) => {
     [body.employee, base.employee, session?.email, createdBy].find(isCyEmail) || DEFAULT_EMPLOYEE;
 
   res.json({ url: signClaimUrl(paramsForBill(base, employee)) });
+});
+
+// POST /api/cyhr/payment-link — Model B. Route an approved claim's payable to
+// CYHR for payment. Claims live client-side, so the claim fields come in the
+// body. Returns { url } pointing at CYHR_PAYMENT_URL, signed the same way.
+cyhrRouter.post('/payment-link', (req, res) => {
+  if (!cyhrEnabled) return res.status(503).json({ error: 'cyhr_not_configured' });
+
+  const body = req.body ?? {};
+  const claim = (body.claim && typeof body.claim === 'object' ? body.claim : {}) as ClaimPayment & {
+    employee?: string;
+  };
+  if (claim.total == null || claim.total === '') return res.status(400).json({ error: 'missing_amount' });
+
+  const session = readSession(req);
+  const employee =
+    [body.employee, claim.employee, session?.email].find(isCyEmail) || DEFAULT_EMPLOYEE;
+
+  res.json({ url: buildSignedUrl(env.CYHR_PAYMENT_URL, paramsForPayment(claim, employee)) });
 });

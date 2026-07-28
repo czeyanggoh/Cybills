@@ -17,6 +17,7 @@ import ClaimExportModal from '@/components/ClaimExportModal';
 import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
 import { useClaims, submitForApproval, approveClaim, rejectClaim } from '@/lib/claimStore';
+import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
 import { useAuth } from '@/lib/auth';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf } from '@/lib/claimPdf';
@@ -93,6 +94,21 @@ export default function ExpenseClaimDetail() {
   const [exportOpen, setExportOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
+  const cyhrEnabled = useCyhrEnabled();
+  const [payNote, setPayNote] = useState('');
+
+  const sendToHr = async () => {
+    if (!cyhrEnabled) {
+      setPayNote('CYHR is not connected yet — set CYHR_SIGNING_SECRET on the server to route payments.');
+      return;
+    }
+    setPayNote('');
+    try {
+      await sendClaimToCyhr(claim);
+    } catch {
+      setPayNote('Could not create the CYHR payment link. Check the server logs.');
+    }
+  };
 
   const index = claims.findIndex((c) => String(c.id) === String(id));
   const go = (delta) => {
@@ -117,6 +133,12 @@ export default function ExpenseClaimDetail() {
 
   return (
     <AppShell subnav={<CostsSubnav />}>
+      {payNote && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border bg-muted px-3 py-2 text-sm text-foreground">
+          {payNote}
+          <button type="button" onClick={() => setPayNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
+        </div>
+      )}
       {/* Action bar */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <TopButton subtle onClick={() => navigate('/expense-claims')}>
@@ -130,9 +152,12 @@ export default function ExpenseClaimDetail() {
             <TopButton danger onClick={() => { if (window.confirm('Reject this claim?')) rejectClaim(claim.id, user?.name || 'Astrid Yang'); }}>Reject</TopButton>
           </>
         ) : claim.approvalStatus === 'approved' ? (
-          <span className="inline-flex h-8 items-center gap-1 rounded-md bg-foreground px-3 text-sm font-medium text-background">
-            Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
-          </span>
+          <>
+            <span className="inline-flex h-8 items-center gap-1 rounded-md bg-foreground px-3 text-sm font-medium text-background">
+              Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
+            </span>
+            <TopButton onClick={sendToHr}>Send to HR for payment</TopButton>
+          </>
         ) : claim.approvalStatus === 'rejected' ? (
           <>
             <span className="inline-flex h-8 items-center rounded-md border border-destructive px-3 text-sm text-destructive">Rejected</span>

@@ -10,7 +10,6 @@ import {
   Filter,
   Settings2,
   ListChecks,
-  Send,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -22,7 +21,6 @@ import { updateBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
-import { useCyhrEnabled, submitManyToCyhr } from '@/lib/cyhr';
 import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
@@ -148,7 +146,6 @@ function ToolbarActions({ tab, hasSelection, a }) {
     { label: 'Move to review', onClick: () => a.move('review') },
     { label: 'Move to ready', onClick: () => a.move('ready') },
     { label: 'Add to expense claim', onClick: a.addClaim },
-    { label: 'Submit to CYHR', onClick: a.submitCyhr },
     { divider: true },
     { label: 'Archive', onClick: () => a.move('archived') },
     { label: 'Delete', onClick: a.del, danger: true },
@@ -484,8 +481,6 @@ export default function Costs() {
   const [sort, setSort] = useState({ key: '', dir: 'asc' });
   const [flagFilter, setFlagFilter] = useState('all'); // all | flagged | unflagged
   const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', supplier: '' });
-  const cyhrEnabled = useCyhrEnabled();
-  const [cyhrNote, setCyhrNote] = useState('');
 
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
@@ -580,28 +575,10 @@ export default function Costs() {
     moveSelected('expenseclaim');
   };
 
-  // Hand the selected costs off to CYHR — one signed prefilled-claim link each.
-  const submitSelectedToCyhr = async () => {
-    if (!hasSelection) return;
-    if (!cyhrEnabled) {
-      setCyhrNote('CYHR is not connected yet — set CYHR_BASE_URL and CYHR_SIGNING_SECRET on the server to enable the handoff.');
-      return;
-    }
-    setCyhrNote('');
-    const byId = new Map(allRows.map((r) => [r.id, r]));
-    const docs = [...selected].map((id) => byId.get(id)).filter(Boolean);
-    try {
-      await submitManyToCyhr(docs, user?.email || user?.name || '');
-    } catch {
-      setCyhrNote('Could not create one or more CYHR links. Check the server logs.');
-    }
-  };
-
   const actions = {
     move: moveSelected,
     del: deleteSelected,
     addClaim: () => hasSelection && setClaimOpen(true),
-    submitCyhr: submitSelectedToCyhr,
     exportCsv: () => setExportOpen(true),
     navigate,
   };
@@ -623,13 +600,6 @@ export default function Costs() {
         <h1 className="text-xl font-semibold tracking-tight">Costs inbox</h1>
         <AddDocumentsButton />
       </div>
-
-      {cyhrNote && (
-        <div className="mb-3 flex items-center gap-2 rounded-md border bg-muted px-3 py-2 text-sm text-foreground">
-          <Send className="h-4 w-4 shrink-0" /> {cyhrNote}
-          <button type="button" onClick={() => setCyhrNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
-        </div>
-      )}
 
       {/* Tabs */}
       <div className="mb-4 flex items-center gap-6 overflow-x-auto border-b">

@@ -9,7 +9,6 @@ import {
   ChevronDown,
   FileText,
   CheckCircle2,
-  Send,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -26,7 +25,6 @@ import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { usePaymentMethods } from '@/lib/paymentMethods';
 import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill } from '@/lib/bills';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
-import { useCyhrEnabled, submitToCyhr } from '@/lib/cyhr';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
 
@@ -187,8 +185,6 @@ export default function CostDetail() {
   const [claimOpen, setClaimOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
-  const cyhrEnabled = useCyhrEnabled();
-  const [cyhrNote, setCyhrNote] = useState('');
 
   const doc = mockDoc ?? persisted;
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
@@ -434,44 +430,8 @@ export default function CostDetail() {
     }
   };
 
-  // Hand this cost off to CYHR: build a signed deep link carrying the current
-  // amount + Xero category and open the employee's prefilled claim in CYHR.
-  // Sends the on-screen field values (so unsaved edits are reflected).
-  const submitCyhr = async () => {
-    if (!cyhrEnabled) {
-      setCyhrNote(
-        'CYHR is not connected yet — set CYHR_BASE_URL and CYHR_SIGNING_SECRET on the server, then this opens the prefilled claim in CYHR.'
-      );
-      return;
-    }
-    setCyhrNote('');
-    try {
-      await submitToCyhr(
-        {
-          persisted: false,
-          total: data.total,
-          currency: data.currency,
-          category: data.category,
-          supplier: data.supplier,
-          date: data.date,
-          invoiceNumber: data.ref,
-          type: data.type,
-        },
-        user?.email || user?.name || ''
-      );
-    } catch {
-      setCyhrNote('Could not create the CYHR link. Check the server logs.');
-    }
-  };
-
   return (
     <AppShell subnav={<CostsSubnav />}>
-      {cyhrNote && (
-        <div className="mb-3 flex items-center gap-2 rounded-md border bg-muted px-3 py-2 text-sm text-foreground">
-          <Send className="h-4 w-4 shrink-0" /> {cyhrNote}
-          <button type="button" onClick={() => setCyhrNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
-        </div>
-      )}
       {splitNote && (
         <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           <CheckCircle2 className="h-4 w-4" /> {splitNote}
@@ -494,9 +454,6 @@ export default function CostDetail() {
             <TopButton onClick={openPublish}>Publish to Xero</TopButton>
           ))}
         <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>
-        <TopButton onClick={submitCyhr}>
-          <Send className="h-3.5 w-3.5" /> Submit to CYHR
-        </TopButton>
         <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
         <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
         <div className="relative">

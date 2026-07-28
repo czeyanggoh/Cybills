@@ -70,6 +70,50 @@ export async function submitToCyhr(doc, employee = '') {
   }
 }
 
+// Model B: route an APPROVED expense claim's payable to CYHR for payment.
+// Claims are client-side, so the claim fields are sent to the server to sign.
+// Returns the signed CYHR payment URL, or throws with a code.
+export async function createCyhrPaymentLink(claim) {
+  const res = await fetch('/api/cyhr/payment-link', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      claim: {
+        claimId: claim.id,
+        claimName: claim.name,
+        total: claim.total,
+        currency: claim.currency,
+        date: claim.endDate || claim.claimDate || '',
+        approvedBy: claim.decidedBy || '',
+        employee: claim.employeeEmail || '',
+      },
+    }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    const err = /** @type {any} */ (new Error(b.error || `Request failed (${res.status})`));
+    err.code = b.error;
+    throw err;
+  }
+  const { url } = await res.json();
+  return url;
+}
+
+// Open the signed payment link in a new tab (finance confirms the payable in
+// CYHR). Opens the tab synchronously so pop-up blockers treat it as user-driven.
+export async function sendClaimToCyhr(claim) {
+  const tab = window.open('', '_blank');
+  try {
+    const url = await createCyhrPaymentLink(claim);
+    if (tab) tab.location.href = url;
+    else window.open(url, '_blank');
+    return url;
+  } catch (err) {
+    if (tab) tab.close();
+    throw err;
+  }
+}
+
 // Bulk handoff (one signed link per selected cost). Pre-opens a tab for each doc
 // synchronously within the click so pop-up blockers treat them as user-initiated,
 // then fills each once its link resolves. Throws if any link fails.

@@ -85,6 +85,9 @@ export const env = {
   // expenses form so only the secret has to be set on the VPS to switch on.
   CYHR_BASE_URL: process.env.CYHR_BASE_URL ?? 'https://hr.cy-bm.sg/claims/expenses/new',
   CYHR_SIGNING_SECRET: process.env.CYHR_SIGNING_SECRET ?? '',
+  // Model B: where an APPROVED claim's payable is routed to CYHR for payment.
+  // Path unconfirmed until CYHR builds the payment-intake page; override here.
+  CYHR_PAYMENT_URL: process.env.CYHR_PAYMENT_URL ?? 'https://hr.cy-bm.sg/payments/new',
 };
 
 // Real Google sign-in is only enabled once the client credentials AND a session
