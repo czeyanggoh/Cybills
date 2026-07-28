@@ -17,6 +17,13 @@ import { readSession } from './auth.js';
 
 export const cyhrRouter = Router();
 
+// CYHR matches the claim to an employee record by email, and those records use
+// @cy-bm.sg addresses. Since CYBills currently signs in with non-cy-bm.sg
+// (e.g. Google) accounts, fall back to this address so the claim always lands
+// on a real CYHR employee. Override with CYHR_DEFAULT_EMPLOYEE on the VPS.
+const DEFAULT_EMPLOYEE = process.env.CYHR_DEFAULT_EMPLOYEE || 'czeyang.goh@cy-bm.sg';
+const isCyEmail = (e: unknown): e is string => typeof e === 'string' && /@cy-bm\.sg$/i.test(e);
+
 // ---------------------------------------------------------------------------
 // The one place the CYHR param contract lives (confirmed with the CYHR side).
 // `source` powers CYHR's "Imported from CYBills" banner. Amount is the captured
@@ -95,14 +102,11 @@ cyhrRouter.post('/claim-link', (req, res) => {
 
   if (!base) return res.status(400).json({ error: 'missing_bill' });
 
-  // The employee the claim is for: an explicit value from the client wins
-  // (the logged-in user), then the signed-in session, then the bill's uploader.
+  // The employee the claim is for. CYHR matches by @cy-bm.sg email, so prefer
+  // the first candidate that is one; otherwise fall back to the default record
+  // (non-cy-bm.sg logins like Google accounts never match on the CYHR side).
   const employee =
-    (typeof body.employee === 'string' && body.employee) ||
-    base.employee ||
-    session?.email ||
-    createdBy ||
-    '';
+    [body.employee, base.employee, session?.email, createdBy].find(isCyEmail) || DEFAULT_EMPLOYEE;
 
   res.json({ url: signClaimUrl(paramsForBill(base, employee)) });
 });
