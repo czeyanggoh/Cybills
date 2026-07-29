@@ -76,15 +76,16 @@ export default function ExpenseClaims() {
   const claims = useClaims();
 
   const inbox = claims.filter((c) => !c.archived);
+  const approvals = claims.filter((c) => !c.archived && c.approvalStatus === 'awaiting_approval');
   const archived = claims.filter((c) => c.archived);
 
   const TABS = [
     { key: 'inbox', label: 'Inbox', count: inbox.length },
-    { key: 'approvals', label: 'Approvals' },
+    { key: 'approvals', label: 'Approvals', count: approvals.length || null },
     { key: 'archive', label: 'Archive', count: archived.length || null },
   ];
 
-  const base = tab === 'inbox' ? inbox : tab === 'archive' ? archived : [];
+  const base = tab === 'inbox' ? inbox : tab === 'approvals' ? approvals : tab === 'archive' ? archived : [];
   const q = query.trim().toLowerCase();
   const rows = q
     ? base.filter((c) => [c.claimFor, c.name, c.type].some((v) => String(v || '').toLowerCase().includes(q)))
