@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Landmark, Search, ChevronDown, Trash2 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import BankSubnav from '@/components/BankSubnav';
+import BankReconcile from '@/components/BankReconcile';
 import AddBankAccountModal from '@/components/AddBankAccountModal';
 import { useBankAccounts, removeBankAccount } from '@/lib/bankAccounts';
 import { cn } from '@/lib/utils';
@@ -36,7 +37,7 @@ export default function Bank({ view = 'transactions' }) {
   const [stmtTab, setStmtTab] = useState('processed');
   const goIntegrate = () => navigate('/settings?section=connections');
 
-  const TITLES = { transactions: 'Transactions', statements: 'Statements', accounts: 'Bank accounts' };
+  const TITLES = { transactions: 'Reconciliation', statements: 'Statements', accounts: 'Bank accounts' };
 
   return (
     <AppShell subnav={<BankSubnav />}>
@@ -94,8 +95,11 @@ export default function Bank({ view = 'transactions' }) {
         </div>
       )}
 
-      {/* Accounts with rows → a table; everything else / no accounts → empty state. */}
-      {view === 'accounts' && accounts.length > 0 ? (
+      {/* Transactions → bank reconciliation; accounts with rows → a table;
+          everything else / no accounts → empty state. */}
+      {view === 'transactions' ? (
+        <BankReconcile />
+      ) : view === 'accounts' && accounts.length > 0 ? (
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full min-w-[640px] text-sm">
             <thead className="border-b bg-muted/40 text-left text-muted-foreground">
