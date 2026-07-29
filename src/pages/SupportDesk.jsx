@@ -38,6 +38,28 @@ const TEST_ITEMS = [
   'K · Exports: Export all (CSV / PDF / ZIP) → the file appears in the Exports tab and Download works.',
 ];
 
+// Dext core-workflow parity checks. `status: 'done'` = already verified (ticked
+// as a pass); untistked items with ⚠️ MANUAL need a human on the live site;
+// 🚧 GAP items are Dext workflows CYBills does not yet cover.
+const DEXT_ITEMS = [
+  // ── Core: Document capture ────────────────────────────────────────────────
+  { text: 'DEXT · Capture: drag & drop files onto Add documents → uploads and lands in the inbox. ✅ verified', status: 'done' },
+  { text: 'DEXT · Extraction: OCR/AI reads supplier, amount, tax & date from the receipt. ✅ verified (prod, Claude Vision)', status: 'done' },
+  { text: 'DEXT · Categorize: extraction auto-assigns a Category from the live Xero chart. ✅ verified', status: 'done' },
+  // ── Core: Expense management ──────────────────────────────────────────────
+  { text: 'DEXT · Expense mgmt: create an expense claim → Submit for approval → Approve. ✅ verified', status: 'done' },
+  { text: 'DEXT · Expense mgmt: approved claim → Send to HR for payment routes the payable to CYHR. ✅ verified end-to-end', status: 'done' },
+  // ── Manual: covered, but you verify on the live site ──────────────────────
+  { text: '⚠️ MANUAL — Capture: snap a receipt photo from your phone browser camera (responsive web; no native app). Test on your phone.', status: 'open' },
+  { text: '⚠️ MANUAL — Sync: Publish to Xero on a cost pushes the bill via the cyworkspace relay. Needs a connected Xero org — confirm the bill appears in Xero.', status: 'open' },
+  // ── Gaps: Dext workflows CYBills does NOT cover yet ───────────────────────
+  { text: "🚧 GAP — Capture by email: the Extract-by-Email addresses shown in Add documents are display-only; email ingestion isn't wired.", status: 'open' },
+  { text: '🚧 GAP — Auto-fetch bills from online suppliers: not built (Dext connects to supplier portals).', status: 'open' },
+  { text: '🚧 GAP — Sync to QuickBooks / Sage: not built (CYBills syncs to Xero only).', status: 'open' },
+  { text: '🚧 GAP — Mileage tracking: not built (record business travel + compute travel costs).', status: 'open' },
+  { text: '🚧 GAP — Bank reconciliation vs a live bank feed: not built (Bank section stores accounts/statements; no live-feed matching).', status: 'open' },
+];
+
 const VIEWS = {
   support: {
     label: 'Support Desk',
@@ -68,7 +90,7 @@ const VIEWS = {
     composerPlaceholder:
       'Add another thing to test… Paste or drop a screenshot here. (⌘/Ctrl+Enter to send)',
     storageKey: 'cybills.testing-checklist',
-    seed: TEST_ITEMS,
+    seed: [...TEST_ITEMS, ...DEXT_ITEMS],
   },
 };
 

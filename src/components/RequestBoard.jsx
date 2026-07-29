@@ -46,30 +46,44 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
   const [quotaError, setQuotaError] = useState(false);
   const fileRef = useRef(null);
 
-  // Load persisted tickets once. If the board is empty and a seed was provided
-  // (the Testing checklist), pre-populate it — but only the first time, so
-  // deleting seeded items doesn't bring them back.
+  // Load persisted tickets, then MERGE in any seed lines not yet added. Seed
+  // entries may be a plain string or { text, status }. Each seed line's text is
+  // its merge key: it's added once and recorded in `${storageKey}.seededKeys`,
+  // so (a) new seed lines appear on an already-seeded board, and (b) deleting a
+  // seeded item doesn't bring it back. `status` lets a seed line start ticked.
   useEffect(() => {
+    const norm = (s) => (typeof s === 'string' ? { text: s, status: 'open' } : { text: s.text, status: s.status || 'open' });
+    const mkTicket = (s) => ({
+      id: crypto.randomUUID(), text: s.text, screenshots: [],
+      status: s.status || 'open', author: '', created_at: new Date().toISOString(), comments: [],
+    });
     try {
       const raw = localStorage.getItem(storageKey);
-      if (raw) { setTickets(JSON.parse(raw)); return; }
-      const items = seedRef.current;
-      if (items.length && !localStorage.getItem(`${storageKey}.seeded`)) {
-        const seeded = items.map((text) => ({
-          id: crypto.randomUUID(),
-          text,
-          screenshots: [],
-          status: 'open',
-          author: '',
-          created_at: new Date().toISOString(),
-          comments: [],
-        }));
-        localStorage.setItem(storageKey, JSON.stringify(seeded));
-        localStorage.setItem(`${storageKey}.seeded`, '1');
-        setTickets(seeded);
-      } else {
-        setTickets([]);
+      const existing = raw ? JSON.parse(raw) : [];
+      const seedItems = seedRef.current.map(norm);
+      if (!seedItems.length) { setTickets(existing); return; }
+
+      const keysRaw = localStorage.getItem(`${storageKey}.seededKeys`);
+      const seededKeys = new Set(keysRaw ? JSON.parse(keysRaw) : []);
+      // Migration from the old boolean `.seeded` flag: any seed line already on
+      // the board counts as seeded, so it isn't duplicated on this first merge.
+      if (!keysRaw) {
+        const present = new Set(existing.map((t) => t.text));
+        for (const s of seedItems) if (present.has(s.text)) seededKeys.add(s.text);
       }
+
+      const toAdd = [];
+      for (const s of seedItems) {
+        if (seededKeys.has(s.text)) continue;
+        toAdd.push(mkTicket(s));
+        seededKeys.add(s.text);
+      }
+
+      const next = raw ? [...existing, ...toAdd] : toAdd;
+      localStorage.setItem(storageKey, JSON.stringify(next));
+      localStorage.setItem(`${storageKey}.seededKeys`, JSON.stringify([...seededKeys]));
+      localStorage.setItem(`${storageKey}.seeded`, '1');
+      setTickets(next);
     } catch {
       setTickets([]);
     }
