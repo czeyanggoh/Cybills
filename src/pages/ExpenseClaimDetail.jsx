@@ -18,6 +18,7 @@ import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
 import { useClaims, submitForApproval, approveClaim, rejectClaim } from '@/lib/claimStore';
 import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
+import { useUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf } from '@/lib/claimPdf';
@@ -95,6 +96,7 @@ export default function ExpenseClaimDetail() {
   const [emailOpen, setEmailOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const cyhrEnabled = useCyhrEnabled();
+  const users = useUsers();
   const [payNote, setPayNote] = useState('');
 
   const sendToHr = async () => {
@@ -103,8 +105,12 @@ export default function ExpenseClaimDetail() {
       return;
     }
     setPayNote('');
+    // Route the payable to the claim person's own employee email (CYHR matches
+    // the record by email); the server falls back to a default if unknown.
+    const who = (claim.claimFor || '').trim().toLowerCase();
+    const employee = users.find((u) => u.name.trim().toLowerCase() === who)?.email || '';
     try {
-      await sendClaimToCyhr(claim);
+      await sendClaimToCyhr(claim, employee);
     } catch {
       setPayNote('Could not create the CYHR payment link. Check the server logs.');
     }

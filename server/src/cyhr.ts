@@ -17,12 +17,12 @@ import { readSession } from './auth.js';
 
 export const cyhrRouter = Router();
 
-// CYHR matches the claim to an employee record by email, and those records use
-// @cy-bm.sg addresses. Since CYBills currently signs in with non-cy-bm.sg
-// (e.g. Google) accounts, fall back to this address so the claim always lands
-// on a real CYHR employee. Override with CYHR_DEFAULT_EMPLOYEE on the VPS.
+// CYHR matches the claim to an employee record by email. Employee records use
+// each person's real address (gmail/yahoo/cy-bm.sg), so accept any email the
+// client sends (the claim's person). Fall back to this default only when none
+// is provided. Override with CYHR_DEFAULT_EMPLOYEE on the VPS.
 const DEFAULT_EMPLOYEE = process.env.CYHR_DEFAULT_EMPLOYEE || 'czeyang.goh@cy-bm.sg';
-const isCyEmail = (e: unknown): e is string => typeof e === 'string' && /@cy-bm\.sg$/i.test(e);
+const isEmail = (e: unknown): e is string => typeof e === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 
 // ---------------------------------------------------------------------------
 // The one place the CYHR param contract lives (confirmed with the CYHR side).
@@ -137,7 +137,7 @@ cyhrRouter.post('/claim-link', (req, res) => {
   // the first candidate that is one; otherwise fall back to the default record
   // (non-cy-bm.sg logins like Google accounts never match on the CYHR side).
   const employee =
-    [body.employee, base.employee, session?.email, createdBy].find(isCyEmail) || DEFAULT_EMPLOYEE;
+    [body.employee, base.employee, session?.email, createdBy].find(isEmail) || DEFAULT_EMPLOYEE;
 
   res.json({ url: signClaimUrl(paramsForBill(base, employee)) });
 });
@@ -156,7 +156,7 @@ cyhrRouter.post('/payment-link', (req, res) => {
 
   const session = readSession(req);
   const employee =
-    [body.employee, claim.employee, session?.email].find(isCyEmail) || DEFAULT_EMPLOYEE;
+    [body.employee, claim.employee, session?.email].find(isEmail) || DEFAULT_EMPLOYEE;
 
   res.json({ url: buildSignedUrl(env.CYHR_PAYMENT_URL, paramsForPayment(claim, employee)) });
 });
