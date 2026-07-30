@@ -1,7 +1,25 @@
 import { Router, type Request, type Response } from 'express';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId } from './workspace.js';
+import { setSession, readSession } from './auth.js';
+
+// Password login (non-Google), so staff on Google Workspace accounts that Google
+// blocks can still sign in. Passwords are salted + scrypt-hashed (Node built-in,
+// no native dep). An admin (already signed in) sets a user's password; the user
+// then logs in with email + password, getting the same session cookie as Google.
+function hashPassword(pw: string): string {
+  const salt = randomBytes(16).toString('hex');
+  return `${salt}:${scryptSync(pw, salt, 64).toString('hex')}`;
+}
+function verifyPassword(pw: string, stored: string | undefined): boolean {
+  if (!stored) return false;
+  const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return false;
+  const orig = Buffer.from(hash, 'hex');
+  const test = scryptSync(pw, salt, 64);
+  return orig.length === test.length && timingSafeEqual(orig, test);
+}
 
 // Server-backed users, shared across the workspace (same JSON-store pattern as
 // claims). This is the company's people list + approver roster + Users-page
@@ -21,7 +39,15 @@ type User = {
   lastLogin: string;
   deactivated: boolean;
   removed: boolean;
+  passwordHash?: string; // set by an admin; never returned to the client
 };
+
+// Public shape sent to the client — never leak the password hash; expose only
+// whether a password has been set.
+function publicUser(u: User) {
+  const { passwordHash, ...rest } = u;
+  return { ...rest, hasPassword: Boolean(passwordHash) };
+}
 
 const COLLECTION = 'users';
 const load = () => loadCollection<User>(COLLECTION);
@@ -69,7 +95,7 @@ export const usersRouter = Router();
 
 usersRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
-  res.json({ users: ensure(ws).filter((u) => u.workspaceId === ws && !u.removed) });
+  res.json({ users: ensure(ws).filter((u) => u.workspaceId === ws && !u.removed).map(publicUser) });
 });
 
 // Add one or many users. Body: a user object, or { users: [...] }.
@@ -80,7 +106,35 @@ usersRouter.post('/', (req, res) => {
   const added = incoming.map((u: Partial<User>) => full({ ...u, id: undefined }, ws));
   items.unshift(...added);
   save(items);
-  res.json({ users: added });
+  res.json({ users: added.map(publicUser) });
+});
+
+// POST /api/users/login — non-Google sign-in with email + password. Issues the
+// same session cookie as Google, so the rest of the app works unchanged.
+usersRouter.post('/login', (req, res) => {
+  const ws = workspaceId(req);
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  if (!email || !password) return res.status(400).json({ error: 'missing_credentials' });
+  const user = ensure(ws).find(
+    (u) => u.workspaceId === ws && !u.removed && !u.deactivated && u.email.toLowerCase() === email
+  );
+  if (!user || !verifyPassword(password, user.passwordHash)) {
+    return res.status(401).json({ error: 'invalid_login' });
+  }
+  setSession(res, { sub: user.id, email: user.email, name: user.name });
+  return res.json({ user: publicUser(user) });
+});
+
+// POST /api/users/:id/password — an admin (already signed in) sets a user's
+// password. Requires a session so it can't be called anonymously.
+usersRouter.post('/:id/password', (req, res) => {
+  if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
+  const password = String(req.body?.password || '');
+  if (password.length < 6) return res.status(400).json({ error: 'weak_password' });
+  return mutate(req, res, (user) => {
+    user.passwordHash = hashPassword(password);
+  });
 });
 
 function mutate(req: Request, res: Response, fn: (u: User) => void) {
@@ -90,7 +144,7 @@ function mutate(req: Request, res: Response, fn: (u: User) => void) {
   if (!user) return res.status(404).json({ error: 'not_found' });
   fn(user);
   save(items);
-  return res.json({ user });
+  return res.json({ user: publicUser(user) });
 }
 
 const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated'];

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Receipt } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -24,9 +25,13 @@ const ERROR_MESSAGES = {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { googleEnabled } = useAuth();
+  const { googleEnabled, loginWithPassword } = useAuth();
   const [params] = useSearchParams();
   const error = params.get('error');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [pwError, setPwError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   // Real OAuth when configured; otherwise a mock sign-in straight into the app.
   const continueWithGoogle = () => {
@@ -34,6 +39,23 @@ export default function Login() {
       window.location.href = '/api/auth/google';
     } else {
       navigate('/costs');
+    }
+  };
+
+  // Non-Google sign-in — for staff whose Google account Google blocks.
+  const submitPassword = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || !password || busy) return;
+    setBusy(true);
+    setPwError('');
+    try {
+      const ok = await loginWithPassword(email.trim(), password);
+      if (ok) navigate('/costs');
+      else setPwError('Wrong email or password.');
+    } catch {
+      setPwError('Could not sign in. Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -67,6 +89,37 @@ export default function Login() {
           <GoogleIcon className="h-4 w-4" />
           Continue with Google
         </button>
+
+        <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
+          <div className="h-px flex-1 bg-border" /> or <div className="h-px flex-1 bg-border" />
+        </div>
+
+        <form onSubmit={submitPassword} className="space-y-2.5">
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Email"
+            autoComplete="username"
+            className="h-11 w-full rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password"
+            autoComplete="current-password"
+            className="h-11 w-full rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          {pwError && <p className="text-center text-xs text-destructive">{pwError}</p>}
+          <button
+            type="submit"
+            disabled={busy || !email.trim() || !password}
+            className="h-11 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
 
         <p className="mt-8 text-center text-xs text-muted-foreground">
           By continuing you agree to the CYBills terms of use.

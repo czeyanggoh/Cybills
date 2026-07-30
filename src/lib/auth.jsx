@@ -44,8 +44,21 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // Non-Google sign-in (email + password). Resolves true on success.
+  const loginWithPassword = useCallback(async (email, password) => {
+    const res = await fetch('/api/users/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) return false;
+    const { user: u } = await res.json();
+    setUser(u || null);
+    return true;
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ loading, googleEnabled, visionEnabled, user, refresh, signOut }}>
+    <AuthContext.Provider value={{ loading, googleEnabled, visionEnabled, user, refresh, signOut, loginWithPassword }}>
       {children}
     </AuthContext.Provider>
   );

@@ -50,6 +50,22 @@ export async function removeUser(id) {
   notifyUsersChanged();
 }
 
+// Set a user's password (admin action). Returns true on success. Lets that user
+// sign in with email + password (no Google needed).
+export async function setUserPassword(id, password) {
+  try {
+    const res = await fetch(`/api/users/${id}/password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (res.ok) notifyUsersChanged();
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Reactive read of all users: fetch on mount, refetch on any mutation.
 export function useUsers() {
   const [users, setUsers] = useState([]);

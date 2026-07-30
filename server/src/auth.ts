@@ -36,7 +36,7 @@ function baseCookieOpts() {
   };
 }
 
-function setSession(res: Response, user: SessionUser) {
+export function setSession(res: Response, user: SessionUser) {
   const token = jwt.sign(user, env.SESSION_SECRET, { expiresIn: SESSION_TTL_SECONDS });
   res.cookie(SESSION_COOKIE, token, { ...baseCookieOpts(), maxAge: SESSION_TTL_SECONDS * 1000 });
 }

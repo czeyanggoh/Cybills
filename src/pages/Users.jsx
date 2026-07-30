@@ -4,7 +4,7 @@ import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
 import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
 import EditUserModal from '@/components/EditUserModal';
-import { useUsers, addUser, addUsers, setUserActive, removeUser } from '@/lib/userStore';
+import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 // Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
@@ -26,7 +26,21 @@ function ManageMenu({ user, onEdit, onToast }) {
             <button type="button" className={item} onClick={() => run(() => onEdit('details'))}>Edit user details</button>
             <button type="button" className={item} onClick={() => run(() => onEdit('privileges'))}>Edit privileges</button>
             <button type="button" className={item} onClick={() => run(() => onToast(`Invitation resent to ${user.email || user.name}.`))}>Resend Invitation</button>
-            <button type="button" className={item} onClick={() => run(() => onToast(`Password reset link sent to ${user.email || user.name}.`))}>Reset Password</button>
+            <button
+              type="button"
+              className={item}
+              onClick={() =>
+                run(async () => {
+                  const pw = window.prompt(`Set a password for ${user.name} (min 6 characters). Share it with them so they can sign in with their email + this password.`);
+                  if (!pw) return;
+                  if (pw.length < 6) { onToast('Password must be at least 6 characters.'); return; }
+                  const ok = await setUserPassword(user.id, pw);
+                  onToast(ok ? `Password set for ${user.name}. They can now sign in with email + password.` : 'Could not set password.');
+                })
+              }
+            >
+              {user.hasPassword ? 'Change password' : 'Set password'}
+            </button>
             {user.deactivated ? (
               <button type="button" className={cn(item, 'text-emerald-600')} onClick={() => run(() => { setUserActive(user.id, true); onToast(`${user.name} reactivated.`); })}>Reactivate user</button>
             ) : (
