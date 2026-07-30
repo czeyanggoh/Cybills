@@ -90,8 +90,11 @@ authRouter.get('/google', (req, res) => {
 authRouter.get('/google/callback', async (req, res) => {
   if (!googleEnabled) return res.status(503).json({ error: 'google_oauth_not_configured' });
 
+  // Relative redirects so the user stays on whatever origin served the login
+  // (e.g. cybills.cy-bm.sg) — NOT APP_ORIGIN, which on the VPS may still be the
+  // dev default (http://localhost:5173) and would strand everyone but the dev.
   const loginFailed = (reason: string) =>
-    res.redirect(`${env.APP_ORIGIN}/login?error=${encodeURIComponent(reason)}`);
+    res.redirect(`/login?error=${encodeURIComponent(reason)}`);
 
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const state = typeof req.query.state === 'string' ? req.query.state : '';
@@ -122,7 +125,7 @@ authRouter.get('/google/callback', async (req, res) => {
       name: payload.name,
       picture: payload.picture,
     });
-    res.redirect(`${env.APP_ORIGIN}/costs`);
+    res.redirect('/costs');
   } catch {
     return loginFailed('exchange_failed');
   }
