@@ -679,13 +679,13 @@ export default function CostDetail() {
       <AddToClaimModal
         open={claimOpen}
         onClose={() => setClaimOpen(false)}
-        onAdd={({ claimId, newClaim }) => {
+        onAdd={async ({ claimId, newClaim }) => {
           setClaimOpen(false);
           // Link this cost to the chosen (or newly created) claim so it shows
           // up as a line item there, then mark it as in an expense claim.
-          const targetId = newClaim ? createClaim(newClaim).id : claimId;
+          const targetId = newClaim ? (await createClaim(newClaim)).id : claimId;
           const actor = user?.name || 'Astrid Yang';
-          if (targetId) addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
+          if (targetId) await addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
           saveWithStatus('expenseclaim');
         }}
       />

@@ -63,8 +63,8 @@ export default function ExpenseClaims() {
     return `${m[3]} ${MON[Number(m[2]) - 1]} ${m[1]}`;
   };
 
-  const submitCreate = () => {
-    createClaim({
+  const submitCreate = async () => {
+    await createClaim({
       claimFor: newClaim.claimFor,
       endDate: fmtEnd(newClaim.endDate),
       name: newClaim.name.trim() || 'Expense claim',

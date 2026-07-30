@@ -137,6 +137,27 @@ export default function ExpenseClaimDetail() {
   const setRowCategory = (itemId, category) =>
     setCatOverrides((o) => ({ ...o, [itemId]: category }));
 
+  // Only the assigned approver may approve/reject (enforced server-side too).
+  // With no specific approver on the claim, anyone can decide.
+  const meEmail = (user?.email || '').toLowerCase();
+  const meName = (user?.name || '').toLowerCase();
+  const iAmApprover =
+    (claim.approverEmail && meEmail && claim.approverEmail.toLowerCase() === meEmail) ||
+    (claim.approver && meName && claim.approver.toLowerCase() === meName) ||
+    (!claim.approverEmail && !claim.approver);
+  const decide = async (fn) => {
+    setPayNote('');
+    try {
+      await fn(claim.id);
+    } catch (e) {
+      setPayNote(
+        e.code === 'not_approver'
+          ? `Only ${claim.approver || 'the assigned approver'} can approve this claim.`
+          : 'Could not update the claim.'
+      );
+    }
+  };
+
   return (
     <AppShell subnav={<CostsSubnav />}>
       {payNote && (
@@ -153,9 +174,17 @@ export default function ExpenseClaimDetail() {
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
         {claim.approvalStatus === 'awaiting_approval' ? (
           <>
-            <span className="inline-flex h-8 items-center rounded-md border border-dashed border-foreground px-3 text-sm">Awaiting approval</span>
-            <TopButton onClick={() => approveClaim(claim.id, user?.name || 'Astrid Yang')}>Approve</TopButton>
-            <TopButton danger onClick={() => { if (window.confirm('Reject this claim?')) rejectClaim(claim.id, user?.name || 'Astrid Yang'); }}>Reject</TopButton>
+            <span className="inline-flex h-8 items-center rounded-md border border-dashed border-foreground px-3 text-sm">
+              Awaiting approval{claim.approver ? ` · ${claim.approver}` : ''}
+            </span>
+            {iAmApprover ? (
+              <>
+                <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>
+                <TopButton danger onClick={() => { if (window.confirm('Reject this claim?')) decide(rejectClaim); }}>Reject</TopButton>
+              </>
+            ) : (
+              <span className="text-sm text-muted-foreground">Only {claim.approver || 'the approver'} can approve</span>
+            )}
           </>
         ) : claim.approvalStatus === 'approved' ? (
           <>
@@ -423,9 +452,12 @@ export default function ExpenseClaimDetail() {
       <ClaimApprovalModal
         open={approvalOpen}
         onClose={() => setApprovalOpen(false)}
-        onSubmit={(approver) => {
-          submitForApproval(claim.id, approver, user?.name || 'Astrid Yang');
+        onSubmit={async (approver) => {
           setApprovalOpen(false);
+          // Resolve the approver's email so the server can enforce that only
+          // they decide (match by email).
+          const approverEmail = users.find((u) => u.name === approver)?.email || '';
+          await submitForApproval(claim.id, approver, user?.name || 'Astrid Yang', approverEmail);
           setTab('history');
         }}
       />

@@ -1,206 +1,109 @@
-import { useState, useEffect } from 'react';
-import { CLAIMS as BASE } from '@/data/claims';
+import { useState, useEffect, useCallback } from 'react';
 import { displayItemId } from '@/lib/bills';
 
-// Older stored items recorded the actor as an email handle (e.g. "astridy2004").
-// Map known handles back to display names; pass full names through unchanged.
-const ACTOR_ALIASES = { astridy2004: 'Astrid Yang' };
-function prettyActor(name) {
-  if (!name) return 'Astrid Yang';
-  if (name.includes(' ')) return name;
-  return ACTOR_ALIASES[name.toLowerCase()] || name;
-}
+// Server-backed expense claims (shared across the workspace). Talks to
+// /api/claims; mirrors the bills client pattern — fetch + a change event that
+// mounted views subscribe to. The old per-browser localStorage store is gone,
+// so a claim one person creates/approves is visible to everyone.
 
-// Client-side persistence for expense claims. The seeded claims live in
-// src/data/claims.js; this layer adds (a) cost items the user attaches to a
-// claim via "Add to expense claim", and (b) claims created on the fly. Both are
-// kept in localStorage and merged on top of the seed data so the claim views
-// and PDF reflect them. Real claim persistence would move server-side later.
-
-const ITEMS_KEY = 'cybills.claims.items.v1';
-const CREATED_KEY = 'cybills.claims.created.v1';
-const EVENTS_KEY = 'cybills.claims.events.v1';
-const STATE_KEY = 'cybills.claims.state.v1'; // { archived: [ids], deleted: [ids] }
-const APPROVALS_KEY = 'cybills.claims.approvals.v1'; // { [claimId]: { approvalStatus, approver, decidedBy, decidedAt } }
 export const CLAIMS_EVENT = 'cybills:claims-changed';
-
-function read(key) {
-  try {
-    return JSON.parse(localStorage.getItem(key) || 'null');
-  } catch {
-    return null;
-  }
-}
-function write(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+export function notifyClaimsChanged() {
   window.dispatchEvent(new Event(CLAIMS_EVENT));
 }
 
-// itemId -> claimId links, stored as { [claimId]: [txn, …] }.
-export function getAddedItems() {
-  return read(ITEMS_KEY) || {};
-}
-export function getCreatedClaims() {
-  return read(CREATED_KEY) || [];
-}
-// Extra activity events (e.g. approval submissions), stored per claim.
-export function getClaimEvents() {
-  return read(EVENTS_KEY) || {};
+// Format an ISO history timestamp for display; pass through legacy strings.
+function fmtAt(at) {
+  if (!at) return '';
+  const d = new Date(at);
+  return Number.isNaN(d.getTime())
+    ? at
+    : d.toLocaleString('en-SG', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function rollups(txns) {
-  const sum = (k) => txns.reduce((n, t) => n + Number(t[k] || 0), 0).toFixed(2);
-  return { net: sum('net'), tax: sum('tax'), total: sum('total') };
+// Shape a server claim into what the views/PDF expect: display ids on rows,
+// recomputed net/tax/total, friendly history timestamps.
+function shape(c) {
+  const transactions = (c.transactions || []).map((t) => ({ ...t, displayId: displayItemId(t.itemId) }));
+  const sum = (k) => transactions.reduce((n, t) => n + Number(t[k] || 0), 0).toFixed(2);
+  const history = (c.history || []).map((e) => ({ ...e, at: fmtAt(e.at) }));
+  return { ...c, transactions, history, net: sum('net'), tax: sum('tax'), total: sum('total') };
 }
 
-// Fold any attached items + logged events into a claim, recompute its
-// net/tax/total, and add a history entry per attached item so the History tab +
-// PDF stay accurate.
-function withItems(claim, itemsMap, eventsMap) {
-  const extra = itemsMap[claim.id] || [];
-  const seen = new Set(claim.transactions.map((t) => t.itemId));
-  const fresh = extra.filter((t) => !seen.has(t.itemId));
-  // Attach a clean display id to every row (seed ids pass through; bill ids get
-  // a numeric form) so reports never show the raw "bill_…" storage key.
-  const transactions = [...claim.transactions, ...fresh].map((t) => ({
-    ...t,
-    displayId: displayItemId(t.itemId),
-  }));
-  const addedEvents = fresh.map((t) => ({
-    text: `Item ${displayItemId(t.itemId)} was added to the expense claim`,
-    by: prettyActor(t.addedBy),
-    at: 'Just now',
-  }));
-  const loggedEvents = (eventsMap[claim.id] || []).map((e) => ({ ...e, by: prettyActor(e.by) }));
-  return {
-    ...claim,
-    transactions,
-    history: [...loggedEvents, ...addedEvents, ...(claim.history || [])],
-    ...rollups(transactions),
-  };
-}
-
-// Archive / delete state (client-side).
-function getState() {
-  return { archived: [], deleted: [], ...(read(STATE_KEY) || {}) };
-}
-function setState(next) {
-  write(STATE_KEY, next);
-}
-
-// Approval state per claim (client-side). approvalStatus is one of
-// 'awaiting_approval' | 'approved' | 'rejected' (absent = not submitted).
-export function getApprovals() {
-  return read(APPROVALS_KEY) || {};
-}
-function setApproval(claimId, patch) {
-  const map = getApprovals();
-  map[claimId] = { ...(map[claimId] || {}), ...patch };
-  write(APPROVALS_KEY, map);
-}
-
-export function getAllClaims() {
-  const itemsMap = getAddedItems();
-  const eventsMap = getClaimEvents();
-  const { archived, deleted } = getState();
-  const approvals = getApprovals();
-  const archivedSet = new Set(archived);
-  const deletedSet = new Set(deleted);
-  return [...BASE, ...getCreatedClaims()]
-    .filter((c) => !deletedSet.has(c.id))
-    .map((c) => ({
-      ...withItems(c, itemsMap, eventsMap),
-      archived: archivedSet.has(c.id),
-      ...(approvals[c.id] || {}),
-    }));
-}
-
-export function archiveClaims(ids, archived = true) {
-  const s = getState();
-  const set = new Set(s.archived);
-  for (const id of ids) (archived ? set.add(id) : set.delete(id));
-  setState({ ...s, archived: [...set] });
-}
-export function deleteClaims(ids) {
-  const s = getState();
-  setState({ ...s, deleted: [...new Set([...s.deleted, ...ids])] });
-}
-
-export function getClaimById(id) {
-  return getAllClaims().find((c) => String(c.id) === String(id)) || null;
-}
-
-// Attach a cost item (transaction shape) to a claim. Idempotent per itemId.
-export function addItemToClaim(claimId, txn) {
-  const map = getAddedItems();
-  const list = map[claimId] || [];
-  if (!list.some((t) => t.itemId === txn.itemId)) {
-    map[claimId] = [...list, txn];
-    write(ITEMS_KEY, map);
+async function fetchClaims() {
+  try {
+    const res = await fetch('/api/claims');
+    if (!res.ok) return [];
+    const { claims } = await res.json();
+    return Array.isArray(claims) ? claims.map(shape) : [];
+  } catch {
+    return [];
   }
 }
 
-// Log an activity event onto a claim (newest first).
-export function addClaimEvent(claimId, event) {
-  const map = getClaimEvents();
-  map[claimId] = [event, ...(map[claimId] || [])];
-  write(EVENTS_KEY, map);
-}
-
-// Submit a claim for approval: marks it "awaiting approval", records the chosen
-// approver, and logs a history event.
-export function submitForApproval(claimId, approver, actor) {
-  setApproval(claimId, { approvalStatus: 'awaiting_approval', approver, decidedBy: '', decidedAt: '' });
-  addClaimEvent(claimId, {
-    text: `This claim was submitted for approval to ${approver}`,
-    by: actor || 'Astrid Yang',
-    at: 'Just now',
+async function post(path, body) {
+  const res = await fetch(`/api/claims${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
   });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    const err = /** @type {any} */ (new Error(b.error || `Request failed (${res.status})`));
+    err.code = b.error;
+    err.approver = b.approver;
+    throw err;
+  }
+  return res.json();
 }
 
-// Approve / reject a claim awaiting approval. `actor` is whoever decides (for
-// solo testing this is the signed-in user).
-export function approveClaim(claimId, actor) {
-  const who = prettyActor(actor);
-  setApproval(claimId, { approvalStatus: 'approved', decidedBy: who, decidedAt: 'Just now' });
-  addClaimEvent(claimId, { text: `This claim was approved by ${who}`, by: who, at: 'Just now' });
-}
-export function rejectClaim(claimId, actor) {
-  const who = prettyActor(actor);
-  setApproval(claimId, { approvalStatus: 'rejected', decidedBy: who, decidedAt: 'Just now' });
-  addClaimEvent(claimId, { text: `This claim was rejected by ${who}`, by: who, at: 'Just now' });
+// Create a new claim; resolves with the created (shaped) claim.
+export async function createClaim({ claimFor, name, endDate }) {
+  const { claim } = await post('/', { claimFor, name, endDate });
+  notifyClaimsChanged();
+  return shape(claim);
 }
 
-// Create a new (empty) claim and return it.
-export function createClaim({ claimFor, name, endDate }) {
-  const created = getCreatedClaims();
-  const id = String(Date.now());
-  const owner = claimFor || 'Astrid Yang';
-  const claim = {
-    id,
-    claimFor: owner,
-    type: 'Regular',
-    name: name || 'Expense claim',
-    claimDate: endDate || '',
-    endDate: endDate || '',
-    currency: 'SGD',
-    net: '0.00',
-    tax: '0.00',
-    total: '0.00',
-    transactions: [],
-    history: [{ text: 'This expense claim was created', by: owner, at: 'Just now' }],
-  };
-  write(CREATED_KEY, [...created, claim]);
-  return claim;
+// Attach a cost item (transaction shape) to a claim. Idempotent per itemId.
+export async function addItemToClaim(claimId, txn) {
+  await post(`/${claimId}/items`, { items: [txn] });
+  notifyClaimsChanged();
 }
 
-// Build a claim transaction row from a cost document's edited fields. `actor`
-// is who performed the action (the signed-in user's display name).
+// Submit a claim for approval to a chosen approver (name + email so the server
+// can enforce that only that person decides).
+export async function submitForApproval(claimId, approver, _actor, approverEmail = '') {
+  await post(`/${claimId}/submit`, { approver, approverEmail });
+  notifyClaimsChanged();
+}
+
+// Approve / reject. The server stamps the acting (signed-in) user and enforces
+// that they are the assigned approver. Throws with code 'not_approver' if not.
+export async function approveClaim(claimId) {
+  await post(`/${claimId}/approve`);
+  notifyClaimsChanged();
+}
+export async function rejectClaim(claimId) {
+  await post(`/${claimId}/reject`);
+  notifyClaimsChanged();
+}
+
+export async function archiveClaims(ids, archived = true) {
+  await Promise.all(ids.map((id) => post(`/${id}/archive`, { archived }).catch(() => {})));
+  notifyClaimsChanged();
+}
+export async function deleteClaims(ids) {
+  await Promise.all(
+    ids.map((id) => fetch(`/api/claims/${id}`, { method: 'DELETE' }).catch(() => {}))
+  );
+  notifyClaimsChanged();
+}
+
+// Build a claim transaction row from a cost document's edited fields (pure).
 export function docToClaimTxn(doc, data, actor) {
   const total = Number(data.total) || 0;
   const tax = Number(data.tax) || 0;
   return {
-    itemId: doc.id,
+    itemId: String(doc.id),
     date: data.date || '—',
     supplier: data.supplier || 'Unknown supplier',
     category: data.category || 'Uncategorised',
@@ -213,13 +116,16 @@ export function docToClaimTxn(doc, data, actor) {
   };
 }
 
-// Reactive read of all claims (re-renders on any claim mutation).
+// Reactive read of all claims: fetches on mount and refetches on any mutation.
 export function useClaims() {
-  const [, bump] = useState(0);
-  useEffect(() => {
-    const sync = () => bump((n) => n + 1);
-    window.addEventListener(CLAIMS_EVENT, sync);
-    return () => window.removeEventListener(CLAIMS_EVENT, sync);
+  const [claims, setClaims] = useState([]);
+  const reload = useCallback(() => {
+    fetchClaims().then(setClaims);
   }, []);
-  return getAllClaims();
+  useEffect(() => {
+    reload();
+    window.addEventListener(CLAIMS_EVENT, reload);
+    return () => window.removeEventListener(CLAIMS_EVENT, reload);
+  }, [reload]);
+  return claims;
 }

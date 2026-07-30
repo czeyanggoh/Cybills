@@ -10,6 +10,7 @@ import { billsRouter } from './bills.js';
 import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { cyhrRouter } from './cyhr.js';
+import { claimsRouter } from './claims.js';
 
 const app = express();
 
@@ -50,6 +51,9 @@ app.use('/api/xero', xeroRouter);
 // CYHR handoff: signed deep links that prefill a claim in CYHR. 503s until
 // CYHR_BASE_URL + CYHR_SIGNING_SECRET are set.
 app.use('/api/cyhr', cyhrRouter);
+
+// Expense claims — server-backed + shared across the workspace.
+app.use('/api/claims', claimsRouter);
 
 app.listen(env.PORT, () => {
   console.log(`[cybills] server listening on :${env.PORT} (${env.NODE_ENV})`);

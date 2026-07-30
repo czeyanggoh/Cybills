@@ -565,12 +565,13 @@ export default function Costs() {
   };
 
   // Add the selected docs to a chosen expense claim, then mark them accordingly.
-  const addSelectedToClaim = (targetId) => {
+  const addSelectedToClaim = async (targetId) => {
     const actor = user?.name || 'Astrid Yang';
     const byId = new Map(allRows.map((r) => [r.id, r]));
     for (const id of selected) {
       const d = byId.get(id);
-      if (d) addItemToClaim(targetId, docToClaimTxn(d, d, actor));
+      // eslint-disable-next-line no-await-in-loop
+      if (d) await addItemToClaim(targetId, docToClaimTxn(d, d, actor));
     }
     moveSelected('expenseclaim');
   };
@@ -755,10 +756,10 @@ export default function Costs() {
         open={claimOpen}
         onClose={() => setClaimOpen(false)}
         count={selected.size}
-        onAdd={({ claimId, newClaim }) => {
+        onAdd={async ({ claimId, newClaim }) => {
           setClaimOpen(false);
-          const targetId = newClaim ? createClaim(newClaim).id : claimId;
-          if (targetId) addSelectedToClaim(targetId);
+          const targetId = newClaim ? (await createClaim(newClaim)).id : claimId;
+          if (targetId) await addSelectedToClaim(targetId);
         }}
       />
 
