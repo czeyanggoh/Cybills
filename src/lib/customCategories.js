@@ -3,21 +3,20 @@
 // accounts, so a category added on one document is available everywhere.
 
 import { useEffect, useState } from 'react';
+import { blobStore } from '@/lib/blobStore';
 
 const KEY = 'cybills.custom.categories.v1';
 export const CUSTOM_CATEGORIES_EVENT = 'cybills:custom-categories-changed';
+const emit = () => window.dispatchEvent(new Event(CUSTOM_CATEGORIES_EVENT));
+const store = blobStore(KEY, [], emit);
 
 function readAll() {
-  try {
-    const v = JSON.parse(localStorage.getItem(KEY) || '[]');
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
-  }
+  const v = store.get();
+  return Array.isArray(v) ? v : [];
 }
 function writeAll(list) {
-  localStorage.setItem(KEY, JSON.stringify(list));
-  window.dispatchEvent(new Event(CUSTOM_CATEGORIES_EVENT));
+  store.set(list);
+  emit();
 }
 
 // The display label: "<code> - <name>" when a code is given (matching the Xero

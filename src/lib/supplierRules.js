@@ -2,20 +2,19 @@
 // in localStorage. Keyed by supplier id.
 
 import { useEffect, useState } from 'react';
+import { blobStore } from '@/lib/blobStore';
 
 const KEY = 'cybills.supplier.rules.v1';
 export const SUPPLIER_RULES_EVENT = 'cybills:supplier-rules-changed';
+const emit = () => window.dispatchEvent(new Event(SUPPLIER_RULES_EVENT));
+const store = blobStore(KEY, {}, emit);
 
 function read() {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) || '{}') || {};
-  } catch {
-    return {};
-  }
+  return store.get() || {};
 }
 function write(map) {
-  localStorage.setItem(KEY, JSON.stringify(map));
-  window.dispatchEvent(new Event(SUPPLIER_RULES_EVENT));
+  store.set(map);
+  emit();
 }
 
 export function getSupplierRule(id) {

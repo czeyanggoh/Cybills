@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Filter } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
 import SearchSelect from '@/components/SearchSelect';
 import { CUSTOMERS } from '@/data/customers';
 import { useCategoryOptions } from '@/lib/organisations';
-import { getCustomerRule, saveCustomerRule } from '@/lib/customerRules';
+import { getCustomerRule, saveCustomerRule, useCustomerRulesVersion } from '@/lib/customerRules';
 import { useProjectOptions } from '@/lib/listsStore';
 import { cn } from '@/lib/utils';
 
@@ -16,14 +16,18 @@ export default function Customers() {
   const PROJECTS = useProjectOptions();
   // Per-customer Category/Project, seeded from any saved customer rule. Editing a
   // cell writes back to that customer's rule so it also applies to new uploads.
-  const [assign, setAssign] = useState(() => {
+  const [assign, setAssign] = useState({});
+  // Re-seed the per-customer cells from saved rules whenever rules hydrate from
+  // the server (or change), since the rule store is now async.
+  const rulesVersion = useCustomerRulesVersion();
+  useEffect(() => {
     const init = {};
     for (const c of CUSTOMERS) {
       const rule = getCustomerRule(c.name);
       init[c.id] = { category: rule?.category || '', project: rule?.project || '' };
     }
-    return init;
-  });
+    setAssign(init);
+  }, [rulesVersion]);
 
   const q = query.trim().toLowerCase();
   const rows = CUSTOMERS.filter((c) => !q || c.name.toLowerCase().includes(q));

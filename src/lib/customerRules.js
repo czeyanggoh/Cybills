@@ -3,21 +3,36 @@
 // (currency, category, due-date terms, project, line-item handling, smart-split
 // line rules). Keyed by the normalised customer name.
 
+import { useEffect, useState } from 'react';
+import { blobStore } from '@/lib/blobStore';
+
 const KEY = 'cybills.customer.rules.v1';
+export const CUSTOMER_RULES_EVENT = 'cybills:customer-rules-changed';
+const emit = () => window.dispatchEvent(new Event(CUSTOMER_RULES_EVENT));
+const store = blobStore(KEY, {}, emit);
 
 function normName(name) {
   return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function readAll() {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) || '{}') || {};
-  } catch {
-    return {};
-  }
+  return store.get() || {};
 }
 function writeAll(map) {
-  localStorage.setItem(KEY, JSON.stringify(map));
+  store.set(map);
+  emit();
+}
+
+// Re-render a component when rules change / hydrate (for render-time readers
+// like the Customers list). Sync getters still work off the in-memory cache.
+export function useCustomerRulesVersion() {
+  const [v, bump] = useState(0);
+  useEffect(() => {
+    const sync = () => bump((n) => n + 1);
+    window.addEventListener(CUSTOMER_RULES_EVENT, sync);
+    return () => window.removeEventListener(CUSTOMER_RULES_EVENT, sync);
+  }, []);
+  return v;
 }
 
 // A blank rule — the shape every consumer can rely on.

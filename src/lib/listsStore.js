@@ -4,9 +4,12 @@
 // hides here is layered over the seed.
 
 import { useEffect, useState } from 'react';
+import { blobStore } from '@/lib/blobStore';
 
 const KEY = 'cybills.lists.v1';
 export const LISTS_EVENT = 'cybills:lists-changed';
+const emit = () => window.dispatchEvent(new Event(LISTS_EVENT));
+const store = blobStore(KEY, { added: {}, hidden: {} }, emit);
 
 // --- Seeds (from the client's ST Eng workspace) -----------------------------
 export const SEED_CATEGORIES = [
@@ -51,15 +54,11 @@ let seq = 0;
 const genId = (p) => `${p}_${Date.now().toString(36)}_${(seq += 1)}`;
 
 function read() {
-  try {
-    return { added: {}, hidden: {}, ...(JSON.parse(localStorage.getItem(KEY) || '{}') || {}) };
-  } catch {
-    return { added: {}, hidden: {} };
-  }
+  return { added: {}, hidden: {}, ...(store.get() || {}) };
 }
 function write(state) {
-  localStorage.setItem(KEY, JSON.stringify(state));
-  window.dispatchEvent(new Event(LISTS_EVENT));
+  store.set(state);
+  emit();
 }
 
 // Generic list access: `kind` is 'categories' | 'taxRates' | 'projects'.
