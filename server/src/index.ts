@@ -11,6 +11,7 @@ import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { cyhrRouter } from './cyhr.js';
 import { claimsRouter } from './claims.js';
+import { usersRouter } from './users.js';
 
 const app = express();
 
@@ -54,6 +55,9 @@ app.use('/api/cyhr', cyhrRouter);
 
 // Expense claims — server-backed + shared across the workspace.
 app.use('/api/claims', claimsRouter);
+
+// Users — server-backed + shared (people list + approver roster).
+app.use('/api/users', usersRouter);
 
 app.listen(env.PORT, () => {
   console.log(`[cybills] server listening on :${env.PORT} (${env.NODE_ENV})`);

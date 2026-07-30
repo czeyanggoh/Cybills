@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { X, ChevronDown, Search, Check } from 'lucide-react';
-import { USERS } from '@/data/users';
+import { useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
-// Searchable approver picker mirroring Dext's. Approvers come from the Users
-// list; the selected value is the person's display name.
+// Searchable approver picker mirroring Dext's. Approvers come from the shared
+// (server-backed) Users list; the selected value is the person's display name.
 function ApproverSelect({ value, onChange }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const filtered = USERS.filter(
+  const users = useUsers();
+  const filtered = users.filter(
     (u) =>
       u.name.toLowerCase().includes(query.toLowerCase()) ||
       u.email.toLowerCase().includes(query.toLowerCase())
