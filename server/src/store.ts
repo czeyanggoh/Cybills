@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from '
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { env } from './env.js';
+import { WORKSPACE_ID } from './workspace.js';
 
 // Tiny persistent JSON store for uploaded bills. Deliberately dependency-free:
 // the VPS deploys with `npm ci` and recompiles native modules on every pull, so
@@ -89,6 +90,16 @@ function load(): Bill[] {
     console.error('[store] could not read bills file; starting empty', err);
     cache = [];
   }
+  // Tenancy migration: fold any legacy (email-domain-scoped) bills into the one
+  // shared workspace so all users see them. One-time + idempotent.
+  let migrated = false;
+  for (const b of cache) {
+    if (b.orgId !== WORKSPACE_ID) {
+      b.orgId = WORKSPACE_ID;
+      migrated = true;
+    }
+  }
+  if (migrated) persist(cache);
   return cache;
 }
 

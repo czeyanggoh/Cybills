@@ -12,19 +12,20 @@ import {
   type Candidate,
 } from './store.js';
 import { putBillFile, getBillFile } from './storage.js';
+import { workspaceId } from './workspace.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
 // mode until Google OAuth is configured), so nothing here hard-requires a
 // session — it just scopes data per org and stamps the uploader when known.
 
-// Single-tenant for now: scope by the signed-in user's email domain, else a
-// shared default. Gives real separation once OAuth is on without a tenant model.
-// (Exported for the organisations + xero routers, which scope the same way.)
+// Bills (and the org/Xero scoping) now share ONE company workspace, like
+// claims/users/settings — so every signed-in user sees the same Costs/Sales,
+// regardless of email domain. (Was scoped by email domain, which siloed
+// gmail / cy-bm.sg / yahoo logins.) The stores re-tag any legacy
+// domain-scoped rows into this workspace on load, so nothing is lost.
 export function orgIdFor(req: Request): string {
-  const me = readSession(req);
-  const domain = me?.email?.split('@')[1]?.toLowerCase();
-  return domain || 'cybills';
+  return workspaceId(req);
 }
 
 // Workflow statuses a client may set at creation time. Anything else (or

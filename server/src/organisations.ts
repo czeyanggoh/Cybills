@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { env } from './env.js';
 import { readSession } from './auth.js';
 import { orgIdFor } from './bills.js';
+import { WORKSPACE_ID } from './workspace.js';
 
 // Organisations = the client entities bills are published for. Each one is
 // linked to a Xero organisation (tenant) that cyworkspace holds a connection
@@ -42,6 +43,15 @@ function load(): Organisation[] {
     console.error('[organisations] could not read store; starting empty', err);
     cache = [];
   }
+  // Tenancy migration: fold legacy domain-scoped orgs into the shared workspace.
+  let migrated = false;
+  for (const o of cache) {
+    if (o.orgId !== WORKSPACE_ID) {
+      o.orgId = WORKSPACE_ID;
+      migrated = true;
+    }
+  }
+  if (migrated) persist(cache);
   return cache;
 }
 
