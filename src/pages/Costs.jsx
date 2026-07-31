@@ -20,6 +20,7 @@ import { useAuth } from '@/lib/auth';
 import { updateBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
+import { mergeCostDocs } from '@/lib/mergeDocs';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
@@ -135,7 +136,12 @@ function Dropdown({ label, disabled = false, items }) {
 
 // Left-hand toolbar actions differ per tab (mirrors Dext). `a` holds the wired
 // bulk-action handlers; all operate on the current selection.
-function ToolbarActions({ tab, hasSelection, a }) {
+function ToolbarActions({ tab, hasSelection, canMerge, merging, a }) {
+  const mergeBtn = (
+    <ToolbarButton disabled={!canMerge || merging} onClick={a.merge}>
+      {merging ? 'Merging…' : 'Merge'}
+    </ToolbarButton>
+  );
   const moveTo = [
     { label: 'To review', onClick: () => a.move('review') },
     { label: 'Ready', onClick: () => a.move('ready') },
@@ -160,6 +166,7 @@ function ToolbarActions({ tab, hasSelection, a }) {
         </ToolbarButton>
         <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
         <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
+        {mergeBtn}
         <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
         <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
       </>
@@ -185,6 +192,7 @@ function ToolbarActions({ tab, hasSelection, a }) {
       <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>
       <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
       <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
+      {mergeBtn}
       <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
       <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
     </>
@@ -481,6 +489,8 @@ export default function Costs() {
   const [sort, setSort] = useState({ key: '', dir: 'asc' });
   const [flagFilter, setFlagFilter] = useState('all'); // all | flagged | unflagged
   const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', supplier: '' });
+  const [merging, setMerging] = useState(false);
+  const [mergeNote, setMergeNote] = useState('');
 
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
@@ -576,11 +586,44 @@ export default function Costs() {
     moveSelected('expenseclaim');
   };
 
+  // Merge the selected documents into one multi-page cost, re-extract, and
+  // archive the originals (the "page 1 + page 2 uploaded separately" case).
+  const mergeSelected = async () => {
+    if (merging) return;
+    const byId = new Map(allRows.map((r) => [r.id, r]));
+    const docs = [...selected].map((id) => byId.get(id)).filter(Boolean);
+    const withFiles = docs.filter((d) => d.persisted && d.hasFile);
+    if (withFiles.length < 2) {
+      setMergeNote('Select at least 2 uploaded documents (each with a file) to merge into one.');
+      return;
+    }
+    setMerging(true);
+    setMergeNote('');
+    try {
+      const res = await mergeCostDocs(docs);
+      if (res.ok) {
+        setSelected(new Set());
+        await reload();
+        setMergeNote(
+          `Merged ${res.count} documents into one${res.extracted ? ' and re-ran extraction' : ''}.` +
+            (res.skipped ? ` ${res.skipped} without a file ${res.skipped === 1 ? 'was' : 'were'} skipped.` : '')
+        );
+      } else {
+        setMergeNote('Could not merge those documents. Make sure at least 2 of them have uploaded files.');
+      }
+    } catch {
+      setMergeNote('Merge failed. Please try again.');
+    } finally {
+      setMerging(false);
+    }
+  };
+
   const actions = {
     move: moveSelected,
     del: deleteSelected,
     addClaim: () => hasSelection && setClaimOpen(true),
     exportCsv: () => setExportOpen(true),
+    merge: mergeSelected,
     navigate,
   };
 
@@ -650,7 +693,7 @@ export default function Costs() {
         <>
           {/* Toolbar */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <ToolbarActions tab={tab} hasSelection={hasSelection} a={actions} />
+            <ToolbarActions tab={tab} hasSelection={hasSelection} canMerge={selected.size >= 2} merging={merging} a={actions} />
             <CostsToolbar
               query={query}
               setQuery={setQuery}
@@ -660,6 +703,13 @@ export default function Costs() {
               setAdv={setAdv}
             />
           </div>
+
+          {mergeNote && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-foreground">
+              <span>{mergeNote}</span>
+              <button type="button" onClick={() => setMergeNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
+            </div>
+          )}
 
           {/* Table */}
           <div className="overflow-x-auto rounded-lg border">

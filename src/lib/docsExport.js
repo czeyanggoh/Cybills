@@ -121,7 +121,9 @@ async function toPngBytes(buf, type) {
 const isPdfBytes = (b) => b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46; // %PDF
 
 // Merge every selected receipt into one PDF. Returns { bytes, added, missing }.
-async function buildReceiptsPdf(rows) {
+// Exported so the Costs "Merge documents" action can reuse the exact same
+// image/PDF-combining logic the PDF export uses.
+export async function buildReceiptsPdf(rows) {
   const out = await PDFDocument.create();
   let added = 0;
   let missing = 0;
