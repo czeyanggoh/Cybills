@@ -2,8 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
-import { env } from './env.js';
-import { authRouter } from './auth.js';
+import { env, googleEnabled } from './env.js';
+import { authRouter, readSession } from './auth.js';
 import { orgRouter } from './org.js';
 import { extractRouter, vaultRouter } from './extract.js';
 import { billsRouter } from './bills.js';
@@ -23,6 +23,24 @@ app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.use(cookieParser());
 app.use(morgan('tiny'));
+
+// Auth guard: once real Google sign-in is on, the data APIs require a valid
+// session — otherwise anyone with the URL could read/write company data. Public:
+// the auth flow, the password login (how you GET a session), the health check,
+// and the capability-URL bill file (opened from exported CSV links without a
+// session). In mock/dev (no Google configured) everything stays open so local
+// development isn't blocked.
+app.use((req, res, next) => {
+  if (!googleEnabled) return next();
+  const p = req.path;
+  if (!p.startsWith('/api/')) return next();
+  if (p.startsWith('/api/auth')) return next();
+  if (p === '/api/users/login') return next();
+  if (p === '/api/health') return next();
+  if (/^\/api\/costs\/bills\/[^/]+\/file$/.test(p)) return next();
+  if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
+  return next();
+});
 
 // Health check — nginx proxies /api/* here, and deploy.sh curls this to
 // confirm the backend came back up after a restart.
