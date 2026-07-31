@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Paperclip, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
 
 // A shared issue/request board (Support Desk, Feature Requests, Testing). Items
@@ -14,72 +15,28 @@ function fmtTime(iso) {
   });
 }
 
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+// Turn a picked/pasted/dropped image into a data URL small enough to post.
+// Screenshots travel inline in the JSON body and nginx caps that body at 10MB,
+// so a full-size phone screenshot would 413 — downscale first, same as the
+// receipt uploader does.
+async function fileToDataUrl(file) {
+  const { base64, mediaType } = await prepareUpload(file);
+  return `data:${mediaType};base64,${base64}`;
+}
+
+// Human-readable reason a board request failed, so a lost ticket never looks
+// like a saved one.
+function failureMessage(res) {
+  if (res?.status === 401) return 'Your session expired — sign in again, then resend. Nothing was saved.';
+  if (res?.status === 413) return 'That screenshot is too large to save. Attach a smaller image.';
+  return 'Couldn’t reach the server — your change was NOT saved. Check your connection and try again.';
 }
 
 const FILTERS = ['all', 'open', 'done', 'closed'];
 
 const UNASSIGNED = '';
 
-// The Support Desk used to persist in localStorage (one key per board). When it
-// moved server-side, tickets filed in a browser before that switch stayed stuck
-// in that browser and were invisible to everyone else. This maps the two boards
-// that held real user tickets to their old keys so we can upload them once. The
-// Testing board is skipped: its checklist is server-seeded, so importing the old
-// localStorage copy would just duplicate all 39 seed rows.
-const LEGACY_KEYS = { support: 'cybills.support-tickets', features: 'cybills.feature-requests' };
-
-// One-time: push any pre-migration tickets from this browser's localStorage up
-// to the server, oldest first (the server lists newest-first, so ascending
-// upload preserves the original order). Marks a per-key flag on success so it
-// never re-uploads. Returns true if it uploaded anything.
-async function migrateLegacyLocalTickets(board, fallbackAuthor) {
-  const oldKey = LEGACY_KEYS[board];
-  if (!oldKey || typeof localStorage === 'undefined') return false;
-  const flag = `${oldKey}.migratedToServer`;
-  if (localStorage.getItem(flag)) return false;
-
-  let legacy = [];
-  try { legacy = JSON.parse(localStorage.getItem(oldKey) || '[]'); } catch { legacy = []; }
-  if (!Array.isArray(legacy) || legacy.length === 0) {
-    localStorage.setItem(flag, '1'); // nothing here — don't keep re-checking
-    return false;
-  }
-
-  const ordered = [...legacy].sort((a, b) =>
-    String(a.created_at || '').localeCompare(String(b.created_at || '')));
-
-  let allOk = true;
-  for (const t of ordered) {
-    try {
-      const r = await fetch(`/api/board/${board}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: t.text || '',
-          screenshots: Array.isArray(t.screenshots) ? t.screenshots : [],
-          author: t.author || fallbackAuthor,
-          created_at: t.created_at,
-        }),
-      });
-      if (!r.ok) allOk = false;
-    } catch {
-      allOk = false;
-    }
-  }
-  // Only burn the flag once every ticket landed — a partial failure (offline, or
-  // a 401 before sign-in) should get another shot on the next load.
-  if (allOk) localStorage.setItem(flag, '1');
-  return allOk;
-}
-
-export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, board, viewToggle = null }) {
+export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, board, legacyKey = '', viewToggle = null }) {
   const { user } = useAuth();
   const author = user?.name || user?.email || '';
 
@@ -91,48 +48,104 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
   const [commentImgs, setCommentImgs] = useState({}); // { [id]: [{ url, name }] }
   const [filter, setFilter] = useState('all');
   const [lightbox, setLightbox] = useState(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const fileRef = useRef(null);
 
   // Load the board's items from the server; refetch on window focus so a
-  // colleague's new ticket/reply shows up without a manual reload.
-  const reload = useCallback(() => {
-    fetch(`/api/board/${board}`)
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((d) => setTickets(Array.isArray(d.items) ? d.items : []))
-      .catch(() => {});
+  // colleague's new ticket/reply shows up without a manual reload. A failed
+  // load keeps whatever is on screen and says so — blanking the board would
+  // read as "everything was deleted". Pass keepError when refetching after a
+  // failed write, so a working read can't clear the write's error banner.
+  const reload = useCallback(async ({ keepError = false } = {}) => {
+    try {
+      const res = await fetch(`/api/board/${board}`);
+      if (!res.ok) { setError(failureMessage(res)); return; }
+      const d = await res.json();
+      setTickets(Array.isArray(d.items) ? d.items : []);
+      if (!keepError) setError('');
+    } catch {
+      setError(failureMessage(null));
+    }
   }, [board]);
   useEffect(() => {
-    // Recover any pre-migration tickets from this browser first, then load the
-    // (now-complete) server list. Reload again only if something was uploaded.
-    let alive = true;
-    (async () => {
-      const migrated = await migrateLegacyLocalTickets(board, author);
-      if (alive) reload();
-      if (migrated && alive) reload();
-    })();
+    reload();
     const onFocus = () => reload();
     window.addEventListener('focus', onFocus);
-    return () => {
-      alive = false;
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [reload, board, author]);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [reload]);
 
-  // One place to hit the board API, then refetch so the list reflects the server.
+  // One place to hit the board API, then refetch so the list reflects the
+  // server. A write that fails must surface — the optimistic update would
+  // otherwise show a saved ticket that only exists in this tab.
   const api = useCallback(
     async (path, method, body) => {
+      let failure = '';
       try {
-        await fetch(`/api/board/${board}${path}`, {
+        const res = await fetch(`/api/board/${board}${path}`, {
           method,
           headers: body ? { 'Content-Type': 'application/json' } : undefined,
           body: body ? JSON.stringify(body) : undefined,
         });
-      } finally {
-        reload();
+        if (!res.ok) failure = failureMessage(res);
+      } catch {
+        failure = failureMessage(null);
       }
+      // Refetch first — it drops the optimistic row the server never accepted —
+      // then report, so the banner outlives the reload that follows it.
+      await reload({ keepError: Boolean(failure) });
+      setError(failure);
+      return !failure;
     },
     [board, reload]
   );
+
+  // One-time rescue of entries that predate the server-backed board. Boards
+  // used to live in localStorage, so each person only ever saw their own posts.
+  // Hand the whole blob to /import in one request and let the server merge it —
+  // it matches on text, so a retry, a second tab, or a browser whose tickets an
+  // earlier migration already uploaded all converge instead of duplicating.
+  // (This replaces a per-ticket upload loop that re-posted every ticket after a
+  // partial failure, and dropped replies, statuses and assignees on the way; the
+  // merge repairs those on rows that migration already created.) The
+  // localStorage copy is left in place as a backup.
+  useEffect(() => {
+    if (!legacyKey) return;
+    const doneKey = `${legacyKey}.migrated`;
+    let items;
+    try {
+      if (localStorage.getItem(doneKey)) return;
+      const raw = localStorage.getItem(legacyKey);
+      if (!raw) { localStorage.setItem(doneKey, '1'); return; }
+      items = JSON.parse(raw);
+      if (!Array.isArray(items) || items.length === 0) { localStorage.setItem(doneKey, '1'); return; }
+    } catch {
+      return; // unreadable/blocked storage — nothing to rescue
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/board/${board}/import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items }),
+        });
+        if (!res.ok) { if (alive) setError(failureMessage(res)); return; }
+        const { imported = 0, merged = 0 } = await res.json();
+        localStorage.setItem(doneKey, '1');
+        if (!alive) return;
+        if (imported || merged) {
+          setNotice(
+            `Moved ${imported + merged} item${imported + merged === 1 ? '' : 's'} from this browser to the shared board — your colleagues can see them now.`
+          );
+        }
+        reload();
+      } catch {
+        // Offline — leave the key unmarked so the next visit retries.
+      }
+    })();
+    return () => { alive = false; };
+  }, [board, legacyKey, reload]);
 
   // Load the assignable-user roster (any signed-in user may read it). Best
   // effort — the dropdown just falls back to "Unassigned" if it can't load.
@@ -250,6 +263,18 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
       <div className="mb-4 mt-2 h-0.5 w-10 bg-foreground" />
       {viewToggle && <div className="mb-4">{viewToggle}</div>}
       <p className="mb-4 text-sm text-muted-foreground">{intro}</p>
+
+      {error && (
+        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-md border bg-muted/50 px-3 py-2 text-sm text-foreground">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice('')} aria-label="Dismiss" className="text-muted-foreground hover:text-foreground">✕</button>
+        </div>
+      )}
 
       {/* Filter */}
       <div className="mb-4 flex gap-1">

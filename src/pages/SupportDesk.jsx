@@ -6,6 +6,11 @@ import { cn } from '@/lib/utils';
 // The three Support Desk views. Each maps to a server-backed board (shared
 // across the workspace); the toggle just swaps which board/labels render. The
 // Testing checklist is seeded server-side (see server/src/board.ts).
+//
+// legacyKey is the localStorage key this board used before it moved
+// server-side. RequestBoard drains it into the shared board once, so entries
+// filed back when each browser kept its own copy stop being invisible to
+// everyone else. Safe to drop once every user has loaded the app at least once.
 
 const VIEWS = {
   support: {
@@ -17,6 +22,7 @@ const VIEWS = {
     composerPlaceholder:
       'Describe an issue or change request… Paste or drop a screenshot here. (⌘/Ctrl+Enter to send)',
     board: 'support',
+    legacyKey: 'cybills.support-tickets',
   },
   features: {
     label: 'Feature Requests',
@@ -27,6 +33,7 @@ const VIEWS = {
     composerPlaceholder:
       "Describe a feature you'd like developed… Paste or drop a mockup here. (⌘/Ctrl+Enter to send)",
     board: 'features',
+    legacyKey: 'cybills.feature-requests',
   },
   testing: {
     label: 'Testing',
@@ -37,6 +44,7 @@ const VIEWS = {
     composerPlaceholder:
       'Add another thing to test… Paste or drop a screenshot here. (⌘/Ctrl+Enter to send)',
     board: 'testing',
+    legacyKey: 'cybills.testing-checklist',
   },
 };
 
@@ -78,6 +86,7 @@ export default function SupportDesk() {
         emptyLabel={config.emptyLabel}
         composerPlaceholder={config.composerPlaceholder}
         board={config.board}
+        legacyKey={config.legacyKey}
         viewToggle={toggle}
       />
     </AppShell>

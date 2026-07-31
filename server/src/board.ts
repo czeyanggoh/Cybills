@@ -121,6 +121,98 @@ boardRouter.post('/:board', (req, res) => {
   res.json({ item });
 });
 
+// POST /api/board/:board/import — adopt items that predate the server-backed
+// board. They lived in one browser's localStorage, so nobody else could ever
+// see them; this lifts them into the shared workspace with their original
+// timestamp, status, screenshots and replies intact.
+//
+// Matching is by normalised text, not by id: the Testing checklist was seeded
+// client-side with the same wording the server now seeds, so an id/timestamp
+// match would import a second copy of all 39 checks. On a match we MERGE
+// (adopt screenshots, replies, a done/closed status, an assignee) rather than
+// insert, so a ticked-off check that carries screenshot proof keeps it. Both
+// paths are idempotent — re-running the migration, or two people migrating the
+// same shared browser, adds nothing the board doesn't already have.
+const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+
+// Cap one import so a corrupted localStorage blob can't balloon the store.
+const IMPORT_LIMIT = 500;
+
+function cleanComments(raw: unknown): Comment[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c): c is Record<string, unknown> => Boolean(c) && typeof c === 'object')
+    .map((c) => ({
+      author: String(c.author || ''),
+      text: String(c.text || ''),
+      created_at: typeof c.created_at === 'string' && c.created_at ? c.created_at : nowIso(),
+      screenshots: Array.isArray(c.screenshots) ? c.screenshots.map(String) : [],
+    }))
+    .filter((c) => c.text || c.screenshots.length);
+}
+
+const commentKey = (c: Comment) => `${c.author} ${c.text} ${c.created_at}`;
+
+boardRouter.post('/:board/import', (req, res) => {
+  const ws = workspaceId(req);
+  const board = req.params.board;
+  const incoming = Array.isArray(req.body?.items) ? req.body.items.slice(0, IMPORT_LIMIT) : [];
+
+  const items = ensure(ws, board);
+  const mine = items.filter((x) => x.workspaceId === ws && x.board === board && !x.deleted);
+  const byText = new Map(mine.map((x) => [norm(x.text), x]));
+  const maxSeq = mine.reduce((m, x) => Math.max(m, x.seq), 0);
+
+  let imported = 0;
+  let merged = 0;
+
+  for (const raw of incoming) {
+    if (!raw || typeof raw !== 'object') continue;
+    const text = String(raw.text || '');
+    const screenshots = Array.isArray(raw.screenshots) ? raw.screenshots.map(String) : [];
+    if (!text && !screenshots.length) continue;
+
+    const created_at = typeof raw.created_at === 'string' && raw.created_at ? raw.created_at : nowIso();
+    const status = raw.status === 'done' || raw.status === 'closed' ? raw.status : 'open';
+    const assignee =
+      raw.assignee && typeof raw.assignee === 'object' && raw.assignee.id
+        ? { id: String(raw.assignee.id), name: String(raw.assignee.name || raw.assignee.id) }
+        : null;
+    const comments = cleanComments(raw.comments);
+
+    const existing = text ? byText.get(norm(text)) : undefined;
+    if (existing) {
+      let touched = false;
+      for (const url of screenshots) {
+        if (!existing.screenshots.includes(url)) { existing.screenshots.push(url); touched = true; }
+      }
+      const seen = new Set(existing.comments.map(commentKey));
+      for (const c of comments) {
+        if (!seen.has(commentKey(c))) { existing.comments.push(c); seen.add(commentKey(c)); touched = true; }
+      }
+      // Only ever move an untouched item forward — never re-open something a
+      // colleague has since closed on the shared board.
+      if (existing.status === 'open' && status !== 'open') { existing.status = status; touched = true; }
+      if (!existing.assignee && assignee) { existing.assignee = assignee; touched = true; }
+      if (!existing.author && raw.author) { existing.author = String(raw.author); touched = true; }
+      if (touched) merged++;
+      continue;
+    }
+
+    const item: Item = {
+      id: randomUUID(), workspaceId: ws, board, text, screenshots, status,
+      author: String(raw.author || ''), created_at, comments, assignee,
+      seq: maxSeq + 1 + imported, deleted: false,
+    };
+    items.push(item);
+    if (text) byText.set(norm(text), item);
+    imported++;
+  }
+
+  if (imported || merged) save(items);
+  res.json({ imported, merged, skipped: incoming.length - imported - merged });
+});
+
 function mutate(req: Request, res: Response, fn: (item: Item, me: { email: string; name: string }) => void) {
   const ws = workspaceId(req);
   const items = load();
