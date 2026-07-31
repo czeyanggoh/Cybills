@@ -13,6 +13,7 @@ import { cyhrRouter } from './cyhr.js';
 import { claimsRouter } from './claims.js';
 import { usersRouter } from './users.js';
 import { settingsRouter } from './settings.js';
+import { boardRouter } from './board.js';
 
 const app = express();
 
@@ -62,6 +63,9 @@ app.use('/api/users', usersRouter);
 
 // Per-workspace settings blobs — Lists, custom categories, customer/supplier rules.
 app.use('/api/settings', settingsRouter);
+
+// Support Desk boards (tickets / feature requests / testing checklist) — shared.
+app.use('/api/board', boardRouter);
 
 app.listen(env.PORT, () => {
   console.log(`[cybills] server listening on :${env.PORT} (${env.NODE_ENV})`);

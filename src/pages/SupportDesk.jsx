@@ -3,62 +3,9 @@ import AppShell from '@/components/AppShell';
 import RequestBoard from '@/components/RequestBoard';
 import { cn } from '@/lib/utils';
 
-// The two views the merged Support Desk board can show. Each keeps its own
-// localStorage-backed store (storageKey) so existing tickets and feature
-// requests stay intact — the toggle only swaps which data/labels render.
-// Pre-loaded test action items — one verifiable step per line. Tick each off
-// and attach a screenshot as proof once tested. Grouped by workspace (A–K).
-const TEST_ITEMS = [
-  'A · Costs: upload a receipt (Add documents) — it reads (OCR) and lands in the Inbox as “New”.',
-  'A · Costs: open the receipt detail — image on the left, extracted fields on the right.',
-  'B · Cost detail: Category dropdown lists the Xero chart + the CSV Lists categories.',
-  'B · Cost detail: Customer & Project dropdowns are populated; the Paid toggle switches Yes/No.',
-  'B · Cost detail: Add payment method — the Bank account list is synced from Xero.',
-  'B · Cost detail: Split the receipt across two categories.',
-  'B · Costs: move an item through the pipeline (Inbox → To review → Ready).',
-  'C · Sales: upload a receipt — the drawer defaults to Sales and the item appears under Processing.',
-  'C · Sales: click Move to inbox — it lands in the Inbox with a green “New” dot.',
-  'C · Sales detail: Set customer rules (+ Smart split), Add category, Add payment method.',
-  'C · Sales detail: History tab shows uploaded → processing → viewed (+ any category change).',
-  'D · Business settings → Lists: add or hide a Category → it appears/disappears in the Cost/Sales dropdowns.',
-  'D · Lists: Tax rates (21) and Projects show; add a project → it appears in every Project dropdown.',
-  'E · Sales → Customers: set a Category and Project per customer (persists on reload).',
-  'E · Costs → Suppliers: set a Category and Customer per supplier (persists on reload).',
-  'F · Expense claims: add selected costs to a claim (new or existing).',
-  'F · Expense claim: Submit for approval — the ✕ closes the dialog even with the approver dropdown open.',
-  'F · Expense claim: PDF preview (with approval-history page) + Export (CSV/PDF).',
-  'G · Vault: upload a file → it previews on the detail page; Subject & Summary auto-fill.',
-  'G · Vault: Copy to Costs and Copy to Sales from a file — it appears in each inbox.',
-  'G · Vault: Manage access (general + per-user); Tags (Add tags); Downloads records a ZIP archive.',
-  'H · Bank → Accounts: Add bank account (2-step wizard) + Request your bank sub-dialog.',
-  'H · Bank → Statements: Set up an Integration → lands on Business settings → Connections.',
-  'I · Users: Add a user — Login access off hides Email, on makes it required; 3-step add completes.',
-  'I · Users: Manage → Deactivate/Reactivate and Edit user details.',
-  'J · Profile: Change email + Change password; Bookkeeping toggles and Approval dropdowns persist.',
-  'K · Exports: Export all (CSV / PDF / ZIP) → the file appears in the Exports tab and Download works.',
-];
-
-// Dext core-workflow parity checks. `status: 'done'` = already verified (ticked
-// as a pass); untistked items with ⚠️ MANUAL need a human on the live site;
-// 🚧 GAP items are Dext workflows CYBills does not yet cover.
-const DEXT_ITEMS = [
-  // ── Core: Document capture ────────────────────────────────────────────────
-  { text: 'DEXT · Capture: drag & drop files onto Add documents → uploads and lands in the inbox. ✅ verified', status: 'done' },
-  { text: 'DEXT · Extraction: OCR/AI reads supplier, amount, tax & date from the receipt. ✅ verified (prod, Claude Vision)', status: 'done' },
-  { text: 'DEXT · Categorize: extraction auto-assigns a Category from the live Xero chart. ✅ verified', status: 'done' },
-  // ── Core: Expense management ──────────────────────────────────────────────
-  { text: 'DEXT · Expense mgmt: create an expense claim → Submit for approval → Approve. ✅ verified', status: 'done' },
-  { text: 'DEXT · Expense mgmt: approved claim → Send to HR for payment routes the payable to CYHR. ✅ verified end-to-end', status: 'done' },
-  // ── Manual: covered, but you verify on the live site ──────────────────────
-  { text: '⚠️ MANUAL — Capture: snap a receipt photo from your phone browser camera (responsive web; no native app). Test on your phone.', status: 'open' },
-  { text: '⚠️ MANUAL — Sync: Publish to Xero on a cost pushes the bill via the cyworkspace relay. Needs a connected Xero org — confirm the bill appears in Xero.', status: 'open' },
-  // ── Gaps: Dext workflows CYBills does NOT cover yet ───────────────────────
-  { text: "🚧 GAP — Capture by email: the Extract-by-Email addresses shown in Add documents are display-only; email ingestion isn't wired.", status: 'open' },
-  { text: '🚧 GAP — Auto-fetch bills from online suppliers: not built (Dext connects to supplier portals).', status: 'open' },
-  { text: '🚧 GAP — Sync to QuickBooks / Sage: not built (CYBills syncs to Xero only).', status: 'open' },
-  { text: '🚧 GAP — Mileage tracking: not built (record business travel + compute travel costs).', status: 'open' },
-  { text: '🚧 GAP — Bank reconciliation vs a live bank feed: not built (Bank section stores accounts/statements; no live-feed matching).', status: 'open' },
-];
+// The three Support Desk views. Each maps to a server-backed board (shared
+// across the workspace); the toggle just swaps which board/labels render. The
+// Testing checklist is seeded server-side (see server/src/board.ts).
 
 const VIEWS = {
   support: {
@@ -69,7 +16,7 @@ const VIEWS = {
     emptyLabel: 'issues',
     composerPlaceholder:
       'Describe an issue or change request… Paste or drop a screenshot here. (⌘/Ctrl+Enter to send)',
-    storageKey: 'cybills.support-tickets',
+    board: 'support',
   },
   features: {
     label: 'Feature Requests',
@@ -79,7 +26,7 @@ const VIEWS = {
     emptyLabel: 'feature requests',
     composerPlaceholder:
       "Describe a feature you'd like developed… Paste or drop a mockup here. (⌘/Ctrl+Enter to send)",
-    storageKey: 'cybills.feature-requests',
+    board: 'features',
   },
   testing: {
     label: 'Testing',
@@ -89,8 +36,7 @@ const VIEWS = {
     emptyLabel: 'test items',
     composerPlaceholder:
       'Add another thing to test… Paste or drop a screenshot here. (⌘/Ctrl+Enter to send)',
-    storageKey: 'cybills.testing-checklist',
-    seed: [...TEST_ITEMS, ...DEXT_ITEMS],
+    board: 'testing',
   },
 };
 
@@ -124,16 +70,14 @@ export default function SupportDesk() {
 
   return (
     <AppShell>
-      {/* Remount the board when the view changes so it reloads the correct
-          store (each view has its own storageKey). */}
+      {/* Remount the board when the view changes so it loads the right board. */}
       <RequestBoard
         key={view}
         title={config.title}
         intro={config.intro}
         emptyLabel={config.emptyLabel}
         composerPlaceholder={config.composerPlaceholder}
-        storageKey={config.storageKey}
-        seed={config.seed || []}
+        board={config.board}
         viewToggle={toggle}
       />
     </AppShell>

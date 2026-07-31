@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Paperclip, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
-// A lightweight issue/request board (Support Desk + Feature Requests share it).
-// Persistence is client-side localStorage — cybills has no domain-data backend
-// yet, so screenshots are kept inline as data URLs. Swap `load`/`persist` for
-// an API layer later without touching the UI.
+// A shared issue/request board (Support Desk, Feature Requests, Testing). Items
+// are server-backed (/api/board/:board), so everyone in the workspace sees the
+// same tickets; screenshots ride along as data URLs.
 
 function fmtTime(iso) {
   if (!iso) return '';
@@ -28,12 +27,9 @@ const FILTERS = ['all', 'open', 'done', 'closed'];
 
 const UNASSIGNED = '';
 
-export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, storageKey, viewToggle = null, seed = [] }) {
+export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, board, viewToggle = null }) {
   const { user } = useAuth();
   const author = user?.name || user?.email || '';
-  // Capture the seed once so the load effect can pre-populate an empty board
-  // without re-running when the parent re-renders.
-  const seedRef = useRef(seed);
 
   const [tickets, setTickets] = useState([]);
   const [assignees, setAssignees] = useState([]); // [{ id, email, name }]
@@ -43,51 +39,38 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
   const [commentImgs, setCommentImgs] = useState({}); // { [id]: [{ url, name }] }
   const [filter, setFilter] = useState('all');
   const [lightbox, setLightbox] = useState(null);
-  const [quotaError, setQuotaError] = useState(false);
   const fileRef = useRef(null);
 
-  // Load persisted tickets, then MERGE in any seed lines not yet added. Seed
-  // entries may be a plain string or { text, status }. Each seed line's text is
-  // its merge key: it's added once and recorded in `${storageKey}.seededKeys`,
-  // so (a) new seed lines appear on an already-seeded board, and (b) deleting a
-  // seeded item doesn't bring it back. `status` lets a seed line start ticked.
+  // Load the board's items from the server; refetch on window focus so a
+  // colleague's new ticket/reply shows up without a manual reload.
+  const reload = useCallback(() => {
+    fetch(`/api/board/${board}`)
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((d) => setTickets(Array.isArray(d.items) ? d.items : []))
+      .catch(() => {});
+  }, [board]);
   useEffect(() => {
-    const norm = (s) => (typeof s === 'string' ? { text: s, status: 'open' } : { text: s.text, status: s.status || 'open' });
-    const mkTicket = (s) => ({
-      id: crypto.randomUUID(), text: s.text, screenshots: [],
-      status: s.status || 'open', author: '', created_at: new Date().toISOString(), comments: [],
-    });
-    try {
-      const raw = localStorage.getItem(storageKey);
-      const existing = raw ? JSON.parse(raw) : [];
-      const seedItems = seedRef.current.map(norm);
-      if (!seedItems.length) { setTickets(existing); return; }
+    reload();
+    const onFocus = () => reload();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [reload]);
 
-      const keysRaw = localStorage.getItem(`${storageKey}.seededKeys`);
-      const seededKeys = new Set(keysRaw ? JSON.parse(keysRaw) : []);
-      // Migration from the old boolean `.seeded` flag: any seed line already on
-      // the board counts as seeded, so it isn't duplicated on this first merge.
-      if (!keysRaw) {
-        const present = new Set(existing.map((t) => t.text));
-        for (const s of seedItems) if (present.has(s.text)) seededKeys.add(s.text);
+  // One place to hit the board API, then refetch so the list reflects the server.
+  const api = useCallback(
+    async (path, method, body) => {
+      try {
+        await fetch(`/api/board/${board}${path}`, {
+          method,
+          headers: body ? { 'Content-Type': 'application/json' } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+      } finally {
+        reload();
       }
-
-      const toAdd = [];
-      for (const s of seedItems) {
-        if (seededKeys.has(s.text)) continue;
-        toAdd.push(mkTicket(s));
-        seededKeys.add(s.text);
-      }
-
-      const next = raw ? [...existing, ...toAdd] : toAdd;
-      localStorage.setItem(storageKey, JSON.stringify(next));
-      localStorage.setItem(`${storageKey}.seededKeys`, JSON.stringify([...seededKeys]));
-      localStorage.setItem(`${storageKey}.seeded`, '1');
-      setTickets(next);
-    } catch {
-      setTickets([]);
-    }
-  }, [storageKey]);
+    },
+    [board, reload]
+  );
 
   // Load the assignable-user roster (any signed-in user may read it). Best
   // effort — the dropdown just falls back to "Unassigned" if it can't load.
@@ -114,29 +97,9 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
     return () => window.removeEventListener('keydown', onKey);
   }, [lightbox]);
 
-  // Write to state + localStorage together; flag quota overflow (big screenshots).
-  function persist(next) {
-    setTickets(next);
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(next));
-      setQuotaError(false);
-    } catch {
-      setQuotaError(true);
-    }
-  }
-
   function submit() {
     if (!input.trim() && pendingImgs.length === 0) return;
-    const ticket = {
-      id: crypto.randomUUID(),
-      text: input.trim(),
-      screenshots: pendingImgs.map((p) => p.url),
-      status: 'open',
-      author,
-      created_at: new Date().toISOString(),
-      comments: [],
-    };
-    persist([ticket, ...tickets]);
+    api('', 'POST', { text: input.trim(), screenshots: pendingImgs.map((p) => p.url), author });
     setInput('');
     setPendingImgs([]);
   }
@@ -177,30 +140,21 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
   }
 
   function setStatus(id, next) {
-    persist(tickets.map((t) => (t.id === id ? { ...t, status: next } : t)));
+    setTickets((ts) => ts.map((t) => (t.id === id ? { ...t, status: next } : t))); // optimistic
+    api(`/${id}`, 'PATCH', { status: next });
   }
   function toggle(t) {
     setStatus(t.id, t.status === 'done' ? 'open' : 'done');
   }
   function remove(id) {
-    persist(tickets.filter((t) => t.id !== id));
+    setTickets((ts) => ts.filter((t) => t.id !== id)); // optimistic
+    api(`/${id}`, 'DELETE');
   }
 
-  // Assign an item to a user (or clear it). Stored inline on the item — no
-  // schema migration since items are a JSON blob.
+  // Assign an item to a user (or clear it).
   function setAssignee(id, assigneeId) {
     const picked = assigneeId ? assignees.find((a) => a.id === assigneeId) : null;
-    persist(
-      tickets.map((t) => {
-        if (t.id !== id) return t;
-        if (!picked) {
-          // Preserve an already-set assignee that's missing from the roster.
-          if (assigneeId && t.assignee?.id === assigneeId) return t;
-          return { ...t, assignee: null };
-        }
-        return { ...t, assignee: { id: picked.id, name: picked.name } };
-      })
-    );
+    api(`/${id}`, 'PATCH', { assignee: picked ? { id: picked.id, name: picked.name } : null });
   }
 
   // Options for a given item: the roster, plus the item's current assignee if
@@ -217,11 +171,7 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
     const text = (drafts[t.id] ?? '').trim();
     const imgs = commentImgs[t.id] ?? [];
     if (!text && imgs.length === 0) return;
-    const comment = {
-      author, text, created_at: new Date().toISOString(),
-      screenshots: imgs.map((i) => i.url),
-    };
-    persist(tickets.map((x) => (x.id === t.id ? { ...x, comments: [...(x.comments ?? []), comment] } : x)));
+    api(`/${t.id}/comment`, 'POST', { author, text, screenshots: imgs.map((i) => i.url) });
     setDrafts((d) => ({ ...d, [t.id]: '' }));
     setCommentImgs((prev) => ({ ...prev, [t.id]: [] }));
   }
@@ -238,12 +188,6 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
       <div className="mb-4 mt-2 h-0.5 w-10 bg-foreground" />
       {viewToggle && <div className="mb-4">{viewToggle}</div>}
       <p className="mb-4 text-sm text-muted-foreground">{intro}</p>
-
-      {quotaError && (
-        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          Storage is full — this browser can’t save more screenshots. Remove some items or attach smaller images.
-        </div>
-      )}
 
       {/* Filter */}
       <div className="mb-4 flex gap-1">
