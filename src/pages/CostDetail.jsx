@@ -492,22 +492,33 @@ export default function CostDetail() {
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        <TopButton onClick={moveToReady}>Move to ready</TopButton>
-        <span
-          title={readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'All required fields present'}
-          className={cn(
-            'inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs',
-            readyMissing.length ? 'text-muted-foreground' : 'border-foreground/40 text-foreground'
-          )}
-        >
-          {readyMissing.length ? (
-            `${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'} to complete`
-          ) : (
-            <>
-              <CheckCircle2 className="h-3.5 w-3.5" /> Ready to move
-            </>
-          )}
-        </span>
+        {doc.status === 'ready' ? (
+          <>
+            <span className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm text-foreground">
+              <CheckCircle2 className="h-4 w-4" /> In Ready
+            </span>
+            <TopButton onClick={() => saveWithStatus('new')}>Move back to inbox</TopButton>
+          </>
+        ) : (
+          <>
+            <TopButton onClick={moveToReady}>Move to ready</TopButton>
+            <span
+              title={readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'All required fields present'}
+              className={cn(
+                'inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs',
+                readyMissing.length ? 'text-muted-foreground' : 'border-foreground/40 text-foreground'
+              )}
+            >
+              {readyMissing.length ? (
+                `${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'} to complete`
+              ) : (
+                <>
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Ready to move
+                </>
+              )}
+            </span>
+          </>
+        )}
         {doc.persisted &&
           (doc.xeroInvoiceId ? (
             <span className="inline-flex h-8 items-center gap-1 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700">
@@ -690,13 +701,19 @@ export default function CostDetail() {
               </Field>
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
-                <button
-                  type="button"
-                  onClick={moveToReady}
-                  className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                >
-                  Move to ready
-                </button>
+                {doc.status === 'ready' ? (
+                  <span className="inline-flex h-9 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm font-medium text-foreground">
+                    <CheckCircle2 className="h-4 w-4" /> In Ready
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={moveToReady}
+                    className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                  >
+                    Move to ready
+                  </button>
+                )}
                 <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>
                 <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
                 <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
