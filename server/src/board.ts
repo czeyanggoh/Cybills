@@ -104,11 +104,15 @@ boardRouter.post('/:board', (req, res) => {
   const ws = workspaceId(req);
   const b = req.body ?? {};
   const me = actor(req);
+  // Honor an optional created_at so the one-time localStorage→server migration
+  // (older tickets filed before the Support Desk went server-side) keeps its
+  // original date instead of all showing "just now".
+  const createdAt = typeof b.created_at === 'string' && b.created_at ? b.created_at : nowIso();
   const item: Item = {
     id: randomUUID(), workspaceId: ws, board: req.params.board,
     text: String(b.text || ''),
     screenshots: Array.isArray(b.screenshots) ? b.screenshots : [],
-    status: 'open', author: b.author || me.name, created_at: nowIso(), comments: [], assignee: null,
+    status: 'open', author: b.author || me.name, created_at: createdAt, comments: [], assignee: null,
     seq: Date.now(), deleted: false,
   };
   const items = load();

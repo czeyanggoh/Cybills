@@ -27,6 +27,58 @@ const FILTERS = ['all', 'open', 'done', 'closed'];
 
 const UNASSIGNED = '';
 
+// The Support Desk used to persist in localStorage (one key per board). When it
+// moved server-side, tickets filed in a browser before that switch stayed stuck
+// in that browser and were invisible to everyone else. This maps the two boards
+// that held real user tickets to their old keys so we can upload them once. The
+// Testing board is skipped: its checklist is server-seeded, so importing the old
+// localStorage copy would just duplicate all 39 seed rows.
+const LEGACY_KEYS = { support: 'cybills.support-tickets', features: 'cybills.feature-requests' };
+
+// One-time: push any pre-migration tickets from this browser's localStorage up
+// to the server, oldest first (the server lists newest-first, so ascending
+// upload preserves the original order). Marks a per-key flag on success so it
+// never re-uploads. Returns true if it uploaded anything.
+async function migrateLegacyLocalTickets(board, fallbackAuthor) {
+  const oldKey = LEGACY_KEYS[board];
+  if (!oldKey || typeof localStorage === 'undefined') return false;
+  const flag = `${oldKey}.migratedToServer`;
+  if (localStorage.getItem(flag)) return false;
+
+  let legacy = [];
+  try { legacy = JSON.parse(localStorage.getItem(oldKey) || '[]'); } catch { legacy = []; }
+  if (!Array.isArray(legacy) || legacy.length === 0) {
+    localStorage.setItem(flag, '1'); // nothing here — don't keep re-checking
+    return false;
+  }
+
+  const ordered = [...legacy].sort((a, b) =>
+    String(a.created_at || '').localeCompare(String(b.created_at || '')));
+
+  let allOk = true;
+  for (const t of ordered) {
+    try {
+      const r = await fetch(`/api/board/${board}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: t.text || '',
+          screenshots: Array.isArray(t.screenshots) ? t.screenshots : [],
+          author: t.author || fallbackAuthor,
+          created_at: t.created_at,
+        }),
+      });
+      if (!r.ok) allOk = false;
+    } catch {
+      allOk = false;
+    }
+  }
+  // Only burn the flag once every ticket landed — a partial failure (offline, or
+  // a 401 before sign-in) should get another shot on the next load.
+  if (allOk) localStorage.setItem(flag, '1');
+  return allOk;
+}
+
 export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, board, viewToggle = null }) {
   const { user } = useAuth();
   const author = user?.name || user?.email || '';
@@ -50,11 +102,21 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
       .catch(() => {});
   }, [board]);
   useEffect(() => {
-    reload();
+    // Recover any pre-migration tickets from this browser first, then load the
+    // (now-complete) server list. Reload again only if something was uploaded.
+    let alive = true;
+    (async () => {
+      const migrated = await migrateLegacyLocalTickets(board, author);
+      if (alive) reload();
+      if (migrated && alive) reload();
+    })();
     const onFocus = () => reload();
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [reload]);
+    return () => {
+      alive = false;
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [reload, board, author]);
 
   // One place to hit the board API, then refetch so the list reflects the server.
   const api = useCallback(
