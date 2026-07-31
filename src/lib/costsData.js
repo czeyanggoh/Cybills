@@ -3,6 +3,7 @@ import { DOCS } from '@/data/docs';
 import { useClaims } from '@/lib/claimStore';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { getDocOverrides, applyOverride, DOC_OVERRIDES_EVENT } from '@/lib/docOverrides';
+import { USERS_EVENT } from '@/lib/userStore';
 
 // Which documents belong in each Costs tab, by status. Uploaded bills carry
 // status new/ready/expenseclaim/archived; sample docs may also be 'viewed' or
@@ -34,7 +35,13 @@ export function useCostsDocs() {
   useEffect(() => {
     reload();
     window.addEventListener(BILLS_CHANGED_EVENT, reload);
-    return () => window.removeEventListener(BILLS_CHANGED_EVENT, reload);
+    // Re-map when the users roster loads/changes, so createdBy emails resolve to
+    // real names ("Astrid Yang" rather than "astridy2004").
+    window.addEventListener(USERS_EVENT, reload);
+    return () => {
+      window.removeEventListener(BILLS_CHANGED_EVENT, reload);
+      window.removeEventListener(USERS_EVENT, reload);
+    };
   }, [reload]);
 
   useEffect(() => {

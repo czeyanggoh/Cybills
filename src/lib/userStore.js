@@ -19,13 +19,36 @@ async function req(path, method = 'GET', body) {
   return res.json();
 }
 
+// Synchronous email → display-name lookup, so a row's uploader can be shown as
+// "Astrid Yang" instead of the raw "astridy2004" email local-part, without every
+// caller refetching the roster. Warmed on import + refreshed on every fetch.
+let rosterByEmail = {};
+function indexRoster(list) {
+  const next = {};
+  for (const u of list) if (u?.email) next[String(u.email).toLowerCase()] = u.name || u.email;
+  rosterByEmail = next;
+}
+export function nameForEmail(email) {
+  if (!email) return '';
+  return rosterByEmail[String(email).toLowerCase()] || '';
+}
+
 async function fetchUsers() {
   try {
     const { users } = await req('/');
-    return Array.isArray(users) ? users : [];
+    const list = Array.isArray(users) ? users : [];
+    indexRoster(list);
+    return list;
   } catch {
     return [];
   }
+}
+
+// Warm the roster cache once on load so email→name resolution works before any
+// <useUsers> component mounts; the one-time notify makes lists that already
+// rendered (e.g. the Costs "User" column) re-resolve with real names.
+if (typeof window !== 'undefined') {
+  fetchUsers().then(() => notifyUsersChanged());
 }
 
 // --- Mutations (async; notify so mounted lists refetch) ----------------------

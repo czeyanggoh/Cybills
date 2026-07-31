@@ -1,4 +1,5 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
+import { nameForEmail } from '@/lib/userStore';
 
 // Fires after a successful upload so open lists (e.g. the Costs inbox) refetch.
 export const BILLS_CHANGED_EVENT = 'cybills:bills-changed';
@@ -83,7 +84,8 @@ export function billToDoc(b) {
     status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted', 'processing'].includes(b.status)
       ? b.status
       : 'new',
-    user: b.createdBy ? b.createdBy.split('@')[0] : 'You',
+    user: b.createdBy ? nameForEmail(b.createdBy) || b.createdBy.split('@')[0] : 'You',
+    createdByEmail: b.createdBy || '',
     fileName: b.fileName || '',
     createdAt: b.createdAt || '',
     date: b.date || '—',

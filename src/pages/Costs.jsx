@@ -399,7 +399,7 @@ function ApprovalsPanel() {
 // Processing tab: freshly-uploaded cost documents still being read, shown with
 // extraction progress and a manual "Move to inbox" step (they also auto-advance
 // to the inbox a moment after upload). Mirrors the Sales processing view.
-function CostProcessingView({ rows, onMoveOne, onMoveAll }) {
+function CostProcessingView({ rows, onMoveOne, onMoveAll, meName = 'You' }) {
   const doneCount = (d) => {
     const present = (v) => v != null && v !== '' && v !== '—' && v !== 'Unknown supplier' && v !== 'Uncategorised';
     return [d.supplier, d.date, d.invoiceNumber, d.category, d.total, d.currency].filter(present).length;
@@ -437,7 +437,7 @@ function CostProcessingView({ rows, onMoveOne, onMoveAll }) {
                     </div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-muted-foreground">{displayItemId(d.id)}</td>
-                  <td className="whitespace-nowrap px-3 py-3">{d.user}</td>
+                  <td className="whitespace-nowrap px-3 py-3">{d.user && d.user !== 'You' ? d.user : meName}</td>
                   <td className="px-3 py-3">{d.fileName || '—'}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">Via web</td>
                   <td className="px-3 py-3">
@@ -481,6 +481,9 @@ function CostProcessingView({ rows, onMoveOne, onMoveAll }) {
 export default function Costs() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  // Label for uploads with no recorded creator ("You" = whoever is viewing).
+  const meName = user?.name || user?.email || 'You';
+  const uploaderLabel = (d) => (d.user && d.user !== 'You' ? d.user : meName);
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
   const [query, setQuery] = useState('');
@@ -688,6 +691,7 @@ export default function Costs() {
           rows={rowsByTab.processing}
           onMoveOne={(id) => moveToInbox([id])}
           onMoveAll={() => moveToInbox()}
+          meName={meName}
         />
       ) : (
         <>
@@ -755,7 +759,7 @@ export default function Costs() {
                       </div>
                     </td>
                     <td className="px-3 py-3"><StatusBadge status={d.status} /></td>
-                    <td className={cn('whitespace-nowrap px-3 py-3', d.unread && 'font-semibold')}>{d.user}</td>
+                    <td className={cn('whitespace-nowrap px-3 py-3', d.unread && 'font-semibold')}>{uploaderLabel(d)}</td>
                     <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{formatDate(d.date)}</td>
                     <td className={cn('px-3 py-3', d.unread && 'font-semibold')}>{d.supplier}</td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
