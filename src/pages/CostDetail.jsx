@@ -510,10 +510,10 @@ export default function CostDetail() {
               )}
             >
               {readyMissing.length ? (
-                `${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'} to complete`
+                `Missing ${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'}`
               ) : (
                 <>
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Ready to move
+                  <CheckCircle2 className="h-3.5 w-3.5" /> All fields complete
                 </>
               )}
             </span>
