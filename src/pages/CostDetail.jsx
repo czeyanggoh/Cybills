@@ -9,6 +9,7 @@ import {
   ChevronDown,
   FileText,
   CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -185,6 +186,7 @@ export default function CostDetail() {
   const [claimOpen, setClaimOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [readyError, setReadyError] = useState([]); // required fields missing when trying to move to Ready
 
   const doc = mockDoc ?? persisted;
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
@@ -232,7 +234,10 @@ export default function CostDetail() {
     );
   }
 
-  const set = (key, value) => setData((d) => ({ ...d, [key]: value }));
+  const set = (key, value) => {
+    setData((d) => ({ ...d, [key]: value }));
+    if (readyError.length) setReadyError([]); // fixing a field clears the "not ready" banner
+  };
   const go = (delta) => {
     const next = DOCS[index + delta];
     if (next) navigate(`/costs/${next.id}`);
@@ -280,6 +285,37 @@ export default function CostDetail() {
   const saveWithStatus = async (status, to = '/costs') => {
     await persistStatus(status);
     navigate(to);
+  };
+
+  // "Ready" means a document is complete enough to export / publish, so it must
+  // carry the fields the rest of the workflow depends on. Instead of silently
+  // advancing a half-filled doc, Move to ready validates these and tells you
+  // exactly what's missing (answers "what does Move to Ready do?").
+  const isBlank = (v) => !v || String(v).trim() === '' || String(v).trim() === '—';
+  const amountOk = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) > 0;
+  const READY_REQUIRED = [
+    ['supplier', 'Supplier'],
+    ['date', 'Date'],
+    ['category', 'Category'],
+    ['total', 'Total amount'],
+  ];
+  const missingForReady = () =>
+    READY_REQUIRED.filter(([k]) => {
+      if (k === 'total') return !amountOk(data.total);
+      if (k === 'category')
+        return isBlank(data.category) || String(data.category).trim().toLowerCase() === 'uncategorised';
+      return isBlank(data[k]);
+    }).map(([, label]) => label);
+
+  // Validate before advancing — only a complete document moves to Ready.
+  const moveToReady = () => {
+    const missing = missingForReady();
+    if (missing.length) {
+      setReadyError(missing);
+      return;
+    }
+    setReadyError([]);
+    saveWithStatus('ready');
   };
 
   // "Move to" another workspace — takes the item out of the Costs inbox and
@@ -430,6 +466,8 @@ export default function CostDetail() {
     }
   };
 
+  const readyMissing = missingForReady();
+
   return (
     <AppShell subnav={<CostsSubnav />}>
       {splitNote && (
@@ -438,13 +476,38 @@ export default function CostDetail() {
           <button type="button" onClick={() => setSplitNote('')} className="ml-auto text-emerald-700/70 hover:text-emerald-700">Dismiss</button>
         </div>
       )}
+      {readyError.length > 0 && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Not ready yet — this document still needs {readyError.join(', ')}. Fill{' '}
+            {readyError.length === 1 ? 'it' : 'them'} in, then Move to ready.
+          </span>
+          <button type="button" onClick={() => setReadyError([])} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
+        </div>
+      )}
       {/* Action bar */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <TopButton subtle onClick={() => navigate('/costs')}>
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        <TopButton onClick={() => saveWithStatus('ready')}>Move to ready</TopButton>
+        <TopButton onClick={moveToReady}>Move to ready</TopButton>
+        <span
+          title={readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'All required fields present'}
+          className={cn(
+            'inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs',
+            readyMissing.length ? 'text-muted-foreground' : 'border-foreground/40 text-foreground'
+          )}
+        >
+          {readyMissing.length ? (
+            `${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'} to complete`
+          ) : (
+            <>
+              <CheckCircle2 className="h-3.5 w-3.5" /> Ready to move
+            </>
+          )}
+        </span>
         {doc.persisted &&
           (doc.xeroInvoiceId ? (
             <span className="inline-flex h-8 items-center gap-1 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700">
@@ -629,7 +692,7 @@ export default function CostDetail() {
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 <button
                   type="button"
-                  onClick={() => saveWithStatus('ready')}
+                  onClick={moveToReady}
                   className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
                 >
                   Move to ready
