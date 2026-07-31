@@ -231,7 +231,11 @@ export default function AppShell({ subnav = null, children }) {
 
   return (
     <AppShellContext.Provider value={{ openAddDocuments: () => setAddOpen(true) }}>
-      <div className="flex min-h-screen bg-background text-foreground">
+      {/* Viewport-locked app shell: the frame stays the height of the window and
+          only <main> scrolls, so the sidebar's bottom nav (Get started, Users,
+          Business settings, Sign out) is always pinned in view on every tab —
+          not pushed below the fold on content-heavy pages like Costs. */}
+      <div className="flex h-screen overflow-hidden bg-background text-foreground">
         {/* Primary sidebar */}
         <aside className="hidden w-56 shrink-0 flex-col border-r bg-background md:flex">
           <div className="flex h-14 items-center gap-2 border-b px-4">

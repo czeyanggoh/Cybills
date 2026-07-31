@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, Link2, RotateCcw } from 'lucide-react';
+import { Check, Link2, RotateCcw, Info } from 'lucide-react';
 import { RECON_ACCOUNTS, useBankFeed, reconcile, reconcileAll } from '@/lib/bankRecon';
 import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
@@ -19,6 +19,20 @@ export default function BankReconcile() {
 
   return (
     <>
+      {/* Where these lines come from — answers "what's the source of this bank
+          data?". CYBills has no live bank feed (Xero exposes no bank-feed API),
+          so the feed is simulated from Costs + a few sample bank-only lines. */}
+      <div className="mb-4 flex items-start gap-2 rounded-lg border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
+        <p>
+          <span className="font-medium text-foreground">Where these lines come from.</span>{' '}
+          This isn&apos;t a live bank feed — bank feeds aren&apos;t available through Xero&apos;s API.
+          To demonstrate reconciliation, the feed is built from your Costs (each shown as a card
+          payment) plus a few sample bank-only lines (account fee, interest, payroll transfer).
+          Connecting a bank-aggregation integration would replace it with your real transactions.
+        </p>
+      </div>
+
       {/* Account filter + summary */}
       <div className="mb-4 flex flex-wrap items-center gap-2 border-b pb-3">
         {TABS.map((a) => (
