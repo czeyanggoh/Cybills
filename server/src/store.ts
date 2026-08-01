@@ -93,11 +93,12 @@ function load(): Bill[] {
     console.error('[store] could not read bills file; starting empty', err);
     cache = [];
   }
-  // Tenancy migration: fold any legacy (email-domain-scoped) bills into the one
-  // shared workspace so all users see them. One-time + idempotent.
+  // Legacy tenancy migration: fold old email-domain-scoped bills into the shared
+  // scope. Per-org bills (orgId 'org_…', from the per-organisation books) are
+  // left alone — only true legacy domain values get re-tagged.
   let migrated = false;
   for (const b of cache) {
-    if (b.orgId !== WORKSPACE_ID) {
+    if (b.orgId !== WORKSPACE_ID && !b.orgId.startsWith('org_')) {
       b.orgId = WORKSPACE_ID;
       migrated = true;
     }

@@ -4,8 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { env } from './env.js';
 import { readSession } from './auth.js';
-import { orgIdFor } from './bills.js';
-import { WORKSPACE_ID } from './workspace.js';
+import { WORKSPACE_ID, workspaceId } from './workspace.js';
 
 // Organisations = the client entities bills are published for. Each one is
 // linked to a Xero organisation (tenant) that cyworkspace holds a connection
@@ -72,11 +71,37 @@ export function getOrganisation(orgId: string, id: string): Organisation | null 
   return load().find((o) => o.orgId === orgId && o.id === id) ?? null;
 }
 
+// The "primary" organisation owns the legacy data (bills created before books
+// were split per-org). Prefer the CY Business Management entity by name, else
+// the oldest org. Empty string when no orgs are linked yet.
+export function primaryOrgId(): string {
+  const orgs = load().filter((o) => o.orgId === WORKSPACE_ID);
+  if (!orgs.length) return '';
+  const byAge = (a: Organisation, b: Organisation) => a.createdAt.localeCompare(b.createdAt);
+  const cybm = orgs.filter((o) => /cy business management/i.test(o.name)).sort(byAge);
+  return (cybm[0] ?? [...orgs].sort(byAge)[0]).id;
+}
+
+// Which bills-store scope a requested organisation maps to. The primary org (and
+// no selection) resolves to the legacy WORKSPACE_ID scope, so existing data
+// stays under CY Business Management; every other org gets an isolated scope
+// keyed on its own id — separate Costs/Sales books per organisation.
+export function dataScopeForOrg(requestedOrgId: string): string {
+  if (!requestedOrgId) return WORKSPACE_ID;
+  return requestedOrgId === primaryOrgId() ? WORKSPACE_ID : requestedOrgId;
+}
+
 export const organisationsRouter = Router();
 
-// GET /api/organisations — the caller's linked organisations, A→Z.
+// GET /api/organisations — the caller's linked organisations, A→Z. Flags the
+// primary org so the client can keep the legacy demo/sample docs there only.
 organisationsRouter.get('/', (req, res) => {
-  res.json({ organisations: listOrganisations(orgIdFor(req)) });
+  const primary = primaryOrgId();
+  const organisations = listOrganisations(workspaceId(req)).map((o) => ({
+    ...o,
+    isPrimary: o.id === primary,
+  }));
+  res.json({ organisations });
 });
 
 // POST /api/organisations — link a new organisation to a Xero tenant.
@@ -88,7 +113,7 @@ organisationsRouter.post('/', (req, res) => {
   const tenantName = String(b.tenantName ?? '').trim();
   if (!tenantId) return res.status(400).json({ error: 'tenant_required' });
 
-  const orgId = orgIdFor(req);
+  const orgId = workspaceId(req);
   const organisations = load();
   const dup = organisations.find((o) => o.orgId === orgId && o.tenantId === tenantId);
   if (dup) return res.status(409).json({ error: 'already_linked', organisation: dup });
@@ -111,7 +136,7 @@ organisationsRouter.post('/', (req, res) => {
 // DELETE /api/organisations/:id — unlink. Does not touch cyworkspace or Xero;
 // it only removes CYBills' pointer to the tenant.
 organisationsRouter.delete('/:id', (req, res) => {
-  const orgId = orgIdFor(req);
+  const orgId = workspaceId(req);
   const organisations = load();
   const idx = organisations.findIndex((o) => o.orgId === orgId && o.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'not_found' });

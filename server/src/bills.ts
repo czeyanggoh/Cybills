@@ -13,20 +13,20 @@ import {
   type Candidate,
 } from './store.js';
 import { putBillFile, getBillFile } from './storage.js';
-import { workspaceId } from './workspace.js';
+import { dataScopeForOrg } from './organisations.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
 // mode until Google OAuth is configured), so nothing here hard-requires a
 // session — it just scopes data per org and stamps the uploader when known.
 
-// Bills (and the org/Xero scoping) now share ONE company workspace, like
-// claims/users/settings — so every signed-in user sees the same Costs/Sales,
-// regardless of email domain. (Was scoped by email domain, which siloed
-// gmail / cy-bm.sg / yahoo logins.) The stores re-tag any legacy
-// domain-scoped rows into this workspace on load, so nothing is lost.
+// Bills are scoped per ORGANISATION (separate Costs/Sales books per client
+// entity). The client sends the selected org via an X-Org-Id header; the primary
+// org (CY Business Management) and no-selection both map to the legacy shared
+// scope so existing data stays put, while every other org gets its own isolated
+// books. Users are still shared — everyone signed in can switch between orgs.
 export function orgIdFor(req: Request): string {
-  return workspaceId(req);
+  return dataScopeForOrg((req.header('X-Org-Id') || '').trim());
 }
 
 // Workflow statuses a client may set at creation time. Anything else (or

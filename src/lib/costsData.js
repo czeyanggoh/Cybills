@@ -4,6 +4,7 @@ import { useClaims } from '@/lib/claimStore';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { getDocOverrides, applyOverride, DOC_OVERRIDES_EVENT } from '@/lib/docOverrides';
 import { USERS_EVENT } from '@/lib/userStore';
+import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 
 // Which documents belong in each Costs tab, by status. Uploaded bills carry
 // status new/ready/expenseclaim/archived; sample docs may also be 'viewed' or
@@ -50,7 +51,14 @@ export function useCostsDocs() {
     return () => window.removeEventListener(DOC_OVERRIDES_EVENT, sync);
   }, []);
 
-  const sampleDocs = DOCS.map((d) => applyOverride(d, overrides));
+  // Legacy demo/sample docs belong to the primary org only — a secondary org's
+  // books show just its own real uploads, so switching orgs shows different data.
+  const { data: organisations = [] } = useOrganisations();
+  const activeId = getActiveOrganisationId();
+  const active = organisations.find((o) => o.id === activeId);
+  const showSamples = !activeId || Boolean(active?.isPrimary);
+
+  const sampleDocs = showSamples ? DOCS.map((d) => applyOverride(d, overrides)) : [];
   const allDocs = [...uploaded, ...sampleDocs];
   return { allDocs, sampleDocs, uploaded, reload };
 }

@@ -27,6 +27,13 @@ export function setActiveOrganisationId(id) {
   } catch {
     // localStorage unavailable — selection just won't persist
   }
+  // Costs/Sales books are per-org, so switching orgs must reload the lists.
+  // Dispatch by literal name to avoid importing bills.js (would cycle).
+  try {
+    window.dispatchEvent(new Event('cybills:bills-changed'));
+  } catch {
+    // no window (SSR/tests) — nothing to refresh
+  }
 }
 
 async function getJson(url) {

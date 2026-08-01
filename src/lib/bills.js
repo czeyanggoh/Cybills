@@ -1,5 +1,14 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
 import { nameForEmail } from '@/lib/userStore';
+import { getActiveOrganisationId } from '@/lib/organisations';
+
+// Every bill request carries the selected organisation so the server serves that
+// org's own Costs/Sales books (separate per client entity). Omitted when no org
+// is selected — the server then falls back to the primary org's data.
+function orgHeaders() {
+  const id = getActiveOrganisationId();
+  return id ? { 'X-Org-Id': id } : {};
+}
 
 // Fires after a successful upload so open lists (e.g. the Costs inbox) refetch.
 export const BILLS_CHANGED_EVENT = 'cybills:bills-changed';
@@ -40,7 +49,7 @@ export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif
 export async function fetchExtract(imageBase64, mediaType, accounts) {
   const res = await fetch('/api/costs/extract', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
     body: JSON.stringify({ imageBase64, mediaType, accounts }),
   });
   if (!res.ok) return null;
@@ -49,7 +58,7 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
 }
 
 export async function fetchBills() {
-  const res = await fetch('/api/costs/bills');
+  const res = await fetch('/api/costs/bills', { headers: orgHeaders() });
   if (!res.ok) return [];
   const { bills } = await res.json();
   return Array.isArray(bills) ? bills : [];
@@ -62,7 +71,7 @@ export async function fetchBills() {
 export async function addBill(payload, { force = false } = {}) {
   const res = await fetch('/api/costs/bills', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
     body: JSON.stringify({ ...payload, force }),
   });
   if (res.status === 409) {
@@ -128,7 +137,7 @@ export function billFileUrl(id) {
 export async function uploadBillFile(id, fileBase64, mediaType) {
   const res = await fetch(`/api/costs/bills/${id}/file`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
     body: JSON.stringify({ fileBase64, mediaType }),
   });
   if (!res.ok) throw new Error('attach_failed');
@@ -140,7 +149,7 @@ export async function uploadBillFile(id, fileBase64, mediaType) {
 export async function updateBill(id, patch) {
   const res = await fetch(`/api/costs/bills/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
     body: JSON.stringify(patch),
   });
   if (!res.ok) throw new Error('update_failed');
