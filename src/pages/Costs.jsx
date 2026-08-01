@@ -20,7 +20,8 @@ import { useAuth } from '@/lib/auth';
 import { updateBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
-import { mergeCostDocs } from '@/lib/mergeDocs';
+import { commitMerge } from '@/lib/mergeDocs';
+import MergeModal from '@/components/MergeModal';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
@@ -62,6 +63,7 @@ function StatusBadge({ status }) {
     review: 'border border-dashed border-foreground text-foreground',
     expenseclaim: 'bg-muted text-muted-foreground',
     archived: 'bg-muted text-muted-foreground',
+    merged: 'bg-muted text-muted-foreground',
   };
   const label = {
     new: 'New',
@@ -70,6 +72,7 @@ function StatusBadge({ status }) {
     review: 'To review',
     expenseclaim: 'In expense claim',
     archived: 'Archived',
+    merged: 'Merged',
   }[status];
   return (
     <span className={cn('inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs', map[status] ?? map.viewed)}>
@@ -136,10 +139,10 @@ function Dropdown({ label, disabled = false, items }) {
 
 // Left-hand toolbar actions differ per tab (mirrors Dext). `a` holds the wired
 // bulk-action handlers; all operate on the current selection.
-function ToolbarActions({ tab, hasSelection, canMerge, merging, a }) {
+function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   const mergeBtn = (
-    <ToolbarButton disabled={!canMerge || merging} onClick={a.merge}>
-      {merging ? 'Merging…' : 'Merge'}
+    <ToolbarButton disabled={!canMerge} onClick={a.merge}>
+      Merge
     </ToolbarButton>
   );
   const moveTo = [
@@ -492,7 +495,7 @@ export default function Costs() {
   const [sort, setSort] = useState({ key: '', dir: 'asc' });
   const [flagFilter, setFlagFilter] = useState('all'); // all | flagged | unflagged
   const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', supplier: '' });
-  const [merging, setMerging] = useState(false);
+  const [mergeModalDocs, setMergeModalDocs] = useState(null); // docs under review in the merge modal
   const [mergeNote, setMergeNote] = useState('');
 
   // Combined document set (persisted bills + sample docs with local edits).
@@ -589,10 +592,10 @@ export default function Costs() {
     moveSelected('expenseclaim');
   };
 
-  // Merge the selected documents into one multi-page cost, re-extract, and
-  // archive the originals (the "page 1 + page 2 uploaded separately" case).
-  const mergeSelected = async () => {
-    if (merging) return;
+  // Merge: open the Dext-style review screen for the selected documents (page 1 +
+  // page 2, an invoice + its backup, a re-upload). Nothing is combined until the
+  // reviewer confirms in the modal.
+  const mergeSelected = () => {
     const byId = new Map(allRows.map((r) => [r.id, r]));
     const docs = [...selected].map((id) => byId.get(id)).filter(Boolean);
     const withFiles = docs.filter((d) => d.persisted && d.hasFile);
@@ -600,24 +603,27 @@ export default function Costs() {
       setMergeNote('Select at least 2 uploaded documents (each with a file) to merge into one.');
       return;
     }
-    setMerging(true);
     setMergeNote('');
+    setMergeModalDocs(docs);
+  };
+
+  // Confirm from the modal: create the combined cost and move the originals to
+  // 'merged'. Readiness of the new doc derives itself from its fields.
+  const confirmMerge = async (sources, base64, fields) => {
     try {
-      const res = await mergeCostDocs(docs);
+      const res = await commitMerge(sources, base64, fields);
       if (res.ok) {
+        setMergeModalDocs(null);
         setSelected(new Set());
         await reload();
         setMergeNote(
-          `Merged ${res.count} documents into one${res.extracted ? ' and re-ran extraction' : ''}.` +
-            (res.skipped ? ` ${res.skipped} without a file ${res.skipped === 1 ? 'was' : 'were'} skipped.` : '')
+          `Merged ${res.count} documents into one. The originals moved to Archive (Merged) — open the new document to Unmerge.`
         );
       } else {
-        setMergeNote('Could not merge those documents. Make sure at least 2 of them have uploaded files.');
+        setMergeNote('Could not merge those documents. Please try again.');
       }
     } catch {
       setMergeNote('Merge failed. Please try again.');
-    } finally {
-      setMerging(false);
     }
   };
 
@@ -697,7 +703,7 @@ export default function Costs() {
         <>
           {/* Toolbar */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <ToolbarActions tab={tab} hasSelection={hasSelection} canMerge={selected.size >= 2} merging={merging} a={actions} />
+            <ToolbarActions tab={tab} hasSelection={hasSelection} canMerge={selected.size >= 2} a={actions} />
             <CostsToolbar
               query={query}
               setQuery={setQuery}
@@ -818,6 +824,14 @@ export default function Costs() {
       />
 
       <DocsExportModal open={exportOpen} kind="costs" rows={rows} onClose={() => setExportOpen(false)} />
+
+      <MergeModal
+        open={Boolean(mergeModalDocs)}
+        docs={mergeModalDocs || []}
+        categoryOptions={categoryOptions}
+        onClose={() => setMergeModalDocs(null)}
+        onConfirm={confirmMerge}
+      />
     </AppShell>
   );
 }

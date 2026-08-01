@@ -27,8 +27,11 @@ export type Bill = {
   createdBy: string; // signed-in email, or '' in mock mode
   storageKey: string; // storage key for the original file (r2:/local: prefixed), or ''
   contentType: string; // MIME type of the stored file, or ''
-  status: string; // workflow state: 'new' (inbox) | 'ready' | 'archived'
+  status: string; // workflow state: 'new' (inbox) | 'ready' | 'archived' | 'merged'
   kind: string; // 'cost' (default) | 'sales' — which workspace inbox it belongs to
+  // Set on a merged document: the ids of the originals it combined. Their own
+  // status becomes 'merged' (out of the active inbox); Unmerge restores them.
+  mergedFrom?: string[];
   // Set once the bill has been published to Xero (via the cyworkspace relay).
   // A non-empty xeroInvoiceId means "already posted" and blocks re-publishing.
   xeroInvoiceId?: string;

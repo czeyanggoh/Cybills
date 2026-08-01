@@ -81,9 +81,10 @@ export function billToDoc(b) {
     kind: b.kind || 'cost',
     itemId: b.id,
     unread: !b.status || b.status === 'new',
-    status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted', 'processing'].includes(b.status)
+    status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted', 'processing', 'merged'].includes(b.status)
       ? b.status
       : 'new',
+    mergedFrom: Array.isArray(b.mergedFrom) ? b.mergedFrom : [],
     user: b.createdBy ? nameForEmail(b.createdBy) || b.createdBy.split('@')[0] : 'You',
     createdByEmail: b.createdBy || '',
     fileName: b.fileName || '',

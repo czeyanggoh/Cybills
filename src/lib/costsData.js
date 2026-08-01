@@ -17,7 +17,7 @@ export function rowsFor(docs, key) {
   if (key === 'inbox') return docs.filter((d) => d.status === 'new' || d.status === 'viewed' || d.status === 'review');
   if (key === 'review') return docs.filter((d) => d.status === 'review');
   if (key === 'ready') return docs.filter((d) => d.status === 'ready');
-  if (key === 'archive') return docs.filter((d) => d.status === 'expenseclaim' || d.status === 'archived');
+  if (key === 'archive') return docs.filter((d) => d.status === 'expenseclaim' || d.status === 'archived' || d.status === 'merged');
   return [];
 }
 

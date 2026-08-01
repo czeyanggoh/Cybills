@@ -31,7 +31,7 @@ export function orgIdFor(req: Request): string {
 
 // Workflow statuses a client may set at creation time. Anything else (or
 // omitted) falls back to 'new' (the inbox).
-const ALLOWED_STATUSES = ['new', 'processing', 'review', 'ready', 'archived'];
+const ALLOWED_STATUSES = ['new', 'processing', 'review', 'ready', 'archived', 'merged'];
 
 export const billsRouter = Router();
 
@@ -171,6 +171,7 @@ billsRouter.post('/bills', async (req, res) => {
     // status so their items land straight in the inbox, as their UI promises.
     status: ALLOWED_STATUSES.includes(String(b.status)) ? String(b.status) : 'new',
     kind: b.kind === 'sales' ? 'sales' : 'cost',
+    ...(Array.isArray(b.mergedFrom) ? { mergedFrom: b.mergedFrom.map(String) } : {}),
   });
 
   // Echo the overridden match back so the client can note "added despite dup".

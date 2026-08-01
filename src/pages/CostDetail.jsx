@@ -25,6 +25,7 @@ import { CUSTOMERS } from '@/data/customers';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { usePaymentMethods } from '@/lib/paymentMethods';
 import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill } from '@/lib/bills';
+import { unmergeCost } from '@/lib/mergeDocs';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
@@ -350,6 +351,14 @@ export default function CostDetail() {
     saveWithStatus('archived', dest.to);
   };
 
+  // Unmerge: split a merged document back into its original items (they return
+  // to the inbox) and remove the combined document. Dext parity.
+  const doUnmerge = async () => {
+    if (!window.confirm('Unmerge this document back into its original items? They return to the inbox and this combined document is removed.')) return;
+    await unmergeCost(doc);
+    navigate('/costs');
+  };
+
   const deleteDoc = () => {
     if (!window.confirm('Delete this document? This removes it from your Costs inbox.')) return;
     saveWithStatus('archived');
@@ -566,6 +575,7 @@ export default function CostDetail() {
           ))}
         <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>
         <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
+        {doc.mergedFrom?.length > 0 && <TopButton onClick={doUnmerge}>Unmerge</TopButton>}
         <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
         <div className="relative">
           <TopButton onClick={() => setMoveOpen((o) => !o)}>
