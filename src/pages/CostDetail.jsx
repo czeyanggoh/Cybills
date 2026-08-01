@@ -20,7 +20,7 @@ import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { getExtractionAccounts, useCategoryOptions } from '@/lib/organisations';
-import { useProjectOptions } from '@/lib/listsStore';
+import { useProjectOptions, useList } from '@/lib/listsStore';
 import { CUSTOMERS } from '@/data/customers';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { usePaymentMethods } from '@/lib/paymentMethods';
@@ -69,15 +69,6 @@ function Input({ value, onChange = null, readOnly = false }) {
 }
 
 // Read-only dropdown-styled display of an extracted value.
-function Select({ value }) {
-  return (
-    <div className="flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 text-sm">
-      <span className="truncate">{value}</span>
-      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-    </div>
-  );
-}
-
 // Editable dropdown (native select) for pick-from-a-list fields like Category.
 function EditableSelect({ value, options, onChange }) {
   const known = options.includes(value);
@@ -156,6 +147,7 @@ function initialData(doc) {
     currency: doc.currency,
     total: doc.total,
     tax: doc.tax,
+    taxRate: doc.taxRate ?? '',
     description: doc.description ?? '',
   };
 }
@@ -168,6 +160,14 @@ export default function CostDetail() {
   const projectOptions = useProjectOptions();
   const customerOptions = CUSTOMERS.map((c) => c.name);
   const paymentMethods = usePaymentMethods();
+  // GST/tax rates for purchases (Costs) — the specific rate replaces the old
+  // "Extracted amount" placeholder. `rateFor` gives the % for the tax math.
+  const taxRates = useList('taxRates');
+  const purchaseTaxRates = taxRates.filter(
+    (t) => !t.hidden && (String(t.code).includes('INPUT') || t.code === 'NONE')
+  );
+  const taxRateOptions = purchaseTaxRates.map((t) => t.name);
+  const rateFor = (name) => Number(taxRates.find((t) => t.name === name)?.rate ?? 0);
   const [pmModalOpen, setPmModalOpen] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -241,6 +241,7 @@ export default function CostDetail() {
   const SERVER_FIELDS = {
     supplier: 'supplier', date: 'date', category: 'category', currency: 'currency',
     total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
+    taxRate: 'taxRate', description: 'description',
   };
   const set = (key, value) => {
     setData((d) => ({ ...d, [key]: value }));
@@ -279,6 +280,8 @@ export default function CostDetail() {
           total: data.total,
           tax: data.tax,
           invoiceNumber: data.ref,
+          taxRate: data.taxRate,
+          description: data.description,
         });
         notifyBillsChanged();
       } catch {
@@ -430,6 +433,38 @@ export default function CostDetail() {
     }
   };
 
+  const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
+
+  // Pick a specific GST/tax rate (replaces the "Extracted amount" placeholder).
+  // A rate with a % also fills the tax amount from the GST-inclusive total.
+  const setTaxRate = (name) => {
+    set('taxRate', name);
+    const r = rateFor(name);
+    const total = num(data.total);
+    const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
+    set('tax', tax ? tax.toFixed(2) : '0.00');
+  };
+
+  // Split an invoice that mixes GST and non-GST costs into two lines: the
+  // GST-inclusive portion (carrying the tax) and the remainder (no tax). Uses the
+  // selected rate, or SG's 9% default.
+  const splitByGst = () => {
+    const total = num(data.total);
+    const tax = num(data.tax);
+    const r = rateFor(data.taxRate) || 9;
+    if (tax <= 0 || total <= 0 || r <= 0) return;
+    const grossTaxed = (tax * (100 + r)) / r; // GST-inclusive amount of the taxed portion
+    const nonTaxed = total - grossTaxed;
+    if (nonTaxed <= 0.005) {
+      window.alert('This invoice looks fully GST-applicable — there is no non-GST amount to split out.');
+      return;
+    }
+    doSplit({
+      current: { category: data.category, total: grossTaxed.toFixed(2), tax: tax.toFixed(2) },
+      next: { category: data.category, total: nonTaxed.toFixed(2), tax: '0.00' },
+    });
+  };
+
   const onUploadClick = () => {
     setAiError('');
     fileInputRef.current?.click();
@@ -487,6 +522,14 @@ export default function CostDetail() {
         category: ex.category || d.category,
         total: ex.total != null ? String(ex.total) : d.total,
         tax: ex.tax != null ? String(ex.tax) : d.tax,
+        // Auto-populate the Description from the model's summary, or the line
+        // items if it didn't give one. Don't overwrite anything already typed.
+        description:
+          d.description ||
+          ex.description ||
+          (Array.isArray(ex.lineItems)
+            ? ex.lineItems.map((li) => li.description).filter(Boolean).join(', ')
+            : ''),
       }));
     } catch {
       setAiError('Could not read that file.');
@@ -677,10 +720,15 @@ export default function CostDetail() {
                 {visionEnabled ? <Sparkles className="h-4 w-4" strokeWidth={2} /> : <Upload className="h-4 w-4" strokeWidth={2} />}
                 {extracting
                   ? 'Reading receipt…'
-                  : visionEnabled
-                    ? 'Upload receipt & auto-fill with Claude'
-                    : 'Upload receipt'}
+                  : imageUrl
+                    ? visionEnabled ? 'Replace file & re-read with Claude' : 'Replace file'
+                    : visionEnabled ? 'Upload receipt & auto-fill with Claude' : 'Upload receipt'}
               </button>
+              <p className="mb-2 text-center text-xs text-muted-foreground">
+                {imageUrl
+                  ? 'Replaces the file on this same document — it won’t create a new one.'
+                  : 'Attaches the receipt to this document — it won’t create a new one.'}
+              </p>
               {aiError && (
                 <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
                   {aiError}
@@ -719,9 +767,28 @@ export default function CostDetail() {
               <SectionHeading>Amount</SectionHeading>
               <Field label="Currency"><Input value={data.currency} onChange={(v) => set('currency', v)} /></Field>
               <Field label="Total amount"><Input value={data.total} onChange={(v) => set('total', v)} /></Field>
-              <Field label="Tax"><Select value="Extracted amount" /></Field>
+              <Field label="Tax rate">
+                <EditableSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
+              </Field>
               <Field label="Tax amount"><Input value={data.tax} onChange={(v) => set('tax', v)} /></Field>
-              <Field label="Net amount"><Input value={data.total} readOnly /></Field>
+              <Field label="Net amount"><Input value={(num(data.total) - num(data.tax)).toFixed(2)} readOnly /></Field>
+              {num(data.tax) > 0 && (
+                <div className="flex items-start gap-4 py-2">
+                  <div className="w-40 shrink-0" />
+                  <div className="flex-1">
+                    <button
+                      type="button"
+                      onClick={splitByGst}
+                      className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted"
+                    >
+                      Split GST / non-GST
+                    </button>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Invoice mixes GST and non-GST costs? Split it into a line with GST and a line without.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <SectionHeading>Payment</SectionHeading>
               <Field label="Paid">

@@ -106,6 +106,8 @@ export function billToDoc(b) {
     total: b.total != null ? String(b.total) : '—',
     tax: b.tax != null ? String(b.tax) : '0.00',
     invoiceNumber: b.invoiceNumber || '',
+    taxRate: b.taxRate || '',
+    description: b.description || '',
     hasFile: Boolean(b.hasFile),
     contentType: b.contentType || '',
     // Xero provenance (set once published through the cyworkspace relay).

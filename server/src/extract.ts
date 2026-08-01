@@ -33,6 +33,11 @@ function buildSchema(categories: string[]) {
         description:
           'The single best-matching expense category from the allowed list. Use "Uncategorised" only if none fit.',
       },
+      description: {
+        type: 'string',
+        description:
+          'A concise plain-language summary of what was purchased (e.g. "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper"). Empty string if unclear.',
+      },
       lineItems: {
         type: 'array',
         description: 'Individual line items if present; empty array if none',
@@ -56,6 +61,7 @@ function buildSchema(categories: string[]) {
       'total',
       'tax',
       'category',
+      'description',
       'lineItems',
     ],
   };
@@ -71,6 +77,7 @@ const ReceiptSchema = z.object({
   total: z.number(),
   tax: z.number(),
   category: z.string(),
+  description: z.string().optional().default(''),
   lineItems: z.array(z.object({ description: z.string(), amount: z.number() })),
 });
 
