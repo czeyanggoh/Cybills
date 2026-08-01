@@ -234,9 +234,29 @@ export default function CostDetail() {
     );
   }
 
+  // Detail field key → the server bill field it maps to. Editing one of these on
+  // a persisted cost auto-saves it so the server can re-derive ready vs inbox
+  // (readiness is automatic now — no manual "Move to ready" needed).
+  const SERVER_FIELDS = {
+    supplier: 'supplier', date: 'date', category: 'category', currency: 'currency',
+    total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
+  };
   const set = (key, value) => {
     setData((d) => ({ ...d, [key]: value }));
     if (readyError.length) setReadyError([]); // fixing a field clears the "not ready" banner
+    const sf = SERVER_FIELDS[key];
+    if (doc?.persisted && sf) {
+      // Persist + adopt the returned status so the action bar flips to "In Ready"
+      // the moment the last required field is filled (and back if one is cleared).
+      updateBill(doc.id, { [sf]: value })
+        .then((r) => {
+          if (r?.bill) {
+            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+            notifyBillsChanged();
+          }
+        })
+        .catch(() => {});
+    }
   };
   const go = (delta) => {
     const next = DOCS[index + delta];
@@ -499,11 +519,28 @@ export default function CostDetail() {
             </span>
             <TopButton onClick={() => saveWithStatus('new')}>Move back to inbox</TopButton>
           </>
+        ) : doc.persisted ? (
+          // Readiness is auto-derived from the fields — show status, no manual button.
+          <span
+            title={readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'All required fields present'}
+            className={cn(
+              'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-xs',
+              readyMissing.length ? 'text-muted-foreground' : 'border-foreground/40 text-foreground'
+            )}
+          >
+            {readyMissing.length ? (
+              `Missing ${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'} — moves to Ready automatically`
+            ) : (
+              <>
+                <CheckCircle2 className="h-3.5 w-3.5" /> Ready
+              </>
+            )}
+          </span>
         ) : (
+          // Sample/demo docs have no server to auto-derive — keep the manual move.
           <>
             <TopButton onClick={moveToReady}>Move to ready</TopButton>
             <span
-              title={readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'All required fields present'}
               className={cn(
                 'inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs',
                 readyMissing.length ? 'text-muted-foreground' : 'border-foreground/40 text-foreground'
@@ -704,6 +741,12 @@ export default function CostDetail() {
                 {doc.status === 'ready' ? (
                   <span className="inline-flex h-9 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm font-medium text-foreground">
                     <CheckCircle2 className="h-4 w-4" /> In Ready
+                  </span>
+                ) : doc.persisted ? (
+                  <span className="inline-flex h-9 items-center gap-1 rounded-md border px-3 text-sm text-muted-foreground">
+                    {readyMissing.length
+                      ? `Missing ${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'} — moves to Ready automatically`
+                      : 'Ready'}
                   </span>
                 ) : (
                   <button

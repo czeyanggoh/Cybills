@@ -98,6 +98,13 @@ function load(): Bill[] {
       b.orgId = WORKSPACE_ID;
       migrated = true;
     }
+    // Readiness is now auto-derived: promote already-complete inbox costs into
+    // Ready so existing data matches the rule. Promote-only here (never yank a
+    // doc already in Ready back) to avoid surprising demotions on deploy.
+    if (b.kind !== 'sales' && b.status === 'new' && costComplete(b)) {
+      b.status = 'ready';
+      migrated = true;
+    }
   }
   if (migrated) persist(cache);
   return cache;
@@ -171,6 +178,30 @@ export function findDuplicate(orgId: string, cand: Candidate): DuplicateMatch | 
 
 export type BillInput = Omit<Bill, 'id' | 'createdAt'>;
 
+// A cost is "Ready" when it carries the fields the rest of the workflow needs.
+// The system decides readiness by validating these (per the Support Desk ask),
+// rather than relying on a manual "Move to ready" click.
+const amount = (v: unknown) => {
+  const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+};
+const filled = (v: unknown) => v != null && String(v).trim() !== '' && String(v).trim() !== '—';
+export function costComplete(b: Bill): boolean {
+  const supplier = filled(b.supplier) && String(b.supplier).trim().toLowerCase() !== 'unknown supplier';
+  const category = filled(b.category) && String(b.category).trim().toLowerCase() !== 'uncategorised';
+  return supplier && filled(b.date) && category && amount(b.total) > 0;
+}
+
+// Auto-move a cost between the inbox ('new') and 'ready' based on completeness.
+// Only ever toggles those two states — never touches processing/review/archived/
+// expenseclaim/deleted, or sales. Returns true if the status changed.
+function applyAutoReady(b: Bill): boolean {
+  if (b.kind === 'sales') return false;
+  if (b.status === 'new' && costComplete(b)) { b.status = 'ready'; return true; }
+  if (b.status === 'ready' && !costComplete(b)) { b.status = 'new'; return true; }
+  return false;
+}
+
 export function insertBill(input: BillInput): Bill {
   const bills = load();
   const bill: Bill = {
@@ -178,8 +209,19 @@ export function insertBill(input: BillInput): Bill {
     id: `bill_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`,
     createdAt: new Date().toISOString(),
   };
+  applyAutoReady(bill); // a fully-extracted upload lands straight in Ready
   bills.push(bill);
   persist(bills);
+  return bill;
+}
+
+// Re-evaluate a bill's ready/inbox status from its current fields, after a
+// field edit. Persists if it changed. Returns the bill (or null if not found).
+export function reconcileReadiness(orgId: string, id: string): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  if (applyAutoReady(bill)) persist(bills);
   return bill;
 }
 

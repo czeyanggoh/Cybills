@@ -4,6 +4,7 @@ import {
   findDuplicate,
   insertBill,
   updateBill,
+  reconcileReadiness,
   setBillFile,
   listBills,
   getBillById,
@@ -94,8 +95,13 @@ billsRouter.patch('/bills/:id', (req, res) => {
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
 
-  const updated = updateBill(orgIdFor(req), req.params.id, patch);
+  const explicitStatus = typeof b.status === 'string';
+  const orgId = orgIdFor(req);
+  let updated = updateBill(orgId, req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'not_found' });
+  // A field edit (no explicit status) lets the system re-derive ready vs inbox
+  // from completeness; an explicit status is a manual override, left untouched.
+  if (!explicitStatus) updated = reconcileReadiness(orgId, req.params.id) || updated;
   res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
 });
 
