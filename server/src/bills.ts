@@ -164,7 +164,9 @@ billsRouter.post('/bills', async (req, res) => {
     category: String(b.category ?? ''),
     taxRate: String(b.taxRate ?? ''),
     description: String(b.description ?? ''),
-    createdBy: me?.email ?? '',
+    // Attribute to the chosen "Document owner" from the drawer when provided,
+    // else the signed-in uploader.
+    createdBy: (typeof b.owner === 'string' && b.owner) ? b.owner : (me?.email ?? ''),
     storageKey,
     contentType,
     // Default to the inbox ('new'). The Add-Documents drawer opts into

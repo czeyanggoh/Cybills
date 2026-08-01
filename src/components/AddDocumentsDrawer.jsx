@@ -16,6 +16,7 @@ import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts } from '@/lib/organisations';
 import { getCustomerRule } from '@/lib/customerRules';
 import { addVaultFiles } from '@/lib/vaultStore';
+import { useUsers } from '@/lib/userStore';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
 // Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
@@ -208,12 +209,19 @@ function tabForPath(pathname) {
 }
 
 export default function AddDocumentsDrawer({ open, onClose }) {
-  const { visionEnabled } = useAuth();
+  const { visionEnabled, user } = useAuth();
   const { pathname } = useLocation();
+  const users = useUsers();
   const [tab, setTab] = useState('Costs');
   const [mode, setMode] = useState('file');
   const [items, setItems] = useState([]);
   const [vaultItems, setVaultItems] = useState([]);
+  // Who the uploaded documents are attributed to — a real dropdown now (it used
+  // to be a dead label). Defaults to the signed-in user.
+  const [owner, setOwner] = useState('');
+  useEffect(() => {
+    if (!owner && user?.email) setOwner(user.email);
+  }, [owner, user]);
 
   // Default the tab to the workspace the drawer was opened from (Sales page →
   // Sales tab, etc.) each time it opens.
@@ -253,50 +261,59 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           // photos stay under the server body limit.
           const fileHash = await sha256Hex(it.file);
           const { base64: fileBase64, mediaType } = await prepareUpload(it.file);
-          let fields = {};
-          if (visionEnabled && VISION_MEDIA.includes(mediaType)) {
-            patch(it.id, { status: 'extracting' });
-            try {
-              const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise);
-              if (ex) fields = ex;
-            } catch {
-              // Extraction is best-effort — still store + dedup-check the file.
-            }
-          }
 
+          // 1) Accept the document immediately — create it in "Processing" before
+          //    reading, so it lands on the Processing page right away (received).
+          //    Claude Vision then reads it in the background (boss's request).
           /** @type {any} */
           const payload = {
             fileHash,
             fileName: it.file.name,
             fileBase64,
             mediaType,
-            // Route the upload to the workspace inbox the drawer was opened in.
             kind: tab === 'Sales' ? 'sales' : 'cost',
-            // Drawer uploads show the Dext-style "Processing" step, then
-            // auto-advance to the inbox (scheduleMoveToInbox).
             status: 'processing',
-            ...fields,
+            ...(owner ? { owner } : {}),
           };
-          // Apply the customer's saved rule (currency / category) to sales uploads.
-          if (tab === 'Sales') {
-            const rule = getCustomerRule(fields.supplier);
-            if (rule) {
-              if (rule.currency) payload.currency = rule.currency;
-              if (rule.category) payload.category = rule.category;
-            }
-          }
           patch(it.id, { status: 'uploading', payload });
           const result = await addBill(payload);
           if (result.rejected) {
             // Byte-identical file already in the account — hard reject, no override.
             patch(it.id, { status: 'rejected', duplicate: result.duplicate });
-          } else if (result.duplicate) {
-            patch(it.id, { status: 'duplicate', duplicate: result.duplicate });
-          } else {
-            patch(it.id, { status: 'added', bill: result.bill });
-            notifyBillsChanged();
-            scheduleMoveToInbox(result.bill);
+            return;
           }
+          if (result.duplicate) {
+            patch(it.id, { status: 'duplicate', duplicate: result.duplicate });
+            return;
+          }
+          const bill = result.bill;
+          notifyBillsChanged(); // now visible on the Processing page
+
+          // 2) Read with Claude Vision in the background, fill the fields, then
+          //    auto-advance from Processing into the inbox.
+          if (visionEnabled && VISION_MEDIA.includes(mediaType)) {
+            patch(it.id, { status: 'extracting', bill });
+            try {
+              const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise);
+              if (ex) {
+                /** @type {any} */
+                const fieldPatch = { ...ex };
+                if (tab === 'Sales') {
+                  const rule = getCustomerRule(ex.supplier);
+                  if (rule) {
+                    if (rule.currency) fieldPatch.currency = rule.currency;
+                    if (rule.category) fieldPatch.category = rule.category;
+                  }
+                }
+                await updateBill(bill.id, fieldPatch).catch(() => {});
+                notifyBillsChanged();
+              }
+            } catch {
+              // Extraction is best-effort — the document is already saved.
+            }
+          }
+          patch(it.id, { status: 'added', bill });
+          scheduleMoveToInbox(bill);
         } catch {
           patch(it.id, { status: 'error', error: 'Upload failed' });
         }
@@ -318,11 +335,25 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       const result = await addBill(payload, { force: true });
       if (result.rejected) {
         patch(id, { status: 'rejected', duplicate: result.duplicate });
-      } else {
-        patch(id, { status: 'added', bill: result.bill });
-        notifyBillsChanged();
-        scheduleMoveToInbox(result.bill);
+        return;
       }
+      const bill = result.bill;
+      notifyBillsChanged(); // in Processing
+      // Read in the background, then advance (same as a fresh upload).
+      if (visionEnabled && payload.fileBase64 && VISION_MEDIA.includes(payload.mediaType)) {
+        patch(id, { status: 'extracting', bill });
+        try {
+          const ex = await fetchExtract(payload.fileBase64, payload.mediaType, await getExtractionAccounts());
+          if (ex) {
+            await updateBill(bill.id, { ...ex }).catch(() => {});
+            notifyBillsChanged();
+          }
+        } catch {
+          // best-effort
+        }
+      }
+      patch(id, { status: 'added', bill });
+      scheduleMoveToInbox(bill);
     } catch {
       patch(id, { status: 'error', error: 'Upload failed' });
     }
@@ -386,9 +417,20 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               <>
                 <label className="mb-4 flex items-center gap-3 text-sm">
                   <span className="w-32 text-muted-foreground">Document owner</span>
-                  <div className="flex h-9 flex-1 items-center justify-between rounded-md border px-3 text-sm">
-                    Astrid Yang
-                    <span className="text-muted-foreground">▾</span>
+                  <div className="relative flex-1">
+                    <select
+                      value={owner}
+                      onChange={(e) => setOwner(e.target.value)}
+                      className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {!users.some((u) => u.email === owner) && owner && (
+                        <option value={owner}>{user?.name || user?.email || owner}</option>
+                      )}
+                      {users.map((u) => (
+                        <option key={u.id} value={u.email}>{u.name || u.email}</option>
+                      ))}
+                    </select>
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">▾</span>
                   </div>
                 </label>
                 <div className="mb-4 grid grid-cols-3 gap-2">
