@@ -76,8 +76,12 @@ export async function buildMergePreview(docs) {
         currency: extracted.currency || agg.currency,
         documentType: agg.documentType,
         invoiceNumber: extracted.invoiceNumber || agg.invoiceNumber,
-        total: extracted.total != null ? String(extracted.total) : String(agg.total),
-        tax: extracted.tax != null ? String(extracted.tax) : String(agg.tax),
+        // Amounts default to the SUM of the source docs, not the model's reading
+        // of the combined PDF (which returns one page's grand total, e.g. 13.80
+        // instead of 13.80 + 25.40). Still editable for a single multi-page
+        // receipt where the real total is on one page.
+        total: String(agg.total),
+        tax: String(agg.tax),
       }
     : { ...agg, total: String(agg.total), tax: String(agg.tax) };
 
