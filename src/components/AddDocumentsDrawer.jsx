@@ -111,7 +111,7 @@ function UploadItem({ item, onForce, onSkip }) {
         )}
         {status === 'uploading' && (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Receiving…
           </span>
         )}
         {status === 'added' && (
@@ -131,6 +131,13 @@ function UploadItem({ item, onForce, onSkip }) {
           </span>
         )}
       </div>
+
+      {(status === 'uploading' || status === 'extracting') && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />
+          <span>Received — it’s in Processing while Claude reads it, and moves to your inbox when done.</span>
+        </p>
+      )}
 
       {status === 'rejected' && (
         <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
