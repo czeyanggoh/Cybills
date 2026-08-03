@@ -5,6 +5,7 @@ import {
   insertBill,
   updateBill,
   reconcileReadiness,
+  sweepStuckProcessing,
   setBillFile,
   listBills,
   getBillById,
@@ -37,7 +38,9 @@ export const billsRouter = Router();
 
 // GET /api/costs/bills — persisted bills for the caller's org, newest first.
 billsRouter.get('/bills', (req, res) => {
-  const bills = listBills(orgIdFor(req)).map((b) => ({ ...b, hasFile: Boolean(b.storageKey) }));
+  const orgId = orgIdFor(req);
+  sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
+  const bills = listBills(orgId).map((b) => ({ ...b, hasFile: Boolean(b.storageKey) }));
   res.json({ bills });
 });
 

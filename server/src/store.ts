@@ -234,6 +234,32 @@ export function reconcileReadiness(orgId: string, id: string): Bill | null {
   return bill;
 }
 
+// Rescue documents stuck in "Processing" — the client advances a doc to the
+// inbox right after Vision reads it, but that step is lost if the tab closes
+// mid-read. After a grace period, any still-processing cost is moved to the
+// inbox (and auto-readied if complete), server-side, so nothing gets stuck.
+// Called on every bills fetch, so it self-heals without a background worker.
+const PROCESSING_GRACE_MS = 60_000;
+export function sweepStuckProcessing(orgId: string): void {
+  const bills = load();
+  const now = Date.now();
+  let changed = false;
+  for (const b of bills) {
+    if (
+      b.orgId === orgId &&
+      b.kind !== 'sales' &&
+      b.status === 'processing' &&
+      b.createdAt &&
+      now - new Date(b.createdAt).getTime() > PROCESSING_GRACE_MS
+    ) {
+      b.status = 'new';
+      applyAutoReady(b);
+      changed = true;
+    }
+  }
+  if (changed) persist(bills);
+}
+
 // Fields a client is allowed to edit on an existing bill.
 const EDITABLE: (keyof Bill)[] = [
   'supplier',
