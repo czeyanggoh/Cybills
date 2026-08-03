@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { X, Copy, FileText, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { X, FileText, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import {
@@ -192,18 +192,6 @@ function UploadItem({ item, onForce, onSkip }) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function EmailRow({ label, value }) {
-  return (
-    <div className="flex items-center justify-between gap-3 text-xs">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="flex items-center gap-2 font-mono text-foreground">
-        <span className="truncate">{value}</span>
-        <Copy className="h-3.5 w-3.5 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground" />
-      </span>
     </div>
   );
 }
@@ -548,19 +536,6 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               </div>
             )}
           </div>
-
-          {isUpload && (
-            <div>
-              <h3 className="mb-1 text-sm font-medium">Extract by Email</h3>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Send digital documents to your dedicated extraction email address.
-              </p>
-              <div className="space-y-2 rounded-md border p-3">
-                <EmailRow label="One document per file" value="astrid.yang.cybm@dext.cc" />
-                <EmailRow label="One document per page" value="astrid.yang.cybm@multiple.dext.cc" />
-              </div>
-            </div>
-          )}
 
           {tab === 'Vault' && (
             <div className="space-y-4">
