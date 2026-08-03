@@ -10,6 +10,26 @@ import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 // status new/ready/expenseclaim/archived; sample docs may also be 'viewed' or
 // 'review'. Used for both the visible rows and the tab/subnav count badges so
 // the numbers always tie to the actual line items.
+// A cost is "complete" when it carries the fields the workflow needs. Mirrors
+// the server's costComplete so demo docs and persisted bills follow one rule.
+function isComplete(d) {
+  const has = (v) => v != null && String(v).trim() !== '' && String(v).trim() !== '—';
+  const supplier = has(d.supplier) && String(d.supplier).trim().toLowerCase() !== 'unknown supplier';
+  const category = has(d.category) && String(d.category).trim().toLowerCase() !== 'uncategorised';
+  const total = Number(String(d.total ?? '').replace(/[^0-9.-]/g, '')) > 0;
+  return supplier && has(d.date) && category && total;
+}
+
+// Demo docs keep hard-coded seed statuses, so a complete one would otherwise sit
+// in the Inbox forever. Apply the same auto-ready rule the server applies to
+// uploads: complete → Ready, incomplete → Inbox. Explicit review/claim/archived
+// states are left alone.
+function withDerivedReadiness(d) {
+  if ((d.status === 'new' || d.status === 'viewed') && isComplete(d)) return { ...d, status: 'ready' };
+  if (d.status === 'ready' && !isComplete(d)) return { ...d, status: 'new' };
+  return d;
+}
+
 export function rowsFor(docs, key) {
   // Dext-style: the Inbox is the whole "not ready for export" pool, and
   // "To review" is a FILTER within it (items flagged for a human to check) —
@@ -58,7 +78,9 @@ export function useCostsDocs() {
   const active = organisations.find((o) => o.id === activeId);
   const showSamples = !activeId || Boolean(active?.isPrimary);
 
-  const sampleDocs = showSamples ? DOCS.map((d) => applyOverride(d, overrides)) : [];
+  const sampleDocs = showSamples
+    ? DOCS.map((d) => withDerivedReadiness(applyOverride(d, overrides)))
+    : [];
   const allDocs = [...uploaded, ...sampleDocs];
   return { allDocs, sampleDocs, uploaded, reload };
 }

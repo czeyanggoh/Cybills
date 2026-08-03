@@ -16,6 +16,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import DocsExportModal from '@/components/DocsExportModal';
 import { useCategoryOptions } from '@/lib/organisations';
+import { useList } from '@/lib/listsStore';
 import { useAuth } from '@/lib/auth';
 import { updateBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
@@ -501,6 +502,10 @@ export default function Costs() {
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
   const categoryOptions = useCategoryOptions();
+  const taxRates = useList('taxRates');
+  const taxRateOptions = taxRates
+    .filter((t) => !t.hidden && (String(t.code).includes('INPUT') || t.code === 'NONE'))
+    .map((t) => t.name);
 
   // Every tab's rows, so its badge count ties to what the tab actually shows.
   const rowsByTab = {
@@ -546,6 +551,17 @@ export default function Costs() {
   const changeCategory = (d, value) => {
     if (d.persisted) updateBill(d.id, { category: value }).then(reload).catch(() => {});
     else setDocOverride(d.id, { category: value });
+  };
+
+  // Pick a GST/tax rate inline. Fills the tax amount from the rate (GST-inclusive)
+  // and persists — replaces the old fixed "Extracted amount" placeholder.
+  const changeTaxRate = (d, name) => {
+    const r = Number(taxRates.find((t) => t.name === name)?.rate ?? 0);
+    const total = toNum(d.total);
+    const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
+    const patch = { taxRate: name, tax: tax ? tax.toFixed(2) : '0.00' };
+    if (d.persisted) updateBill(d.id, patch).then(reload).catch(() => {});
+    else setDocOverride(d.id, patch);
   };
 
   // Move every selected document to a workflow status (the pipeline step) —
@@ -781,10 +797,19 @@ export default function Costs() {
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{d.tax}</td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <div className="inline-flex w-36 items-center justify-between rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground">
-                        <span className="truncate">Extracted amount</span>
-                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                      </div>
+                      <select
+                        value={d.taxRate || ''}
+                        onChange={(e) => changeTaxRate(d, e.target.value)}
+                        className="w-36 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <option value="">No tax rate</option>
+                        {!taxRateOptions.includes(d.taxRate) && d.taxRate && (
+                          <option value={d.taxRate}>{d.taxRate}</option>
+                        )}
+                        {taxRateOptions.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
                     </td>
                   </tr>
                 ))}
