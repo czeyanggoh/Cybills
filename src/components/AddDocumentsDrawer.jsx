@@ -8,6 +8,7 @@ import {
   fetchExtract,
   addBill,
   updateBill,
+  finalizeBill,
   notifyBillsChanged,
   describeDuplicate,
   VISION_MEDIA,
@@ -297,7 +298,9 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           notifyBillsChanged(); // now visible on the Processing page
 
           // 2) Read with Claude Vision in the background, fill the fields, then
-          //    auto-advance from Processing into the inbox.
+          //    re-check for a duplicate now that supplier/amount/date are known
+          //    (the create-time check only had the file hash). A duplicate row
+          //    is removed and offered as "Add anyway / Skip".
           if (visionEnabled && VISION_MEDIA.includes(mediaType)) {
             patch(it.id, { status: 'extracting', bill });
             try {
@@ -312,7 +315,13 @@ export default function AddDocumentsDrawer({ open, onClose }) {
                     if (rule.category) fieldPatch.category = rule.category;
                   }
                 }
-                await updateBill(bill.id, fieldPatch).catch(() => {});
+                const fin = await finalizeBill(bill.id, fieldPatch);
+                if (fin?.duplicate) {
+                  await updateBill(bill.id, { status: 'deleted' }).catch(() => {});
+                  notifyBillsChanged();
+                  patch(it.id, { status: 'duplicate', duplicate: fin.duplicate });
+                  return;
+                }
                 notifyBillsChanged();
               }
             } catch {

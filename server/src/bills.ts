@@ -105,6 +105,35 @@ billsRouter.patch('/bills/:id', (req, res) => {
   res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
 });
 
+// POST /api/costs/bills/:id/finalize — apply the fields Vision just read to a
+// doc that was created up-front (in Processing), THEN run the fuzzy duplicate
+// check now that supplier/invoice/total/date are known (the create-time check
+// only had the file hash). Returns { bill, duplicate } — the client removes the
+// row and offers "Add anyway" when a duplicate is reported.
+billsRouter.post('/bills/:id/finalize', (req, res) => {
+  const orgId = orgIdFor(req);
+  const b = req.body ?? {};
+  const patch: Record<string, unknown> = {};
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'description']) {
+    if (typeof b[k] === 'string') patch[k] = b[k];
+  }
+  if (b.total != null) patch.total = parseAmount(b.total);
+  if (b.tax != null) patch.tax = parseAmount(b.tax);
+
+  const updated = updateBill(orgId, req.params.id, patch);
+  if (!updated) return res.status(404).json({ error: 'not_found' });
+
+  // Fuzzy dedup against every OTHER doc (skip the file-hash tier — that already
+  // ran at create). Exclude this row so it can't match itself.
+  const dup = findDuplicate(
+    orgId,
+    { fileHash: '', supplier: updated.supplier, invoiceNumber: updated.invoiceNumber, total: updated.total, date: updated.date },
+    updated.id
+  );
+  const bill = reconcileReadiness(orgId, req.params.id) || updated;
+  res.json({ ok: true, bill: { ...bill, hasFile: Boolean(bill.storageKey) }, duplicate: dup ?? null });
+});
+
 // POST /api/costs/bills — persist an uploaded bill after a duplicate check.
 // Body: { fileHash, fileName, fileBase64?, mediaType?, supplier, invoiceNumber,
 //         documentType, currency, total, tax, date, category, force }. On a

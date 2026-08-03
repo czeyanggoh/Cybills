@@ -82,6 +82,18 @@ export async function addBill(payload, { force = false } = {}) {
   return res.json();
 }
 
+// Apply the Vision-read fields to a doc created up-front (in Processing), then
+// run the fuzzy duplicate check. Returns { ok, bill, duplicate }.
+export async function finalizeBill(id, fields) {
+  const res = await fetch(`/api/costs/bills/${id}/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify(fields),
+  });
+  if (!res.ok) return { ok: false, duplicate: null };
+  return res.json();
+}
+
 // Shape a persisted bill into the row/doc form the Costs list + detail expect.
 export function billToDoc(b) {
   return {

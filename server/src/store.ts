@@ -145,10 +145,13 @@ export function getBillByIdAny(id: string): Bill | null {
 
 // First (highest-confidence) duplicate for `cand`, or null. Cheapest checks
 // first; each tier requires the fields it keys on to actually be present.
-export function findDuplicate(orgId: string, cand: Candidate): DuplicateMatch | null {
+export function findDuplicate(orgId: string, cand: Candidate, excludeId?: string): DuplicateMatch | null {
   // A deleted bill must not block re-uploading the same file, or a receipt the
-  // user removed becomes impossible to add back.
-  const bills = load().filter((b) => b.orgId === orgId && b.status !== 'deleted');
+  // user removed becomes impossible to add back. `excludeId` skips the row being
+  // finalized so a doc never matches itself after its fields are read.
+  const bills = load().filter(
+    (b) => b.orgId === orgId && b.status !== 'deleted' && b.id !== excludeId
+  );
 
   if (cand.fileHash) {
     const hit = bills.find((b) => b.fileHash && b.fileHash === cand.fileHash);
