@@ -188,6 +188,8 @@ export default function CostDetail() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [readyError, setReadyError] = useState([]); // required fields missing when trying to move to Ready
+  const [gstOpen, setGstOpen] = useState(false); // GST-split panel open
+  const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
 
   const doc = mockDoc ?? persisted;
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
@@ -448,20 +450,39 @@ export default function CostDetail() {
   // Split an invoice that mixes GST and non-GST costs into two lines: the
   // GST-inclusive portion (carrying the tax) and the remainder (no tax). Uses the
   // selected rate, or SG's 9% default.
-  const splitByGst = () => {
+  // Open the GST-split panel. Pre-fill the GST-inclusive amount: if a tax amount
+  // is already set, derive the taxed portion from it; otherwise start at the full
+  // total so the user just types how much of it has GST.
+  const openGstSplit = () => {
     const total = num(data.total);
-    const tax = num(data.tax);
     const r = rateFor(data.taxRate) || 9;
-    if (tax <= 0 || total <= 0 || r <= 0) return;
-    const grossTaxed = (tax * (100 + r)) / r; // GST-inclusive amount of the taxed portion
-    const nonTaxed = total - grossTaxed;
-    if (nonTaxed <= 0.005) {
-      window.alert('This invoice looks fully GST-applicable — there is no non-GST amount to split out.');
+    const tax = num(data.tax);
+    const preset = tax > 0 && r > 0 ? (tax * (100 + r)) / r : total;
+    setGstWith(Math.min(preset, total).toFixed(2));
+    setGstOpen(true);
+  };
+
+  // Split into a GST line (the entered amount, carrying its GST) + a no-tax line
+  // for the remainder. Matches the Support Desk ask for invoices that mix GST and
+  // non-GST costs.
+  const runGstSplit = () => {
+    const total = num(data.total);
+    const withGst = num(gstWith);
+    const withoutGst = total - withGst;
+    const r = rateFor(data.taxRate) || 9;
+    if (withGst <= 0 || withGst > total + 0.005) {
+      window.alert('Enter a “with GST” amount between 0 and the total.');
       return;
     }
+    if (withoutGst <= 0.005) {
+      window.alert('Nothing to split — the whole total has GST, so leave it as one line.');
+      return;
+    }
+    const gstTax = (withGst * r) / (100 + r); // GST inside the GST-inclusive amount
+    setGstOpen(false);
     doSplit({
-      current: { category: data.category, total: grossTaxed.toFixed(2), tax: tax.toFixed(2) },
-      next: { category: data.category, total: nonTaxed.toFixed(2), tax: '0.00' },
+      current: { category: data.category, total: withGst.toFixed(2), tax: gstTax.toFixed(2) },
+      next: { category: data.category, total: withoutGst.toFixed(2), tax: '0.00' },
     });
   };
 
@@ -772,20 +793,59 @@ export default function CostDetail() {
               </Field>
               <Field label="Tax amount"><Input value={data.tax} onChange={(v) => set('tax', v)} /></Field>
               <Field label="Net amount"><Input value={(num(data.total) - num(data.tax)).toFixed(2)} readOnly /></Field>
-              {num(data.tax) > 0 && (
+              {num(data.total) > 0 && (
                 <div className="flex items-start gap-4 py-2">
                   <div className="w-40 shrink-0" />
                   <div className="flex-1">
-                    <button
-                      type="button"
-                      onClick={splitByGst}
-                      className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted"
-                    >
-                      Split GST / non-GST
-                    </button>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Invoice mixes GST and non-GST costs? Split it into a line with GST and a line without.
-                    </p>
+                    {!gstOpen ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={openGstSplit}
+                          className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted"
+                        >
+                          Split GST / non-GST
+                        </button>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Invoice mixes GST and non-GST costs? Split it into a line with GST and a line without.
+                        </p>
+                      </>
+                    ) : (
+                      <div className="space-y-2 rounded-md border p-3">
+                        <p className="text-xs font-medium">Split into a GST line + a non-GST line</p>
+                        <label className="flex items-center gap-2 text-xs">
+                          <span className="w-32 shrink-0 text-muted-foreground">Amount with GST</span>
+                          <input
+                            value={gstWith}
+                            onChange={(e) => setGstWith(e.target.value)}
+                            className="h-8 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-xs">
+                          <span className="w-32 shrink-0 text-muted-foreground">Amount without GST</span>
+                          <span className="flex-1 tabular-nums">{(num(data.total) - num(gstWith)).toFixed(2)}</span>
+                        </label>
+                        <p className="text-[11px] text-muted-foreground">
+                          GST rate: {data.taxRate || 'Standard-Rated Purchases (9%)'}. The GST line carries the tax; the other line has none.
+                        </p>
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={runGstSplit}
+                            className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"
+                          >
+                            Create 2 lines
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setGstOpen(false)}
+                            className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
