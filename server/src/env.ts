@@ -88,6 +88,29 @@ export const env = {
   // Model B: where an APPROVED claim's payable is routed to CYHR for payment.
   // Path unconfirmed until CYHR builds the payment-intake page; override here.
   CYHR_PAYMENT_URL: process.env.CYHR_PAYMENT_URL ?? 'https://hr.cy-bm.sg/payments/new',
+
+  // --- Microsoft 365 transactional email (Graph, app-only) -------------------
+  // Outbound mail is sent as the shared VA01@cy-bm.sg mailbox through Microsoft
+  // Graph using the OAuth2 client_credentials flow. Same four variable names as
+  // CYWorkspace so the Azure/Exchange setup + troubleshooting runbook transfers
+  // verbatim (see docs/transactional-email.md). The client secret is used ONLY
+  // on the server — it never reaches the browser, so there is deliberately no
+  // VITE_-prefixed counterpart for any of these.
+  //
+  // Nothing throws at boot when they're unset: `missingEmailEnvVars()` in
+  // email.ts checks at call time, the send path returns a typed
+  // EmailNotConfiguredError, and the UI falls back to a Copy button. An
+  // unconfigured mailer is a normal state in dev.
+  M365_TENANT_ID: process.env.M365_TENANT_ID ?? '',
+  M365_CLIENT_ID: process.env.M365_CLIENT_ID ?? '',
+  M365_CLIENT_SECRET: process.env.M365_CLIENT_SECRET ?? '',
+  // Has a default, so it is never reported as a missing var. Only change this
+  // if the Exchange role assignment is widened past the VA01 mailbox.
+  M365_SENDER_EMAIL: process.env.M365_SENDER_EMAIL ?? 'VA01@cy-bm.sg',
+
+  // Absolute base URL for links embedded in emails — mail clients can't resolve
+  // relative paths. Defaults to APP_ORIGIN (prod: https://cybills.cy-bm.sg).
+  APP_PUBLIC_URL: process.env.APP_PUBLIC_URL || APP_ORIGIN,
 };
 
 // Real Google sign-in is only enabled once the client credentials AND a session

@@ -447,6 +447,7 @@ export default function ExpenseClaimDetail() {
       <ClaimEmailModal
         open={emailOpen}
         onClose={() => setEmailOpen(false)}
+        claim={{ ...claim, transactions: rows }}
         defaultName={user?.name || 'Astrid Yang'}
       />
       <ClaimApprovalModal

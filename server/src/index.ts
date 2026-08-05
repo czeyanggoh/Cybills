@@ -14,6 +14,7 @@ import { claimsRouter } from './claims.js';
 import { usersRouter } from './users.js';
 import { settingsRouter } from './settings.js';
 import { boardRouter } from './board.js';
+import { emailRouter } from './emailRoutes.js';
 
 const app = express();
 
@@ -84,6 +85,10 @@ app.use('/api/settings', settingsRouter);
 
 // Support Desk boards (tickets / feature requests / testing checklist) — shared.
 app.use('/api/board', boardRouter);
+
+// Outbound email as VA01@cy-bm.sg via Microsoft Graph. 503s until the four
+// M365_* vars are set; the UI falls back to a Copy button until then.
+app.use('/api/email', emailRouter);
 
 app.listen(env.PORT, () => {
   console.log(`[cybills] server listening on :${env.PORT} (${env.NODE_ENV})`);

@@ -2,12 +2,14 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
+import { sendMail, EmailNotConfiguredError } from './email.js';
+import { approvalRequestSubject, buildApprovalRequestHtml } from './claimEmail.js';
 
 // Server-backed expense claims, shared across the workspace (same JSON-store
 // pattern as bills). Replaces the old per-browser localStorage claim store, so
 // a claim one person creates/approves is visible to everyone.
 
-type Txn = {
+export type Txn = {
   itemId: string;
   date: string;
   supplier: string;
@@ -20,7 +22,7 @@ type Txn = {
   addedBy?: string;
 };
 type Event = { text: string; by: string; at: string };
-type Claim = {
+export type Claim = {
   id: string;
   workspaceId: string;
   claimFor: string;
@@ -48,6 +50,22 @@ const save = (items: Claim[]) => saveCollection(COLLECTION, items);
 const nowIso = () => new Date().toISOString();
 
 export const claimsRouter = Router();
+
+// Read one claim in a workspace. Exported so the email routes can render a
+// summary from the STORED claim rather than trusting rows sent by the client.
+export function getClaimById(ws: string, id: string): Claim | undefined {
+  return load().find((c) => c.id === id && c.workspaceId === ws && !c.deleted);
+}
+
+// Append a history event to a stored claim. Re-reads the collection so it never
+// clobbers a concurrent write (used after an awaited email send).
+function appendHistory(ws: string, id: string, text: string, by: string): void {
+  const items = load();
+  const claim = items.find((c) => c.id === id && c.workspaceId === ws);
+  if (!claim) return;
+  claim.history.unshift({ text, by, at: nowIso() });
+  save(items);
+}
 
 // GET /api/claims — every non-deleted claim in the workspace.
 claimsRouter.get('/', (req, res) => {
@@ -113,17 +131,66 @@ claimsRouter.post('/:id/items', (req, res) =>
   })
 );
 
-// POST /api/claims/:id/submit — submit for approval to a chosen approver.
-claimsRouter.post('/:id/submit', (req, res) =>
-  mutate(req, res, (claim, me) => {
-    claim.approvalStatus = 'awaiting_approval';
-    claim.approver = String(req.body?.approver || '');
-    claim.approverEmail = String(req.body?.approverEmail || '');
-    claim.decidedBy = '';
-    claim.decidedAt = '';
-    claim.history.unshift({ text: `This claim was submitted for approval to ${claim.approver}`, by: me.name, at: nowIso() });
-  })
-);
+// Best-effort notification to the assigned approver (call-site convention A:
+// mail is a convenience, submitting succeeds either way). Never throws — the
+// caller gets a boolean plus a short reason so the UI can show a fallback.
+async function notifyApprover(
+  claim: Claim,
+  submittedBy: string
+): Promise<{ sent: boolean; error?: string }> {
+  if (!claim.approverEmail) return { sent: false, error: 'no approver email on file' };
+  try {
+    await sendMail({
+      to: claim.approverEmail,
+      subject: approvalRequestSubject(claim),
+      // Rendered server-side from the stored claim, every value escaped.
+      htmlBody: buildApprovalRequestHtml(claim, submittedBy),
+    });
+    return { sent: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Not-configured is the expected state in dev — log it quietly.
+    if (err instanceof EmailNotConfiguredError) {
+      console.warn('[cybills/claims] approver notification skipped:', msg);
+    } else {
+      console.error('[cybills/claims] approver notification failed:', msg);
+    }
+    return { sent: false, error: msg.slice(0, 300) };
+  }
+}
+
+// POST /api/claims/:id/submit — submit for approval to a chosen approver, then
+// email them (best effort). The claim is saved before the send so a mail
+// failure can never lose the submission.
+claimsRouter.post('/:id/submit', async (req, res) => {
+  const ws = workspaceId(req);
+  const items = load();
+  const claim = items.find((c) => c.id === req.params.id && c.workspaceId === ws);
+  if (!claim) return res.status(404).json({ error: 'not_found' });
+
+  const me = actor(req);
+  claim.approvalStatus = 'awaiting_approval';
+  claim.approver = String(req.body?.approver || '');
+  claim.approverEmail = String(req.body?.approverEmail || '');
+  claim.decidedBy = '';
+  claim.decidedAt = '';
+  claim.history.unshift({
+    text: `This claim was submitted for approval to ${claim.approver}`,
+    by: me.name,
+    at: nowIso(),
+  });
+  save(items);
+
+  const notified = await notifyApprover(claim, me.name);
+  if (notified.sent) {
+    // Visible in-app confirmation that the approver was actually emailed —
+    // when mail is off, the history simply doesn't gain this line.
+    appendHistory(ws, claim.id, `Approval request emailed to ${claim.approverEmail}`, me.name);
+  }
+
+  // Re-read so the response carries any history line we just appended.
+  return res.json({ claim: getClaimById(ws, claim.id) ?? claim, notified });
+});
 
 // Only the assigned approver may decide — enforced when we know both the
 // approver's email and the caller's (signed-in) email. Permissive when there's
