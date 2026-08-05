@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { pdfDate, claimRef, claimExportName } from '@/lib/exportFormat';
 
 // A4 in points, with a comfortable margin.
 const W = 595.28;
@@ -66,6 +67,14 @@ export function buildClaimDoc(claim) {
     doc.setTextColor(20);
     y += 18;
   };
+  // Trim text to fit a column width, adding an ellipsis, so cells never bleed
+  // into the next column (the transactions table is tight in portrait A4).
+  const clip = (text, width) => {
+    let s = String(text ?? '');
+    if (doc.getTextWidth(s) <= width) return s;
+    while (s.length > 1 && doc.getTextWidth(`${s}…`) > width) s = s.slice(0, -1);
+    return `${s}…`;
+  };
 
   chrome();
 
@@ -77,10 +86,10 @@ export function buildClaimDoc(claim) {
   y += 15;
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(90);
-  doc.text(`Claim ID: #${claim.id}`, M, y);
+  doc.text(`Claim ID: #${claimRef(claim)}`, M, y);
   doc.text(`(incl. tax: ${n2(claim.tax)})`, RIGHT, y, { align: 'right' });
   y += 14;
-  doc.text(`Claim date: ${claim.claimDate}`, M, y);
+  doc.text(`Claim date: ${pdfDate(claim.claimDate)}`, M, y);
   doc.setTextColor(20);
   y += 30;
 
@@ -119,8 +128,12 @@ export function buildClaimDoc(claim) {
   section('TRANSACTIONS');
   const hasProject = claim.transactions.some((t) => t.project);
   const tc = hasProject
-    ? { date: M, item: 92, supplier: 168, category: 250, project: 360, net: 445, tax: 505, total: RIGHT }
-    : { date: M, item: 96, supplier: 185, category: 320, net: 435, tax: 500, total: RIGHT };
+    ? { date: M, item: 98, supplier: 162, category: 236, project: 338, net: 432, tax: 498, total: RIGHT }
+    : { date: M, item: 98, supplier: 172, category: 252, net: 432, tax: 498, total: RIGHT };
+  // How wide each free-text cell may draw before the next column starts.
+  const catWidth = (hasProject ? tc.project : tc.net - 44) - tc.category - 6;
+  const supWidth = tc.category - tc.supplier - 6;
+  const projWidth = hasProject ? tc.net - 44 - tc.project - 6 : 0;
 
   const txnHeader = () => {
     doc.setFont('helvetica', 'bold');
@@ -143,13 +156,13 @@ export function buildClaimDoc(claim) {
     ensure(18);
     if (y === 80) txnHeader(); // header was redrawn after a page break
     doc.setTextColor(60);
-    doc.text(t.date, tc.date, y);
+    doc.text(pdfDate(t.date), tc.date, y);
     doc.setTextColor(LINK[0], LINK[1], LINK[2]);
     doc.text(String(t.displayId || t.itemId), tc.item, y);
     doc.setTextColor(60);
-    doc.text(doc.splitTextToSize(t.supplier, tc.category - tc.supplier - 6)[0], tc.supplier, y);
-    doc.text(t.category, tc.category, y);
-    if (hasProject) doc.text(t.project || '', tc.project, y);
+    doc.text(clip(t.supplier, supWidth), tc.supplier, y);
+    doc.text(clip(t.category, catWidth), tc.category, y);
+    if (hasProject) doc.text(clip(t.project || '', projWidth), tc.project, y);
     doc.text(n2(t.net), tc.net, y, { align: 'right' });
     doc.text(n2(t.tax), tc.tax, y, { align: 'right' });
     doc.text(n2(t.total), tc.total, y, { align: 'right' });
@@ -184,37 +197,6 @@ export function buildClaimDoc(claim) {
   sigRow('Employee signature');
   sigRow("Approver's signature");
 
-  // ---- Approval history (added page) ----------------------------------
-  nextPage();
-  section('APPROVAL HISTORY');
-  y += 4;
-  const events = claim.history || [];
-  events.forEach((e, i) => {
-    ensure(34);
-    // timeline dot + connector
-    doc.setFillColor(30, 30, 30);
-    doc.circle(M + 3, y - 3, 2.4, 'F');
-    if (i < events.length - 1) {
-      doc.setDrawColor(210);
-      doc.setLineWidth(0.8);
-      doc.line(M + 3, y, M + 3, y + 30);
-    }
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.5);
-    doc.setTextColor(20);
-    doc.text(e.text, M + 16, y);
-    const w = doc.getTextWidth(e.text);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(110);
-    doc.text(` by ${e.by}`, M + 16 + w, y);
-    y += 13;
-    doc.setFontSize(8.5);
-    doc.setTextColor(150);
-    doc.text(e.at, M + 16, y);
-    doc.setTextColor(20);
-    y += 24;
-  });
-
   doc.putTotalPages(totalExp);
   return doc;
 }
@@ -225,6 +207,6 @@ export function generateClaimPdf(claim) {
   const doc = buildClaimDoc(claim);
   const url = doc.output('bloburl');
   const win = window.open(url, '_blank');
-  if (!win) doc.save(`${claim.id}.pdf`);
+  if (!win) doc.save(claimExportName(claim, 'pdf'));
   return claim.id;
 }

@@ -1,5 +1,8 @@
 // Generate + download a CSV export for an expense claim (client-side, no
-// backend). "summary" rolls up by category; "items" lists every line item.
+// backend). "summary" rolls up by category; "items" emits one Dext-format row
+// per line item.
+
+import { csvDate, claimRef, claimExportName } from '@/lib/exportFormat';
 
 function esc(v) {
   const s = String(v ?? '');
@@ -35,20 +38,52 @@ function download(name, text) {
   URL.revokeObjectURL(url);
 }
 
+// Dext's per-receipt column schema (accountants import against these headers).
+const DEXT_COLUMNS = [
+  'Receipt ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Supplier',
+  'Category', 'Customer', 'Project', 'Payment Method', 'Bank Account', 'Tax',
+  'Total', 'Currency', 'Tax (SGD)', 'Total (SGD)', 'Status', 'Owner', 'Note',
+  'Description', 'Image',
+];
+
+function dextRow(claim, t) {
+  const cur = claim.currency || 'SGD';
+  return [
+    t.displayId || t.itemId, // Receipt ID
+    'Expense claim', // Type
+    csvDate(t.date), // Date
+    '', // Due Date
+    '', // Invoice Number
+    t.supplier, // Supplier
+    t.category, // Category
+    '', // Customer
+    t.project || '', // Project
+    '', // Payment Method
+    '', // Bank Account
+    t.tax, // Tax
+    t.total, // Total
+    cur, // Currency
+    t.tax, // Tax (SGD)
+    t.total, // Total (SGD)
+    'processed', // Status
+    t.addedBy || claim.claimFor || '', // Owner
+    '', // Note
+    t.description || '', // Description
+    '', // Image
+  ];
+}
+
 export function generateClaimCsv(claim, { detailLevel = 'summary' } = {}) {
   const rows = [];
   if (detailLevel === 'items') {
-    rows.push(['Date', 'Item ID', 'Supplier', 'Category', 'Project', 'Net (SGD)', 'Tax (SGD)', 'Total (SGD)']);
-    for (const t of claim.transactions) {
-      rows.push([t.date, t.displayId || t.itemId, t.supplier, t.category, t.project || '', t.net, t.tax, t.total]);
-    }
-    rows.push(['', '', '', '', 'Total', claim.net, claim.tax, claim.total]);
+    rows.push(DEXT_COLUMNS);
+    for (const t of claim.transactions) rows.push(dextRow(claim, t));
   } else {
     rows.push(['Claim name', 'Claim ID', 'Claim date', 'Category', 'Net (SGD)', 'Tax (SGD)', 'Total (SGD)']);
     for (const c of summarise(claim.transactions)) {
-      rows.push([claim.name, claim.id, claim.claimDate, c.category, c.net, c.tax, c.total]);
+      rows.push([claim.name, claimRef(claim), csvDate(claim.claimDate), c.category, c.net, c.tax, c.total]);
     }
     rows.push(['', '', '', 'Total', claim.net, claim.tax, claim.total]);
   }
-  download(`${claim.id}.csv`, rows.map((r) => r.map(esc).join(',')).join('\n'));
+  download(claimExportName(claim, 'csv'), rows.map((r) => r.map(esc).join(',')).join('\n'));
 }

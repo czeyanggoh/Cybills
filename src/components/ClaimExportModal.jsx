@@ -85,7 +85,7 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
               </label>
               <label className="flex items-center gap-3 text-sm">
                 <span className="w-28 shrink-0 text-muted-foreground">CSV format</span>
-                <Select value={format} onChange={setFormat} options={[{ value: 'dext', label: 'CYBills default' }]} />
+                <Select value={format} onChange={setFormat} options={[{ value: 'dext', label: 'Dext' }]} />
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input
@@ -99,7 +99,7 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Export this claim as a formatted PDF report, including the approval-history page.
+              Export this claim as a formatted PDF report (Dext layout).
             </p>
           )}
         </div>
