@@ -69,6 +69,29 @@ export async function addItemToClaim(claimId, txn) {
   notifyClaimsChanged();
 }
 
+// Remove items (by itemId) from a claim.
+export async function removeItemsFromClaim(claimId, itemIds) {
+  await post(`/${claimId}/items/remove`, { itemIds });
+  notifyClaimsChanged();
+}
+
+// Bulk-edit fields (e.g. category) on selected claim items.
+export async function updateClaimItems(claimId, itemIds, patch) {
+  await post(`/${claimId}/items/update`, { itemIds, patch });
+  notifyClaimsChanged();
+}
+
+// Move items from one claim to another: add to the target, then remove from the
+// source. `txns` are the full transaction rows (so the target keeps their data).
+export async function moveItemsToClaim(fromClaimId, toClaimId, txns) {
+  for (const t of txns) {
+    // eslint-disable-next-line no-await-in-loop
+    await post(`/${toClaimId}/items`, { items: [t] });
+  }
+  await post(`/${fromClaimId}/items/remove`, { itemIds: txns.map((t) => t.itemId) });
+  notifyClaimsChanged();
+}
+
 // Submit a claim for approval to a chosen approver (name + email so the server
 // can enforce that only that person decides).
 export async function submitForApproval(claimId, approver, _actor, approverEmail = '') {

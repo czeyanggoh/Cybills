@@ -10,13 +10,23 @@ import {
   Settings2,
   Plus,
   FileText,
+  X,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
-import { useClaims, submitForApproval, approveClaim, rejectClaim } from '@/lib/claimStore';
+import {
+  useClaims,
+  submitForApproval,
+  approveClaim,
+  rejectClaim,
+  createClaim,
+  removeItemsFromClaim,
+  updateClaimItems,
+  moveItemsToClaim,
+} from '@/lib/claimStore';
 import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
 import { useUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
@@ -91,6 +101,14 @@ export default function ExpenseClaimDetail() {
   const claim = claims.find((c) => String(c.id) === String(id)) || null;
   const [tab, setTab] = useState('details');
   const [catOverrides, setCatOverrides] = useState({});
+  const [selected, setSelected] = useState(() => new Set());
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [bulkCatOpen, setBulkCatOpen] = useState(false);
+  const [bulkCat, setBulkCat] = useState('');
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moveTarget, setMoveTarget] = useState('');
+  const [moveNewName, setMoveNewName] = useState('');
+  const [query, setQuery] = useState('');
   const [exportMenu, setExportMenu] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
@@ -130,12 +148,67 @@ export default function ExpenseClaimDetail() {
     );
   }
 
-  // Apply any in-session category tweaks on top of the stored line items.
-  const rows = claim.transactions.map((t) =>
-    catOverrides[t.itemId] ? { ...t, category: catOverrides[t.itemId] } : t
-  );
-  const setRowCategory = (itemId, category) =>
-    setCatOverrides((o) => ({ ...o, [itemId]: category }));
+  // Apply any in-session category tweaks on top of the stored line items, then
+  // filter by the search box (supplier / category / date / description / id).
+  const q = query.trim().toLowerCase();
+  const rows = claim.transactions
+    .map((t) => (catOverrides[t.itemId] ? { ...t, category: catOverrides[t.itemId] } : t))
+    .filter(
+      (t) =>
+        !q ||
+        [t.supplier, t.category, t.date, t.description, t.displayId, t.itemId].some((v) =>
+          String(v || '').toLowerCase().includes(q)
+        )
+    );
+  const setRowCategory = (itemId, category) => {
+    setCatOverrides((o) => ({ ...o, [itemId]: category })); // optimistic
+    updateClaimItems(claim.id, [itemId], { category }).catch(() => {}); // persist
+  };
+
+  // ── Item selection + bulk actions (Dext-style) ──────────────────────────────
+  const toggleItem = (itemId) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(itemId)) n.delete(itemId);
+      else n.add(itemId);
+      return n;
+    });
+  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.itemId)));
+
+  const doRemove = async () => {
+    if (!selected.size) return;
+    if (!window.confirm(`Remove ${selected.size} item${selected.size === 1 ? '' : 's'} from this claim?`)) return;
+    setActionsOpen(false);
+    await removeItemsFromClaim(claim.id, [...selected]).catch(() => {});
+    setSelected(new Set());
+  };
+
+  const doBulkCategory = async () => {
+    if (!bulkCat || !selected.size) return;
+    await updateClaimItems(claim.id, [...selected], { category: bulkCat }).catch(() => {});
+    setBulkCatOpen(false);
+    setBulkCat('');
+    setSelected(new Set());
+  };
+
+  const doMove = async () => {
+    const txns = rows.filter((r) => selected.has(r.itemId));
+    if (!txns.length) return;
+    let targetId = moveTarget;
+    if (moveTarget === 'new') {
+      const created = await createClaim({ claimFor: claim.claimFor, name: moveNewName.trim() || 'Expense claim', endDate: claim.endDate });
+      targetId = created?.id;
+    }
+    if (!targetId || targetId === claim.id) return;
+    await moveItemsToClaim(claim.id, targetId, txns).catch(() => {});
+    setMoveOpen(false);
+    setMoveTarget('');
+    setMoveNewName('');
+    setSelected(new Set());
+  };
+
+  const otherClaims = claims.filter((c) => c.id !== claim.id && !c.archived && !c.deleted);
 
   // Only the assigned approver may approve/reject (enforced server-side too).
   // With no specific approver on the claim, anyone can decide.
@@ -293,12 +366,32 @@ export default function ExpenseClaimDetail() {
             >
               <Plus className="h-3.5 w-3.5" /> Add items
             </button>
-            <button type="button" className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm text-muted-foreground/60" disabled>
-              Actions <ChevronDown className="h-3.5 w-3.5" />
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                disabled={selected.size === 0}
+                onClick={() => setActionsOpen((o) => !o)}
+                className={cn(
+                  'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
+                  selected.size === 0 ? 'text-muted-foreground/60' : 'hover:bg-muted'
+                )}
+              >
+                Actions <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+              {actionsOpen && selected.size > 0 && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setActionsOpen(false)} aria-hidden="true" />
+                  <div className="absolute left-0 z-20 mt-1 w-40 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                    <button type="button" onClick={() => { setActionsOpen(false); setBulkCat(''); setBulkCatOpen(true); }} className="flex w-full px-3 py-2 text-left text-sm hover:bg-muted">Bulk edit</button>
+                    <button type="button" onClick={() => { setActionsOpen(false); setMoveTarget(''); setMoveOpen(true); }} className="flex w-full px-3 py-2 text-left text-sm hover:bg-muted">Move</button>
+                    <button type="button" onClick={doRemove} className="flex w-full px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10">Remove</button>
+                  </div>
+                </>
+              )}
+            </div>
             <div className="relative ml-auto hidden sm:block">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input type="text" placeholder="Search" className="h-8 w-44 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+              <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="h-8 w-44 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
               <button type="button" className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground">
                 Advanced <ChevronDown className="h-3 w-3" />
               </button>
@@ -313,10 +406,13 @@ export default function ExpenseClaimDetail() {
             <table className="w-full min-w-[560px] text-sm">
               <thead className="border-b bg-muted/40 text-left">
                 <tr className="text-muted-foreground">
-                  <th className="w-28 px-3 py-2.5"><span className="sr-only">Select</span></th>
+                  <th className="w-28 px-3 py-2.5">
+                    <input type="checkbox" checked={allSelected} onChange={toggleAll} className="h-4 w-4 accent-black" aria-label="Select all" />
+                  </th>
                   <th className="px-3 py-2.5 font-medium">Supplier</th>
                   <th className="px-3 py-2.5 font-medium">Date</th>
                   <th className="px-3 py-2.5 font-medium">Category</th>
+                  <th className="w-10 px-2 py-2.5"><span className="sr-only">Remove</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -328,7 +424,7 @@ export default function ExpenseClaimDetail() {
                   >
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
-                        <input type="checkbox" className="h-4 w-4 accent-black" />
+                        <input type="checkbox" checked={selected.has(t.itemId)} onChange={() => toggleItem(t.itemId)} className="h-4 w-4 accent-black" />
                         <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
                         <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
                         <span className="rounded bg-foreground px-2 py-0.5 text-xs text-background">Ready</span>
@@ -339,8 +435,26 @@ export default function ExpenseClaimDetail() {
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <CategorySelect value={t.category} onChange={(v) => setRowCategory(t.itemId, v)} />
                     </td>
+                    <td className="px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => removeItemsFromClaim(claim.id, [t.itemId])}
+                        title="Remove from claim"
+                        aria-label="Remove from claim"
+                        className="text-muted-foreground transition-colors hover:text-destructive"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                      {q ? 'No items match your search.' : 'No items in this claim yet.'}
+                    </td>
+                  </tr>
+                )}
               </tbody>
               <tfoot>
                 <tr className="border-t bg-muted/20">
@@ -348,12 +462,13 @@ export default function ExpenseClaimDetail() {
                   <td className="px-3 py-3 text-sm font-semibold tabular-nums">
                     {claim.currency} {claim.total}
                   </td>
+                  <td />
                 </tr>
               </tfoot>
             </table>
           </div>
           <p className="mt-3 text-center text-xs text-muted-foreground">
-            Showing {rows.length} of {rows.length} items
+            Showing {rows.length} of {claim.transactions.length} items
           </p>
         </div>
 
@@ -461,6 +576,55 @@ export default function ExpenseClaimDetail() {
           setTab('history');
         }}
       />
+
+      {/* Bulk edit — set a category on the selected items */}
+      {bulkCatOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setBulkCatOpen(false)}>
+          <div className="w-full max-w-sm rounded-xl border bg-background p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="mb-4 text-sm font-semibold">Bulk edit {selected.size} item{selected.size === 1 ? '' : 's'}</h2>
+            <label className="mb-4 block text-sm">
+              <span className="mb-1 block text-muted-foreground">Category</span>
+              <select value={bulkCat} onChange={(e) => setBulkCat(e.target.value)} className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <option value="">Select a category…</option>
+                {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
+              </select>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setBulkCatOpen(false)} className="inline-flex h-9 items-center rounded-md border px-4 text-sm hover:bg-muted">Cancel</button>
+              <button type="button" disabled={!bulkCat} onClick={doBulkCategory} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">Apply</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Move — move the selected items to another (existing or new) claim */}
+      {moveOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setMoveOpen(false)}>
+          <div className="w-full max-w-sm rounded-xl border bg-background p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="mb-4 text-sm font-semibold">Move {selected.size} item{selected.size === 1 ? '' : 's'} to a claim</h2>
+            <label className="mb-3 block text-sm">
+              <span className="mb-1 block text-muted-foreground">Destination claim</span>
+              <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)} className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <option value="">Select a claim…</option>
+                <option value="new">+ New claim</option>
+                {otherClaims.map((c) => (
+                  <option key={c.id} value={c.id}>{c.claimFor} — {c.name || 'Expense claim'}</option>
+                ))}
+              </select>
+            </label>
+            {moveTarget === 'new' && (
+              <label className="mb-3 block text-sm">
+                <span className="mb-1 block text-muted-foreground">New claim name</span>
+                <input value={moveNewName} onChange={(e) => setMoveNewName(e.target.value)} placeholder="Expense claim" className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              </label>
+            )}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setMoveOpen(false)} className="inline-flex h-9 items-center rounded-md border px-4 text-sm hover:bg-muted">Cancel</button>
+              <button type="button" disabled={!moveTarget} onClick={doMove} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">Move</button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

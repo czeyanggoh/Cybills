@@ -113,6 +113,32 @@ claimsRouter.post('/:id/items', (req, res) =>
   })
 );
 
+// POST /api/claims/:id/items/remove — remove items (by itemId) from the claim.
+claimsRouter.post('/:id/items/remove', (req, res) =>
+  mutate(req, res, (claim, me) => {
+    const ids = new Set((Array.isArray(req.body?.itemIds) ? req.body.itemIds : []).map(String));
+    const before = claim.transactions.length;
+    claim.transactions = claim.transactions.filter((t) => !ids.has(String(t.itemId)));
+    const removed = before - claim.transactions.length;
+    if (removed) claim.history.unshift({ text: `${removed} item(s) removed from the expense claim`, by: me.name, at: nowIso() });
+  })
+);
+
+// POST /api/claims/:id/items/update — bulk-edit fields (e.g. category) on items.
+claimsRouter.post('/:id/items/update', (req, res) =>
+  mutate(req, res, (claim, me) => {
+    const ids = new Set((Array.isArray(req.body?.itemIds) ? req.body.itemIds : []).map(String));
+    const patch = (req.body?.patch ?? {}) as Partial<Txn>;
+    let n = 0;
+    for (const t of claim.transactions) {
+      if (!ids.has(String(t.itemId))) continue;
+      if (typeof patch.category === 'string') t.category = patch.category;
+      n += 1;
+    }
+    if (n) claim.history.unshift({ text: `${n} item(s) bulk-edited`, by: me.name, at: nowIso() });
+  })
+);
+
 // POST /api/claims/:id/submit — submit for approval to a chosen approver.
 claimsRouter.post('/:id/submit', (req, res) =>
   mutate(req, res, (claim, me) => {
