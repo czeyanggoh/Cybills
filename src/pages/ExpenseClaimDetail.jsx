@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeft,
@@ -117,6 +117,17 @@ export default function ExpenseClaimDetail() {
   const users = useUsers();
   const [payNote, setPayNote] = useState('');
 
+  // Keep the selection in sync with what actually exists: when items are removed
+  // (here or in another tab) drop their ids so the count never counts phantoms.
+  const txnKey = (claim?.transactions || []).map((t) => String(t.itemId)).join(',');
+  useEffect(() => {
+    const valid = new Set((claim?.transactions || []).map((t) => String(t.itemId)));
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((itemId) => valid.has(String(itemId))));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [txnKey]);
+
   const sendToHr = async () => {
     if (!cyhrEnabled) {
       setPayNote('CYHR is not connected yet — set CYHR_SIGNING_SECRET on the server to route payments.');
@@ -173,7 +184,7 @@ export default function ExpenseClaimDetail() {
       else n.add(itemId);
       return n;
     });
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.itemId));
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.itemId)));
 
   const doRemove = async () => {
