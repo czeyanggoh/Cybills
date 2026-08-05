@@ -369,22 +369,29 @@ export default function ExpenseClaimDetail() {
             <div className="relative">
               <button
                 type="button"
-                disabled={selected.size === 0}
                 onClick={() => setActionsOpen((o) => !o)}
-                className={cn(
-                  'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
-                  selected.size === 0 ? 'text-muted-foreground/60' : 'hover:bg-muted'
-                )}
+                className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-muted"
               >
-                Actions <ChevronDown className="h-3.5 w-3.5" />
+                Actions
+                {selected.size > 0 && (
+                  <span className="ml-0.5 rounded bg-foreground px-1.5 text-xs text-background">{selected.size}</span>
+                )}
+                <ChevronDown className="h-3.5 w-3.5" />
               </button>
-              {actionsOpen && selected.size > 0 && (
+              {actionsOpen && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setActionsOpen(false)} aria-hidden="true" />
-                  <div className="absolute left-0 z-20 mt-1 w-40 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
-                    <button type="button" onClick={() => { setActionsOpen(false); setBulkCat(''); setBulkCatOpen(true); }} className="flex w-full px-3 py-2 text-left text-sm hover:bg-muted">Bulk edit</button>
-                    <button type="button" onClick={() => { setActionsOpen(false); setMoveTarget(''); setMoveOpen(true); }} className="flex w-full px-3 py-2 text-left text-sm hover:bg-muted">Move</button>
-                    <button type="button" onClick={doRemove} className="flex w-full px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10">Remove</button>
+                  <div className="absolute left-0 z-20 mt-1 w-52 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                    {selected.size === 0 ? (
+                      <p className="px-3 py-2 text-xs text-muted-foreground">Tick one or more items on the left, then choose an action.</p>
+                    ) : (
+                      <>
+                        <p className="px-3 py-1.5 text-xs text-muted-foreground">{selected.size} item{selected.size === 1 ? '' : 's'} selected</p>
+                        <button type="button" onClick={() => { setActionsOpen(false); setBulkCat(''); setBulkCatOpen(true); }} className="flex w-full px-3 py-2 text-left text-sm hover:bg-muted">Bulk edit</button>
+                        <button type="button" onClick={() => { setActionsOpen(false); setMoveTarget(''); setMoveOpen(true); }} className="flex w-full px-3 py-2 text-left text-sm hover:bg-muted">Move</button>
+                        <button type="button" onClick={doRemove} className="flex w-full px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10">Remove</button>
+                      </>
+                    )}
                   </div>
                 </>
               )}
