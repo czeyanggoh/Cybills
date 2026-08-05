@@ -15,10 +15,12 @@ import {
   ImagePlus,
   Copy,
   ListChecks,
+  Info,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import ListsSettings from '@/components/ListsSettings';
 import { cn } from '@/lib/utils';
+import { useApprovalReminders, setReminders, DAYS, TIMES } from '@/lib/approvalReminders';
 import {
   useOrganisations,
 } from '@/lib/organisations';
@@ -440,7 +442,32 @@ function Automation() {
   );
 }
 
+// Approvals settings: Workflows (Dext-style rules, display) + Reminders (live).
 function Approvals() {
+  const [sub, setSub] = useState('workflows');
+  return (
+    <div className="space-y-5">
+      <div className="flex gap-6 border-b">
+        {[['workflows', 'Workflows'], ['reminders', 'Reminders']].map(([k, label]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setSub(k)}
+            className={cn(
+              '-mb-px border-b-2 pb-3 pt-1 text-sm transition-colors',
+              sub === k ? 'border-foreground font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {sub === 'workflows' ? <ApprovalWorkflows /> : <ApprovalReminders />}
+    </div>
+  );
+}
+
+function ApprovalWorkflows() {
   const [view, setView] = useState('list');
   const [tab, setTab] = useState('Costs');
   const [stages, setStages] = useState([{}]);
@@ -582,6 +609,72 @@ function Approvals() {
         </button>
       </div>
     </div>
+  );
+}
+
+// Live approval reminders. No mail server yet, so delivery is in-app (a banner
+// to approvers with outstanding requests); the schedule is stored for later.
+function ApprovalReminders() {
+  const reminders = useApprovalReminders();
+  const update = (patch) => setReminders({ ...reminders, ...patch });
+  return (
+    <Card title="Approval reminders">
+      <Row label="Enable approval reminders" hint="Remind approvers who have outstanding approval requests.">
+        <button type="button" onClick={() => update({ enabled: !reminders.enabled })} className="flex items-center gap-2 pt-1">
+          <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', reminders.enabled ? 'justify-end bg-foreground' : 'justify-start border')}>
+            <span className={cn('h-4 w-4 rounded-full', reminders.enabled ? 'bg-background' : 'bg-muted-foreground/50')} />
+          </span>
+          <span className="text-sm text-muted-foreground">{reminders.enabled ? 'Yes' : 'No'}</span>
+        </button>
+      </Row>
+      {reminders.enabled && (
+        <>
+          <div className="grid gap-6 pt-2 sm:grid-cols-2">
+            <div>
+              <p className="mb-2 text-sm font-medium">Send reminders every</p>
+              <div className="space-y-1.5">
+                {DAYS.map(([k, label]) => (
+                  <label key={k} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(reminders.days[k])}
+                      onChange={() => update({ days: { ...reminders.days, [k]: !reminders.days[k] } })}
+                      className="h-4 w-4 accent-black"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="mb-2 text-sm font-medium">At</p>
+              <div className="space-y-1.5">
+                {TIMES.map(([k, label]) => (
+                  <label key={k} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="reminder-time"
+                      checked={reminders.time === k}
+                      onChange={() => update({ time: k })}
+                      className="h-4 w-4 accent-black"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              CYBills has no mail server yet, so reminders show <span className="font-medium text-foreground">in-app</span>:
+              an approver with outstanding requests sees a banner at the top of the app. The day/time schedule is saved and
+              will drive email once mail is connected.
+            </span>
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 

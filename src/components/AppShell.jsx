@@ -29,6 +29,7 @@ import {
 import AddDocumentsDrawer from './AddDocumentsDrawer';
 import AddOrganisationModal from './AddOrganisationModal';
 import RemoveOrganisationModal from './RemoveOrganisationModal';
+import ApprovalReminderBanner from './ApprovalReminderBanner';
 
 // Primary workspaces (matches Dext's left rail: Costs / Sales / Bank / Vault).
 const NAV = [
@@ -365,7 +366,10 @@ export default function AppShell({ subnav = null, children }) {
                 {subnav}
               </aside>
             )}
-            <main className="min-w-0 flex-1 overflow-auto p-4 md:p-6">{children}</main>
+            <main className="min-w-0 flex-1 overflow-auto p-4 md:p-6">
+              <ApprovalReminderBanner />
+              {children}
+            </main>
           </div>
         </div>
       </div>
