@@ -2,7 +2,16 @@
 // Dext's conventions: clean file names, "D MMM YYYY" dates, and a short claim
 // reference instead of a raw UUID.
 
+import { displayItemId } from '@/lib/bills';
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// History text stores raw internal item keys (e.g. "bill_msfp2iz5_d2f91b0e").
+// Swap them for the clean numeric display id shown everywhere else, so reports
+// and the activity log never surface storage keys.
+export function cleanHistoryText(text) {
+  return String(text ?? '').replace(/\bbill_[A-Za-z0-9_]+/g, (m) => displayItemId(m));
+}
 
 // Parse an ISO (YYYY-MM-DD) or DD/MM/YYYY date; null when unrecognised.
 function dateParts(input) {

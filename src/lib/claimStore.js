@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { displayItemId } from '@/lib/bills';
+import { cleanHistoryText } from '@/lib/exportFormat';
 
 // Server-backed expense claims (shared across the workspace). Talks to
 // /api/claims; mirrors the bills client pattern — fetch + a change event that
@@ -25,7 +26,7 @@ function fmtAt(at) {
 function shape(c) {
   const transactions = (c.transactions || []).map((t) => ({ ...t, displayId: displayItemId(t.itemId) }));
   const sum = (k) => transactions.reduce((n, t) => n + Number(t[k] || 0), 0).toFixed(2);
-  const history = (c.history || []).map((e) => ({ ...e, at: fmtAt(e.at) }));
+  const history = (c.history || []).map((e) => ({ ...e, text: cleanHistoryText(e.text), at: fmtAt(e.at) }));
   return { ...c, transactions, history, net: sum('net'), tax: sum('tax'), total: sum('total') };
 }
 

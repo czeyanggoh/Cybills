@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { pdfDate, claimRef, claimExportName } from '@/lib/exportFormat';
+import { pdfDate, claimRef, claimExportName, cleanHistoryText } from '@/lib/exportFormat';
 
 // A4 in points, with a comfortable margin.
 const W = 595.28;
@@ -196,6 +196,38 @@ export function buildClaimDoc(claim) {
   };
   sigRow('Employee signature');
   sigRow("Approver's signature");
+
+  // ---- Approval history (added page) ----------------------------------
+  nextPage();
+  section('APPROVAL HISTORY');
+  y += 4;
+  const events = claim.history || [];
+  events.forEach((e, i) => {
+    ensure(34);
+    // timeline dot + connector
+    doc.setFillColor(30, 30, 30);
+    doc.circle(M + 3, y - 3, 2.4, 'F');
+    if (i < events.length - 1) {
+      doc.setDrawColor(210);
+      doc.setLineWidth(0.8);
+      doc.line(M + 3, y, M + 3, y + 30);
+    }
+    const text = cleanHistoryText(e.text);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(20);
+    doc.text(text, M + 16, y);
+    const w = doc.getTextWidth(text);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(110);
+    doc.text(` by ${e.by}`, M + 16 + w, y);
+    y += 13;
+    doc.setFontSize(8.5);
+    doc.setTextColor(150);
+    doc.text(e.at, M + 16, y);
+    doc.setTextColor(20);
+    y += 24;
+  });
 
   doc.putTotalPages(totalExp);
   return doc;
