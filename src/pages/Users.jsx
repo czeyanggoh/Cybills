@@ -4,7 +4,7 @@ import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
 import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
 import EditUserModal from '@/components/EditUserModal';
-import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword } from '@/lib/userStore';
+import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 // Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
@@ -76,7 +76,12 @@ export default function Users() {
       u.name.toLowerCase().includes(query.toLowerCase()) ||
       (u.email || '').toLowerCase().includes(query.toLowerCase())
   );
-  const rows = filtered.filter((u) => (tab === 'active' ? !u.deactivated : u.deactivated));
+  const pendingCount = users.filter((u) => u.pending && !u.deactivated).length;
+  const rows = filtered.filter((u) => {
+    if (tab === 'pending') return u.pending && !u.deactivated;
+    if (tab === 'deactivated') return u.deactivated;
+    return !u.deactivated && !u.pending; // active
+  });
 
   return (
     <AppShell>
@@ -98,6 +103,7 @@ export default function Users() {
         <div className="inline-flex overflow-hidden rounded-md border text-sm">
           {[
             { key: 'active', label: 'Active' },
+            { key: 'pending', label: `Pending${pendingCount ? ` (${pendingCount})` : ''}` },
             { key: 'deactivated', label: 'Deactivated' },
           ].map((t) => (
             <button
@@ -130,6 +136,7 @@ export default function Users() {
             <tr className="text-muted-foreground">
               <th className="px-3 py-2.5 font-medium">Name</th>
               <th className="px-3 py-2.5 font-medium">Email</th>
+              <th className="px-3 py-2.5 font-medium">Company</th>
               <th className="px-3 py-2.5 font-medium">Login access</th>
               <th className="px-3 py-2.5 font-medium">Role</th>
               <th className="px-3 py-2.5 font-medium">Last login</th>
@@ -141,18 +148,33 @@ export default function Users() {
               <tr key={u.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{u.name}</td>
                 <td className="px-3 py-3 text-muted-foreground">{u.email || '—'}</td>
+                <td className="px-3 py-3 text-muted-foreground">{u.companyName || '—'}</td>
                 <td className="px-3 py-3">{u.login}</td>
                 <td className="whitespace-nowrap px-3 py-3">{u.role}</td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{u.lastLogin}</td>
                 <td className="px-3 py-3">
-                  <ManageMenu user={u} onEdit={(mode) => setEdit({ user: u, mode })} onToast={showToast} />
+                  {u.pending ? (
+                    <button
+                      type="button"
+                      onClick={async () => { await approveUser(u.id); showToast(`${u.name} approved.`); }}
+                      className="inline-flex h-8 items-center rounded-md bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90"
+                    >
+                      Approve
+                    </button>
+                  ) : (
+                    <ManageMenu user={u} onEdit={(mode) => setEdit({ user: u, mode })} onToast={showToast} />
+                  )}
                 </td>
               </tr>
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-16 text-center text-sm text-muted-foreground">
-                  {tab === 'deactivated' ? 'No deactivated users.' : 'No users found.'}
+                <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                  {tab === 'deactivated'
+                    ? 'No deactivated users.'
+                    : tab === 'pending'
+                      ? 'No pending join requests.'
+                      : 'No users found.'}
                 </td>
               </tr>
             )}

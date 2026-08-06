@@ -39,6 +39,11 @@ type User = {
   lastLogin: string;
   deactivated: boolean;
   removed: boolean;
+  // Self-signup: a user who joined via /join is `pending` until an admin
+  // approves them, and is tied to the company (organisation) they picked.
+  pending: boolean;
+  companyId: string;
+  companyName: string;
   passwordHash?: string; // set by an admin; never returned to the client
 };
 
@@ -84,6 +89,9 @@ function full(u: Partial<User>, ws: string): User {
     lastLogin: u.lastLogin || '—',
     deactivated: Boolean(u.deactivated),
     removed: Boolean(u.removed),
+    pending: Boolean(u.pending),
+    companyId: u.companyId || '',
+    companyName: u.companyName || '',
   };
 }
 
@@ -144,7 +152,7 @@ function ensure(ws: string): User[] {
   return items;
 }
 
-const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated'];
+const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'companyId', 'companyName'];
 
 // Apply the editable fields present in `b` onto a user, keeping name in sync
 // with first/last. Shared by the add-merge path and PATCH.
@@ -161,6 +169,67 @@ export const usersRouter = Router();
 usersRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
   res.json({ users: ensure(ws).filter((u) => u.workspaceId === ws && !u.removed).map(publicUser) });
+});
+
+// GET /api/users/me — the signed-in user's membership status, used to gate the
+// app: 'anonymous' (no session), 'none' (signed in but no roster profile — send
+// to /join), 'pending' (awaiting approval), 'deactivated', or 'active'.
+usersRouter.get('/me', (req, res) => {
+  const session = readSession(req);
+  if (!session?.email) return res.json({ status: 'anonymous', user: null });
+  const ws = workspaceId(req);
+  const email = norm(session.email);
+  const user = ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email);
+  if (!user) return res.json({ status: 'none', user: null });
+  const status = user.deactivated ? 'deactivated' : user.pending ? 'pending' : 'active';
+  return res.json({ status, user: publicUser(user) });
+});
+
+// POST /api/users/join — self-signup onboarding. The signed-in user submits
+// their details and the company (organisation) they belong to; they become a
+// pending roster member until an admin approves. Idempotent: re-joining updates
+// the same row, and an already-active member is left untouched.
+usersRouter.post('/join', (req, res) => {
+  const session = readSession(req);
+  if (!session?.email) return res.status(401).json({ error: 'unauthenticated' });
+  const ws = workspaceId(req);
+  const items = ensure(ws);
+  const email = norm(session.email);
+  const b = req.body ?? {};
+  const firstName = String(b.firstName || '').trim();
+  const lastName = String(b.lastName || '').trim();
+  const fields = {
+    firstName,
+    lastName,
+    name: `${firstName} ${lastName}`.trim() || session.name || session.email,
+    mobile: String(b.mobile || '').trim(),
+    companyId: String(b.companyId || '').trim(),
+    companyName: String(b.companyName || '').trim(),
+    role: String(b.role || 'Standard'),
+  };
+  let user = items.find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email);
+  if (user) {
+    if (!user.pending && user.login === 'Yes' && !user.deactivated) {
+      return res.json({ status: 'active', user: publicUser(user) }); // already a member
+    }
+    Object.assign(user, fields, { email: session.email, login: 'No', pending: true, deactivated: false });
+  } else {
+    user = full({ ...fields, email: session.email, login: 'No', pending: true }, ws);
+    items.unshift(user);
+  }
+  save(items);
+  return res.json({ status: 'pending', user: publicUser(user) });
+});
+
+// POST /api/users/:id/approve — an admin (signed in) approves a pending member,
+// granting access.
+usersRouter.post('/:id/approve', (req, res) => {
+  if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
+  return mutate(req, res, (user) => {
+    user.pending = false;
+    user.deactivated = false;
+    user.login = 'Yes';
+  });
 });
 
 // Add one or many users. Body: a user object, or { users: [...] }. To keep one

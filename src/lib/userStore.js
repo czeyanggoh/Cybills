@@ -73,6 +73,37 @@ export async function removeUser(id) {
   notifyUsersChanged();
 }
 
+// Approve a pending self-signup, granting them access.
+export async function approveUser(id) {
+  await req(`/${id}/approve`, 'POST', {});
+  notifyUsersChanged();
+}
+
+// Self-signup: the signed-in user submits their details + chosen company. They
+// become a pending member until an admin approves. Returns { status, user }.
+export async function joinCompany(payload) {
+  const res = await fetch('/api/users/join', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload ?? {}),
+  });
+  if (!res.ok) throw new Error(`join failed (${res.status})`);
+  notifyUsersChanged();
+  return res.json();
+}
+
+// The signed-in user's membership status (anonymous | none | pending |
+// deactivated | active) plus their roster profile, used to gate the app.
+export async function fetchMembership() {
+  try {
+    const res = await fetch('/api/users/me');
+    if (!res.ok) return { status: 'anonymous', user: null };
+    return res.json();
+  } catch {
+    return { status: 'anonymous', user: null };
+  }
+}
+
 // Set a user's password (admin action). Returns true on success. Lets that user
 // sign in with email + password (no Google needed).
 export async function setUserPassword(id, password) {

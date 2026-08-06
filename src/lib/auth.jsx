@@ -1,7 +1,9 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { fetchMembership } from '@/lib/userStore';
 
 // App-wide auth state. Loads once: whether real Google OAuth is configured on
-// the backend (`googleEnabled`) and the current signed-in user (or null).
+// the backend (`googleEnabled`), the current signed-in user (or null), and the
+// user's roster membership (`membership.status`: anonymous|none|pending|active).
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
@@ -9,12 +11,14 @@ export function AuthProvider({ children }) {
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [user, setUser] = useState(null);
+  const [membership, setMembership] = useState({ status: 'anonymous', user: null });
 
   const refresh = useCallback(async () => {
     try {
-      const [statusRes, meRes] = await Promise.all([
+      const [statusRes, meRes, mem] = await Promise.all([
         fetch('/api/auth/status'),
         fetch('/api/auth/me'),
+        fetchMembership(),
       ]);
       if (statusRes.ok) {
         const s = await statusRes.json();
@@ -22,11 +26,13 @@ export function AuthProvider({ children }) {
         setVisionEnabled(Boolean(s.visionEnabled));
       }
       setUser(meRes.ok ? (await meRes.json()).user : null);
+      setMembership(mem || { status: 'anonymous', user: null });
     } catch {
       // Backend unreachable — treat as signed-out, mock mode.
       setGoogleEnabled(false);
       setVisionEnabled(false);
       setUser(null);
+      setMembership({ status: 'anonymous', user: null });
     } finally {
       setLoading(false);
     }
@@ -58,7 +64,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ loading, googleEnabled, visionEnabled, user, refresh, signOut, loginWithPassword }}>
+    <AuthContext.Provider value={{ loading, googleEnabled, visionEnabled, user, membership, refresh, signOut, loginWithPassword }}>
       {children}
     </AuthContext.Provider>
   );
