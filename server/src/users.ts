@@ -62,6 +62,12 @@ const SEED: Array<Partial<User>> = [
   { id: 'yuyu', name: 'Yu Yu', email: 'yuyu@cy-bm.sg', login: 'Yes', role: 'Standard' },
 ];
 
+const norm = (s: string) => String(s ?? '').trim().toLowerCase();
+// The intended one-email-per-teammate identity, from the seed (each person's
+// real address that both their login and CYHR use).
+const SEED_EMAIL_BY_NAME = new Map(SEED.map((s) => [norm(String(s.name)), norm(String(s.email))]));
+const SEED_IDS = new Set(SEED.map((s) => s.id));
+
 function full(u: Partial<User>, ws: string): User {
   const name = (u.name || `${u.firstName || ''} ${u.lastName || ''}`).trim() || 'New user';
   return {
@@ -81,14 +87,73 @@ function full(u: Partial<User>, ws: string): User {
   };
 }
 
-// Return the workspace's users, seeding the real employees on first use.
+// Collapse duplicate rows for the same person (same name) into a single row, so
+// every teammate has exactly one email. Idempotent — runs on every load so a
+// roster that drifted (a person added twice under two addresses) self-heals.
+// Prefers the row whose email is the teammate's canonical seed address; else one
+// that can log in (has a password); else the original seed row; else the first.
+// Any password on a discarded duplicate is carried onto the keeper so sign-in
+// keeps working. Returns true if anything changed.
+function normalizeRoster(items: User[], ws: string): boolean {
+  const groups = new Map<string, User[]>();
+  for (const u of items) {
+    if (u.workspaceId !== ws || u.removed) continue;
+    const key = norm(u.name);
+    if (!key) continue;
+    const g = groups.get(key);
+    if (g) g.push(u);
+    else groups.set(key, [u]);
+  }
+  let changed = false;
+  for (const [name, dups] of groups) {
+    if (dups.length < 2) continue; // already one row — nothing to unify
+    const seedEmail = SEED_EMAIL_BY_NAME.get(name);
+    const keeper =
+      (seedEmail ? dups.find((d) => norm(d.email) === seedEmail) : undefined) ||
+      dups.find((d) => d.passwordHash) ||
+      dups.find((d) => SEED_IDS.has(d.id)) ||
+      dups[0];
+    if (!keeper.passwordHash) {
+      const withPw = dups.find((d) => d.passwordHash);
+      if (withPw) {
+        keeper.passwordHash = withPw.passwordHash;
+        changed = true;
+      }
+    }
+    for (const d of dups) {
+      if (d !== keeper && !d.removed) {
+        d.removed = true;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+// Return the workspace's users, seeding the real employees on first use and
+// keeping the roster de-duplicated (one email per teammate).
 function ensure(ws: string): User[] {
   const items = load();
+  let changed = false;
   if (!items.some((u) => u.workspaceId === ws)) {
     items.push(...SEED.map((s) => full(s, ws)));
-    save(items);
+    changed = true;
   }
+  if (normalizeRoster(items, ws)) changed = true;
+  if (changed) save(items);
   return items;
+}
+
+const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated'];
+
+// Apply the editable fields present in `b` onto a user, keeping name in sync
+// with first/last. Shared by the add-merge path and PATCH.
+function applyEditable(user: User, b: Partial<User>) {
+  for (const k of EDITABLE) if (k in b) (user as Record<string, unknown>)[k] = (b as Record<string, unknown>)[k];
+  if ('firstName' in b || 'lastName' in b) {
+    const nm = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+    if (nm) user.name = nm;
+  }
 }
 
 export const usersRouter = Router();
@@ -98,15 +163,33 @@ usersRouter.get('/', (req, res) => {
   res.json({ users: ensure(ws).filter((u) => u.workspaceId === ws && !u.removed).map(publicUser) });
 });
 
-// Add one or many users. Body: a user object, or { users: [...] }.
+// Add one or many users. Body: a user object, or { users: [...] }. To keep one
+// email per teammate, an incoming user that matches an existing one (by email
+// or name) updates that teammate in place instead of creating a duplicate row.
 usersRouter.post('/', (req, res) => {
   const ws = workspaceId(req);
   const items = ensure(ws);
-  const incoming = Array.isArray(req.body?.users) ? req.body.users : [req.body ?? {}];
-  const added = incoming.map((u: Partial<User>) => full({ ...u, id: undefined }, ws));
-  items.unshift(...added);
+  const incoming: Partial<User>[] = Array.isArray(req.body?.users) ? req.body.users : [req.body ?? {}];
+  const affected: User[] = [];
+  for (const u of incoming) {
+    const email = norm(String(u.email || ''));
+    const name = norm(String(u.name || `${u.firstName || ''} ${u.lastName || ''}`).trim());
+    const existing = items.find(
+      (x) =>
+        x.workspaceId === ws && !x.removed &&
+        ((email && norm(x.email) === email) || (name && norm(x.name) === name))
+    );
+    if (existing) {
+      applyEditable(existing, u);
+      affected.push(existing);
+    } else {
+      const created = full({ ...u, id: undefined }, ws);
+      items.unshift(created);
+      affected.push(created);
+    }
+  }
   save(items);
-  res.json({ users: added.map(publicUser) });
+  res.json({ users: affected.map(publicUser) });
 });
 
 // POST /api/users/login — non-Google sign-in with email + password. Issues the
@@ -147,16 +230,9 @@ function mutate(req: Request, res: Response, fn: (u: User) => void) {
   return res.json({ user: publicUser(user) });
 }
 
-const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated'];
-
 usersRouter.patch('/:id', (req, res) =>
   mutate(req, res, (user) => {
-    const b = req.body ?? {};
-    for (const k of EDITABLE) if (k in b) (user as Record<string, unknown>)[k] = b[k];
-    if ('firstName' in b || 'lastName' in b) {
-      const nm = `${user.firstName || ''} ${user.lastName || ''}`.trim();
-      if (nm) user.name = nm;
-    }
+    applyEditable(user, req.body ?? {});
   })
 );
 
