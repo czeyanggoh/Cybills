@@ -3,7 +3,15 @@ import { Navigate } from 'react-router-dom';
 import { CheckCircle2, Clock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useOrganisations } from '@/lib/organisations';
-import { joinCompany, ROLES } from '@/lib/userStore';
+import { joinCompany } from '@/lib/userStore';
+
+// Self-signup asks for a simple role — an employee who submits, or an
+// admin/approver who reviews. The (CY) admin can fine-tune the exact role on
+// approval. Values map onto the app's underlying roles.
+const JOIN_ROLES = [
+  { value: 'Standard', label: 'Employee' },
+  { value: 'Approver', label: 'Admin / Approver' },
+];
 
 function Field({ label, children }) {
   return (
@@ -107,8 +115,8 @@ export default function Join() {
                 </Field>
                 <Field label="Requested Role">
                   <select className={inputCls} value={role} onChange={(e) => setRole(e.target.value)}>
-                    {ROLES.map((r) => (
-                      <option key={r} value={r}>{r}</option>
+                    {JOIN_ROLES.map((r) => (
+                      <option key={r.value} value={r.value}>{r.label}</option>
                     ))}
                   </select>
                 </Field>
