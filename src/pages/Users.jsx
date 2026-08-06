@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Search, ChevronDown, Settings2, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
@@ -61,7 +62,8 @@ function ManageMenu({ user, onEdit, onToast }) {
 }
 
 export default function Users() {
-  const [tab, setTab] = useState('active');
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(params.get('tab') === 'pending' ? 'pending' : 'active');
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [multiOpen, setMultiOpen] = useState(false);
