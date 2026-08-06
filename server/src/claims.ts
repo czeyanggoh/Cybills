@@ -151,13 +151,19 @@ claimsRouter.post('/:id/submit', (req, res) =>
   })
 );
 
-// Only the assigned approver may decide — enforced when we know both the
-// approver's email and the caller's (signed-in) email. Permissive when there's
-// no session (mock/dev) so local testing isn't bricked.
+// Only the assigned approver may decide. Match on email OR name (mirroring the
+// client's own check): the approver is picked from the team roster, and a
+// person's roster email can differ from their login email (e.g. a gmail login
+// vs a work address) — matching only on email would then lock out the real
+// approver. Permissive when no approver is assigned, or in a session-less
+// mock/dev context.
 function ensureApprover(claim: Claim, me: { email: string; name: string }, res: Response): Response | void {
-  if (me.email && claim.approverEmail && me.email.toLowerCase() !== claim.approverEmail.toLowerCase()) {
-    return res.status(403).json({ error: 'not_approver', approver: claim.approver });
-  }
+  if (!claim.approverEmail && !claim.approver) return; // open claim — anyone may decide
+  const norm = (s: string) => s.trim().toLowerCase();
+  const emailMatch = Boolean(me.email && claim.approverEmail && norm(me.email) === norm(claim.approverEmail));
+  const nameMatch = Boolean(me.name && claim.approver && norm(me.name) === norm(claim.approver));
+  if (emailMatch || nameMatch) return;
+  return res.status(403).json({ error: 'not_approver', approver: claim.approver });
 }
 
 claimsRouter.post('/:id/approve', (req, res) =>
