@@ -63,7 +63,9 @@ function ExportsTable({ kind }) {
 
 export default function Exports({ workspace = 'costs' }) {
   const [tab, setTab] = useState(workspace === 'sales' ? 'sales' : 'costs');
-  const subnav = workspace === 'sales' ? <SalesSubnav /> : <CostsSubnav />;
+  // Standalone top-level Exports page (workspace="all") shows no Costs/Sales
+  // subnav — it's its own destination, like Dext's Exports.
+  const subnav = workspace === 'all' ? undefined : workspace === 'sales' ? <SalesSubnav /> : <CostsSubnav />;
 
   return (
     <AppShell subnav={subnav}>

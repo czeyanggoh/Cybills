@@ -1,7 +1,7 @@
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth';
-import RequireAuth, { RequireSignedIn } from '@/components/RequireAuth';
+import RequireAuth, { RequireSignedIn, RequireAdmin } from '@/components/RequireAuth';
 import Login from './pages/Login';
 import Join from './pages/Join';
 import Costs from './pages/Costs';
@@ -61,9 +61,10 @@ function App() {
             <Route path="/expense-claims/:id" element={<Protected><ExpenseClaimDetail /></Protected>} />
             <Route path="/supplier-statements" element={<Protected><SupplierStatements /></Protected>} />
             <Route path="/suppliers" element={<Protected><Suppliers /></Protected>} />
-            <Route path="/users" element={<Protected><UsersPage /></Protected>} />
+            <Route path="/exports" element={<Protected><Exports workspace="all" /></Protected>} />
+            <Route path="/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
             <Route path="/submission-history" element={<Protected><SubmissionHistory /></Protected>} />
-            <Route path="/settings" element={<Protected><Settings /></Protected>} />
+            <Route path="/settings" element={<RequireAdmin><Settings /></RequireAdmin>} />
             <Route path="/profile" element={<Protected><Profile /></Protected>} />
             <Route path="/support" element={<Protected><SupportDesk /></Protected>} />
             {/* Feature Requests merged into Support Desk — keep old links working. */}

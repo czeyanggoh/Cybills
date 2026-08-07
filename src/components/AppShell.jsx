@@ -9,10 +9,10 @@ import {
   Plus,
   HelpCircle,
   ChevronDown,
-  Rocket,
   Users,
   User,
   History,
+  Download,
   Settings,
   LogOut,
   Check,
@@ -47,10 +47,10 @@ const TOP_TABS = [
 ];
 
 const BOTTOM = [
-  { label: 'Get started', icon: Rocket },
-  { label: 'Users', icon: Users, to: '/users' },
+  { label: 'Users', icon: Users, to: '/users', adminOnly: true },
+  { label: 'Exports', icon: Download, to: '/exports' },
   { label: 'Submission history', icon: History, to: '/submission-history' },
-  { label: 'Business settings', icon: Settings, to: '/settings' },
+  { label: 'Business settings', icon: Settings, to: '/settings', adminOnly: true },
 ];
 
 // Lets any page open the "Add documents" drawer (e.g. the Costs header button).
@@ -221,10 +221,15 @@ function OrganisationSwitcher() {
 // App chrome for the signed-in experience. `subnav` renders an optional second
 // column (used by Costs for its inbox/expense-claims/suppliers list).
 export default function AppShell({ subnav = null, children }) {
-  const { user, signOut } = useAuth();
+  const { user, membership, googleEnabled, signOut } = useAuth();
   const navigate = useNavigate();
   const [addOpen, setAddOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
+
+  // Admin-only surfaces (Users, Business settings) are hidden from Standard
+  // employees. Mock mode (no real auth) shows everything so the demo works.
+  const isAdmin = !googleEnabled || ['Business Admin', 'User Admin'].includes(membership.user?.role);
+  const bottomNav = BOTTOM.filter((item) => isAdmin || !item.adminOnly);
 
   const handleSignOut = async () => {
     await signOut();
@@ -260,7 +265,7 @@ export default function AppShell({ subnav = null, children }) {
             ))}
           </nav>
           <div className="flex flex-col gap-1 border-t p-3">
-            {BOTTOM.map((item) => (
+            {bottomNav.map((item) => (
               <button
                 key={item.label}
                 type="button"
@@ -338,13 +343,15 @@ export default function AppShell({ subnav = null, children }) {
                       >
                         <User className="h-4 w-4" strokeWidth={1.75} /> Profile
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => { setUserMenu(false); navigate('/settings'); }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-                      >
-                        <Settings className="h-4 w-4" strokeWidth={1.75} /> Business settings
-                      </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => { setUserMenu(false); navigate('/settings'); }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                        >
+                          <Settings className="h-4 w-4" strokeWidth={1.75} /> Business settings
+                        </button>
+                      )}
                       {user && (
                         <button
                           type="button"

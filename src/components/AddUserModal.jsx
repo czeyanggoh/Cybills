@@ -44,7 +44,7 @@ export default function AddUserModal({ open, onClose, onAdd }) {
   const commit = () => { onAdd(form); close(); };
 
   const input = 'h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
-  const TITLES = { details: 'Details', role: 'Role', review: 'Review and invite' };
+  const TITLES = { details: 'Details', role: 'Role', review: 'Review and add' };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -144,12 +144,14 @@ export default function AddUserModal({ open, onClose, onAdd }) {
               <p>The user will have access to your account with the following permissions:</p>
               <p className="pl-4"><span className="font-medium">Role:</span> {form.role}</p>
               {form.login ? (
-                <p className="text-muted-foreground">An invitation email will be sent to {form.email}.</p>
+                <p className="text-muted-foreground">
+                  They&apos;ll get access straight away — they can sign in with {form.email}.
+                </p>
               ) : (
-                <p className="text-muted-foreground">This user has no login access and will be added without an invitation.</p>
+                <p className="text-muted-foreground">This user is added without login access.</p>
               )}
               <div className="flex items-center justify-between border-t pt-4">
-                <span className="text-sm">Send a text invitation</span>
+                <span className="text-sm">Add a mobile number</span>
                 <Toggle on={form.sendText} onToggle={() => set('sendText', !form.sendText)} />
               </div>
               {form.sendText && (

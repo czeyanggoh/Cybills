@@ -152,6 +152,21 @@ function ensure(ws: string): User[] {
   return items;
 }
 
+// The roster member for the signed-in caller (by session email), or null in a
+// session-less (mock/dev) context. Used for role-based access control.
+export function memberForSession(req: Request): User | null {
+  const s = readSession(req);
+  if (!s?.email) return null;
+  const ws = workspaceId(req);
+  const email = norm(s.email);
+  return ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email) ?? null;
+}
+
+// Business/User Admins manage the account; everyone else is limited.
+export function isAdminRole(role: string | undefined): boolean {
+  return role === 'Business Admin' || role === 'User Admin';
+}
+
 const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'companyId', 'companyName'];
 
 // Apply the editable fields present in `b` onto a user, keeping name in sync

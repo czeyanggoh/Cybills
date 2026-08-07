@@ -37,3 +37,22 @@ export function RequireSignedIn({ children }) {
 
   return children;
 }
+
+// Admin-only pages (Users, Business settings). Runs the same auth/membership
+// gate as RequireAuth, then requires a Business/User Admin role; non-admins are
+// bounced to Costs. Mock mode (no real auth) stays open for the demo.
+export function RequireAdmin({ children }) {
+  const { loading, googleEnabled, user, membership } = useAuth();
+
+  if (loading) return <Loading />;
+  if (googleEnabled && !user) return <Navigate to="/login" replace />;
+  if (googleEnabled && user && (membership.status === 'none' || membership.status === 'pending')) {
+    return <Navigate to="/join" replace />;
+  }
+
+  const role = membership.user?.role;
+  const isAdmin = !googleEnabled || ['Business Admin', 'User Admin'].includes(role);
+  if (!isAdmin) return <Navigate to="/costs" replace />;
+
+  return children;
+}
