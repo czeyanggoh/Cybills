@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { displayItemId } from '@/lib/bills';
+import { displayItemId, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { cleanHistoryText } from '@/lib/exportFormat';
 
 // Server-backed expense claims (shared across the workspace). Talks to
@@ -70,10 +70,15 @@ export async function addItemToClaim(claimId, txn) {
   notifyClaimsChanged();
 }
 
-// Remove items (by itemId) from a claim.
+// Remove items (by itemId) from a claim. Following Dext, the underlying cost
+// documents return to the Costs inbox (status 'new') rather than staying under
+// Archive — the itemId is the bill id. Failures (e.g. demo docs that aren't
+// persisted server-side) are ignored.
 export async function removeItemsFromClaim(claimId, itemIds) {
   await post(`/${claimId}/items/remove`, { itemIds });
+  await Promise.all(itemIds.map((id) => updateBill(id, { status: 'new' }).catch(() => {})));
   notifyClaimsChanged();
+  notifyBillsChanged();
 }
 
 // Bulk-edit fields (e.g. category) on selected claim items.
