@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, Copy, Check, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { useAuth } from '@/lib/auth';
 import ChangeEmailModal from '@/components/ChangeEmailModal';
@@ -11,7 +11,6 @@ const NAV = [
   { key: 'personal', label: 'Personal details' },
   { key: 'login', label: 'Login details' },
   { key: 'security', label: 'Security' },
-  { key: 'extract', label: 'Extract by Email' },
   { key: 'language', label: 'Language and time zone' },
   { key: 'bookkeeping', label: 'Bookkeeping email notifications' },
   { key: 'approval', label: 'Approval email notifications' },
@@ -117,30 +116,6 @@ function Toggle({ defaultOn = false, on: onProp = undefined, onToggle = undefine
   );
 }
 
-function CopyRow({ label, value }) {
-  const [done, setDone] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setDone(true);
-      setTimeout(() => setDone(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
-  };
-  return (
-    <div className="flex items-center justify-between gap-3 text-sm">
-      <span className="font-medium">{label}</span>
-      <span className="flex min-w-0 items-center gap-2">
-        <span className="truncate font-mono text-muted-foreground">{value}</span>
-        <button type="button" onClick={copy} className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="Copy">
-          {done ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-        </button>
-      </span>
-    </div>
-  );
-}
-
 // A "title + description" row with a control on the right (security / 2FA).
 function ActionRow({ title, desc, children }) {
   return (
@@ -193,33 +168,6 @@ function Security({ onChangePassword }) {
       <ActionRow title="Password" desc="Update your password to keep your account safe">
         <OutlineButton onClick={onChangePassword}>Change</OutlineButton>
       </ActionRow>
-    </Card>
-  );
-}
-
-function ExtractByEmail({ prefix }) {
-  return (
-    <Card title="Extract by Email">
-      <p className="text-sm text-muted-foreground">
-        Add documents to your business CYBills account by emailing them to the addresses below.
-      </p>
-      <Row label="Business"><Select defaultValue="Red Alpha Cybersecurity - ST Eng" options={['Red Alpha Cybersecurity - ST Eng']} /></Row>
-      <Row label="Your email address for Extract by Email begins with"><TextInput defaultValue={prefix} readOnly /></Row>
-      <div className="space-y-2 border-t pt-4">
-        <p className="text-sm font-semibold">Costs</p>
-        <p className="text-xs text-muted-foreground">Give these email addresses to your suppliers. They can then email their invoices straight into CYBills.</p>
-        <div className="space-y-2 pt-1">
-          <CopyRow label="Single documents" value={`${prefix}@in.cybills.cc`} />
-          <CopyRow label="Multiple documents" value={`${prefix}@multiple.cybills.cc`} />
-        </div>
-      </div>
-      <div className="space-y-2 border-t pt-4">
-        <p className="text-sm font-semibold">Sales</p>
-        <div className="space-y-2 pt-1">
-          <CopyRow label="Single documents" value={`${prefix}+sales@in.cybills.cc`} />
-          <CopyRow label="Multiple documents" value={`${prefix}+sales@multiple.cybills.cc`} />
-        </div>
-      </div>
     </Card>
   );
 }
@@ -301,7 +249,6 @@ const SECTIONS = {
   personal: PersonalDetails,
   login: LoginDetails,
   security: Security,
-  extract: ExtractByEmail,
   language: LanguageZone,
   bookkeeping: Bookkeeping,
   approval: Approval,
@@ -320,13 +267,11 @@ export default function Profile() {
   const last = rest.join(' ') || '';
   // A locally-changed email (Change email) takes precedence over the session one.
   const email = profile.email || user?.email || 'astridy2004@gmail.com';
-  const prefix = `${fullName.toLowerCase().replace(/\s+/g, '.')}.cybm`;
 
   const props = {
     first,
     last,
     email,
-    prefix,
     onChangeEmail: () => setEmailModal(true),
     onChangePassword: () => setPwModal(true),
   };
