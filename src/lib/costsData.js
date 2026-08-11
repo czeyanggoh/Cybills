@@ -1,18 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
-import { DOCS } from '@/data/docs';
 import { useClaims } from '@/lib/claimStore';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
-import { getDocOverrides, applyOverride, DOC_OVERRIDES_EVENT } from '@/lib/docOverrides';
 import { USERS_EVENT } from '@/lib/userStore';
-import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 
-// Which documents belong in each Costs tab, by status. Uploaded bills carry
-// status new/ready/expenseclaim/archived; sample docs may also be 'viewed' or
-// 'review'. Used for both the visible rows and the tab/subnav count badges so
-// the numbers always tie to the actual line items.
-// A cost is "complete" when it carries the fields the workflow needs. Mirrors
-// the server's costComplete so demo docs and persisted bills follow one rule.
-function isComplete(d) {
+// The fields a cost document needs before it's "ready" (moves out of the inbox).
+// Surfaced in the UI so users know exactly why something is still in the inbox.
+export const READY_FIELDS = ['Supplier', 'Date', 'Category', 'Total'];
+
+// A cost is "complete" (→ Ready) when it carries those fields: a real supplier
+// (not "Unknown supplier"), a date, a real category (not "Uncategorised"), and a
+// total above 0. Mirrors the server's costComplete so both follow one rule.
+export function isComplete(d) {
   const has = (v) => v != null && String(v).trim() !== '' && String(v).trim() !== '—';
   const supplier = has(d.supplier) && String(d.supplier).trim().toLowerCase() !== 'unknown supplier';
   const category = has(d.category) && String(d.category).trim().toLowerCase() !== 'uncategorised';
@@ -20,20 +18,21 @@ function isComplete(d) {
   return supplier && has(d.date) && category && total;
 }
 
-// Demo docs keep hard-coded seed statuses, so a complete one would otherwise sit
-// in the Inbox forever. Apply the same auto-ready rule the server applies to
-// uploads: complete → Ready, incomplete → Inbox. Explicit review/claim/archived
-// states are left alone.
-function withDerivedReadiness(d) {
-  if ((d.status === 'new' || d.status === 'viewed') && isComplete(d)) return { ...d, status: 'ready' };
-  if (d.status === 'ready' && !isComplete(d)) return { ...d, status: 'new' };
-  return d;
+// The specific fields still missing on a document (for a per-row explanation).
+export function missingFields(d) {
+  const has = (v) => v != null && String(v).trim() !== '' && String(v).trim() !== '—';
+  const out = [];
+  if (!(has(d.supplier) && String(d.supplier).trim().toLowerCase() !== 'unknown supplier')) out.push('Supplier');
+  if (!has(d.date)) out.push('Date');
+  if (!(has(d.category) && String(d.category).trim().toLowerCase() !== 'uncategorised')) out.push('Category');
+  if (!(Number(String(d.total ?? '').replace(/[^0-9.-]/g, '')) > 0)) out.push('Total');
+  return out;
 }
 
 export function rowsFor(docs, key) {
   // Dext-style: the Inbox is the whole "not ready for export" pool, and
-  // "To review" is a FILTER within it (items flagged for a human to check) —
-  // not a separate bucket. So review items stay counted/shown in the Inbox.
+  // "To review" is a FILTER within it (items flagged for a human) — not a
+  // separate bucket. So review items stay counted/shown in the Inbox.
   if (key === 'processing') return docs.filter((d) => d.status === 'processing');
   if (key === 'inbox') return docs.filter((d) => d.status === 'new' || d.status === 'viewed' || d.status === 'review');
   if (key === 'review') return docs.filter((d) => d.status === 'review');
@@ -42,11 +41,11 @@ export function rowsFor(docs, key) {
   return [];
 }
 
-// Loads the combined Costs document set (persisted bills + sample docs with any
-// local edits applied) and keeps it in sync with upload / edit events.
+// Loads the real Costs document set (persisted bills) and keeps it in sync with
+// upload / edit events. (Seed/demo sample rows were removed — the list shows
+// only real uploaded documents.)
 export function useCostsDocs() {
   const [uploaded, setUploaded] = useState([]);
-  const [overrides, setOverrides] = useState(() => getDocOverrides());
 
   const reload = useCallback(async () => {
     // Only cost-workspace bills belong in Costs; sales uploads have kind==='sales'.
@@ -65,24 +64,7 @@ export function useCostsDocs() {
     };
   }, [reload]);
 
-  useEffect(() => {
-    const sync = () => setOverrides(getDocOverrides());
-    window.addEventListener(DOC_OVERRIDES_EVENT, sync);
-    return () => window.removeEventListener(DOC_OVERRIDES_EVENT, sync);
-  }, []);
-
-  // Legacy demo/sample docs belong to the primary org only — a secondary org's
-  // books show just its own real uploads, so switching orgs shows different data.
-  const { data: organisations = [] } = useOrganisations();
-  const activeId = getActiveOrganisationId();
-  const active = organisations.find((o) => o.id === activeId);
-  const showSamples = !activeId || Boolean(active?.isPrimary);
-
-  const sampleDocs = showSamples
-    ? DOCS.map((d) => withDerivedReadiness(applyOverride(d, overrides)))
-    : [];
-  const allDocs = [...uploaded, ...sampleDocs];
-  return { allDocs, sampleDocs, uploaded, reload };
+  return { allDocs: uploaded, sampleDocs: [], uploaded, reload };
 }
 
 // Live counts for every Costs tab + the subnav badges, derived from real rows.

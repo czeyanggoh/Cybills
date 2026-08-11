@@ -10,6 +10,7 @@ import {
   Filter,
   Settings2,
   ListChecks,
+  Info,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -734,6 +735,20 @@ export default function Costs() {
             <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-foreground">
               <span>{mergeNote}</span>
               <button type="button" onClick={() => setMergeNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
+            </div>
+          )}
+
+          {(tab === 'inbox' || tab === 'review' || tab === 'ready') && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+              <span>
+                A document moves to <span className="font-medium text-foreground">Ready</span> automatically once it has a{' '}
+                <span className="font-medium text-foreground">Supplier</span>,{' '}
+                <span className="font-medium text-foreground">Date</span>,{' '}
+                <span className="font-medium text-foreground">Category</span>, and a{' '}
+                <span className="font-medium text-foreground">Total</span> above 0. While any of those is missing it stays
+                in the <span className="font-medium text-foreground">Inbox</span> to review — no manual “Move to ready” needed.
+              </span>
             </div>
           )}
 

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Flag, Image, ChevronDown, Search, Filter, Settings2 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
-import { SALES } from '@/data/sales';
 import { useCategoryOptions } from '@/lib/organisations';
 import {
   fetchBills,
@@ -129,8 +128,8 @@ export default function Sales() {
   const categoryOptions = useCategoryOptions();
   const salesBills = useSalesBills();
 
-  // Persisted uploads first (newest work), then the sample rows.
-  const allSales = [...salesBills, ...SALES];
+  // Only real uploaded sales documents (seed/demo sample rows were removed).
+  const allSales = salesBills;
 
   const statusOf = (s) => (s.persisted ? s.status || 'new' : statusMap[s.id] || 'viewed');
   const matchTab = (key, st) => {
