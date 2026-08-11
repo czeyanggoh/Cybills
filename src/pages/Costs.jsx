@@ -11,6 +11,7 @@ import {
   Settings2,
   ListChecks,
   Info,
+  Trash2,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -554,6 +555,13 @@ export default function Costs() {
     else setDocOverride(d.id, { category: value });
   };
 
+  // Delete a single document (soft delete — leaves every tab). Confirms first.
+  const deleteOne = (d) => {
+    if (!window.confirm(`Delete this document from ${d.supplier || 'Unknown supplier'}? It will be removed from every tab.`)) return;
+    if (d.persisted) updateBill(d.id, { status: 'deleted' }).then(reload).catch(() => {});
+    else setDocOverride(d.id, { status: 'deleted' });
+  };
+
   // Pick a GST/tax rate inline. Fills the tax amount from the rate (GST-inclusive)
   // and persists — replaces the old fixed "Extracted amount" placeholder.
   const changeTaxRate = (d, name) => {
@@ -773,6 +781,7 @@ export default function Costs() {
                   <SortTh label="Total" sortKey="total" sort={sort} setSort={setSort} align="right" />
                   <SortTh label="Tax" sortKey="tax" sort={sort} setSort={setSort} align="right" />
                   <th className="px-3 py-2.5 font-medium">Tax rate</th>
+                  <th className="w-10 px-2 py-2.5"><span className="sr-only">Delete</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -826,11 +835,22 @@ export default function Costs() {
                         ))}
                       </select>
                     </td>
+                    <td className="px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => deleteOne(d)}
+                        title="Delete document"
+                        aria-label="Delete document"
+                        className="text-muted-foreground transition-colors hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                    <td colSpan={10} className="px-4 py-16 text-center text-sm text-muted-foreground">
                       <Plus className="mx-auto mb-2 h-5 w-5" strokeWidth={1.5} />
                       {tab === 'processing'
                         ? 'Nothing processing right now.'
