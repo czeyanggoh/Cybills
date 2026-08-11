@@ -21,6 +21,7 @@ import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { getExtractionAccounts, useCategoryOptions } from '@/lib/organisations';
 import { useProjectOptions, useList } from '@/lib/listsStore';
+import { useUsers } from '@/lib/userStore';
 import { CUSTOMERS } from '@/data/customers';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { usePaymentMethods } from '@/lib/paymentMethods';
@@ -156,6 +157,10 @@ export default function CostDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { visionEnabled, user } = useAuth();
+  const teamUsers = useUsers();
+  const ownerOptions = Array.from(
+    new Set([user?.name || user?.email || 'Astrid Yang', ...teamUsers.map((u) => u.name || u.email).filter(Boolean)])
+  );
   const categoryOptions = useCategoryOptions();
   const projectOptions = useProjectOptions();
   const customerOptions = CUSTOMERS.map((c) => c.name);
@@ -243,7 +248,7 @@ export default function CostDetail() {
   const SERVER_FIELDS = {
     supplier: 'supplier', date: 'date', category: 'category', currency: 'currency',
     total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
-    taxRate: 'taxRate', description: 'description',
+    taxRate: 'taxRate', description: 'description', user: 'createdBy',
   };
   const set = (key, value) => {
     setData((d) => ({ ...d, [key]: value }));
@@ -763,7 +768,7 @@ export default function CostDetail() {
 
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={doc.itemId} readOnly /></Field>
-              <Field label="Document owner"><Input value={data.user} onChange={(v) => set('user', v)} /></Field>
+              <Field label="Document owner"><EditableSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
               <Field label="Type"><Input value={data.type} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date"><Input value={data.date} onChange={(v) => set('date', v)} /></Field>
               <Field label="Supplier"><Input value={data.supplier} onChange={(v) => set('supplier', v)} /></Field>

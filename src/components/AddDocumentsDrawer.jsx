@@ -212,12 +212,17 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const [mode, setMode] = useState('file');
   const [items, setItems] = useState([]);
   const [vaultItems, setVaultItems] = useState([]);
-  // Who the uploaded documents are attributed to — a real dropdown now (it used
-  // to be a dead label). Defaults to the signed-in user.
+  // Who the uploaded documents are attributed to. Stored as the display name
+  // (not an email) so attribution shows correctly regardless of the roster's
+  // email→name mapping. Defaults to the signed-in user.
+  const meName = user?.name || user?.email || 'Astrid Yang';
   const [owner, setOwner] = useState('');
   useEffect(() => {
-    if (!owner && user?.email) setOwner(user.email);
-  }, [owner, user]);
+    if (!owner) setOwner(meName);
+  }, [owner, meName]);
+  const ownerOptions = Array.from(
+    new Set([meName, ...users.map((u) => u.name || u.email).filter(Boolean)])
+  );
 
   // Default the tab to the workspace the drawer was opened from (Sales page →
   // Sales tab, etc.) each time it opens.
@@ -427,11 +432,8 @@ export default function AddDocumentsDrawer({ open, onClose }) {
                       onChange={(e) => setOwner(e.target.value)}
                       className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      {!users.some((u) => u.email === owner) && owner && (
-                        <option value={owner}>{user?.name || user?.email || owner}</option>
-                      )}
-                      {users.map((u) => (
-                        <option key={u.id} value={u.email}>{u.name || u.email}</option>
+                      {ownerOptions.map((n) => (
+                        <option key={n} value={n}>{n}</option>
                       ))}
                     </select>
                     <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">▾</span>

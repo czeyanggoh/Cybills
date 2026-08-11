@@ -273,6 +273,7 @@ const EDITABLE: (keyof Bill)[] = [
   'taxRate',
   'description',
   'status',
+  'createdBy',
 ];
 
 // Attach (or replace) the stored file on an existing bill. Returns null if not
