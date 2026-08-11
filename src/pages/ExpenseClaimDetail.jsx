@@ -27,6 +27,7 @@ import {
   removeItemsFromClaim,
   updateClaimItems,
   moveItemsToClaim,
+  markClaimSentToHr,
 } from '@/lib/claimStore';
 import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
 import { useUsers } from '@/lib/userStore';
@@ -141,6 +142,14 @@ export default function ExpenseClaimDetail() {
     const employee = users.find((u) => u.name.trim().toLowerCase() === who)?.email || '';
     try {
       await sendClaimToCyhr(claim, employee);
+      // Stamp the handoff so the button flips to "Re-send" and history records it.
+      // CYHR keys the payable on claimId, so a re-send updates it in place.
+      await markClaimSentToHr(claim.id, claim.total).catch(() => {});
+      setPayNote(
+        claim.hrSentAt
+          ? `Re-sent to CYHR (${claim.currency} ${claim.total}). CYHR updates the existing payable by claim ID.`
+          : `Sent to CYHR for payment (${claim.currency} ${claim.total}). Re-send anytime to update it.`
+      );
     } catch {
       setPayNote('Could not create the CYHR payment link. Check the server logs.');
     }
@@ -257,6 +266,11 @@ export default function ExpenseClaimDetail() {
           <button type="button" onClick={() => setPayNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
         </div>
       )}
+      {claim.hrSentAt && (
+        <div className="mb-3 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          Sent to HR for payment{claim.hrSentAmount ? ` · ${claim.currency} ${claim.hrSentAmount}` : ''}. Re-sending updates the same payable in CYHR by claim ID.
+        </div>
+      )}
       {/* Action bar */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <TopButton subtle onClick={() => navigate('/expense-claims')}>
@@ -282,7 +296,7 @@ export default function ExpenseClaimDetail() {
             <span className="inline-flex h-8 items-center gap-1 rounded-md bg-foreground px-3 text-sm font-medium text-background">
               Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
             </span>
-            <TopButton onClick={sendToHr}>Send to HR for payment</TopButton>
+            <TopButton onClick={sendToHr}>{claim.hrSentAt ? 'Re-send to HR (update)' : 'Send to HR for payment'}</TopButton>
           </>
         ) : claim.approvalStatus === 'rejected' ? (
           <>

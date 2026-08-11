@@ -40,6 +40,11 @@ type Claim = {
   deleted: boolean;
   createdBy: string;
   createdAt: string;
+  // CYHR handoff (Model B): when the approved payable was last sent to CYHR, the
+  // amount sent, and by whom. Re-sending updates the same CYHR payable by claimId.
+  hrSentAt: string;
+  hrSentAmount: string;
+  hrSentBy: string;
 };
 
 const COLLECTION = 'claims';
@@ -80,6 +85,9 @@ claimsRouter.post('/', (req, res) => {
     deleted: false,
     createdBy: me.email,
     createdAt: nowIso(),
+    hrSentAt: '',
+    hrSentAmount: '',
+    hrSentBy: '',
   };
   const items = load();
   items.push(claim);
@@ -192,6 +200,25 @@ claimsRouter.post('/:id/reject', (req, res) =>
     claim.decidedBy = me.name;
     claim.decidedAt = nowIso();
     claim.history.unshift({ text: `This claim was rejected by ${me.name}`, by: me.name, at: nowIso() });
+  })
+);
+
+// POST /api/claims/:id/mark-hr-sent  { amount } — record that the approved
+// payable was handed to CYHR. Re-callable: CYHR upserts by claimId, so
+// re-sending updates the existing payable (and its amount) rather than
+// creating a duplicate. Only meaningful once the claim is approved.
+claimsRouter.post('/:id/mark-hr-sent', (req, res) =>
+  mutate(req, res, (claim, me) => {
+    const wasSent = Boolean(claim.hrSentAt);
+    claim.hrSentAt = nowIso();
+    claim.hrSentAmount = String(req.body?.amount ?? '');
+    claim.hrSentBy = me.name;
+    const amt = claim.hrSentAmount ? ` (${claim.currency} ${claim.hrSentAmount})` : '';
+    claim.history.unshift({
+      text: `Payable ${wasSent ? 're-sent' : 'sent'} to HR for payment${amt}`,
+      by: me.name,
+      at: nowIso(),
+    });
   })
 );
 

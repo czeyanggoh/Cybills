@@ -98,6 +98,13 @@ export async function moveItemsToClaim(fromClaimId, toClaimId, txns) {
   notifyClaimsChanged();
 }
 
+// Record that an approved claim's payable was sent to CYHR (re-callable — CYHR
+// updates the same payable by claimId).
+export async function markClaimSentToHr(claimId, amount) {
+  await post(`/${claimId}/mark-hr-sent`, { amount });
+  notifyClaimsChanged();
+}
+
 // Submit a claim for approval to a chosen approver (name + email so the server
 // can enforce that only that person decides).
 export async function submitForApproval(claimId, approver, _actor, approverEmail = '') {
