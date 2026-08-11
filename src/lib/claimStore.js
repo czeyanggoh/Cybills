@@ -99,9 +99,10 @@ export async function moveItemsToClaim(fromClaimId, toClaimId, txns) {
 }
 
 // Record that an approved claim's payable was sent to CYHR (re-callable — CYHR
-// updates the same payable by claimId).
-export async function markClaimSentToHr(claimId, amount) {
-  await post(`/${claimId}/mark-hr-sent`, { amount });
+// updates the same payable by claimId). `revision` is the monotonic counter sent
+// on the link so CYHR can reject a stale re-send.
+export async function markClaimSentToHr(claimId, amount, revision) {
+  await post(`/${claimId}/mark-hr-sent`, { amount, revision });
   notifyClaimsChanged();
 }
 

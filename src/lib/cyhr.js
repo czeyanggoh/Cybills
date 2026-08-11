@@ -73,7 +73,7 @@ export async function submitToCyhr(doc, employee = '') {
 // Model B: route an APPROVED expense claim's payable to CYHR for payment.
 // Claims are client-side, so the claim fields are sent to the server to sign.
 // Returns the signed CYHR payment URL, or throws with a code.
-export async function createCyhrPaymentLink(claim, employee = '') {
+export async function createCyhrPaymentLink(claim, employee = '', extra = {}) {
   const res = await fetch('/api/cyhr/payment-link', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -86,6 +86,11 @@ export async function createCyhrPaymentLink(claim, employee = '') {
         currency: claim.currency,
         date: claim.endDate || claim.claimDate || '',
         approvedBy: claim.decidedBy || '',
+        // Re-send metadata (CYHR upserts by claimId): monotonic revision so a
+        // stale re-send is ignored, an audit reason, and the GL code.
+        revision: extra.revision,
+        reason: extra.reason,
+        glCode: extra.glCode,
       },
     }),
   });
@@ -101,10 +106,10 @@ export async function createCyhrPaymentLink(claim, employee = '') {
 
 // Open the signed payment link in a new tab (finance confirms the payable in
 // CYHR). Opens the tab synchronously so pop-up blockers treat it as user-driven.
-export async function sendClaimToCyhr(claim, employee = '') {
+export async function sendClaimToCyhr(claim, employee = '', extra = {}) {
   const tab = window.open('', '_blank');
   try {
-    const url = await createCyhrPaymentLink(claim, employee);
+    const url = await createCyhrPaymentLink(claim, employee, extra);
     if (tab) tab.location.href = url;
     else window.open(url, '_blank');
     return url;

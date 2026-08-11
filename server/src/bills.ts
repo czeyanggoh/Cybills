@@ -5,6 +5,7 @@ import {
   insertBill,
   updateBill,
   reconcileReadiness,
+  costComplete,
   sweepStuckProcessing,
   setBillFile,
   listBills,
@@ -141,7 +142,15 @@ billsRouter.post('/bills/:id/finalize', (req, res) => {
     { fileHash: '', supplier: updated.supplier, invoiceNumber: updated.invoiceNumber, total: updated.total, date: updated.date },
     updated.id
   );
-  const bill = reconcileReadiness(orgId, req.params.id) || updated;
+  // Advance out of Processing now that Vision has read it: a complete document
+  // lands straight in Ready, an incomplete one in the inbox (New). (Reconcile on
+  // its own only toggles new↔ready, never leaves 'processing'.)
+  let bill = updated;
+  if (bill.status === 'processing') {
+    bill = updateBill(orgId, req.params.id, { status: costComplete(bill) ? 'ready' : 'new' }) || bill;
+  } else {
+    bill = reconcileReadiness(orgId, req.params.id) || bill;
+  }
   res.json({ ok: true, bill: { ...bill, hasFile: Boolean(bill.storageKey) }, duplicate: dup ?? null });
 });
 

@@ -36,6 +36,17 @@ import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf } from '@/lib/claimPdf';
 import { cn } from '@/lib/utils';
 
+// The GL/account code CYHR should book the payable against — the leading number
+// on the category (e.g. "412 - Consulting" → "412"). Only returned when every
+// line shares the same account; otherwise '' (mixed claim → let CYHR default).
+function glCodeForClaim(transactions) {
+  const codes = (transactions || [])
+    .map((t) => (String(t.category || '').match(/^\s*(\d{2,})/) || [])[1])
+    .filter(Boolean);
+  if (!codes.length) return '';
+  return codes.every((c) => c === codes[0]) ? codes[0] : '';
+}
+
 function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false }) {
   return (
     <button
@@ -140,11 +151,16 @@ export default function ExpenseClaimDetail() {
     // the record by email); the server falls back to a default if unknown.
     const who = (claim.claimFor || '').trim().toLowerCase();
     const employee = users.find((u) => u.name.trim().toLowerCase() === who)?.email || '';
+    // Monotonic revision so CYHR ignores a stale re-send; a reason for their
+    // audit trail; and the GL code when every line shares one account.
+    const revision = (claim.hrRevision || 0) + 1;
+    const reason = claim.hrSentAt ? 'Amount corrected in CYBills' : 'Payable created in CYBills';
+    const glCode = glCodeForClaim(claim.transactions);
     try {
-      await sendClaimToCyhr(claim, employee);
+      await sendClaimToCyhr(claim, employee, { revision, reason, glCode });
       // Stamp the handoff so the button flips to "Re-send" and history records it.
       // CYHR keys the payable on claimId, so a re-send updates it in place.
-      await markClaimSentToHr(claim.id, claim.total).catch(() => {});
+      await markClaimSentToHr(claim.id, claim.total, revision).catch(() => {});
       setPayNote(
         claim.hrSentAt
           ? `Re-sent to CYHR (${claim.currency} ${claim.total}). CYHR updates the existing payable by claim ID.`

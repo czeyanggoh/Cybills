@@ -42,9 +42,11 @@ type Claim = {
   createdAt: string;
   // CYHR handoff (Model B): when the approved payable was last sent to CYHR, the
   // amount sent, and by whom. Re-sending updates the same CYHR payable by claimId.
+  // hrRevision is the monotonic counter CYHR uses to reject stale re-sends.
   hrSentAt: string;
   hrSentAmount: string;
   hrSentBy: string;
+  hrRevision: number;
 };
 
 const COLLECTION = 'claims';
@@ -88,6 +90,7 @@ claimsRouter.post('/', (req, res) => {
     hrSentAt: '',
     hrSentAmount: '',
     hrSentBy: '',
+    hrRevision: 0,
   };
   const items = load();
   items.push(claim);
@@ -213,6 +216,9 @@ claimsRouter.post('/:id/mark-hr-sent', (req, res) =>
     claim.hrSentAt = nowIso();
     claim.hrSentAmount = String(req.body?.amount ?? '');
     claim.hrSentBy = me.name;
+    // Monotonic revision so CYHR can reject a stale/replayed re-send.
+    const revision = Number(req.body?.revision);
+    claim.hrRevision = Number.isFinite(revision) && revision > claim.hrRevision ? revision : claim.hrRevision + 1;
     const amt = claim.hrSentAmount ? ` (${claim.currency} ${claim.hrSentAmount})` : '';
     claim.history.unshift({
       text: `Payable ${wasSent ? 're-sent' : 'sent'} to HR for payment${amt}`,

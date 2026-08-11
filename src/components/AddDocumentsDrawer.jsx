@@ -32,18 +32,6 @@ const MODES = [
 
 let uid = 0;
 
-// After an upload is saved it sits in "Processing" (fields being read); a moment
-// later it auto-advances into the inbox — Dext-style, for both Costs and Sales.
-// Module-scoped so the timer still fires if the drawer is closed meanwhile.
-function scheduleMoveToInbox(bill) {
-  if (!bill?.id) return;
-  window.setTimeout(() => {
-    updateBill(bill.id, { status: 'new' })
-      .then(() => notifyBillsChanged())
-      .catch(() => {});
-  }, 1500);
-}
-
 function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, accept = 'image/png,image/jpeg,image/webp,image/gif,application/pdf' }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -290,39 +278,48 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           const bill = result.bill;
           notifyBillsChanged(); // now visible on the Processing page
 
-          // 2) Read with Claude Vision in the background, fill the fields, then
-          //    re-check for a duplicate now that supplier/amount/date are known
-          //    (the create-time check only had the file hash). A duplicate row
-          //    is removed and offered as "Add anyway / Skip".
+          // 2) Read with Claude Vision (when available), then finalize — which
+          //    applies the fields, re-checks for a duplicate now that
+          //    supplier/amount/date are known, and advances the doc out of
+          //    Processing: straight to Ready when complete, else the inbox. No
+          //    artificial delay — it moves the moment reading is done.
+          /** @type {any} */
+          let fields = null;
           if (visionEnabled && VISION_MEDIA.includes(mediaType)) {
             patch(it.id, { status: 'extracting', bill });
             try {
               const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise);
               if (ex) {
-                /** @type {any} */
-                const fieldPatch = { ...ex };
+                fields = { ...ex };
                 if (tab === 'Sales') {
                   const rule = getCustomerRule(ex.supplier);
                   if (rule) {
-                    if (rule.currency) fieldPatch.currency = rule.currency;
-                    if (rule.category) fieldPatch.category = rule.category;
+                    if (rule.currency) fields.currency = rule.currency;
+                    if (rule.category) fields.category = rule.category;
                   }
                 }
-                const fin = await finalizeBill(bill.id, fieldPatch);
-                if (fin?.duplicate) {
-                  await updateBill(bill.id, { status: 'deleted' }).catch(() => {});
-                  notifyBillsChanged();
-                  patch(it.id, { status: 'duplicate', duplicate: fin.duplicate });
-                  return;
-                }
-                notifyBillsChanged();
               }
             } catch {
               // Extraction is best-effort — the document is already saved.
             }
           }
-          patch(it.id, { status: 'added', bill });
-          scheduleMoveToInbox(bill);
+          if (fields) {
+            const fin = await finalizeBill(bill.id, fields);
+            if (fin?.duplicate) {
+              await updateBill(bill.id, { status: 'deleted' }).catch(() => {});
+              notifyBillsChanged();
+              patch(it.id, { status: 'duplicate', duplicate: fin.duplicate });
+              return;
+            }
+            notifyBillsChanged();
+            patch(it.id, { status: 'added', bill: fin?.bill ?? bill });
+          } else {
+            // Nothing read (extraction off/failed) — move straight to the inbox;
+            // no fuzzy dedup on empty fields.
+            const advanced = await updateBill(bill.id, { status: 'new' }).then((r) => r?.bill).catch(() => null);
+            notifyBillsChanged();
+            patch(it.id, { status: 'added', bill: advanced ?? bill });
+          }
         } catch {
           patch(it.id, { status: 'error', error: 'Upload failed' });
         }
@@ -348,21 +345,22 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       }
       const bill = result.bill;
       notifyBillsChanged(); // in Processing
-      // Read in the background, then advance (same as a fresh upload).
+      /** @type {any} */
+      let fields = {};
       if (visionEnabled && payload.fileBase64 && VISION_MEDIA.includes(payload.mediaType)) {
         patch(id, { status: 'extracting', bill });
         try {
           const ex = await fetchExtract(payload.fileBase64, payload.mediaType, await getExtractionAccounts());
-          if (ex) {
-            await updateBill(bill.id, { ...ex }).catch(() => {});
-            notifyBillsChanged();
-          }
+          if (ex) fields = { ...ex };
         } catch {
           // best-effort
         }
       }
-      patch(id, { status: 'added', bill });
-      scheduleMoveToInbox(bill);
+      // Apply fields + advance out of Processing. This is a forced add, so a
+      // duplicate is expected — ignore it (the user chose "Add anyway").
+      const fin = await finalizeBill(bill.id, fields).catch(() => null);
+      notifyBillsChanged();
+      patch(id, { status: 'added', bill: fin?.bill ?? bill });
     } catch {
       patch(id, { status: 'error', error: 'Upload failed' });
     }

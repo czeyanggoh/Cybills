@@ -90,6 +90,14 @@ type ClaimPayment = {
   currency?: string;
   date?: string;
   approvedBy?: string;
+  // Re-send support (confirmed with CYHR): CYHR keys the payable on claimId and
+  // amends in place. `revision` is a monotonic counter — CYHR ignores a re-send
+  // whose revision <= the stored one (stale_revision), so a delayed/replayed
+  // older amount can't clobber a newer one. `reason` is kept in CYHR's audit
+  // trail; `glCode` feeds their GL report. All three are in CYHR's SIGNED_KEYS.
+  revision?: number | string;
+  reason?: string;
+  glCode?: string;
 };
 function paramsForPayment(c: ClaimPayment, employee: string): Record<string, string> {
   return {
@@ -97,11 +105,14 @@ function paramsForPayment(c: ClaimPayment, employee: string): Record<string, str
     type: 'expense_payment',
     claimId: c.claimId != null ? String(c.claimId) : '',
     claimName: c.claimName ?? '',
-    amount: c.total != null ? String(c.total) : '',
+    amount: c.total != null ? String(c.total) : '', // single authoritative current amount
     currency: c.currency ?? '',
     date: c.date ?? '',
     approvedBy: c.approvedBy ?? '',
     employee, // who gets paid — matched to the CYHR employee record by email
+    revision: c.revision != null && c.revision !== '' ? String(c.revision) : '',
+    reason: c.reason ?? '',
+    glCode: c.glCode ?? '',
   };
 }
 
