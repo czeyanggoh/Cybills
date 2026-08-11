@@ -75,8 +75,11 @@ export default function ExpenseClaims() {
   };
   const claims = useClaims();
 
-  const inbox = claims.filter((c) => !c.archived);
-  const approvals = claims.filter((c) => !c.archived && c.approvalStatus === 'awaiting_approval');
+  // Inbox = editable claims (drafts, or rejected ones sent back to fix).
+  // Approvals = claims in the approval flow (awaiting a decision, or approved).
+  const inClaimApprovalFlow = (c) => c.approvalStatus === 'awaiting_approval' || c.approvalStatus === 'approved';
+  const inbox = claims.filter((c) => !c.archived && !inClaimApprovalFlow(c));
+  const approvals = claims.filter((c) => !c.archived && inClaimApprovalFlow(c));
   const archived = claims.filter((c) => c.archived);
 
   const TABS = [

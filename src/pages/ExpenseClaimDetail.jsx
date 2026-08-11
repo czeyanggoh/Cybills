@@ -11,6 +11,7 @@ import {
   Plus,
   FileText,
   X,
+  Lock,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -159,6 +160,11 @@ export default function ExpenseClaimDetail() {
     );
   }
 
+  // A claim in the approval flow (submitted for approval, or approved) is locked
+  // from item edits — otherwise its total could drift after it's been approved
+  // and handed to CYHR for payment. Rejected/draft claims stay editable.
+  const locked = claim.approvalStatus === 'awaiting_approval' || claim.approvalStatus === 'approved';
+
   // Apply any in-session category tweaks on top of the stored line items, then
   // filter by the search box (supplier / category / date / description / id).
   const q = query.trim().toLowerCase();
@@ -172,6 +178,7 @@ export default function ExpenseClaimDetail() {
         )
     );
   const setRowCategory = (itemId, category) => {
+    if (locked) return;
     setCatOverrides((o) => ({ ...o, [itemId]: category })); // optimistic
     updateClaimItems(claim.id, [itemId], { category }).catch(() => {}); // persist
   };
@@ -369,6 +376,13 @@ export default function ExpenseClaimDetail() {
 
           {/* Line-item toolbar */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
+            {locked && (
+              <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-muted px-3 text-xs text-muted-foreground">
+                <Lock className="h-3.5 w-3.5" />
+                {claim.approvalStatus === 'approved' ? 'Approved — items are locked' : 'Awaiting approval — items are locked'}
+              </span>
+            )}
+            {!locked && (
             <button
               type="button"
               onClick={() => navigate('/costs')}
@@ -377,6 +391,8 @@ export default function ExpenseClaimDetail() {
             >
               <Plus className="h-3.5 w-3.5" /> Add items
             </button>
+            )}
+            {!locked && (
             <div className="relative">
               <button
                 type="button"
@@ -407,6 +423,7 @@ export default function ExpenseClaimDetail() {
                 </>
               )}
             </div>
+            )}
             <div className="relative ml-auto hidden sm:block">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="h-8 w-44 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
@@ -425,7 +442,7 @@ export default function ExpenseClaimDetail() {
               <thead className="border-b bg-muted/40 text-left">
                 <tr className="text-muted-foreground">
                   <th className="w-28 px-3 py-2.5">
-                    <input type="checkbox" checked={allSelected} onChange={toggleAll} className="h-4 w-4 accent-black" aria-label="Select all" />
+                    <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={locked} className="h-4 w-4 accent-black disabled:opacity-40" aria-label="Select all" />
                   </th>
                   <th className="px-3 py-2.5 font-medium">Supplier</th>
                   <th className="px-3 py-2.5 font-medium">Date</th>
@@ -442,7 +459,7 @@ export default function ExpenseClaimDetail() {
                   >
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
-                        <input type="checkbox" checked={selected.has(t.itemId)} onChange={() => toggleItem(t.itemId)} className="h-4 w-4 accent-black" />
+                        <input type="checkbox" checked={selected.has(t.itemId)} onChange={() => toggleItem(t.itemId)} disabled={locked} className="h-4 w-4 accent-black disabled:opacity-40" />
                         <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
                         <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
                         <span className="rounded bg-foreground px-2 py-0.5 text-xs text-background">Ready</span>
@@ -451,18 +468,24 @@ export default function ExpenseClaimDetail() {
                     <td className="whitespace-nowrap px-3 py-3">{t.supplier}</td>
                     <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{t.date}</td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <CategorySelect value={t.category} onChange={(v) => setRowCategory(t.itemId, v)} />
+                      {locked ? (
+                        <span className="text-muted-foreground">{t.category}</span>
+                      ) : (
+                        <CategorySelect value={t.category} onChange={(v) => setRowCategory(t.itemId, v)} />
+                      )}
                     </td>
                     <td className="px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        onClick={() => removeItemsFromClaim(claim.id, [t.itemId])}
-                        title="Remove from claim"
-                        aria-label="Remove from claim"
-                        className="text-muted-foreground transition-colors hover:text-destructive"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
+                      {!locked && (
+                        <button
+                          type="button"
+                          onClick={() => removeItemsFromClaim(claim.id, [t.itemId])}
+                          title="Remove from claim"
+                          aria-label="Remove from claim"
+                          className="text-muted-foreground transition-colors hover:text-destructive"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

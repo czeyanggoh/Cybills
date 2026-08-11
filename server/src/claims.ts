@@ -99,9 +99,14 @@ function mutate(req: Request, res: Response, fn: (claim: Claim, me: { email: str
   return res.json({ claim });
 }
 
+// A claim that's been submitted for approval or approved is locked from item
+// edits — its total must not drift after approval / handoff to CYHR for payment.
+const isLocked = (c: Claim) => c.approvalStatus === 'awaiting_approval' || c.approvalStatus === 'approved';
+
 // POST /api/claims/:id/items — attach cost items (idempotent per itemId).
 claimsRouter.post('/:id/items', (req, res) =>
   mutate(req, res, (claim, me) => {
+    if (isLocked(claim)) return res.status(409).json({ error: 'claim_locked' });
     const incoming: Txn[] = Array.isArray(req.body?.items) ? req.body.items : [];
     const seen = new Set(claim.transactions.map((t) => t.itemId));
     for (const t of incoming) {
@@ -116,6 +121,7 @@ claimsRouter.post('/:id/items', (req, res) =>
 // POST /api/claims/:id/items/remove — remove items (by itemId) from the claim.
 claimsRouter.post('/:id/items/remove', (req, res) =>
   mutate(req, res, (claim, me) => {
+    if (isLocked(claim)) return res.status(409).json({ error: 'claim_locked' });
     const ids = new Set((Array.isArray(req.body?.itemIds) ? req.body.itemIds : []).map(String));
     const before = claim.transactions.length;
     claim.transactions = claim.transactions.filter((t) => !ids.has(String(t.itemId)));
@@ -127,6 +133,7 @@ claimsRouter.post('/:id/items/remove', (req, res) =>
 // POST /api/claims/:id/items/update — bulk-edit fields (e.g. category) on items.
 claimsRouter.post('/:id/items/update', (req, res) =>
   mutate(req, res, (claim, me) => {
+    if (isLocked(claim)) return res.status(409).json({ error: 'claim_locked' });
     const ids = new Set((Array.isArray(req.body?.itemIds) ? req.body.itemIds : []).map(String));
     const patch = (req.body?.patch ?? {}) as Partial<Txn>;
     let n = 0;
