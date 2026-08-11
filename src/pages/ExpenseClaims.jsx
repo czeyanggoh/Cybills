@@ -1,10 +1,25 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Flag, Image, ChevronDown, Search, Filter, Settings2, X } from 'lucide-react';
+import { Plus, Flag, Image, ChevronDown, Search, Filter, Settings2, X, Send } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { useClaims, archiveClaims, deleteClaims, createClaim } from '@/lib/claimStore';
+import ClaimApprovalModal from '@/components/ClaimApprovalModal';
+import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval } from '@/lib/claimStore';
+import { useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
+
+// Status pill for a claim's approval state (Draft / Pending / Approved / Rejected).
+function ClaimStatusBadge({ status, label }) {
+  const cls =
+    status === 'approved'
+      ? 'bg-foreground text-background'
+      : status === 'rejected'
+        ? 'border border-destructive text-destructive'
+        : status === 'awaiting_approval'
+          ? 'border border-foreground/40 text-foreground'
+          : 'border border-dashed text-muted-foreground';
+  return <span className={cn('inline-flex rounded px-2 py-0.5 text-xs font-medium', cls)}>{label}</span>;
+}
 
 // Bulk "Actions" dropdown for the claims list.
 function ClaimsActions({ disabled, tab, onArchive, onDelete }) {
@@ -54,6 +69,8 @@ export default function ExpenseClaims() {
   const [showCreate, setShowCreate] = useState(false);
   const [newClaim, setNewClaim] = useState({ claimFor: 'Astrid Yang', endDate: '', name: '' });
   const [query, setQuery] = useState('');
+  const [approveOpen, setApproveOpen] = useState(false);
+  const users = useUsers();
 
   // "2026-07-27" → "27 Jul 2026" to match the rest of the list.
   const fmtEnd = (iso) => {
@@ -75,12 +92,16 @@ export default function ExpenseClaims() {
   };
   const claims = useClaims();
 
-  // Inbox = editable claims (drafts, or rejected ones sent back to fix).
-  // Approvals = claims in the approval flow (awaiting a decision, or approved).
-  const inClaimApprovalFlow = (c) => c.approvalStatus === 'awaiting_approval' || c.approvalStatus === 'approved';
-  const inbox = claims.filter((c) => !c.archived && !inClaimApprovalFlow(c));
-  const approvals = claims.filter((c) => !c.archived && inClaimApprovalFlow(c));
+  // Inbox = every claim that isn't approved yet — drafts, ones awaiting a
+  // decision (still pending), and rejected ones to fix. Approvals = only claims
+  // that have been APPROVED. So a not-yet-approved claim stays in the Inbox.
+  const inbox = claims.filter((c) => !c.archived && c.approvalStatus !== 'approved');
+  const approvals = claims.filter((c) => !c.archived && c.approvalStatus === 'approved');
   const archived = claims.filter((c) => c.archived);
+
+  // Human-readable status for a claim, shown in the Status column.
+  const STATUS_LABEL = { awaiting_approval: 'Pending', approved: 'Approved', rejected: 'Rejected' };
+  const statusOf = (c) => STATUS_LABEL[c.approvalStatus] || 'Draft';
 
   const TABS = [
     { key: 'inbox', label: 'Inbox', count: inbox.length },
@@ -169,6 +190,19 @@ export default function ExpenseClaims() {
 
       {/* Toolbar */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {tab === 'inbox' && (
+          <button
+            type="button"
+            disabled={!hasSelection}
+            onClick={() => setApproveOpen(true)}
+            className={cn(
+              'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-opacity',
+              hasSelection ? 'bg-primary text-primary-foreground hover:opacity-90' : 'cursor-not-allowed bg-muted text-muted-foreground/60'
+            )}
+          >
+            <Send className="h-3.5 w-3.5" /> Submit for approval
+          </button>
+        )}
         <button
           type="button"
           disabled={!hasSelection}
@@ -220,7 +254,7 @@ export default function ExpenseClaims() {
                   className="h-4 w-4 accent-black"
                 />
               </th>
-              <th className="px-3 py-2.5 font-medium">New items</th>
+              <th className="px-3 py-2.5 font-medium">Status</th>
               <th className="px-3 py-2.5 font-medium">Claim for</th>
               <th className="px-3 py-2.5 font-medium">Type</th>
               <th className="px-3 py-2.5 font-medium">Name</th>
@@ -248,7 +282,9 @@ export default function ExpenseClaims() {
                     <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
                   </div>
                 </td>
-                <td className="px-3 py-3 text-muted-foreground">—</td>
+                <td className="px-3 py-3">
+                  <ClaimStatusBadge status={c.approvalStatus} label={statusOf(c)} />
+                </td>
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{c.claimFor}</td>
                 <td className="px-3 py-3 text-muted-foreground">{c.type}</td>
                 <td className="px-3 py-3">{c.name}</td>
@@ -336,6 +372,20 @@ export default function ExpenseClaims() {
           </div>
         </div>
       )}
+
+      <ClaimApprovalModal
+        open={approveOpen}
+        onClose={() => setApproveOpen(false)}
+        onSubmit={async (approver) => {
+          setApproveOpen(false);
+          const approverEmail = users.find((u) => u.name === approver)?.email || '';
+          // Submit each selected claim for approval to the chosen approver.
+          await Promise.all(
+            [...selected].map((id) => submitForApproval(id, approver, undefined, approverEmail).catch(() => {}))
+          );
+          clear();
+        }}
+      />
     </AppShell>
   );
 }
