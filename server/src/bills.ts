@@ -16,7 +16,6 @@ import {
 } from './store.js';
 import { putBillFile, getBillFile } from './storage.js';
 import { dataScopeForOrg } from './organisations.js';
-import { memberForSession } from './users.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -39,17 +38,15 @@ const ALLOWED_STATUSES = ['new', 'processing', 'review', 'ready', 'archived', 'm
 export const billsRouter = Router();
 
 // GET /api/costs/bills — persisted bills for the caller's org, newest first.
-// A Standard (employee) user sees only their own documents; admins and other
-// roles see the whole org's. No role (mock/dev) → see all, so the demo works.
+// NB: no owner-based filtering. An earlier "Standard users see only their own
+// docs" filter hid a person's own upload the moment its (editable) owner field
+// no longer matched their session — losing the document from every tab. The
+// "employees can't do admin things" requirement is enforced by gating the admin
+// pages (Users / Business settings), not by hiding receipts.
 billsRouter.get('/bills', (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
-  let bills = listBills(orgId).map((b) => ({ ...b, hasFile: Boolean(b.storageKey) }));
-  const me = memberForSession(req);
-  if (me && me.role === 'Standard') {
-    const own = new Set([me.email, me.name].map((v) => String(v || '').toLowerCase()).filter(Boolean));
-    bills = bills.filter((b) => own.has(String(b.createdBy || '').toLowerCase()));
-  }
+  const bills = listBills(orgId).map((b) => ({ ...b, hasFile: Boolean(b.storageKey) }));
   res.json({ bills });
 });
 
