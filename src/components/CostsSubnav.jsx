@@ -1,11 +1,18 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useCostsCounts } from '@/lib/costsData';
+import { useClaims, pendingApprovalsFor } from '@/lib/claimStore';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
 export default function CostsSubnav() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const counts = useCostsCounts();
+  const claims = useClaims();
+  const { user } = useAuth();
+  // Claims awaiting the signed-in user's approval — shown as a red badge so a
+  // pending approval stays visible even after the reminder banner is dismissed.
+  const pendingApprovals = pendingApprovalsFor(claims, user).length;
   const isActive = (item) =>
     item.to === '/costs'
       ? pathname === '/costs' ||
@@ -15,7 +22,7 @@ export default function CostsSubnav() {
   // Live counts so the subnav badges match the inbox tab + expense claims list.
   const SUBNAV = [
     { label: 'Costs inbox', count: counts.inbox, to: '/costs' },
-    { label: 'Expense claims', count: counts.expenseClaims, to: '/expense-claims' },
+    { label: 'Expense claims', count: counts.expenseClaims, pending: pendingApprovals, to: '/expense-claims' },
     { label: 'Supplier statements', to: '/supplier-statements' },
     { label: 'Fetch bills', to: '/costs/fetch' },
     { label: 'Exports', to: '/costs/exports' },
@@ -41,16 +48,26 @@ export default function CostsSubnav() {
             )}
           >
             {item.label}
-            {item.count != null && (
-              <span
-                className={cn(
-                  'rounded-full px-1.5 text-xs',
-                  active ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'
-                )}
-              >
-                {item.count}
-              </span>
-            )}
+            <span className="flex items-center gap-1">
+              {item.pending > 0 && (
+                <span
+                  title={`${item.pending} claim${item.pending === 1 ? '' : 's'} awaiting your approval`}
+                  className="inline-flex min-w-[18px] items-center justify-center rounded-full bg-red-600 px-1.5 text-xs font-medium text-white"
+                >
+                  {item.pending}
+                </span>
+              )}
+              {item.count != null && (
+                <span
+                  className={cn(
+                    'rounded-full px-1.5 text-xs',
+                    active ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  {item.count}
+                </span>
+              )}
+            </span>
           </button>
         );
       })}

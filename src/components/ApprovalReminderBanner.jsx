@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BellRing, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { useClaims } from '@/lib/claimStore';
+import { useClaims, pendingApprovalsFor } from '@/lib/claimStore';
 import { useApprovalReminders } from '@/lib/approvalReminders';
 
 // In-app delivery of approval reminders (CYBills has no mail server): when the
@@ -15,14 +15,9 @@ export default function ApprovalReminderBanner() {
   const [dismissed, setDismissed] = useState(false);
   const navigate = useNavigate();
 
-  const email = (user?.email || '').toLowerCase();
-  const pending = email
-    ? claims.filter(
-        (c) =>
-          c.approvalStatus === 'awaiting_approval' &&
-          String(c.approverEmail || '').toLowerCase() === email
-      )
-    : [];
+  // Matched by name OR email (same rule as the Approve action) so a roster
+  // email mismatch can't hide the reminder from the approver.
+  const pending = pendingApprovalsFor(claims, user);
 
   if (!reminders.enabled || dismissed || pending.length === 0) return null;
 

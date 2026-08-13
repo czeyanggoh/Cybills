@@ -153,6 +153,21 @@ export function docToClaimTxn(doc, data, actor) {
   };
 }
 
+// Claims awaiting a given user's approval — matched by name OR email (the same
+// rule the approve action uses), so a roster email mismatch can't hide a pending
+// approval from the approver. Powers the reminder banner + the nav badge.
+export function pendingApprovalsFor(claims, user) {
+  const email = (user?.email || '').trim().toLowerCase();
+  const name = (user?.name || '').trim().toLowerCase();
+  if (!email && !name) return [];
+  return (claims || []).filter((c) => {
+    if (c.approvalStatus !== 'awaiting_approval') return false;
+    const byEmail = email && String(c.approverEmail || '').trim().toLowerCase() === email;
+    const byName = name && String(c.approver || '').trim().toLowerCase() === name;
+    return byEmail || byName;
+  });
+}
+
 // Reactive read of all claims: fetches on mount and refetches on any mutation.
 export function useClaims() {
   const [claims, setClaims] = useState([]);
