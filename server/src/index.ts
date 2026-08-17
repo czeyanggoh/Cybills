@@ -12,6 +12,7 @@ import { xeroRouter } from './xero.js';
 import { cyhrRouter } from './cyhr.js';
 import { claimsRouter } from './claims.js';
 import { usersRouter } from './users.js';
+import { mailRouter } from './mail.js';
 import { settingsRouter } from './settings.js';
 import { boardRouter } from './board.js';
 
@@ -83,6 +84,10 @@ app.use('/api/claims', claimsRouter);
 
 // Users — server-backed + shared (people list + approver roster).
 app.use('/api/users', usersRouter);
+
+// Connecting the Microsoft 365 sending mailbox (delegated Mail.Send). 503s
+// until the GRAPH_* app-registration vars are set.
+app.use('/api/mail', mailRouter);
 
 // Per-workspace settings blobs — Lists, custom categories, customer/supplier rules.
 app.use('/api/settings', settingsRouter);

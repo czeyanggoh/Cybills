@@ -1,46 +1,122 @@
-import { env, mailEnabled } from './env.js';
+import { env, mailConfigured } from './env.js';
+import {
+  readRefreshToken,
+  updateRefreshToken,
+  invalidateMailAccount,
+  isMailConnected,
+  senderAddress,
+} from './mailAccount.js';
 
-// Outbound email via Microsoft Graph (app-only / client-credentials). CYBills
-// sends from a real Microsoft 365 mailbox — no SMTP relay, no third-party mail
-// vendor holding our list. The Azure app registration holds the `Mail.Send`
-// APPLICATION permission (admin-consented), which is tenant-wide, so the
-// mailbox should be locked to one address with an Exchange application access
-// policy (see deploy/EMAIL.md).
+// Outbound email via Microsoft Graph, using DELEGATED auth — the app sends as a
+// signed-in Microsoft user, never as a daemon with tenant-wide reach. The app
+// registration holds `Mail.Send` (Delegated), so the only mailbox it can touch
+// is the one whose owner consented, and it cannot read anything in it.
 //
-// Everything below no-ops with `sent: false` until the four GRAPH_* vars are
-// configured, so the invite / password flows degrade to "copy this link
-// yourself" instead of failing.
+// A password reset is requested by someone who can't sign in, so there's no
+// live user session to borrow at that moment. An admin therefore connects the
+// sending mailbox once (Settings > Email) and we keep the refresh token; every
+// send below redeems it for a short-lived access token. See deploy/EMAIL.md.
+//
+// Everything no-ops with `sent: false` until a mailbox is connected, so the
+// invite / password flows degrade to "copy this link yourself" instead of
+// failing.
 
 const TOKEN_HOST = 'https://login.microsoftonline.com';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 
-// Cached app-only access token. Graph tokens last ~60–90 min; we refresh a
-// minute early so a request never races the expiry.
+// The delegated permissions we ask the connecting admin to consent to.
+// `offline_access` is what yields the refresh token; `Mail.Send.Shared` is only
+// requested when sending from a shared mailbox is configured.
+export function graphScopes(): string[] {
+  const scopes = ['offline_access', 'https://graph.microsoft.com/Mail.Send'];
+  if (env.GRAPH_SHARED_SENDER) scopes.push('https://graph.microsoft.com/Mail.Send.Shared');
+  return scopes;
+}
+
+export const tokenEndpoint = () =>
+  `${TOKEN_HOST}/${encodeURIComponent(env.GRAPH_TENANT_ID || 'organizations')}/oauth2/v2.0/token`;
+
+export const authorizeEndpoint = () =>
+  `${TOKEN_HOST}/${encodeURIComponent(env.GRAPH_TENANT_ID || 'organizations')}/oauth2/v2.0/authorize`;
+
+// A refresh token whose redemption fails for one of these reasons will never
+// work again — the user changed their password, consent was revoked, an admin
+// killed the sessions. Retrying is pointless; the connection needs redoing.
+const DEAD_TOKEN_ERRORS = new Set(['invalid_grant', 'interaction_required', 'unauthorized_client']);
+
+// Exchange an authorization code (Settings > Email connect flow) for tokens.
+// Throws with the AAD error text, which is what you need to debug a misconfig.
+export async function redeemCode(code: string): Promise<{ accessToken: string; refreshToken: string; scopes: string[] }> {
+  const data = await postToken({
+    client_id: env.GRAPH_CLIENT_ID,
+    client_secret: env.GRAPH_CLIENT_SECRET,
+    code,
+    redirect_uri: env.GRAPH_REDIRECT_URI,
+    grant_type: 'authorization_code',
+  });
+  if (!data.refresh_token) {
+    // No refresh token means offline_access wasn't consented — the connection
+    // would work until the first access token expired, then silently die.
+    throw new Error('graph_no_refresh_token: the app must request offline_access');
+  }
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    scopes: String(data.scope ?? '').split(' ').filter(Boolean),
+  };
+}
+
+async function postToken(form: Record<string, string>): Promise<any> {
+  const res = await fetch(tokenEndpoint(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(form),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const data: any = await res.json().catch(() => null);
+  if (!res.ok || !data?.access_token) {
+    const err = new Error(`graph_token_failed: ${data?.error_description ?? `HTTP ${res.status}`}`);
+    (err as any).aadError = String(data?.error ?? '');
+    throw err;
+  }
+  return data;
+}
+
+// Cached delegated access token. Graph tokens last ~60–90 min; we refresh a
+// minute early so a send never races the expiry.
 let cachedToken: { value: string; expiresAt: number } | null = null;
+
+export function forgetCachedToken() {
+  cachedToken = null;
+}
 
 async function accessToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now()) return cachedToken.value;
 
-  const body = new URLSearchParams({
-    client_id: env.GRAPH_CLIENT_ID,
-    client_secret: env.GRAPH_CLIENT_SECRET,
-    scope: 'https://graph.microsoft.com/.default',
-    grant_type: 'client_credentials',
-  });
+  const refresh = readRefreshToken();
+  if (!refresh) throw new Error('mail_not_connected');
 
-  const res = await fetch(`${TOKEN_HOST}/${encodeURIComponent(env.GRAPH_TENANT_ID)}/oauth2/v2.0/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    signal: AbortSignal.timeout(20_000),
-  });
-
-  const data: any = await res.json().catch(() => null);
-  if (!res.ok || !data?.access_token) {
-    // AAD returns error_description with the actual cause (bad secret, wrong
-    // tenant, consent not granted) — keep it, it's what you need to debug.
-    throw new Error(`graph_token_failed: ${data?.error_description ?? `HTTP ${res.status}`}`);
+  let data: any;
+  try {
+    data = await postToken({
+      client_id: env.GRAPH_CLIENT_ID,
+      client_secret: env.GRAPH_CLIENT_SECRET,
+      refresh_token: refresh,
+      scope: graphScopes().join(' '),
+      grant_type: 'refresh_token',
+    });
+  } catch (err) {
+    // Distinguish "this connection is dead, ask for a reconnect" from a
+    // transient failure we should just retry on the next send.
+    if (DEAD_TOKEN_ERRORS.has((err as any)?.aadError)) {
+      invalidateMailAccount(err instanceof Error ? err.message : String(err));
+    }
+    throw err;
   }
+
+  // Azure rotates the refresh token on most redemptions; persist the new one so
+  // the connection keeps rolling forward instead of ageing out.
+  if (data.refresh_token && data.refresh_token !== refresh) updateRefreshToken(data.refresh_token);
 
   const ttl = Number(data.expires_in) || 3600;
   cachedToken = { value: data.access_token, expiresAt: Date.now() + (ttl - 60) * 1000 };
@@ -64,14 +140,20 @@ export async function sendMail(msg: {
   html: string;
   cc?: Recipient[];
 }): Promise<MailResult> {
-  if (!mailEnabled) return { sent: false, error: 'mail_not_configured' };
+  if (!mailConfigured) return { sent: false, error: 'mail_not_configured' };
+  if (!isMailConnected()) return { sent: false, error: 'mail_not_connected' };
 
   const to = Array.isArray(msg.to) ? msg.to : [msg.to];
   if (!to.length || !to.every((r) => r.email)) return { sent: false, error: 'no_recipient' };
 
   try {
     const token = await accessToken();
-    const res = await fetch(`${GRAPH}/users/${encodeURIComponent(env.GRAPH_SENDER)}/sendMail`, {
+    // Delegated auth sends as the connected user (/me). A shared sender is
+    // addressed explicitly, which Mail.Send.Shared + "Send As" allows.
+    const endpoint = env.GRAPH_SHARED_SENDER
+      ? `${GRAPH}/users/${encodeURIComponent(env.GRAPH_SHARED_SENDER)}/sendMail`
+      : `${GRAPH}/me/sendMail`;
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -97,6 +179,11 @@ export async function sendMail(msg: {
     console.error('[mailer] sendMail failed:', detail);
     // A stale token would keep failing; drop it so the next attempt re-auths.
     if (res.status === 401) cachedToken = null;
+    // 403 on a delegated send means the consented scopes don't cover this
+    // mailbox — typically a shared sender without Mail.Send.Shared or Send As.
+    if (res.status === 403 && env.GRAPH_SHARED_SENDER) {
+      return { sent: false, error: `${detail} (check Send As rights on ${env.GRAPH_SHARED_SENDER} and the Mail.Send.Shared consent)` };
+    }
     return { sent: false, error: detail };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -162,6 +249,20 @@ export function passwordResetEmail(o: { name: string; url: string; expiresInDays
              <p style="margin:14px 0 0">Choose a new password using the link below.</p>`,
       cta: { label: 'Choose a new password', url: o.url },
       footnote: `This link expires in ${o.expiresInDays} days and can only be used once. If you didn&rsquo;t request a reset, ignore this email &mdash; your password is unchanged.`,
+    }),
+  };
+}
+
+// Sent by Settings > Email → "Send test email". Proves consent, scopes and (for
+// a shared sender) Send As all line up, without waiting for a real invitation.
+export function testEmail(o: { name: string; sender: string }) {
+  return {
+    subject: 'CYBills test email',
+    html: layout({
+      heading: 'Email is working',
+      body: `<p style="margin:0">This is a test message from CYBills, sent as <strong>${esc(o.sender)}</strong>.</p>
+             <p style="margin:14px 0 0">Invitations, password resets and password-changed notices will arrive from this address.</p>`,
+      footnote: 'Sent from Settings &rarr; Email. Nobody else received this message.',
     }),
   };
 }

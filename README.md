@@ -45,9 +45,10 @@ npm run dev
 ## Email
 
 Account email (invitations, password resets, password-changed notices) goes out
-through Microsoft Graph from a Microsoft 365 mailbox. Setup — the Azure app
-registration, the single `Mail.Send` application permission, and where each
-value lives in Entra — is in [`deploy/EMAIL.md`](deploy/EMAIL.md).
+through Microsoft Graph from a Microsoft 365 mailbox, using the **delegated**
+`Mail.Send` permission — send-only, and only as the one mailbox an admin
+connects in Settings → Email. Setup, and where each value lives in Entra, is in
+[`deploy/EMAIL.md`](deploy/EMAIL.md).
 
 ## Deploy
 

@@ -89,18 +89,32 @@ export const env = {
   // Path unconfirmed until CYHR builds the payment-intake page; override here.
   CYHR_PAYMENT_URL: process.env.CYHR_PAYMENT_URL ?? 'https://hr.cy-bm.sg/payments/new',
 
-  // --- Outbound email (Microsoft Graph, app-only) ---------------------------
-  // Account emails (invitations, password resets/changes) are sent from a real
-  // Microsoft 365 mailbox through Graph's sendMail, using an Azure app
-  // registration with the `Mail.Send` APPLICATION permission (admin-consented).
-  // GRAPH_SENDER is the mailbox to send AS (e.g. no-reply@cy-bm.sg) — it must
-  // exist and be licensed. All four must be set for mail to switch on (see
-  // `mailEnabled`); until then the invite/reset endpoints still mint the link
-  // and hand it back so an admin can pass it on manually. See deploy/EMAIL.md.
+  // --- Outbound email (Microsoft Graph, DELEGATED) --------------------------
+  // Account emails (invitations, password resets/changes) are sent through
+  // Graph's sendMail as a signed-in Microsoft user — the app registration holds
+  // the `Mail.Send` DELEGATED permission, never the Application one. Delegated
+  // means the app can only ever send as the account that consented; it has no
+  // tenant-wide reach and cannot read any mailbox.
+  //
+  // Because a password-reset is triggered by someone who is BY DEFINITION not
+  // signed in, an admin connects the sending mailbox once (Settings > Email)
+  // and CYBills keeps the resulting refresh token (encrypted at rest, see
+  // mailAccount.ts). Sending then works for every flow, still as that one user.
+  //
+  // These three make the connection POSSIBLE (`mailConfigured`); mail actually
+  // sends once a mailbox is connected (`isMailConnected()`). Until then the
+  // invite/reset endpoints still mint the link and hand it back so an admin can
+  // pass it on manually. See deploy/EMAIL.md.
   GRAPH_TENANT_ID: process.env.GRAPH_TENANT_ID ?? '',
   GRAPH_CLIENT_ID: process.env.GRAPH_CLIENT_ID ?? '',
   GRAPH_CLIENT_SECRET: process.env.GRAPH_CLIENT_SECRET ?? '',
-  GRAPH_SENDER: process.env.GRAPH_SENDER ?? '',
+  // Must EXACTLY match a "Web" redirect URI on the app registration.
+  GRAPH_REDIRECT_URI: process.env.GRAPH_REDIRECT_URI ?? `${APP_ORIGIN}/api/mail/callback`,
+  // Optional: send from a SHARED mailbox (e.g. no-reply@cy-bm.sg) instead of
+  // the connecting admin's own. Needs the `Mail.Send.Shared` delegated
+  // permission plus "Send As" rights on that mailbox for the connecting user —
+  // still delegated, still not tenant-wide. Blank = send as the connected user.
+  GRAPH_SHARED_SENDER: process.env.GRAPH_SHARED_SENDER ?? '',
   // Optional Reply-To, so replies to a no-reply sender reach a real inbox.
   MAIL_REPLY_TO: process.env.MAIL_REPLY_TO ?? '',
   // How long an invitation / password-reset link stays valid.
@@ -131,9 +145,11 @@ export const r2Enabled = Boolean(
 // client disables the "Submit to CYHR" action.
 export const cyhrEnabled = Boolean(env.CYHR_BASE_URL && env.CYHR_SIGNING_SECRET);
 
-// Outbound email switches on once the Graph app registration AND the sending
-// mailbox are configured. Until then invite/reset links are still generated —
-// they're just returned to the admin instead of being emailed.
-export const mailEnabled = Boolean(
-  env.GRAPH_TENANT_ID && env.GRAPH_CLIENT_ID && env.GRAPH_CLIENT_SECRET && env.GRAPH_SENDER
+// Whether a mailbox CAN be connected — i.e. the Azure app registration is
+// configured. Sending additionally needs an admin to have connected a mailbox
+// (see isMailConnected() in mailAccount.ts): delegated auth has no credential
+// of its own, it borrows a user's. Until both hold, invite/reset links are
+// still generated — they're just returned to the admin instead of emailed.
+export const mailConfigured = Boolean(
+  env.GRAPH_TENANT_ID && env.GRAPH_CLIENT_ID && env.GRAPH_CLIENT_SECRET
 );
