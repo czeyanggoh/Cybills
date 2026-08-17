@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { X, Search, Trash2 } from 'lucide-react';
+import { X, Search, Trash2, Flag } from 'lucide-react';
 import { useList, addToList, removeFromList, setListVisible } from '@/lib/listsStore';
+import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { cn } from '@/lib/utils';
 
 // Inner sub-nav for Business settings → Lists (mirrors Dext).
 const SUBNAV = [
   { key: 'visibility', label: 'List visibility' },
   { key: 'categories', label: 'Categories' },
-  { key: 'lineitems', label: 'Line item groups' },
   { key: 'taxRates', label: 'Tax rates' },
   { key: 'projects', label: 'Projects' },
   { key: 'projects2', label: 'Projects 2' },
@@ -145,7 +145,6 @@ function TaxRatesList() {
         setQuery={setQuery}
       >
         <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Add tax rate</button>
-        <button type="button" className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Default tax settings</button>
       </Toolbar>
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full min-w-[720px] text-sm">
@@ -220,6 +219,50 @@ function ProjectsList() {
   );
 }
 
+// Colour → Tailwind text colour for the flag icon. Full class strings so the
+// JIT compiler keeps them.
+const FLAG_COLOR_CLASS = {
+  orange: 'text-orange-500',
+  yellow: 'text-yellow-500',
+  green: 'text-green-500',
+  blue: 'text-blue-500',
+  purple: 'text-purple-500',
+};
+
+function FlagsList() {
+  const flags = useFlags();
+  return (
+    <div>
+      <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
+        Use additional flags to help organise the Costs and Sales inbox. Rename a flag or hide the ones you don&apos;t use.
+      </p>
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[520px] text-sm">
+          <thead className="border-b bg-muted/40 text-left text-muted-foreground">
+            <tr><th className="w-20 px-3 py-2.5 font-medium">Colour</th><th className="px-3 py-2.5 font-medium">Label</th><th className="w-40 px-3 py-2.5 font-medium">Visible</th></tr>
+          </thead>
+          <tbody>
+            {flags.map((f) => (
+              <tr key={f.color} className="border-b last:border-0 hover:bg-muted/40">
+                <td className="px-3 py-3"><Flag className={cn('h-4 w-4', FLAG_COLOR_CLASS[f.color] || 'text-muted-foreground')} fill="currentColor" /></td>
+                <td className="px-3 py-3">
+                  <input
+                    value={f.label}
+                    onChange={(e) => updateFlag(f.color, { label: e.target.value })}
+                    placeholder={f.color}
+                    className="h-9 w-full max-w-md rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                </td>
+                <td className="px-3 py-3"><VisibleToggle on={f.visible} onToggle={() => updateFlag(f.color, { visible: !f.visible })} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Placeholder({ label }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">
@@ -252,7 +295,7 @@ export default function ListsSettings() {
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="mb-4 text-lg font-semibold tracking-tight">{TITLES[tab]}</h2>
-        {tab === 'categories' ? <CategoriesList /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsList /> : <Placeholder label={TITLES[tab]} />}
+        {tab === 'categories' ? <CategoriesList /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsList /> : tab === 'flags' ? <FlagsList /> : <Placeholder label={TITLES[tab]} />}
       </div>
     </div>
   );
