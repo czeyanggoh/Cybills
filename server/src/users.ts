@@ -176,6 +176,25 @@ function normalizeRoster(items: User[], ws: string): boolean {
   return changed;
 }
 
+// Guarantee the seeded owners (Astrid, Cze) never lose their admin role. Their
+// row can drift to a non-admin role — e.g. re-created via the /join self-signup
+// flow, which always sets 'Standard' — which would silently lock the account
+// owner out of Users and Business settings. Runs on every load so it self-heals.
+// Only ever promotes seed admins; never touches other users or demotes anyone.
+function reconcileSeedAdmins(items: User[], ws: string): boolean {
+  let changed = false;
+  for (const s of SEED) {
+    if (!isAdminRole(String(s.role))) continue;
+    const email = norm(String(s.email));
+    const row = items.find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email);
+    if (row && !isAdminRole(row.role)) {
+      row.role = String(s.role);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 // Return the workspace's users, seeding the real employees on first use and
 // keeping the roster de-duplicated (one email per teammate).
 function ensure(ws: string): User[] {
@@ -186,6 +205,7 @@ function ensure(ws: string): User[] {
     changed = true;
   }
   if (normalizeRoster(items, ws)) changed = true;
+  if (reconcileSeedAdmins(items, ws)) changed = true;
   if (changed) save(items);
   return items;
 }
