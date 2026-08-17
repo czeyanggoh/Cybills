@@ -34,7 +34,7 @@ import { useUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf } from '@/lib/claimPdf';
-import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
+import { useCategoryDisplayMode, useCategorySortMode, sortCategories, formatCategory } from '@/lib/categoryDisplay';
 import { cn } from '@/lib/utils';
 
 // The GL/account code CYHR should book the payable against — the leading number
@@ -90,7 +90,10 @@ function Input({ value, readOnly = false }) {
 
 function CategorySelect({ value, onChange }) {
   const mode = useCategoryDisplayMode();
-  const known = CATEGORIES.includes(value);
+  const sort = useCategorySortMode();
+  // 'Uncategorised' pinned first; the rest follow the chosen order.
+  const options = ['Uncategorised', ...sortCategories(CATEGORIES.filter((c) => c !== 'Uncategorised'), sort)];
+  const known = options.includes(value);
   return (
     <div className="relative w-40">
       <select
@@ -99,7 +102,7 @@ function CategorySelect({ value, onChange }) {
         className="h-8 w-full appearance-none rounded-md border bg-background px-2.5 pr-7 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {!known && value && <option value={value}>{formatCategory(value, mode)}</option>}
-        {CATEGORIES.map((c) => (
+        {options.map((c) => (
           <option key={c} value={c}>{formatCategory(c, mode)}</option>
         ))}
       </select>

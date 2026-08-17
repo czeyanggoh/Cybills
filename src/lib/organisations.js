@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
 import { useCustomCategories } from '@/lib/customCategories';
+import { useCategorySortMode, sortCategories } from '@/lib/categoryDisplay';
 import { useBankAccounts } from '@/lib/bankAccounts';
 import { BANK_ACCOUNTS } from '@/lib/paymentMethods';
 
@@ -164,7 +165,13 @@ export function useCategoryOptions() {
   // categories the user explicitly adds via "Add category" are appended; the
   // Business-settings Lists categories no longer feed this dropdown.
   const custom = useCustomCategories().map((c) => c.label);
-  return Array.from(new Set(['Uncategorised', ...labels, ...custom]));
+  const sort = useCategorySortMode();
+  // 'Uncategorised' is pinned first; everything else follows the chosen order.
+  const rest = sortCategories(
+    Array.from(new Set([...labels, ...custom])).filter((c) => c !== 'Uncategorised'),
+    sort,
+  );
+  return ['Uncategorised', ...rest];
 }
 
 // Bank-account dropdown options: the linked org's Xero BANK accounts (live via

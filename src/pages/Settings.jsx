@@ -21,7 +21,7 @@ import AppShell from '@/components/AppShell';
 import ListsSettings from '@/components/ListsSettings';
 import { cn } from '@/lib/utils';
 import { useApprovalReminders, setReminders, DAYS, TIMES } from '@/lib/approvalReminders';
-import { useCategoryDisplayMode, setCategoryDisplayMode } from '@/lib/categoryDisplay';
+import { useCategoryDisplayMode, setCategoryDisplayMode, useCategorySortMode, setCategorySortMode } from '@/lib/categoryDisplay';
 import {
   useOrganisations,
 } from '@/lib/organisations';
@@ -375,6 +375,7 @@ const CAT_LABEL_TO_MODE = { 'Code and name': 'codeName', 'Name only': 'name', 'C
 
 function Automation() {
   const catMode = useCategoryDisplayMode();
+  const catSort = useCategorySortMode();
   return (
     <div className="space-y-6">
       <Card title="Categorisation">
@@ -392,8 +393,12 @@ function Automation() {
             options={CAT_DISPLAY_OPTIONS}
           />
         </Row>
-        <Row label="Category sort">
-          <SelectBox defaultValue="Code" options={['Code', 'Name']} />
+        <Row label="Category sort" hint="Order of the categories in the Costs dropdowns.">
+          <SelectBox
+            value={catSort === 'name' ? 'Name' : 'Code'}
+            onChange={(v) => setCategorySortMode(v === 'Name' ? 'name' : 'code')}
+            options={['Code', 'Name']}
+          />
         </Row>
       </Card>
 
