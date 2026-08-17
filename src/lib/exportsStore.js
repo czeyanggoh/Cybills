@@ -89,6 +89,7 @@ export function useExports(kind) {
   const [list, setList] = useState(() => getExports(kind));
   useEffect(() => {
     const sync = () => setList(getExports(kind));
+    sync(); // re-filter immediately when the tab (kind) changes, not only on events
     window.addEventListener(EXPORTS_EVENT, sync);
     return () => window.removeEventListener(EXPORTS_EVENT, sync);
   }, [kind]);
