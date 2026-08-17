@@ -4,8 +4,6 @@ import {
   Receipt,
   ShoppingCart,
   Tag,
-  Landmark,
-  Archive,
   Plus,
   HelpCircle,
   ChevronDown,
@@ -36,8 +34,6 @@ import JoinRequestBanner from './JoinRequestBanner';
 const NAV = [
   { to: '/costs', label: 'Costs', icon: ShoppingCart },
   { to: '/sales', label: 'Sales', icon: Tag },
-  { to: '/bank', label: 'Bank', icon: Landmark },
-  { to: '/vault', label: 'Vault', icon: Archive },
 ];
 
 // Right-aligned top-bar tabs (support channels). Feature Requests now lives as
