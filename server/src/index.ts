@@ -12,6 +12,7 @@ import { xeroRouter } from './xero.js';
 import { cyhrRouter } from './cyhr.js';
 import { claimsRouter } from './claims.js';
 import { usersRouter } from './users.js';
+import { mailRouter } from './mail.js';
 import { settingsRouter } from './settings.js';
 import { boardRouter } from './board.js';
 
@@ -36,6 +37,11 @@ app.use((req, res, next) => {
   if (!p.startsWith('/api/')) return next();
   if (p.startsWith('/api/auth')) return next();
   if (p === '/api/users/login') return next();
+  // Invitation / password-reset links are opened by people who, by definition,
+  // can't sign in yet — these three are the flow that gets them a password.
+  if (p === '/api/users/forgot-password') return next();
+  if (p === '/api/users/reset') return next();
+  if (p.startsWith('/api/users/reset/')) return next();
   if (p === '/api/health') return next();
   if (/^\/api\/costs\/bills\/[^/]+\/file$/.test(p)) return next();
   if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
@@ -78,6 +84,10 @@ app.use('/api/claims', claimsRouter);
 
 // Users — server-backed + shared (people list + approver roster).
 app.use('/api/users', usersRouter);
+
+// Connecting the Microsoft 365 sending mailbox (delegated Mail.Send). 503s
+// until the GRAPH_* app-registration vars are set.
+app.use('/api/mail', mailRouter);
 
 // Per-workspace settings blobs — Lists, custom categories, customer/supplier rules.
 app.use('/api/settings', settingsRouter);

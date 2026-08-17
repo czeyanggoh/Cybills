@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 import jwt from 'jsonwebtoken';
 import { env, googleEnabled, visionEnabled } from './env.js';
+import { isMailConnected } from './mailAccount.js';
 
 // Real Google OAuth 2.0 (authorization-code flow), server-side. The whole router
 // no-ops with 503 until credentials are configured (see `googleEnabled`), so it
@@ -54,10 +55,13 @@ export function readSession(req: Request): SessionUser | null {
 
 export const authRouter = Router();
 
-// Capability probe: real OAuth vs mock sign-in, and whether Claude Vision
-// receipt extraction is available. Fetched once by the frontend AuthProvider.
+// Capability probe: real OAuth vs mock sign-in, whether Claude Vision receipt
+// extraction is available, and whether a sending mailbox is connected (drives
+// the "Forgot password?" link and the invite copy). Fetched once by
+// AuthProvider. `mailEnabled` is a live check: delegated mail depends on an
+// admin-granted connection that can lapse, not just on static config.
 authRouter.get('/status', (_req, res) => {
-  res.json({ googleEnabled, visionEnabled });
+  res.json({ googleEnabled, visionEnabled, mailEnabled: isMailConnected() });
 });
 
 // Who am I? Reads the session cookie. 401 when signed out.

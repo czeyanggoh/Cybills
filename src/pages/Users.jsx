@@ -5,7 +5,7 @@ import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
 import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
 import EditUserModal from '@/components/EditUserModal';
-import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser } from '@/lib/userStore';
+import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 // Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
@@ -14,6 +14,33 @@ function ManageMenu({ user, onEdit, onToast }) {
   const [open, setOpen] = useState(false);
   const item = 'flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted';
   const run = (fn) => { setOpen(false); fn(); };
+
+  // Send (or re-send) the invitation email. The server always returns the link,
+  // so when mail isn't configured — or delivery failed — we hand the admin the
+  // link to pass on instead of leaving the invite stuck.
+  const sendInvite = async () => {
+    if (!user.email) {
+      onToast(`${user.name} has no email address — add one before inviting them.`);
+      return;
+    }
+    onToast(`Sending invitation to ${user.email}…`);
+    const res = await inviteUser(user.id);
+    if (res.sent) {
+      onToast(`Invitation emailed to ${user.email}.`);
+      return;
+    }
+    if (!res.link) {
+      onToast(`Could not invite ${user.name} (${res.error || 'unknown error'}).`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(res.link);
+      onToast(`Email isn’t configured — invite link copied to your clipboard. Send it to ${user.email} yourself.`);
+    } catch {
+      window.prompt(`Email isn’t configured. Copy this invite link and send it to ${user.email}:`, res.link);
+      onToast('Invite link created — share it with the user.');
+    }
+  };
 
   return (
     <div className="relative">
@@ -26,15 +53,17 @@ function ManageMenu({ user, onEdit, onToast }) {
           <div className="absolute right-0 z-20 mt-1 w-52 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
             <button type="button" className={item} onClick={() => run(() => onEdit('details'))}>Edit user details</button>
             <button type="button" className={item} onClick={() => run(() => onEdit('privileges'))}>Edit privileges</button>
-            <button type="button" className={item} onClick={() => run(() => onToast(`Invitation resent to ${user.email || user.name}.`))}>Resend Invitation</button>
+            <button type="button" className={item} onClick={() => run(sendInvite)}>
+              {user.invitedAt ? 'Resend invitation' : 'Send invitation'}
+            </button>
             <button
               type="button"
               className={item}
               onClick={() =>
                 run(async () => {
-                  const pw = window.prompt(`Set a password for ${user.name} (min 6 characters). Share it with them so they can sign in with their email + this password.`);
+                  const pw = window.prompt(`Set a password for ${user.name} (min 8 characters). Share it with them so they can sign in with their email + this password. Prefer "Send invitation" — it lets them choose their own.`);
                   if (!pw) return;
-                  if (pw.length < 6) { onToast('Password must be at least 6 characters.'); return; }
+                  if (pw.length < 8) { onToast('Password must be at least 8 characters.'); return; }
                   const ok = await setUserPassword(user.id, pw);
                   onToast(ok ? `Password set for ${user.name}. They can now sign in with email + password.` : 'Could not set password.');
                 })

@@ -255,7 +255,7 @@ const SECTIONS = {
 };
 
 export default function Profile() {
-  const { user } = useAuth();
+  const { user, membership } = useAuth();
   const profile = useProfile();
   const [section, setSection] = useState('personal');
   const [emailModal, setEmailModal] = useState(false);
@@ -299,8 +299,9 @@ export default function Profile() {
       />
       <ChangePasswordModal
         open={pwModal}
+        hasPassword={Boolean(membership?.user?.hasPassword)}
         onClose={() => setPwModal(false)}
-        onSaved={() => setToast('Password updated.')}
+        onSaved={() => setToast('Password updated. We’ve emailed you a confirmation.')}
       />
     </AppShell>
   );

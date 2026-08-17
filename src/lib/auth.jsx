@@ -1,15 +1,16 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { fetchMembership } from '@/lib/userStore';
 
-// App-wide auth state. Loads once: whether real Google OAuth is configured on
-// the backend (`googleEnabled`), the current signed-in user (or null), and the
-// user's roster membership (`membership.status`: anonymous|none|pending|active).
+// App-wide auth state. Loads once: which backend capabilities are configured
+// (`googleEnabled`, `visionEnabled`, `mailEnabled`), the current signed-in user
+// (or null), and the user's roster membership (`membership.status`: anonymous|none|pending|active).
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
+  const [mailEnabled, setMailEnabled] = useState(false);
   const [user, setUser] = useState(null);
   const [membership, setMembership] = useState({ status: 'anonymous', user: null });
 
@@ -24,6 +25,7 @@ export function AuthProvider({ children }) {
         const s = await statusRes.json();
         setGoogleEnabled(Boolean(s.googleEnabled));
         setVisionEnabled(Boolean(s.visionEnabled));
+        setMailEnabled(Boolean(s.mailEnabled));
       }
       setUser(meRes.ok ? (await meRes.json()).user : null);
       setMembership(mem || { status: 'anonymous', user: null });
@@ -31,6 +33,7 @@ export function AuthProvider({ children }) {
       // Backend unreachable — treat as signed-out, mock mode.
       setGoogleEnabled(false);
       setVisionEnabled(false);
+      setMailEnabled(false);
       setUser(null);
       setMembership({ status: 'anonymous', user: null });
     } finally {
@@ -64,7 +67,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ loading, googleEnabled, visionEnabled, user, membership, refresh, signOut, loginWithPassword }}>
+    <AuthContext.Provider value={{ loading, googleEnabled, visionEnabled, mailEnabled, user, membership, refresh, signOut, loginWithPassword }}>
       {children}
     </AuthContext.Provider>
   );

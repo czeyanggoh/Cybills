@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Building2,
@@ -16,6 +16,9 @@ import {
   Copy,
   ListChecks,
   Info,
+  Mail,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import ListsSettings from '@/components/ListsSettings';
@@ -24,6 +27,7 @@ import { useApprovalReminders, setReminders, DAYS, TIMES } from '@/lib/approvalR
 import {
   useOrganisations,
 } from '@/lib/organisations';
+import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 
 const NAV = [
   {
@@ -35,6 +39,7 @@ const NAV = [
       { key: 'automation', label: 'Automation', icon: Workflow },
       { key: 'ai', label: 'AI Assist', icon: Sparkles },
       { key: 'approvals', label: 'Approvals', icon: Check },
+      { key: 'email', label: 'Email', icon: Mail },
       { key: 'exports', label: 'Exports', icon: Download },
       { key: 'lists', label: 'Lists', icon: ClipboardList },
       { key: 'accountant', label: 'Accountant', icon: Briefcase },
@@ -838,6 +843,173 @@ function Connections() {
   );
 }
 
+// Business settings → Email. Connects the Microsoft 365 mailbox that account
+// email (invitations, password resets, password-changed notices) is sent from.
+//
+// CYBills asks Microsoft only for DELEGATED Mail.Send: it sends *as* the
+// account that consents here, and can never reach another mailbox or read
+// anything in this one. The trade-off of that narrower grant is that the
+// connection is a user's, so it can lapse — hence the reconnect path below.
+function EmailSettings() {
+  const [params, setParams] = useSearchParams();
+  const [status, reload] = useMailStatus();
+  const [busy, setBusy] = useState('');
+  const [note, setNote] = useState('');
+
+  // The OAuth callback returns here with ?mail=connected|error.
+  const outcome = params.get('mail');
+  const reason = params.get('reason');
+  useEffect(() => {
+    if (!outcome) return;
+    setNote(
+      outcome === 'connected'
+        ? `Connected ${params.get('account') || 'the mailbox'}. Send a test email to confirm it works.`
+        : `Could not connect: ${reason || 'unknown error'}`
+    );
+    // Clear the params so a refresh doesn't replay the banner.
+    const next = new URLSearchParams(params);
+    ['mail', 'reason', 'account'].forEach((k) => next.delete(k));
+    next.set('section', 'email');
+    setParams(next, { replace: true });
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outcome]);
+
+  const disconnect = async () => {
+    if (!window.confirm('Disconnect the sending mailbox? Invitations and password resets will stop being emailed until you reconnect.')) return;
+    setBusy('disconnect');
+    await disconnectMailbox();
+    setBusy('');
+    setNote('Mailbox disconnected. Invite links will be handed to admins to share manually.');
+    reload();
+  };
+
+  const test = async () => {
+    setBusy('test');
+    const res = await sendTestEmail();
+    setBusy('');
+    setNote(res.sent ? `Test email sent to ${res.to}.` : `Test failed: ${res.error || 'unknown error'}`);
+    reload();
+  };
+
+  if (!status) return <p className="text-sm text-muted-foreground">Loading…</p>;
+
+  const btn = 'inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50';
+  const primary = 'inline-flex h-9 shrink-0 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50';
+
+  return (
+    <div className="space-y-5">
+      {note && (
+        <div className="flex items-start gap-2 rounded-md border bg-muted px-3 py-2 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="flex-1">{note}</span>
+          <button type="button" onClick={() => setNote('')} className="text-muted-foreground hover:text-foreground">Dismiss</button>
+        </div>
+      )}
+
+      <Card title="Sending mailbox">
+        <div className="rounded-lg border p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 font-medium">
+                Microsoft 365
+                {status.connected ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-600/30 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                    <ShieldCheck className="h-3 w-3" /> Connected
+                  </span>
+                ) : status.needsReconnect ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-600/30 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                    <AlertTriangle className="h-3 w-3" /> Reconnect needed
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                    Not connected
+                  </span>
+                )}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Invitations, password resets and password-changed notices are sent from this mailbox.
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              {status.connected && (
+                <button type="button" onClick={test} disabled={Boolean(busy)} className={btn}>
+                  {busy === 'test' ? 'Sending…' : 'Send test email'}
+                </button>
+              )}
+              {status.configured && (
+                <button type="button" onClick={connectMailbox} className={status.connected ? btn : primary}>
+                  {status.connected || status.needsReconnect ? 'Reconnect' : 'Connect mailbox'}
+                </button>
+              )}
+              {(status.connected || status.needsReconnect) && (
+                <button type="button" onClick={disconnect} disabled={Boolean(busy)} className={cn(btn, 'text-destructive')}>
+                  {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {!status.configured && (
+            <p className="mt-4 rounded-md border bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground">
+              No Azure app registration is configured yet, so a mailbox can&rsquo;t be connected. Set
+              <code className="mx-1 rounded bg-muted px-1 text-xs">GRAPH_TENANT_ID</code>,
+              <code className="mx-1 rounded bg-muted px-1 text-xs">GRAPH_CLIENT_ID</code> and
+              <code className="mx-1 rounded bg-muted px-1 text-xs">GRAPH_CLIENT_SECRET</code> on the
+              server — see <span className="font-medium text-foreground">deploy/EMAIL.md</span>. Until
+              then, invitations still work: the link is handed to the admin to share.
+            </p>
+          )}
+
+          {status.needsReconnect && (
+            <p className="mt-4 rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+              The connection to <span className="font-medium">{status.account}</span> stopped working
+              {status.invalidReason ? ` (${status.invalidReason})` : ''}. This normally means that
+              account&rsquo;s password changed or its consent was revoked. Reconnect to resume sending.
+            </p>
+          )}
+
+          {(status.connected || status.needsReconnect) && (
+            <dl className="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[160px_1fr]">
+              <dt className="text-muted-foreground">Sending as</dt>
+              <dd className="font-medium">
+                {status.sendingAs}
+                {status.sharedSender && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    shared mailbox, authorised by {status.account}
+                  </span>
+                )}
+              </dd>
+              <dt className="text-muted-foreground">Connected by</dt>
+              <dd>{status.connectedBy}{status.connectedAt ? ` · ${new Date(status.connectedAt).toLocaleDateString()}` : ''}</dd>
+            </dl>
+          )}
+        </div>
+      </Card>
+
+      <Card title="Access granted">
+        <div className="rounded-lg border p-5 text-sm">
+          <p className="flex items-center gap-2 font-medium">
+            <ShieldCheck className="h-4 w-4" /> Send-only, one mailbox
+          </p>
+          <ul className="mt-3 list-disc space-y-1.5 pl-5 text-muted-foreground">
+            <li>
+              CYBills holds the <span className="font-medium text-foreground">Mail.Send (Delegated)</span>{' '}
+              permission — it sends as the account connected above and nothing else.
+            </li>
+            <li>It cannot read, search, or delete anything in that mailbox, or any other.</li>
+            <li>
+              No tenant-wide application permission is used, so no other mailbox in the organisation
+              is reachable.
+            </li>
+            <li>Sent messages appear in that mailbox&rsquo;s Sent Items, so there&rsquo;s a delivery trail.</li>
+          </ul>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // Business settings → Vault. Flagging (auto-flag files N days before due) and
 // Vault sync (cloud storage the Vault mirrors to).
 function VaultSettings() {
@@ -932,6 +1104,8 @@ export default function Settings() {
         <Automation />
       ) : section === 'approvals' ? (
         <Approvals />
+      ) : section === 'email' ? (
+        <EmailSettings />
       ) : section === 'exports' ? (
         <Exports />
       ) : section === 'lists' ? (
