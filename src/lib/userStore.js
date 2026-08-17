@@ -105,7 +105,8 @@ export async function fetchMembership() {
 }
 
 // Set a user's password (admin action). Returns true on success. Lets that user
-// sign in with email + password (no Google needed).
+// sign in with email + password (no Google needed). The account owner is
+// emailed that their password was changed (see the server's mailer).
 export async function setUserPassword(id, password) {
   try {
     const res = await fetch(`/api/users/${id}/password`, {
@@ -117,6 +118,86 @@ export async function setUserPassword(id, password) {
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+// --- Invitations + password links -------------------------------------------
+
+// Invite (or re-invite) a user by email: the server mints a single-use link and
+// mails it. Returns { sent, link, error } — `link` is always present so the
+// admin can pass it on by hand when mail is off or delivery failed.
+export async function inviteUser(id) {
+  try {
+    const res = await fetch(`/api/users/${id}/invite`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { sent: false, error: data.error || `http_${res.status}` };
+    notifyUsersChanged();
+    return data;
+  } catch {
+    return { sent: false, error: 'network' };
+  }
+}
+
+// Ask for a password-reset email. Always resolves true — the server answers the
+// same way whether or not the address has an account, so this can't be used to
+// probe for members.
+export async function requestPasswordReset(email) {
+  try {
+    const res = await fetch('/api/users/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Check an invite/reset token from the emailed link. Returns
+// { valid, kind, name, email }.
+export async function checkResetToken(token) {
+  try {
+    const res = await fetch(`/api/users/reset/${encodeURIComponent(token)}`);
+    if (!res.ok) return { valid: false };
+    return res.json();
+  } catch {
+    return { valid: false };
+  }
+}
+
+// Consume the token and set the chosen password. On success the server also
+// signs the user in, so the caller can go straight into the app.
+export async function acceptReset(token, password) {
+  try {
+    const res = await fetch('/api/users/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error || `http_${res.status}` };
+    notifyUsersChanged();
+    return { ok: true, user: data.user };
+  } catch {
+    return { ok: false, error: 'network' };
+  }
+}
+
+// Change your own password. Returns { ok, error }; `currentPassword` is only
+// required when you already have one set.
+export async function changeOwnPassword(currentPassword, newPassword) {
+  try {
+    const res = await fetch('/api/users/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error || `http_${res.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'network' };
   }
 }
 

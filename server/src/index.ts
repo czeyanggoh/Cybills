@@ -36,6 +36,11 @@ app.use((req, res, next) => {
   if (!p.startsWith('/api/')) return next();
   if (p.startsWith('/api/auth')) return next();
   if (p === '/api/users/login') return next();
+  // Invitation / password-reset links are opened by people who, by definition,
+  // can't sign in yet — these three are the flow that gets them a password.
+  if (p === '/api/users/forgot-password') return next();
+  if (p === '/api/users/reset') return next();
+  if (p.startsWith('/api/users/reset/')) return next();
   if (p === '/api/health') return next();
   if (/^\/api\/costs\/bills\/[^/]+\/file$/.test(p)) return next();
   if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });

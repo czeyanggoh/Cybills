@@ -45,6 +45,23 @@ Env (server/.env): `CYWORKSPACE_RELAY_URL` (on the VPS use
 (same value as cyworkspace's `WEBHOOK_API_KEY`). Xero endpoints 503 until the
 key is set, so deploys are safe before the env is configured.
 
+## Account email via Microsoft Graph
+
+Invitations, password resets, and password-changed notices are sent from a
+Microsoft 365 mailbox through Graph's `sendMail` (app-only client credentials).
+The Azure app registration holds exactly one permission — Microsoft Graph
+**`Mail.Send`, Application type**, admin-consented — and should be pinned to the
+sending mailbox with an Exchange application access policy, since app-type
+`Mail.Send` is otherwise tenant-wide.
+
+Server-side consumer: `server/src/mailer.ts` (token cache + `sendMail` +
+templates); the flows live in `server/src/users.ts` (invite / reset / change
+password). Env (server/.env): `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`,
+`GRAPH_CLIENT_SECRET`, `GRAPH_SENDER`, optional `MAIL_REPLY_TO` and
+`INVITE_TTL_DAYS`. With them unset, mail no-ops and invite/reset links are
+returned to the admin to share by hand, so deploys are safe before the app
+registration exists. Setup walkthrough: `deploy/EMAIL.md`.
+
 ## Push policy: auto-deploy enabled
 
 The operator has granted standing authorization to push to `main` after each

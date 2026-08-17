@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-d
 import { AuthProvider } from '@/lib/auth';
 import RequireAuth, { RequireSignedIn, RequireAdmin } from '@/components/RequireAuth';
 import Login from './pages/Login';
+import SetPassword from './pages/SetPassword';
 import Join from './pages/Join';
 import Costs from './pages/Costs';
 import CostDetail from './pages/CostDetail';
@@ -41,6 +42,8 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<Login />} />
+            {/* Public: opened from an invitation / password-reset email. */}
+            <Route path="/set-password" element={<SetPassword />} />
             <Route path="/join" element={<RequireSignedIn><Join /></RequireSignedIn>} />
             <Route path="/costs" element={<Protected><Costs /></Protected>} />
             <Route path="/costs/exports" element={<Protected><Exports workspace="costs" /></Protected>} />

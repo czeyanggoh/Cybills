@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Receipt } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { requestPasswordReset } from '@/lib/userStore';
 
 // Google "G" rendered monochrome to fit the black & white house style (the
 // four-colour mark would break the minimalist aesthetic).
@@ -25,13 +26,14 @@ const ERROR_MESSAGES = {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { googleEnabled, loginWithPassword } = useAuth();
+  const { googleEnabled, mailEnabled, loginWithPassword } = useAuth();
   const [params] = useSearchParams();
   const error = params.get('error');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pwError, setPwError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [resetNote, setResetNote] = useState('');
 
   // Real OAuth when configured; otherwise a mock sign-in straight into the app.
   const continueWithGoogle = () => {
@@ -57,6 +59,22 @@ export default function Login() {
     } finally {
       setBusy(false);
     }
+  };
+
+  // "Forgot password?" — emails a single-use reset link. The confirmation is
+  // deliberately vague about whether the address has an account (the server
+  // answers identically either way), so this can't be used to probe the roster.
+  const sendReset = async () => {
+    const addr = email.trim();
+    if (!addr) {
+      setPwError('Enter your email address first, then choose Forgot password.');
+      return;
+    }
+    setBusy(true);
+    setPwError('');
+    await requestPasswordReset(addr);
+    setBusy(false);
+    setResetNote(`If ${addr} has a CYBills account, a reset link is on its way. It expires in a few days.`);
   };
 
   return (
@@ -112,6 +130,9 @@ export default function Login() {
             className="h-11 w-full rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
           />
           {pwError && <p className="text-center text-xs text-destructive">{pwError}</p>}
+          {resetNote && (
+            <p className="rounded-md border bg-muted px-3 py-2 text-center text-xs text-muted-foreground">{resetNote}</p>
+          )}
           <button
             type="submit"
             disabled={busy || !email.trim() || !password}
@@ -119,6 +140,18 @@ export default function Login() {
           >
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
+          {/* Only offered once outbound email is configured — without a mailer
+              there'd be nothing to send, and an admin has to reset by hand. */}
+          {mailEnabled && (
+            <button
+              type="button"
+              onClick={sendReset}
+              disabled={busy}
+              className="w-full pt-1 text-center text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline disabled:opacity-50"
+            >
+              Forgot password?
+            </button>
+          )}
         </form>
 
         <p className="mt-8 text-center text-xs text-muted-foreground">

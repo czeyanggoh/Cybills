@@ -42,6 +42,13 @@ npm run dev
 - `npm run lint` / `npm run lint:fix`
 - `npm run typecheck` — checkJs over `src/`
 
+## Email
+
+Account email (invitations, password resets, password-changed notices) goes out
+through Microsoft Graph from a Microsoft 365 mailbox. Setup — the Azure app
+registration, the single `Mail.Send` application permission, and where each
+value lives in Entra — is in [`deploy/EMAIL.md`](deploy/EMAIL.md).
+
 ## Deploy
 
 Push to `main`; the VPS poller picks it up within ~1 minute. See

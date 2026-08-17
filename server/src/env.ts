@@ -88,6 +88,23 @@ export const env = {
   // Model B: where an APPROVED claim's payable is routed to CYHR for payment.
   // Path unconfirmed until CYHR builds the payment-intake page; override here.
   CYHR_PAYMENT_URL: process.env.CYHR_PAYMENT_URL ?? 'https://hr.cy-bm.sg/payments/new',
+
+  // --- Outbound email (Microsoft Graph, app-only) ---------------------------
+  // Account emails (invitations, password resets/changes) are sent from a real
+  // Microsoft 365 mailbox through Graph's sendMail, using an Azure app
+  // registration with the `Mail.Send` APPLICATION permission (admin-consented).
+  // GRAPH_SENDER is the mailbox to send AS (e.g. no-reply@cy-bm.sg) — it must
+  // exist and be licensed. All four must be set for mail to switch on (see
+  // `mailEnabled`); until then the invite/reset endpoints still mint the link
+  // and hand it back so an admin can pass it on manually. See deploy/EMAIL.md.
+  GRAPH_TENANT_ID: process.env.GRAPH_TENANT_ID ?? '',
+  GRAPH_CLIENT_ID: process.env.GRAPH_CLIENT_ID ?? '',
+  GRAPH_CLIENT_SECRET: process.env.GRAPH_CLIENT_SECRET ?? '',
+  GRAPH_SENDER: process.env.GRAPH_SENDER ?? '',
+  // Optional Reply-To, so replies to a no-reply sender reach a real inbox.
+  MAIL_REPLY_TO: process.env.MAIL_REPLY_TO ?? '',
+  // How long an invitation / password-reset link stays valid.
+  INVITE_TTL_DAYS: Number(process.env.INVITE_TTL_DAYS) || 7,
 };
 
 // Real Google sign-in is only enabled once the client credentials AND a session
@@ -113,3 +130,10 @@ export const r2Enabled = Boolean(
 // secret are configured. Until then /api/cyhr/claim-link returns 503 and the
 // client disables the "Submit to CYHR" action.
 export const cyhrEnabled = Boolean(env.CYHR_BASE_URL && env.CYHR_SIGNING_SECRET);
+
+// Outbound email switches on once the Graph app registration AND the sending
+// mailbox are configured. Until then invite/reset links are still generated —
+// they're just returned to the admin instead of being emailed.
+export const mailEnabled = Boolean(
+  env.GRAPH_TENANT_ID && env.GRAPH_CLIENT_ID && env.GRAPH_CLIENT_SECRET && env.GRAPH_SENDER
+);
