@@ -135,6 +135,43 @@ xeroRouter.get('/organisations/:id/taxrates', async (req, res) => {
   res.json({ taxRates });
 });
 
+// GET /api/xero/organisations/:id/profile — the linked Xero org's registration
+// details (name, CRN, tax number, country, base currency, registered address),
+// used to populate Business settings → Business profile.
+xeroRouter.get('/organisations/:id/profile', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const result = await relay('Organisation', { tenantId: organisation.tenantId });
+  if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
+  const org = result.data?.Organisations?.[0];
+  if (!org) return res.status(404).json({ error: 'organisation_not_found_in_xero' });
+  const addresses: any[] = Array.isArray(org.Addresses) ? org.Addresses : [];
+  const addr =
+    addresses.find((a) => a.AddressType === 'STREET' && (a.AddressLine1 || a.City)) ||
+    addresses.find((a) => a.AddressLine1 || a.City) ||
+    {};
+  res.json({
+    profile: {
+      name: org.Name ?? '',
+      legalName: org.LegalName ?? '',
+      registrationNumber: org.RegistrationNumber ?? '',
+      taxNumber: org.TaxNumber ?? '',
+      countryCode: org.CountryCode ?? '',
+      baseCurrency: org.BaseCurrency ?? '',
+      organisationType: org.OrganisationType ?? '',
+      address: {
+        line1: addr.AddressLine1 ?? '',
+        line2: addr.AddressLine2 ?? '',
+        city: addr.City ?? '',
+        region: addr.Region ?? '',
+        postalCode: addr.PostalCode ?? '',
+        country: addr.Country ?? '',
+      },
+    },
+  });
+});
+
 const PUBLISH_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'AUTHORISED']);
 
 // POST /api/xero/organisations/:id/publish-bill — publish a stored cost

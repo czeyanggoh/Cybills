@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Building2,
@@ -16,14 +16,18 @@ import {
   Mail,
   ShieldCheck,
   AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import ListsSettings from '@/components/ListsSettings';
 import { cn } from '@/lib/utils';
 import { useApprovalReminders, setReminders, DAYS, TIMES } from '@/lib/approvalReminders';
 import { useCategoryDisplayMode, setCategoryDisplayMode, useCategorySortMode, setCategorySortMode } from '@/lib/categoryDisplay';
+import { useBusinessProfile, saveBusinessProfile, mergeXeroProfile } from '@/lib/businessProfile';
 import {
   useOrganisations,
+  fetchXeroProfile,
+  getActiveOrganisationId,
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 
@@ -101,10 +105,11 @@ function Row({ label, children, hint = '', required = false }) {
   );
 }
 
-function TextInput({ defaultValue = '', readOnly = false, placeholder = '' }) {
+function TextInput({ defaultValue = '', value = undefined, onChange = undefined, readOnly = false, placeholder = '' }) {
+  const controlled = value !== undefined && onChange;
   return (
     <input
-      defaultValue={defaultValue}
+      {...(controlled ? { value, onChange: (e) => onChange(e.target.value) } : { defaultValue })}
       readOnly={readOnly}
       placeholder={placeholder}
       className={cn(
@@ -200,6 +205,60 @@ const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
 
 // --- Sections ---------------------------------------------------------------
 function BusinessProfile() {
+  const stored = useBusinessProfile();
+  const { data: organisations = [] } = useOrganisations();
+  const [form, setForm] = useState(stored);
+  const [dirty, setDirty] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [sync, setSync] = useState({ state: 'idle', message: '' }); // idle | loading | ok | error
+
+  // Keep the form in step with the persisted profile until the user edits it.
+  useEffect(() => {
+    if (!dirty) setForm(stored);
+  }, [stored, dirty]);
+
+  const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); setSaved(false); };
+  const setAddr = (key, value) => {
+    setForm((f) => ({ ...f, address: { ...f.address, [key]: value } }));
+    setDirty(true); setSaved(false);
+  };
+
+  // Which linked org to read from Xero: the active one, else the first.
+  const orgId = (organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0])?.id || '';
+  const linked = Boolean(orgId);
+
+  const pullFromXero = async () => {
+    if (!orgId) { setSync({ state: 'error', message: 'No Xero organisation is linked yet. Link one under Connections first.' }); return; }
+    setSync({ state: 'loading', message: '' });
+    try {
+      const xero = await fetchXeroProfile(orgId);
+      if (!xero) { setSync({ state: 'error', message: 'Xero returned no organisation details.' }); return; }
+      setForm((f) => mergeXeroProfile(f, xero));
+      setDirty(true); setSaved(false);
+      setSync({ state: 'ok', message: 'Pulled from Xero. Review, then Save changes.' });
+    } catch (err) {
+      const code = err?.code || '';
+      const message =
+        code === 'xero_not_configured' ? 'Xero isn’t connected on the server yet.'
+        : code === 'organisation_not_found' ? 'This organisation isn’t linked to a Xero tenant.'
+        : err?.message || 'Could not reach Xero.';
+      setSync({ state: 'error', message });
+    }
+  };
+
+  const save = () => { saveBusinessProfile(form); setDirty(false); setSaved(true); };
+
+  // First time in, if a Xero org is linked and the profile has never been
+  // synced, pull it automatically so the fields reflect Xero out of the box.
+  // One attempt per mount; the user still reviews and Saves.
+  const autoTried = useRef(false);
+  useEffect(() => {
+    if (autoTried.current || !linked || form.syncedAt || dirty) return;
+    autoTried.current = true;
+    pullFromXero();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linked]);
+
   return (
     <div className="space-y-6">
       <Card title="Upload your logo">
@@ -220,29 +279,53 @@ function BusinessProfile() {
       </Card>
 
       <Card title="Business profile">
-        <Row label="CRN"><TextInput defaultValue="9881375639" readOnly /></Row>
-        <Row label="Business name" required><TextInput defaultValue="CY Business Management" /></Row>
-        <Row label="Practice code"><TextInput placeholder="" /></Row>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            {form.syncedAt
+              ? `Registration details last synced from Xero on ${new Date(form.syncedAt).toLocaleString('en-SG', { dateStyle: 'medium', timeStyle: 'short' })}.`
+              : 'Pull the registration details straight from your connected Xero organisation.'}
+          </p>
+          <button
+            type="button"
+            onClick={pullFromXero}
+            disabled={sync.state === 'loading'}
+            className="inline-flex h-8 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            <RefreshCw className={cn('h-4 w-4', sync.state === 'loading' && 'animate-spin')} />
+            {sync.state === 'loading' ? 'Updating…' : 'Update from Xero'}
+          </button>
+        </div>
+        {sync.message && (
+          <p className={cn('text-xs', sync.state === 'error' ? 'text-destructive' : 'text-muted-foreground')}>{sync.message}</p>
+        )}
+        {!linked && (
+          <p className="text-xs text-muted-foreground">No Xero organisation is linked yet — add one under <span className="font-medium">Connections</span> to enable syncing.</p>
+        )}
+
+        <Row label="CRN"><TextInput value={form.crn} onChange={(v) => set('crn', v)} placeholder="Company registration no." /></Row>
+        <Row label="Business name" required><TextInput value={form.businessName} onChange={(v) => set('businessName', v)} /></Row>
+        <Row label="Tax / GST number"><TextInput value={form.taxNumber} onChange={(v) => set('taxNumber', v)} placeholder="—" /></Row>
+        <Row label="Practice code"><TextInput value={form.practiceCode} onChange={(v) => set('practiceCode', v)} /></Row>
         <Row label="Country of registration" required>
-          <SelectBox defaultValue="Singapore" options={['Singapore', 'Malaysia', 'United Kingdom', 'Australia']} />
+          <SelectBox value={form.country} onChange={(v) => set('country', v)} options={['Singapore', 'Malaysia', 'United Kingdom', 'Australia']} />
         </Row>
         <Row label="Base currency">
-          <SelectBox defaultValue="SGD — Singapore, Dollars" options={['SGD — Singapore, Dollars', 'USD — US, Dollars', 'MYR — Malaysian, Ringgit', 'GBP — British, Pounds']} />
+          <SelectBox value={form.baseCurrency} onChange={(v) => set('baseCurrency', v)} options={['SGD — Singapore, Dollars', 'USD — US, Dollars', 'MYR — Malaysian, Ringgit', 'GBP — British, Pounds']} />
         </Row>
         <Row label="Account language">
-          <SelectBox defaultValue="English" options={['English', 'Chinese', 'Malay']} />
+          <SelectBox value={form.language} onChange={(v) => set('language', v)} options={['English', 'Chinese', 'Malay']} />
         </Row>
         <Row label="Industry">
-          <SelectBox defaultValue="IT and Computer Services" options={['IT and Computer Services', 'Professional Services', 'Retail', 'Construction', 'Other']} />
+          <SelectBox value={form.industry} onChange={(v) => set('industry', v)} options={['IT and Computer Services', 'Professional Services', 'Retail', 'Construction', 'Other']} />
         </Row>
       </Card>
 
       <Card title="Registered address">
-        <Row label="Address line 1"><TextInput /></Row>
-        <Row label="Address line 2"><TextInput /></Row>
-        <Row label="City/town"><TextInput /></Row>
-        <Row label="Postal/zip code"><TextInput /></Row>
-        <Row label="Country"><TextInput defaultValue="Singapore" readOnly /></Row>
+        <Row label="Address line 1"><TextInput value={form.address.line1} onChange={(v) => setAddr('line1', v)} /></Row>
+        <Row label="Address line 2"><TextInput value={form.address.line2} onChange={(v) => setAddr('line2', v)} /></Row>
+        <Row label="City/town"><TextInput value={form.address.city} onChange={(v) => setAddr('city', v)} /></Row>
+        <Row label="Postal/zip code"><TextInput value={form.address.postalCode} onChange={(v) => setAddr('postalCode', v)} /></Row>
+        <Row label="Country"><TextInput value={form.address.country} onChange={(v) => setAddr('country', v)} /></Row>
       </Card>
 
       <Card title="Item messaging">
@@ -254,8 +337,14 @@ function BusinessProfile() {
         </Row>
       </Card>
 
-      <div className="flex justify-end">
-        <button type="button" className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+      <div className="flex items-center justify-end gap-3">
+        {saved && <span className="text-sm text-muted-foreground">Saved.</span>}
+        <button
+          type="button"
+          onClick={save}
+          disabled={!dirty}
+          className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
           Save changes
         </button>
       </div>

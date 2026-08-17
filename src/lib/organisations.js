@@ -112,6 +112,12 @@ export function fetchXeroTaxRates(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/taxrates`).then((b) => b.taxRates ?? []);
 }
 
+// The linked organisation's registration details, straight from Xero's
+// Organisation endpoint through the relay. Used to sync the Business profile.
+export function fetchXeroProfile(organisationId) {
+  return getJson(`/api/xero/organisations/${organisationId}/profile`).then((b) => b.profile ?? null);
+}
+
 // The org whose chart drives categorisation: the active org, else the first
 // linked one. Returns '' when none are linked / Xero isn't configured.
 async function resolveCategorisationOrgId() {
