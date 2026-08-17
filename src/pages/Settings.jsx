@@ -21,6 +21,7 @@ import AppShell from '@/components/AppShell';
 import ListsSettings from '@/components/ListsSettings';
 import { cn } from '@/lib/utils';
 import { useApprovalReminders, setReminders, DAYS, TIMES } from '@/lib/approvalReminders';
+import { useCategoryDisplayMode, setCategoryDisplayMode } from '@/lib/categoryDisplay';
 import {
   useOrganisations,
 } from '@/lib/organisations';
@@ -114,10 +115,12 @@ function TextInput({ defaultValue = '', readOnly = false, placeholder = '' }) {
   );
 }
 
-function SelectBox({ defaultValue, options }) {
+// Controlled when `value`+`onChange` are given, else uncontrolled via defaultValue.
+function SelectBox({ defaultValue = undefined, value = undefined, onChange = undefined, options }) {
+  const controlled = value !== undefined && onChange;
   return (
     <select
-      defaultValue={defaultValue}
+      {...(controlled ? { value, onChange: (e) => onChange(e.target.value) } : { defaultValue })}
       className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       {options.map((o) => (
@@ -366,7 +369,12 @@ function Extraction() {
   );
 }
 
+const CAT_DISPLAY_OPTIONS = ['Code and name', 'Name only', 'Code only'];
+const CAT_MODE_TO_LABEL = { codeName: 'Code and name', name: 'Name only', code: 'Code only' };
+const CAT_LABEL_TO_MODE = { 'Code and name': 'codeName', 'Name only': 'name', 'Code only': 'code' };
+
 function Automation() {
+  const catMode = useCategoryDisplayMode();
   return (
     <div className="space-y-6">
       <Card title="Categorisation">
@@ -377,8 +385,12 @@ function Automation() {
         <Row label="Default category" hint="Applied when there’s no supplier rule and no better match.">
           <SelectBox defaultValue="— None —" options={['— None —', 'Transport - Taxi', 'Meals & Entertainment', 'Others']} />
         </Row>
-        <Row label="Category display">
-          <SelectBox defaultValue="Code and name" options={['Code and name', 'Name only', 'Code only']} />
+        <Row label="Category display" hint="How categories appear in the Costs dropdowns.">
+          <SelectBox
+            value={CAT_MODE_TO_LABEL[catMode] || 'Code and name'}
+            onChange={(v) => setCategoryDisplayMode(CAT_LABEL_TO_MODE[v] || 'codeName')}
+            options={CAT_DISPLAY_OPTIONS}
+          />
         </Row>
         <Row label="Category sort">
           <SelectBox defaultValue="Code" options={['Code', 'Name']} />

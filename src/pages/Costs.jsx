@@ -26,12 +26,14 @@ import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
 import MergeModal from '@/components/MergeModal';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
+import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
 // Native (working) category dropdown styled to match the row cells. `options`
 // is the active org's live Xero chart (bundled fallback).
 function CategorySelect({ value, onChange, options }) {
+  const mode = useCategoryDisplayMode();
   const known = options.includes(value);
   return (
     <select
@@ -39,9 +41,9 @@ function CategorySelect({ value, onChange, options }) {
       onChange={(e) => onChange(e.target.value)}
       className="w-44 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      {!known && <option value={value}>{value}</option>}
+      {!known && <option value={value}>{formatCategory(value, mode)}</option>}
       {options.map((c) => (
-        <option key={c} value={c}>{c}</option>
+        <option key={c} value={c}>{formatCategory(c, mode)}</option>
       ))}
     </select>
   );

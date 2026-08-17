@@ -20,6 +20,7 @@ import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { getExtractionAccounts, useCategoryOptions } from '@/lib/organisations';
+import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions, useList } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import { CUSTOMERS } from '@/data/customers';
@@ -71,7 +72,7 @@ function Input({ value, onChange = null, readOnly = false }) {
 
 // Read-only dropdown-styled display of an extracted value.
 // Editable dropdown (native select) for pick-from-a-list fields like Category.
-function EditableSelect({ value, options, onChange }) {
+function EditableSelect({ value, options, onChange, format = (x) => x }) {
   const known = options.includes(value);
   return (
     <div className="relative">
@@ -80,9 +81,9 @@ function EditableSelect({ value, options, onChange }) {
         onChange={(e) => onChange(e.target.value)}
         className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {!known && <option value={value}>{value}</option>}
+        {!known && <option value={value}>{format(value)}</option>}
         {options.map((o) => (
-          <option key={o} value={o}>{o}</option>
+          <option key={o} value={o}>{format(o)}</option>
         ))}
       </select>
       <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -162,6 +163,7 @@ export default function CostDetail() {
     new Set([user?.name || user?.email || 'Astrid Yang', ...teamUsers.map((u) => u.name || u.email).filter(Boolean)])
   );
   const categoryOptions = useCategoryOptions();
+  const catMode = useCategoryDisplayMode();
   const projectOptions = useProjectOptions();
   const customerOptions = CUSTOMERS.map((c) => c.name);
   const paymentMethods = usePaymentMethods();
@@ -775,7 +777,7 @@ export default function CostDetail() {
               <Field label="Purchase order number"><Input value={data.po} onChange={(v) => set('po', v)} /></Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
-                <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} />
+                <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>

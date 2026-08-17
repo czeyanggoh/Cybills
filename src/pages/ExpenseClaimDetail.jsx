@@ -34,6 +34,7 @@ import { useUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf } from '@/lib/claimPdf';
+import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { cn } from '@/lib/utils';
 
 // The GL/account code CYHR should book the payable against — the leading number
@@ -88,6 +89,7 @@ function Input({ value, readOnly = false }) {
 }
 
 function CategorySelect({ value, onChange }) {
+  const mode = useCategoryDisplayMode();
   const known = CATEGORIES.includes(value);
   return (
     <div className="relative w-40">
@@ -96,9 +98,9 @@ function CategorySelect({ value, onChange }) {
         onChange={(e) => onChange(e.target.value)}
         className="h-8 w-full appearance-none rounded-md border bg-background px-2.5 pr-7 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {!known && value && <option value={value}>{value}</option>}
+        {!known && value && <option value={value}>{formatCategory(value, mode)}</option>}
         {CATEGORIES.map((c) => (
-          <option key={c} value={c}>{c}</option>
+          <option key={c} value={c}>{formatCategory(c, mode)}</option>
         ))}
       </select>
       <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
