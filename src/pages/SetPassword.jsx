@@ -14,7 +14,9 @@ export default function SetPassword() {
   const { refresh } = useAuth();
   const token = params.get('token') || '';
 
-  const [state, setState] = useState({ status: 'checking' }); // checking | valid | invalid
+  const [state, setState] = useState(
+    /** @type {{ status: string, kind?: string, email?: string }} */ ({ status: 'checking' })
+  ); // checking | valid | invalid
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
