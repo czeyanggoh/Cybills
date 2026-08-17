@@ -5,12 +5,9 @@ import {
   Share2,
   Upload,
   Workflow,
-  Sparkles,
   Check,
   Download,
   ClipboardList,
-  Briefcase,
-  Archive,
   LayoutGrid,
   ImagePlus,
   Copy,
@@ -37,13 +34,10 @@ const NAV = [
       { key: 'connections', label: 'Connections', icon: Share2 },
       { key: 'extraction', label: 'Extraction', icon: Upload },
       { key: 'automation', label: 'Automation', icon: Workflow },
-      { key: 'ai', label: 'AI Assist', icon: Sparkles },
       { key: 'approvals', label: 'Approvals', icon: Check },
       { key: 'email', label: 'Email', icon: Mail },
       { key: 'exports', label: 'Exports', icon: Download },
       { key: 'lists', label: 'Lists', icon: ClipboardList },
-      { key: 'accountant', label: 'Accountant', icon: Briefcase },
-      { key: 'vault', label: 'Vault', icon: Archive },
     ],
   },
   { group: 'Manage', items: [{ key: 'subscription', label: 'Subscription', icon: LayoutGrid }] },
@@ -755,7 +749,7 @@ const TITLES = Object.fromEntries(NAV.flatMap((s) => s.items).map((i) => [i.key,
 // shown for parity with Dext but not yet wired.
 function Connections() {
   const { data: organisations = [] } = useOrganisations();
-  const linked = organisations.filter((o) => o.xeroTenantId || o.xeroTenantName);
+  const linked = organisations.filter((o) => o.tenantId || o.tenantName);
 
   return (
     <div className="space-y-5">
@@ -792,7 +786,7 @@ function Connections() {
             <p className="mt-4 text-sm text-muted-foreground">
               Linked to Xero:{' '}
               <span className="font-medium text-foreground">
-                {linked.map((o) => o.xeroTenantName || o.name).join(', ')}
+                {linked.map((o) => o.tenantName || o.name).join(', ')}
               </span>
               .
             </p>
@@ -802,41 +796,6 @@ function Connections() {
               (top-left) to publish bills through the relay.
             </p>
           )}
-        </div>
-      </Card>
-
-      <Card title="Back up">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="font-medium">Backup your paperwork</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Connect CYBills to a cloud storage provider to back up all your Costs and Sales
-              documents automatically or on demand.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2 text-sm text-muted-foreground/60">
-              {['Dropbox', 'Google Drive', 'OneDrive', 'Everial'].map((p) => (
-                <span key={p} className="inline-flex h-8 items-center rounded-md border px-3">{p}</span>
-              ))}
-            </div>
-          </div>
-          <button type="button" className="inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium text-muted-foreground" disabled>
-            Connect
-          </button>
-        </div>
-      </Card>
-
-      <Card title="Cost connections">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="font-medium">Fetch bills automatically</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Automatically collect your new bills and invoices from these apps or websites. Find the
-              collected documents in your Costs inbox.
-            </p>
-          </div>
-          <button type="button" className="inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium text-muted-foreground" disabled>
-            Connect
-          </button>
         </div>
       </Card>
     </div>
