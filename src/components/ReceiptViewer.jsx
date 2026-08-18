@@ -1,27 +1,32 @@
 import { useState, useEffect } from 'react';
 import { Image as ImageIcon, X, ChevronLeft, ChevronRight } from 'lucide-react';
-import { fetchBills, billFileUrl } from '@/lib/bills';
+import { fetchBillFileMeta, billFileUrl } from '@/lib/bills';
 import { cn } from '@/lib/utils';
 
 // An image icon that opens a lightbox of the uploaded receipt(s). `itemIds` is
 // one bill id or a list of them (a claim's line items) — each item's receipt is
-// the file stored on its cost document. Items without a stored file are skipped;
-// if none have one, the lightbox says so.
+// the file stored on its cost document, resolved globally by id (so it shows
+// even when the document lives in another org's book). Items without a stored
+// file are skipped; if none have one, the lightbox says so.
 export default function ReceiptViewer({ itemIds, size = 'sm' }) {
   const ids = (Array.isArray(itemIds) ? itemIds : [itemIds]).map(String).filter(Boolean);
+  const idsKey = ids.join(',');
   const [open, setOpen] = useState(false);
-  const [bills, setBills] = useState(null); // null = not loaded yet
+  const [files, setFiles] = useState(null); // null = not loaded yet; else [{id, contentType}]
   const [idx, setIdx] = useState(0);
 
   useEffect(() => {
-    if (!open || bills) return;
+    if (!open || files) return undefined;
     let alive = true;
-    fetchBills().then((all) => { if (alive) setBills(all); }).catch(() => { if (alive) setBills([]); });
+    Promise.all(ids.map((id) => fetchBillFileMeta(id).then((m) => ({ id, ...m }))))
+      .then((metas) => { if (alive) setFiles(metas.filter((m) => m.hasFile)); })
+      .catch(() => { if (alive) setFiles([]); });
     return () => { alive = false; };
-  }, [open, bills]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, files, idsKey]);
 
   const dim = size === 'lg' ? 'h-4 w-4' : 'h-3.5 w-3.5';
-  const withFiles = (bills || []).filter((b) => ids.includes(String(b.id)) && b.hasFile);
+  const withFiles = files || [];
   const cur = withFiles[Math.min(idx, Math.max(0, withFiles.length - 1))];
 
   return (
@@ -48,7 +53,7 @@ export default function ReceiptViewer({ itemIds, size = 'sm' }) {
               </button>
             </div>
             <div className="relative flex-1 overflow-auto bg-muted/30">
-              {bills === null ? (
+              {files === null ? (
                 <p className="p-12 text-center text-sm text-muted-foreground">Loading…</p>
               ) : !cur ? (
                 <p className="p-12 text-center text-sm text-muted-foreground">No receipt image is attached to this {ids.length > 1 ? 'claim' : 'item'}.</p>

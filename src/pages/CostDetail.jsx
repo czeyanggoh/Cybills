@@ -26,7 +26,7 @@ import { useUsers } from '@/lib/userStore';
 import { CUSTOMERS } from '@/data/customers';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { usePaymentMethods } from '@/lib/paymentMethods';
-import { fetchBills, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -215,20 +215,27 @@ export default function CostDetail() {
     }
     let alive = true;
     setLoading(true);
-    fetchBills().then((bills) => {
-      if (!alive) return;
-      const match = bills.find((b) => b.id === id);
-      const pd = match ? billToDoc(match) : null;
-      setPersisted(pd);
-      if (pd) {
-        setData(initialData(pd));
-        if (pd.hasFile) {
-          setImageUrl(billFileUrl(pd.id));
-          setPreviewType(pd.contentType.includes('pdf') ? 'pdf' : 'image');
+    // Prefer the active org's list (drives prev/next); fall back to a global
+    // by-id fetch so a claim's line item resolves even if its document sits in
+    // another org's book.
+    fetchBills()
+      .then(async (bills) => {
+        const match = bills.find((b) => b.id === id);
+        return match || (await fetchBillById(id));
+      })
+      .then((match) => {
+        if (!alive) return;
+        const pd = match ? billToDoc(match) : null;
+        setPersisted(pd);
+        if (pd) {
+          setData(initialData(pd));
+          if (pd.hasFile) {
+            setImageUrl(billFileUrl(pd.id));
+            setPreviewType(pd.contentType.includes('pdf') ? 'pdf' : 'image');
+          }
         }
-      }
-      setLoading(false);
-    });
+        setLoading(false);
+      });
     return () => {
       alive = false;
     };

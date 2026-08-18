@@ -146,6 +146,31 @@ export function billFileUrl(id) {
   return `/api/costs/bills/${id}/file`;
 }
 
+// Whether a bill has a stored file (+ its type), resolved globally by id — works
+// even when the bill sits outside the active org's book (e.g. a claim item).
+export async function fetchBillFileMeta(id) {
+  try {
+    const res = await fetch(`/api/costs/bills/${id}/file-meta`, { headers: orgHeaders() });
+    if (!res.ok) return { hasFile: false };
+    return await res.json();
+  } catch {
+    return { hasFile: false };
+  }
+}
+
+// One bill by id, with a global fallback so claim line items resolve regardless
+// of which org's book the document lives in. Returns null when truly absent.
+export async function fetchBillById(id) {
+  try {
+    const res = await fetch(`/api/costs/bills/${id}`, { headers: orgHeaders() });
+    if (!res.ok) return null;
+    const { bill } = await res.json();
+    return bill ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Attach/replace the original file on an existing bill. Returns the updated
 // bill; throws on failure.
 export async function uploadBillFile(id, fileBase64, mediaType) {

@@ -68,6 +68,24 @@ billsRouter.get('/bills/:id/file', async (req, res) => {
   obj.body.pipe(res);
 });
 
+// GET /api/costs/bills/:id/file-meta — does this bill have a stored file, and
+// what type? Resolved globally by id (same capability-token model as /file), so
+// a claim item whose document lives in another org scope still resolves.
+billsRouter.get('/bills/:id/file-meta', (req, res) => {
+  const bill = getBillById(orgIdFor(req), req.params.id) || getBillByIdAny(req.params.id);
+  if (!bill) return res.json({ hasFile: false });
+  res.json({ hasFile: Boolean(bill.storageKey), contentType: bill.contentType || '', fileName: bill.fileName || '' });
+});
+
+// GET /api/costs/bills/:id — one bill by id, org-first then a global fallback,
+// so opening a claim's line item resolves its document even if it sits in a
+// different org's book (or the active org isn't the one it was created under).
+billsRouter.get('/bills/:id', (req, res) => {
+  const bill = getBillById(orgIdFor(req), req.params.id) || getBillByIdAny(req.params.id);
+  if (!bill) return res.status(404).json({ error: 'not_found' });
+  res.json({ bill: { ...bill, hasFile: Boolean(bill.storageKey) } });
+});
+
 // POST /api/costs/bills/:id/file — attach/replace the original file on an
 // existing bill (e.g. one uploaded before file storage worked). Body:
 // { fileBase64, mediaType }.
