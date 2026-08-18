@@ -216,7 +216,7 @@ function OrganisationSwitcher() {
 
 // App chrome for the signed-in experience. `subnav` renders an optional second
 // column (used by Costs for its inbox/expense-claims/suppliers list).
-export default function AppShell({ subnav = null, children }) {
+export default function AppShell({ subnav = null, hideSidebar = false, children }) {
   const { user, membership, googleEnabled, signOut } = useAuth();
   const navigate = useNavigate();
   const [addOpen, setAddOpen] = useState(false);
@@ -239,8 +239,9 @@ export default function AppShell({ subnav = null, children }) {
           Business settings, Sign out) is always pinned in view on every tab —
           not pushed below the fold on content-heavy pages like Costs. */}
       <div className="flex h-screen overflow-hidden bg-background text-foreground">
-        {/* Primary sidebar */}
-        <aside className="hidden w-56 shrink-0 flex-col border-r bg-background md:flex">
+        {/* Primary sidebar — hidden in full-width chrome (e.g. Settings, which
+            shows its own nav column + a Back link, like Dext). */}
+        <aside className={cn('hidden w-56 shrink-0 flex-col border-r bg-background', hideSidebar ? 'hidden' : 'md:flex')}>
           <div className="flex h-14 items-center gap-2 border-b px-4">
             <Receipt className="h-5 w-5" />
             <span className="text-sm font-semibold tracking-tight">CYBills</span>

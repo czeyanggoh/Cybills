@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
+  ChevronLeft,
   Building2,
   Share2,
   Upload,
@@ -50,8 +51,16 @@ const NAV = [
 ];
 
 function SettingsNav({ active, onSelect }) {
+  const navigate = useNavigate();
   return (
     <div className="p-3 text-sm">
+      <button
+        type="button"
+        onClick={() => navigate('/costs')}
+        className="mb-2 flex w-full items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <ChevronLeft className="h-4 w-4" strokeWidth={2} /> Back
+      </button>
       {NAV.map((section) => (
         <div key={section.group} className="mb-3">
           <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1172,7 +1181,7 @@ export default function Settings() {
   };
 
   return (
-    <AppShell subnav={<SettingsNav active={section} onSelect={selectSection} />}>
+    <AppShell hideSidebar subnav={<SettingsNav active={section} onSelect={selectSection} />}>
       <h1 className="mb-6 text-xl font-semibold tracking-tight">{TITLES[section]}</h1>
       {section === 'business' ? (
         <BusinessProfile />
