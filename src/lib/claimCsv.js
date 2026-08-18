@@ -3,11 +3,70 @@
 // per line item.
 
 import { csvDate, claimRef, claimExportName } from '@/lib/exportFormat';
+import { EXPORT_COLUMNS } from '@/lib/exportSettings';
 
-function esc(v) {
-  const s = String(v ?? '');
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+// Escape a field for a given delimiter (',' default, ';' for comma-decimal CSV).
+function escFor(delimiter) {
+  const re = new RegExp(`["${delimiter}\\n]`);
+  return (v) => {
+    const s = String(v ?? '');
+    return re.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
 }
+
+// Format a number string with the chosen decimal separator.
+function num(v, sep) {
+  const s = Number(v || 0).toFixed(2);
+  return sep === 'Comma (,)' ? s.replace('.', ',') : s;
+}
+
+// Format an ISO date (YYYY-MM-DD) per the chosen Custom CSV date format.
+function fmtDate(iso, dateFormat = '') {
+  if (!iso || iso === '—') return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+  if (!m) return csvDate(iso);
+  const [, y, mo, d] = m;
+  if (dateFormat.startsWith('YYYY-MM-DD')) return `${y}-${mo}-${d}`;
+  if (dateFormat.startsWith('DD/MM/YYYY')) return `${d}/${mo}/${y}`;
+  if (dateFormat.startsWith('MM/DD/YYYY')) return `${mo}/${d}/${y}`;
+  return csvDate(iso); // DD-Mon-YYYY (default)
+}
+
+// Value of each selectable Custom CSV column for one claim line item. `f` is the
+// export settings (decimalSeparator, dateFormat). Blank for fields a claim has
+// no data for (kept so the column still appears if the user selected it).
+const CUSTOM_COL = {
+  'Receipt ID': (c, t) => t.displayId || t.itemId,
+  'Invoice number': () => '',
+  Type: () => 'Expense claim',
+  Status: () => 'processed',
+  Owner: (c, t) => t.addedBy || c.claimFor || '',
+  Date: (c, t, cur, f) => fmtDate(t.date, f.dateFormat),
+  'Due date': () => '',
+  Supplier: (c, t) => t.supplier || '',
+  Customer: () => '',
+  Description: (c, t) => t.description || '',
+  Category: (c, t) => t.category || '',
+  'Product/Service': () => '',
+  'Project 1': (c, t) => t.project || '',
+  'Payment method': () => '',
+  Currency: (c) => c.currency || 'SGD',
+  'Tax rate': (c, t) => t.taxRate || '',
+  'Quantity (line items)': () => '',
+  'Unit price (net)': (c, t, cur, f) => num(t.net, f.decimalSeparator),
+  'Unit price (total)': (c, t, cur, f) => num(t.total, f.decimalSeparator),
+  'Net amount': (c, t, cur, f) => num(t.net, f.decimalSeparator),
+  'Tax amount': (c, t, cur, f) => num(t.tax, f.decimalSeparator),
+  'Total amount': (c, t, cur, f) => num(t.total, f.decimalSeparator),
+  'Net with currency': (c, t, cur, f) => `${cur} ${num(t.net, f.decimalSeparator)}`,
+  'Tax with currency': (c, t, cur, f) => `${cur} ${num(t.tax, f.decimalSeparator)}`,
+  'Total with currency': (c, t, cur, f) => `${cur} ${num(t.total, f.decimalSeparator)}`,
+  'Base net amount': (c, t, cur, f) => num(t.net, f.decimalSeparator),
+  'Base total amount': (c, t, cur, f) => num(t.total, f.decimalSeparator),
+  Note: () => '',
+  Image: () => '',
+  'Project 2': () => '',
+};
 
 function summarise(txns) {
   const map = new Map();
@@ -73,9 +132,25 @@ function dextRow(claim, t) {
   ];
 }
 
-export function generateClaimCsv(claim, { detailLevel = 'summary' } = {}) {
+// format: 'cybills' (fixed accounting schema) | 'custom' (the Business-settings
+// column selection). `settings` are the Exports settings (columns, decimal
+// separator, date format) — required for the 'custom' format.
+export function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null } = {}) {
+  const f = settings || {};
+  // Comma decimals need a non-comma field delimiter, so switch to ';'.
+  const delimiter = f.decimalSeparator === 'Comma (,)' ? ';' : ',';
+  const esc = escFor(delimiter);
   const rows = [];
-  if (detailLevel === 'items') {
+
+  if (format === 'custom' && Array.isArray(f.columns) && f.columns.length) {
+    // Emit exactly the selected columns, in the canonical order, one row/item.
+    const cols = EXPORT_COLUMNS.filter((c) => f.columns.includes(c));
+    const cur = claim.currency || 'SGD';
+    rows.push(cols);
+    for (const t of claim.transactions) {
+      rows.push(cols.map((c) => (CUSTOM_COL[c] ? CUSTOM_COL[c](claim, t, cur, f) : '')));
+    }
+  } else if (detailLevel === 'items') {
     rows.push(DEXT_COLUMNS);
     for (const t of claim.transactions) rows.push(dextRow(claim, t));
   } else {
@@ -85,5 +160,5 @@ export function generateClaimCsv(claim, { detailLevel = 'summary' } = {}) {
     }
     rows.push(['', '', '', 'Total', claim.net, claim.tax, claim.total]);
   }
-  download(claimExportName(claim, 'csv'), rows.map((r) => r.map(esc).join(',')).join('\n'));
+  download(claimExportName(claim, 'csv'), rows.map((r) => r.map(esc).join(delimiter)).join('\n'));
 }

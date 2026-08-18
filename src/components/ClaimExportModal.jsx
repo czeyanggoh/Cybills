@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
 import { generateClaimCsv } from '@/lib/claimCsv';
 import { generateClaimPdf } from '@/lib/claimPdf';
+import { useExportSettings } from '@/lib/exportSettings';
 import { cn } from '@/lib/utils';
 
 function Select({ value, onChange, options }) {
@@ -26,13 +27,14 @@ function Select({ value, onChange, options }) {
 export default function ClaimExportModal({ open, onClose, claim, onExported }) {
   const [tab, setTab] = useState('csv');
   const [detail, setDetail] = useState('summary');
-  const [format, setFormat] = useState('dext');
+  const [format, setFormat] = useState('cybills');
   const [archiveAfter, setArchiveAfter] = useState(false);
+  const settings = useExportSettings();
 
   if (!open) return null;
 
   const doExport = () => {
-    if (tab === 'csv') generateClaimCsv(claim, { detailLevel: detail });
+    if (tab === 'csv') generateClaimCsv(claim, { detailLevel: detail, format, settings });
     else generateClaimPdf(claim);
     onClose();
     if (archiveAfter) onExported?.();
@@ -85,7 +87,7 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
               </label>
               <label className="flex items-center gap-3 text-sm">
                 <span className="w-28 shrink-0 text-muted-foreground">CSV format</span>
-                <Select value={format} onChange={setFormat} options={[{ value: 'dext', label: 'Dext' }]} />
+                <Select value={format} onChange={setFormat} options={[{ value: 'cybills', label: 'CYBills Default' }, { value: 'custom', label: 'Custom CSV (from Export settings)' }]} />
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input

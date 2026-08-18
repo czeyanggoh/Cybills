@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { useApprovalReminders, setReminders, DAYS, TIMES } from '@/lib/approvalReminders';
 import { useCategoryDisplayMode, setCategoryDisplayMode, useCategorySortMode, setCategorySortMode } from '@/lib/categoryDisplay';
 import { useBusinessProfile, saveBusinessProfile, mergeXeroProfile } from '@/lib/businessProfile';
+import { useExportSettings, saveExportSettings, EXPORT_COLUMNS } from '@/lib/exportSettings';
 import {
   useOrganisations,
   fetchXeroProfile,
@@ -135,12 +136,15 @@ function SelectBox({ defaultValue = undefined, value = undefined, onChange = und
   );
 }
 
-function Toggle({ defaultOn = false }) {
-  const [on, setOn] = useState(defaultOn);
+function Toggle({ defaultOn = false, on: onProp = undefined, onChange = undefined }) {
+  const controlled = onProp !== undefined && onChange;
+  const [onState, setOn] = useState(defaultOn);
+  const on = controlled ? onProp : onState;
+  const toggle = () => (controlled ? onChange(!onProp) : setOn((v) => !v));
   return (
     <button
       type="button"
-      onClick={() => setOn((v) => !v)}
+      onClick={toggle}
       className="inline-flex items-center gap-2 text-sm"
     >
       <span
@@ -168,11 +172,14 @@ function CopyRow({ label, value }) {
   );
 }
 
-function CheckRow({ label, defaultChecked = false }) {
-  const [on, setOn] = useState(defaultChecked);
+function CheckRow({ label, defaultChecked = false, checked = undefined, onChange = undefined }) {
+  const controlled = checked !== undefined && onChange;
+  const [onState, setOn] = useState(defaultChecked);
+  const on = controlled ? checked : onState;
+  const toggle = () => (controlled ? onChange(!checked) : setOn((v) => !v));
   return (
     <label className="flex items-center gap-2 text-sm">
-      <input type="checkbox" checked={on} onChange={() => setOn((v) => !v)} className="h-4 w-4 accent-black" />
+      <input type="checkbox" checked={on} onChange={toggle} className="h-4 w-4 accent-black" />
       <span>{label}</span>
     </label>
   );
@@ -188,16 +195,6 @@ function MiniSelect({ defaultValue, options }) {
         <option key={o} value={o}>{o}</option>
       ))}
     </select>
-  );
-}
-
-function SaveBar() {
-  return (
-    <div className="flex justify-end">
-      <button type="button" className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
-        Save changes
-      </button>
-    </div>
   );
 }
 
@@ -783,40 +780,48 @@ function ApprovalReminders() {
   );
 }
 
-const EXPORT_COLUMNS = [
-  'Receipt ID', 'Invoice number', 'Type', 'Status', 'Owner', 'Date', 'Due date', 'Supplier',
-  'Customer', 'Description', 'Category', 'Product/Service', 'Project 1', 'Payment method',
-  'Currency', 'Tax rate', 'Quantity (line items)', 'Unit price (net)', 'Unit price (total)',
-  'Net amount', 'Tax amount', 'Total amount', 'Net with currency', 'Tax with currency',
-  'Total with currency', 'Base net amount', 'Base total amount', 'Note', 'Image', 'Project 2',
-];
-const EXPORT_DEFAULTS = new Set(['Receipt ID', 'Description', 'Net amount', 'Tax amount', 'Total amount']);
-
 function Exports() {
+  const stored = useExportSettings();
+  const [form, setForm] = useState(stored);
+  const [dirty, setDirty] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { if (!dirty) setForm(stored); }, [stored, dirty]);
+
+  const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); setSaved(false); };
+  const toggleColumn = (c) => {
+    setForm((f) => {
+      const has = f.columns.includes(c);
+      return { ...f, columns: has ? f.columns.filter((x) => x !== c) : [...f.columns, c] };
+    });
+    setDirty(true); setSaved(false);
+  };
+  const save = () => { saveExportSettings(form); setDirty(false); setSaved(true); };
+
   return (
     <div className="space-y-6">
       <Card title="CSV Exports">
         <p className="text-sm text-muted-foreground">Choose how the data in CSV file exports gets formatted.</p>
-        <Row label="Receipts and invoices"><SelectBox defaultValue="Dext Default" options={['Dext Default', 'Custom CSV', 'Xero', 'QuickBooks']} /></Row>
-        <Row label="Bank statements"><SelectBox defaultValue="Standard Dext Excel" options={['Standard Dext Excel', 'Custom']} /></Row>
-        <Row label="Sales documents"><SelectBox defaultValue="Dext Sales Default" options={['Dext Sales Default', 'Custom']} /></Row>
-        <Row label="Expense reports"><SelectBox defaultValue="Dext Default" options={['Dext Default', 'Custom']} /></Row>
-        <Row label="Show net amount" hint="Include the net value field in CSV exports."><Toggle /></Row>
+        <Row label="Receipts and invoices"><SelectBox value={form.receiptsFormat} onChange={(v) => set('receiptsFormat', v)} options={['CYBills Default', 'Custom CSV', 'Xero', 'QuickBooks']} /></Row>
+        <Row label="Bank statements"><SelectBox value={form.bankFormat} onChange={(v) => set('bankFormat', v)} options={['CYBills Excel', 'Custom']} /></Row>
+        <Row label="Sales documents"><SelectBox value={form.salesFormat} onChange={(v) => set('salesFormat', v)} options={['CYBills Sales Default', 'Custom']} /></Row>
+        <Row label="Expense reports"><SelectBox value={form.expenseFormat} onChange={(v) => set('expenseFormat', v)} options={['CYBills Default', 'Custom']} /></Row>
+        <Row label="Show net amount" hint="Include the net value field in CSV exports."><Toggle on={form.showNet} onChange={(v) => set('showNet', v)} /></Row>
       </Card>
 
       <Card title="CSV Custom Exports">
-        <p className="text-sm text-muted-foreground">Choose how the data in Custom CSV file exports gets formatted.</p>
-        <Row label="Decimal separator"><SelectBox defaultValue="Dot (.)" options={['Dot (.)', 'Comma (,)']} /></Row>
+        <p className="text-sm text-muted-foreground">Choose how the data in Custom CSV file exports gets formatted. Applied when you pick <span className="font-medium">Custom CSV</span> when exporting an expense claim.</p>
+        <Row label="Decimal separator" hint="Comma switches the CSV field delimiter to “;” so numbers stay unambiguous."><SelectBox value={form.decimalSeparator} onChange={(v) => set('decimalSeparator', v)} options={['Dot (.)', 'Comma (,)']} /></Row>
         <Row label="Date format">
-          <SelectBox defaultValue="DD-Mon-YYYY (e.g. 20-Sep-2025)" options={['DD-Mon-YYYY (e.g. 20-Sep-2025)', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY']} />
+          <SelectBox value={form.dateFormat} onChange={(v) => set('dateFormat', v)} options={['DD-Mon-YYYY (e.g. 20-Sep-2025)', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY']} />
         </Row>
-        <Row label="Show item header in line items export"><Toggle /></Row>
+        <Row label="Show item header in line items export"><Toggle on={form.showItemHeader} onChange={(v) => set('showItemHeader', v)} /></Row>
         <div>
           <p className="mb-1 text-sm font-medium">Custom CSV Export columns</p>
           <p className="mb-3 text-xs text-muted-foreground">Choose the columns to include in the Custom CSV export.</p>
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
             {EXPORT_COLUMNS.map((c) => (
-              <CheckRow key={c} label={c} defaultChecked={EXPORT_DEFAULTS.has(c)} />
+              <CheckRow key={c} label={c} checked={form.columns.includes(c)} onChange={() => toggleColumn(c)} />
             ))}
           </div>
         </div>
@@ -824,16 +829,26 @@ function Exports() {
 
       <Card title="PDF Exports">
         <Row label="Item headers in PDF exports" hint="A page is generated before each item with the item ID.">
-          <Toggle />
+          <Toggle on={form.pdfItemHeaders} onChange={(v) => set('pdfItemHeaders', v)} />
         </Row>
         <Row label="Order of items" hint="Order of items in the PDF export.">
-          <SelectBox defaultValue="Date (old to new)" options={['Date (old to new)', 'Date (new to old)', 'Supplier']} />
+          <SelectBox value={form.pdfOrder} onChange={(v) => set('pdfOrder', v)} options={['Date (old to new)', 'Date (new to old)', 'Supplier']} />
         </Row>
-        <Row label="Hide Project in expense claim PDFs"><Toggle /></Row>
-        <Row label="Hide Project 2 in expense claim PDFs"><Toggle /></Row>
+        <Row label="Hide Project in expense claim PDFs"><Toggle on={form.hideProject} onChange={(v) => set('hideProject', v)} /></Row>
+        <Row label="Hide Project 2 in expense claim PDFs"><Toggle on={form.hideProject2} onChange={(v) => set('hideProject2', v)} /></Row>
       </Card>
 
-      <SaveBar />
+      <div className="flex items-center justify-end gap-3">
+        {saved && <span className="text-sm text-muted-foreground">Saved.</span>}
+        <button
+          type="button"
+          onClick={save}
+          disabled={!dirty}
+          className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          Save changes
+        </button>
+      </div>
     </div>
   );
 }
