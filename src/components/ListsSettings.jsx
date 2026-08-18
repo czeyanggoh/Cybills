@@ -148,16 +148,15 @@ function TaxRatesList() {
         <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Add tax rate</button>
       </Toolbar>
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[720px] text-sm">
+        <table className="w-full min-w-[560px] text-sm">
           <thead className="border-b bg-muted/40 text-left text-muted-foreground">
-            <tr><th className="w-10 px-3 py-2.5" /><th className="px-3 py-2.5 font-medium">Name</th><th className="px-3 py-2.5 font-medium">ID</th><th className="px-3 py-2.5 font-medium">Code</th><th className="px-3 py-2.5 font-medium">Rate %</th><th className="px-3 py-2.5 font-medium">Visible</th></tr>
+            <tr><th className="w-10 px-3 py-2.5" /><th className="px-3 py-2.5 font-medium">Name</th><th className="px-3 py-2.5 font-medium">Code</th><th className="px-3 py-2.5 font-medium">Rate %</th><th className="px-3 py-2.5 font-medium">Visible</th></tr>
           </thead>
           <tbody>
             {filtered.map((r) => (
               <tr key={r.id} className="border-b last:border-0 hover:bg-muted/40">
                 <td className="px-3 py-3"><input type="checkbox" checked={selected.has(r.id)} onChange={() => toggle(r.id)} className="h-4 w-4 accent-black" /></td>
                 <td className="px-3 py-3 font-medium">{r.name}</td>
-                <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{r.id}</td>
                 <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{r.code}</td>
                 <td className="px-3 py-3 tabular-nums">{Number(r.rate).toFixed(1)}</td>
                 <td className="px-3 py-3"><VisibleToggle on={r.visible} onToggle={() => setListVisible('taxRates', r.id, !r.visible)} /></td>
