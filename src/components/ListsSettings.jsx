@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
 import { useList, addToList, removeFromList, setListVisible } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
-import { useOrganisations, useXeroTracking, getActiveOrganisationId } from '@/lib/organisations';
+import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 // Inner sub-nav for Business settings → Lists (mirrors Dext).
@@ -88,43 +89,89 @@ function useSelection() {
   return { selected, toggle, clear };
 }
 
-function CategoriesList() {
-  const rows = useList('categories');
+// Categories = the active org's Xero expense accounts. Each Description is
+// editable here and written straight back to Xero. Pulled live per org (so CYBM
+// shows CYBM's chart). Name/Code come from Xero and are read-only.
+function CategoriesFromXero() {
+  const qc = useQueryClient();
+  const { data: organisations = [] } = useOrganisations();
+  const orgId = (organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0])?.id || '';
+  const { data: categories, isLoading, isError, error } = useXeroCategories(orgId);
   const [query, setQuery] = useState('');
-  const [addOpen, setAddOpen] = useState(false);
-  const { selected, toggle, clear } = useSelection();
+  const [edits, setEdits] = useState({}); // id -> edited description
+  const [status, setStatus] = useState({}); // id -> 'saving' | 'saved' | 'error'
+  const [errMsg, setErrMsg] = useState({}); // id -> message
+
+  const notice = (msg) => (
+    <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">{msg}</div>
+  );
+  if (!orgId) return notice('No Xero organisation is linked yet — connect one under Connections to load categories.');
+  if (isLoading) return notice('Loading categories from Xero…');
+  if (isError) {
+    return notice(/** @type {any} */ (error)?.code === 'xero_not_configured'
+      ? 'Xero isn’t connected on the server yet.'
+      : 'Could not load categories from Xero.');
+  }
+
   const q = query.trim().toLowerCase();
-  const filtered = rows.filter((r) => !q || r.name.toLowerCase().includes(q));
+  const rows = (categories || []).filter((c) => !q || c.name.toLowerCase().includes(q) || (c.code || '').toLowerCase().includes(q));
+  const descOf = (c) => (edits[c.id] !== undefined ? edits[c.id] : c.description);
+  const dirty = (c) => edits[c.id] !== undefined && edits[c.id] !== c.description;
+  const setDesc = (id, v) => { setEdits((e) => ({ ...e, [id]: v })); setStatus((s) => ({ ...s, [id]: undefined })); };
+
+  const save = async (c) => {
+    setStatus((s) => ({ ...s, [c.id]: 'saving' }));
+    try {
+      const updated = await updateXeroCategoryDescription(orgId, c.id, { name: c.name, code: c.code, description: edits[c.id] });
+      qc.setQueryData(['xero-categories', orgId], (prev) => (/** @type {any[]} */ (prev) || []).map((x) => (x.id === c.id ? { ...x, description: (updated && updated.description) ?? edits[c.id] } : x)));
+      setEdits((e) => { const n = { ...e }; delete n[c.id]; return n; });
+      setStatus((s) => ({ ...s, [c.id]: 'saved' }));
+    } catch (err) {
+      setErrMsg((m) => ({ ...m, [c.id]: (err && err.message) || 'Update failed' }));
+      setStatus((s) => ({ ...s, [c.id]: 'error' }));
+    }
+  };
 
   return (
     <div>
-      <Toolbar
-        hasSelection={selected.size > 0}
-        onDelete={() => { removeFromList('categories', [...selected]); clear(); }}
-        query={query}
-        setQuery={setQuery}
-      >
-        <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Add category</button>
-      </Toolbar>
+      <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
+        Categories are your connected Xero organisation’s expense accounts. Edit a <span className="font-medium text-foreground">Description</span> and Save to write it straight back to Xero.
+      </p>
+      <div className="mb-3 flex items-center">
+        <div className="relative ml-auto">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter by name or code" className="h-8 w-64 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+        </div>
+      </div>
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[560px] text-sm">
+        <table className="w-full min-w-[640px] text-sm">
           <thead className="border-b bg-muted/40 text-left text-muted-foreground">
-            <tr><th className="w-10 px-3 py-2.5" /><th className="px-3 py-2.5 font-medium">Name</th><th className="px-3 py-2.5 font-medium">Code</th><th className="px-3 py-2.5 font-medium">Visible</th></tr>
+            <tr><th className="px-3 py-2.5 font-medium">Code</th><th className="px-3 py-2.5 font-medium">Name</th><th className="px-3 py-2.5 font-medium">Description</th><th className="w-24 px-3 py-2.5" /></tr>
           </thead>
           <tbody>
-            {filtered.map((r) => (
-              <tr key={r.id} className="border-b last:border-0 hover:bg-muted/40">
-                <td className="px-3 py-3"><input type="checkbox" checked={selected.has(r.id)} onChange={() => toggle(r.id)} className="h-4 w-4 accent-black" /></td>
-                <td className="px-3 py-3 font-medium">{r.name}</td>
-                <td className="px-3 py-3 text-muted-foreground">{r.code || '—'}</td>
-                <td className="px-3 py-3"><VisibleToggle on={r.visible} onToggle={() => setListVisible('categories', r.id, !r.visible)} /></td>
+            {rows.map((c) => (
+              <tr key={c.id} className="border-b align-top last:border-0 hover:bg-muted/40">
+                <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{c.code || '—'}</td>
+                <td className="px-3 py-3 font-medium">{c.name}</td>
+                <td className="px-3 py-2">
+                  <input value={descOf(c)} onChange={(e) => setDesc(c.id, e.target.value)} placeholder="Add a description…" className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                  {status[c.id] === 'error' && <p className="mt-1 text-xs text-destructive">{errMsg[c.id]}</p>}
+                  {status[c.id] === 'saved' && <p className="mt-1 text-xs text-muted-foreground">Saved to Xero.</p>}
+                </td>
+                <td className="px-3 py-2">
+                  <button type="button" onClick={() => save(c)} disabled={!dirty(c) || status[c.id] === 'saving'} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50">
+                    {status[c.id] === 'saving' ? 'Saving…' : 'Save'}
+                  </button>
+                </td>
               </tr>
             ))}
+            {rows.length === 0 && (
+              <tr><td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">No categories{q ? ' match your search' : ''}.</td></tr>
+            )}
           </tbody>
         </table>
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">Showing {filtered.length} of {filtered.length} items</p>
-      <AddDialog open={addOpen} title="Add category" fields={[{ key: 'name', label: 'Name' }, { key: 'code', label: 'Code' }]} required={['name']} onClose={() => setAddOpen(false)} onAdd={(f) => addToList('categories', { name: f.name.trim(), code: (f.code || '').trim() })} />
+      <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {(categories || []).length} categories</p>
     </div>
   );
 }
@@ -315,7 +362,7 @@ export default function ListsSettings() {
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="mb-4 text-lg font-semibold tracking-tight">{TITLES[tab]}</h2>
-        {tab === 'categories' ? <CategoriesList /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : <Placeholder label={TITLES[tab]} />}
+        {tab === 'categories' ? <CategoriesFromXero /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : <Placeholder label={TITLES[tab]} />}
       </div>
     </div>
   );

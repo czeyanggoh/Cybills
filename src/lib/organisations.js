@@ -134,6 +134,39 @@ export function useXeroTracking(organisationId) {
   });
 }
 
+// The org's Xero expense accounts (with AccountID + Description) — the editable
+// Categories list. Category = a Xero account; its Description syncs to Xero.
+export function fetchXeroCategories(organisationId) {
+  return getJson(`/api/xero/organisations/${organisationId}/categories`).then((b) => b.categories ?? []);
+}
+
+export function useXeroCategories(organisationId) {
+  return useQuery({
+    queryKey: ['xero-categories', organisationId],
+    queryFn: () => fetchXeroCategories(organisationId),
+    enabled: Boolean(organisationId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
+// Push a category's edited Description back to Xero (Name + Code re-sent
+// unchanged so only the Description moves). Resolves with the updated category.
+export async function updateXeroCategoryDescription(organisationId, accountId, { name, code, description }) {
+  const res = await fetch(`/api/xero/organisations/${organisationId}/categories/${accountId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, code, description }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = /** @type {any} */ (new Error(body.message || (body.messages && body.messages[0]) || 'Could not update Xero.'));
+    err.code = body.error;
+    throw err;
+  }
+  return body.category;
+}
+
 // The org whose chart drives categorisation: the active org, else the first
 // linked one. Returns '' when none are linked / Xero isn't configured.
 async function resolveCategorisationOrgId() {

@@ -193,6 +193,53 @@ xeroRouter.get('/organisations/:id/tracking', async (req, res) => {
   res.json({ categories });
 });
 
+const EXPENSE_TYPES = new Set(['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS']);
+
+// GET /api/xero/organisations/:id/categories — the org's Xero expense accounts
+// with their AccountID + editable Description, for Business settings → Lists →
+// Categories (where the Description can be edited and pushed back to Xero).
+xeroRouter.get('/organisations/:id/categories', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const result = await relay('Accounts', { tenantId: organisation.tenantId, query: { where: 'Status=="ACTIVE"' } });
+  if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
+  const categories = (result.data?.Accounts ?? [])
+    .filter((a: any) => a.AccountID && EXPENSE_TYPES.has(String(a.Type).toUpperCase()))
+    .map((a: any) => ({ id: a.AccountID, code: a.Code ?? '', name: a.Name ?? '', description: a.Description ?? '' }));
+  res.json({ categories });
+});
+
+// POST /api/xero/organisations/:id/categories/:accountId — update one account's
+// Description in Xero. Body: { name, code, description }. Name (Xero-required)
+// and Code are re-sent unchanged so only the Description moves.
+xeroRouter.post('/organisations/:id/categories/:accountId', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const b = req.body ?? {};
+  const name = String(b.name ?? '').trim();
+  if (!name) return res.status(400).json({ error: 'name_required', message: 'The account name is required by Xero.' });
+  const account: Record<string, unknown> = { Name: name, Description: String(b.description ?? '') };
+  if (String(b.code ?? '').trim()) account.Code = String(b.code).trim();
+
+  const result = await relay(`Accounts/${encodeURIComponent(req.params.accountId)}`, {
+    method: 'POST',
+    tenantId: organisation.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { Accounts: [account] },
+  });
+  if (!result.ok) {
+    return res.status(result.status >= 500 ? 502 : result.status).json({ error: result.error, message: result.message });
+  }
+  const acc = result.data?.Accounts?.[0];
+  const validationErrors: string[] = (acc?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+  if (!acc || validationErrors.length > 0) {
+    return res.status(422).json({ error: 'xero_validation_failed', messages: validationErrors.length ? validationErrors : ['Xero rejected the update.'] });
+  }
+  res.json({ ok: true, category: { id: acc.AccountID, code: acc.Code ?? '', name: acc.Name ?? '', description: acc.Description ?? '' } });
+});
+
 const PUBLISH_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'AUTHORISED']);
 
 // POST /api/xero/organisations/:id/publish-bill — publish a stored cost
