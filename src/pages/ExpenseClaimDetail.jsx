@@ -4,8 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
-  Flag,
-  Image,
   Search,
   Settings2,
   Plus,
@@ -18,6 +16,8 @@ import CostsSubnav from '@/components/CostsSubnav';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
+import FlagMenu from '@/components/FlagMenu';
+import ReceiptViewer from '@/components/ReceiptViewer';
 import {
   useClaims,
   submitForApproval,
@@ -297,7 +297,7 @@ export default function ExpenseClaimDetail() {
         <TopButton subtle onClick={() => navigate('/expense-claims')}>
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
-        <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
+        <span className="mx-1"><FlagMenu id={claim.id} size="lg" /></span>
         {claim.approvalStatus === 'awaiting_approval' ? (
           <>
             <span className="inline-flex h-8 items-center rounded-md border border-dashed border-foreground px-3 text-sm">
@@ -495,8 +495,8 @@ export default function ExpenseClaimDetail() {
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
                         <input type="checkbox" checked={selected.has(t.itemId)} onChange={() => toggleItem(t.itemId)} disabled={locked} className="h-4 w-4 accent-black disabled:opacity-40" />
-                        <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
-                        <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                        <FlagMenu id={t.itemId} />
+                        <ReceiptViewer itemIds={t.itemId} />
                         <span className="rounded bg-foreground px-2 py-0.5 text-xs text-background">Ready</span>
                       </div>
                     </td>

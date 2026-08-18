@@ -10,10 +10,10 @@ export const FLAGS_EVENT = 'cybills:flags-changed';
 
 export const DEFAULT_FLAGS = [
   { color: 'orange', label: 'Orange', visible: true },
-  { color: 'yellow', label: 'Yellow', visible: false },
-  { color: 'green', label: 'Green', visible: false },
-  { color: 'blue', label: 'Blue', visible: false },
-  { color: 'purple', label: 'Purple', visible: false },
+  { color: 'yellow', label: 'Yellow', visible: true },
+  { color: 'green', label: 'Green', visible: true },
+  { color: 'blue', label: 'Blue', visible: true },
+  { color: 'purple', label: 'Purple', visible: true },
 ];
 
 const emit = () => window.dispatchEvent(new Event(FLAGS_EVENT));

@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Flag, Image, ChevronDown, Search, Filter, Settings2, X, Send } from 'lucide-react';
+import { Plus, ChevronDown, Search, Filter, Settings2, X, Send } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
+import FlagMenu from '@/components/FlagMenu';
+import ReceiptViewer from '@/components/ReceiptViewer';
 import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval } from '@/lib/claimStore';
 import { useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
@@ -278,8 +280,8 @@ export default function ExpenseClaims() {
                       onChange={() => toggle(c.id)}
                       className="h-4 w-4 accent-black"
                     />
-                    <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
-                    <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                    <FlagMenu id={c.id} />
+                    <ReceiptViewer itemIds={(c.transactions || []).map((t) => t.itemId)} />
                   </div>
                 </td>
                 <td className="px-3 py-3">
