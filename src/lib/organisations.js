@@ -118,6 +118,22 @@ export function fetchXeroProfile(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/profile`).then((b) => b.profile ?? null);
 }
 
+// The linked organisation's Xero tracking categories (up to two) + their active
+// options. Category 0 → Projects, category 1 → Projects 2.
+export function fetchXeroTracking(organisationId) {
+  return getJson(`/api/xero/organisations/${organisationId}/tracking`).then((b) => b.categories ?? []);
+}
+
+export function useXeroTracking(organisationId) {
+  return useQuery({
+    queryKey: ['xero-tracking', organisationId],
+    queryFn: () => fetchXeroTracking(organisationId),
+    enabled: Boolean(organisationId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
 // The org whose chart drives categorisation: the active org, else the first
 // linked one. Returns '' when none are linked / Xero isn't configured.
 async function resolveCategorisationOrgId() {

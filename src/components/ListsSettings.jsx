@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Search, Trash2, Flag } from 'lucide-react';
 import { useList, addToList, removeFromList, setListVisible } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
+import { useOrganisations, useXeroTracking, getActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 // Inner sub-nav for Business settings → Lists (mirrors Dext).
@@ -178,43 +179,63 @@ function TaxRatesList() {
   );
 }
 
-function ProjectsList() {
-  const rows = useList('projects');
+// Projects = a Xero tracking category. `index` 0 → the first tracking category
+// (Projects), 1 → the second (Projects 2). The rows are that category's tracking
+// options, pulled live from the ACTIVE organisation's Xero — so each org shows
+// its own tracking (e.g. CYBM's, not another entity's). Read-only here; options
+// are managed in Xero.
+function ProjectsFromXero({ index }) {
+  const { data: organisations = [] } = useOrganisations();
+  const orgId = (organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0])?.id || '';
+  const { data: categories, isLoading, isError, error } = useXeroTracking(orgId);
   const [query, setQuery] = useState('');
-  const [addOpen, setAddOpen] = useState(false);
-  const { selected, toggle, clear } = useSelection();
+
+  const notice = (msg) => (
+    <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">{msg}</div>
+  );
+
+  if (!orgId) return notice('No Xero organisation is linked yet — connect one under Connections to load tracking categories.');
+  if (isLoading) return notice('Loading tracking categories from Xero…');
+  if (isError) {
+    return notice(/** @type {any} */ (error)?.code === 'xero_not_configured'
+      ? 'Xero isn’t connected on the server yet.'
+      : 'Could not load tracking categories from Xero.');
+  }
+  const cat = (categories || [])[index];
+  if (!cat) return notice(`The connected Xero organisation has no ${index === 0 ? 'first' : 'second'} tracking category.`);
+
   const q = query.trim().toLowerCase();
-  const filtered = rows.filter((r) => !q || r.name.toLowerCase().includes(q));
+  const options = cat.options.filter((o) => !q || o.name.toLowerCase().includes(q));
 
   return (
     <div>
-      <Toolbar
-        hasSelection={selected.size > 0}
-        onDelete={() => { removeFromList('projects', [...selected]); clear(); }}
-        query={query}
-        setQuery={setQuery}
-      >
-        <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Add project</button>
-        <button type="button" className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Set user defaults</button>
-      </Toolbar>
+      <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
+        Tracking category <span className="font-medium text-foreground">{cat.name}</span>, synced from the connected Xero organisation. Its options are managed in Xero.
+      </p>
+      <div className="mb-3 flex items-center">
+        <div className="relative ml-auto">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter by name" className="h-8 w-56 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+        </div>
+      </div>
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[480px] text-sm">
+        <table className="w-full min-w-[360px] text-sm">
           <thead className="border-b bg-muted/40 text-left text-muted-foreground">
-            <tr><th className="w-10 px-3 py-2.5" /><th className="px-3 py-2.5 font-medium">Name</th><th className="px-3 py-2.5 font-medium">Visible</th></tr>
+            <tr><th className="px-3 py-2.5 font-medium">Option</th></tr>
           </thead>
           <tbody>
-            {filtered.map((r) => (
-              <tr key={r.id} className="border-b last:border-0 hover:bg-muted/40">
-                <td className="px-3 py-3"><input type="checkbox" checked={selected.has(r.id)} onChange={() => toggle(r.id)} className="h-4 w-4 accent-black" /></td>
-                <td className="px-3 py-3 font-medium">{r.name}</td>
-                <td className="px-3 py-3"><VisibleToggle on={r.visible} onToggle={() => setListVisible('projects', r.id, !r.visible)} /></td>
+            {options.map((o) => (
+              <tr key={o.id} className="border-b last:border-0 hover:bg-muted/40">
+                <td className="px-3 py-3 font-medium">{o.name}</td>
               </tr>
             ))}
+            {options.length === 0 && (
+              <tr><td className="px-3 py-8 text-center text-muted-foreground">No options{q ? ' match your search' : ' in this tracking category'}.</td></tr>
+            )}
           </tbody>
         </table>
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">Showing {filtered.length} of {filtered.length} items</p>
-      <AddDialog open={addOpen} title="Add project" fields={[{ key: 'name', label: 'Name' }]} required={['name']} onClose={() => setAddOpen(false)} onAdd={(f) => addToList('projects', { name: f.name.trim() })} />
+      <p className="mt-3 text-xs text-muted-foreground">Showing {options.length} of {cat.options.length} options</p>
     </div>
   );
 }
@@ -295,7 +316,7 @@ export default function ListsSettings() {
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="mb-4 text-lg font-semibold tracking-tight">{TITLES[tab]}</h2>
-        {tab === 'categories' ? <CategoriesList /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsList /> : tab === 'flags' ? <FlagsList /> : <Placeholder label={TITLES[tab]} />}
+        {tab === 'categories' ? <CategoriesList /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : <Placeholder label={TITLES[tab]} />}
       </div>
     </div>
   );

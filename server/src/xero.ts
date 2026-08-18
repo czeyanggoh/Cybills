@@ -172,6 +172,27 @@ xeroRouter.get('/organisations/:id/profile', async (req, res) => {
   });
 });
 
+// GET /api/xero/organisations/:id/tracking — the linked Xero org's tracking
+// categories (up to two, active only) and each one's active options. Drives the
+// Projects / Projects 2 lists, which are Xero tracking categories 1 and 2.
+xeroRouter.get('/organisations/:id/tracking', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const result = await relay('TrackingCategories', { tenantId: organisation.tenantId });
+  if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
+  const categories = (result.data?.TrackingCategories ?? [])
+    .filter((c: any) => c.Status === 'ACTIVE')
+    .map((c: any) => ({
+      id: c.TrackingCategoryID,
+      name: c.Name,
+      options: (c.Options ?? [])
+        .filter((o: any) => o.Status === 'ACTIVE')
+        .map((o: any) => ({ id: o.TrackingOptionID, name: o.Name })),
+    }));
+  res.json({ categories });
+});
+
 const PUBLISH_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'AUTHORISED']);
 
 // POST /api/xero/organisations/:id/publish-bill — publish a stored cost
