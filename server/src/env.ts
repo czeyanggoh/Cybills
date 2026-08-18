@@ -119,6 +119,22 @@ export const env = {
   MAIL_REPLY_TO: process.env.MAIL_REPLY_TO ?? '',
   // How long an invitation / password-reset link stays valid.
   INVITE_TTL_DAYS: Number(process.env.INVITE_TTL_DAYS) || 7,
+
+  // --- Outbound email via SMTP (any transactional provider) -----------------
+  // The universal alternative to Microsoft Graph, for domains not on Microsoft
+  // 365 (e.g. a Cloudflare-managed domain, which only *receives*). Point these
+  // at a transactional provider (Resend, Brevo, Mailgun, Amazon SES, …) that is
+  // verified to send as your domain. When SMTP is configured it takes priority
+  // over Graph. See deploy/EMAIL.md.
+  SMTP_HOST: process.env.SMTP_HOST ?? '',
+  SMTP_PORT: Number(process.env.SMTP_PORT) || 587,
+  SMTP_USER: process.env.SMTP_USER ?? '',
+  SMTP_PASS: process.env.SMTP_PASS ?? '',
+  // true for implicit TLS on port 465; false for STARTTLS on 587 (the default).
+  SMTP_SECURE: process.env.SMTP_SECURE === 'true',
+  // The From address all account email is sent as, e.g. no-reply@cybills.sg.
+  MAIL_FROM: process.env.MAIL_FROM ?? '',
+  MAIL_FROM_NAME: process.env.MAIL_FROM_NAME ?? 'CYBills',
 };
 
 // Real Google sign-in is only enabled once the client credentials AND a session
@@ -152,4 +168,11 @@ export const cyhrEnabled = Boolean(env.CYHR_BASE_URL && env.CYHR_SIGNING_SECRET)
 // still generated — they're just returned to the admin instead of emailed.
 export const mailConfigured = Boolean(
   env.GRAPH_TENANT_ID && env.GRAPH_CLIENT_ID && env.GRAPH_CLIENT_SECRET
+);
+
+// SMTP sending is ready as soon as host + credentials + a From address are set.
+// Unlike Graph (delegated) it needs no interactive "connect" step, so once these
+// are present mail sends straight away. Takes priority over Graph when set.
+export const smtpConfigured = Boolean(
+  env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS && env.MAIL_FROM
 );

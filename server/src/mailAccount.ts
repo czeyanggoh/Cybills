@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
-import { env, mailConfigured } from './env.js';
+import { env, mailConfigured, smtpConfigured } from './env.js';
 
 // The connected sending mailbox: one record, holding the OAuth refresh token an
 // admin granted from Settings > Email. Delegated Graph auth has no credential
@@ -133,16 +133,19 @@ export function senderAddress(): string {
 // Shape for the Settings UI — never leaks the token itself.
 export function mailStatus() {
   const a = getMailAccount();
+  // SMTP, when configured, is the sender — no interactive connect step, always
+  // "connected". Otherwise fall back to the Graph delegated-mailbox state.
   return {
-    configured: mailConfigured,
-    connected: isMailConnected(),
-    account: a?.account ?? '',
+    configured: smtpConfigured || mailConfigured,
+    connected: smtpConfigured || isMailConnected(),
+    smtp: smtpConfigured,
+    account: smtpConfigured ? env.MAIL_FROM : (a?.account ?? ''),
     displayName: a?.displayName ?? '',
     connectedBy: a?.connectedBy ?? '',
     connectedAt: a?.connectedAt ?? '',
     sharedSender: env.GRAPH_SHARED_SENDER,
-    sendingAs: senderAddress(),
-    needsReconnect: Boolean(a && !isMailConnected()),
+    sendingAs: smtpConfigured ? env.MAIL_FROM : senderAddress(),
+    needsReconnect: !smtpConfigured && Boolean(a && !isMailConnected()),
     invalidReason: a?.invalidReason ?? '',
   };
 }

@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 import jwt from 'jsonwebtoken';
-import { env, googleEnabled, visionEnabled } from './env.js';
+import { env, googleEnabled, visionEnabled, smtpConfigured } from './env.js';
 import { isMailConnected } from './mailAccount.js';
 
 // Real Google OAuth 2.0 (authorization-code flow), server-side. The whole router
@@ -61,7 +61,9 @@ export const authRouter = Router();
 // AuthProvider. `mailEnabled` is a live check: delegated mail depends on an
 // admin-granted connection that can lapse, not just on static config.
 authRouter.get('/status', (_req, res) => {
-  res.json({ googleEnabled, visionEnabled, mailEnabled: isMailConnected() });
+  // Mail works via SMTP (static config, always ready) or via a connected Graph
+  // mailbox (delegated, can lapse). Either one enables the mail-dependent UI.
+  res.json({ googleEnabled, visionEnabled, mailEnabled: smtpConfigured || isMailConnected() });
 });
 
 // Who am I? Reads the session cookie. 401 when signed out.

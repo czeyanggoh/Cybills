@@ -1,8 +1,101 @@
-# Outbound email (Microsoft Graph, delegated)
+# Outbound email
 
 CYBills sends account email — invitations, password resets, password-changed
-notices — from a Microsoft 365 mailbox via Microsoft Graph's `sendMail`. No SMTP
-relay, no third-party mail vendor.
+notices. There are **two** ways to send; pick one:
+
+- **SMTP** (below) — the universal path. Use this when your domain is **not** on
+  Microsoft 365 — e.g. `cybills.sg` on **Cloudflare**, which only *receives*
+  (Email Routing) and cannot send. You point CYBills at any transactional
+  provider (Resend, Brevo, Mailgun, Amazon SES, …) verified to send as your
+  domain, and it sends as e.g. `no-reply@cybills.sg`. No interactive connect step.
+- **Microsoft Graph** (further down) — use only when the sending mailbox lives in
+  Microsoft 365 / Exchange Online. Delegated OAuth, an admin connects once.
+
+When **both** are configured, **SMTP wins**.
+
+---
+
+# Outbound email via SMTP (any provider)
+
+Cloudflare Email Routing forwards *inbound* mail but has no outbound sending, so
+sending as `no-reply@cybills.sg` needs a transactional email provider. The steps
+are the same for any of them:
+
+## 1. Pick a provider and verify the domain
+
+Sign up for a transactional email service (e.g. **Resend**, **Brevo**,
+**Mailgun**, **Amazon SES**, **Postmark**). In its dashboard, **add and verify
+the domain `cybills.sg`**. The provider gives you a handful of DNS records —
+usually an **SPF** `TXT`, one or more **DKIM** `CNAME`/`TXT`, and sometimes a
+**DMARC** `TXT` and a return-path `CNAME`.
+
+## 2. Add those DNS records in Cloudflare
+
+Cloudflare dashboard → **`cybills.sg`** → **DNS** → **Records** → add each record
+the provider listed, exactly as given. For the records the provider says to add
+as `CNAME` (DKIM/return-path), set the Cloudflare **proxy status to "DNS only"**
+(grey cloud) — proxying breaks mail DNS. Wait for the provider to show the domain
+as **Verified** (minutes to an hour).
+
+> Keep your existing Cloudflare Email Routing MX records — they handle *incoming*
+> mail and don't conflict with outbound sending.
+
+## 3. Get SMTP credentials
+
+In the provider, open the **SMTP** section and copy the host, port, username and
+password (often the username is a fixed string like `resend` / `apikey` and the
+password is an API key). Typical values:
+
+| | Value |
+| --- | --- |
+| `SMTP_HOST` | e.g. `smtp.resend.com`, `smtp-relay.brevo.com`, `email-smtp.ap-southeast-1.amazonaws.com` |
+| `SMTP_PORT` | `587` (STARTTLS) — or `465` with `SMTP_SECURE=true` |
+| `SMTP_USER` | the provider's SMTP username |
+| `SMTP_PASS` | the provider's SMTP password / API key |
+
+## 4. Configure CYBills
+
+On the VPS, in `/opt/cybills/server/.env`:
+
+```
+SMTP_HOST=<provider smtp host>
+SMTP_PORT=587
+SMTP_USER=<smtp username>
+SMTP_PASS=<smtp password / api key>
+SMTP_SECURE=false                    # true only if using port 465
+MAIL_FROM=no-reply@cybills.sg        # every account email is sent as this
+MAIL_FROM_NAME=CYBills               # optional display name
+MAIL_REPLY_TO=support@cybills.sg     # optional; where replies should go
+APP_ORIGIN=https://cybills.cy-bm.sg  # links in emails are built from this
+SESSION_SECRET=<long random string>  # also signs sessions
+```
+
+Then restart — no connect step, it sends straight away:
+
+```bash
+sudo systemctl restart cybills-backend.service
+```
+
+`GET /api/auth/status` reports `"mailEnabled": true`, and Settings → Email shows
+it sending as `no-reply@cybills.sg`. Send a test from Settings → Email to confirm
+delivery (check the recipient's inbox and, at first, the spam folder — good SPF +
+DKIM keeps it out of spam).
+
+### SMTP troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| `EAUTH` / 535 | Wrong `SMTP_USER` / `SMTP_PASS` |
+| `ETIMEDOUT` / `ECONNREFUSED` | Wrong host/port, or the VPS firewall blocks outbound 587/465 |
+| Mail lands in spam | Domain not fully verified — recheck SPF/DKIM/DMARC in Cloudflare |
+| `Mailbox unauthorized` / 550 sender | `MAIL_FROM` domain isn't verified in the provider |
+
+---
+
+# Outbound email via Microsoft Graph (delegated)
+
+Use this path **only** if the sending mailbox is on Microsoft 365. CYBills sends
+from a Microsoft 365 mailbox via Microsoft Graph's `sendMail`.
 
 Server-side: `server/src/mailer.ts` (tokens + templates), `mailAccount.ts` (the
 stored connection), `mail.ts` (the connect flow). Until a mailbox is connected,

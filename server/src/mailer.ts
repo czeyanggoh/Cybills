@@ -1,4 +1,5 @@
-import { env, mailConfigured } from './env.js';
+import nodemailer from 'nodemailer';
+import { env, mailConfigured, smtpConfigured } from './env.js';
 import {
   readRefreshToken,
   updateRefreshToken,
@@ -127,6 +128,44 @@ export type MailResult = { sent: boolean; error?: string };
 
 type Recipient = { email: string; name?: string };
 
+// --- SMTP transport (any transactional provider) -----------------------------
+// Built once and reused. Sends as env.MAIL_FROM (e.g. no-reply@cybills.sg).
+let smtpTransport: nodemailer.Transporter | null = null;
+function transporter(): nodemailer.Transporter {
+  if (!smtpTransport) {
+    smtpTransport = nodemailer.createTransport({
+      host: env.SMTP_HOST,
+      port: env.SMTP_PORT,
+      secure: env.SMTP_SECURE, // true=465 implicit TLS; false=587 STARTTLS
+      auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+    });
+  }
+  return smtpTransport;
+}
+
+const addr = (r: Recipient) => (r.name ? `${r.name} <${r.email}>` : r.email);
+
+async function sendViaSmtp(
+  msg: { subject: string; html: string; cc?: Recipient[] },
+  to: Recipient[]
+): Promise<MailResult> {
+  try {
+    await transporter().sendMail({
+      from: env.MAIL_FROM_NAME ? `${env.MAIL_FROM_NAME} <${env.MAIL_FROM}>` : env.MAIL_FROM,
+      to: to.map(addr),
+      ...(msg.cc?.length ? { cc: msg.cc.map(addr) } : {}),
+      ...(env.MAIL_REPLY_TO ? { replyTo: env.MAIL_REPLY_TO } : {}),
+      subject: msg.subject,
+      html: msg.html,
+    });
+    return { sent: true };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('[mailer] SMTP send failed:', detail);
+    return { sent: false, error: detail };
+  }
+}
+
 function graphRecipient(r: Recipient) {
   return { emailAddress: { address: r.email, ...(r.name ? { name: r.name } : {}) } };
 }
@@ -140,11 +179,14 @@ export async function sendMail(msg: {
   html: string;
   cc?: Recipient[];
 }): Promise<MailResult> {
-  if (!mailConfigured) return { sent: false, error: 'mail_not_configured' };
-  if (!isMailConnected()) return { sent: false, error: 'mail_not_connected' };
-
   const to = Array.isArray(msg.to) ? msg.to : [msg.to];
   if (!to.length || !to.every((r) => r.email)) return { sent: false, error: 'no_recipient' };
+
+  // SMTP takes priority when configured — no interactive connect step needed.
+  if (smtpConfigured) return sendViaSmtp(msg, to);
+
+  if (!mailConfigured) return { sent: false, error: 'mail_not_configured' };
+  if (!isMailConnected()) return { sent: false, error: 'mail_not_connected' };
 
   try {
     const token = await accessToken();
