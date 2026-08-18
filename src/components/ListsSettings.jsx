@@ -4,12 +4,14 @@ import { X, Search, Trash2, Flag } from 'lucide-react';
 import { useList, addToList, removeFromList, setListVisible } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId } from '@/lib/organisations';
+import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
 import { cn } from '@/lib/utils';
 
 // Inner sub-nav for Business settings → Lists (mirrors Dext).
 const SUBNAV = [
   { key: 'visibility', label: 'List visibility' },
   { key: 'categories', label: 'Categories' },
+  { key: 'review', label: 'Review instructions' },
   { key: 'taxRates', label: 'Tax rates' },
   { key: 'projects', label: 'Projects' },
   { key: 'projects2', label: 'Projects 2' },
@@ -330,6 +332,59 @@ function FlagsList() {
   );
 }
 
+// Organisation-level context + GST/coding overrides for the extraction AI. A
+// business overview + rules, passed to the model alongside each document and the
+// Xero chart of accounts. Saved per organisation.
+function ReviewInstructions() {
+  const { data: organisations = [] } = useOrganisations();
+  const org = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
+  const orgId = org ? org.id : '';
+  const { text, setText, loading } = useReviewInstructions(orgId);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    await saveReviewInstructions(orgId, text);
+    setSaving(false);
+    setSaved(true);
+  };
+
+  if (!orgId) {
+    return (
+      <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">
+        No organisation is linked yet — connect one under Connections first.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="mb-3 max-w-3xl text-sm text-muted-foreground">
+        A high-level overview of {org && org.name ? org.name : 'this organisation'}’s business, plus any GST and coding overrides. This is passed to the AI alongside each uploaded document and the Xero chart of accounts, so it picks the best account code and applies your GST rules. Saved per organisation.
+      </p>
+      <textarea
+        value={loading ? '' : text}
+        onChange={(e) => { setText(e.target.value); setSaved(false); }}
+        rows={16}
+        placeholder={loading ? 'Loading…' : 'e.g. Excellence A.S runs a beauty facial and cosmetic retail business. The outlets are at Vivocity and CK Tangs. Vendor name should be the other identified party.\n\nGST overriding instructions — discard the GST amount and substitute "0" for: any activity involving a motor vehicle; medical treatment for employees; …'}
+        className="w-full rounded-lg border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <div className="mt-3 flex items-center justify-end gap-3">
+        {saved && <span className="text-sm text-muted-foreground">Saved.</span>}
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || loading}
+          className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save instructions'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Placeholder({ label }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">
@@ -362,7 +417,7 @@ export default function ListsSettings() {
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="mb-4 text-lg font-semibold tracking-tight">{TITLES[tab]}</h2>
-        {tab === 'categories' ? <CategoriesFromXero /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : <Placeholder label={TITLES[tab]} />}
+        {tab === 'categories' ? <CategoriesFromXero /> : tab === 'review' ? <ReviewInstructions /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : <Placeholder label={TITLES[tab]} />}
       </div>
     </div>
   );

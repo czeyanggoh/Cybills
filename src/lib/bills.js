@@ -1,6 +1,7 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
 import { nameForEmail } from '@/lib/userStore';
 import { getActiveOrganisationId } from '@/lib/organisations';
+import { fetchReviewInstructions } from '@/lib/reviewInstructions';
 
 // Every bill request carries the selected organisation so the server serves that
 // org's own Costs/Sales books (separate per client entity). Omitted when no org
@@ -47,10 +48,13 @@ export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif
 // descriptions. Returns the extracted fields object, or null if extraction is
 // unavailable/failed (best-effort — the file is still stored + dedup-checked).
 export async function fetchExtract(imageBase64, mediaType, accounts) {
+  // The active org's Review instructions (business context + GST/coding rules)
+  // ride along so the model classifies with that context. Best-effort.
+  const instructions = await fetchReviewInstructions(getActiveOrganisationId());
   const res = await fetch('/api/costs/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ imageBase64, mediaType, accounts }),
+    body: JSON.stringify({ imageBase64, mediaType, accounts, instructions }),
   });
   if (!res.ok) return null;
   const { data } = await res.json();

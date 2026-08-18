@@ -133,6 +133,15 @@ extractRouter.post('/extract', async (req, res) => {
     : DEFAULT_CATEGORIES;
   const categorySet = new Set(categories);
 
+  // Organisation-level Review instructions (business overview + GST/coding
+  // overrides). Prepended as context; may override the printed GST/tax and guide
+  // the account choice + supplier identification.
+  const rawInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
+  const instructions = rawInstructions.slice(0, 6000); // guard the prompt size
+  const contextBlock = instructions
+    ? `Business context and coding rules for this organisation — apply these when extracting and classifying. They can override the printed GST/tax amount (e.g. substitute 0), guide which account code to choose, and say how to identify the supplier:\n${instructions}\n\n`
+    : '';
+
   // A description-annotated guide so the model classifies by what each Xero
   // account is for, not just its name.
   const accountsGuide = accounts.length
@@ -160,6 +169,7 @@ extractRouter.post('/extract', async (req, res) => {
             {
               type: 'text',
               text:
+                contextBlock +
                 `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. ` +
                 'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
                 'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
