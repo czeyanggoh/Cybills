@@ -146,9 +146,11 @@ function CategoriesFromXero() {
         </div>
       </div>
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[640px] text-sm">
+        <table className="w-full min-w-[440px] text-sm">
           <thead className="border-b bg-muted/40 text-left text-muted-foreground">
-            <tr><th className="px-3 py-2.5 font-medium">Code</th><th className="px-3 py-2.5 font-medium">Name</th><th className="px-3 py-2.5 font-medium">Description</th><th className="w-24 px-3 py-2.5" /></tr>
+            {/* Description is the greedy column (w-full) so it fills the row; the
+                others shrink to their content. */}
+            <tr><th className="whitespace-nowrap px-3 py-2.5 font-medium">Code</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Name</th><th className="w-full px-3 py-2.5 font-medium">Description</th><th className="w-24 px-3 py-2.5" /></tr>
           </thead>
           <tbody>
             {rows.map((c) => (
