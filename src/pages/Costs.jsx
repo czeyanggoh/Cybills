@@ -151,6 +151,9 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       Merge
     </ToolbarButton>
   );
+  // Always enabled — scans every doc in the view for likely merges (no selection
+  // needed) and opens the review modal on what it finds.
+  const scanBtn = <ToolbarButton onClick={a.scanMerges}>Scan for merges</ToolbarButton>;
   const moveTo = [
     { label: 'To review', onClick: () => a.move('review') },
     { label: 'Ready', onClick: () => a.move('ready') },
@@ -176,6 +179,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
         <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
         <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
         {mergeBtn}
+        {scanBtn}
         <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
         <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
       </>
@@ -202,6 +206,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
       <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
       {mergeBtn}
+      {scanBtn}
       <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
       <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
     </>
@@ -636,6 +641,44 @@ export default function Costs() {
     setMergeModalDocs(docs);
   };
 
+  // Scan every document in this view for likely duplicates / multi-scans of the
+  // same invoice — the same match the uploader uses (supplier + invoice + amount,
+  // or supplier + amount + date) — and open the review modal on the first group.
+  // Nothing merges until you confirm; scan again for the next group.
+  const scanForMerges = () => {
+    const norm = (s) => String(s ?? '').trim().toLowerCase();
+    const amt = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
+    const docs = allRows.filter((d) => d.persisted && d.hasFile && d.status !== 'merged');
+    const groups = new Map();
+    for (const d of docs) {
+      const sup = norm(d.supplier);
+      if (!sup || sup === 'unknown supplier') continue;
+      const total = amt(d.total);
+      if (total <= 0) continue;
+      const inv = norm(d.invoiceNumber || d.ref);
+      const key = inv
+        ? `${sup}|inv:${inv}|${total.toFixed(2)}`
+        : /^\d{4}-\d{2}-\d{2}$/.test(d.date)
+          ? `${sup}|dt:${d.date}|${total.toFixed(2)}`
+          : null;
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(d);
+    }
+    const found = [...groups.values()].filter((g) => g.length >= 2);
+    if (!found.length) {
+      setMergeNote('Scanned this view — no documents look like they need merging (matched on supplier + invoice/amount).');
+      return;
+    }
+    setSelected(new Set(found[0].map((d) => d.id)));
+    setMergeNote(
+      found.length === 1
+        ? 'Found 1 set of documents that look like the same item — review and confirm the merge below.'
+        : `Found ${found.length} sets that look like duplicates — review the first below, then Scan again for the next.`
+    );
+    setMergeModalDocs(found[0]);
+  };
+
   // Confirm from the modal: create the combined cost and move the originals to
   // 'merged'. Readiness of the new doc derives itself from its fields.
   const confirmMerge = async (sources, base64, fields) => {
@@ -662,6 +705,7 @@ export default function Costs() {
     addClaim: () => hasSelection && setClaimOpen(true),
     exportCsv: () => setExportOpen(true),
     merge: mergeSelected,
+    scanMerges: scanForMerges,
     navigate,
   };
 
