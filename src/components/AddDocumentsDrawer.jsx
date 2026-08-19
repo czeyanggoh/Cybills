@@ -17,6 +17,7 @@ import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts } from '@/lib/organisations';
 import { getCustomerRule } from '@/lib/customerRules';
 import { useUsers } from '@/lib/userStore';
+import { PDFDocument } from 'pdf-lib';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
 // Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
@@ -24,6 +25,32 @@ import { useUsers } from '@/lib/userStore';
 const TABS = ['Costs', 'Sales', 'Supplier statements'];
 
 let uid = 0;
+
+// Split a multi-page PDF into one single-page PDF per page, client-side via
+// pdf-lib (already bundled). Non-PDFs and single-page PDFs pass through
+// unchanged. Powers the "Split PDF by page" mode so each page of a batched
+// scan becomes its own document, extracted independently.
+async function splitPdfByPage(file) {
+  if (file.type !== 'application/pdf') return [file];
+  try {
+    const src = await PDFDocument.load(await file.arrayBuffer());
+    const n = src.getPageCount();
+    if (n <= 1) return [file];
+    const base = file.name.replace(/\.pdf$/i, '');
+    const pages = [];
+    for (let i = 0; i < n; i++) {
+      const doc = await PDFDocument.create();
+      const [page] = await doc.copyPages(src, [i]);
+      doc.addPage(page);
+      const bytes = await doc.save();
+      pages.push(new File([bytes], `${base} — p${i + 1}.pdf`, { type: 'application/pdf' }));
+    }
+    return pages;
+  } catch {
+    // Encrypted or unreadable PDF — upload it whole rather than dropping it.
+    return [file];
+  }
+}
 
 function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, accept = 'image/png,image/jpeg,image/webp,image/gif,application/pdf' }) {
   const inputRef = useRef(null);
@@ -198,6 +225,10 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   // first render, so a one-shot default would freeze on a stale/empty value.
   const meName = user?.name || user?.email || '';
   const [owner, setOwner] = useState('');
+  // 'file' = one document per uploaded file; 'split' = split each PDF into one
+  // document per page before running the pipeline.
+  const [mode, setMode] = useState('file');
+  const [splitting, setSplitting] = useState(false);
   const ownerTouched = useRef(false);
   useEffect(() => {
     if (!ownerTouched.current && meName) setOwner(meName);
@@ -222,7 +253,18 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   // Per file: hash → optional Vision extract → duplicate check → persist. The
   // extracted fields are kept on the item so "Add anyway" can reuse them without
   // re-running extraction.
-  const onFiles = (files) => {
+  const onFiles = async (rawFiles) => {
+    // In "Split PDF by page" mode, expand every multi-page PDF into per-page
+    // files first, so each page flows through the pipeline as its own document.
+    let files = rawFiles;
+    if (mode === 'split' && rawFiles.some((f) => f.type === 'application/pdf')) {
+      setSplitting(true);
+      try {
+        files = (await Promise.all(rawFiles.map(splitPdfByPage))).flat();
+      } finally {
+        setSplitting(false);
+      }
+    }
     const created = files.map((file) => ({ id: ++uid, file, status: 'pending', fields: {} }));
     setItems((prev) => [...created, ...prev]);
 
@@ -426,10 +468,48 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               </label>
             )}
 
+            {isUpload && (
+              <div className="mb-4 grid grid-cols-2 gap-2">
+                {[
+                  { k: 'file', t: 'One document per file', h: 'A PDF stays as one document' },
+                  { k: 'split', t: 'Split PDF by page', h: 'Each PDF page becomes its own document' },
+                ].map((m) => (
+                  <button
+                    key={m.k}
+                    type="button"
+                    onClick={() => setMode(m.k)}
+                    className={cn(
+                      'rounded-md border p-3 text-left transition-colors',
+                      mode === m.k ? 'border-foreground bg-muted' : 'hover:bg-muted'
+                    )}
+                  >
+                    <span className="flex items-center gap-2 text-xs font-medium">
+                      <span
+                        className={cn(
+                          'flex h-3.5 w-3.5 items-center justify-center rounded-full border',
+                          mode === m.k ? 'border-foreground' : 'border-muted-foreground'
+                        )}
+                      >
+                        {mode === m.k && <span className="h-1.5 w-1.5 rounded-full bg-foreground" />}
+                      </span>
+                      {m.t}
+                    </span>
+                    <span className="mt-1 block text-[11px] text-muted-foreground">{m.h}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {isUpload ? (
               <Dropzone onFiles={onFiles} />
             ) : (
               <Dropzone onFiles={() => {}} hint="6MB for images, 40MB for PDFs" />
+            )}
+
+            {splitting && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Splitting PDF into pages…
+              </p>
             )}
 
             {isUpload && !visionEnabled && (
