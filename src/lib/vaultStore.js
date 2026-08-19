@@ -37,7 +37,7 @@ export function fileTypeBadge(name) {
 }
 
 let seq = 0;
-export function addVaultFiles(files, { creator = 'Astrid Yang', access = 'Practice & Admin users', folder = '' } = {}) {
+export function addVaultFiles(files, { creator = 'You', access = 'Practice & Admin users', folder = '' } = {}) {
   const state = read();
   const now = today();
   const added = files.map((f) => {

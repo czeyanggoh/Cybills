@@ -262,11 +262,12 @@ export default function Profile() {
   const [pwModal, setPwModal] = useState(false);
   const [toast, setToast] = useState('');
 
-  const fullName = user?.name || 'Astrid Yang';
+  const fullName = user?.name || '';
   const [first, ...rest] = fullName.split(' ');
   const last = rest.join(' ') || '';
   // A locally-changed email (Change email) takes precedence over the session one.
-  const email = profile.email || user?.email || 'astridy2004@gmail.com';
+  // Never fall back to a hardcoded identity — show the real signed-in user only.
+  const email = profile.email || user?.email || '';
 
   const props = {
     first,

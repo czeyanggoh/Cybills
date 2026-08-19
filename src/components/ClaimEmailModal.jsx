@@ -32,7 +32,7 @@ function Select({ value, onChange, options }) {
 
 // "Send by email" dialog. This is a UI mock — CYBills has no mail backend, so
 // nothing is actually transmitted; on send we just confirm to the user.
-export default function ClaimEmailModal({ open, onClose, defaultName = 'Astrid Yang' }) {
+export default function ClaimEmailModal({ open, onClose, defaultName = '' }) {
   const [name, setName] = useState(defaultName);
   const [toName, setToName] = useState('');
   const [toEmail, setToEmail] = useState('');

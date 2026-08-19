@@ -156,7 +156,7 @@ export default function CostDetail() {
   const { visionEnabled, user } = useAuth();
   const teamUsers = useUsers();
   const ownerOptions = Array.from(
-    new Set([user?.name || user?.email || 'Astrid Yang', ...teamUsers.map((u) => u.name || u.email).filter(Boolean)])
+    new Set([user?.name || user?.email, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
   );
   const categoryOptions = useCategoryOptions();
   const catMode = useCategoryDisplayMode();
@@ -979,7 +979,7 @@ export default function CostDetail() {
                 <span className="text-muted-foreground">{doc.date}</span>
               </li>
               <li className="flex justify-between">
-                <span>Viewed by Astrid Yang</span>
+                <span>Viewed by {user?.name || 'you'}</span>
                 <span className="text-muted-foreground">{doc.date}</span>
               </li>
             </ul>
@@ -1005,7 +1005,7 @@ export default function CostDetail() {
           // up as a line item there, then mark it as in an expense claim.
           try {
             const targetId = newClaim ? (await createClaim(newClaim)).id : claimId;
-            const actor = user?.name || 'Astrid Yang';
+            const actor = user?.name || user?.email || 'You';
             if (targetId) await addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
             await saveWithStatus('expenseclaim');
           } catch (err) {

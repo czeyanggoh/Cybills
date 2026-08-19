@@ -150,7 +150,7 @@ export function docToClaimTxn(doc, data, actor) {
     tax: tax.toFixed(2),
     total: total.toFixed(2),
     status: 'ready',
-    addedBy: actor || 'Astrid Yang',
+    addedBy: actor || '',
   };
 }
 

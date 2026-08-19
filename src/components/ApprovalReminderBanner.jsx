@@ -30,7 +30,7 @@ export default function ApprovalReminderBanner() {
       </span>
       <button
         type="button"
-        onClick={() => navigate('/expense-claims')}
+        onClick={() => navigate(pending.length === 1 ? `/expense-claims/${pending[0].id}` : '/expense-claims')}
         className="shrink-0 rounded-md bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-90"
       >
         Review

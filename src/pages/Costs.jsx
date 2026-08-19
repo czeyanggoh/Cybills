@@ -611,7 +611,7 @@ export default function Costs() {
 
   // Add the selected docs to a chosen expense claim, then mark them accordingly.
   const addSelectedToClaim = async (targetId) => {
-    const actor = user?.name || 'Astrid Yang';
+    const actor = user?.name || user?.email || 'You';
     const byId = new Map(allRows.map((r) => [r.id, r]));
     for (const id of selected) {
       const d = byId.get(id);

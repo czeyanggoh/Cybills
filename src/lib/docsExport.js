@@ -231,7 +231,7 @@ export function downloadExportBlob(rec) {
 
 // Main entry: generate the chosen format, download it, log an export event on
 // sales items, and record it in the Exports tab. `kind` is 'costs' | 'sales'.
-export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = 'Astrid Yang' } = {}) {
+export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = 'You' } = {}) {
   const wKind = kind === 'sales' ? 'sales' : 'costs';
   const base = `red-alpha-cybersecurity-st-eng-${isoDate()}`;
   const csvText = wKind === 'sales' ? buildSalesCsv(rows) : buildCostCsv(rows);

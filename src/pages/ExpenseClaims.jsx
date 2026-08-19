@@ -8,7 +8,7 @@ import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
-import { isAdminAccess } from '@/lib/userStore';
+import { isAdminAccess, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 // Status pill for a claim's approval state (Draft / Pending / Approved / Rejected).
@@ -70,7 +70,7 @@ export default function ExpenseClaims() {
   const [tab, setTab] = useState('inbox');
   const [selected, setSelected] = useState(() => new Set());
   const [showCreate, setShowCreate] = useState(false);
-  const [newClaim, setNewClaim] = useState({ claimFor: 'Astrid Yang', endDate: '', name: '' });
+  const [newClaim, setNewClaim] = useState({ claimFor: '', endDate: '', name: '' });
   const [query, setQuery] = useState('');
   const [approveOpen, setApproveOpen] = useState(false);
 
@@ -84,15 +84,19 @@ export default function ExpenseClaims() {
 
   const submitCreate = async () => {
     await createClaim({
-      claimFor: newClaim.claimFor,
+      claimFor: newClaim.claimFor || meName,
       endDate: fmtEnd(newClaim.endDate),
       name: newClaim.name.trim() || 'Expense claim',
     });
     setShowCreate(false);
-    setNewClaim({ claimFor: 'Astrid Yang', endDate: '', name: '' });
+    setNewClaim({ claimFor: '', endDate: '', name: '' });
     setTab('inbox');
   };
   const { user, googleEnabled, membership } = useAuth();
+  const roster = useUsers();
+  const meName = user?.name || user?.email || '';
+  // Claim-for options: the real roster, with the current user always available.
+  const claimForOptions = Array.from(new Set([meName, ...roster.map((u) => u.name || u.email)].filter(Boolean)));
   const allClaims = useClaims();
   // Gatekeep: a submitted claim is visible only to its claimant and their direct
   // manager. Admins keep full oversight (they process/export every claim).
@@ -334,13 +338,13 @@ export default function ExpenseClaims() {
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium">Claim for <span className="text-destructive">*</span></span>
                 <select
-                  value={newClaim.claimFor}
+                  value={newClaim.claimFor || meName}
                   onChange={(e) => setNewClaim((c) => ({ ...c, claimFor: e.target.value }))}
                   className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <option>Astrid Yang</option>
-                  <option>Sean Tan</option>
-                  <option>Clara Lee</option>
+                  {claimForOptions.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
                 </select>
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
