@@ -121,6 +121,37 @@ xeroRouter.get('/organisations/:id/accounts', async (req, res) => {
   res.json({ accounts });
 });
 
+// GET /api/xero/organisations/:id/payment-methods — accounts a payment can be
+// applied to in the linked Xero org: bank accounts (Type BANK) plus any account
+// flagged EnablePaymentsToAccount. Feeds the document "Payment method" dropdown.
+xeroRouter.get('/organisations/:id/payment-methods', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const result = await relay('Accounts', {
+    tenantId: organisation.tenantId,
+    query: { where: 'Status=="ACTIVE"' },
+  });
+  if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
+  const methods = (result.data?.Accounts ?? [])
+    .filter((a: any) => String(a.Type).toUpperCase() === 'BANK' || a.EnablePaymentsToAccount === true)
+    .map((a: any) => {
+      const name = String(a.Name ?? '').trim();
+      const last4 = String(a.BankAccountNumber ?? '').replace(/\D/g, '').slice(-4);
+      const isBank = String(a.Type).toUpperCase() === 'BANK';
+      return {
+        code: String(a.Code ?? ''),
+        name,
+        type: String(a.Type ?? ''),
+        bankAccountNumber: String(a.BankAccountNumber ?? ''),
+        // "DBS Business Account (1234)" for banks with a number, else the name.
+        label: isBank && last4 ? `${name} (${last4})` : name,
+      };
+    })
+    .filter((m: any) => m.label);
+  res.json({ paymentMethods: methods });
+});
+
 // GET /api/xero/organisations/:id/taxrates — active tax rates usable on
 // purchases in the linked Xero org.
 xeroRouter.get('/organisations/:id/taxrates', async (req, res) => {

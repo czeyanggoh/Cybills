@@ -21,13 +21,12 @@ import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/cla
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
-import { getExtractionAccounts, useCategoryOptions } from '@/lib/organisations';
+import { getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions, useList } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import { CUSTOMERS } from '@/data/customers';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { usePaymentMethods } from '@/lib/paymentMethods';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
@@ -162,7 +161,7 @@ export default function CostDetail() {
   const catMode = useCategoryDisplayMode();
   const projectOptions = useProjectOptions();
   const customerOptions = CUSTOMERS.map((c) => c.name);
-  const paymentMethods = usePaymentMethods();
+  const paymentMethods = useXeroPaymentMethods();
   // GST/tax rates for purchases (Costs) — the specific rate replaces the old
   // "Extracted amount" placeholder. `rateFor` gives the % for the tax math.
   const taxRates = useList('taxRates');

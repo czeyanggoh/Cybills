@@ -3,7 +3,7 @@ import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
 import { useCustomCategories } from '@/lib/customCategories';
 import { useCategorySortMode, sortCategories } from '@/lib/categoryDisplay';
 import { useBankAccounts } from '@/lib/bankAccounts';
-import { BANK_ACCOUNTS } from '@/lib/paymentMethods';
+import { BANK_ACCOUNTS, usePaymentMethods } from '@/lib/paymentMethods';
 
 // Client helpers for organisations (client entities linked to a Xero tenant in
 // cyworkspace) and the Xero endpoints that publish bills through the relay.
@@ -110,6 +110,32 @@ export function useXeroAccounts(organisationId) {
 
 export function fetchXeroTaxRates(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/taxrates`).then((b) => b.taxRates ?? []);
+}
+
+export function fetchXeroPaymentMethods(organisationId) {
+  return getJson(`/api/xero/organisations/${organisationId}/payment-methods`).then((b) => b.paymentMethods ?? []);
+}
+
+// Payment-method dropdown options: the linked org's Xero accounts a payment can
+// be applied to — bank accounts + accounts with EnablePaymentsToAccount — live
+// via the relay. Any manually-added methods are appended, and are used alone
+// when Xero isn't connected. Returns [{ label }] to match the dropdowns.
+export function useXeroPaymentMethods() {
+  const { data: organisations = [] } = useOrganisations();
+  const active = getActiveOrganisationId();
+  const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  const { data } = useQuery({
+    queryKey: ['xero-payment-methods', orgId],
+    queryFn: () => fetchXeroPaymentMethods(orgId),
+    enabled: Boolean(orgId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  const manual = usePaymentMethods(); // reactive to manual "Add payment method"
+  const seen = new Set();
+  return [...(data ?? []), ...manual]
+    .map((m) => ({ label: m.label }))
+    .filter((m) => m.label && !seen.has(m.label) && seen.add(m.label));
 }
 
 // The linked organisation's registration details, straight from Xero's

@@ -10,10 +10,9 @@ import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { currencyLabel } from '@/lib/customerRules';
 import { useProjectOptions } from '@/lib/listsStore';
 import { CUSTOMERS } from '@/data/customers';
-import { usePaymentMethods } from '@/lib/paymentMethods';
 import { useAuth } from '@/lib/auth';
 import { SALES, getSale } from '@/data/sales';
-import { useCategoryOptions, getExtractionAccounts } from '@/lib/organisations';
+import { useCategoryOptions, getExtractionAccounts, useXeroPaymentMethods } from '@/lib/organisations';
 import { fetchBills, billToDoc, billFileUrl, displayItemId, updateBill, notifyBillsChanged } from '@/lib/bills';
 import {
   getSalesHistory,
@@ -235,7 +234,7 @@ export default function SalesDetail() {
   const [catModalOpen, setCatModalOpen] = useState(false);
   const [pmModalOpen, setPmModalOpen] = useState(false);
   const [paid, setPaid] = useState(false);
-  const paymentMethods = usePaymentMethods();
+  const paymentMethods = useXeroPaymentMethods();
   const [imageUrl, setImageUrl] = useState('');
   const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);

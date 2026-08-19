@@ -14,11 +14,10 @@ export const BANK_ACCOUNTS = [
   'Petty Cash',
 ];
 
-const SEED = [
-  { id: 'pm_master_5889', name: 'Mastercard', reference: '5889', bankAccount: '', label: 'Mastercard (5889)' },
-  { id: 'pm_visa_1234', name: 'Visa', reference: '1234', bankAccount: '', label: 'Visa (1234)' },
-  { id: 'pm_banktransfer', name: 'Bank Transfer', reference: '', bankAccount: 'DBS Current Account', label: 'Bank Transfer' },
-];
+// No seeded methods: the payment-method list comes from Xero (bank + payment-
+// enabled accounts). Anything here would just be a fake preset. Users can still
+// add their own via "Add payment method", which are stored below.
+const SEED = [];
 
 function paymentLabel(name, reference) {
   const n = String(name || '').trim();

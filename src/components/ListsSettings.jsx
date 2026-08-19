@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
 import { useList, addToList, removeFromList, setListVisible } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
-import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId } from '@/lib/organisations';
+import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId, useXeroPaymentMethods } from '@/lib/organisations';
 import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
 import { cn } from '@/lib/utils';
 
@@ -387,6 +387,32 @@ function ReviewInstructions() {
   );
 }
 
+// Read-only list of the payment methods derived from Xero (bank + payment-
+// enabled accounts). The document "Payment method" dropdown uses the same source.
+function PaymentMethodsFromXero() {
+  const methods = useXeroPaymentMethods();
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Payment methods come from your linked Xero organisation — every bank account and any account
+        enabled for payments. Manage them in Xero; they refresh here automatically.
+      </p>
+      {methods.length === 0 ? (
+        <div className="rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">
+          No payment methods yet. Connect a Xero organisation with bank or payment-enabled accounts,
+          or add one from a document’s Payment method field.
+        </div>
+      ) : (
+        <ul className="divide-y rounded-lg border">
+          {methods.map((m) => (
+            <li key={m.label} className="px-4 py-2.5 text-sm">{m.label}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function Placeholder({ label }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">
@@ -419,7 +445,7 @@ export default function ListsSettings() {
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="mb-4 text-lg font-semibold tracking-tight">{TITLES[tab]}</h2>
-        {tab === 'categories' ? <CategoriesFromXero /> : tab === 'review' ? <ReviewInstructions /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : <Placeholder label={TITLES[tab]} />}
+        {tab === 'categories' ? <CategoriesFromXero /> : tab === 'review' ? <ReviewInstructions /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : tab === 'payment' ? <PaymentMethodsFromXero /> : <Placeholder label={TITLES[tab]} />}
       </div>
     </div>
   );
