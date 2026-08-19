@@ -819,7 +819,7 @@ function Exports() {
       </Card>
 
       <Card title="CSV Custom Exports">
-        <p className="text-sm text-muted-foreground">Choose how the data in Custom CSV file exports gets formatted. Applied when you pick <span className="font-medium">Custom CSV</span> when exporting an expense claim.</p>
+        <p className="text-sm text-muted-foreground">Choose how the data in Custom CSV file exports gets formatted. Applied when you pick <span className="font-medium">Custom CSV</span> when exporting costs, sales, or an expense claim.</p>
         <Row label="Decimal separator" hint="Comma switches the CSV field delimiter to “;” so numbers stay unambiguous."><SelectBox value={form.decimalSeparator} onChange={(v) => set('decimalSeparator', v)} options={['Dot (.)', 'Comma (,)']} /></Row>
         <Row label="Date format">
           <SelectBox value={form.dateFormat} onChange={(v) => set('dateFormat', v)} options={['DD-Mon-YYYY (e.g. 20-Sep-2025)', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY']} />

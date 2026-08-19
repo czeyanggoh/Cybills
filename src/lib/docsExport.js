@@ -3,6 +3,7 @@ import { displayItemId, billFileUrl } from '@/lib/bills';
 import { recordEvent } from '@/lib/salesEvents';
 import { recordExport } from '@/lib/exportsStore';
 import { makeZip } from '@/lib/zip';
+import { getExportSettings, EXPORT_COLUMNS } from '@/lib/exportSettings';
 
 // Client-side Costs/Sales export — CSV (exact Dext column layout), PDF (items +
 // a submission-history page), or ZIP (CSV + PDF). Every export is recorded so it
@@ -52,24 +53,112 @@ function imageUrlFor(d) {
 
 // --- CSV --------------------------------------------------------------------
 const SALES_COLS = ['Item ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Customer', 'Category', 'Project', 'Tax', 'Total', 'Currency', 'Tax (SGD)', 'Total (SGD)', 'Note', 'Description', 'Image'];
-function buildSalesCsv(rows) {
-  const body = rows.map((d) => [
-    idOf(d), d.type || 'Sales invoice', fmtDate(d.date), fmtDate(d.dueDate), d.ref || d.invoiceNumber || '',
-    d.customer || '', d.category || '', d.project || '', n2(d.tax), n2(d.total), d.currency || 'SGD',
-    n2(d.tax), n2(d.total), d.note || '', d.description || '', imageUrlFor(d),
-  ]);
-  return csvLines([SALES_COLS, ...body]);
+function buildSalesCsv(rows, showNet = false) {
+  const cols = showNet ? [...SALES_COLS, 'Net (SGD)'] : SALES_COLS;
+  const body = rows.map((d) => {
+    const r = [
+      idOf(d), d.type || 'Sales invoice', fmtDate(d.date), fmtDate(d.dueDate), d.ref || d.invoiceNumber || '',
+      d.customer || '', d.category || '', d.project || '', n2(d.tax), n2(d.total), d.currency || 'SGD',
+      n2(d.tax), n2(d.total), d.note || '', d.description || '', imageUrlFor(d),
+    ];
+    if (showNet) r.push(n2(num(d.total) - num(d.tax)));
+    return r;
+  });
+  return csvLines([cols, ...body]);
 }
 
+const netOf = (d) => num(d.total) - num(d.tax);
+
 const COST_COLS = ['Receipt ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Supplier', 'Category', 'Customer', 'Project', 'Payment Method', 'Bank Account', 'Tax', 'Total', 'Currency', 'Tax (SGD)', 'Total (SGD)', 'Status', 'Owner', 'Note', 'Description', 'Image'];
-function buildCostCsv(rows) {
-  const body = rows.map((d) => [
-    idOf(d), d.type || 'Receipt', fmtDate(d.date), fmtDate(d.dueDate), d.invoiceNumber || '',
-    d.supplier || '', d.category || '', d.customer || '', d.project || '', d.paymentMethod || '', d.bankAccount || '',
-    n2(d.tax), n2(d.total), d.currency || 'SGD', n2(d.tax), n2(d.total),
-    d.status === 'ready' ? 'processed' : d.status || 'processed', d.user || d.owner || '', d.note || '', d.description || '', imageUrlFor(d),
-  ]);
-  return csvLines([COST_COLS, ...body]);
+function buildCostCsv(rows, showNet = false) {
+  const cols = showNet ? [...COST_COLS, 'Net (SGD)'] : COST_COLS;
+  const body = rows.map((d) => {
+    const r = [
+      idOf(d), d.type || 'Receipt', fmtDate(d.date), fmtDate(d.dueDate), d.invoiceNumber || '',
+      d.supplier || '', d.category || '', d.customer || '', d.project || '', d.paymentMethod || '', d.bankAccount || '',
+      n2(d.tax), n2(d.total), d.currency || 'SGD', n2(d.tax), n2(d.total),
+      d.status === 'ready' ? 'processed' : d.status || 'processed', d.user || d.owner || '', d.note || '', d.description || '', imageUrlFor(d),
+    ];
+    if (showNet) r.push(n2(netOf(d)));
+    return r;
+  });
+  return csvLines([cols, ...body]);
+}
+
+// --- Custom CSV (honours Business settings → Exports) -----------------------
+// Formats a doc date per the chosen date-format setting.
+function fmtDateFmt(v, dateFormat = '') {
+  const s = String(v ?? '').trim();
+  if (!s || s === '—') return '';
+  let y, mo, d, m;
+  if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s))) [y, mo, d] = [+m[1], +m[2], +m[3]];
+  else if ((m = /^(\d{1,2})[-\s]([A-Za-z]{3,})[-\s](\d{4})$/.exec(s))) {
+    const i = MON.findIndex((x) => x.toLowerCase() === m[2].slice(0, 3).toLowerCase());
+    if (i < 0) return s;
+    [y, mo, d] = [+m[3], i + 1, +m[1]];
+  } else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) [y, mo, d] = [+m[3], +m[2], +m[1]];
+  else {
+    const dt = new Date(s);
+    if (Number.isNaN(dt.getTime())) return s;
+    [y, mo, d] = [dt.getFullYear(), dt.getMonth() + 1, dt.getDate()];
+  }
+  const DD = pad(d), MM = pad(mo);
+  if (dateFormat.startsWith('YYYY-MM-DD')) return `${y}-${MM}-${DD}`;
+  if (dateFormat.startsWith('DD/MM/YYYY')) return `${DD}/${MM}/${y}`;
+  if (dateFormat.startsWith('MM/DD/YYYY')) return `${MM}/${DD}/${y}`;
+  return `${DD}-${MON[mo - 1]}-${y}`; // DD-Mon-YYYY (default)
+}
+// Formats a number with the chosen decimal separator.
+const numDec = (v, sep) => (sep === 'Comma (,)' ? n2(v).replace('.', ',') : n2(v));
+
+// Value of each selectable Custom CSV column for one cost/sales doc.
+const DOC_COLUMN_VALUE = {
+  'Receipt ID': (d) => idOf(d),
+  'Invoice number': (d) => d.invoiceNumber || d.ref || '',
+  Type: (d) => d.type || '',
+  Status: (d) => (d.status === 'ready' ? 'processed' : d.status || 'processed'),
+  Owner: (d) => d.user || d.owner || '',
+  Date: (d, f) => fmtDateFmt(d.date, f.dateFormat),
+  'Due date': (d, f) => fmtDateFmt(d.dueDate, f.dateFormat),
+  Supplier: (d) => d.supplier || '',
+  Customer: (d) => d.customer || '',
+  Description: (d) => d.description || '',
+  Category: (d) => d.category || '',
+  'Product/Service': () => '',
+  'Project 1': (d) => d.project || '',
+  'Payment method': (d) => d.paymentMethod || '',
+  Currency: (d) => d.currency || 'SGD',
+  'Tax rate': (d) => d.taxRate || '',
+  'Quantity (line items)': (d) => (Array.isArray(d.lineItems) ? String(d.lineItems.length) : ''),
+  'Unit price (net)': (d, f) => numDec(netOf(d), f.decimalSeparator),
+  'Unit price (total)': (d, f) => numDec(d.total, f.decimalSeparator),
+  'Net amount': (d, f) => numDec(netOf(d), f.decimalSeparator),
+  'Tax amount': (d, f) => numDec(d.tax, f.decimalSeparator),
+  'Total amount': (d, f) => numDec(d.total, f.decimalSeparator),
+  'Net with currency': (d, f) => `${d.currency || 'SGD'} ${numDec(netOf(d), f.decimalSeparator)}`,
+  'Tax with currency': (d, f) => `${d.currency || 'SGD'} ${numDec(d.tax, f.decimalSeparator)}`,
+  'Total with currency': (d, f) => `${d.currency || 'SGD'} ${numDec(d.total, f.decimalSeparator)}`,
+  'Base net amount': (d, f) => numDec(netOf(d), f.decimalSeparator),
+  'Base total amount': (d, f) => numDec(d.total, f.decimalSeparator),
+  Note: (d) => d.note || '',
+  Image: (d) => imageUrlFor(d),
+  'Project 2': () => '',
+};
+
+function buildCustomCsv(rows, settings) {
+  const selected = EXPORT_COLUMNS.filter((c) => (settings.columns || []).includes(c));
+  const cols = selected.length ? selected : ['Receipt ID', 'Description', 'Net amount', 'Tax amount', 'Total amount'];
+  // Comma-decimal switches the field delimiter to ';' so numbers stay unambiguous.
+  const delimiter = settings.decimalSeparator === 'Comma (,)' ? ';' : ',';
+  const re = new RegExp(`["${delimiter === ';' ? ';' : ','}\\n]`);
+  const escD = (v) => {
+    const s = String(v ?? '');
+    return re.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const line = (arr) => arr.map(escD).join(delimiter);
+  const header = line(cols);
+  const body = rows.map((d) => line(cols.map((c) => (DOC_COLUMN_VALUE[c] ? DOC_COLUMN_VALUE[c](d, settings) : ''))));
+  return [header, ...body].join('\n');
 }
 
 // --- PDF (merged receipt documents, Dext-style) -----------------------------
@@ -234,7 +323,16 @@ export function downloadExportBlob(rec) {
 export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = 'You' } = {}) {
   const wKind = kind === 'sales' ? 'sales' : 'costs';
   const base = `red-alpha-cybersecurity-st-eng-${isoDate()}`;
-  const csvText = wKind === 'sales' ? buildSalesCsv(rows) : buildCostCsv(rows);
+  // Honour Business settings → Exports: "Custom CSV" uses the chosen columns +
+  // date/decimal formats; otherwise the fixed template, plus a Net column when
+  // "Show net amount" is on.
+  const settings = getExportSettings();
+  const isCustom = /custom/i.test(csvFormat || '');
+  const csvText = isCustom
+    ? buildCustomCsv(rows, settings)
+    : wKind === 'sales'
+      ? buildSalesCsv(rows, settings.showNet)
+      : buildCostCsv(rows, settings.showNet);
 
   let blob;
   let filename;

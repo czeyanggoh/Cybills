@@ -1,13 +1,17 @@
 import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
 import { exportDocs } from '@/lib/docsExport';
+import { useExportSettings } from '@/lib/exportSettings';
 import { cn } from '@/lib/utils';
 
 // Export dialog for Costs/Sales — CSV / PDF / ZIP. Runs fully client-side and
 // records the file in the Exports tab. `kind` is 'costs' | 'sales'.
 export default function DocsExportModal({ open, kind, rows, onClose, onArchive = () => {} }) {
+  const settings = useExportSettings();
+  const defaultLabel = kind === 'sales' ? 'CYBills sales default' : 'CYBills default';
+  const configured = kind === 'sales' ? settings.salesFormat : settings.receiptsFormat;
   const [tab, setTab] = useState('csv');
-  const [csvFormat, setCsvFormat] = useState(kind === 'sales' ? 'CYBills sales default' : 'CYBills default');
+  const [csvFormat, setCsvFormat] = useState(/custom/i.test(configured || '') ? 'Custom CSV' : defaultLabel);
   const [archiveAfter, setArchiveAfter] = useState(false);
   const [busy, setBusy] = useState(false);
   if (!open) return null;
@@ -62,7 +66,7 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
                   onChange={(e) => setCsvFormat(e.target.value)}
                   className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  {(kind === 'sales' ? ['CYBills sales default'] : ['CYBills default']).map((o) => <option key={o} value={o}>{o}</option>)}
+                  {[defaultLabel, 'Custom CSV'].map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               </div>
