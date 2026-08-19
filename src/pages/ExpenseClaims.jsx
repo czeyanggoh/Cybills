@@ -6,7 +6,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor } from '@/lib/claimStore';
+import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { isAdminAccess, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
@@ -75,17 +75,10 @@ export default function ExpenseClaims() {
   const [approveOpen, setApproveOpen] = useState(false);
 
   // "2026-07-27" → "27 Jul 2026" to match the rest of the list.
-  const fmtEnd = (iso) => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
-    if (!m) return iso || '';
-    const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return `${m[3]} ${MON[Number(m[2]) - 1]} ${m[1]}`;
-  };
-
   const submitCreate = async () => {
     await createClaim({
       claimFor: newClaim.claimFor || meName,
-      endDate: fmtEnd(newClaim.endDate),
+      endDate: newClaim.endDate, // ISO from the date picker; createClaim canonicalises
       name: newClaim.name.trim() || 'Expense claim',
     });
     setShowCreate(false);
@@ -299,7 +292,7 @@ export default function ExpenseClaims() {
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{c.claimFor}</td>
                 <td className="px-3 py-3 text-muted-foreground">{c.type}</td>
                 <td className="px-3 py-3">{c.name}</td>
-                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{c.endDate}</td>
+                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{formatClaimDate(c.endDate)}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
                   <span className="text-xs text-muted-foreground">SGD </span>{c.total}
                 </td>

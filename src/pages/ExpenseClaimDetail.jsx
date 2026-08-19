@@ -28,6 +28,9 @@ import {
   updateClaimItems,
   moveItemsToClaim,
   markClaimSentToHr,
+  updateClaim,
+  formatClaimDate,
+  toIsoClaimDate,
 } from '@/lib/claimStore';
 import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
 import { useUsers } from '@/lib/userStore';
@@ -389,7 +392,7 @@ export default function ExpenseClaimDetail() {
                 </p>
                 <p>
                   <span className="text-muted-foreground">Claim date&nbsp;&nbsp;</span>
-                  <span className="font-medium">{claim.claimDate}</span>
+                  <span className="font-medium">{formatClaimDate(claim.claimDate)}</span>
                 </p>
                 <p>
                   <span className="text-muted-foreground">Expense total&nbsp;&nbsp;</span>
@@ -576,7 +579,15 @@ export default function ExpenseClaimDetail() {
               <DetailField label="Claim ID"><Input value={claim.id} readOnly /></DetailField>
               <DetailField label="Claim for"><Input value={claim.claimFor} /></DetailField>
               <DetailField label="Claim name"><Input value={claim.name} /></DetailField>
-              <DetailField label="End date"><Input value={claim.endDate} /></DetailField>
+              <DetailField label="End date">
+                <input
+                  type="date"
+                  value={toIsoClaimDate(claim.endDate)}
+                  disabled={claim.approvalStatus === 'approved'}
+                  onChange={(e) => updateClaim(claim.id, { endDate: e.target.value }).catch(() => {})}
+                  className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              </DetailField>
               <DetailField label="Currency"><Input value={`${claim.currency} — Singapore, Dollars`} /></DetailField>
               <DetailField label="Claim description">
                 <textarea rows={2} className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />

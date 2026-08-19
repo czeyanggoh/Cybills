@@ -193,6 +193,23 @@ claimsRouter.post('/:id/items/update', (req, res) =>
   })
 );
 
+// POST /api/claims/:id/update — edit top-level claim fields (name, end date).
+// Locked once approved so a finalized claim's details can't drift. End date is
+// stored verbatim (the client sends canonical ISO YYYY-MM-DD).
+claimsRouter.post('/:id/update', (req, res) =>
+  mutate(req, res, (claim, me) => {
+    if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
+    const b = req.body ?? {};
+    if (typeof b.name === 'string' && b.name.trim()) claim.name = b.name.trim();
+    if (typeof b.endDate === 'string') {
+      const d = b.endDate.trim();
+      claim.endDate = d;
+      claim.claimDate = d; // keep the two in sync (claimDate mirrors endDate)
+      claim.history.unshift({ text: `End date set to ${d || '—'}`, by: me.name, at: nowIso() });
+    }
+  })
+);
+
 // POST /api/claims/:id/submit — submit for approval. The approver is derived
 // automatically from the claimant's direct manager (set in Users), so there's no
 // approver to pick. Fails with 'no_manager' when the claimant has none assigned.
