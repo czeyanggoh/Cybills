@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth';
 import ChangeEmailModal from '@/components/ChangeEmailModal';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
 import { useProfile, setBookkeepingFreq, setBookkeepingToggle, setApprovalFreq } from '@/lib/profileStore';
+import { updateUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -132,19 +133,76 @@ function ActionRow({ title, desc, children }) {
 const FREQ = ['Daily', 'Weekly', 'Never'];
 const APPROVAL_FREQ = ['Instantly', 'Group hourly', 'Group daily', 'Never'];
 
+// Controlled text input (Personal details is editable + saved).
+function EditInput({ value, onChange, placeholder = '' }) {
+  return (
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    />
+  );
+}
+
 // --- Sections ---------------------------------------------------------------
-function PersonalDetails({ first, last }) {
+function PersonalDetails({ rosterUser, refresh, onSaved }) {
+  const name0 = rosterUser?.name || '';
+  const first0 = rosterUser?.firstName || name0.split(' ')[0] || '';
+  const last0 = rosterUser?.lastName || name0.split(' ').slice(1).join(' ') || '';
+  const mobile0 = rosterUser?.mobile || '';
+  const [first, setFirst] = useState(first0);
+  const [last, setLast] = useState(last0);
+  const [mobile, setMobile] = useState(mobile0);
+  const [saving, setSaving] = useState(false);
+
+  const dirty = first !== first0 || last !== last0 || mobile !== mobile0;
+  const canSave = Boolean(rosterUser?.id) && first.trim() && last.trim() && dirty && !saving;
+
+  const save = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      await updateUser(rosterUser.id, {
+        firstName: first.trim(),
+        lastName: last.trim(),
+        name: `${first.trim()} ${last.trim()}`.trim(),
+        mobile: mobile.trim(),
+      });
+      await refresh?.(); // refetch session/roster so the header updates too
+      onSaved?.('Your details were saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <Card title="Personal details">
       <Row label="CRN"><TextInput defaultValue="9948074612" readOnly /></Row>
-      <Row label="First name" required><TextInput defaultValue={first} /></Row>
-      <Row label="Last name" required><TextInput defaultValue={last} /></Row>
+      <Row label="First name" required><EditInput value={first} onChange={setFirst} /></Row>
+      <Row label="Last name" required><EditInput value={last} onChange={setLast} /></Row>
       <Row label="Mobile number">
         <div className="flex gap-2">
           <div className="w-24"><Select defaultValue="+65" options={['+65', '+60', '+1', '+44', '+61']} /></div>
-          <div className="flex-1"><TextInput placeholder="Mobile number" /></div>
+          <div className="flex-1"><EditInput value={mobile} onChange={setMobile} placeholder="Mobile number" /></div>
         </div>
       </Row>
+      <div className="flex items-center justify-end gap-3 border-t pt-4">
+        {!rosterUser?.id && (
+          <span className="text-xs text-muted-foreground">Your profile isn’t on the team roster yet, so it can’t be saved here.</span>
+        )}
+        <button
+          type="button"
+          onClick={save}
+          disabled={!canSave}
+          className={cn(
+            'inline-flex h-9 items-center rounded-md px-4 text-sm font-medium transition-opacity',
+            canSave ? 'bg-foreground text-background hover:opacity-90' : 'bg-muted text-muted-foreground cursor-not-allowed'
+          )}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
     </Card>
   );
 }
@@ -255,23 +313,24 @@ const SECTIONS = {
 };
 
 export default function Profile() {
-  const { user, membership } = useAuth();
+  const { user, membership, refresh } = useAuth();
   const profile = useProfile();
   const [section, setSection] = useState('personal');
   const [emailModal, setEmailModal] = useState(false);
   const [pwModal, setPwModal] = useState(false);
   const [toast, setToast] = useState('');
 
-  const fullName = user?.name || '';
-  const [first, ...rest] = fullName.split(' ');
-  const last = rest.join(' ') || '';
+  // The CYBills roster row is the editable identity (managed in Users); the raw
+  // session name comes from the Google profile and may differ.
+  const rosterUser = membership?.user || null;
   // A locally-changed email (Change email) takes precedence over the session one.
   // Never fall back to a hardcoded identity — show the real signed-in user only.
-  const email = profile.email || user?.email || '';
+  const email = profile.email || rosterUser?.email || user?.email || '';
 
   const props = {
-    first,
-    last,
+    rosterUser,
+    refresh,
+    onSaved: (msg) => setToast(msg),
     email,
     onChangeEmail: () => setEmailModal(true),
     onChangePassword: () => setPwModal(true),

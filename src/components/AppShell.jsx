@@ -228,6 +228,10 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   // auth) shows everything so the demo works.
   const isAdmin = isAdminAccess(membership, googleEnabled);
   const bottomNav = BOTTOM.filter((item) => isAdmin || !item.adminOnly);
+  // Prefer the CYBills roster identity (managed in Users) over the raw session,
+  // whose name comes from the Google profile — which may differ (e.g. a Google
+  // account named "Astrid Yang" signed in under a different roster user).
+  const displayUser = membership?.user || user;
 
   const handleSignOut = async () => {
     await signOut();
@@ -326,9 +330,9 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                   className="flex items-center gap-2 text-sm"
                 >
                   <span className="flex h-7 w-7 items-center justify-center rounded-full border text-xs font-medium">
-                    {initialsFrom(user)}
+                    {initialsFrom(displayUser)}
                   </span>
-                  <span className="hidden sm:inline">{user?.name || user?.email || 'Account'}</span>
+                  <span className="hidden sm:inline">{displayUser?.name || displayUser?.email || 'Account'}</span>
                   <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', userMenu && 'rotate-180')} />
                 </button>
                 {userMenu && (

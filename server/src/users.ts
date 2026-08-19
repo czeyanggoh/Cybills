@@ -579,20 +579,34 @@ function mutate(req: Request, res: Response, fn: (u: User) => void) {
   return res.json({ user: publicUser(user) });
 }
 
-usersRouter.patch('/:id', (req, res) =>
-  mutate(req, res, (user) => {
-    applyEditable(user, req.body ?? {});
-  })
-);
+// Fields a non-admin may change on their OWN profile. Everything else (role,
+// login, deactivation, company, manager, …) is admin-only — otherwise any
+// signed-in user could PATCH themselves to Admin.
+const SELF_EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'mobile'];
 
-usersRouter.post('/:id/active', (req, res) =>
-  mutate(req, res, (user) => {
+usersRouter.patch('/:id', (req, res) => {
+  const session = readSession(req);
+  const me = session ? memberForSession(req) : null;
+  const admin = me ? isAdminRole(me.role) : !session; // sessionless mock stays open
+  const isSelf = Boolean(me && me.id === req.params.id);
+  if (!admin && !isSelf) return res.status(403).json({ error: 'forbidden' });
+  const allowed = admin ? EDITABLE : SELF_EDITABLE;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const filtered: Partial<User> = {};
+  for (const k of allowed) if (k in body) (filtered as Record<string, unknown>)[k] = body[k];
+  return mutate(req, res, (user) => applyEditable(user, filtered));
+});
+
+usersRouter.post('/:id/active', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  return mutate(req, res, (user) => {
     user.deactivated = req.body?.active === false;
-  })
-);
+  });
+});
 
-usersRouter.delete('/:id', (req, res) =>
-  mutate(req, res, (user) => {
+usersRouter.delete('/:id', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  return mutate(req, res, (user) => {
     user.removed = true;
-  })
-);
+  });
+});
