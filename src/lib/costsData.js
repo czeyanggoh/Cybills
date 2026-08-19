@@ -51,8 +51,9 @@ export function useCostsDocs() {
   const [uploaded, setUploaded] = useState([]);
 
   const reload = useCallback(async () => {
-    // Only cost-workspace bills belong in Costs; sales uploads have kind==='sales'.
-    setUploaded((await fetchBills()).map(billToDoc).filter((d) => d.kind !== 'sales'));
+    // Only cost-workspace bills belong in Costs; sales uploads have kind==='sales'
+    // and supplier statements have kind==='supplier_statement'.
+    setUploaded((await fetchBills()).map(billToDoc).filter((d) => d.kind === 'cost'));
   }, []);
 
   useEffect(() => {

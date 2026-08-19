@@ -245,7 +245,9 @@ export default function AddDocumentsDrawer({ open, onClose }) {
 
   if (!open) return null;
 
-  const isUpload = tab === 'Costs' || tab === 'Sales';
+  const isUpload = tab === 'Costs' || tab === 'Sales' || tab === 'Supplier statements';
+  // The split-by-page mode only applies to cost/sales documents, not statements.
+  const showModes = tab === 'Costs' || tab === 'Sales';
 
   const patch = (id, next) =>
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...next } : it)));
@@ -254,10 +256,15 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   // extracted fields are kept on the item so "Add anyway" can reuse them without
   // re-running extraction.
   const onFiles = async (rawFiles) => {
+    const kind = tab === 'Sales' ? 'sales' : tab === 'Supplier statements' ? 'supplier_statement' : 'cost';
+    // Supplier statements are just stored + listed (reconciliation docs) — no
+    // categorisation/extraction and no Processing step; they land straight in
+    // their own list.
+    const isStatement = kind === 'supplier_statement';
     // In "Split PDF by page" mode, expand every multi-page PDF into per-page
     // files first, so each page flows through the pipeline as its own document.
     let files = rawFiles;
-    if (mode === 'split' && rawFiles.some((f) => f.type === 'application/pdf')) {
+    if (!isStatement && mode === 'split' && rawFiles.some((f) => f.type === 'application/pdf')) {
       setSplitting(true);
       try {
         files = (await Promise.all(rawFiles.map(splitPdfByPage))).flat();
@@ -289,8 +296,8 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             fileName: it.file.name,
             fileBase64,
             mediaType,
-            kind: tab === 'Sales' ? 'sales' : 'cost',
-            status: 'processing',
+            kind,
+            status: isStatement ? 'new' : 'processing',
             ...(owner ? { owner } : {}),
           };
           patch(it.id, { status: 'uploading', payload });
@@ -314,7 +321,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           //    artificial delay — it moves the moment reading is done.
           /** @type {any} */
           let fields = null;
-          if (visionEnabled && VISION_MEDIA.includes(mediaType)) {
+          if (!isStatement && visionEnabled && VISION_MEDIA.includes(mediaType)) {
             patch(it.id, { status: 'extracting', bill });
             try {
               const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise);
@@ -468,7 +475,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               </label>
             )}
 
-            {isUpload && (
+            {showModes && (
               <div className="mb-4 grid grid-cols-2 gap-2">
                 {[
                   { k: 'file', t: 'One document per file', h: 'A PDF stays as one document' },
@@ -500,11 +507,8 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               </div>
             )}
 
-            {isUpload ? (
-              <Dropzone onFiles={onFiles} />
-            ) : (
-              <Dropzone onFiles={() => {}} hint="6MB for images, 40MB for PDFs" />
-            )}
+            <Dropzone onFiles={onFiles} />
+
 
             {splitting && (
               <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -512,7 +516,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               </p>
             )}
 
-            {isUpload && !visionEnabled && (
+            {showModes && !visionEnabled && (
               <p className="mt-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
                 Field extraction is off (no <span className="font-mono">ANTHROPIC_API_KEY</span>). Files
                 are still stored and checked for exact-file duplicates.

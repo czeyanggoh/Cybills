@@ -238,7 +238,7 @@ billsRouter.post('/bills', async (req, res) => {
     // moment later; other creators (Vault "Copy to Costs/Sales", Split) omit
     // status so their items land straight in the inbox, as their UI promises.
     status: ALLOWED_STATUSES.includes(String(b.status)) ? String(b.status) : 'new',
-    kind: b.kind === 'sales' ? 'sales' : 'cost',
+    kind: b.kind === 'sales' ? 'sales' : b.kind === 'supplier_statement' ? 'supplier_statement' : 'cost',
     ...(Array.isArray(b.mergedFrom) ? { mergedFrom: b.mergedFrom.map(String) } : {}),
   });
 

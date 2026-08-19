@@ -206,7 +206,7 @@ export function costComplete(b: Bill): boolean {
 // Only ever toggles those two states — never touches processing/review/archived/
 // expenseclaim/deleted, or sales. Returns true if the status changed.
 function applyAutoReady(b: Bill): boolean {
-  if (b.kind === 'sales') return false;
+  if (b.kind !== 'cost') return false; // only cost docs use the inbox↔ready flow
   if (b.status === 'new' && costComplete(b)) { b.status = 'ready'; return true; }
   if (b.status === 'ready' && !costComplete(b)) { b.status = 'new'; return true; }
   return false;

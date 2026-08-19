@@ -1,13 +1,45 @@
-import { useState } from 'react';
-import { ShoppingCart, Search, ChevronDown, Filter } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { ShoppingCart, FileText, ExternalLink, Trash2 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { cn } from '@/lib/utils';
+import { fetchBills, billFileUrl, updateBill, notifyBillsChanged, BILLS_CHANGED_EVENT } from '@/lib/bills';
+import { nameForEmail } from '@/lib/userStore';
 
-const TABS = ['Inbox', 'Processing', 'Archive'];
+// Supplier statements: files uploaded via the Add-documents "Supplier statements"
+// tab (kind='supplier_statement'). Stored server-side like bills but kept out of
+// the Costs pipeline — no extraction/readiness, just a list to keep + open.
+function useStatements() {
+  const [rows, setRows] = useState([]);
+  const reload = useCallback(async () => {
+    const bills = await fetchBills();
+    setRows(
+      bills
+        .filter((b) => b.kind === 'supplier_statement' && b.status !== 'deleted')
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+    );
+  }, []);
+  useEffect(() => {
+    reload();
+    window.addEventListener(BILLS_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(BILLS_CHANGED_EVENT, reload);
+  }, [reload]);
+  return rows;
+}
+
+function fmtDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '—';
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${m[3]} ${MON[Number(m[2]) - 1]} ${m[1]}`;
+}
 
 export default function SupplierStatements() {
-  const [tab, setTab] = useState('Inbox');
+  const rows = useStatements();
+
+  const remove = async (id) => {
+    await updateBill(id, { status: 'deleted' }).catch(() => {});
+    notifyBillsChanged();
+  };
 
   return (
     <AppShell subnav={<CostsSubnav />}>
@@ -16,55 +48,69 @@ export default function SupplierStatements() {
         <AddDocumentsButton />
       </div>
 
-      <div className="mb-4 flex items-center gap-6 border-b">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            className={cn(
-              '-mb-px border-b-2 pb-3 pt-1 text-sm transition-colors',
-              tab === t
-                ? 'border-foreground font-medium text-foreground'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            )}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button type="button" disabled className="inline-flex h-8 cursor-not-allowed items-center rounded-md border px-3 text-sm text-muted-foreground/50">
-          Mark as reconciled
-        </button>
-        <button type="button" disabled className="inline-flex h-8 cursor-not-allowed items-center rounded-md border px-3 text-sm text-muted-foreground/50">
-          Archive
-        </button>
-        <button type="button" disabled className="inline-flex h-8 cursor-not-allowed items-center rounded-md border px-3 text-sm text-muted-foreground/50">
-          Delete
-        </button>
-        <div className="relative ml-auto hidden sm:block">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input type="text" placeholder="Search" className="h-8 w-52 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
-          <button type="button" className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground">
-            Advanced <ChevronDown className="h-3 w-3" />
-          </button>
+      {rows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-xl border">
+            <ShoppingCart className="h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
+          </div>
+          <p className="text-lg font-semibold tracking-tight">No supplier statements yet.</p>
+          <p className="max-w-md text-sm text-muted-foreground">
+            Use <span className="font-medium text-foreground">Add documents → Supplier statements</span> to
+            upload a statement. It’s stored here for reconciliation.
+          </p>
         </div>
-        <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Filter">
-          <Filter className="h-4 w-4" strokeWidth={1.75} />
-        </button>
-      </div>
-
-      <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-xl border">
-          <ShoppingCart className="h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
+      ) : (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                <th className="px-4 py-2 font-medium">Document</th>
+                <th className="px-4 py-2 font-medium">Uploaded by</th>
+                <th className="px-4 py-2 font-medium">Date added</th>
+                <th className="px-4 py-2 text-right font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((b) => (
+                <tr key={b.id} className="border-b last:border-0">
+                  <td className="px-4 py-2.5">
+                    <span className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{b.fileName || 'Statement'}</span>
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-muted-foreground">
+                    {b.createdBy ? nameForEmail(b.createdBy) || b.createdBy.split('@')[0] : '—'}
+                  </td>
+                  <td className="px-4 py-2.5 text-muted-foreground">{fmtDate(b.createdAt)}</td>
+                  <td className="px-4 py-2.5">
+                    <span className="flex items-center justify-end gap-1">
+                      {b.hasFile && (
+                        <a
+                          href={billFileUrl(b.id)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors hover:bg-muted"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" /> Open
+                        </a>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => remove(b.id)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                        aria-label="Delete statement"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <p className="text-lg font-semibold tracking-tight">This workspace is for supplier statements.</p>
-        <p className="max-w-md text-sm text-muted-foreground">
-          Use the supplier statements workspace to upload and reconcile your supplier statements.
-        </p>
-      </div>
+      )}
     </AppShell>
   );
 }
