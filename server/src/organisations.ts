@@ -118,11 +118,25 @@ organisationsRouter.post('/', (req, res) => {
   const dup = organisations.find((o) => o.orgId === orgId && o.tenantId === tenantId);
   if (dup) return res.status(409).json({ error: 'already_linked', organisation: dup });
 
+  // Also block a second organisation with the same display name — the earlier
+  // guard only caught an identical Xero tenant, so the same company linked under
+  // a different tenant slipped through as a confusing duplicate.
+  const normName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+  const desiredName = String(b.name ?? '').trim() || tenantName || 'Untitled organisation';
+  const nameDup = organisations.find((o) => o.orgId === orgId && normName(o.name) === normName(desiredName));
+  if (nameDup) {
+    return res.status(409).json({
+      error: 'name_exists',
+      message: `An organisation named "${nameDup.name}" is already linked. Remove or rename it before adding another with the same name.`,
+      organisation: nameDup,
+    });
+  }
+
   const me = readSession(req);
   const organisation: Organisation = {
     id: `org_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`,
     orgId,
-    name: String(b.name ?? '').trim() || tenantName || 'Untitled organisation',
+    name: desiredName,
     tenantId,
     tenantName,
     createdAt: new Date().toISOString(),
