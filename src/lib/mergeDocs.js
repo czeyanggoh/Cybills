@@ -94,13 +94,16 @@ export async function buildMergePreview(docs) {
       }
     : { ...agg, total: String(agg.total), tax: String(agg.tax) };
 
-  // If every source has the same total, these look like the same document
-  // (duplicates) rather than different pages — flag it so the reviewer can keep
-  // one and archive the rest instead of merging.
+  // Only warn about duplicates when the sources are the SAME supplier AND the
+  // same amount — that's a re-upload of one document. Same amount from DIFFERENT
+  // suppliers (e.g. an itemised receipt + its card slip) is a legitimate merge,
+  // so it must NOT be flagged as a duplicate.
   const warnings = mergeWarnings(mergeable);
+  const norm = (s) => String(s ?? '').trim().toLowerCase();
   const totalsSet = new Set(mergeable.map((d) => num(d.total).toFixed(2)));
-  if (mergeable.length > 1 && totalsSet.size === 1) {
-    warnings.unshift('these look like the same document (identical amounts) — if they are duplicates, keep one and archive the rest instead of merging');
+  const suppliersSet = new Set(mergeable.map((d) => norm(d.supplier)));
+  if (mergeable.length > 1 && totalsSet.size === 1 && suppliersSet.size === 1) {
+    warnings.unshift('these look like the same document (same supplier + amount) — if they are duplicates, keep one and archive the rest instead of merging');
   }
 
   return {
