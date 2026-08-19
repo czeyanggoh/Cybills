@@ -120,6 +120,15 @@ billsRouter.patch('/bills/:id', (req, res) => {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   if (typeof b.paid === 'boolean') patch.paid = b.paid;
+  if (Array.isArray(b.lineItems)) {
+    patch.lineItems = b.lineItems.map((li: any) => ({
+      description: String(li?.description ?? ''),
+      category: String(li?.category ?? ''),
+      net: String(li?.net ?? ''),
+      tax: String(li?.tax ?? ''),
+      total: String(li?.total ?? ''),
+    }));
+  }
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
 

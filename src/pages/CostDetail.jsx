@@ -11,6 +11,9 @@ import {
   CheckCircle2,
   AlertCircle,
   Info,
+  Plus,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -146,6 +149,9 @@ function initialData(doc) {
     tax: doc.tax,
     taxRate: doc.taxRate ?? '',
     description: doc.description ?? '',
+    paymentMethod: doc.paymentMethod ?? '',
+    paid: Boolean(doc.paid),
+    lineItems: Array.isArray(doc.lineItems) ? doc.lineItems : [],
   };
 }
 
@@ -183,6 +189,7 @@ export default function CostDetail() {
   const [imageUrl, setImageUrl] = useState('');
   const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);
+  const [extractingLines, setExtractingLines] = useState(false);
   const [aiError, setAiError] = useState('');
   const [splitOpen, setSplitOpen] = useState(false);
   const [splitNote, setSplitNote] = useState('');
@@ -257,7 +264,7 @@ export default function CostDetail() {
     supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
     taxRate: 'taxRate', description: 'description', user: 'createdBy',
-    paymentMethod: 'paymentMethod', paid: 'paid',
+    paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
   };
   const set = (key, value) => {
     setData((d) => ({ ...d, [key]: value }));
@@ -554,6 +561,49 @@ export default function CostDetail() {
       setAiError('Could not read that file.');
     } finally {
       setExtracting(false);
+    }
+  };
+
+  // --- Line items (Dext-style per-line breakdown) --------------------------
+  const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
+  const lineTotal = lineItems.reduce((s, li) => s + num(li.total), 0);
+  const outBy = num(data.total) - lineTotal;
+  const setLineItems = (rows) => set('lineItems', rows);
+  const updateLineItem = (i, patch) =>
+    setLineItems(lineItems.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
+  const addLineItem = () =>
+    setLineItems([...lineItems, { description: '', category: data.category || 'Uncategorised', net: '', tax: '', total: '' }]);
+  const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
+
+  // Read the attached receipt and turn its printed lines into editable rows.
+  const extractLineItems = async () => {
+    setAiError('');
+    const rec = await receiptToUpload();
+    if (!rec) { setAiError('Attach a receipt first, then extract line items.'); return; }
+    setExtractingLines(true);
+    try {
+      const accounts = await getExtractionAccounts();
+      const ex = await fetchExtract(rec.base64, rec.mediaType, accounts);
+      const rows = Array.isArray(ex?.lineItems) ? ex.lineItems : [];
+      if (!rows.length) { setAiError('No line items found on this document.'); return; }
+      setLineItems(
+        rows.map((li) => {
+          const total = li.amount != null ? Number(li.amount) : num(li.net) + num(li.tax);
+          const tax = li.tax != null ? Number(li.tax) : 0;
+          const net = li.net != null ? Number(li.net) : total - tax;
+          return {
+            description: li.description || '',
+            category: li.category || data.category || 'Uncategorised',
+            net: net.toFixed(2),
+            tax: tax.toFixed(2),
+            total: total.toFixed(2),
+          };
+        })
+      );
+    } catch {
+      setAiError('Could not extract line items.');
+    } finally {
+      setExtractingLines(false);
     }
   };
 
@@ -936,6 +986,101 @@ export default function CostDetail() {
                   Add payment method
                 </button>
               </Field>
+
+              <SectionHeading>Line items</SectionHeading>
+              {lineItems.length > 0 && (
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                        <th className="px-2 py-2 font-medium">Description</th>
+                        <th className="px-2 py-2 font-medium">Category</th>
+                        <th className="px-2 py-2 text-right font-medium">Net</th>
+                        <th className="px-2 py-2 text-right font-medium">Tax</th>
+                        <th className="px-2 py-2 text-right font-medium">Total</th>
+                        <th className="w-8" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lineItems.map((li, i) => (
+                        <tr key={i} className="border-b last:border-0 align-top">
+                          <td className="px-2 py-1.5">
+                            <input
+                              value={li.description || ''}
+                              onChange={(e) => updateLineItem(i, { description: e.target.value })}
+                              className="h-8 w-full min-w-[9rem] rounded border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <select
+                              value={li.category || ''}
+                              onChange={(e) => updateLineItem(i, { category: e.target.value })}
+                              className="h-8 w-full min-w-[9rem] rounded border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              {Array.from(new Set([li.category, ...categoryOptions].filter(Boolean))).map((c) => (
+                                <option key={c} value={c}>{formatCategory(c, catMode)}</option>
+                              ))}
+                            </select>
+                          </td>
+                          {['net', 'tax', 'total'].map((f) => (
+                            <td key={f} className="px-2 py-1.5">
+                              <input
+                                value={li[f] || ''}
+                                inputMode="decimal"
+                                onChange={(e) => updateLineItem(i, { [f]: e.target.value })}
+                                className="h-8 w-20 rounded border bg-background px-2 text-right text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              />
+                            </td>
+                          ))}
+                          <td className="px-1 py-1.5 text-center">
+                            <button type="button" onClick={() => removeLineItem(i)} aria-label="Remove line" className="text-muted-foreground transition-colors hover:text-destructive">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t bg-muted/20 text-xs">
+                        <td className="px-2 py-2 font-medium" colSpan={4}>Item total</td>
+                        <td className="px-2 py-2 text-right font-semibold">{lineTotal.toFixed(2)}</td>
+                        <td />
+                      </tr>
+                      <tr className="text-xs">
+                        <td className={cn('px-2 py-2 font-medium', Math.abs(outBy) > 0.005 && 'text-destructive')} colSpan={4}>
+                          Out by
+                        </td>
+                        <td className={cn('px-2 py-2 text-right font-semibold', Math.abs(outBy) > 0.005 && 'text-destructive')}>
+                          {outBy.toFixed(2)}
+                        </td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={extractLineItems}
+                  disabled={extractingLines || !visionEnabled}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {extractingLines ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Extracting…</> : <><Sparkles className="h-3.5 w-3.5" /> Extract line items</>}
+                </button>
+                <button
+                  type="button"
+                  onClick={addLineItem}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Create line item
+                </button>
+              </div>
+              {!visionEnabled && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Line-item extraction needs an <span className="font-mono">ANTHROPIC_API_KEY</span>. You can still add lines manually.
+                </p>
+              )}
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 {doc.status === 'ready' ? (

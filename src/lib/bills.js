@@ -127,6 +127,7 @@ export function billToDoc(b) {
     description: b.description || '',
     paymentMethod: b.paymentMethod || '',
     paid: Boolean(b.paid),
+    lineItems: Array.isArray(b.lineItems) ? b.lineItems : [],
     hasFile: Boolean(b.hasFile),
     contentType: b.contentType || '',
     // Xero provenance (set once published through the cyworkspace relay).

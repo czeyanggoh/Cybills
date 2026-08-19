@@ -50,8 +50,15 @@ function buildSchema(categories: string[]) {
           type: 'object',
           additionalProperties: false,
           properties: {
-            description: { type: 'string' },
-            amount: { type: 'number' },
+            description: { type: 'string', description: 'What this line is for' },
+            category: {
+              type: 'string',
+              enum: categories,
+              description: 'Best-matching category for THIS line from the allowed list; "Uncategorised" if unclear',
+            },
+            net: { type: 'number', description: 'Line amount excluding tax; 0 if not separable' },
+            tax: { type: 'number', description: 'Tax on this line; 0 if none' },
+            amount: { type: 'number', description: 'Line total including tax' },
           },
           required: ['description', 'amount'],
         },
@@ -85,7 +92,15 @@ const ReceiptSchema = z.object({
   category: z.string(),
   categoryReason: z.string().optional().default(''),
   description: z.string().optional().default(''),
-  lineItems: z.array(z.object({ description: z.string(), amount: z.number() })),
+  lineItems: z.array(
+    z.object({
+      description: z.string(),
+      amount: z.number(),
+      net: z.number().optional(),
+      tax: z.number().optional(),
+      category: z.string().optional(),
+    })
+  ),
 });
 
 const IMAGE_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
