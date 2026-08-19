@@ -68,23 +68,6 @@ const CUSTOM_COL = {
   'Project 2': () => '',
 };
 
-function summarise(txns) {
-  const map = new Map();
-  for (const t of txns) {
-    const c = map.get(t.category) || { category: t.category, net: 0, tax: 0, total: 0 };
-    c.net += Number(t.net || 0);
-    c.tax += Number(t.tax || 0);
-    c.total += Number(t.total || 0);
-    map.set(t.category, c);
-  }
-  return [...map.values()].map((c) => ({
-    ...c,
-    net: c.net.toFixed(2),
-    tax: c.tax.toFixed(2),
-    total: c.total.toFixed(2),
-  }));
-}
-
 function download(name, text) {
   const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -132,6 +115,35 @@ function dextRow(claim, t) {
   ];
 }
 
+// One row for the whole claim, in Dext's column format (Type "Expense claim").
+// Mirrors Dext's expense-claim export: the claim as a single payable row.
+function claimRow(claim) {
+  const cur = claim.currency || 'SGD';
+  return [
+    claimRef(claim), // Receipt ID (the claim's id)
+    'Expense claim', // Type
+    csvDate(claim.endDate || claim.claimDate), // Date
+    '', // Due Date
+    '', // Invoice Number
+    claim.claimFor || '', // Supplier (the claimant)
+    '', // Category
+    '', // Customer
+    '', // Project
+    '', // Payment Method
+    '', // Bank Account
+    claim.tax, // Tax
+    claim.total, // Total
+    cur, // Currency
+    claim.tax, // Tax (SGD)
+    claim.total, // Total (SGD)
+    'processed', // Status
+    claim.claimFor || '', // Owner
+    '', // Note
+    '', // Description
+    '', // Image
+  ];
+}
+
 // format: 'cybills' (fixed accounting schema) | 'custom' (the Business-settings
 // column selection). `settings` are the Exports settings (columns, decimal
 // separator, date format) — required for the 'custom' format.
@@ -151,14 +163,13 @@ export function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cyb
       rows.push(cols.map((c) => (CUSTOM_COL[c] ? CUSTOM_COL[c](claim, t, cur, f) : '')));
     }
   } else if (detailLevel === 'items') {
+    // Per-receipt rows in Dext's column format.
     rows.push(DEXT_COLUMNS);
     for (const t of claim.transactions) rows.push(dextRow(claim, t));
   } else {
-    rows.push(['Claim name', 'Claim ID', 'Claim date', 'Category', 'Net (SGD)', 'Tax (SGD)', 'Total (SGD)']);
-    for (const c of summarise(claim.transactions)) {
-      rows.push([claim.name, claimRef(claim), csvDate(claim.claimDate), c.category, c.net, c.tax, c.total]);
-    }
-    rows.push(['', '', '', 'Total', claim.net, claim.tax, claim.total]);
+    // Claim summary: one row for the whole claim, same Dext columns.
+    rows.push(DEXT_COLUMNS);
+    rows.push(claimRow(claim));
   }
   download(claimExportName(claim, 'csv'), rows.map((r) => r.map(esc).join(delimiter)).join('\n'));
 }

@@ -10,13 +10,15 @@ import {
   FileText,
   CheckCircle2,
   AlertCircle,
+  Info,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import PublishToXeroModal from '@/components/PublishToXeroModal';
-import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
+import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/claimStore';
+import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { getExtractionAccounts, useCategoryOptions } from '@/lib/organisations';
@@ -193,6 +195,10 @@ export default function CostDetail() {
   const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
 
   const doc = mockDoc ?? persisted;
+  // If this document is a line item inside an expense claim, keep the page in
+  // that context: a note links back to the claim, and Back returns to it.
+  const claims = useClaims();
+  const claimForItem = claims.find((c) => (c.transactions || []).some((t) => String(t.itemId) === String(id)));
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
 
   // Reset the form when navigating between documents. Sample docs resolve from
@@ -584,6 +590,23 @@ export default function CostDetail() {
 
   return (
     <AppShell subnav={<CostsSubnav />}>
+      {claimForItem && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted px-3 py-2 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            This item belongs to expense claim{' '}
+            <button
+              type="button"
+              onClick={() => navigate(`/expense-claims/${claimForItem.id}`)}
+              className="font-medium text-foreground underline underline-offset-2 hover:opacity-80"
+            >
+              {claimRef(claimForItem)}
+            </button>{' '}
+            called <span className="font-medium text-foreground">{claimForItem.claimFor}</span>
+            {claimForItem.endDate ? ` (${claimForItem.endDate})` : ''}.
+          </span>
+        </div>
+      )}
       {splitNote && (
         <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           <CheckCircle2 className="h-4 w-4" /> {splitNote}
@@ -602,7 +625,7 @@ export default function CostDetail() {
       )}
       {/* Action bar */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <TopButton subtle onClick={() => navigate('/costs')}>
+        <TopButton subtle onClick={() => navigate(claimForItem ? `/expense-claims/${claimForItem.id}` : '/costs')}>
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
