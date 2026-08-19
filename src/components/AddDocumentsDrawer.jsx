@@ -16,19 +16,12 @@ import {
 import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts } from '@/lib/organisations';
 import { getCustomerRule } from '@/lib/customerRules';
-import { addVaultFiles } from '@/lib/vaultStore';
 import { useUsers } from '@/lib/userStore';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
 // Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
-// extract) → duplicate check → persist. The other tabs remain UI-only.
-const TABS = ['Costs', 'Sales', 'Bank', 'Supplier statements', 'Vault'];
-
-const MODES = [
-  { key: 'file', title: 'One document per file', hint: 'PDF, JPG, PNG, ZIP' },
-  { key: 'page', title: 'One document per page', hint: 'PDF files only' },
-  { key: 'split', title: 'Auto-splitting', hint: 'PDF files only (up to 1 hour)' },
-];
+// extract) → duplicate check → persist. Supplier statements stays UI-only.
+const TABS = ['Costs', 'Sales', 'Supplier statements'];
 
 let uid = 0;
 
@@ -185,7 +178,7 @@ function UploadItem({ item, onForce, onSkip }) {
 }
 
 // Which drawer tab matches the workspace the user opened the drawer from.
-const TAB_FOR_PATH = { '/sales': 'Sales', '/customers': 'Sales', '/bank': 'Bank', '/vault': 'Vault' };
+const TAB_FOR_PATH = { '/sales': 'Sales', '/customers': 'Sales' };
 function tabForPath(pathname) {
   if (pathname.startsWith('/supplier-statements')) return 'Supplier statements';
   const key = Object.keys(TAB_FOR_PATH).find((p) => pathname.startsWith(p));
@@ -197,19 +190,20 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const { pathname } = useLocation();
   const users = useUsers();
   const [tab, setTab] = useState('Costs');
-  const [mode, setMode] = useState('file');
   const [items, setItems] = useState([]);
-  const [vaultItems, setVaultItems] = useState([]);
   // Who the uploaded documents are attributed to. Stored as the display name
   // (not an email) so attribution shows correctly regardless of the roster's
-  // email→name mapping. Defaults to the signed-in user.
-  const meName = user?.name || user?.email || 'Astrid Yang';
+  // email→name mapping. Defaults to the signed-in user, and keeps following the
+  // signed-in user until they pick someone else — auth resolves a tick after
+  // first render, so a one-shot default would freeze on a stale/empty value.
+  const meName = user?.name || user?.email || '';
   const [owner, setOwner] = useState('');
+  const ownerTouched = useRef(false);
   useEffect(() => {
-    if (!owner) setOwner(meName);
-  }, [owner, meName]);
+    if (!ownerTouched.current && meName) setOwner(meName);
+  }, [meName]);
   const ownerOptions = Array.from(
-    new Set([meName, ...users.map((u) => u.name || u.email).filter(Boolean)])
+    new Set([meName, ...users.map((u) => u.name || u.email)].filter(Boolean))
   );
 
   // Default the tab to the workspace the drawer was opened from (Sales page →
@@ -219,13 +213,6 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   }, [open, pathname]);
 
   if (!open) return null;
-
-  // Vault stores any file (metadata) client-side — no OCR / dedup, just save it
-  // so it shows in the Vault list.
-  const onVaultFiles = (files) => {
-    const added = addVaultFiles(files);
-    setVaultItems((prev) => [...added.map((f) => ({ id: f.id, name: f.name })), ...prev]);
-  };
 
   const isUpload = tab === 'Costs' || tab === 'Sales';
 
@@ -411,114 +398,38 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           <p className="text-sm text-muted-foreground">
             {tab === 'Costs' && 'Use this panel to add your bills, receipts and purchase invoices.'}
             {tab === 'Sales' && 'Use this panel to add your sales invoices.'}
-            {tab === 'Bank' && 'Use this panel to add your bank statements.'}
             {tab === 'Supplier statements' &&
               'Use this panel to upload your supplier statements. PDF, JPG and PNG, one document per file.'}
-            {tab === 'Vault' && 'Store any document for safekeeping — accessible for 10 years.'}
           </p>
 
           <div>
             <h3 className="mb-3 text-sm font-medium">Upload from computer</h3>
 
             {isUpload && (
-              <>
-                <label className="mb-4 flex items-center gap-3 text-sm">
-                  <span className="w-32 text-muted-foreground">Document owner</span>
-                  <div className="relative flex-1">
-                    <select
-                      value={owner}
-                      onChange={(e) => setOwner(e.target.value)}
-                      className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {ownerOptions.map((n) => (
-                        <option key={n} value={n}>{n}</option>
-                      ))}
-                    </select>
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">▾</span>
-                  </div>
-                </label>
-                <div className="mb-4 grid grid-cols-3 gap-2">
-                  {MODES.map((m) => (
-                    <button
-                      key={m.key}
-                      type="button"
-                      onClick={() => setMode(m.key)}
-                      className={cn(
-                        'rounded-md border p-3 text-left transition-colors',
-                        mode === m.key ? 'border-foreground bg-muted' : 'hover:bg-muted'
-                      )}
-                    >
-                      <span className="flex items-center gap-2 text-xs font-medium">
-                        <span
-                          className={cn(
-                            'flex h-3.5 w-3.5 items-center justify-center rounded-full border',
-                            mode === m.key ? 'border-foreground' : 'border-muted-foreground'
-                          )}
-                        >
-                          {mode === m.key && <span className="h-1.5 w-1.5 rounded-full bg-foreground" />}
-                        </span>
-                        {m.title}
-                      </span>
-                      <span className="mt-1 block text-[11px] text-muted-foreground">{m.hint}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {tab === 'Bank' && (
               <label className="mb-4 flex items-center gap-3 text-sm">
-                <span className="w-32 text-muted-foreground">Bank account</span>
-                <div className="flex h-9 flex-1 items-center justify-between rounded-md border px-3 text-sm text-muted-foreground">
-                  Select an account
-                  <span>▾</span>
+                <span className="w-32 text-muted-foreground">Document owner</span>
+                <div className="relative flex-1">
+                  <select
+                    value={owner}
+                    onChange={(e) => {
+                      ownerTouched.current = true;
+                      setOwner(e.target.value);
+                    }}
+                    className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {ownerOptions.map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">▾</span>
                 </div>
               </label>
             )}
 
-            {tab === 'Vault' && (
-              <div className="mb-4 flex items-center justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">Upload destination</span>
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-medium">📁 Red Alpha Cybersecurity</span>
-                  <button
-                    type="button"
-                    className="rounded-md border px-3 py-1 text-xs font-medium transition-colors hover:bg-muted"
-                  >
-                    Change
-                  </button>
-                </div>
-              </div>
-            )}
-
             {isUpload ? (
               <Dropzone onFiles={onFiles} />
-            ) : tab === 'Vault' ? (
-              // Vault accepts any file type (store anything for safekeeping).
-              <Dropzone onFiles={onVaultFiles} accept="" hint="100MB max per file" />
             ) : (
-              <Dropzone
-                onFiles={() => {}}
-                hint={
-                  tab === 'Bank'
-                    ? '50MB, minimum 200dpi scans'
-                    : '6MB for images, 40MB for PDFs'
-                }
-              />
-            )}
-
-            {tab === 'Vault' && vaultItems.length > 0 && (
-              <div className="mt-4 space-y-2">
-                {vaultItems.map((it) => (
-                  <div key={it.id} className="flex items-center gap-3 rounded-md border p-3">
-                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate text-sm">{it.name}</span>
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Added to Vault
-                    </span>
-                  </div>
-                ))}
-              </div>
+              <Dropzone onFiles={() => {}} hint="6MB for images, 40MB for PDFs" />
             )}
 
             {isUpload && !visionEnabled && (
@@ -536,22 +447,6 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               </div>
             )}
           </div>
-
-          {tab === 'Vault' && (
-            <div className="space-y-4">
-              <div>
-                <h3 className="mb-1 text-sm font-medium">Vault storage usage</h3>
-                <p className="mb-2 text-xs text-muted-foreground">Used 1 MB of 500 MB</p>
-                <div className="h-1.5 w-full rounded-full bg-muted">
-                  <div className="h-full w-[1%] rounded-full bg-foreground" />
-                </div>
-              </div>
-              <div>
-                <h3 className="mb-1 text-sm font-medium">Vault AI credits usage</h3>
-                <p className="text-xs text-muted-foreground">Used 0 of 5 credits</p>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
