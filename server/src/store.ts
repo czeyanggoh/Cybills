@@ -26,6 +26,8 @@ export type Bill = {
   categoryReason?: string; // why the AI chose this category (account/rule cited)
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   description?: string; // plain-language summary of what was purchased
+  paymentMethod?: string; // Xero payment account label the cost was paid from
+  paid?: boolean; // whether the cost has been paid
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
   storageKey: string; // storage key for the original file (r2:/local: prefixed), or ''
@@ -276,6 +278,8 @@ const EDITABLE: (keyof Bill)[] = [
   'description',
   'status',
   'createdBy',
+  'paymentMethod',
+  'paid',
 ];
 
 // Attach (or replace) the stored file on an existing bill. Returns null if not

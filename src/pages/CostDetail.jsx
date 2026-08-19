@@ -257,6 +257,7 @@ export default function CostDetail() {
     supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
     taxRate: 'taxRate', description: 'description', user: 'createdBy',
+    paymentMethod: 'paymentMethod', paid: 'paid',
   };
   const set = (key, value) => {
     setData((d) => ({ ...d, [key]: value }));
@@ -302,6 +303,8 @@ export default function CostDetail() {
           invoiceNumber: data.ref,
           taxRate: data.taxRate,
           description: data.description,
+          paymentMethod: data.paymentMethod,
+          paid: data.paid,
         });
         notifyBillsChanged();
       } catch {

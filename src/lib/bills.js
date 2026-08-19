@@ -125,6 +125,8 @@ export function billToDoc(b) {
     invoiceNumber: b.invoiceNumber || '',
     taxRate: b.taxRate || '',
     description: b.description || '',
+    paymentMethod: b.paymentMethod || '',
+    paid: Boolean(b.paid),
     hasFile: Boolean(b.hasFile),
     contentType: b.contentType || '',
     // Xero provenance (set once published through the cyworkspace relay).
