@@ -133,13 +133,25 @@ function ReceiptPreview({ doc, imageUrl, previewType }) {
   );
 }
 
+// Document types offered in the Type dropdown (mirrors Dext's list).
+const DOC_TYPES = [
+  'Receipt',
+  'Invoice',
+  'Credit note/refund',
+  'Statement/remittance advice',
+  'Expense statement',
+  'Delivery note',
+  'ATM withdrawal',
+  'Mileage',
+  'Other',
+];
+
 function initialData(doc) {
   return {
     user: doc.user,
     type: doc.type,
     date: doc.date,
     supplier: doc.supplier,
-    po: doc.po ?? '',
     ref: doc.ref ?? doc.invoiceNumber ?? '',
     category: doc.category,
     categoryReason: doc.categoryReason ?? '',
@@ -335,7 +347,6 @@ export default function CostDetail() {
         type: data.type,
         date: isoDate(data.date),
         supplier: data.supplier,
-        po: data.po,
         ref: data.ref,
         category: data.category,
         currency: data.currency,
@@ -882,7 +893,7 @@ export default function CostDetail() {
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={doc.itemId} readOnly /></Field>
               <Field label="Document owner"><EditableSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
-              <Field label="Type"><Input value={data.type} onChange={(v) => set('type', v)} /></Field>
+              <Field label="Type"><EditableSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date">
                 <input
                   type="date"
@@ -892,7 +903,6 @@ export default function CostDetail() {
                 />
               </Field>
               <Field label="Supplier"><Input value={data.supplier} onChange={(v) => set('supplier', v)} /></Field>
-              <Field label="Purchase order number"><Input value={data.po} onChange={(v) => set('po', v)} /></Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
                 <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
