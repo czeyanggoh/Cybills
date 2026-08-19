@@ -116,16 +116,30 @@ function mutate(req: Request, res: Response, fn: (claim: Claim, me: { email: str
 const isLocked = (c: Claim) => c.approvalStatus === 'awaiting_approval' || c.approvalStatus === 'approved';
 
 // POST /api/claims/:id/items — attach cost items (idempotent per itemId).
+// Allowed until the claim is APPROVED — you can still add to a claim that's
+// awaiting approval (the total changes, so the approver re-reviews). Only an
+// approved claim is locked, to keep its total stable for the CYHR payment.
 claimsRouter.post('/:id/items', (req, res) =>
   mutate(req, res, (claim, me) => {
-    if (isLocked(claim)) return res.status(409).json({ error: 'claim_locked' });
+    if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
     const incoming: Txn[] = Array.isArray(req.body?.items) ? req.body.items : [];
     const seen = new Set(claim.transactions.map((t) => t.itemId));
+    let added = 0;
     for (const t of incoming) {
       if (!t || seen.has(t.itemId)) continue;
       claim.transactions.push({ ...t, addedBy: t.addedBy || me.name });
       claim.history.unshift({ text: `Item ${t.itemId} was added to the expense claim`, by: t.addedBy || me.name, at: nowIso() });
       seen.add(t.itemId);
+      added += 1;
+    }
+    // Adding to a submitted claim changes its total — flag it so the assigned
+    // approver re-reviews. It stays in their approval queue (still awaiting).
+    if (added && claim.approvalStatus === 'awaiting_approval' && claim.approver) {
+      claim.history.unshift({
+        text: `${added} item(s) added after submission — ${claim.approver} to re-review the updated total`,
+        by: me.name,
+        at: nowIso(),
+      });
     }
   })
 );

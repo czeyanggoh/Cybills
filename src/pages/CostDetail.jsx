@@ -989,12 +989,21 @@ export default function CostDetail() {
         onClose={() => setClaimOpen(false)}
         onAdd={async ({ claimId, newClaim }) => {
           setClaimOpen(false);
+          setAiError('');
           // Link this cost to the chosen (or newly created) claim so it shows
           // up as a line item there, then mark it as in an expense claim.
-          const targetId = newClaim ? (await createClaim(newClaim)).id : claimId;
-          const actor = user?.name || 'Astrid Yang';
-          if (targetId) await addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
-          saveWithStatus('expenseclaim');
+          try {
+            const targetId = newClaim ? (await createClaim(newClaim)).id : claimId;
+            const actor = user?.name || 'Astrid Yang';
+            if (targetId) await addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
+            await saveWithStatus('expenseclaim');
+          } catch (err) {
+            setAiError(
+              err?.code === 'claim_locked'
+                ? 'That claim is already approved, so items can’t be added to it.'
+                : 'Could not add this item to the claim — please try again.'
+            );
+          }
         }}
       />
       <PublishToXeroModal

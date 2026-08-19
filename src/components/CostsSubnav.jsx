@@ -13,11 +13,27 @@ export default function CostsSubnav() {
   // Claims awaiting the signed-in user's approval — shown as a red badge so a
   // pending approval stays visible even after the reminder banner is dismissed.
   const pendingApprovals = pendingApprovalsFor(claims, user).length;
-  const isActive = (item) =>
-    item.to === '/costs'
-      ? pathname === '/costs' ||
-        (pathname.startsWith('/costs/') && pathname !== '/costs/exports' && pathname !== '/costs/fetch')
-      : pathname === item.to;
+  // A cost document opened from inside a claim (/costs/<id> where <id> is a
+  // claim line item) belongs to Expense claims, so highlight that — not Inbox.
+  const costItemId = pathname.startsWith('/costs/') ? pathname.slice('/costs/'.length) : '';
+  const itemInClaim =
+    Boolean(costItemId) &&
+    claims.some((c) => (c.transactions || []).some((t) => String(t.itemId) === costItemId));
+  const isActive = (item) => {
+    if (item.to === '/costs') {
+      return (
+        pathname === '/costs' ||
+        (pathname.startsWith('/costs/') &&
+          pathname !== '/costs/exports' &&
+          pathname !== '/costs/fetch' &&
+          !itemInClaim)
+      );
+    }
+    if (item.to === '/expense-claims') {
+      return pathname === '/expense-claims' || pathname.startsWith('/expense-claims/') || itemInClaim;
+    }
+    return pathname === item.to;
+  };
 
   // Live counts so the subnav badges match the inbox tab + expense claims list.
   const SUBNAV = [
