@@ -116,6 +116,47 @@ export function fetchXeroPaymentMethods(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/payment-methods`).then((b) => b.paymentMethods ?? []);
 }
 
+export function fetchXeroCustomers(organisationId) {
+  return getJson(`/api/xero/organisations/${organisationId}/customers`).then((b) => b.customers ?? []);
+}
+
+// The active org (CYBM by default) — the one whose Xero chart drives the
+// document dropdowns. Falls back to the first linked org.
+function useActiveOrgId() {
+  const { data: organisations = [] } = useOrganisations();
+  const active = getActiveOrganisationId();
+  return organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+}
+
+// Customer-allocation options: the active org's Xero customer contacts, live via
+// the relay. Empty until an org is linked (the field stays free-text).
+export function useXeroCustomers() {
+  const orgId = useActiveOrgId();
+  const { data } = useQuery({
+    queryKey: ['xero-customers', orgId],
+    queryFn: () => fetchXeroCustomers(orgId),
+    enabled: Boolean(orgId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  return (data ?? []).map((c) => c.name).filter(Boolean);
+}
+
+// Purchase tax-rate options straight from the active org's Xero, with each rate's
+// %. Returns { options: string[], rateFor: (name) => number }. Falls back to the
+// caller's list when Xero isn't connected.
+export function useXeroPurchaseTaxRates() {
+  const orgId = useActiveOrgId();
+  const { data } = useQuery({
+    queryKey: ['xero-taxrates', orgId],
+    queryFn: () => fetchXeroTaxRates(orgId),
+    enabled: Boolean(orgId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  return data ?? [];
+}
+
 // Payment-method dropdown options: the linked org's Xero accounts a payment can
 // be applied to — bank accounts + accounts with EnablePaymentsToAccount — live
 // via the relay. Any manually-added methods are appended, and are used alone

@@ -24,11 +24,10 @@ import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/cla
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
-import { getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods } from '@/lib/organisations';
+import { getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useXeroPurchaseTaxRates } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions, useList } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
-import { CUSTOMERS } from '@/data/customers';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
@@ -151,6 +150,8 @@ function initialData(doc) {
     description: doc.description ?? '',
     paymentMethod: doc.paymentMethod ?? '',
     paid: Boolean(doc.paid),
+    customer: doc.customer ?? '',
+    project: doc.project ?? '',
     lineItems: Array.isArray(doc.lineItems) ? doc.lineItems : [],
   };
 }
@@ -166,16 +167,21 @@ export default function CostDetail() {
   const categoryOptions = useCategoryOptions();
   const catMode = useCategoryDisplayMode();
   const projectOptions = useProjectOptions();
-  const customerOptions = CUSTOMERS.map((c) => c.name);
+  // Customers come from the active org's (CYBM) live Xero customer contacts.
+  const customerOptions = useXeroCustomers();
   const paymentMethods = useXeroPaymentMethods();
   // GST/tax rates for purchases (Costs) — the specific rate replaces the old
   // "Extracted amount" placeholder. `rateFor` gives the % for the tax math.
-  const taxRates = useList('taxRates');
-  const purchaseTaxRates = taxRates.filter(
+  // Tax rates: prefer the active org's (CYBM) LIVE Xero purchase tax rates; fall
+  // back to the bundled Singapore seed list when Xero isn't connected.
+  const seededTaxRates = useList('taxRates');
+  const seededPurchase = seededTaxRates.filter(
     (t) => !t.hidden && (String(t.code).includes('INPUT') || t.code === 'NONE')
   );
-  const taxRateOptions = purchaseTaxRates.map((t) => t.name);
-  const rateFor = (name) => Number(taxRates.find((t) => t.name === name)?.rate ?? 0);
+  const xeroTaxRates = useXeroPurchaseTaxRates();
+  const taxRateSource = xeroTaxRates.length ? xeroTaxRates : seededPurchase;
+  const taxRateOptions = taxRateSource.map((t) => t.name);
+  const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
   const [pmModalOpen, setPmModalOpen] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -190,6 +196,7 @@ export default function CostDetail() {
   const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);
   const [extractingLines, setExtractingLines] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
   const [aiError, setAiError] = useState('');
   const [splitOpen, setSplitOpen] = useState(false);
   const [splitNote, setSplitNote] = useState('');
@@ -265,6 +272,7 @@ export default function CostDetail() {
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
     taxRate: 'taxRate', description: 'description', user: 'createdBy',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
+    customer: 'customer', project: 'project',
   };
   const set = (key, value) => {
     setData((d) => ({ ...d, [key]: value }));
@@ -312,6 +320,9 @@ export default function CostDetail() {
           description: data.description,
           paymentMethod: data.paymentMethod,
           paid: data.paid,
+          customer: data.customer,
+          project: data.project,
+          lineItems: data.lineItems,
         });
         notifyBillsChanged();
       } catch {
@@ -339,6 +350,16 @@ export default function CostDetail() {
   const saveWithStatus = async (status, to = '/costs') => {
     await persistStatus(status);
     navigate(to);
+  };
+
+  // Explicit Save: persist every field on the document, keeping its current
+  // workflow status, and flash a confirmation. Fields already auto-save on
+  // change; this is the reassuring "it's saved" affordance.
+  const saveNow = async () => {
+    await persistStatus(doc.status || 'new'); // keep current workflow status
+    notifyBillsChanged();
+    setSavedFlash(true);
+    setTimeout(() => setSavedFlash(false), 1800);
   };
 
   // "Ready" means a document is complete enough to export / publish, so it must
@@ -1098,6 +1119,15 @@ export default function CostDetail() {
                     className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
                   >
                     Move to ready
+                  </button>
+                )}
+                {doc.persisted && (
+                  <button
+                    type="button"
+                    onClick={saveNow}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background transition-opacity hover:opacity-90"
+                  >
+                    {savedFlash ? <><CheckCircle2 className="h-4 w-4" /> Saved</> : 'Save'}
                   </button>
                 )}
                 <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>

@@ -28,6 +28,8 @@ export type Bill = {
   description?: string; // plain-language summary of what was purchased
   paymentMethod?: string; // Xero payment account label the cost was paid from
   paid?: boolean; // whether the cost has been paid
+  customer?: string; // Xero customer contact the cost is allocated to
+  project?: string; // Xero tracking option (project) the cost is allocated to
   // Per-line breakdown of the document (Dext-style). Stored as strings so they
   // round-trip through the editable form unchanged.
   lineItems?: Array<{ description: string; category: string; net: string; tax: string; total: string }>;
@@ -284,6 +286,8 @@ const EDITABLE: (keyof Bill)[] = [
   'paymentMethod',
   'paid',
   'lineItems',
+  'customer',
+  'project',
 ];
 
 // Attach (or replace) the stored file on an existing bill. Returns null if not

@@ -166,6 +166,24 @@ xeroRouter.get('/organisations/:id/taxrates', async (req, res) => {
   res.json({ taxRates });
 });
 
+// GET /api/xero/organisations/:id/customers — active customer contacts in the
+// linked Xero org, for the document "Customer" allocation dropdown.
+xeroRouter.get('/organisations/:id/customers', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const result = await relay('Contacts', {
+    tenantId: organisation.tenantId,
+    query: { where: 'IsCustomer==true AND ContactStatus=="ACTIVE"' },
+  });
+  if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
+  const customers = (result.data?.Contacts ?? [])
+    .map((c: any) => ({ id: String(c.ContactID ?? ''), name: String(c.Name ?? '').trim() }))
+    .filter((c: any) => c.name)
+    .sort((a: any, b: any) => a.name.localeCompare(b.name));
+  res.json({ customers });
+});
+
 // GET /api/xero/organisations/:id/profile — the linked Xero org's registration
 // details (name, CRN, tax number, country, base currency, registered address),
 // used to populate Business settings → Business profile.
