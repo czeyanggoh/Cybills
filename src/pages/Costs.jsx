@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
-  Flag,
-  Image,
   ChevronDown,
   SlidersHorizontal,
   Search,
@@ -17,6 +15,9 @@ import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import DocsExportModal from '@/components/DocsExportModal';
+import FlagMenu from '@/components/FlagMenu';
+import ReceiptViewer from '@/components/ReceiptViewer';
+import { useFlagAssignments } from '@/lib/flagAssignments';
 import { useCategoryOptions } from '@/lib/organisations';
 import { useList } from '@/lib/listsStore';
 import { useAuth } from '@/lib/auth';
@@ -438,10 +439,10 @@ function CostProcessingView({ rows, onMoveOne, onMoveAll, meName = 'You' }) {
               const done = doneCount(d);
               return (
                 <tr key={d.id} className="group border-b last:border-0">
-                  <td className="px-3 py-3">
+                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-1.5">
-                      <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
-                      <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                      <FlagMenu id={d.id} />
+                      <ReceiptViewer itemIds={d.id} />
                     </div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-muted-foreground">{displayItemId(d.id)}</td>
@@ -505,6 +506,7 @@ export default function Costs() {
 
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
+  const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
   const taxRates = useList('taxRates');
   const taxRateOptions = taxRates
@@ -530,8 +532,8 @@ export default function Costs() {
       )
     : allRows;
   // Filter popover (flag) + Advanced search (amount / date / supplier).
-  if (flagFilter === 'flagged') rows = rows.filter((d) => d.flagged);
-  if (flagFilter === 'unflagged') rows = rows.filter((d) => !d.flagged);
+  if (flagFilter === 'flagged') rows = rows.filter((d) => flagAssignments[d.id]);
+  if (flagFilter === 'unflagged') rows = rows.filter((d) => !flagAssignments[d.id]);
   if (adv.min) rows = rows.filter((d) => toNum(d.total) >= toNum(adv.min));
   if (adv.max) rows = rows.filter((d) => toNum(d.total) <= toNum(adv.max));
   if (adv.from) rows = rows.filter((d) => toTime(d.date) >= toTime(adv.from));
@@ -802,8 +804,8 @@ export default function Costs() {
                           onChange={() => toggle(d.id)}
                           className="h-4 w-4 accent-black"
                         />
-                        <Flag className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
-                        <Image className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={1.75} />
+                        <FlagMenu id={d.id} />
+                        <ReceiptViewer itemIds={d.id} />
                       </div>
                     </td>
                     <td className="px-3 py-3"><StatusBadge status={d.status} /></td>
