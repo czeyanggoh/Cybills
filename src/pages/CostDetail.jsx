@@ -643,7 +643,7 @@ export default function CostDetail() {
             )}
           >
             {readyMissing.length ? (
-              `Missing ${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'} — moves to Ready automatically`
+              `Missing: ${readyMissing.join(', ')}`
             ) : (
               <>
                 <CheckCircle2 className="h-3.5 w-3.5" /> Ready
@@ -931,9 +931,7 @@ export default function CostDetail() {
                   </span>
                 ) : doc.persisted ? (
                   <span className="inline-flex h-9 items-center gap-1 rounded-md border px-3 text-sm text-muted-foreground">
-                    {readyMissing.length
-                      ? `Missing ${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'} — moves to Ready automatically`
-                      : 'Ready'}
+                    {readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'Ready'}
                   </span>
                 ) : (
                   <button
