@@ -26,7 +26,7 @@ import { useUsers } from '@/lib/userStore';
 import { CUSTOMERS } from '@/data/customers';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { usePaymentMethods } from '@/lib/paymentMethods';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -129,13 +129,6 @@ function ReceiptPreview({ doc, imageUrl, previewType }) {
     </div>
   );
 }
-
-const EXTRACT_ERRORS = {
-  vision_not_configured: 'Vision extraction isn’t configured on the server yet.',
-  invalid_image: 'That file type isn’t supported — use a PNG, JPG, or WebP.',
-  refused: 'Claude declined to read that image.',
-  no_data: 'Couldn’t read fields from that image — try a clearer photo.',
-};
 
 function initialData(doc) {
   return {
@@ -502,6 +495,72 @@ export default function CostDetail() {
     });
   };
 
+  // Run extraction on the given bytes (with the org's Review instructions + live
+  // chart), then apply + persist the results. Shared by upload and re-read.
+  const extractAndApply = async (imageBase64, mediaType) => {
+    setAiError('');
+    setExtracting(true);
+    try {
+      const accounts = await getExtractionAccounts();
+      const ex = await fetchExtract(imageBase64, mediaType, accounts);
+      if (!ex) { setAiError('Extraction failed — please try again.'); return; }
+      const descr =
+        ex.description ||
+        (Array.isArray(ex.lineItems) ? ex.lineItems.map((li) => li.description).filter(Boolean).join(', ') : '');
+      setData((d) => ({
+        ...d,
+        supplier: ex.supplier || d.supplier,
+        date: ex.date || d.date,
+        type: ex.documentType || d.type,
+        ref: ex.invoiceNumber || d.ref,
+        currency: ex.currency || d.currency,
+        category: ex.category || d.category,
+        categoryReason: ex.categoryReason || d.categoryReason,
+        total: ex.total != null ? String(ex.total) : d.total,
+        tax: ex.tax != null ? String(ex.tax) : d.tax,
+        description: descr || d.description,
+      }));
+      if (doc?.persisted) {
+        const patch = {};
+        if (ex.supplier) patch.supplier = ex.supplier;
+        if (ex.date) patch.date = ex.date;
+        if (ex.documentType) patch.documentType = ex.documentType;
+        if (ex.invoiceNumber) patch.invoiceNumber = ex.invoiceNumber;
+        if (ex.currency) patch.currency = ex.currency;
+        if (ex.category) patch.category = ex.category;
+        if (ex.categoryReason) patch.categoryReason = ex.categoryReason;
+        if (ex.total != null) patch.total = ex.total;
+        if (ex.tax != null) patch.tax = ex.tax;
+        if (descr) patch.description = descr;
+        const r = await updateBill(doc.id, patch).catch(() => null);
+        if (r?.bill) {
+          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+          notifyBillsChanged();
+        }
+      }
+    } catch {
+      setAiError('Could not read that file.');
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  // Re-read the already-stored file with Claude (no re-upload) — regenerates the
+  // fields incl. the category Reason for docs read before those existed.
+  const reReadStored = async () => {
+    if (!imageUrl || !visionEnabled) return;
+    setAiError('');
+    try {
+      const resp = await fetch(imageUrl);
+      const blob = await resp.blob();
+      const type = blob.type || (previewType === 'pdf' ? 'application/pdf' : 'image/jpeg');
+      const { base64, mediaType } = await prepareUpload(new File([blob], doc.fileName || 'receipt', { type }));
+      await extractAndApply(base64, mediaType);
+    } catch {
+      setAiError('Could not re-read the stored file.');
+    }
+  };
+
   const onUploadClick = () => {
     setAiError('');
     fileInputRef.current?.click();
@@ -534,46 +593,7 @@ export default function CostDetail() {
     // Only run Claude Vision auto-fill when it's configured; otherwise the user
     // fills the (editable) fields manually.
     if (!visionEnabled) return;
-    setExtracting(true);
-    try {
-      // Classify into the connected org's live Xero chart (bundled fallback).
-      const accounts = await getExtractionAccounts();
-      const res = await fetch('/api/costs/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64, mediaType, accounts }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setAiError(EXTRACT_ERRORS[body.error] ?? 'Extraction failed — please try again.');
-        return;
-      }
-      const { data: ex } = await res.json();
-      setData((d) => ({
-        ...d,
-        supplier: ex.supplier || d.supplier,
-        date: ex.date || d.date,
-        type: ex.documentType || d.type,
-        ref: ex.invoiceNumber || d.ref,
-        currency: ex.currency || d.currency,
-        category: ex.category || d.category,
-        categoryReason: ex.categoryReason || d.categoryReason,
-        total: ex.total != null ? String(ex.total) : d.total,
-        tax: ex.tax != null ? String(ex.tax) : d.tax,
-        // Auto-populate the Description from the model's summary, or the line
-        // items if it didn't give one. Don't overwrite anything already typed.
-        description:
-          d.description ||
-          ex.description ||
-          (Array.isArray(ex.lineItems)
-            ? ex.lineItems.map((li) => li.description).filter(Boolean).join(', ')
-            : ''),
-      }));
-    } catch {
-      setAiError('Could not read that file.');
-    } finally {
-      setExtracting(false);
-    }
+    await extractAndApply(imageBase64, mediaType);
   };
 
   const readyMissing = missingForReady();
@@ -764,6 +784,17 @@ export default function CostDetail() {
                   ? 'Replaces the file on this same document — it won’t create a new one.'
                   : 'Attaches the receipt to this document — it won’t create a new one.'}
               </p>
+              {imageUrl && visionEnabled && (
+                <button
+                  type="button"
+                  onClick={reReadStored}
+                  disabled={extracting}
+                  className="mb-2 flex w-full items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-60"
+                >
+                  <Sparkles className="h-4 w-4" strokeWidth={2} />
+                  {extracting ? 'Reading…' : 'Re-read with Claude (fills the Reason)'}
+                </button>
+              )}
               {aiError && (
                 <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
                   {aiError}
