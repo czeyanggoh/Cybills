@@ -61,20 +61,6 @@ function Row({ label, required = false, children }) {
   );
 }
 
-function TextInput({ defaultValue = '', readOnly = false, placeholder = '' }) {
-  return (
-    <input
-      defaultValue={defaultValue}
-      readOnly={readOnly}
-      placeholder={placeholder}
-      className={cn(
-        'h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        readOnly ? 'bg-muted text-muted-foreground' : 'bg-background'
-      )}
-    />
-  );
-}
-
 // Controlled when `value`+`onChange` are given, else uncontrolled via defaultValue.
 function Select({ defaultValue = undefined, value = undefined, onChange = undefined, options }) {
   const controlled = value !== undefined && onChange;
@@ -178,7 +164,6 @@ function PersonalDetails({ rosterUser, refresh, onSaved }) {
 
   return (
     <Card title="Personal details">
-      <Row label="CRN"><TextInput defaultValue="9948074612" readOnly /></Row>
       <Row label="First name" required><EditInput value={first} onChange={setFirst} /></Row>
       <Row label="Last name" required><EditInput value={last} onChange={setLast} /></Row>
       <Row label="Mobile number">
