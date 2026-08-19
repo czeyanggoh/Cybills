@@ -81,6 +81,11 @@ export async function recordExport({ kind, name, filename, format, csvFormat = '
   return entry;
 }
 
+// Remove one recorded export (its metadata; the stored blob ages out on its own).
+export function deleteExport(id) {
+  write(read().filter((e) => e.id !== id));
+}
+
 export function getExports(kind) {
   return read().filter((e) => !kind || e.kind === kind);
 }

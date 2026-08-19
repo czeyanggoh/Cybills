@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { pdfDate, claimRef, claimExportName, cleanHistoryText } from '@/lib/exportFormat';
+import { recordExport } from '@/lib/exportsStore';
 
 // A4 in points, with a comfortable margin.
 const W = 595.28;
@@ -235,10 +236,22 @@ export function buildClaimDoc(claim) {
 
 // Generate + open the claim PDF. Opens in a new tab; falls back to a download
 // if the popup is blocked. Returns the claim id.
-export function generateClaimPdf(claim) {
+export function generateClaimPdf(claim, { exportedBy = '' } = {}) {
   const doc = buildClaimDoc(claim);
   const url = doc.output('bloburl');
   const win = window.open(url, '_blank');
-  if (!win) doc.save(claimExportName(claim, 'pdf'));
+  const name = claimExportName(claim, 'pdf');
+  if (!win) doc.save(name);
+  // Record it so it appears under Exports → Expense claims.
+  void recordExport({
+    kind: 'claims',
+    name: claim.name || name,
+    filename: name,
+    format: 'PDF',
+    csvFormat: '-',
+    count: Array.isArray(claim.transactions) ? claim.transactions.length : 1,
+    exportedBy: exportedBy || claim.claimFor || 'You',
+    blob: doc.output('blob'),
+  });
   return claim.id;
 }

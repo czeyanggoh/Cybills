@@ -322,7 +322,7 @@ export function downloadExportBlob(rec) {
 // sales items, and record it in the Exports tab. `kind` is 'costs' | 'sales'.
 export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = 'You' } = {}) {
   const wKind = kind === 'sales' ? 'sales' : 'costs';
-  const base = `red-alpha-cybersecurity-st-eng-${isoDate()}`;
+  const base = `cybills-${wKind}-${isoDate()}`;
   // Honour Business settings → Exports: "Custom CSV" uses the chosen columns +
   // date/decimal formats; otherwise the fixed template, plus a Net column when
   // "Show net amount" is on.

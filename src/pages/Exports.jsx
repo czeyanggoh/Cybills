@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SalesSubnav from '@/components/SalesSubnav';
-import { useExports, getExportBlob } from '@/lib/exportsStore';
+import { useExports, getExportBlob, deleteExport } from '@/lib/exportsStore';
 import { downloadExportBlob } from '@/lib/docsExport';
 import { cn } from '@/lib/utils';
 
@@ -49,9 +50,14 @@ function ExportsTable({ kind }) {
               <td className="px-3 py-3 tabular-nums">{e.count}</td>
               <td className="whitespace-nowrap px-3 py-3">{e.exportedBy}</td>
               <td className="px-3 py-3 text-right">
-                <button type="button" onClick={() => download(e.id)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
-                  Download
-                </button>
+                <span className="inline-flex items-center gap-1.5">
+                  <button type="button" onClick={() => download(e.id)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
+                    Download
+                  </button>
+                  <button type="button" onClick={() => deleteExport(e.id)} aria-label="Delete export" title="Remove from history" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-destructive">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </span>
               </td>
             </tr>
           ))}

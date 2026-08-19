@@ -4,6 +4,7 @@
 
 import { csvDate, claimRef, claimExportName } from '@/lib/exportFormat';
 import { EXPORT_COLUMNS } from '@/lib/exportSettings';
+import { recordExport } from '@/lib/exportsStore';
 
 // Escape a field for a given delimiter (',' default, ';' for comma-decimal CSV).
 function escFor(delimiter) {
@@ -147,7 +148,7 @@ function claimRow(claim) {
 // format: 'cybills' (fixed accounting schema) | 'custom' (the Business-settings
 // column selection). `settings` are the Exports settings (columns, decimal
 // separator, date format) — required for the 'custom' format.
-export function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null } = {}) {
+export function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null, exportedBy = '' } = {}) {
   const f = settings || {};
   // Comma decimals need a non-comma field delimiter, so switch to ';'.
   const delimiter = f.decimalSeparator === 'Comma (,)' ? ';' : ',';
@@ -171,5 +172,18 @@ export function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cyb
     rows.push(DEXT_COLUMNS);
     rows.push(claimRow(claim));
   }
-  download(claimExportName(claim, 'csv'), rows.map((r) => r.map(esc).join(delimiter)).join('\n'));
+  const name = claimExportName(claim, 'csv');
+  const text = rows.map((r) => r.map(esc).join(delimiter)).join('\n');
+  download(name, text);
+  // Record it so it appears under Exports → Expense claims.
+  void recordExport({
+    kind: 'claims',
+    name: claim.name || name,
+    filename: name,
+    format: 'CSV',
+    csvFormat: format === 'custom' ? 'Custom CSV' : 'CYBills default',
+    count: Array.isArray(claim.transactions) ? claim.transactions.length : 1,
+    exportedBy: exportedBy || claim.claimFor || 'You',
+    blob: new Blob([text], { type: 'text/csv;charset=utf-8;' }),
+  });
 }

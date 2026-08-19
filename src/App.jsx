@@ -7,7 +7,6 @@ import SetPassword from './pages/SetPassword';
 import Join from './pages/Join';
 import Costs from './pages/Costs';
 import CostDetail from './pages/CostDetail';
-import SupplierFetch from './pages/SupplierFetch';
 import ExpenseClaims from './pages/ExpenseClaims';
 import ExpenseClaimDetail from './pages/ExpenseClaimDetail';
 import Suppliers from './pages/Suppliers';
@@ -47,7 +46,6 @@ function App() {
             <Route path="/join" element={<RequireSignedIn><Join /></RequireSignedIn>} />
             <Route path="/costs" element={<Protected><Costs /></Protected>} />
             <Route path="/costs/exports" element={<Protected><Exports workspace="costs" /></Protected>} />
-            <Route path="/costs/fetch" element={<Protected><SupplierFetch /></Protected>} />
             <Route path="/costs/:id" element={<Protected><CostDetail /></Protected>} />
             <Route path="/sales" element={<Protected><Sales /></Protected>} />
             <Route path="/sales/exports" element={<Protected><Exports workspace="sales" /></Protected>} />

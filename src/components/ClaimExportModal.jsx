@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
 import { generateClaimCsv } from '@/lib/claimCsv';
 import { generateClaimPdf } from '@/lib/claimPdf';
+import { useAuth } from '@/lib/auth';
 import { useExportSettings } from '@/lib/exportSettings';
 import { cn } from '@/lib/utils';
 
@@ -30,12 +31,14 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
   const [format, setFormat] = useState('cybills');
   const [archiveAfter, setArchiveAfter] = useState(false);
   const settings = useExportSettings();
+  const { user, membership } = useAuth();
 
   if (!open) return null;
 
   const doExport = () => {
-    if (tab === 'csv') generateClaimCsv(claim, { detailLevel: detail, format, settings });
-    else generateClaimPdf(claim);
+    const exportedBy = membership?.user?.name || user?.name || user?.email || 'You';
+    if (tab === 'csv') generateClaimCsv(claim, { detailLevel: detail, format, settings, exportedBy });
+    else generateClaimPdf(claim, { exportedBy });
     onClose();
     if (archiveAfter) onExported?.();
   };

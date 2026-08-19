@@ -25,7 +25,6 @@ export default function CostsSubnav() {
         pathname === '/costs' ||
         (pathname.startsWith('/costs/') &&
           pathname !== '/costs/exports' &&
-          pathname !== '/costs/fetch' &&
           !itemInClaim)
       );
     }
@@ -40,7 +39,6 @@ export default function CostsSubnav() {
     { label: 'Costs inbox', count: counts.inbox, to: '/costs' },
     { label: 'Expense claims', count: counts.expenseClaims, pending: pendingApprovals, to: '/expense-claims' },
     { label: 'Supplier statements', to: '/supplier-statements' },
-    { label: 'Fetch bills', to: '/costs/fetch' },
     { label: 'Exports', to: '/costs/exports' },
   ];
 
