@@ -49,7 +49,25 @@ type Claim = {
   hrSentAmount: string;
   hrSentBy: string;
   hrRevision: number;
+  // Xero handoff: set once the approved claim is posted as an ACCPAY bill.
+  xeroInvoiceId?: string;
+  xeroTenantName?: string;
+  xeroPostedAt?: string;
 };
+
+// Exported so the Xero publish endpoint can load/persist a claim without
+// duplicating the collection name.
+export function getClaimForXero(ws: string, id: string): Claim | null {
+  return loadCollection<Claim>(COLLECTION).find((c) => c.id === id && c.workspaceId === ws && !c.deleted) ?? null;
+}
+export function saveClaimXero(ws: string, id: string, patch: Partial<Pick<Claim, 'xeroInvoiceId' | 'xeroTenantName' | 'xeroPostedAt'>>): Claim | null {
+  const items = loadCollection<Claim>(COLLECTION);
+  const claim = items.find((c) => c.id === id && c.workspaceId === ws && !c.deleted);
+  if (!claim) return null;
+  Object.assign(claim, patch);
+  saveCollection(COLLECTION, items);
+  return claim;
+}
 
 const COLLECTION = 'claims';
 const load = () => loadCollection<Claim>(COLLECTION);

@@ -322,6 +322,25 @@ export function useXeroBankAccounts() {
 // Publish a stored bill to Xero as an ACCPAY supplier bill. Resolves with
 // { invoice, bill }; rejects with a message (422 carries Xero's validation
 // messages, joined for display).
+// Post an approved expense claim to Xero as a DRAFT ACCPAY bill payable to the
+// employee. Resolves with { ok, invoice, claim }; throws with a message on error.
+export async function publishClaimToXero(organisationId, payload) {
+  const res = await fetch(`/api/xero/organisations/${organisationId}/publish-claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = /** @type {any} */ (new Error(
+      Array.isArray(body.messages) ? body.messages.join(' ') : body.message || 'Publish to Xero failed.'
+    ));
+    err.code = body.error;
+    throw err;
+  }
+  return body;
+}
+
 export async function publishBillToXero(organisationId, payload) {
   const res = await fetch(`/api/xero/organisations/${organisationId}/publish-bill`, {
     method: 'POST',

@@ -10,6 +10,7 @@ import {
   FileText,
   X,
   Lock,
+  CheckCircle2,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -28,6 +29,7 @@ import {
   updateClaimItems,
   moveItemsToClaim,
   markClaimSentToHr,
+  notifyClaimsChanged,
   updateClaim,
   formatClaimDate,
   toIsoClaimDate,
@@ -35,6 +37,7 @@ import {
 import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
 import { useUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
+import { useOrganisations, getActiveOrganisationId, publishClaimToXero } from '@/lib/organisations';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf } from '@/lib/claimPdf';
 import { useCategoryDisplayMode, useCategorySortMode, sortCategories, formatCategory } from '@/lib/categoryDisplay';
@@ -136,7 +139,9 @@ export default function ExpenseClaimDetail() {
   const [approvalOpen, setApprovalOpen] = useState(false);
   const cyhrEnabled = useCyhrEnabled();
   const users = useUsers();
+  const { data: organisations = [] } = useOrganisations();
   const [payNote, setPayNote] = useState('');
+  const [publishing, setPublishing] = useState(false);
 
   // Keep the selection in sync with what actually exists: when items are removed
   // (here or in another tab) drop their ids so the count never counts phantoms.
@@ -176,6 +181,28 @@ export default function ExpenseClaimDetail() {
       );
     } catch {
       setPayNote('Could not create the CYHR payment link. Check the server logs.');
+    }
+  };
+
+  // Post the approved claim to Xero as a DRAFT ACCPAY bill payable to the
+  // employee. Draft = reviewable in Xero before it's finalised.
+  const publishXero = async () => {
+    setPayNote('');
+    const active = getActiveOrganisationId();
+    const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+    if (!orgId) {
+      setPayNote('No Xero organisation is linked. Connect one in the organisation switcher first.');
+      return;
+    }
+    setPublishing(true);
+    try {
+      const r = await publishClaimToXero(orgId, { claimId: claim.id, status: 'DRAFT' });
+      notifyClaimsChanged(); // refresh so the button flips to "Published to Xero"
+      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as a DRAFT bill${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} — review and approve it in Xero.`);
+    } catch (err) {
+      setPayNote(err?.message || 'Could not publish the claim to Xero.');
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -321,6 +348,13 @@ export default function ExpenseClaimDetail() {
               Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
             </span>
             <TopButton onClick={sendToHr}>{claim.hrSentAt ? 'Re-send to HR (update)' : 'Send to HR for payment'}</TopButton>
+            {claim.xeroInvoiceId ? (
+              <span className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm font-medium text-foreground" title={`Xero bill ${claim.xeroInvoiceId}`}>
+                <CheckCircle2 className="h-4 w-4" /> Published to Xero
+              </span>
+            ) : (
+              <TopButton onClick={publishXero}>{publishing ? 'Publishing…' : 'Publish to Xero'}</TopButton>
+            )}
           </>
         ) : claim.approvalStatus === 'rejected' ? (
           <>

@@ -3,6 +3,8 @@ import { env, xeroEnabled } from './env.js';
 import { orgIdFor } from './bills.js';
 import { getOrganisation } from './organisations.js';
 import { getBillById, markBillPosted, parseAmount } from './store.js';
+import { getClaimForXero, saveClaimXero } from './claims.js';
+import { workspaceId } from './workspace.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -399,5 +401,115 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
       status: String(invoice.Status ?? status),
     },
     bill: updated,
+  });
+});
+
+// POST /api/xero/organisations/:id/publish-claim — post an APPROVED expense
+// claim to the linked Xero org as an ACCPAY bill payable to the employee. Each
+// claim line becomes an invoice line (account code parsed from its category);
+// Xero applies each account's default tax rate. Defaults to DRAFT so it's
+// reviewable in Xero, not finalised. Re-publishing is refused (409) unless force.
+xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+
+  const b = req.body ?? {};
+  const claimId = String(b.claimId ?? '');
+  const status = String(b.status ?? 'DRAFT').toUpperCase();
+  if (!claimId) return res.status(400).json({ error: 'missing_field', message: 'claimId is required.' });
+  if (!PUBLISH_STATUSES.has(status)) {
+    return res.status(400).json({ error: 'invalid_status', message: 'status must be DRAFT, SUBMITTED or AUTHORISED.' });
+  }
+
+  const ws = workspaceId(req);
+  const claim = getClaimForXero(ws, claimId);
+  if (!claim) return res.status(404).json({ error: 'claim_not_found' });
+  if (claim.approvalStatus !== 'approved') {
+    return res.status(400).json({ error: 'not_approved', message: 'Only an approved claim can be published to Xero.' });
+  }
+  if (claim.xeroInvoiceId && b.force !== true) {
+    return res.status(409).json({
+      error: 'already_posted',
+      message: `Already posted to ${claim.xeroTenantName || 'Xero'} on ${claim.xeroPostedAt ?? ''}.`,
+      xeroInvoiceId: claim.xeroInvoiceId,
+    });
+  }
+
+  // Account code = the leading digits of the category label ("412 - …" → "412").
+  const codeOf = (cat: string) => (String(cat ?? '').match(/\b(\d{3,})\b/) || [])[1] || '';
+  const lineItems = (claim.transactions ?? [])
+    .map((t) => {
+      const total = parseAmount(t.total);
+      const line: Record<string, unknown> = {
+        Description: [t.supplier, t.category].filter(Boolean).join(' — ') || 'Expense',
+        Quantity: 1,
+        UnitAmount: total,
+        AccountCode: codeOf(t.category),
+      };
+      const tax = parseAmount(t.tax);
+      if (tax > 0) line.TaxAmount = tax;
+      return line;
+    })
+    .filter((l) => l.AccountCode && Number(l.UnitAmount) > 0);
+
+  if (!lineItems.length) {
+    return res.status(400).json({
+      error: 'no_lines',
+      message: 'No claim lines have a Xero account code. Categorise each item with a coded category (e.g. "412 - Consulting & Accounting") first.',
+    });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const iso = (s: string) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? String(s) : '');
+  const date = iso(claim.claimDate) || iso(claim.endDate) || today;
+
+  const payload: Record<string, unknown> = {
+    Type: 'ACCPAY',
+    Contact: { Name: claim.claimFor || 'Employee' },
+    Date: date,
+    DueDate: date,
+    LineAmountTypes: 'Inclusive',
+    LineItems: lineItems,
+    Status: status,
+    Reference: claim.name || 'Expense claim',
+  };
+  if (claim.currency) payload.CurrencyCode = claim.currency;
+
+  const result = await relay('Invoices', {
+    method: 'PUT',
+    tenantId: organisation.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { Invoices: [payload] },
+  });
+
+  if (!result.ok) {
+    console.error('[xero] publish-claim failed', result.status, result.message);
+    return res.status(result.status >= 500 ? 502 : result.status).json({ error: result.error, message: result.message });
+  }
+
+  const invoice = result.data?.Invoices?.[0];
+  const validationErrors: string[] = (invoice?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+  if (!invoice || invoice.HasErrors || validationErrors.length > 0) {
+    return res.status(422).json({
+      error: 'xero_validation_failed',
+      messages: validationErrors.length ? validationErrors : ['Xero rejected the claim.'],
+    });
+  }
+
+  const updated = saveClaimXero(ws, claim.id, {
+    xeroInvoiceId: String(invoice.InvoiceID ?? ''),
+    xeroTenantName: organisation.tenantName || organisation.name,
+    xeroPostedAt: today,
+  });
+
+  res.json({
+    ok: true,
+    invoice: {
+      invoiceId: String(invoice.InvoiceID ?? ''),
+      invoiceNumber: String(invoice.InvoiceNumber ?? ''),
+      status: String(invoice.Status ?? status),
+    },
+    claim: updated,
   });
 });
