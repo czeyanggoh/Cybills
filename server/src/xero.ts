@@ -186,6 +186,24 @@ xeroRouter.get('/organisations/:id/customers', async (req, res) => {
   res.json({ customers });
 });
 
+// GET /api/xero/organisations/:id/suppliers — active supplier contacts in the
+// linked Xero org, for the Costs → Suppliers list.
+xeroRouter.get('/organisations/:id/suppliers', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const result = await relay('Contacts', {
+    tenantId: organisation.tenantId,
+    query: { where: 'IsSupplier==true AND ContactStatus=="ACTIVE"' },
+  });
+  if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
+  const suppliers = (result.data?.Contacts ?? [])
+    .map((c: any) => ({ id: String(c.ContactID ?? ''), name: String(c.Name ?? '').trim() }))
+    .filter((c: any) => c.name)
+    .sort((a: any, b: any) => a.name.localeCompare(b.name));
+  res.json({ suppliers });
+});
+
 // GET /api/xero/organisations/:id/profile — the linked Xero org's registration
 // details (name, CRN, tax number, country, base currency, registered address),
 // used to populate Business settings → Business profile.

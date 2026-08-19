@@ -120,6 +120,23 @@ export function fetchXeroCustomers(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/customers`).then((b) => b.customers ?? []);
 }
 
+export function fetchXeroSuppliers(organisationId) {
+  return getJson(`/api/xero/organisations/${organisationId}/suppliers`).then((b) => b.suppliers ?? []);
+}
+
+// Supplier list: the active org's (CYBM) live Xero supplier contacts.
+export function useXeroSuppliers() {
+  const orgId = useActiveOrgId();
+  const { data } = useQuery({
+    queryKey: ['xero-suppliers', orgId],
+    queryFn: () => fetchXeroSuppliers(orgId),
+    enabled: Boolean(orgId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  return (data ?? []).map((s) => s.name).filter(Boolean);
+}
+
 // The active org (CYBM by default) — the one whose Xero chart drives the
 // document dropdowns. Falls back to the first linked org.
 function useActiveOrgId() {

@@ -3,9 +3,8 @@ import { Search, Filter, Settings2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SearchSelect from '@/components/SearchSelect';
-import { SUPPLIERS } from '@/data/suppliers';
-import { CUSTOMERS } from '@/data/customers';
-import { useCategoryOptions } from '@/lib/organisations';
+import { useCategoryOptions, useXeroSuppliers, useXeroCustomers } from '@/lib/organisations';
+import { useCostsDocs } from '@/lib/costsData';
 import { getSupplierRule, setSupplierRule, useSupplierRules } from '@/lib/supplierRules';
 import { cn } from '@/lib/utils';
 
@@ -39,11 +38,25 @@ function ToolbarButton({ children, disabled = false }) {
 
 export default function Suppliers() {
   const [selected, setSelected] = useState(() => new Set());
-  const rows = SUPPLIERS;
-  const hasSelection = selected.size > 0;
+  const [query, setQuery] = useState('');
   const categoryOptions = useCategoryOptions();
-  const customerOptions = CUSTOMERS.map((c) => c.name);
+  // Suppliers + customers come from the active org's (CYBM) live Xero contacts.
+  const supplierNames = useXeroSuppliers();
+  const customerOptions = useXeroCustomers();
+  const { allDocs } = useCostsDocs();
   useSupplierRules(); // re-render when a supplier's category/customer changes
+
+  // How many cost documents each supplier has, by name.
+  const counts = {};
+  for (const d of allDocs || []) {
+    const k = String(d.supplier || '').trim().toLowerCase();
+    if (k) counts[k] = (counts[k] || 0) + 1;
+  }
+  const q = query.trim().toLowerCase();
+  const rows = supplierNames
+    .filter((name) => !q || name.toLowerCase().includes(q))
+    .map((name) => ({ id: name, name, items: counts[name.trim().toLowerCase()] || 0, extractLines: false, extractStatements: true }));
+  const hasSelection = selected.size > 0;
 
   const toggle = (id) =>
     setSelected((prev) => {
@@ -65,7 +78,7 @@ export default function Suppliers() {
         <ToolbarButton disabled={!hasSelection}>Delete</ToolbarButton>
         <div className="relative ml-auto hidden sm:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input type="text" placeholder="Filter by name" className="h-8 w-52 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+          <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter by name" className="h-8 w-52 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
         </div>
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Filter">
           <Filter className="h-4 w-4" strokeWidth={1.75} />
@@ -124,7 +137,12 @@ export default function Suppliers() {
         </table>
       </div>
 
-      <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of 307 items</p>
+      {rows.length === 0 && (
+        <p className="mt-4 rounded-lg border bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
+          No Xero supplier contacts found for this organisation.
+        </p>
+      )}
+      <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} supplier{rows.length === 1 ? '' : 's'}</p>
     </AppShell>
   );
 }
