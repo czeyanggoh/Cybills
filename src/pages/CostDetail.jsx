@@ -545,22 +545,6 @@ export default function CostDetail() {
     }
   };
 
-  // Re-read the already-stored file with Claude (no re-upload) — regenerates the
-  // fields incl. the category Reason for docs read before those existed.
-  const reReadStored = async () => {
-    if (!imageUrl || !visionEnabled) return;
-    setAiError('');
-    try {
-      const resp = await fetch(imageUrl);
-      const blob = await resp.blob();
-      const type = blob.type || (previewType === 'pdf' ? 'application/pdf' : 'image/jpeg');
-      const { base64, mediaType } = await prepareUpload(new File([blob], doc.fileName || 'receipt', { type }));
-      await extractAndApply(base64, mediaType);
-    } catch {
-      setAiError('Could not re-read the stored file.');
-    }
-  };
-
   const onUploadClick = () => {
     setAiError('');
     fileInputRef.current?.click();
@@ -784,17 +768,6 @@ export default function CostDetail() {
                   ? 'Replaces the file on this same document — it won’t create a new one.'
                   : 'Attaches the receipt to this document — it won’t create a new one.'}
               </p>
-              {imageUrl && visionEnabled && (
-                <button
-                  type="button"
-                  onClick={reReadStored}
-                  disabled={extracting}
-                  className="mb-2 flex w-full items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-60"
-                >
-                  <Sparkles className="h-4 w-4" strokeWidth={2} />
-                  {extracting ? 'Reading…' : 'Re-read with Claude (fills the Reason)'}
-                </button>
-              )}
               {aiError && (
                 <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
                   {aiError}
