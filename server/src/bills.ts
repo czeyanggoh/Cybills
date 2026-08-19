@@ -236,6 +236,7 @@ billsRouter.post('/bills', async (req, res) => {
     tax: parseAmount(b.tax),
     date: candidate.date,
     category: String(b.category ?? ''),
+    categoryReason: String(b.categoryReason ?? ''),
     taxRate: String(b.taxRate ?? ''),
     description: String(b.description ?? ''),
     // Attribute to the chosen "Document owner" from the drawer when provided,

@@ -647,6 +647,15 @@ export default function CostDetail() {
     fileInputRef.current?.click();
   };
 
+  // Re-read the EXISTING receipt with Claude (no file replacement) — for fixing
+  // a wrong field the AI read (date, category, description…) without re-uploading.
+  const reReadExisting = async () => {
+    setAiError('');
+    const rec = await receiptToUpload();
+    if (!rec) { setAiError('No receipt attached to re-read. Upload one first.'); return; }
+    await extractAndApply(rec.base64, rec.mediaType);
+  };
+
   const onFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -866,7 +875,7 @@ export default function CostDetail() {
               />
               <button
                 type="button"
-                onClick={onUploadClick}
+                onClick={imageUrl && visionEnabled ? reReadExisting : onUploadClick}
                 disabled={extracting}
                 className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
               >
@@ -874,14 +883,24 @@ export default function CostDetail() {
                 {extracting
                   ? 'Reading receipt…'
                   : imageUrl
-                    ? visionEnabled ? 'Replace file & re-read with Claude' : 'Replace file'
+                    ? visionEnabled ? 'Re-read with Claude' : 'Replace file'
                     : visionEnabled ? 'Upload receipt & auto-fill with Claude' : 'Upload receipt'}
               </button>
-              <p className="mb-2 text-center text-xs text-muted-foreground">
-                {imageUrl
-                  ? 'Replaces the file on this same document — it won’t create a new one.'
-                  : 'Attaches the receipt to this document — it won’t create a new one.'}
-              </p>
+              {imageUrl && visionEnabled ? (
+                <p className="mb-2 text-center text-xs text-muted-foreground">
+                  Re-reads the attached receipt to fix a wrong field —{' '}
+                  <button type="button" onClick={onUploadClick} disabled={extracting} className="font-medium text-emerald-600 hover:underline disabled:opacity-60">
+                    replace the file
+                  </button>{' '}
+                  instead if the photo is unclear.
+                </p>
+              ) : (
+                <p className="mb-2 text-center text-xs text-muted-foreground">
+                  {imageUrl
+                    ? 'Replaces the file on this same document — it won’t create a new one.'
+                    : 'Attaches the receipt to this document — it won’t create a new one.'}
+                </p>
+              )}
               {aiError && (
                 <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
                   {aiError}

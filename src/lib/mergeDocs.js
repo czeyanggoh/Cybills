@@ -29,6 +29,19 @@ function uint8ToBase64(bytes) {
 // NOT the sum of the pages (which would double-count a repeated total or a
 // duplicate). Always editable; the combined-PDF re-read overrides it when it
 // succeeds.
+// Page order: the itemised invoice/receipt first, the card-payment slip second.
+// The itemised doc is the one that carries line items / tax / an "Invoice" type;
+// a card slip has none of those. Sorting invoice-first also makes docs[0] the
+// merchant (not the bank), so the merged document takes the merchant's identity.
+function invoiceScore(d) {
+  const lines = Array.isArray(d.lineItems) ? d.lineItems.length : 0;
+  const type = String(d.type || d.documentType || '').toLowerCase();
+  return (lines > 0 ? 4 : 0) + (num(d.tax) > 0 ? 2 : 0) + (type === 'invoice' ? 1 : 0);
+}
+export function orderInvoiceFirst(docs) {
+  return [...docs].sort((a, b) => invoiceScore(b) - invoiceScore(a));
+}
+
 function aggregateFields(docs) {
   const first = docs[0] || {};
   const grand = [...docs].sort((a, b) => num(b.total) - num(a.total))[0] || {};
@@ -39,6 +52,8 @@ function aggregateFields(docs) {
     supplier: first.supplier && first.supplier !== 'Unknown supplier' ? first.supplier : '',
     date: first.date && first.date !== '—' ? first.date : '',
     category,
+    categoryReason: docs.map((d) => d.categoryReason).find(Boolean) || '',
+    description: docs.map((d) => d.description).find(Boolean) || '',
     currency: first.currency || 'SGD',
     documentType: first.type || 'Receipt',
     invoiceNumber: first.invoiceNumber || first.ref || '',
@@ -62,7 +77,7 @@ function mergeWarnings(docs) {
 // to pre-fill the combined details, and surface any mismatch warnings. Returns
 // null if fewer than 2 of the selected docs carry a file.
 export async function buildMergePreview(docs) {
-  const mergeable = docs.filter((d) => d.persisted && d.hasFile);
+  const mergeable = orderInvoiceFirst(docs.filter((d) => d.persisted && d.hasFile));
   if (mergeable.length < 2) return null;
 
   const { bytes, added } = await buildReceiptsPdf(mergeable);
@@ -83,6 +98,8 @@ export async function buildMergePreview(docs) {
         // Prefer the source docs' already-reviewed category over a re-read of the
         // combined PDF (which can regress to Uncategorised).
         category: agg.category || extracted.category,
+        categoryReason: agg.categoryReason || extracted.categoryReason || '',
+        description: extracted.description || agg.description || '',
         currency: extracted.currency || agg.currency,
         documentType: agg.documentType,
         invoiceNumber: extracted.invoiceNumber || agg.invoiceNumber,
@@ -129,6 +146,8 @@ export async function commitMerge(sources, base64, fields) {
     date: fields.date || '',
     currency: fields.currency || 'SGD',
     category: fields.category || '',
+    categoryReason: fields.categoryReason || '',
+    description: fields.description || '',
     total: fields.total != null ? String(fields.total) : '',
     tax: fields.tax != null ? String(fields.tax) : '',
     kind: 'cost',
