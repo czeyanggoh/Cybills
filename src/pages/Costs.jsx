@@ -641,10 +641,12 @@ export default function Costs() {
     setMergeModalDocs(docs);
   };
 
-  // Scan every document in this view for likely duplicates / multi-scans of the
-  // same invoice — the same match the uploader uses (supplier + invoice + amount,
-  // or supplier + amount + date) — and open the review modal on the first group.
-  // Nothing merges until you confirm; scan again for the next group.
+  // Scan the view for MULTI-PAGE sets: separate uploads that are really pages of
+  // one document. Signal = same supplier + same invoice/reference number, with
+  // DIFFERENT page amounts (pages of one invoice). Same-amount matches are exact
+  // duplicates, not pages, so they're deliberately excluded (delete one instead
+  // of merging). Opens the review modal on the first set; nothing merges until
+  // you confirm. Scan again for the next.
   const scanForMerges = () => {
     const norm = (s) => String(s ?? '').trim().toLowerCase();
     const amt = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
@@ -652,29 +654,26 @@ export default function Costs() {
     const groups = new Map();
     for (const d of docs) {
       const sup = norm(d.supplier);
-      if (!sup || sup === 'unknown supplier') continue;
-      const total = amt(d.total);
-      if (total <= 0) continue;
       const inv = norm(d.invoiceNumber || d.ref);
-      const key = inv
-        ? `${sup}|inv:${inv}|${total.toFixed(2)}`
-        : /^\d{4}-\d{2}-\d{2}$/.test(d.date)
-          ? `${sup}|dt:${d.date}|${total.toFixed(2)}`
-          : null;
-      if (!key) continue;
+      if (!sup || sup === 'unknown supplier' || !inv) continue; // need a supplier + shared invoice
+      const key = `${sup}|${inv}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(d);
     }
-    const found = [...groups.values()].filter((g) => g.length >= 2);
+    const found = [...groups.values()].filter((g) => {
+      if (g.length < 2) return false;
+      const totals = new Set(g.map((d) => amt(d.total).toFixed(2)));
+      return totals.size > 1; // different page amounts → genuine multi-page parts (not duplicates)
+    });
     if (!found.length) {
-      setMergeNote('Scanned this view — no documents look like they need merging (matched on supplier + invoice/amount).');
+      setMergeNote('Scanned this view — no multi-page sets found (separate uploads from the same supplier sharing an invoice number, with different page amounts).');
       return;
     }
     setSelected(new Set(found[0].map((d) => d.id)));
     setMergeNote(
       found.length === 1
-        ? 'Found 1 set of documents that look like the same item — review and confirm the merge below.'
-        : `Found ${found.length} sets that look like duplicates — review the first below, then Scan again for the next.`
+        ? 'Found a set that looks like one multi-page document — review the combined result and confirm below.'
+        : `Found ${found.length} possible multi-page sets — review the first below, then Scan again for the next.`
     );
     setMergeModalDocs(found[0]);
   };

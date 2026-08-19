@@ -23,19 +23,27 @@ function uint8ToBase64(bytes) {
   return btoa(binary);
 }
 
-// Sensible defaults for the review form when Vision can't read the combined doc:
-// the first document's identity, amounts summed across the pages.
+// Sensible defaults for the review form. Merge combines the PAGES of ONE
+// document (same supplier, uploaded separately), so the merged amount is the
+// document's GRAND TOTAL — the largest source total (the summary/last page) —
+// NOT the sum of the pages (which would double-count a repeated total or a
+// duplicate). Always editable; the combined-PDF re-read overrides it when it
+// succeeds.
 function aggregateFields(docs) {
   const first = docs[0] || {};
+  const grand = [...docs].sort((a, b) => num(b.total) - num(a.total))[0] || {};
+  // Inherit a real category from the already-coded source docs; only blank when
+  // none of them are categorised.
+  const category = docs.map((d) => d.category).find((c) => c && c !== 'Uncategorised') || '';
   return {
     supplier: first.supplier && first.supplier !== 'Unknown supplier' ? first.supplier : '',
     date: first.date && first.date !== '—' ? first.date : '',
-    category: first.category && first.category !== 'Uncategorised' ? first.category : '',
+    category,
     currency: first.currency || 'SGD',
     documentType: first.type || 'Receipt',
     invoiceNumber: first.invoiceNumber || first.ref || '',
-    total: docs.reduce((s, d) => s + num(d.total), 0),
-    tax: docs.reduce((s, d) => s + num(d.tax), 0),
+    total: num(grand.total),
+    tax: num(grand.tax),
   };
 }
 
@@ -72,25 +80,35 @@ export async function buildMergePreview(docs) {
     ? {
         supplier: extracted.supplier || agg.supplier,
         date: extracted.date || agg.date,
-        category: extracted.category || agg.category,
+        // Prefer the source docs' already-reviewed category over a re-read of the
+        // combined PDF (which can regress to Uncategorised).
+        category: agg.category || extracted.category,
         currency: extracted.currency || agg.currency,
         documentType: agg.documentType,
         invoiceNumber: extracted.invoiceNumber || agg.invoiceNumber,
-        // Amounts default to the SUM of the source docs, not the model's reading
-        // of the combined PDF (which returns one page's grand total, e.g. 13.80
-        // instead of 13.80 + 25.40). Still editable for a single multi-page
-        // receipt where the real total is on one page.
-        total: String(agg.total),
-        tax: String(agg.tax),
+        // Grand total: the combined PDF re-read gives the document's real total
+        // (one page's grand total, not the pages added together); fall back to
+        // the largest source total. Never the sum — merging must not double.
+        total: String(extracted.total != null ? extracted.total : agg.total),
+        tax: String(extracted.tax != null ? extracted.tax : agg.tax),
       }
     : { ...agg, total: String(agg.total), tax: String(agg.tax) };
+
+  // If every source has the same total, these look like the same document
+  // (duplicates) rather than different pages — flag it so the reviewer can keep
+  // one and archive the rest instead of merging.
+  const warnings = mergeWarnings(mergeable);
+  const totalsSet = new Set(mergeable.map((d) => num(d.total).toFixed(2)));
+  if (mergeable.length > 1 && totalsSet.size === 1) {
+    warnings.unshift('these look like the same document (identical amounts) — if they are duplicates, keep one and archive the rest instead of merging');
+  }
 
   return {
     sources: mergeable,
     skipped: docs.length - mergeable.length,
     base64,
     extracted: Boolean(extracted),
-    warnings: mergeWarnings(mergeable),
+    warnings,
     fields,
   };
 }
