@@ -162,6 +162,7 @@ function initialData(doc) {
     description: doc.description ?? '',
     paymentMethod: doc.paymentMethod ?? '',
     paid: Boolean(doc.paid),
+    cardLast4: doc.cardLast4 ?? '',
     customer: doc.customer ?? '',
     project: doc.project ?? '',
     lineItems: Array.isArray(doc.lineItems) ? doc.lineItems : [],
@@ -284,7 +285,7 @@ export default function CostDetail() {
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
     taxRate: 'taxRate', description: 'description', user: 'createdBy',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
-    customer: 'customer', project: 'project',
+    customer: 'customer', project: 'project', cardLast4: 'cardLast4',
   };
   const set = (key, value) => {
     setData((d) => ({ ...d, [key]: value }));
@@ -570,6 +571,7 @@ export default function CostDetail() {
         total: ex.total != null ? String(ex.total) : d.total,
         tax: ex.tax != null ? String(ex.tax) : d.tax,
         description: descr || d.description,
+        cardLast4: ex.cardLast4 || d.cardLast4,
       }));
       if (doc?.persisted) {
         const patch = {};
@@ -583,6 +585,7 @@ export default function CostDetail() {
         if (ex.total != null) patch.total = ex.total;
         if (ex.tax != null) patch.tax = ex.tax;
         if (descr) patch.description = descr;
+        if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
         const r = await updateBill(doc.id, patch).catch(() => null);
         if (r?.bill) {
           setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
@@ -1016,6 +1019,16 @@ export default function CostDetail() {
                 >
                   Add payment method
                 </button>
+              </Field>
+              <Field label="Card (last 4)">
+                <input
+                  value={data.cardLast4 || ''}
+                  inputMode="numeric"
+                  maxLength={4}
+                  placeholder="e.g. 7849"
+                  onChange={(e) => set('cardLast4', e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  className="h-9 w-24 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
               </Field>
 
               <SectionHeading>Line items</SectionHeading>

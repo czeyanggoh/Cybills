@@ -43,6 +43,11 @@ function buildSchema(categories: string[]) {
         description:
           'A concise plain-language summary of what was purchased (e.g. "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper"). Empty string if unclear.',
       },
+      cardLast4: {
+        type: 'string',
+        description:
+          'The LAST 4 DIGITS of the payment card if shown anywhere (e.g. "Mastercard ...7849", "XXXX XXXX XXXX 7849", "card ending 7849"). Digits only, exactly 4. Empty string if no card number is shown (cash, unknown).',
+      },
       lineItems: {
         type: 'array',
         description: 'Individual line items if present; empty array if none',
@@ -75,6 +80,7 @@ function buildSchema(categories: string[]) {
       'category',
       'categoryReason',
       'description',
+      'cardLast4',
       'lineItems',
     ],
   };
@@ -92,6 +98,7 @@ const ReceiptSchema = z.object({
   category: z.string(),
   categoryReason: z.string().optional().default(''),
   description: z.string().optional().default(''),
+  cardLast4: z.string().optional().default(''),
   lineItems: z.array(
     z.object({
       description: z.string(),

@@ -648,6 +648,7 @@ export default function Costs() {
   // on the first set; nothing merges until you confirm. Scan again for the next.
   const scanForMerges = () => {
     const amt = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
+    const last4 = (d) => (String(d.cardLast4 ?? '').match(/\d{4}/) || [''])[0];
     const docs = allRows.filter((d) => d.persisted && d.hasFile && d.status !== 'merged');
     const groups = new Map();
     for (const d of docs) {
@@ -658,7 +659,14 @@ export default function Costs() {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(d);
     }
-    const found = [...groups.values()].filter((g) => g.length >= 2);
+    // A candidate set = 2+ docs with the same date + total AND no CONFLICTING
+    // card last-4 (two different cards ⇒ different transactions, even if the
+    // amount + date coincide). A doc with no card number joins either way.
+    const found = [...groups.values()].filter((g) => {
+      if (g.length < 2) return false;
+      const cards = new Set(g.map(last4).filter(Boolean));
+      return cards.size <= 1;
+    });
     if (!found.length) {
       setMergeNote('Scanned this view — nothing to merge (looking for separate uploads of the same transaction: same date + same total, e.g. an itemised receipt and its card slip).');
       return;
