@@ -34,9 +34,12 @@ export const env = {
   // faster option.
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
   ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
-  // Receipt/invoice extraction is a fast, structured task — use Haiku by default
-  // so "Reading…" returns in ~1–2s instead of Opus's many seconds.
-  ANTHROPIC_EXTRACT_MODEL: process.env.ANTHROPIC_EXTRACT_MODEL ?? 'claude-haiku-4-5-20251001',
+  // Receipt/invoice extraction defaults to Sonnet 5 — Haiku was fast but misread
+  // messy photographed receipts (wrong dates from DD/MM/YY, garbled amounts).
+  // Accuracy matters more than the extra second here. Set
+  // ANTHROPIC_EXTRACT_MODEL=claude-opus-4-8 for the most accurate (slower) read,
+  // or =claude-haiku-4-5-20251001 to trade accuracy for speed.
+  ANTHROPIC_EXTRACT_MODEL: process.env.ANTHROPIC_EXTRACT_MODEL ?? 'claude-sonnet-5',
 
   // --- Org roster (assignable users) ----------------------------------------
   // Optional comma-separated roster of org members for the Support Desk

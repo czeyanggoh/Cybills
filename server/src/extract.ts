@@ -18,7 +18,11 @@ function buildSchema(categories: string[]) {
     additionalProperties: false,
     properties: {
       supplier: { type: 'string', description: 'Merchant / supplier name, e.g. "Grab"' },
-      date: { type: 'string', description: 'Document date, ISO YYYY-MM-DD when determinable' },
+      date: {
+        type: 'string',
+        description:
+          'The document/transaction date as ISO YYYY-MM-DD. Printed dates are Singapore format DD/MM/YYYY (day first), e.g. "25/1/2026" and "25/01/26" both mean 2026-01-25. Expand a 2-digit year YY to 20YY (26 → 2026 — NEVER 2019 or 1926). Never invent a month; read it exactly. Empty string if no date is printed.',
+      },
       documentType: { type: 'string', enum: ['Receipt', 'Invoice', 'Other'] },
       invoiceNumber: {
         type: 'string',
@@ -201,6 +205,7 @@ extractRouter.post('/extract', async (req, res) => {
                 contextBlock +
                 `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. ` +
                 'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
+                `Today is ${new Date().toISOString().slice(0, 10)}. Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ` +
                 'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
                 'pick "Uncategorised" only when none reasonably fit. ' +
                 'If a field is not present, use an empty string or 0.' +

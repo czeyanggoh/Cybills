@@ -647,35 +647,43 @@ export default function Costs() {
   // the sum), so a same-amount pair reconciles correctly. Opens the review modal
   // on the first set; nothing merges until you confirm. Scan again for the next.
   const scanForMerges = () => {
+    const norm = (s) => String(s ?? '').trim().toLowerCase();
     const amt = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
     const last4 = (d) => (String(d.cardLast4 ?? '').match(/\d{4}/) || [''])[0];
     const docs = allRows.filter((d) => d.persisted && d.hasFile && d.status !== 'merged');
-    const groups = new Map();
+    // Group by TOTAL only — it's the one field reliable across an itemised
+    // receipt and its card slip. Their dates and suppliers differ (merchant vs
+    // card issuer), and extraction can misread the date on one half, so matching
+    // on date is unreliable.
+    const byTotal = new Map();
     for (const d of docs) {
       const total = amt(d.total);
       if (total <= 0) continue;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) continue; // need a real date to be confident
-      const key = `${d.date}|${total.toFixed(2)}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(d);
+      const key = total.toFixed(2);
+      if (!byTotal.has(key)) byTotal.set(key, []);
+      byTotal.get(key).push(d);
     }
-    // A candidate set = 2+ docs with the same date + total AND no CONFLICTING
-    // card last-4 (two different cards ⇒ different transactions, even if the
-    // amount + date coincide). A doc with no card number joins either way.
-    const found = [...groups.values()].filter((g) => {
+    const found = [...byTotal.values()].filter((g) => {
       if (g.length < 2) return false;
+      // Receipt + card slip = same total but DIFFERENT suppliers. All-same-
+      // supplier groups are DUPLICATES of one document, not a pair — leave those
+      // alone (delete one instead of merging).
+      const suppliers = new Set(g.map((d) => norm(d.supplier)).filter(Boolean));
+      if (suppliers.size < 2) return false;
+      // If both carry a card number it must match — a shared card confirms one
+      // payment; two different cards means two different transactions.
       const cards = new Set(g.map(last4).filter(Boolean));
       return cards.size <= 1;
     });
     if (!found.length) {
-      setMergeNote('Scanned this view — nothing to merge (looking for separate uploads of the same transaction: same date + same total, e.g. an itemised receipt and its card slip).');
+      setMergeNote('Scanned this view — no receipt + card-slip pairs found (same total, different documents, no conflicting card).');
       return;
     }
     setSelected(new Set(found[0].map((d) => d.id)));
     setMergeNote(
       found.length === 1
-        ? 'Found a set that looks like the same transaction (same date + total) — review the combined result and confirm below.'
-        : `Found ${found.length} sets that look like the same transaction — review the first below, then Scan again for the next.`
+        ? 'Found a receipt + card-slip pair for the same transaction (same total) — review the combined result and confirm below.'
+        : `Found ${found.length} possible receipt + card-slip pairs — review the first below, then Scan again for the next.`
     );
     setMergeModalDocs(found[0]);
   };
