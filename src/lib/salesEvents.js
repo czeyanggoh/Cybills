@@ -20,11 +20,14 @@ function writeAll(map) {
   window.dispatchEvent(new Event(SALES_EVENTS_EVENT));
 }
 
-const ACTOR_ALIASES = { astridy2004: 'Astrid Yang', You: 'Astrid Yang', you: 'Astrid Yang' };
+// Display an actor label without leaking a hardcoded identity: an unknown or
+// generic actor reads as "You", and an email is shortened to its local-part.
+// (This used to force every generic actor to "Astrid Yang", which mislabelled
+// other users' actions as the dev's.)
 export function prettyActor(a) {
   const s = String(a || '').trim();
-  if (!s) return 'Astrid Yang';
-  return ACTOR_ALIASES[s] || (s.includes('@') ? s.split('@')[0] : s);
+  if (!s || s.toLowerCase() === 'you') return 'You';
+  return s.includes('@') ? s.split('@')[0] : s;
 }
 
 let seq = 0;

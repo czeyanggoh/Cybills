@@ -24,6 +24,7 @@ import {
   getActiveOrganisationId,
   setActiveOrganisationId,
 } from '@/lib/organisations';
+import { isAdminAccess } from '@/lib/userStore';
 import AddDocumentsDrawer from './AddDocumentsDrawer';
 import AddOrganisationModal from './AddOrganisationModal';
 import RemoveOrganisationModal from './RemoveOrganisationModal';
@@ -223,8 +224,9 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   const [userMenu, setUserMenu] = useState(false);
 
   // Admin-only surfaces (Users, Business settings) are hidden from Standard
-  // employees. Mock mode (no real auth) shows everything so the demo works.
-  const isAdmin = !googleEnabled || ['Admin', 'Business Admin', 'User Admin'].includes(membership.user?.role);
+  // employees. A signed-in user's real role decides this; mock mode (no real
+  // auth) shows everything so the demo works.
+  const isAdmin = isAdminAccess(membership, googleEnabled);
   const bottomNav = BOTTOM.filter((item) => isAdmin || !item.adminOnly);
 
   const handleSignOut = async () => {
@@ -326,7 +328,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                   <span className="flex h-7 w-7 items-center justify-center rounded-full border text-xs font-medium">
                     {initialsFrom(user)}
                   </span>
-                  <span className="hidden sm:inline">{user?.name || user?.email || 'Astrid Yang'}</span>
+                  <span className="hidden sm:inline">{user?.name || user?.email || 'Account'}</span>
                   <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', userMenu && 'rotate-180')} />
                 </button>
                 {userMenu && (

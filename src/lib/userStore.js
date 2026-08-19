@@ -225,6 +225,21 @@ export function normalizeRole(role) {
   return role === 'Business Admin' || role === 'User Admin' || role === 'Admin' ? 'Admin' : 'Standard';
 }
 
+// Admin-tier role check (accepts the legacy names still on un-normalized rows).
+export function isAdminRole(role) {
+  return role === 'Admin' || role === 'Business Admin' || role === 'User Admin';
+}
+
+// Whether the current session has admin access. When someone is actually signed
+// in (a roster membership exists), their real role decides it — a Standard user
+// is never an admin, even in a password-only (no-Google) setup. Only when there
+// is NO identified user (anonymous / mock demo) do we fall back to leaving the
+// app open when Google auth isn't configured.
+export function isAdminAccess(membership, googleEnabled) {
+  if (membership?.user) return isAdminRole(membership.user.role);
+  return !googleEnabled;
+}
+
 // Short descriptions shown in the role step.
 export const ROLE_INFO = {
   Standard: ['Submit, view and edit their own items', 'Change their personal settings'],

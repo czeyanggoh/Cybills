@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
+import { isAdminAccess } from '@/lib/userStore';
 
 function Loading() {
   return (
@@ -50,8 +51,7 @@ export function RequireAdmin({ children }) {
     return <Navigate to="/join" replace />;
   }
 
-  const role = membership.user?.role;
-  const isAdmin = !googleEnabled || ['Admin', 'Business Admin', 'User Admin'].includes(role);
+  const isAdmin = isAdminAccess(membership, googleEnabled);
   if (!isAdmin) return <Navigate to="/costs" replace />;
 
   return children;
