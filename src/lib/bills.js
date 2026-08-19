@@ -118,6 +118,7 @@ export function billToDoc(b) {
     supplier: b.supplier || 'Unknown supplier',
     type: b.documentType || 'Document',
     category: b.category || 'Uncategorised',
+    categoryReason: b.categoryReason || '',
     currency: b.currency || 'SGD',
     total: b.total != null ? String(b.total) : '—',
     tax: b.tax != null ? String(b.tax) : '0.00',

@@ -33,6 +33,11 @@ function buildSchema(categories: string[]) {
         description:
           'The single best-matching expense category from the allowed list. Use "Uncategorised" only if none fit.',
       },
+      categoryReason: {
+        type: 'string',
+        description:
+          'One short sentence explaining WHY this category was chosen — cite the account name/description it matched or the coding rule applied, e.g. "Software subscription invoice — matched the 485 Subscriptions account." Empty string if uncategorised.',
+      },
       description: {
         type: 'string',
         description:
@@ -61,6 +66,7 @@ function buildSchema(categories: string[]) {
       'total',
       'tax',
       'category',
+      'categoryReason',
       'description',
       'lineItems',
     ],
@@ -77,6 +83,7 @@ const ReceiptSchema = z.object({
   total: z.number(),
   tax: z.number(),
   category: z.string(),
+  categoryReason: z.string().optional().default(''),
   description: z.string().optional().default(''),
   lineItems: z.array(z.object({ description: z.string(), amount: z.number() })),
 });

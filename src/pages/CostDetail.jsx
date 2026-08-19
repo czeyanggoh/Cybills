@@ -146,6 +146,7 @@ function initialData(doc) {
     po: doc.po ?? '',
     ref: doc.ref ?? doc.invoiceNumber ?? '',
     category: doc.category,
+    categoryReason: doc.categoryReason ?? '',
     currency: doc.currency,
     total: doc.total,
     tax: doc.tax,
@@ -255,8 +256,8 @@ export default function CostDetail() {
   // a persisted cost auto-saves it so the server can re-derive ready vs inbox
   // (readiness is automatic now — no manual "Move to ready" needed).
   const SERVER_FIELDS = {
-    supplier: 'supplier', date: 'date', category: 'category', currency: 'currency',
-    total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
+    supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
+    currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
     taxRate: 'taxRate', description: 'description', user: 'createdBy',
   };
   const set = (key, value) => {
@@ -292,6 +293,7 @@ export default function CostDetail() {
           date: data.date,
           documentType: data.type,
           category: data.category,
+          categoryReason: data.categoryReason,
           currency: data.currency,
           total: data.total,
           tax: data.tax,
@@ -555,6 +557,7 @@ export default function CostDetail() {
         ref: ex.invoiceNumber || d.ref,
         currency: ex.currency || d.currency,
         category: ex.category || d.category,
+        categoryReason: ex.categoryReason || d.categoryReason,
         total: ex.total != null ? String(ex.total) : d.total,
         tax: ex.tax != null ? String(ex.tax) : d.tax,
         // Auto-populate the Description from the model's summary, or the line
@@ -600,12 +603,9 @@ export default function CostDetail() {
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
         {doc.status === 'ready' ? (
-          <>
-            <span className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm text-foreground">
-              <CheckCircle2 className="h-4 w-4" /> In Ready
-            </span>
-            <TopButton onClick={() => saveWithStatus('new')}>Move back to inbox</TopButton>
-          </>
+          <span className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm text-foreground">
+            <CheckCircle2 className="h-4 w-4" /> In Ready
+          </span>
         ) : doc.persisted ? (
           // Readiness is auto-derived from the fields — show status, no manual button.
           <span
@@ -785,6 +785,15 @@ export default function CostDetail() {
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
                 <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
+              </Field>
+              <Field label="Reason">
+                <textarea
+                  rows={2}
+                  value={data.categoryReason}
+                  onChange={(e) => set('categoryReason', e.target.value)}
+                  placeholder={extracting ? 'Reading…' : 'Why this category — filled in by the AI, editable'}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>

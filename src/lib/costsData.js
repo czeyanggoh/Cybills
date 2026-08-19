@@ -34,7 +34,10 @@ export function rowsFor(docs, key) {
   // "To review" is a FILTER within it (items flagged for a human) — not a
   // separate bucket. So review items stay counted/shown in the Inbox.
   if (key === 'processing') return docs.filter((d) => d.status === 'processing');
-  if (key === 'inbox') return docs.filter((d) => d.status === 'new' || d.status === 'viewed' || d.status === 'review');
+  // Dext-style: the Inbox is the master list of everything not archived — it's
+  // the sum of the other tabs (Ready, To review, new/viewed). A Ready item shows
+  // here too, just carrying its "Ready" status tag; the Ready tab is a filter.
+  if (key === 'inbox') return docs.filter((d) => ['new', 'viewed', 'review', 'ready'].includes(d.status));
   if (key === 'review') return docs.filter((d) => d.status === 'review');
   if (key === 'ready') return docs.filter((d) => d.status === 'ready');
   if (key === 'archive') return docs.filter((d) => d.status === 'expenseclaim' || d.status === 'archived' || d.status === 'merged');

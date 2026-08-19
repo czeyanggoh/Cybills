@@ -23,6 +23,7 @@ export type Bill = {
   tax: number;
   date: string; // as extracted, ISO YYYY-MM-DD when determinable
   category: string;
+  categoryReason?: string; // why the AI chose this category (account/rule cited)
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   description?: string; // plain-language summary of what was purchased
   createdAt: string; // ISO timestamp
@@ -270,6 +271,7 @@ const EDITABLE: (keyof Bill)[] = [
   'tax',
   'date',
   'category',
+  'categoryReason',
   'taxRate',
   'description',
   'status',
