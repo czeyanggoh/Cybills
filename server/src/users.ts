@@ -44,8 +44,21 @@ function clearToken(user: User) {
   delete user.resetTokenKind;
 }
 
+// The public origin to build emailed links from. Prefer an explicitly-set
+// APP_ORIGIN, but when it's left at the localhost default, derive the real
+// origin from the incoming request (behind nginx: X-Forwarded-Proto/Host) so
+// invite/reset links point at the domain the app is actually served from —
+// no env footgun.
+function appOrigin(req: Request): string {
+  const configured = (env.APP_ORIGIN || '').replace(/\/+$/, '');
+  if (configured && !configured.includes('localhost')) return configured;
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  return host ? `${proto}://${host}` : (configured || 'http://localhost:5173');
+}
+
 // The page the emailed link lands on, where the recipient chooses a password.
-const resetUrl = (raw: string) => `${env.APP_ORIGIN}/set-password?token=${raw}`;
+const resetUrl = (req: Request, raw: string) => `${appOrigin(req)}/set-password?token=${raw}`;
 
 function findByToken(items: User[], raw: string): User | undefined {
   if (!raw) return undefined;
@@ -395,7 +408,7 @@ usersRouter.post('/:id/invite', async (req, res) => {
   user.invitedAt = new Date().toISOString();
   save(items);
 
-  const link = resetUrl(raw);
+  const link = resetUrl(req, raw);
   const inviter = memberForSession(req)?.name || readSession(req)?.name;
   const mail = inviteEmail({ name: user.name, url: link, inviterName: inviter, expiresInDays: env.INVITE_TTL_DAYS });
   const { sent, error } = await sendMail({ to: { email: user.email, name: user.name }, ...mail });
@@ -417,7 +430,7 @@ usersRouter.post('/forgot-password', async (req, res) => {
   if (user) {
     const raw = issueToken(user, 'reset');
     save(items);
-    const mail = passwordResetEmail({ name: user.name, url: resetUrl(raw), expiresInDays: env.INVITE_TTL_DAYS });
+    const mail = passwordResetEmail({ name: user.name, url: resetUrl(req, raw), expiresInDays: env.INVITE_TTL_DAYS });
     await sendMail({ to: { email: user.email, name: user.name }, ...mail });
   }
   return res.json({ ok: true });
