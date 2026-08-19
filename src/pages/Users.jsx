@@ -6,6 +6,7 @@ import AddUserModal from '@/components/AddUserModal';
 import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
 import EditUserModal from '@/components/EditUserModal';
 import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser, updateUser } from '@/lib/userStore';
+import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 // Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
@@ -110,6 +111,11 @@ export default function Users() {
   const pendingCount = users.filter((u) => u.pending && !u.deactivated).length;
   // Anyone active can be someone's direct manager (the approver claims route to).
   const managerOptions = users.filter((m) => !m.deactivated && !m.pending);
+  // Users without an explicit company (seeded / admin-added) belong to the
+  // active workspace organisation, so show that rather than a blank dash.
+  const { data: organisations = [] } = useOrganisations();
+  const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
+  const workspaceCompany = activeOrg?.name || '';
   const rows = filtered.filter((u) => {
     if (tab === 'pending') return u.pending && !u.deactivated;
     if (tab === 'deactivated') return u.deactivated;
@@ -182,7 +188,7 @@ export default function Users() {
               <tr key={u.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{u.name}</td>
                 <td className="px-3 py-3 text-muted-foreground">{u.email || '—'}</td>
-                <td className="px-3 py-3 text-muted-foreground">{u.companyName || '—'}</td>
+                <td className="px-3 py-3 text-muted-foreground">{u.companyName || workspaceCompany || '—'}</td>
                 <td className="px-3 py-3">{u.login}</td>
                 <td className="whitespace-nowrap px-3 py-3">{u.role}</td>
                 <td className="px-3 py-3">
