@@ -5,7 +5,7 @@ import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
 import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
 import EditUserModal from '@/components/EditUserModal';
-import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser } from '@/lib/userStore';
+import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser, updateUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 // Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
@@ -108,6 +108,8 @@ export default function Users() {
       (u.email || '').toLowerCase().includes(query.toLowerCase())
   );
   const pendingCount = users.filter((u) => u.pending && !u.deactivated).length;
+  // Anyone active can be someone's direct manager (the approver claims route to).
+  const managerOptions = users.filter((m) => !m.deactivated && !m.pending);
   const rows = filtered.filter((u) => {
     if (tab === 'pending') return u.pending && !u.deactivated;
     if (tab === 'deactivated') return u.deactivated;
@@ -170,6 +172,7 @@ export default function Users() {
               <th className="px-3 py-2.5 font-medium">Company</th>
               <th className="px-3 py-2.5 font-medium">Login access</th>
               <th className="px-3 py-2.5 font-medium">Role</th>
+              <th className="px-3 py-2.5 font-medium">Direct manager</th>
               <th className="px-3 py-2.5 font-medium">Last login</th>
               <th className="px-3 py-2.5 font-medium">Manage</th>
             </tr>
@@ -182,6 +185,21 @@ export default function Users() {
                 <td className="px-3 py-3 text-muted-foreground">{u.companyName || '—'}</td>
                 <td className="px-3 py-3">{u.login}</td>
                 <td className="whitespace-nowrap px-3 py-3">{u.role}</td>
+                <td className="px-3 py-3">
+                  <select
+                    value={u.managerId || ''}
+                    onChange={async (e) => {
+                      await updateUser(u.id, { managerId: e.target.value });
+                      showToast(e.target.value ? `Direct manager set for ${u.name}.` : `Direct manager cleared for ${u.name}.`);
+                    }}
+                    className="h-8 w-44 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <option value="">— None —</option>
+                    {managerOptions.filter((m) => m.id !== u.id).map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{u.lastLogin}</td>
                 <td className="px-3 py-3">
                   {u.pending ? (
@@ -200,7 +218,7 @@ export default function Users() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={8} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {tab === 'deactivated'
                     ? 'No deactivated users.'
                     : tab === 'pending'

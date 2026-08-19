@@ -6,8 +6,8 @@ import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval } from '@/lib/claimStore';
-import { useUsers } from '@/lib/userStore';
+import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor } from '@/lib/claimStore';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
 // Status pill for a claim's approval state (Draft / Pending / Approved / Rejected).
@@ -72,7 +72,6 @@ export default function ExpenseClaims() {
   const [newClaim, setNewClaim] = useState({ claimFor: 'Astrid Yang', endDate: '', name: '' });
   const [query, setQuery] = useState('');
   const [approveOpen, setApproveOpen] = useState(false);
-  const users = useUsers();
 
   // "2026-07-27" → "27 Jul 2026" to match the rest of the list.
   const fmtEnd = (iso) => {
@@ -92,7 +91,12 @@ export default function ExpenseClaims() {
     setNewClaim({ claimFor: 'Astrid Yang', endDate: '', name: '' });
     setTab('inbox');
   };
-  const claims = useClaims();
+  const { user, googleEnabled, membership } = useAuth();
+  const allClaims = useClaims();
+  // Gatekeep: a submitted claim is visible only to its claimant and their direct
+  // manager. Admins keep full oversight (they process/export every claim).
+  const isAdmin = !googleEnabled || ['Business Admin', 'User Admin'].includes(membership?.user?.role);
+  const claims = isAdmin ? allClaims : visibleClaimsFor(allClaims, user);
 
   // Inbox = every claim that isn't approved yet — drafts, ones awaiting a
   // decision (still pending), and rejected ones to fix. Approvals = only claims
@@ -378,13 +382,11 @@ export default function ExpenseClaims() {
       <ClaimApprovalModal
         open={approveOpen}
         onClose={() => setApproveOpen(false)}
-        onSubmit={async (approver) => {
+        claims={rows.filter((c) => selected.has(c.id))}
+        onSubmit={async (ids) => {
           setApproveOpen(false);
-          const approverEmail = users.find((u) => u.name === approver)?.email || '';
-          // Submit each selected claim for approval to the chosen approver.
-          await Promise.all(
-            [...selected].map((id) => submitForApproval(id, approver, undefined, approverEmail).catch(() => {}))
-          );
+          // Each routes to the claimant's direct manager, resolved server-side.
+          await Promise.all(ids.map((id) => submitForApproval(id).catch(() => {})));
           clear();
         }}
       />

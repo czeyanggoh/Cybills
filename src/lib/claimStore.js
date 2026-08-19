@@ -106,10 +106,11 @@ export async function markClaimSentToHr(claimId, amount, revision) {
   notifyClaimsChanged();
 }
 
-// Submit a claim for approval to a chosen approver (name + email so the server
-// can enforce that only that person decides).
-export async function submitForApproval(claimId, approver, _actor, approverEmail = '') {
-  await post(`/${claimId}/submit`, { approver, approverEmail });
+// Submit a claim for approval. The approver is derived server-side from the
+// claimant's direct manager (set in Users) — nothing to pick. Throws with code
+// 'no_manager' when the claimant has no direct manager assigned.
+export async function submitForApproval(claimId) {
+  await post(`/${claimId}/submit`, {});
   notifyClaimsChanged();
 }
 
@@ -156,6 +157,30 @@ export function docToClaimTxn(doc, data, actor) {
 // Claims awaiting a given user's approval — matched by name OR email (the same
 // rule the approve action uses), so a roster email mismatch can't hide a pending
 // approval from the approver. Powers the reminder banner + the nav badge.
+const norm = (s) => String(s ?? '').trim().toLowerCase();
+
+// The approver a claim routes to = the claimant's direct manager (set in Users).
+// Returns the manager user, or null when none is assigned.
+export function directManagerFor(users, claimantName) {
+  const claimant = (users || []).find((u) => norm(u.name) === norm(claimantName));
+  if (!claimant?.managerId) return null;
+  return (users || []).find((u) => u.id === claimant.managerId) || null;
+}
+
+// Claims a user is allowed to see: their own (they're the claimant or created
+// it) plus ones awaiting/decided by them as approver. Gatekeeps the list so a
+// submitted claim is visible only to the claimant and their direct manager.
+export function visibleClaimsFor(claims, user) {
+  const email = norm(user?.email);
+  const name = norm(user?.name);
+  if (!email && !name) return claims || [];
+  return (claims || []).filter((c) => {
+    const mine = (name && norm(c.claimFor) === name) || (email && norm(c.createdBy) === email);
+    const iApprove = (email && norm(c.approverEmail) === email) || (name && norm(c.approver) === name);
+    return mine || iApprove;
+  });
+}
+
 export function pendingApprovalsFor(claims, user) {
   const email = (user?.email || '').trim().toLowerCase();
   const name = (user?.name || '').trim().toLowerCase();

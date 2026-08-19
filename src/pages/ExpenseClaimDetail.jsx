@@ -643,12 +643,11 @@ export default function ExpenseClaimDetail() {
       <ClaimApprovalModal
         open={approvalOpen}
         onClose={() => setApprovalOpen(false)}
-        onSubmit={async (approver) => {
+        claims={[claim]}
+        onSubmit={async (ids) => {
           setApprovalOpen(false);
-          // Resolve the approver's email so the server can enforce that only
-          // they decide (match by email).
-          const approverEmail = users.find((u) => u.name === approver)?.email || '';
-          await submitForApproval(claim.id, approver, user?.name || 'Astrid Yang', approverEmail);
+          // Routes to the claimant's direct manager, resolved server-side.
+          if (ids.length) await submitForApproval(claim.id).catch(() => {});
           setTab('history');
         }}
       />

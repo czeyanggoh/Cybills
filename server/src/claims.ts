@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
+import { directManagerFor } from './users.js';
 
 // Server-backed expense claims, shared across the workspace (same JSON-store
 // pattern as bills). Replaces the old per-browser localStorage claim store, so
@@ -157,15 +158,21 @@ claimsRouter.post('/:id/items/update', (req, res) =>
   })
 );
 
-// POST /api/claims/:id/submit — submit for approval to a chosen approver.
+// POST /api/claims/:id/submit — submit for approval. The approver is derived
+// automatically from the claimant's direct manager (set in Users), so there's no
+// approver to pick. Fails with 'no_manager' when the claimant has none assigned.
 claimsRouter.post('/:id/submit', (req, res) =>
   mutate(req, res, (claim, me) => {
+    const manager = directManagerFor(workspaceId(req), claim.claimFor);
+    if (!manager) {
+      return res.status(400).json({ error: 'no_manager', claimant: claim.claimFor });
+    }
     claim.approvalStatus = 'awaiting_approval';
-    claim.approver = String(req.body?.approver || '');
-    claim.approverEmail = String(req.body?.approverEmail || '');
+    claim.approver = manager.name;
+    claim.approverEmail = manager.email;
     claim.decidedBy = '';
     claim.decidedAt = '';
-    claim.history.unshift({ text: `This claim was submitted for approval to ${claim.approver}`, by: me.name, at: nowIso() });
+    claim.history.unshift({ text: `This claim was submitted for approval to ${manager.name}`, by: me.name, at: nowIso() });
   })
 );
 

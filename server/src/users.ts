@@ -89,6 +89,9 @@ type User = {
   pending: boolean;
   companyId: string;
   companyName: string;
+  // The user's direct manager (another user's id) — the approver a claim is
+  // auto-routed to when this person submits it for approval.
+  managerId?: string;
   passwordHash?: string; // set by an admin; never returned to the client
   // Single-use invitation / password-reset link. Only the SHA-256 of the token
   // is stored, so a leaked data file can't be replayed into an account.
@@ -243,7 +246,21 @@ export function isAdminRole(role: string | undefined): boolean {
   return role === 'Business Admin' || role === 'User Admin';
 }
 
-const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'companyId', 'companyName'];
+const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'companyId', 'companyName', 'managerId'];
+
+// The direct manager to route a claim to, given the claimant's display name.
+// Resolves the claimant's row, then their managerId to a roster member. Returns
+// the approver's { name, email } or null when no manager is set / found.
+export function directManagerFor(ws: string, claimantName: string): { name: string; email: string } | null {
+  const key = norm(claimantName);
+  if (!key) return null;
+  const items = ensure(ws);
+  const claimant = items.find((u) => u.workspaceId === ws && !u.removed && norm(u.name) === key);
+  if (!claimant?.managerId) return null;
+  const manager = items.find((u) => u.workspaceId === ws && !u.removed && u.id === claimant.managerId);
+  if (!manager) return null;
+  return { name: manager.name, email: manager.email };
+}
 
 // Apply the editable fields present in `b` onto a user, keeping name in sync
 // with first/last. Shared by the add-merge path and PATCH.
