@@ -95,7 +95,7 @@ export default function ExpenseClaims() {
   const allClaims = useClaims();
   // Gatekeep: a submitted claim is visible only to its claimant and their direct
   // manager. Admins keep full oversight (they process/export every claim).
-  const isAdmin = !googleEnabled || ['Business Admin', 'User Admin'].includes(membership?.user?.role);
+  const isAdmin = !googleEnabled || ['Admin', 'Business Admin', 'User Admin'].includes(membership?.user?.role);
   const claims = isAdmin ? allClaims : visibleClaimsFor(allClaims, user);
 
   // Inbox = every claim that isn't approved yet — drafts, ones awaiting a

@@ -224,7 +224,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
 
   // Admin-only surfaces (Users, Business settings) are hidden from Standard
   // employees. Mock mode (no real auth) shows everything so the demo works.
-  const isAdmin = !googleEnabled || ['Business Admin', 'User Admin'].includes(membership.user?.role);
+  const isAdmin = !googleEnabled || ['Admin', 'Business Admin', 'User Admin'].includes(membership.user?.role);
   const bottomNav = BOTTOM.filter((item) => isAdmin || !item.adminOnly);
 
   const handleSignOut = async () => {

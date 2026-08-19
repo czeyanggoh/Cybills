@@ -51,7 +51,7 @@ export function RequireAdmin({ children }) {
   }
 
   const role = membership.user?.role;
-  const isAdmin = !googleEnabled || ['Business Admin', 'User Admin'].includes(role);
+  const isAdmin = !googleEnabled || ['Admin', 'Business Admin', 'User Admin'].includes(role);
   if (!isAdmin) return <Navigate to="/costs" replace />;
 
   return children;

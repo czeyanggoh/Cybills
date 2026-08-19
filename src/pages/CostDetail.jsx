@@ -281,6 +281,10 @@ export default function CostDetail() {
     if (next) navigate(`/costs/${next.id}`);
   };
 
+  // billToDoc shows an empty date as the placeholder '—'; never persist that
+  // literal back — coerce anything that isn't a real ISO date to blank.
+  const isoDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
+
   // Persist the current edits + set a workflow status. Uploaded bills save
   // server-side; sample docs save to localStorage.
   const persistStatus = async (status) => {
@@ -289,7 +293,7 @@ export default function CostDetail() {
         await updateBill(doc.id, {
           status,
           supplier: data.supplier,
-          date: data.date,
+          date: isoDate(data.date),
           documentType: data.type,
           category: data.category,
           categoryReason: data.categoryReason,
@@ -309,7 +313,7 @@ export default function CostDetail() {
         status,
         user: data.user,
         type: data.type,
-        date: data.date,
+        date: isoDate(data.date),
         supplier: data.supplier,
         po: data.po,
         ref: data.ref,
@@ -428,7 +432,7 @@ export default function CostDetail() {
       supplier: data.supplier,
       invoiceNumber: data.invoiceNumber || '',
       documentType: data.type || 'Receipt',
-      date: data.date,
+      date: isoDate(data.date),
       currency: 'SGD',
       category: next.category,
       total: next.total,
@@ -806,7 +810,14 @@ export default function CostDetail() {
               <Field label="Item ID"><Input value={doc.itemId} readOnly /></Field>
               <Field label="Document owner"><EditableSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
               <Field label="Type"><Input value={data.type} onChange={(v) => set('type', v)} /></Field>
-              <Field label="Date"><Input value={data.date} onChange={(v) => set('date', v)} /></Field>
+              <Field label="Date">
+                <input
+                  type="date"
+                  value={/^\d{4}-\d{2}-\d{2}$/.test(data.date) ? data.date : ''}
+                  onChange={(e) => set('date', e.target.value)}
+                  className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </Field>
               <Field label="Supplier"><Input value={data.supplier} onChange={(v) => set('supplier', v)} /></Field>
               <Field label="Purchase order number"><Input value={data.po} onChange={(v) => set('po', v)} /></Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>

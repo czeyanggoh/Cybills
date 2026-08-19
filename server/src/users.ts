@@ -49,7 +49,7 @@ function clearToken(user: User) {
 // origin from the incoming request (behind nginx: X-Forwarded-Proto/Host) so
 // invite/reset links point at the domain the app is actually served from —
 // no env footgun.
-function appOrigin(req: Request): string {
+export function appOrigin(req: Request): string {
   const configured = (env.APP_ORIGIN || '').replace(/\/+$/, '');
   if (configured && !configured.includes('localhost')) return configured;
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
@@ -115,8 +115,8 @@ const save = (items: User[]) => saveCollection(COLLECTION, items);
 // The real company employees (matching the CYHR/Talenox records). Seeded once
 // per workspace so the list is never empty.
 const SEED: Array<Partial<User>> = [
-  { id: 'astrid', name: 'Astrid Yang', email: 'astridy2004@gmail.com', login: 'Yes', role: 'Business Admin' },
-  { id: 'cze', name: 'Cze Yang Goh', email: 'czeyang.goh@cy-bm.sg', login: 'Yes', role: 'Business Admin' },
+  { id: 'astrid', name: 'Astrid Yang', email: 'astridy2004@gmail.com', login: 'Yes', role: 'Admin' },
+  { id: 'cze', name: 'Cze Yang Goh', email: 'czeyang.goh@cy-bm.sg', login: 'Yes', role: 'Admin' },
   { id: 'yeoh', name: 'Yeoh Lay Ean', email: 'joanne_yle@yahoo.com', login: 'Yes', role: 'Standard' },
   { id: 'yuyu', name: 'Yu Yu', email: 'yuyu@cy-bm.sg', login: 'Yes', role: 'Standard' },
 ];
@@ -226,6 +226,7 @@ function ensure(ws: string): User[] {
     changed = true;
   }
   if (normalizeRoster(items, ws)) changed = true;
+  if (normalizeRoles(items, ws)) changed = true;
   if (reconcileSeedAdmins(items, ws)) changed = true;
   if (changed) save(items);
   return items;
@@ -241,9 +242,33 @@ export function memberForSession(req: Request): User | null {
   return ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email) ?? null;
 }
 
-// Business/User Admins manage the account; everyone else is limited.
+// Admins manage the account; everyone else is limited. Roles were simplified to
+// just Admin / Standard, so 'Admin' is the current form; the old 'Business Admin'
+// / 'User Admin' names are still honoured on any records not yet normalized.
 export function isAdminRole(role: string | undefined): boolean {
-  return role === 'Business Admin' || role === 'User Admin';
+  return role === 'Admin' || role === 'Business Admin' || role === 'User Admin';
+}
+
+// Collapse any legacy role onto the two current ones (Admin / Standard) so the
+// UI only ever shows a valid role. Any admin-tier legacy name → Admin; anything
+// else (Approver, Bookkeeper, blank, …) → Standard.
+function currentRole(role: string | undefined): string {
+  return isAdminRole(role) ? 'Admin' : 'Standard';
+}
+
+// Rewrite stored roles to the current two-role scheme in place. Runs on load so
+// old rosters self-heal to displaying Admin / Standard.
+function normalizeRoles(items: User[], ws: string): boolean {
+  let changed = false;
+  for (const u of items) {
+    if (u.workspaceId !== ws || u.removed) continue;
+    const next = currentRole(u.role);
+    if (u.role !== next) {
+      u.role = next;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'companyId', 'companyName', 'managerId'];

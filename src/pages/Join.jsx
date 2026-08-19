@@ -10,7 +10,7 @@ import { joinCompany } from '@/lib/userStore';
 // approval. Values map onto the app's underlying roles.
 const JOIN_ROLES = [
   { value: 'Standard', label: 'Employee' },
-  { value: 'Approver', label: 'Admin / Approver' },
+  { value: 'Admin', label: 'Admin' },
 ];
 
 function Field({ label, children }) {

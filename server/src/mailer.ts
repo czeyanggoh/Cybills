@@ -281,6 +281,34 @@ export function inviteEmail(o: { name: string; url: string; inviterName?: string
   };
 }
 
+// Sent to a claimant's direct manager when their claim is submitted for approval
+// or updated with a new item (so the total changed and needs a re-review).
+export function approvalRequestEmail(o: {
+  approverName: string;
+  claimantName: string;
+  claimName: string;
+  total: string;
+  currency: string;
+  url: string;
+  updated: boolean;
+}) {
+  const action = o.updated
+    ? 'was updated with a new item and needs your review'
+    : 'has been submitted for your approval';
+  return {
+    subject: o.updated
+      ? `Expense claim updated — ${o.claimantName}`
+      : `Expense claim to approve — ${o.claimantName}`,
+    html: layout({
+      heading: `Hi ${esc(o.approverName.split(' ')[0] || 'there')},`,
+      body: `<p style="margin:0"><strong>${esc(o.claimantName)}</strong>&rsquo;s expense claim${o.claimName ? ` &ldquo;${esc(o.claimName)}&rdquo;` : ''} ${action}.</p>
+             <p style="margin:14px 0 0">Total: <strong>${esc(o.currency)} ${esc(o.total)}</strong>. Open it in CYBills to approve or reject.</p>`,
+      cta: { label: 'Review the claim', url: o.url },
+      footnote: 'You are the direct manager for this claimant, so their claims come to you for approval.',
+    }),
+  };
+}
+
 // Self-service reset requested from the sign-in page.
 export function passwordResetEmail(o: { name: string; url: string; expiresInDays: number }) {
   return {

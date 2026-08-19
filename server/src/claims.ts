@@ -2,7 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
-import { directManagerFor } from './users.js';
+import { directManagerFor, appOrigin } from './users.js';
+import { sendMail, approvalRequestEmail } from './mailer.js';
 
 // Server-backed expense claims, shared across the workspace (same JSON-store
 // pattern as bills). Replaces the old per-browser localStorage claim store, so
@@ -115,6 +116,25 @@ function mutate(req: Request, res: Response, fn: (claim: Claim, me: { email: str
 // edits — its total must not drift after approval / handoff to CYHR for payment.
 const isLocked = (c: Claim) => c.approvalStatus === 'awaiting_approval' || c.approvalStatus === 'approved';
 
+const claimTotal = (c: Claim): string => c.transactions.reduce((n, t) => n + Number(t.total || 0), 0).toFixed(2);
+
+// Email the assigned approver (the claimant's direct manager) that a claim needs
+// their review — on submit, or when a new item changes an already-submitted
+// claim. Best-effort: silently no-ops when mail isn't configured.
+function notifyApprover(req: Request, claim: Claim, updated: boolean): void {
+  if (!claim.approverEmail) return;
+  const mail = approvalRequestEmail({
+    approverName: claim.approver,
+    claimantName: claim.claimFor,
+    claimName: claim.name,
+    total: claimTotal(claim),
+    currency: claim.currency || 'SGD',
+    url: `${appOrigin(req)}/expense-claims/${claim.id}`,
+    updated,
+  });
+  void sendMail({ to: { email: claim.approverEmail, name: claim.approver }, ...mail }).catch(() => {});
+}
+
 // POST /api/claims/:id/items — attach cost items (idempotent per itemId).
 // Allowed until the claim is APPROVED — you can still add to a claim that's
 // awaiting approval (the total changes, so the approver re-reviews). Only an
@@ -140,6 +160,7 @@ claimsRouter.post('/:id/items', (req, res) =>
         by: me.name,
         at: nowIso(),
       });
+      notifyApprover(req, claim, true);
     }
   })
 );
@@ -187,6 +208,7 @@ claimsRouter.post('/:id/submit', (req, res) =>
     claim.decidedBy = '';
     claim.decidedAt = '';
     claim.history.unshift({ text: `This claim was submitted for approval to ${manager.name}`, by: me.name, at: nowIso() });
+    notifyApprover(req, claim, false);
   })
 );
 

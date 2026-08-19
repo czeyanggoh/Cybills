@@ -17,7 +17,7 @@ export default function JoinRequestBanner() {
 
   const pending = users.filter((u) => u.pending && !u.deactivated);
   const role = membership.user?.role || '';
-  const isAdmin = !googleEnabled || ['Business Admin', 'User Admin'].includes(role);
+  const isAdmin = !googleEnabled || ['Admin', 'Business Admin', 'User Admin'].includes(role);
 
   if (!isAdmin || dismissed || pending.length === 0) return null;
 

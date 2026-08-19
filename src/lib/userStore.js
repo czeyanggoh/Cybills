@@ -215,18 +215,22 @@ export function useUsers() {
   return users;
 }
 
-export const ROLES = ['Standard', 'Business Admin', 'User Admin', 'Approver', 'Bookkeeper'];
+// Just two roles — approval routing is a standalone "Direct manager" column now,
+// so we no longer need separate Approver / Bookkeeper / User Admin tiers.
+export const ROLES = ['Standard', 'Admin'];
 
-// Short descriptions shown in the role step (mirrors Dext).
+// Map any legacy role stored on old user records to one of the two current roles,
+// so the table + pickers always display a valid current role.
+export function normalizeRole(role) {
+  return role === 'Business Admin' || role === 'User Admin' || role === 'Admin' ? 'Admin' : 'Standard';
+}
+
+// Short descriptions shown in the role step.
 export const ROLE_INFO = {
   Standard: ['Submit, view and edit their own items', 'Change their personal settings'],
-  'Business Admin': ['Submit, view, edit and publish other peoples’ items', 'Change account-wide settings'],
-  'User Admin': [
+  Admin: [
     'Submit, view, edit and publish other peoples’ items',
     'Add and suspend users',
     'Change account-wide settings',
-    'Set automation rules and other advanced features',
   ],
-  Approver: ['Review and approve expense claims and items'],
-  Bookkeeper: ['Submit, view, edit and publish items', 'Publish to accounting software'],
 };
