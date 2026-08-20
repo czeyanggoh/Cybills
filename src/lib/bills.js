@@ -131,6 +131,7 @@ export function billToDoc(b) {
     project: b.project || '',
     cardLast4: b.cardLast4 || '',
     note: b.note || '',
+    dueDate: b.dueDate || '',
     lineItems: Array.isArray(b.lineItems) ? b.lineItems : [],
     hasFile: Boolean(b.hasFile),
     contentType: b.contentType || '',

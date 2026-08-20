@@ -93,6 +93,16 @@ export function removeFromList(kind, ids) {
   write({ ...state, added, hidden });
 }
 
+// The hidden-id set for a list kind (ids the user switched off). Used by the
+// live-Xero-backed tax-rate list so the picker and Lists page share one source.
+export function getHiddenSet(kind) {
+  return new Set(read().hidden[kind] || []);
+}
+// User-added rows for a list kind (not from the seed / Xero).
+export function getAddedRows(kind) {
+  return read().added[kind] || [];
+}
+
 export function setListVisible(kind, id, visible) {
   const state = read();
   const hidden = { ...(state.hidden || {}) };

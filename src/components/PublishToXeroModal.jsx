@@ -35,7 +35,15 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
       organisations.some((o) => o.id === active) ? active : organisations[0]?.id ?? ''
     );
     setStatus('DRAFT');
-    setDueDate(/^\d{4}-\d{2}-\d{2}$/.test(bill?.date ?? '') ? bill.date : '');
+    // Prefer the doc's computed due date (from Extraction settings), else the
+    // invoice date.
+    setDueDate(
+      /^\d{4}-\d{2}-\d{2}$/.test(bill?.dueDate ?? '')
+        ? bill.dueDate
+        : /^\d{4}-\d{2}-\d{2}$/.test(bill?.date ?? '')
+          ? bill.date
+          : ''
+    );
     setError('');
     setDone(null);
   }, [open]);

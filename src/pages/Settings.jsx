@@ -30,8 +30,10 @@ import {
   useOrganisations,
   fetchXeroProfile,
   getActiveOrganisationId,
+  useVisibleTaxRates,
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
+import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
 
 const NAV = [
   {
@@ -359,6 +361,18 @@ function BusinessProfile() {
 }
 
 function Extraction() {
+  const stored = useExtractionSettings();
+  const [form, setForm] = useState(stored);
+  const [dirty, setDirty] = useState(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { if (!dirty) setForm(stored); }, [stored, dirty]);
+  const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); setSaved(false); };
+  const save = () => { saveExtractionSettings(form); setDirty(false); setSaved(true); setTimeout(() => setSaved(false), 2000); };
+
+  // The default-tax-rate pickers offer the SAME rates the cost/sales pickers do
+  // — the visible rates from the managed Tax-rates list — plus a "None" option.
+  const taxRateOptions = ['— None —', ...useVisibleTaxRates().map((t) => t.name)];
+
   return (
     <div className="space-y-6">
       <Card title="Extract by Email">
@@ -392,7 +406,7 @@ function Extraction() {
 
       <Card title="Inbox tabs">
         <Row label="Show To review and Ready tabs" hint="Show these tabs in the costs and sales inboxes.">
-          <Toggle defaultOn />
+          <Toggle on={form.showReviewReadyTabs} onChange={(v) => set('showReviewReadyTabs', v)} />
         </Row>
       </Card>
 
@@ -401,62 +415,52 @@ function Extraction() {
           label="Duplicate cost items"
           hint="Supplier rules take priority when identifying duplicate items."
         >
-          <SelectBox defaultValue="Automatic" options={['Automatic', 'Review manually', 'Off']} />
+          <SelectBox value={form.duplicateMode} onChange={(v) => set('duplicateMode', v)} options={DUP_MODES} />
         </Row>
       </Card>
 
       <Card title="Tax">
         <Row label="Extract tax" hint="Extract the tax value from new costs and sales documents.">
-          <Toggle defaultOn />
+          <Toggle on={form.extractTax} onChange={(v) => set('extractTax', v)} />
         </Row>
         <Row label="Default tax rate for costs">
-          <SelectBox defaultValue="— None —" options={['— None —', 'Standard-Rated 9%', 'Zero-Rated', 'Exempt']} />
+          <SelectBox value={form.defaultTaxRateCosts || '— None —'} onChange={(v) => set('defaultTaxRateCosts', v === '— None —' ? '' : v)} options={taxRateOptions} />
         </Row>
         <Row label="Default tax rate for sales">
-          <SelectBox defaultValue="— None —" options={['— None —', 'Standard-Rated 9%', 'Zero-Rated', 'Exempt']} />
+          <SelectBox value={form.defaultTaxRateSales || '— None —'} onChange={(v) => set('defaultTaxRateSales', v === '— None —' ? '' : v)} options={taxRateOptions} />
         </Row>
       </Card>
 
       <Card title="Due dates">
         <Row label="Due date for costs invoices">
-          <SelectBox defaultValue="A number of days after the invoice date" options={['A number of days after the invoice date', 'End of the following month', 'On the invoice date']} />
+          <SelectBox value={form.dueCostsMode} onChange={(v) => set('dueCostsMode', v)} options={DUE_MODES} />
         </Row>
         <Row label="How many days (costs)">
-          <SelectBox defaultValue="30" options={['7', '14', '30', '60']} />
+          <SelectBox value={form.dueCostsDays} onChange={(v) => set('dueCostsDays', v)} options={DUE_DAYS} />
         </Row>
         <Row label="Due date for sales invoices">
-          <SelectBox defaultValue="A number of days after the invoice date" options={['A number of days after the invoice date', 'End of the following month', 'On the invoice date']} />
+          <SelectBox value={form.dueSalesMode} onChange={(v) => set('dueSalesMode', v)} options={DUE_MODES} />
         </Row>
         <Row label="How many days (sales)">
-          <SelectBox defaultValue="7" options={['7', '14', '30', '60']} />
+          <SelectBox value={form.dueSalesDays} onChange={(v) => set('dueSalesDays', v)} options={DUE_DAYS} />
         </Row>
       </Card>
 
       <Card title="Payment status">
         <p className="text-sm text-muted-foreground">Mark costs documents as paid or not paid by default.</p>
-        <Row label="Receipts"><SelectBox defaultValue="Not paid" options={['Not paid', 'Paid']} /></Row>
-        <Row label="Invoices"><SelectBox defaultValue="Not paid" options={['Not paid', 'Paid']} /></Row>
-        <Row label="Credit notes"><SelectBox defaultValue="Not paid" options={['Not paid', 'Paid']} /></Row>
+        <Row label="Receipts"><SelectBox value={form.payReceipts} onChange={(v) => set('payReceipts', v)} options={PAID_OPTIONS} /></Row>
+        <Row label="Invoices"><SelectBox value={form.payInvoices} onChange={(v) => set('payInvoices', v)} options={PAID_OPTIONS} /></Row>
+        <Row label="Credit notes"><SelectBox value={form.payCreditNotes} onChange={(v) => set('payCreditNotes', v)} options={PAID_OPTIONS} /></Row>
       </Card>
 
-      <Card title="Bank statements">
-        <p className="text-sm text-muted-foreground">Choose if we should notify you about missing bank statement data.</p>
-        <Row label="Missing period" hint="Display notifications for missing bank data between bank statements.">
-          <Toggle defaultOn />
-        </Row>
-      </Card>
-
-      <Card title="Email notifications">
-        <Row
-          label="When a document doesn’t have an owner"
-          hint="Who to notify by email when a costs or sales document has no owner."
+      <div className="flex items-center justify-end gap-3">
+        {saved && <span className="text-sm text-emerald-600">Saved</span>}
+        <button
+          type="button"
+          onClick={save}
+          disabled={!dirty}
+          className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
-          <SelectBox defaultValue="— None —" options={['— None —', 'Account admins', 'Document uploader']} />
-        </Row>
-      </Card>
-
-      <div className="flex justify-end">
-        <button type="button" className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
           Save changes
         </button>
       </div>

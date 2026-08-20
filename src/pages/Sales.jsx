@@ -4,6 +4,7 @@ import { Flag, Image, ChevronDown, Search, Filter, Settings2 } from 'lucide-reac
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
 import { useCategoryOptions } from '@/lib/organisations';
+import { useExtractionSettings } from '@/lib/extractionSettings';
 import {
   fetchBills,
   billToDoc,
@@ -119,6 +120,13 @@ function Dropdown({ label, disabled = false, items }) {
 export default function Sales() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
+  const settings = useExtractionSettings();
+  const visibleTabs = TABS.filter(
+    (t) => settings.showReviewReadyTabs || (t.key !== 'review' && t.key !== 'ready')
+  );
+  useEffect(() => {
+    if (!settings.showReviewReadyTabs && (tab === 'review' || tab === 'ready')) setTab('inbox');
+  }, [settings.showReviewReadyTabs, tab]);
   const [selected, setSelected] = useState(() => new Set());
   const [query, setQuery] = useState('');
   // In-session workflow status per SAMPLE sales doc (id -> status). Persisted
@@ -199,7 +207,7 @@ export default function Sales() {
       </div>
 
       <div className="mb-4 flex items-center gap-6 overflow-x-auto border-b">
-        {TABS.map((t) => {
+        {visibleTabs.map((t) => {
           const active = tab === t.key;
           const count = ['inbox', 'processing', 'review', 'ready', 'archive'].includes(t.key)
             ? countFor(t.key)

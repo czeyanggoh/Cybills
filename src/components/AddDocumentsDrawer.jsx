@@ -16,6 +16,7 @@ import {
 import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts } from '@/lib/organisations';
 import { getCustomerRule } from '@/lib/customerRules';
+import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc } from '@/lib/extractionSettings';
 import { useUsers } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
@@ -260,6 +261,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const { visionEnabled, user } = useAuth();
   const { pathname } = useLocation();
   const users = useUsers();
+  const settings = useExtractionSettings();
   const [tab, setTab] = useState('Costs');
   const [items, setItems] = useState([]);
   // Who the uploaded documents are attributed to. Stored as the display name
@@ -305,6 +307,24 @@ export default function AddDocumentsDrawer({ open, onClose }) {
     // categorisation/extraction and no Processing step; they land straight in
     // their own list.
     const isStatement = kind === 'supplier_statement';
+
+    // Apply the Business settings → Extraction defaults to a freshly-created
+    // cost/sales doc: default tax rate (only when extraction didn't read one),
+    // clear tax when "Extract tax" is off, default paid status by document type,
+    // and a due date computed from the invoice date. Skipped for statements.
+    const applyExtractionDefaults = async (billId, cur) => {
+      if (isStatement) return cur;
+      const p = {};
+      const defRate = kind === 'sales' ? settings.defaultTaxRateSales : settings.defaultTaxRateCosts;
+      if (defRate && !String(cur?.taxRate || '')) p.taxRate = defRate;
+      if (!settings.extractTax) p.tax = 0;
+      p.paid = defaultPaidFor(settings, cur?.documentType);
+      const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(cur?.date || '')) ? cur.date : '';
+      const due = dueDateForNewDoc(settings, kind, iso);
+      if (due) p.dueDate = due;
+      const r = await updateBill(billId, p).then((res) => res?.bill).catch(() => null);
+      return r ?? cur;
+    };
     // In "Split PDF by page" mode, expand every multi-page PDF into per-page
     // files first, so each page flows through the pipeline as its own document.
     let files = rawFiles;
@@ -391,14 +411,16 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               patch(it.id, { status: 'duplicate', duplicate: fin.duplicate });
               return;
             }
+            const withDefaults = await applyExtractionDefaults(bill.id, fin?.bill ?? bill);
             notifyBillsChanged();
-            patch(it.id, { status: 'added', bill: fin?.bill ?? bill });
+            patch(it.id, { status: 'added', bill: withDefaults });
           } else {
             // Nothing read (extraction off/failed) — move straight to the inbox;
             // no fuzzy dedup on empty fields.
             const advanced = await updateBill(bill.id, { status: 'new' }).then((r) => r?.bill).catch(() => null);
+            const withDefaults = await applyExtractionDefaults(bill.id, advanced ?? bill);
             notifyBillsChanged();
-            patch(it.id, { status: 'added', bill: advanced ?? bill });
+            patch(it.id, { status: 'added', bill: withDefaults });
           }
         } catch {
           patch(it.id, { status: 'error', error: 'Upload failed' });

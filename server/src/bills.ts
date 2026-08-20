@@ -117,7 +117,7 @@ billsRouter.post('/bills/:id/file', async (req, res) => {
 billsRouter.patch('/bills/:id', (req, res) => {
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'description', 'status', 'createdBy', 'paymentMethod', 'customer', 'project', 'cardLast4', 'note']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'description', 'status', 'createdBy', 'paymentMethod', 'customer', 'project', 'cardLast4', 'note', 'dueDate']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   if (typeof b.paid === 'boolean') patch.paid = b.paid;

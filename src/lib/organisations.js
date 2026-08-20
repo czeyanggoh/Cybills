@@ -1,5 +1,7 @@
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
+import { getHiddenSet, getAddedRows, LISTS_EVENT, SEED_TAX_RATES } from '@/lib/listsStore';
 import { useCustomCategories } from '@/lib/customCategories';
 import { useCategorySortMode, sortCategories } from '@/lib/categoryDisplay';
 import { useBankAccounts } from '@/lib/bankAccounts';
@@ -172,6 +174,40 @@ export function useXeroPurchaseTaxRates() {
     retry: false,
   });
   return data ?? [];
+}
+
+// The ONE managed tax-rate list, shared by Business settings → Lists → Tax rates
+// AND every cost/sales tax-rate picker. Source = the linked org's LIVE Xero
+// purchase tax rates (fallback: the bundled Singapore seed when Xero isn't
+// connected), plus any manually-added rates. Each row is annotated `visible`
+// from the managed hidden-set, keyed by NAME — so switching a rate off in the
+// list removes it from every picker. (Previously the list showed the seed while
+// the pickers showed the fuller Xero set, so visibility toggles never matched.)
+export function useManagedTaxRates() {
+  const xero = useXeroPurchaseTaxRates();
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const sync = () => setTick((t) => t + 1);
+    window.addEventListener(LISTS_EVENT, sync);
+    return () => window.removeEventListener(LISTS_EVENT, sync);
+  }, []);
+  return useMemo(() => {
+    void tick; // re-run when the managed list changes
+    const hidden = getHiddenSet('taxRates');
+    const base = xero.length
+      ? xero.map((t) => ({ name: t.name, code: t.taxType || '', rate: Number(t.rate) || 0 }))
+      : SEED_TAX_RATES.map((t) => ({ name: t.name, code: t.code, rate: Number(t.rate) || 0 }));
+    const added = getAddedRows('taxRates').map((a) => ({ name: a.name, code: a.code || '', rate: Number(a.rate) || 0 }));
+    const seen = new Set();
+    return [...base, ...added]
+      .filter((t) => t.name && !seen.has(t.name) && seen.add(t.name))
+      .map((t) => ({ ...t, id: t.name, visible: !hidden.has(t.name) }));
+  }, [xero, tick]);
+}
+
+// Just the visible rates (what the pickers offer).
+export function useVisibleTaxRates() {
+  return useManagedTaxRates().filter((t) => t.visible);
 }
 
 // Payment-method dropdown options: the linked org's Xero accounts a payment can

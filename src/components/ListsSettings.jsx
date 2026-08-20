@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
-import { useList, addToList, removeFromList, setListVisible } from '@/lib/listsStore';
+import { addToList, removeFromList, setListVisible } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
-import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId, useXeroPaymentMethods } from '@/lib/organisations';
+import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
 import { cn } from '@/lib/utils';
 
@@ -181,7 +181,9 @@ function CategoriesFromXero() {
 }
 
 function TaxRatesList() {
-  const rows = useList('taxRates');
+  // The live Xero purchase rates (seed fallback) — the SAME source the cost/sales
+  // pickers use — so switching a rate's Visible off here removes it there.
+  const rows = useManagedTaxRates();
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const { selected, toggle, clear } = useSelection();

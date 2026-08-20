@@ -24,9 +24,9 @@ import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/cla
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
-import { getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useXeroPurchaseTaxRates } from '@/lib/organisations';
+import { getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
-import { useProjectOptions, useList } from '@/lib/listsStore';
+import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract } from '@/lib/bills';
@@ -166,6 +166,7 @@ function initialData(doc) {
     customer: doc.customer ?? '',
     project: doc.project ?? '',
     note: doc.note ?? '',
+    dueDate: doc.dueDate ?? '',
     lineItems: Array.isArray(doc.lineItems) ? doc.lineItems : [],
   };
 }
@@ -184,23 +185,10 @@ export default function CostDetail() {
   // Customers come from the active org's (CYBM) live Xero customer contacts.
   const customerOptions = useXeroCustomers();
   const paymentMethods = useXeroPaymentMethods();
-  // GST/tax rates for purchases (Costs) — the specific rate replaces the old
-  // "Extracted amount" placeholder. `rateFor` gives the % for the tax math.
-  // Tax rates: prefer the active org's (CYBM) LIVE Xero purchase tax rates; fall
-  // back to the bundled Singapore seed list when Xero isn't connected.
-  const seededTaxRates = useList('taxRates');
-  // Names/codes the user hid in Business settings → Tax rates (Visible = No).
-  // Both the seed list AND the live Xero list must honour these toggles — a rate
-  // switched off in the list should never appear in the picker.
-  const hiddenRateKeys = new Set(
-    seededTaxRates.filter((t) => !t.visible).flatMap((t) => [t.name, t.code].filter(Boolean))
-  );
-  const rateVisible = (t) => !hiddenRateKeys.has(t.name) && !hiddenRateKeys.has(t.code || t.taxType);
-  const seededPurchase = seededTaxRates.filter(
-    (t) => t.visible && (String(t.code).includes('INPUT') || t.code === 'NONE')
-  );
-  const xeroTaxRates = useXeroPurchaseTaxRates();
-  const taxRateSource = xeroTaxRates.length ? xeroTaxRates.filter(rateVisible) : seededPurchase;
+  // GST/tax rates for purchases (Costs) — one managed list shared with Business
+  // settings → Lists → Tax rates: the live Xero rates (seed fallback), showing
+  // only the rates left Visible there. `rateFor` gives the % for the tax math.
+  const taxRateSource = useVisibleTaxRates();
   const taxRateOptions = taxRateSource.map((t) => t.name);
   const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
   const [pmModalOpen, setPmModalOpen] = useState(false);
@@ -1332,7 +1320,7 @@ export default function CostDetail() {
       <PublishToXeroModal
         open={publishOpen}
         onClose={() => setPublishOpen(false)}
-        bill={{ id: doc.id, supplier: data.supplier, total: data.total, currency: data.currency, date: data.date }}
+        bill={{ id: doc.id, supplier: data.supplier, total: data.total, currency: data.currency, date: data.date, dueDate: data.dueDate }}
         onPublished={onPublished}
       />
 

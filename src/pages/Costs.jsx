@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -18,8 +18,8 @@ import DocsExportModal from '@/components/DocsExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useFlagAssignments } from '@/lib/flagAssignments';
-import { useCategoryOptions } from '@/lib/organisations';
-import { useList } from '@/lib/listsStore';
+import { useCategoryOptions, useVisibleTaxRates } from '@/lib/organisations';
+import { useExtractionSettings } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
 import { updateBill, deleteBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
@@ -499,6 +499,15 @@ export default function Costs() {
   const meName = user?.name || user?.email || 'You';
   const uploaderLabel = (d) => (d.user && d.user !== 'You' ? d.user : meName);
   const [tab, setTab] = useState('inbox');
+  const settings = useExtractionSettings();
+  // Business settings → Extraction can hide the To review + Ready tabs (their
+  // docs still live under Inbox with their status tag).
+  const visibleTabs = TABS.filter(
+    (t) => settings.showReviewReadyTabs || (t.key !== 'review' && t.key !== 'ready')
+  );
+  useEffect(() => {
+    if (!settings.showReviewReadyTabs && (tab === 'review' || tab === 'ready')) setTab('inbox');
+  }, [settings.showReviewReadyTabs, tab]);
   const [selected, setSelected] = useState(() => new Set());
   const [query, setQuery] = useState('');
   const [claimOpen, setClaimOpen] = useState(false);
@@ -513,10 +522,8 @@ export default function Costs() {
   const { allDocs, reload } = useCostsDocs();
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
-  const taxRates = useList('taxRates');
-  const taxRateOptions = taxRates
-    .filter((t) => t.visible && (String(t.code).includes('INPUT') || t.code === 'NONE'))
-    .map((t) => t.name);
+  const taxRates = useVisibleTaxRates(); // shared managed list (Lists → Tax rates)
+  const taxRateOptions = taxRates.map((t) => t.name);
 
   // Every tab's rows, so its badge count ties to what the tab actually shows.
   const rowsByTab = {
@@ -762,7 +769,7 @@ export default function Costs() {
 
       {/* Tabs */}
       <div className="mb-4 flex items-center gap-6 overflow-x-auto border-b">
-        {TABS.map((t) => {
+        {visibleTabs.map((t) => {
           const active = tab === t.key;
           const count = t.counted ? (rowsByTab[t.key]?.length ?? 0) : null;
           return (
