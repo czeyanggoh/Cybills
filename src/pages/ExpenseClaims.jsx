@@ -365,7 +365,7 @@ export default function ExpenseClaims() {
               <button
                 type="button"
                 onClick={submitCreate}
-                disabled={!newClaim.claimFor || !newClaim.endDate}
+                disabled={!(newClaim.claimFor || meName) || !newClaim.endDate}
                 className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 Create
