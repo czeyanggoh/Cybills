@@ -246,6 +246,9 @@ export default function ExpenseClaimDetail() {
           String(v || '').toLowerCase().includes(q)
         )
     );
+  // Show the most recently added item on top (transactions are stored in add
+  // order). Only the on-screen table is reversed; the PDF stays chronological.
+  const displayRows = [...rows].reverse();
   const setRowCategory = (itemId, category) => {
     if (locked) return;
     setCatOverrides((o) => ({ ...o, [itemId]: category })); // optimistic
@@ -533,7 +536,7 @@ export default function ExpenseClaimDetail() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((t) => (
+                {displayRows.map((t) => (
                   <tr
                     key={t.itemId}
                     onClick={() => navigate(`/costs/${t.itemId}`)}
