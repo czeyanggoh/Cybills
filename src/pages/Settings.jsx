@@ -6,13 +6,10 @@ import {
   Share2,
   Upload,
   Workflow,
-  Check,
   Download,
   ClipboardList,
-  LayoutGrid,
   ImagePlus,
   Copy,
-  ListChecks,
   Info,
   Mail,
   ShieldCheck,
@@ -22,7 +19,6 @@ import {
 import AppShell from '@/components/AppShell';
 import ListsSettings from '@/components/ListsSettings';
 import { cn } from '@/lib/utils';
-import { useApprovalReminders, setReminders, DAYS, TIMES } from '@/lib/approvalReminders';
 import { useCategoryDisplayMode, setCategoryDisplayMode, useCategorySortMode, setCategorySortMode } from '@/lib/categoryDisplay';
 import { useBusinessProfile, saveBusinessProfile, mergeXeroProfile } from '@/lib/businessProfile';
 import { useExportSettings, saveExportSettings, EXPORT_COLUMNS } from '@/lib/exportSettings';
@@ -43,13 +39,11 @@ const NAV = [
       { key: 'connections', label: 'Connections', icon: Share2 },
       { key: 'extraction', label: 'Extraction', icon: Upload },
       { key: 'automation', label: 'Automation', icon: Workflow },
-      { key: 'approvals', label: 'Approvals', icon: Check },
       { key: 'email', label: 'Email', icon: Mail },
       { key: 'exports', label: 'Exports', icon: Download },
       { key: 'lists', label: 'Lists', icon: ClipboardList },
     ],
   },
-  { group: 'Manage', items: [{ key: 'subscription', label: 'Subscription', icon: LayoutGrid }] },
 ];
 
 function SettingsNav({ active, onSelect }) {
@@ -557,242 +551,6 @@ function Automation() {
   );
 }
 
-// Approvals settings: Workflows (Dext-style rules, display) + Reminders (live).
-function Approvals() {
-  const [sub, setSub] = useState('workflows');
-  return (
-    <div className="space-y-5">
-      <div className="flex gap-6 border-b">
-        {[['workflows', 'Workflows'], ['reminders', 'Reminders']].map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setSub(k)}
-            className={cn(
-              '-mb-px border-b-2 pb-3 pt-1 text-sm transition-colors',
-              sub === k ? 'border-foreground font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {sub === 'workflows' ? <ApprovalWorkflows /> : <ApprovalReminders />}
-    </div>
-  );
-}
-
-function ApprovalWorkflows() {
-  const [view, setView] = useState('list');
-  const [tab, setTab] = useState('Costs');
-  const [stages, setStages] = useState([{}]);
-
-  if (view === 'create') {
-    return (
-      <div className="space-y-6">
-        <button
-          type="button"
-          onClick={() => setView('list')}
-          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          ← Approval workflows
-        </button>
-        <Card title="Approval workflow creator">
-          <Row label="Workflow name" required><TextInput /></Row>
-          <Row label="Description">
-            <textarea
-              rows={3}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </Row>
-          <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Apply approvals to
-          </p>
-          <Row label="Item type"><SelectBox defaultValue="Costs" options={['Costs', 'Sales', 'Expense claims']} /></Row>
-          <Row label="Documents"><SelectBox defaultValue="All documents" options={['All documents', 'Receipts', 'Invoices']} /></Row>
-          <Row label="Document owners"><SelectBox defaultValue="All document owners" options={['All document owners']} /></Row>
-          <Row label="Project"><SelectBox defaultValue="All projects" options={['All projects']} /></Row>
-          <Row label="Suppliers"><SelectBox defaultValue="All suppliers" options={['All suppliers']} /></Row>
-          <Row label="Customers"><SelectBox defaultValue="All customers" options={['All customers']} /></Row>
-          <Row label="Categories"><SelectBox defaultValue="All categories" options={['All categories']} /></Row>
-
-          <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Create approval flow
-          </p>
-          <div className="overflow-x-auto rounded-md border">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead className="border-b bg-muted/40 text-left text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Stage</th>
-                  <th className="px-3 py-2 font-medium">Approver type</th>
-                  <th className="px-3 py-2 font-medium">Approver(s)</th>
-                  <th className="px-3 py-2 font-medium">Condition</th>
-                  <th className="px-3 py-2 font-medium">Amount (SGD)</th>
-                  <th className="px-3 py-2 font-medium">Can edit?</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stages.map((_, i) => (
-                  <tr key={i} className="border-b last:border-0">
-                    <td className="whitespace-nowrap px-3 py-2">{ORDINALS[i] ?? `${i + 1}th`}</td>
-                    <td className="px-3 py-2"><MiniSelect defaultValue="Specific user" options={['Specific user', 'Manager', 'Any admin']} /></td>
-                    <td className="px-3 py-2"><MiniSelect defaultValue="Select user(s)" options={['Select user(s)', 'Sean Tan', 'Astrid Yang']} /></td>
-                    <td className="px-3 py-2"><MiniSelect defaultValue="Always" options={['Always', 'Amount is over']} /></td>
-                    <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">Any amount</td>
-                    <td className="px-3 py-2"><MiniSelect defaultValue="No" options={['No', 'Yes']} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <button
-            type="button"
-            onClick={() => setStages((s) => [...s, {}])}
-            className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
-          >
-            + Add stage
-          </button>
-
-          <div className="space-y-4 border-t pt-4">
-            <Row label="Switch workflow on" hint="This workflow will apply to current and future documents once saved.">
-              <Toggle defaultOn />
-            </Row>
-            <Row label="Allow self-approval" hint="Whether approvers can approve their own documents.">
-              <Toggle />
-            </Row>
-          </div>
-        </Card>
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => setView('list')}
-            className="rounded-md border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
-          >
-            Cancel
-          </button>
-          <button type="button" className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
-            Save
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-6 border-b">
-          {['Costs', 'Sales', 'Expense claims'].map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={cn(
-                '-mb-px border-b-2 pb-3 pt-1 text-sm transition-colors',
-                tab === t
-                  ? 'border-foreground font-medium text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              )}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => setView('create')}
-          className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
-        >
-          Create workflow
-        </button>
-      </div>
-      <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-xl border">
-          <ListChecks className="h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
-        </div>
-        <p className="text-lg font-semibold tracking-tight">Welcome to your approvals workspace</p>
-        <p className="max-w-md text-sm text-muted-foreground">
-          Set up approval workflows to automatically route {tab.toLowerCase()} items to managers or
-          specific people.
-        </p>
-        <button
-          type="button"
-          onClick={() => setView('create')}
-          className="mt-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-        >
-          Create workflow
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Live approval reminders. No mail server yet, so delivery is in-app (a banner
-// to approvers with outstanding requests); the schedule is stored for later.
-function ApprovalReminders() {
-  const reminders = useApprovalReminders();
-  const update = (patch) => setReminders({ ...reminders, ...patch });
-  return (
-    <Card title="Approval reminders">
-      <Row label="Enable approval reminders" hint="Remind approvers who have outstanding approval requests.">
-        <button type="button" onClick={() => update({ enabled: !reminders.enabled })} className="flex items-center gap-2 pt-1">
-          <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', reminders.enabled ? 'justify-end bg-foreground' : 'justify-start border')}>
-            <span className={cn('h-4 w-4 rounded-full', reminders.enabled ? 'bg-background' : 'bg-muted-foreground/50')} />
-          </span>
-          <span className="text-sm text-muted-foreground">{reminders.enabled ? 'Yes' : 'No'}</span>
-        </button>
-      </Row>
-      {reminders.enabled && (
-        <>
-          <div className="grid gap-6 pt-2 sm:grid-cols-2">
-            <div>
-              <p className="mb-2 text-sm font-medium">Send reminders every</p>
-              <div className="space-y-1.5">
-                {DAYS.map(([k, label]) => (
-                  <label key={k} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(reminders.days[k])}
-                      onChange={() => update({ days: { ...reminders.days, [k]: !reminders.days[k] } })}
-                      className="h-4 w-4 accent-black"
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="mb-2 text-sm font-medium">At</p>
-              <div className="space-y-1.5">
-                {TIMES.map(([k, label]) => (
-                  <label key={k} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="reminder-time"
-                      checked={reminders.time === k}
-                      onChange={() => update({ time: k })}
-                      className="h-4 w-4 accent-black"
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="mt-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
-            <Info className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              CYBills has no mail server yet, so reminders show <span className="font-medium text-foreground">in-app</span>:
-              an approver with outstanding requests sees a banner at the top of the app. The day/time schedule is saved and
-              will drive email once mail is connected.
-            </span>
-          </div>
-        </>
-      )}
-    </Card>
-  );
-}
-
 function Exports() {
   const stored = useExportSettings();
   const [form, setForm] = useState(stored);
@@ -1201,7 +959,8 @@ function VaultSettings() {
 }
 
 export default function Settings() {
-  // Deep-link support: /settings?section=approvals opens that section directly.
+  // Deep-link support: /settings?section=extraction opens that section directly.
+  // Unknown/removed sections fall back to Business profile.
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get('section');
   const [section, setSection] = useState(() => (requested && TITLES[requested] ? requested : 'business'));
@@ -1223,8 +982,6 @@ export default function Settings() {
         <Extraction />
       ) : section === 'automation' ? (
         <Automation />
-      ) : section === 'approvals' ? (
-        <Approvals />
       ) : section === 'email' ? (
         <EmailSettings />
       ) : section === 'exports' ? (
