@@ -526,6 +526,7 @@ export default function ExpenseClaimDetail() {
                     <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={locked} className="h-4 w-4 accent-black disabled:opacity-40" aria-label="Select all" />
                   </th>
                   <th className="px-3 py-2.5 font-medium">Supplier</th>
+                  <th className="px-3 py-2.5 font-medium">Description</th>
                   <th className="px-3 py-2.5 font-medium">Date</th>
                   <th className="px-3 py-2.5 font-medium">Category</th>
                   <th className="w-10 px-2 py-2.5"><span className="sr-only">Remove</span></th>
@@ -547,6 +548,7 @@ export default function ExpenseClaimDetail() {
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-3 py-3">{t.supplier}</td>
+                    <td className="max-w-[16rem] truncate px-3 py-3 text-muted-foreground" title={t.description || ''}>{t.description || '—'}</td>
                     <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{t.date}</td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       {locked ? (
@@ -572,7 +574,7 @@ export default function ExpenseClaimDetail() {
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                    <td colSpan={6} className="px-4 py-12 text-center text-sm text-muted-foreground">
                       {q ? 'No items match your search.' : 'No items in this claim yet.'}
                     </td>
                   </tr>

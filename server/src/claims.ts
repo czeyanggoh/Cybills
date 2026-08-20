@@ -4,6 +4,7 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
 import { directManagerFor, appOrigin } from './users.js';
 import { sendMail, approvalRequestEmail } from './mailer.js';
+import { getBillByIdAny } from './store.js';
 
 // Server-backed expense claims, shared across the workspace (same JSON-store
 // pattern as bills). Replaces the old per-browser localStorage claim store, so
@@ -79,9 +80,23 @@ const nowIso = () => new Date().toISOString();
 export const claimsRouter = Router();
 
 // GET /api/claims — every non-deleted claim in the workspace.
+// Enrich a claim's transactions with the source bill's current description (and
+// supplier) when the stored snapshot lacks one — so items claimed before the
+// description was captured still show it in the UI / PDF / Xero. Non-destructive.
+function withDescriptions(c: Claim): Claim {
+  return {
+    ...c,
+    transactions: c.transactions.map((t) => {
+      if (t.description) return t;
+      const bill = getBillByIdAny(String(t.itemId));
+      return bill?.description ? { ...t, description: bill.description } : t;
+    }),
+  };
+}
+
 claimsRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
-  res.json({ claims: load().filter((c) => c.workspaceId === ws && !c.deleted) });
+  res.json({ claims: load().filter((c) => c.workspaceId === ws && !c.deleted).map(withDescriptions) });
 });
 
 // POST /api/claims — create a claim.

@@ -168,6 +168,22 @@ export function buildClaimDoc(claim) {
     doc.text(n2(t.tax), tc.tax, y, { align: 'right' });
     doc.text(n2(t.total), tc.total, y, { align: 'right' });
     y += 16;
+    // Item description on its own wrapped line beneath the row (matches Dext).
+    if (t.description) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(8);
+      doc.setTextColor(120);
+      const lines = doc.splitTextToSize(String(t.description), tc.net - 50 - tc.supplier);
+      for (const ln of lines) {
+        ensure(11);
+        doc.text(ln, tc.supplier, y);
+        y += 11;
+      }
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(60);
+      y += 4;
+    }
   }
   doc.setDrawColor(220);
   doc.line(M, y - 10, RIGHT, y - 10);
