@@ -99,10 +99,10 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
               <label className="flex items-center gap-3 text-sm">
                 <span className="w-28 shrink-0 text-muted-foreground">End date</span>
                 <input
+                  type="date"
                   value={newClaim.endDate}
                   onChange={(e) => setNewClaim((s) => ({ ...s, endDate: e.target.value }))}
-                  placeholder="DD MMM YYYY"
-                  className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </label>
             </div>
