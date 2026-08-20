@@ -568,6 +568,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     xeroInvoiceId: String(invoice.InvoiceID ?? ''),
     xeroTenantName: organisation.tenantName || organisation.name,
     xeroPostedAt: today,
+    archived: true, // a published claim leaves the inbox for the Archive tab
   });
 
   // Best-effort: attach the expense-claim PDF (rendered client-side and passed as

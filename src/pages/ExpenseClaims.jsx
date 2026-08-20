@@ -101,8 +101,11 @@ export default function ExpenseClaims() {
   // its own Approval status, so there's no separate Approvals tab.
   // Newest claim on top (createdAt is an ISO stamp, so lexical sort = chrono).
   const byNewest = (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
-  const inbox = claims.filter((c) => !c.archived).sort(byNewest);
-  const archived = claims.filter((c) => c.archived).sort(byNewest);
+  // A claim published to Xero belongs in Archive (out of the active inbox), even
+  // if it was published before auto-archiving was added.
+  const isArchived = (c) => c.archived || Boolean(c.xeroInvoiceId);
+  const inbox = claims.filter((c) => !isArchived(c)).sort(byNewest);
+  const archived = claims.filter((c) => isArchived(c)).sort(byNewest);
 
   // Per-claim approval status shown in its column (Dext wording).
   const STATUS_LABEL = { awaiting_approval: 'Waiting', approved: 'Approved', rejected: 'Rejected' };

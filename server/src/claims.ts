@@ -63,7 +63,7 @@ type Claim = {
 export function getClaimForXero(ws: string, id: string): Claim | null {
   return loadCollection<Claim>(COLLECTION).find((c) => c.id === id && c.workspaceId === ws && !c.deleted) ?? null;
 }
-export function saveClaimXero(ws: string, id: string, patch: Partial<Pick<Claim, 'xeroInvoiceId' | 'xeroTenantName' | 'xeroPostedAt'>>): Claim | null {
+export function saveClaimXero(ws: string, id: string, patch: Partial<Pick<Claim, 'xeroInvoiceId' | 'xeroTenantName' | 'xeroPostedAt' | 'archived'>>): Claim | null {
   const items = loadCollection<Claim>(COLLECTION);
   const claim = items.find((c) => c.id === id && c.workspaceId === ws && !c.deleted);
   if (!claim) return null;
