@@ -1341,7 +1341,7 @@ export default function CostDetail() {
       <PublishToXeroModal
         open={publishOpen}
         onClose={() => setPublishOpen(false)}
-        bill={{ id: doc.id, supplier: data.supplier, total: data.total, currency: data.currency, date: data.date, dueDate: data.dueDate }}
+        bill={{ id: doc.id, supplier: data.supplier, total: data.total, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate }}
         onPublished={onPublished}
       />
 

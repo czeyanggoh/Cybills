@@ -63,14 +63,15 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
         setAccounts(acc);
         setTaxRates(rates);
         // Preselect the Xero account the OCR categorised this bill into (its
-        // category is a "<code> - <name>" chart-of-accounts label), and default
-        // the tax rate to that account's own default.
+        // category is a "<code> - <name>" chart-of-accounts label).
         const code = accountCodeFromCategory(bill?.category);
         const match = code ? acc.find((a) => a.code === code) : null;
-        if (match) {
-          setAccountCode(match.code);
-          if (match.taxType && rates.some((t) => t.taxType === match.taxType)) setTaxType(match.taxType);
-        }
+        if (match) setAccountCode(match.code);
+        // Tax rate: prefer the doc's own tax rate (matched by name), else fall
+        // back to the selected account's default.
+        const byName = bill?.taxRate ? rates.find((t) => t.name === bill.taxRate) : null;
+        if (byName) setTaxType(byName.taxType);
+        else if (match?.taxType && rates.some((t) => t.taxType === match.taxType)) setTaxType(match.taxType);
       })
       .catch((err) => {
         if (!alive) return;
