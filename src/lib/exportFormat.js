@@ -39,9 +39,20 @@ export function csvDate(input) {
 
 // Short, human-friendly claim reference. Dext shows a compact id, not the raw
 // UUID — take the first block of the id, uppercased.
+// A clean NUMERIC claim id, consistent with the item-id scheme (displayItemId):
+// the claim's creation date-time in SGT as YYMMDDHHMMSS. Falls back to a stable
+// numeric hash of the UUID for claims created before createdAt was recorded.
 export function claimRef(claim) {
-  const id = String(claim?.id || '');
-  return (id.split('-')[0] || id).slice(0, 10).toUpperCase();
+  const ms = Date.parse(String(claim?.createdAt || ''));
+  if (Number.isFinite(ms) && ms > 0) {
+    const d = new Date(ms + 8 * 60 * 60 * 1000); // SGT
+    const p = (n) => String(n).padStart(2, '0');
+    return `${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+  }
+  const s = String(claim?.id || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return String(21000000000 + (h % 1000000000));
 }
 
 function slug(s) {

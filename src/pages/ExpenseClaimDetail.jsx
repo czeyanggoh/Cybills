@@ -40,7 +40,7 @@ import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId, publishClaimToXero } from '@/lib/organisations';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
-import { claimExportName } from '@/lib/exportFormat';
+import { claimExportName, claimRef } from '@/lib/exportFormat';
 import { useCategoryDisplayMode, useCategorySortMode, sortCategories, formatCategory } from '@/lib/categoryDisplay';
 import { cn } from '@/lib/utils';
 
@@ -624,7 +624,7 @@ export default function ExpenseClaimDetail() {
 
           {tab === 'details' ? (
             <div>
-              <DetailField label="Claim ID"><Input value={claim.id} readOnly /></DetailField>
+              <DetailField label="Claim ID"><Input value={claimRef(claim)} readOnly /></DetailField>
               <DetailField label="Claim for"><Input value={claim.claimFor} /></DetailField>
               <DetailField label="Claim name"><Input value={claim.name} /></DetailField>
               <DetailField label="End date">
