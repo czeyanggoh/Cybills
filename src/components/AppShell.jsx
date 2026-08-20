@@ -247,7 +247,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
       <div className="flex h-screen overflow-hidden bg-background text-foreground">
         {/* Primary sidebar — hidden in full-width chrome (e.g. Settings, which
             shows its own nav column + a Back link, like Dext). */}
-        <aside className={cn('hidden w-56 shrink-0 flex-col border-r bg-background', hideSidebar ? 'hidden' : 'md:flex')}>
+        <aside className={cn('hidden w-48 shrink-0 flex-col border-r bg-background', hideSidebar ? 'hidden' : 'md:flex')}>
           <div className="flex h-14 items-center gap-2 border-b px-4">
             <Receipt className="h-5 w-5" />
             <span className="text-sm font-semibold tracking-tight">CYBills</span>
@@ -373,7 +373,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
 
           <div className="flex min-h-0 flex-1">
             {subnav && (
-              <aside className="hidden w-60 shrink-0 overflow-auto border-r bg-background lg:block">
+              <aside className="hidden w-48 shrink-0 overflow-auto border-r bg-background lg:block">
                 {subnav}
               </aside>
             )}
