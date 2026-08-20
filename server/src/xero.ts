@@ -329,6 +329,35 @@ xeroRouter.post('/organisations/:id/categories/:accountId', async (req, res) => 
 
 const PUBLISH_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'AUTHORISED']);
 
+// Numeric display id (mirrors the client's displayItemId) — a bill's creation
+// date-time in SGT as YYMMDDHHMMSS, decoded from the id it embeds.
+function displayIdOf(id: string): string {
+  const s = String(id ?? '');
+  if (/^\d+$/.test(s)) return s;
+  const m = /^bill_([0-9a-z]+)_/.exec(s);
+  if (m) {
+    const ms = parseInt(m[1], 36);
+    if (Number.isFinite(ms) && ms > 0) {
+      const d = new Date(ms + 8 * 60 * 60 * 1000);
+      const p = (n: number) => String(n).padStart(2, '0');
+      return `${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+    }
+  }
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return String(21000000000 + (h % 1000000000));
+}
+
+// Dext-style Xero line description: "<Supplier> #<ItemID> - <Description>".
+function xeroLineDescription(supplier: string, id: string, description: string): string {
+  let out = String(supplier || '').trim();
+  const idNum = displayIdOf(id);
+  if (idNum) out += ` #${idNum}`;
+  const desc = String(description || '').trim();
+  if (desc) out += ` - ${desc}`;
+  return out.trim();
+}
+
 // POST /api/xero/organisations/:id/publish-bill — publish a stored cost
 // document to the linked Xero org as a supplier bill (ACCPAY invoice).
 // Body: { billId, accountCode, taxType, status?, dueDate?, description?,
@@ -372,25 +401,27 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(b.dueDate ?? '')) ? String(b.dueDate) : date;
   const tax = parseAmount(bill.tax);
 
+  const net = Math.max(0, total - tax);
   const line: Record<string, unknown> = {
     Description:
       String(b.description ?? '').trim() ||
+      xeroLineDescription(bill.supplier, bill.id, bill.description || '') ||
       [bill.category || bill.documentType || 'Supplier bill', bill.invoiceNumber].filter(Boolean).join(' — '),
     Quantity: 1,
-    UnitAmount: total, // tax-inclusive; LineAmountTypes below tells Xero so
+    // Post tax-EXCLUSIVE (net unit amount + explicit tax) so Xero shows a Tax
+    // Amount column and the figures match the paper exactly — matching Dext.
+    UnitAmount: net,
     AccountCode: accountCode,
     TaxType: taxType,
+    TaxAmount: tax,
   };
-  // When the document states its own GST, override Xero's computed tax so the
-  // posted bill matches the paper exactly (rounding differences are common).
-  if (tax > 0) line.TaxAmount = tax;
 
   const payload: Record<string, unknown> = {
     Type: 'ACCPAY',
     Contact: { Name: bill.supplier || 'Unknown supplier' },
     Date: date,
     DueDate: dueDate,
-    LineAmountTypes: 'Inclusive',
+    LineAmountTypes: 'Exclusive',
     LineItems: [line],
     Status: status,
   };
@@ -474,24 +505,6 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
 
   // Account code = the leading digits of the category label ("412 - …" → "412").
   const codeOf = (cat: string) => (String(cat ?? '').match(/\b(\d{3,})\b/) || [])[1] || '';
-  // Numeric display id (mirrors the client's displayItemId) for the "#…" prefix —
-  // the doc's creation date-time in SGT as YYMMDDHHMMSS, decoded from the id.
-  const displayId = (id: string) => {
-    const s = String(id ?? '');
-    if (/^\d+$/.test(s)) return s;
-    const m = /^bill_([0-9a-z]+)_/.exec(s);
-    if (m) {
-      const ms = parseInt(m[1], 36);
-      if (Number.isFinite(ms) && ms > 0) {
-        const d = new Date(ms + 8 * 60 * 60 * 1000);
-        const p = (n: number) => String(n).padStart(2, '0');
-        return `${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
-      }
-    }
-    let h = 0;
-    for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    return String(21000000000 + (h % 1000000000));
-  };
   // Dext-style line description: "<Supplier> #<ItemID> - <Description>". Falls
   // back to the live bill's description for items claimed before descriptions
   // were stored on the transaction, then to supplier + category.
@@ -499,26 +512,29 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     const bill = getBillByIdAny(String(t.itemId));
     const desc = String(t.description || bill?.description || '').trim();
     const supplier = String(t.supplier || bill?.supplier || '').trim();
-    const idNum = t.displayId || displayId(String(t.itemId));
-    let out = supplier;
-    if (idNum) out += ` #${idNum}`;
-    if (desc) out += ` - ${desc}`;
-    return out.trim() || [t.supplier, t.category].filter(Boolean).join(' — ') || 'Expense';
+    return (
+      xeroLineDescription(supplier, String(t.itemId), desc) ||
+      [t.supplier, t.category].filter(Boolean).join(' — ') ||
+      'Expense'
+    );
   };
   const lineItems = (claim.transactions ?? [])
     .map((t) => {
       const total = parseAmount(t.total);
-      const line: Record<string, unknown> = {
+      const tax = parseAmount(t.tax);
+      return {
         Description: describe(t),
         Quantity: 1,
-        UnitAmount: total,
+        // Tax-exclusive: net unit amount + explicit tax, so Xero renders a Tax
+        // Amount column (matching Dext).
+        UnitAmount: Math.max(0, total - tax),
         AccountCode: codeOf(t.category),
-      };
-      const tax = parseAmount(t.tax);
-      if (tax > 0) line.TaxAmount = tax;
-      return line;
+        TaxAmount: tax,
+        __total: total,
+      } as Record<string, unknown>;
     })
-    .filter((l) => l.AccountCode && Number(l.UnitAmount) > 0);
+    .filter((l) => l.AccountCode && Number(l.__total) > 0)
+    .map(({ __total, ...line }) => line);
 
   if (!lineItems.length) {
     return res.status(400).json({
@@ -536,7 +552,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     Contact: { Name: claim.claimFor || 'Employee' },
     Date: date,
     DueDate: date,
-    LineAmountTypes: 'Inclusive',
+    LineAmountTypes: 'Exclusive',
     LineItems: lineItems,
     Status: status,
     Reference: claim.name || 'Expense claim',
