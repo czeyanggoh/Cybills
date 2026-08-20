@@ -63,11 +63,10 @@ function useSalesBills() {
 }
 
 const TABS = [
-  { key: 'inbox', label: 'Inbox', count: 2 },
+  { key: 'inbox', label: 'Inbox' },
   { key: 'processing', label: 'Processing' },
   { key: 'review', label: 'To review' },
   { key: 'ready', label: 'Ready' },
-  { key: 'approvals', label: 'Approvals' },
   { key: 'archive', label: 'Archive' },
 ];
 
@@ -133,8 +132,10 @@ export default function Sales() {
 
   const statusOf = (s) => (s.persisted ? s.status || 'new' : statusMap[s.id] || 'viewed');
   const matchTab = (key, st) => {
-    // Inbox is the whole not-ready pool; "To review" is a filter within it.
-    if (key === 'inbox') return st === 'viewed' || st === 'new' || st === 'review';
+    // Inbox holds everything that isn't still processing or archived (like the
+    // Costs inbox — Ready items show here too). Processing / To review / Ready
+    // are filtered views within it.
+    if (key === 'inbox') return st !== 'processing' && st !== 'archived' && st !== 'merged';
     if (key === 'processing') return st === 'processing';
     if (key === 'review') return st === 'review';
     if (key === 'ready') return st === 'ready';
