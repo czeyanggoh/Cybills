@@ -130,6 +130,7 @@ export function billToDoc(b) {
     customer: b.customer || '',
     project: b.project || '',
     cardLast4: b.cardLast4 || '',
+    note: b.note || '',
     lineItems: Array.isArray(b.lineItems) ? b.lineItems : [],
     hasFile: Boolean(b.hasFile),
     contentType: b.contentType || '',

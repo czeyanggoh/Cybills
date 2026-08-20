@@ -6,7 +6,7 @@ function buildEvents(item) {
   if (!item) return [];
   const who = item.submittedBy || 'a user';
   const owner = item.ownedBy || who;
-  const via = item.method === 'Via web' ? 'via web' : 'via mobile';
+  const via = item.method === 'Via mobile' ? 'via mobile' : 'via web';
   const events = [
     { text: `This item was uploaded ${via}`, by: who, at: `${item.submittedAt} · 09:46`, origin: true },
     { text: 'Processing was completed by CYBills AI', by: 'CYBills AI', at: `${item.submittedAt} · 09:47` },

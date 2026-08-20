@@ -165,6 +165,7 @@ function initialData(doc) {
     cardLast4: doc.cardLast4 ?? '',
     customer: doc.customer ?? '',
     project: doc.project ?? '',
+    note: doc.note ?? '',
     lineItems: Array.isArray(doc.lineItems) ? doc.lineItems : [],
   };
 }
@@ -226,6 +227,8 @@ export default function CostDetail() {
   const [readyError, setReadyError] = useState([]); // required fields missing when trying to move to Ready
   const [gstOpen, setGstOpen] = useState(false); // GST-split panel open
   const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
+  const [noteSaved, setNoteSaved] = useState(false); // "Saved" flash on the Note tab
+  const [savingNote, setSavingNote] = useState(false);
 
   const doc = mockDoc ?? persisted;
   // If this document is a line item inside an expense claim, keep the page in
@@ -315,6 +318,62 @@ export default function CostDetail() {
     const next = DOCS[index + delta];
     if (next) navigate(`/costs/${next.id}`);
   };
+
+  // Explicitly persist the Note tab's text (kept out of the auto-save SERVER_FIELDS
+  // so we don't PATCH on every keystroke — the user asked for a Save button).
+  const saveNote = async () => {
+    setSavingNote(true);
+    try {
+      if (doc?.persisted) {
+        const r = await updateBill(doc.id, { note: data.note });
+        if (r?.bill) {
+          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+          notifyBillsChanged();
+        }
+      } else {
+        setDocOverride(id, { note: data.note });
+      }
+      setNoteSaved(true);
+      setTimeout(() => setNoteSaved(false), 2000);
+    } catch {
+      setAiError('Could not save the note. Please try again.');
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  // Activity timeline for the History tab — a vertical, dotted feed (newest
+  // first) built from the document's real events, mirroring the expense-claim
+  // approval-history layout.
+  const fmtStamp = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString('en-SG', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+    });
+  };
+  const docHistoryEvents = (() => {
+    if (!doc) return [];
+    const created = doc.createdAt || '';
+    const owner = doc.user || 'a user';
+    const events = [
+      { text: 'This document was uploaded', by: owner, at: fmtStamp(created), origin: true },
+      { text: 'Data was extracted by CYBills AI', by: 'CYBills AI', at: fmtStamp(created) },
+    ];
+    if (doc.xeroPostedAt) {
+      events.push({
+        text: `This document was published to Xero${doc.xeroTenantName ? ` (${doc.xeroTenantName})` : ''}`,
+        by: owner,
+        at: fmtStamp(doc.xeroPostedAt),
+      });
+    }
+    if (doc.status === 'expenseclaim') {
+      events.push({ text: 'This document was added to an expense claim', by: owner, at: '' });
+    }
+    events.push({ text: 'This document was viewed', by: user?.name || user?.email || 'you', at: '' });
+    return events.reverse(); // newest first
+  })();
 
   // billToDoc shows an empty date as the placeholder '—'; never persist that
   // literal back — coerce anything that isn't a real ISO date to blank.
@@ -417,7 +476,6 @@ export default function CostDetail() {
   const MOVE_DESTS = [
     { label: 'Sales', to: '/sales' },
     { label: 'Supplier statements', to: '/supplier-statements' },
-    { label: 'Vault', to: '/vault' },
   ];
   const moveTo = (dest) => {
     setMoveOpen(false);
@@ -1187,28 +1245,56 @@ export default function CostDetail() {
           )}
 
           {tab === 'note' && (
-            <textarea
-              rows={6}
-              placeholder="Add a note about this document…"
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
+            <div className="space-y-3">
+              <textarea
+                rows={6}
+                value={data.note}
+                onChange={(e) => set('note', e.target.value)}
+                placeholder="Add a note about this document…"
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={saveNote}
+                  disabled={savingNote}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  {savingNote ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : 'Save note'}
+                </button>
+                {noteSaved && (
+                  <span className="inline-flex items-center gap-1 text-sm text-emerald-600">
+                    <CheckCircle2 className="h-4 w-4" /> Saved
+                  </span>
+                )}
+              </div>
+            </div>
           )}
 
           {tab === 'history' && (
-            <ul className="space-y-3 text-sm">
-              <li className="flex justify-between border-b pb-2">
-                <span>Uploaded by {doc.user}</span>
-                <span className="text-muted-foreground">{doc.date}</span>
-              </li>
-              <li className="flex justify-between border-b pb-2">
-                <span>Data extracted</span>
-                <span className="text-muted-foreground">{doc.date}</span>
-              </li>
-              <li className="flex justify-between">
-                <span>Viewed by {user?.name || 'you'}</span>
-                <span className="text-muted-foreground">{doc.date}</span>
-              </li>
-            </ul>
+            <ol className="relative space-y-6 text-sm">
+              {docHistoryEvents.map((e, i) => (
+                <li key={i} className="relative flex gap-4">
+                  <div className="flex flex-col items-center">
+                    <span
+                      className={
+                        e.origin
+                          ? 'mt-1 h-3 w-3 rounded-full bg-foreground ring-4 ring-muted'
+                          : 'mt-1 h-3 w-3 rounded-full border-2 border-foreground bg-background'
+                      }
+                    />
+                    {i < docHistoryEvents.length - 1 && <span className="mt-1 w-px flex-1 bg-border" />}
+                  </div>
+                  <div className="pb-1">
+                    <p className="text-sm">
+                      <span className="font-medium">{e.text}</span>
+                      {e.by && <span className="text-muted-foreground"> by {e.by}</span>}
+                    </p>
+                    {e.at && <p className="mt-0.5 text-xs text-muted-foreground">{e.at}</p>}
+                  </div>
+                </li>
+              ))}
+            </ol>
           )}
         </div>
       </div>
