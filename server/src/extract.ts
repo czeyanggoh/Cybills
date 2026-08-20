@@ -40,12 +40,12 @@ function buildSchema(categories: string[]) {
       categoryReason: {
         type: 'string',
         description:
-          'One short sentence explaining WHY this category was chosen — cite the account name/description it matched or the coding rule applied, e.g. "Software subscription invoice — matched the 485 Subscriptions account." Empty string if uncategorised.',
+          'ALWAYS give one short sentence (never empty) explaining WHY this category fits — cite the account name/description it matched or the merchant/purchase type, e.g. "Software subscription invoice — matched the 485 Subscriptions account." or "Restaurant dining — matched Business meetings / staff meals." If uncategorised, say why nothing fit.',
       },
       description: {
         type: 'string',
         description:
-          'A concise plain-language summary of what was purchased (e.g. "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper"). Empty string if unclear.',
+          'ALWAYS provide a concise plain-language summary of what was purchased (never empty) — base it on the merchant, any visible items/services, and the document type. Examples: "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper". For a bare card/payment slip with no itemisation, describe it from the merchant, e.g. "Card payment at Marina Bay Sands (Marquee)".',
       },
       cardLast4: {
         type: 'string',
@@ -208,7 +208,8 @@ extractRouter.post('/extract', async (req, res) => {
                 `Today is ${new Date().toISOString().slice(0, 10)}. Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ` +
                 'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
                 'pick "Uncategorised" only when none reasonably fit. ' +
-                'If a field is not present, use an empty string or 0.' +
+                'If a field is not present, use an empty string or 0. ' +
+                'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
                 accountsGuide,
             },
           ],

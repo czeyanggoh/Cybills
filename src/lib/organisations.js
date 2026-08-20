@@ -254,6 +254,16 @@ export function useXeroTracking(organisationId) {
   });
 }
 
+// Project (Xero tracking-category) option NAMES for the active org — `index` 0 =
+// Projects, 1 = Projects 2. The cost/sales Project pickers use these live Xero
+// options (Business settings → Lists → Projects manages them) instead of the
+// bundled seed list. Empty until an org is linked.
+export function useXeroProjectOptions(index = 0) {
+  const orgId = useActiveOrgId();
+  const { data: categories = [] } = useXeroTracking(orgId);
+  return (categories[index]?.options ?? []).map((o) => o.name).filter(Boolean);
+}
+
 // The org's Xero expense accounts (with AccountID + Description) — the editable
 // Categories list. Category = a Xero account; its Description syncs to Xero.
 export function fetchXeroCategories(organisationId) {

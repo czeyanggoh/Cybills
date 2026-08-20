@@ -24,7 +24,7 @@ import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/cla
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
-import { getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates } from '@/lib/organisations';
+import { getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useXeroProjectOptions } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
@@ -183,7 +183,11 @@ export default function CostDetail() {
   );
   const categoryOptions = useCategoryOptions();
   const catMode = useCategoryDisplayMode();
-  const projectOptions = useProjectOptions();
+  // Projects come from the active org's live Xero tracking category (managed in
+  // Lists → Projects); fall back to the bundled seed only when Xero isn't linked.
+  const xeroProjects = useXeroProjectOptions();
+  const seedProjects = useProjectOptions();
+  const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;
   // Customers come from the active org's (CYBM) live Xero customer contacts.
   const customerOptions = useXeroCustomers();
   const paymentMethods = useXeroPaymentMethods();
