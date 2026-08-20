@@ -21,7 +21,7 @@ import { useFlagAssignments } from '@/lib/flagAssignments';
 import { useCategoryOptions } from '@/lib/organisations';
 import { useList } from '@/lib/listsStore';
 import { useAuth } from '@/lib/auth';
-import { updateBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
+import { updateBill, deleteBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
@@ -564,10 +564,19 @@ export default function Costs() {
     else setDocOverride(d.id, { category: value });
   };
 
-  // Delete a single document (soft delete — leaves every tab). Confirms first.
+  // Permanently delete a single document. For an uploaded bill this removes the
+  // record AND its stored file from Cloudflare (reclaiming storage) — it cannot
+  // be undone, so confirm first. (To just take a doc out of the inbox and keep
+  // it, use Archive instead.) Sample/local docs have no server file.
   const deleteOne = (d) => {
-    if (!window.confirm(`Delete this document from ${d.supplier || 'Unknown supplier'}? It will be removed from every tab.`)) return;
-    if (d.persisted) updateBill(d.id, { status: 'deleted' }).then(reload).catch(() => {});
+    if (!window.confirm(`Permanently delete this document from ${d.supplier || 'Unknown supplier'}?\n\nThis removes it everywhere and deletes the file from storage — it can't be undone. To keep it out of the inbox but recoverable, use Archive.`)) return;
+    if (d.persisted)
+      deleteBill(d.id)
+        .then(() => {
+          notifyBillsChanged();
+          reload();
+        })
+        .catch(() => {});
     else setDocOverride(d.id, { status: 'deleted' });
   };
 
@@ -608,10 +617,25 @@ export default function Costs() {
     notifyBillsChanged();
   };
 
-  const deleteSelected = () => {
-    if (selected.size && window.confirm(`Delete ${selected.size} item(s)? They leave every tab.`)) {
-      moveSelected('deleted');
-    }
+  // Permanently delete every selected document — removes each record AND its
+  // stored file from Cloudflare. Destructive and irreversible (use Archive to
+  // keep them); confirm first.
+  const deleteSelected = async () => {
+    if (!selected.size) return;
+    if (!window.confirm(`Permanently delete ${selected.size} item(s)?\n\nThis removes them everywhere and deletes their files from storage — it can't be undone. To keep them but out of the inbox, use Archive.`)) return;
+    const byId = new Map(allRows.map((r) => [r.id, r]));
+    await Promise.all(
+      [...selected].map((id) => {
+        const d = byId.get(id);
+        if (!d) return null;
+        if (d.persisted) return deleteBill(d.id).catch(() => {});
+        setDocOverride(d.id, { status: 'deleted' });
+        return null;
+      })
+    );
+    notifyBillsChanged();
+    setSelected(new Set());
+    reload();
   };
 
   // Add the selected docs to a chosen expense claim, then mark them accordingly.

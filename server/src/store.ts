@@ -340,3 +340,16 @@ export function updateBill(orgId: string, id: string, patch: Partial<Bill>): Bil
   persist(bills);
   return bill;
 }
+
+// Permanently remove a bill from the store. Unlike a soft delete (status →
+// 'deleted', which keeps the row and its stored file so it can be restored),
+// this drops the record entirely. Returns the removed bill so the caller can
+// reclaim its stored file (see deleteBillFile); null if not found.
+export function deleteBillHard(orgId: string, id: string): Bill | null {
+  const bills = load();
+  const idx = bills.findIndex((b) => b.orgId === orgId && b.id === id);
+  if (idx === -1) return null;
+  const [removed] = bills.splice(idx, 1);
+  persist(bills);
+  return removed;
+}

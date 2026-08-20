@@ -11,10 +11,11 @@ import {
   listBills,
   getBillById,
   getBillByIdAny,
+  deleteBillHard,
   parseAmount,
   type Candidate,
 } from './store.js';
-import { putBillFile, getBillFile } from './storage.js';
+import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { dataScopeForOrg } from './organisations.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
@@ -140,6 +141,19 @@ billsRouter.patch('/bills/:id', (req, res) => {
   // from completeness; an explicit status is a manual override, left untouched.
   if (!explicitStatus) updated = reconcileReadiness(orgId, req.params.id) || updated;
   res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
+});
+
+// DELETE /api/costs/bills/:id — PERMANENT delete. Drops the record for good AND
+// reclaims its stored file from R2 (or local disk). This is the destructive
+// counterpart to the soft delete/archive (status change, file kept) — the client
+// only calls it behind an explicit confirmation. File cleanup is best-effort and
+// never blocks removing the record.
+billsRouter.delete('/bills/:id', async (req, res) => {
+  const orgId = orgIdFor(req);
+  const removed = deleteBillHard(orgId, req.params.id);
+  if (!removed) return res.status(404).json({ error: 'not_found' });
+  if (removed.storageKey) await deleteBillFile(removed.storageKey);
+  res.json({ ok: true, id: removed.id, fileRemoved: Boolean(removed.storageKey) });
 });
 
 // POST /api/costs/bills/:id/finalize — apply the fields Vision just read to a

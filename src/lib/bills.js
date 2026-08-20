@@ -206,6 +206,19 @@ export async function updateBill(id, patch) {
   return res.json();
 }
 
+// Permanently delete a bill: removes the record AND reclaims its stored file
+// from Cloudflare R2 (or local disk). Destructive — callers confirm first. This
+// is distinct from a soft delete/archive (updateBill with a status change),
+// which keeps the row and its file so it can be restored.
+export async function deleteBill(id) {
+  const res = await fetch(`/api/costs/bills/${id}`, {
+    method: 'DELETE',
+    headers: orgHeaders(),
+  });
+  if (!res.ok) throw new Error('delete_failed');
+  return res.json();
+}
+
 // Human summary of a duplicate match, e.g. for a warning banner.
 export function describeDuplicate(dup) {
   if (!dup) return '';

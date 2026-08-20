@@ -1,5 +1,5 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
-import { mkdirSync, writeFileSync, createReadStream, existsSync } from 'node:fs';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { mkdirSync, writeFileSync, createReadStream, existsSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Readable } from 'node:stream';
 import { env, r2Enabled } from './env.js';
@@ -97,6 +97,31 @@ export async function putBillFile(
     }
   }
   return putBillLocal(orgId, fileHash, ext, bytes, contentType);
+}
+
+// Permanently remove a stored file, routing on the storageKey prefix. Used only
+// by a hard delete (the record is being removed for good), so the bytes are
+// reclaimed rather than orphaned. Best-effort: a missing object/file is fine,
+// and any backend error is logged but never fails the delete of the record.
+export async function deleteBillFile(storageKey: string): Promise<void> {
+  if (!storageKey) return;
+  if (storageKey.startsWith('local:')) {
+    const path = `${FILES_DIR}/${storageKey.slice('local:'.length)}`;
+    try {
+      rmSync(path, { force: true });
+    } catch (err) {
+      console.error('[storage] local delete failed', err);
+    }
+    return;
+  }
+  if (!r2Enabled) return;
+  // `r2:`-prefixed, or a legacy bare key (only ever created under R2).
+  const key = storageKey.startsWith('r2:') ? storageKey.slice('r2:'.length) : storageKey;
+  try {
+    await r2().send(new DeleteObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
+  } catch (err) {
+    console.error('[storage] R2 delete failed', err);
+  }
 }
 
 // Read a stored file back, routing on the storageKey prefix. `contentTypeHint`
