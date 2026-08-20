@@ -29,7 +29,7 @@ import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { useExtractionSettings, inferTaxRateName } from '@/lib/extractionSettings';
@@ -994,7 +994,7 @@ export default function CostDetail() {
               )}
 
               <SectionHeading>Item details</SectionHeading>
-              <Field label="Item ID"><Input value={doc.itemId} readOnly /></Field>
+              <Field label="Item ID"><Input value={displayItemId(doc.id)} readOnly /></Field>
               <Field label="Document owner"><EditableSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
               <Field label="Type"><EditableSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date">
