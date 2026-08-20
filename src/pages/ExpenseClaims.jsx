@@ -11,7 +11,7 @@ import { useAuth } from '@/lib/auth';
 import { isAdminAccess, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
-// Status pill for a claim's approval state (Draft / Pending / Approved / Rejected).
+// Status pill for a claim's approval state (Not submitted / Waiting / Approved / Rejected).
 function ClaimStatusBadge({ status, label }) {
   const cls =
     status === 'approved'
@@ -97,23 +97,21 @@ export default function ExpenseClaims() {
   const claims = isAdmin ? allClaims : visibleClaimsFor(allClaims, user);
 
   // Inbox = every claim that isn't approved yet — drafts, ones awaiting a
-  // decision (still pending), and rejected ones to fix. Approvals = only claims
-  // that have been APPROVED. So a not-yet-approved claim stays in the Inbox.
-  const inbox = claims.filter((c) => !c.archived && c.approvalStatus !== 'approved');
-  const approvals = claims.filter((c) => !c.archived && c.approvalStatus === 'approved');
+  // Inbox holds every non-archived claim (like the Costs inbox) — each row shows
+  // its own Approval status, so there's no separate Approvals tab.
+  const inbox = claims.filter((c) => !c.archived);
   const archived = claims.filter((c) => c.archived);
 
-  // Human-readable status for a claim, shown in the Status column.
-  const STATUS_LABEL = { awaiting_approval: 'Pending', approved: 'Approved', rejected: 'Rejected' };
-  const statusOf = (c) => STATUS_LABEL[c.approvalStatus] || 'Draft';
+  // Per-claim approval status shown in its column (Dext wording).
+  const STATUS_LABEL = { awaiting_approval: 'Waiting', approved: 'Approved', rejected: 'Rejected' };
+  const statusOf = (c) => STATUS_LABEL[c.approvalStatus] || 'Not submitted';
 
   const TABS = [
     { key: 'inbox', label: 'Inbox', count: inbox.length },
-    { key: 'approvals', label: 'Approvals', count: approvals.length || null },
     { key: 'archive', label: 'Archive', count: archived.length || null },
   ];
 
-  const base = tab === 'inbox' ? inbox : tab === 'approvals' ? approvals : tab === 'archive' ? archived : [];
+  const base = tab === 'inbox' ? inbox : tab === 'archive' ? archived : [];
   const q = query.trim().toLowerCase();
   const rows = q
     ? base.filter((c) => [c.claimFor, c.name, c.type].some((v) => String(v || '').toLowerCase().includes(q)))
@@ -258,7 +256,7 @@ export default function ExpenseClaims() {
                   className="h-4 w-4 accent-black"
                 />
               </th>
-              <th className="px-3 py-2.5 font-medium">Status</th>
+              <th className="px-3 py-2.5 font-medium">Approval status</th>
               <th className="px-3 py-2.5 font-medium">Claim for</th>
               <th className="px-3 py-2.5 font-medium">Type</th>
               <th className="px-3 py-2.5 font-medium">Name</th>
