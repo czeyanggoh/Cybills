@@ -224,6 +224,7 @@ export default function CostDetail() {
   const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
   const [noteSaved, setNoteSaved] = useState(false); // "Saved" flash on the Note tab
   const [savingNote, setSavingNote] = useState(false);
+  const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
 
   const doc = mockDoc ?? persisted;
   // If this document is a line item inside an expense claim, keep the page in
@@ -1325,10 +1326,12 @@ export default function CostDetail() {
             const targetId = newClaim ? (await createClaim(newClaim)).id : claimId;
             const actor = user?.name || user?.email || 'You';
             if (targetId) await addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
-            // Advance to the next inbox item (computed before this doc leaves it).
             await persistStatus('expenseclaim');
             notifyBillsChanged();
-            goToNextInbox();
+            // Confirm before moving on: let the user jump to the claim they just
+            // added to, or close to advance to the next inbox item.
+            const name = newClaim ? (newClaim.name || 'Expense claim') : (claims.find((c) => c.id === targetId)?.name || 'Expense claim');
+            setClaimAdded({ id: targetId, name });
           } catch (err) {
             setAiError(
               err?.code === 'claim_locked'
@@ -1344,6 +1347,36 @@ export default function CostDetail() {
         bill={{ id: doc.id, supplier: data.supplier, total: data.total, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate }}
         onPublished={onPublished}
       />
+
+      {claimAdded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-foreground/20" onClick={() => { setClaimAdded(null); goToNextInbox(); }} aria-hidden="true" />
+          <div className="relative w-full max-w-sm overflow-hidden rounded-lg bg-background shadow-xl">
+            <div className="flex flex-col items-center gap-3 p-6 text-center">
+              <CheckCircle2 className="h-10 w-10 text-emerald-600" />
+              <p className="text-sm">
+                Item added to expense claim <span className="font-medium">{claimAdded.name}</span>.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 border-t px-6 py-4">
+              <button
+                type="button"
+                onClick={() => { const id = claimAdded.id; setClaimAdded(null); navigate(`/expense-claims/${id}`); }}
+                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Go to expense claim
+              </button>
+              <button
+                type="button"
+                onClick={() => { setClaimAdded(null); goToNextInbox(); }}
+                className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AddPaymentMethodModal
         open={pmModalOpen}
