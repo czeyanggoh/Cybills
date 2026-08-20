@@ -638,7 +638,7 @@ export default function CostDetail() {
       // doesn't already carry one (don't clobber a manual choice).
       const exTotal = ex.total != null ? ex.total : data.total;
       const exTax = ex.tax != null ? ex.tax : data.tax;
-      const inferredRate = inferTaxRateName(exTotal, exTax, taxRateSource, extractionSettings.defaultTaxRateCosts);
+      const inferredRate = inferTaxRateName(exTotal, exTax, taxRateSource, extractionSettings.defaultTaxRateCosts, ex.currency || data.currency);
       setData((d) => ({
         ...d,
         supplier: ex.supplier || d.supplier,

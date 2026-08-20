@@ -320,7 +320,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // Auto-populate the tax rate from the extracted total/tax (matched to a
       // visible rate), falling back to the configured default.
       if (!String(cur?.taxRate || '')) {
-        const inferred = inferTaxRateName(cur?.total, cur?.tax, visibleTaxRates, defRate);
+        const inferred = inferTaxRateName(cur?.total, cur?.tax, visibleTaxRates, defRate, cur?.currency);
         if (inferred) p.taxRate = inferred;
       }
       if (!settings.extractTax) p.tax = 0;

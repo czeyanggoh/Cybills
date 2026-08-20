@@ -95,15 +95,22 @@ export function dueDateForNewDoc(settings, kind, invoiceDate) {
 }
 
 // Infer the tax-rate NAME for an extracted document from its total + tax amounts,
-// matched against the org's visible tax rates (`rates` = [{name, rate}]). When
-// tax is charged, pick the visible rate whose % is closest to the effective rate
-// (tax / net); when there's no tax, fall back to the configured default, then a
-// 0%/"No Tax" rate. Returns '' when nothing sensible matches.
-export function inferTaxRateName(total, tax, rates, defaultName = '') {
+// matched against the org's visible tax rates (`rates` = [{name, rate}]) and its
+// currency. When tax is charged, pick the rate whose % matches the effective
+// rate (tax / net) closely — tight tolerance so a 10% AU invoice never snaps to
+// a 9% SG rate. Currency-aware: a FOREIGN-currency invoice (≠ base, default SGD)
+// whose exact rate isn't in the chart falls back to a 0%/out-of-scope rate,
+// because foreign GST isn't domestic input tax (this is what Dext does). With no
+// tax, use the configured default, then a named 0% rate. '' when nothing fits.
+export function inferTaxRateName(total, tax, rates, defaultName = '', currency = '', baseCurrency = 'SGD') {
   const t = Number(String(total ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const x = Number(String(tax ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const list = Array.isArray(rates) ? rates : [];
   const net = t - x;
+  const cur = String(currency || '').toUpperCase().slice(0, 3);
+  const base = String(baseCurrency || 'SGD').toUpperCase().slice(0, 3);
+  const isForeign = Boolean(cur) && Boolean(base) && cur !== base;
+  const zeroRate = (re) => list.find((r) => Number(r.rate) === 0 && re.test(r.name));
   if (x > 0 && net > 0) {
     const pct = (x / net) * 100;
     let best = '';
@@ -114,7 +121,14 @@ export function inferTaxRateName(total, tax, rates, defaultName = '') {
       const d = Math.abs(rate - pct);
       if (d < bestDiff) { bestDiff = d; best = r.name; }
     }
-    if (best && bestDiff <= 1.5) return best;
+    // Tight tolerance: only a genuinely-matching domestic rate (e.g. 9% ~ 9%).
+    if (best && bestDiff <= 0.6) return best;
+    // Foreign-currency invoice whose exact rate isn't in our chart → the tax is
+    // foreign GST, not SG input tax: code it out of scope / zero-rated.
+    if (isForeign) {
+      const oos = zeroRate(/out of scope|zero[- ]?rated|no tax/i);
+      if (oos) return oos.name;
+    }
   }
   // No tax charged: honour the configured default, else a named 0% rate.
   if (defaultName && list.some((r) => r.name === defaultName)) return defaultName;
