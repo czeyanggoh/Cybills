@@ -39,7 +39,8 @@ import { useUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId, publishClaimToXero } from '@/lib/organisations';
 import { CATEGORIES } from '@/data/categories';
-import { generateClaimPdf } from '@/lib/claimPdf';
+import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
+import { claimExportName } from '@/lib/exportFormat';
 import { useCategoryDisplayMode, useCategorySortMode, sortCategories, formatCategory } from '@/lib/categoryDisplay';
 import { cn } from '@/lib/utils';
 
@@ -196,9 +197,17 @@ export default function ExpenseClaimDetail() {
     }
     setPublishing(true);
     try {
-      const r = await publishClaimToXero(orgId, { claimId: claim.id, status: 'DRAFT' });
+      // Render the claim PDF and send it along so it's attached to the Xero bill.
+      const pdfBase64 = buildClaimPdfBase64(claim);
+      const r = await publishClaimToXero(orgId, {
+        claimId: claim.id,
+        status: 'DRAFT',
+        pdfBase64,
+        pdfName: claimExportName(claim, 'pdf'),
+      });
       notifyClaimsChanged(); // refresh so the button flips to "Published to Xero"
-      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as a DRAFT bill${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} — review and approve it in Xero.`);
+      const attachNote = r.attachment && r.attachment.ok === false ? ' (PDF attachment couldn’t be sent — see Xero)' : '';
+      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as a DRAFT bill${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} — review and approve it in Xero.${attachNote}`);
     } catch (err) {
       setPayNote(err?.message || 'Could not publish the claim to Xero.');
     } finally {

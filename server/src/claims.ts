@@ -14,6 +14,8 @@ type Txn = {
   date: string;
   supplier: string;
   category: string;
+  description?: string; // the item's own description (for the Xero bill line)
+  displayId?: string; // numeric display id (Dext-style "#…")
   project?: string;
   net: string;
   tax: string;

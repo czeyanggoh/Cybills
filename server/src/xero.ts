@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { env, xeroEnabled } from './env.js';
 import { orgIdFor } from './bills.js';
 import { getOrganisation } from './organisations.js';
-import { getBillById, markBillPosted, parseAmount } from './store.js';
+import { getBillById, getBillByIdAny, markBillPosted, parseAmount } from './store.js';
 import { getClaimForXero, saveClaimXero } from './claims.js';
 import { workspaceId } from './workspace.js';
 
@@ -19,20 +19,38 @@ type RelayResult =
 
 async function relay(
   xeroPath: string,
-  opts: { method?: string; tenantId?: string; query?: Record<string, string>; body?: unknown } = {}
+  opts: {
+    method?: string;
+    tenantId?: string;
+    query?: Record<string, string>;
+    body?: unknown;
+    // Raw binary upload (e.g. attaching a PDF to an invoice): sent as-is with the
+    // given content type instead of being JSON-encoded.
+    rawBody?: Buffer;
+    contentType?: string;
+  } = {}
 ): Promise<RelayResult> {
   const url = new URL(`${env.CYWORKSPACE_RELAY_URL}/api/webhooks/xero-relay/${xeroPath}`);
   if (opts.tenantId) url.searchParams.set('tenant_id', opts.tenantId);
   for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
 
+  const hasRaw = opts.rawBody !== undefined;
   const res = await fetch(url, {
     method: opts.method ?? 'GET',
     headers: {
       'X-API-Key': env.CYWORKSPACE_API_KEY,
       Accept: 'application/json',
-      ...(opts.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(hasRaw
+        ? { 'Content-Type': opts.contentType ?? 'application/octet-stream' }
+        : opts.body !== undefined
+          ? { 'Content-Type': 'application/json' }
+          : {}),
     },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    body: hasRaw
+      ? (opts.rawBody as unknown as BodyInit)
+      : opts.body !== undefined
+        ? JSON.stringify(opts.body)
+        : undefined,
     signal: AbortSignal.timeout(60_000),
   });
 
@@ -456,11 +474,32 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
 
   // Account code = the leading digits of the category label ("412 - …" → "412").
   const codeOf = (cat: string) => (String(cat ?? '').match(/\b(\d{3,})\b/) || [])[1] || '';
+  // Numeric display id (mirrors the client's displayItemId) for the "#…" prefix.
+  const displayId = (id: string) => {
+    const s = String(id ?? '');
+    if (/^\d+$/.test(s)) return s;
+    let h = 0;
+    for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return String(21000000000 + (h % 1000000000));
+  };
+  // Dext-style line description: "<Supplier> #<ItemID> - <Description>". Falls
+  // back to the live bill's description for items claimed before descriptions
+  // were stored on the transaction, then to supplier + category.
+  const describe = (t: (typeof claim.transactions)[number]) => {
+    const bill = getBillByIdAny(String(t.itemId));
+    const desc = String(t.description || bill?.description || '').trim();
+    const supplier = String(t.supplier || bill?.supplier || '').trim();
+    const idNum = t.displayId || displayId(String(t.itemId));
+    let out = supplier;
+    if (idNum) out += ` #${idNum}`;
+    if (desc) out += ` - ${desc}`;
+    return out.trim() || [t.supplier, t.category].filter(Boolean).join(' — ') || 'Expense';
+  };
   const lineItems = (claim.transactions ?? [])
     .map((t) => {
       const total = parseAmount(t.total);
       const line: Record<string, unknown> = {
-        Description: [t.supplier, t.category].filter(Boolean).join(' — ') || 'Expense',
+        Description: describe(t),
         Quantity: 1,
         UnitAmount: total,
         AccountCode: codeOf(t.category),
@@ -521,13 +560,39 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     xeroPostedAt: today,
   });
 
+  // Best-effort: attach the expense-claim PDF (rendered client-side and passed as
+  // base64) to the new Xero bill, so the supporting document rides along — the
+  // invoice stays posted even if the attachment fails.
+  const invoiceId = String(invoice.InvoiceID ?? '');
+  const pdfBase64 = typeof b.pdfBase64 === 'string' ? b.pdfBase64 : '';
+  let attachment: { ok: boolean; error?: string } | null = null;
+  if (invoiceId && pdfBase64) {
+    try {
+      const bytes = Buffer.from(pdfBase64, 'base64');
+      const rawName = String(b.pdfName || `expense-claim-${invoice.InvoiceNumber || invoiceId}.pdf`);
+      const fileName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/(\.pdf)?$/i, '.pdf');
+      const att = await relay(`Invoices/${invoiceId}/Attachments/${encodeURIComponent(fileName)}`, {
+        method: 'POST',
+        tenantId: organisation.tenantId,
+        rawBody: bytes,
+        contentType: 'application/pdf',
+      });
+      attachment = att.ok ? { ok: true } : { ok: false, error: att.message };
+      if (!att.ok) console.error('[xero] claim PDF attach failed', att.status, att.message);
+    } catch (err) {
+      attachment = { ok: false, error: 'attach_failed' };
+      console.error('[xero] claim PDF attach error', err);
+    }
+  }
+
   res.json({
     ok: true,
     invoice: {
-      invoiceId: String(invoice.InvoiceID ?? ''),
+      invoiceId,
       invoiceNumber: String(invoice.InvoiceNumber ?? ''),
       status: String(invoice.Status ?? status),
     },
+    attachment,
     claim: updated,
   });
 });

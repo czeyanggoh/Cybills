@@ -234,6 +234,18 @@ export function buildClaimDoc(claim) {
   return doc;
 }
 
+// The claim PDF as a base64 string (no data: prefix) — used to attach it to the
+// Xero bill when publishing. Returns '' if rendering fails.
+export function buildClaimPdfBase64(claim) {
+  try {
+    const doc = buildClaimDoc(claim);
+    const uri = doc.output('datauristring'); // "data:application/pdf;base64,…"
+    return String(uri).split(',')[1] || '';
+  } catch {
+    return '';
+  }
+}
+
 // Generate + open the claim PDF. Opens in a new tab; falls back to a download
 // if the popup is blocked. Returns the claim id.
 export function generateClaimPdf(claim, { exportedBy = '' } = {}) {

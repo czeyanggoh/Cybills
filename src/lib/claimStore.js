@@ -187,6 +187,9 @@ export function docToClaimTxn(doc, data, actor) {
     date: data.date || '—',
     supplier: data.supplier || 'Unknown supplier',
     category: data.category || 'Uncategorised',
+    // The item's own description (same field the Costs inbox shows) so the Xero
+    // bill line reads like Dext: "<Supplier> #<ItemID> - <Description>".
+    description: data.description || doc.description || '',
     project: '',
     net: (total - tax).toFixed(2),
     tax: tax.toFixed(2),
