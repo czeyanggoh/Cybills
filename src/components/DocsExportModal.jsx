@@ -1,17 +1,16 @@
 import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
 import { exportDocs } from '@/lib/docsExport';
-import { useExportSettings } from '@/lib/exportSettings';
 import { cn } from '@/lib/utils';
 
 // Export dialog for Costs/Sales — CSV / PDF / ZIP. Runs fully client-side and
 // records the file in the Exports tab. `kind` is 'costs' | 'sales'.
 export default function DocsExportModal({ open, kind, rows, onClose, onArchive = () => {} }) {
-  const settings = useExportSettings();
   const defaultLabel = kind === 'sales' ? 'CYBills sales default' : 'CYBills default';
-  const configured = kind === 'sales' ? settings.salesFormat : settings.receiptsFormat;
   const [tab, setTab] = useState('csv');
-  const [csvFormat, setCsvFormat] = useState(/custom/i.test(configured || '') ? 'Custom CSV' : defaultLabel);
+  // Default to "Custom CSV" so the columns configured in Business settings →
+  // Exports actually drive the file. The full fixed template stays selectable.
+  const [csvFormat, setCsvFormat] = useState('Custom CSV');
   const [archiveAfter, setArchiveAfter] = useState(false);
   const [busy, setBusy] = useState(false);
   if (!open) return null;

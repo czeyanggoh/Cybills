@@ -31,6 +31,7 @@ import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
+import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
@@ -222,6 +223,7 @@ export default function CostDetail() {
   // If this document is a line item inside an expense claim, keep the page in
   // that context: a note links back to the claim, and Back returns to it.
   const claims = useClaims();
+  const { allDocs: inboxAllDocs } = useCostsDocs();
   const claimForItem = claims.find((c) => (c.transactions || []).some((t) => String(t.itemId) === String(id)));
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
 
@@ -305,6 +307,17 @@ export default function CostDetail() {
   const go = (delta) => {
     const next = DOCS[index + delta];
     if (next) navigate(`/costs/${next.id}`);
+  };
+
+  // After an action that finishes with this document (Add to expense claim,
+  // Publish to Xero), jump to the next item still in the Costs inbox so the
+  // reviewer can keep working without going Back each time. Falls back to the
+  // previous item, then to the inbox list when nothing else is left.
+  const goToNextInbox = () => {
+    const ids = rowsFor(inboxAllDocs, 'inbox').map((d) => String(d.id));
+    const i = ids.indexOf(String(id));
+    const nextId = i !== -1 ? (ids[i + 1] ?? ids[i - 1]) : ids[0];
+    navigate(nextId && nextId !== String(id) ? `/costs/${nextId}` : '/costs');
   };
 
   // Explicitly persist the Note tab's text (kept out of the auto-save SERVER_FIELDS
@@ -492,6 +505,8 @@ export default function CostDetail() {
   const onPublished = ({ bill }) => {
     if (bill) setPersisted(billToDoc({ ...bill, hasFile: Boolean(bill.storageKey) }));
     notifyBillsChanged();
+    // Move on to the next inbox item once the publish dialog reports success.
+    goToNextInbox();
   };
 
   // Grab the current receipt's bytes (so the split's new item shares the image).
@@ -1297,7 +1312,10 @@ export default function CostDetail() {
             const targetId = newClaim ? (await createClaim(newClaim)).id : claimId;
             const actor = user?.name || user?.email || 'You';
             if (targetId) await addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
-            await saveWithStatus('expenseclaim');
+            // Advance to the next inbox item (computed before this doc leaves it).
+            await persistStatus('expenseclaim');
+            notifyBillsChanged();
+            goToNextInbox();
           } catch (err) {
             setAiError(
               err?.code === 'claim_locked'

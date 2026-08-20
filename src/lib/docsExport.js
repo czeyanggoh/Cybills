@@ -1,4 +1,4 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { displayItemId, billFileUrl } from '@/lib/bills';
 import { recordEvent } from '@/lib/salesEvents';
 import { recordExport } from '@/lib/exportsStore';
@@ -212,11 +212,53 @@ const isPdfBytes = (b) => b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3
 // Merge every selected receipt into one PDF. Returns { bytes, added, missing }.
 // Exported so the Costs "Merge documents" action can reuse the exact same
 // image/PDF-combining logic the PDF export uses.
-export async function buildReceiptsPdf(rows) {
+// Order rows for the PDF export per the "Order of items" setting.
+function orderRowsForPdf(rows, order) {
+  const t = (d) => {
+    const dt = new Date(String(d.date || '').trim());
+    return Number.isNaN(dt.getTime()) ? 0 : dt.getTime();
+  };
+  const list = [...rows];
+  if (order === 'Date (new to old)') list.sort((a, b) => t(b) - t(a));
+  else if (order === 'Supplier') list.sort((a, b) => String(a.supplier || '').localeCompare(String(b.supplier || '')));
+  else if (order === 'Date (old to new)') list.sort((a, b) => t(a) - t(b));
+  return list;
+}
+
+// `opts.itemHeaders` inserts a header page (item ID + key fields) before each
+// item — Business settings → Exports → "Item headers in PDF exports". `opts.order`
+// applies the "Order of items" setting. Both default off so the merge path
+// (which calls this too) is unaffected.
+export async function buildReceiptsPdf(rows, opts = {}) {
+  const { itemHeaders = false, order = '' } = opts;
   const out = await PDFDocument.create();
+  const ordered = order ? orderRowsForPdf(rows, order) : rows;
+  const hFont = itemHeaders ? await out.embedFont(StandardFonts.HelveticaBold) : null;
+  const bFont = itemHeaders ? await out.embedFont(StandardFonts.Helvetica) : null;
+  const drawHeaderPage = (d) => {
+    const page = out.addPage([A4.w, A4.h]);
+    let y = A4.h - 96;
+    page.drawText(`Item ${idOf(d)}`, { x: 48, y, size: 22, font: hFont, color: rgb(0, 0, 0) });
+    y -= 16;
+    page.drawLine({ start: { x: 48, y }, end: { x: A4.w - 48, y }, thickness: 1, color: rgb(0.8, 0.8, 0.8) });
+    y -= 34;
+    const rowsMeta = [
+      ['Supplier', d.supplier || '—'],
+      ['Date', fmtDate(d.date)],
+      ['Category', d.category || '—'],
+      ['Total', `${d.currency || 'SGD'} ${n2(d.total)}`],
+      ['Owner', d.user || d.owner || '—'],
+    ];
+    for (const [label, value] of rowsMeta) {
+      page.drawText(label, { x: 48, y, size: 11, font: bFont, color: rgb(0.45, 0.45, 0.45) });
+      page.drawText(String(value), { x: 168, y, size: 12, font: hFont, color: rgb(0, 0, 0) });
+      y -= 24;
+    }
+  };
   let added = 0;
   let missing = 0;
-  for (const d of rows) {
+  for (const d of ordered) {
+    if (itemHeaders) drawHeaderPage(d);
     // eslint-disable-next-line no-await-in-loop
     const rec = await fetchReceipt(d);
     if (!rec) { missing += 1; continue; }
@@ -342,7 +384,7 @@ export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvForm
     filename = `${base}.csv`;
     fmtLabel = 'CSV';
   } else if (format === 'pdf') {
-    const { bytes } = await buildReceiptsPdf(rows);
+    const { bytes } = await buildReceiptsPdf(rows, { itemHeaders: settings.pdfItemHeaders, order: settings.pdfOrder });
     blob = new Blob([/** @type {any} */ (bytes)], { type: 'application/pdf' });
     filename = `${base}.pdf`;
     fmtLabel = 'PDF';
