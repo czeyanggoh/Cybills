@@ -188,11 +188,18 @@ export default function CostDetail() {
   // Tax rates: prefer the active org's (CYBM) LIVE Xero purchase tax rates; fall
   // back to the bundled Singapore seed list when Xero isn't connected.
   const seededTaxRates = useList('taxRates');
+  // Names/codes the user hid in Business settings → Tax rates (Visible = No).
+  // Both the seed list AND the live Xero list must honour these toggles — a rate
+  // switched off in the list should never appear in the picker.
+  const hiddenRateKeys = new Set(
+    seededTaxRates.filter((t) => !t.visible).flatMap((t) => [t.name, t.code].filter(Boolean))
+  );
+  const rateVisible = (t) => !hiddenRateKeys.has(t.name) && !hiddenRateKeys.has(t.code || t.taxType);
   const seededPurchase = seededTaxRates.filter(
-    (t) => !t.hidden && (String(t.code).includes('INPUT') || t.code === 'NONE')
+    (t) => t.visible && (String(t.code).includes('INPUT') || t.code === 'NONE')
   );
   const xeroTaxRates = useXeroPurchaseTaxRates();
-  const taxRateSource = xeroTaxRates.length ? xeroTaxRates : seededPurchase;
+  const taxRateSource = xeroTaxRates.length ? xeroTaxRates.filter(rateVisible) : seededPurchase;
   const taxRateOptions = taxRateSource.map((t) => t.name);
   const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
   const [pmModalOpen, setPmModalOpen] = useState(false);

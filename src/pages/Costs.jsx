@@ -515,7 +515,7 @@ export default function Costs() {
   const categoryOptions = useCategoryOptions();
   const taxRates = useList('taxRates');
   const taxRateOptions = taxRates
-    .filter((t) => !t.hidden && (String(t.code).includes('INPUT') || t.code === 'NONE'))
+    .filter((t) => t.visible && (String(t.code).includes('INPUT') || t.code === 'NONE'))
     .map((t) => t.name);
 
   // Every tab's rows, so its badge count ties to what the tab actually shows.
