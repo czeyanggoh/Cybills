@@ -32,6 +32,7 @@ import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
+import { useExtractionSettings, inferTaxRateName } from '@/lib/extractionSettings';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
@@ -192,6 +193,7 @@ export default function CostDetail() {
   const taxRateSource = useVisibleTaxRates();
   const taxRateOptions = taxRateSource.map((t) => t.name);
   const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
+  const extractionSettings = useExtractionSettings();
   const [pmModalOpen, setPmModalOpen] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -627,6 +629,11 @@ export default function CostDetail() {
       const descr =
         ex.description ||
         (Array.isArray(ex.lineItems) ? ex.lineItems.map((li) => li.description).filter(Boolean).join(', ') : '');
+      // Auto-populate the tax rate from the extracted total/tax when the doc
+      // doesn't already carry one (don't clobber a manual choice).
+      const exTotal = ex.total != null ? ex.total : data.total;
+      const exTax = ex.tax != null ? ex.tax : data.tax;
+      const inferredRate = inferTaxRateName(exTotal, exTax, taxRateSource, extractionSettings.defaultTaxRateCosts);
       setData((d) => ({
         ...d,
         supplier: ex.supplier || d.supplier,
@@ -638,6 +645,7 @@ export default function CostDetail() {
         categoryReason: ex.categoryReason || d.categoryReason,
         total: ex.total != null ? String(ex.total) : d.total,
         tax: ex.tax != null ? String(ex.tax) : d.tax,
+        taxRate: d.taxRate || inferredRate,
         description: descr || d.description,
         cardLast4: ex.cardLast4 || d.cardLast4,
       }));
@@ -652,6 +660,7 @@ export default function CostDetail() {
         if (ex.categoryReason) patch.categoryReason = ex.categoryReason;
         if (ex.total != null) patch.total = ex.total;
         if (ex.tax != null) patch.tax = ex.tax;
+        if (!data.taxRate && inferredRate) patch.taxRate = inferredRate;
         if (descr) patch.description = descr;
         if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
         const r = await updateBill(doc.id, patch).catch(() => null);

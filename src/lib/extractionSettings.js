@@ -93,3 +93,31 @@ export function dueDateForNewDoc(settings, kind, invoiceDate) {
     ? computeDueDate(settings.dueSalesMode, settings.dueSalesDays, invoiceDate)
     : computeDueDate(settings.dueCostsMode, settings.dueCostsDays, invoiceDate);
 }
+
+// Infer the tax-rate NAME for an extracted document from its total + tax amounts,
+// matched against the org's visible tax rates (`rates` = [{name, rate}]). When
+// tax is charged, pick the visible rate whose % is closest to the effective rate
+// (tax / net); when there's no tax, fall back to the configured default, then a
+// 0%/"No Tax" rate. Returns '' when nothing sensible matches.
+export function inferTaxRateName(total, tax, rates, defaultName = '') {
+  const t = Number(String(total ?? '').replace(/[^0-9.-]/g, '')) || 0;
+  const x = Number(String(tax ?? '').replace(/[^0-9.-]/g, '')) || 0;
+  const list = Array.isArray(rates) ? rates : [];
+  const net = t - x;
+  if (x > 0 && net > 0) {
+    const pct = (x / net) * 100;
+    let best = '';
+    let bestDiff = Infinity;
+    for (const r of list) {
+      const rate = Number(r.rate);
+      if (!(rate > 0)) continue;
+      const d = Math.abs(rate - pct);
+      if (d < bestDiff) { bestDiff = d; best = r.name; }
+    }
+    if (best && bestDiff <= 1.5) return best;
+  }
+  // No tax charged: honour the configured default, else a named 0% rate.
+  if (defaultName && list.some((r) => r.name === defaultName)) return defaultName;
+  const zero = list.find((r) => Number(r.rate) === 0 && /no tax|zero[- ]?rated/i.test(r.name));
+  return zero ? zero.name : defaultName || '';
+}

@@ -14,9 +14,9 @@ import {
   VISION_MEDIA,
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
-import { getExtractionAccounts } from '@/lib/organisations';
+import { getExtractionAccounts, useVisibleTaxRates } from '@/lib/organisations';
 import { getCustomerRule } from '@/lib/customerRules';
-import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc } from '@/lib/extractionSettings';
+import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, inferTaxRateName } from '@/lib/extractionSettings';
 import { useUsers } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
@@ -262,6 +262,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const { pathname } = useLocation();
   const users = useUsers();
   const settings = useExtractionSettings();
+  const visibleTaxRates = useVisibleTaxRates();
   const [tab, setTab] = useState('Costs');
   const [items, setItems] = useState([]);
   // Who the uploaded documents are attributed to. Stored as the display name
@@ -316,7 +317,12 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       if (isStatement) return cur;
       const p = {};
       const defRate = kind === 'sales' ? settings.defaultTaxRateSales : settings.defaultTaxRateCosts;
-      if (defRate && !String(cur?.taxRate || '')) p.taxRate = defRate;
+      // Auto-populate the tax rate from the extracted total/tax (matched to a
+      // visible rate), falling back to the configured default.
+      if (!String(cur?.taxRate || '')) {
+        const inferred = inferTaxRateName(cur?.total, cur?.tax, visibleTaxRates, defRate);
+        if (inferred) p.taxRate = inferred;
+      }
       if (!settings.extractTax) p.tax = 0;
       p.paid = defaultPaidFor(settings, cur?.documentType);
       const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(cur?.date || '')) ? cur.date : '';
