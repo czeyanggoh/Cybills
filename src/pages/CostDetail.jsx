@@ -1092,16 +1092,6 @@ export default function CostDetail() {
                   Add payment method
                 </button>
               </Field>
-              <Field label="Card (last 4)">
-                <input
-                  value={data.cardLast4 || ''}
-                  inputMode="numeric"
-                  maxLength={4}
-                  placeholder="e.g. 7849"
-                  onChange={(e) => set('cardLast4', e.target.value.replace(/\D/g, '').slice(0, 4))}
-                  className="h-9 w-24 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </Field>
 
               <SectionHeading>Line items</SectionHeading>
               {lineItems.length > 0 && (
