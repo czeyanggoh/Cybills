@@ -146,9 +146,24 @@ export function billToDoc(b) {
 // numeric ids (returned as-is); persisted bills use an internal "bill_…" id, so
 // we derive a stable 11-digit number from it (same id → same number) rather
 // than surfacing the raw storage key in reports.
+// A clean numeric item id (no letters) that reads as a chronological SEQUENCE:
+// the document's creation date-time in Singapore time, as YYMMDDHHMMSS
+// (e.g. 260820130500 = 20 Aug 2026 13:05:00). Persisted bills embed their
+// creation ms in the id (bill_<base36 ms>_<rand>), so this is stable and matches
+// on the client and the Xero-publish side. Sample docs already numeric pass
+// through; anything unexpected falls back to a stable hash.
 export function displayItemId(id) {
   const s = String(id ?? '');
   if (/^\d+$/.test(s)) return s;
+  const m = /^bill_([0-9a-z]+)_/.exec(s);
+  if (m) {
+    const ms = parseInt(m[1], 36);
+    if (Number.isFinite(ms) && ms > 0) {
+      const d = new Date(ms + 8 * 60 * 60 * 1000); // shift to SGT, then read UTC parts
+      const p = (n) => String(n).padStart(2, '0');
+      return `${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+    }
+  }
   let h = 0;
   for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return String(21000000000 + (h % 1000000000));

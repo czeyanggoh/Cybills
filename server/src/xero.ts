@@ -474,10 +474,20 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
 
   // Account code = the leading digits of the category label ("412 - …" → "412").
   const codeOf = (cat: string) => (String(cat ?? '').match(/\b(\d{3,})\b/) || [])[1] || '';
-  // Numeric display id (mirrors the client's displayItemId) for the "#…" prefix.
+  // Numeric display id (mirrors the client's displayItemId) for the "#…" prefix —
+  // the doc's creation date-time in SGT as YYMMDDHHMMSS, decoded from the id.
   const displayId = (id: string) => {
     const s = String(id ?? '');
     if (/^\d+$/.test(s)) return s;
+    const m = /^bill_([0-9a-z]+)_/.exec(s);
+    if (m) {
+      const ms = parseInt(m[1], 36);
+      if (Number.isFinite(ms) && ms > 0) {
+        const d = new Date(ms + 8 * 60 * 60 * 1000);
+        const p = (n: number) => String(n).padStart(2, '0');
+        return `${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+      }
+    }
     let h = 0;
     for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
     return String(21000000000 + (h % 1000000000));
