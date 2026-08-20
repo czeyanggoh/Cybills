@@ -52,6 +52,27 @@ async function splitPdfByPage(file) {
   }
 }
 
+let pasteSeq = 0;
+
+// Files off the clipboard. A file copied in Explorer/Finder arrives in
+// `files`; a screenshot (Win+Shift+S, ⌘⇧4, "copy image") arrives as an image
+// item with no usable name, so give those one — the row label and the stored
+// fileName both come from it.
+function filesFromClipboard(data) {
+  if (!data) return [];
+  const direct = Array.from(data.files || []);
+  if (direct.length) return direct;
+  return Array.from(data.items || [])
+    .filter((i) => i.kind === 'file' && i.type.startsWith('image/'))
+    .map((i) => i.getAsFile())
+    .filter(Boolean)
+    .map((f) => {
+      if (f.name && f.name !== 'image.png') return f;
+      const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      return new File([f], `Pasted screenshot ${++pasteSeq}.${ext}`, { type: f.type });
+    });
+}
+
 function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, accept = 'image/png,image/jpeg,image/webp,image/gif,application/pdf' }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -60,6 +81,25 @@ function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, a
     const files = Array.from(fileList || []);
     if (files.length) onFiles(files);
   };
+
+  // Ctrl/⌘+V anywhere in the panel feeds the clipboard straight into the same
+  // pipeline as a drop. The dropzone isn't focused by default, so listen on the
+  // document while it's mounted (it unmounts with the drawer) and stay out of
+  // the way of pastes aimed at a real text field.
+  const onFilesRef = useRef(onFiles);
+  onFilesRef.current = onFiles;
+  useEffect(() => {
+    const onPaste = (e) => {
+      const t = e.target;
+      if (t?.isContentEditable || t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA') return;
+      const files = filesFromClipboard(e.clipboardData);
+      if (!files.length) return;
+      e.preventDefault();
+      onFilesRef.current(files);
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, []);
 
   return (
     <div
@@ -98,6 +138,10 @@ function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, a
       >
         Select files
       </button>
+      <p className="mt-3 text-xs text-muted-foreground">
+        or paste a screenshot or copied file with{' '}
+        <span className="font-medium text-foreground">Ctrl/⌘ + V</span>
+      </p>
       <p className="mt-4 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">File limits</span> · {hint}
       </p>
