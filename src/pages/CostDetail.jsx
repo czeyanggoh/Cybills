@@ -34,6 +34,8 @@ import { unmergeCost } from '@/lib/mergeDocs';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
 import { useGstRegistered } from '@/lib/businessProfile';
+import { useAutoSave } from '@/lib/useAutoSave';
+import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
@@ -220,7 +222,7 @@ export default function CostDetail() {
   const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);
   const [extractingLines, setExtractingLines] = useState(false);
-  const [savedFlash, setSavedFlash] = useState(false);
+  const [fieldSave, setFieldSave] = useState('idle'); // auto-save status for the document's fields
   const [aiError, setAiError] = useState('');
   const [splitOpen, setSplitOpen] = useState(false);
   const [splitNote, setSplitNote] = useState('');
@@ -230,8 +232,6 @@ export default function CostDetail() {
   const [readyError, setReadyError] = useState([]); // required fields missing when trying to move to Ready
   const [gstOpen, setGstOpen] = useState(false); // GST-split panel open
   const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
-  const [noteSaved, setNoteSaved] = useState(false); // "Saved" flash on the Note tab
-  const [savingNote, setSavingNote] = useState(false);
   const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
 
   const doc = mockDoc ?? persisted;
@@ -306,6 +306,24 @@ export default function CostDetail() {
     }
   }, [gstRegistered, noTaxName, doc, data.taxRate, data.tax]);
 
+  // The Note tab saves itself too, on a pause rather than per keystroke — it's
+  // free text, so a PATCH per character would be a write storm.
+  const noteSave = useAutoSave(
+    data.note,
+    async (note) => {
+      if (doc?.persisted) {
+        const r = await updateBill(doc.id, { note });
+        if (r?.bill) {
+          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+          notifyBillsChanged();
+        }
+      } else {
+        setDocOverride(id, { note });
+      }
+    },
+    { delay: 900, enabled: Boolean(doc) },
+  );
+
   if (!doc) {
     return (
       <AppShell subnav={<CostsSubnav />}>
@@ -333,14 +351,16 @@ export default function CostDetail() {
     if (doc?.persisted && sf) {
       // Persist + adopt the returned status so the action bar flips to "In Ready"
       // the moment the last required field is filled (and back if one is cleared).
+      setFieldSave('saving');
       updateBill(doc.id, { [sf]: value })
         .then((r) => {
+          setFieldSave('saved');
           if (r?.bill) {
             setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
             notifyBillsChanged();
           }
         })
-        .catch(() => {});
+        .catch(() => setFieldSave('error'));
     }
   };
   const go = (delta) => {
@@ -357,29 +377,6 @@ export default function CostDetail() {
     const i = ids.indexOf(String(id));
     const nextId = i !== -1 ? (ids[i + 1] ?? ids[i - 1]) : ids[0];
     navigate(nextId && nextId !== String(id) ? `/costs/${nextId}` : '/costs');
-  };
-
-  // Explicitly persist the Note tab's text (kept out of the auto-save SERVER_FIELDS
-  // so we don't PATCH on every keystroke — the user asked for a Save button).
-  const saveNote = async () => {
-    setSavingNote(true);
-    try {
-      if (doc?.persisted) {
-        const r = await updateBill(doc.id, { note: data.note });
-        if (r?.bill) {
-          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-          notifyBillsChanged();
-        }
-      } else {
-        setDocOverride(id, { note: data.note });
-      }
-      setNoteSaved(true);
-      setTimeout(() => setNoteSaved(false), 2000);
-    } catch {
-      setAiError('Could not save the note. Please try again.');
-    } finally {
-      setSavingNote(false);
-    }
   };
 
   // Activity timeline for the History tab — a vertical, dotted feed (newest
@@ -469,16 +466,6 @@ export default function CostDetail() {
   const saveWithStatus = async (status, to = '/costs') => {
     await persistStatus(status);
     navigate(to);
-  };
-
-  // Explicit Save: persist every field on the document, keeping its current
-  // workflow status, and flash a confirmation. Fields already auto-save on
-  // change; this is the reassuring "it's saved" affordance.
-  const saveNow = async () => {
-    await persistStatus(doc.status || 'new'); // keep current workflow status
-    notifyBillsChanged();
-    setSavedFlash(true);
-    setTimeout(() => setSavedFlash(false), 1800);
   };
 
   // "Ready" means a document is complete enough to export / publish, so it must
@@ -1292,15 +1279,7 @@ export default function CostDetail() {
                     Move to ready
                   </button>
                 )}
-                {doc.persisted && (
-                  <button
-                    type="button"
-                    onClick={saveNow}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background transition-opacity hover:opacity-90"
-                  >
-                    {savedFlash ? <><CheckCircle2 className="h-4 w-4" /> Saved</> : 'Save'}
-                  </button>
-                )}
+                {doc.persisted && <SaveStatus status={fieldSave} className="px-1" />}
                 <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>
                 <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
                 <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
@@ -1318,19 +1297,7 @@ export default function CostDetail() {
                 className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={saveNote}
-                  disabled={savingNote}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {savingNote ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : 'Save note'}
-                </button>
-                {noteSaved && (
-                  <span className="inline-flex items-center gap-1 text-sm text-emerald-600">
-                    <CheckCircle2 className="h-4 w-4" /> Saved
-                  </span>
-                )}
+                <SaveStatus status={noteSave} />
               </div>
             </div>
           )}

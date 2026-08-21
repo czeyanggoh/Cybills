@@ -7,6 +7,8 @@ import ChangePasswordModal from '@/components/ChangePasswordModal';
 import { useProfile, setBookkeepingFreq, setBookkeepingToggle, setApprovalFreq } from '@/lib/profileStore';
 import { updateUser, normalizeRole, canManageBusiness, canManageUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
+import { useAutoSave } from '@/lib/useAutoSave';
+import SaveStatus from '@/components/SaveStatus';
 
 const NAV = [
   { key: 'personal', label: 'Personal details' },
@@ -140,27 +142,24 @@ function PersonalDetails({ rosterUser, refresh, onSaved, canBusiness, canUsers }
   const [first, setFirst] = useState(first0);
   const [last, setLast] = useState(last0);
   const [mobile, setMobile] = useState(mobile0);
-  const [saving, setSaving] = useState(false);
 
-  const dirty = first !== first0 || last !== last0 || mobile !== mobile0;
-  const canSave = Boolean(rosterUser?.id) && first.trim() && last.trim() && dirty && !saving;
-
-  const save = async () => {
-    if (!canSave) return;
-    setSaving(true);
-    try {
+  // Auto-saved, but only once the required names are actually filled — saving a
+  // half-typed name over the roster would rename the user mid-keystroke.
+  const complete = Boolean(first.trim() && last.trim());
+  const status = useAutoSave(
+    { first, last, mobile },
+    async (v) => {
       await updateUser(rosterUser.id, {
-        firstName: first.trim(),
-        lastName: last.trim(),
-        name: `${first.trim()} ${last.trim()}`.trim(),
-        mobile: mobile.trim(),
+        firstName: v.first.trim(),
+        lastName: v.last.trim(),
+        name: `${v.first.trim()} ${v.last.trim()}`.trim(),
+        mobile: v.mobile.trim(),
       });
       await refresh?.(); // refetch session/roster so the header updates too
       onSaved?.('Your details were saved.');
-    } finally {
-      setSaving(false);
-    }
-  };
+    },
+    { delay: 900, enabled: Boolean(rosterUser?.id) && complete },
+  );
 
   return (
     <Card title="Personal details">
@@ -193,17 +192,7 @@ function PersonalDetails({ rosterUser, refresh, onSaved, canBusiness, canUsers }
         {!rosterUser?.id && (
           <span className="text-xs text-muted-foreground">Your profile isn’t on the team roster yet, so it can’t be saved here.</span>
         )}
-        <button
-          type="button"
-          onClick={save}
-          disabled={!canSave}
-          className={cn(
-            'inline-flex h-9 items-center rounded-md px-4 text-sm font-medium transition-opacity',
-            canSave ? 'bg-foreground text-background hover:opacity-90' : 'bg-muted text-muted-foreground cursor-not-allowed'
-          )}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </button>
+        <SaveStatus status={status} />
       </div>
     </Card>
   );

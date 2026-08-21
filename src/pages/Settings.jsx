@@ -22,6 +22,8 @@ import { cn } from '@/lib/utils';
 import { useCategoryDisplayMode, setCategoryDisplayMode, useCategorySortMode, setCategorySortMode } from '@/lib/categoryDisplay';
 import { useBusinessProfile, saveBusinessProfile, mergeXeroProfile } from '@/lib/businessProfile';
 import { useExportSettings, saveExportSettings, EXPORT_COLUMNS } from '@/lib/exportSettings';
+import { useAutoSave } from '@/lib/useAutoSave';
+import SaveStatus from '@/components/SaveStatus';
 import {
   useOrganisations,
   fetchXeroProfile,
@@ -211,18 +213,19 @@ function BusinessProfile() {
   const { data: organisations = [] } = useOrganisations();
   const [form, setForm] = useState(stored);
   const [dirty, setDirty] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [sync, setSync] = useState({ state: 'idle', message: '' }); // idle | loading | ok | error
+  // Every edit saves itself; the status sits where the Save button used to.
+  const status = useAutoSave(form, (v) => { saveBusinessProfile(v); setDirty(false); });
 
   // Keep the form in step with the persisted profile until the user edits it.
   useEffect(() => {
     if (!dirty) setForm(stored);
   }, [stored, dirty]);
 
-  const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); setSaved(false); };
+  const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); };
   const setAddr = (key, value) => {
     setForm((f) => ({ ...f, address: { ...f.address, [key]: value } }));
-    setDirty(true); setSaved(false);
+    setDirty(true);
   };
 
   // Which linked org to read from Xero: the active one, else the first.
@@ -236,8 +239,8 @@ function BusinessProfile() {
       const xero = await fetchXeroProfile(orgId);
       if (!xero) { setSync({ state: 'error', message: 'Xero returned no organisation details.' }); return; }
       setForm((f) => mergeXeroProfile(f, xero));
-      setDirty(true); setSaved(false);
-      setSync({ state: 'ok', message: 'Pulled from Xero. Review, then Save changes.' });
+      setDirty(true);
+      setSync({ state: 'ok', message: 'Pulled from Xero and saved.' });
     } catch (err) {
       const code = err?.code || '';
       const message =
@@ -248,7 +251,6 @@ function BusinessProfile() {
     }
   };
 
-  const save = () => { saveBusinessProfile(form); setDirty(false); setSaved(true); };
 
   // First time in, if a Xero org is linked and the profile has never been
   // synced, pull it automatically so the fields reflect Xero out of the box.
@@ -348,15 +350,7 @@ function BusinessProfile() {
       </Card>
 
       <div className="flex items-center justify-end gap-3">
-        {saved && <span className="text-sm text-muted-foreground">Saved.</span>}
-        <button
-          type="button"
-          onClick={save}
-          disabled={!dirty}
-          className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          Save changes
-        </button>
+        <SaveStatus status={status} />
       </div>
     </div>
   );
@@ -366,10 +360,9 @@ function Extraction() {
   const stored = useExtractionSettings();
   const [form, setForm] = useState(stored);
   const [dirty, setDirty] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const status = useAutoSave(form, (v) => { saveExtractionSettings(v); setDirty(false); });
   useEffect(() => { if (!dirty) setForm(stored); }, [stored, dirty]);
-  const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); setSaved(false); };
-  const save = () => { saveExtractionSettings(form); setDirty(false); setSaved(true); setTimeout(() => setSaved(false), 2000); };
+  const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); };
 
   // The default-tax-rate pickers offer the SAME rates the cost/sales pickers do
   // — the visible rates from the managed Tax-rates list — plus a "None" option.
@@ -456,15 +449,7 @@ function Extraction() {
       </Card>
 
       <div className="flex items-center justify-end gap-3">
-        {saved && <span className="text-sm text-emerald-600">Saved</span>}
-        <button
-          type="button"
-          onClick={save}
-          disabled={!dirty}
-          className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          Save changes
-        </button>
+        <SaveStatus status={status} />
       </div>
     </div>
   );
@@ -550,11 +535,6 @@ function Automation() {
         <Row label="Archive after exporting to CSV"><Toggle defaultOn /></Row>
       </Card>
 
-      <div className="flex justify-end">
-        <button type="button" className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
-          Save changes
-        </button>
-      </div>
     </div>
   );
 }
@@ -563,19 +543,18 @@ function Exports() {
   const stored = useExportSettings();
   const [form, setForm] = useState(stored);
   const [dirty, setDirty] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => { if (!dirty) setForm(stored); }, [stored, dirty]);
 
-  const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); setSaved(false); };
+  const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); };
   const toggleColumn = (c) => {
     setForm((f) => {
       const has = f.columns.includes(c);
       return { ...f, columns: has ? f.columns.filter((x) => x !== c) : [...f.columns, c] };
     });
-    setDirty(true); setSaved(false);
+    setDirty(true);
   };
-  const save = () => { saveExportSettings(form); setDirty(false); setSaved(true); };
+  const status = useAutoSave(form, (v) => { saveExportSettings(v); setDirty(false); });
 
   return (
     <div className="space-y-6">
@@ -618,15 +597,7 @@ function Exports() {
       </Card>
 
       <div className="flex items-center justify-end gap-3">
-        {saved && <span className="text-sm text-muted-foreground">Saved.</span>}
-        <button
-          type="button"
-          onClick={save}
-          disabled={!dirty}
-          className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          Save changes
-        </button>
+        <SaveStatus status={status} />
       </div>
     </div>
   );

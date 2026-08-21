@@ -6,6 +6,8 @@ import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
 import { cn } from '@/lib/utils';
+import { useAutoSave } from '@/lib/useAutoSave';
+import SaveStatus from '@/components/SaveStatus';
 
 // Inner sub-nav for Business settings → Lists (mirrors Dext).
 const SUBNAV = [
@@ -91,6 +93,48 @@ function useSelection() {
   return { selected, toggle, clear };
 }
 
+// One category's Description, written straight back to Xero when the user stops
+// typing. Longer debounce than a local field — every save is a round trip to
+// Xero through the relay, so we wait for a real pause.
+function CategoryDescriptionCell({ category, orgId, onSaved }) {
+  const [draft, setDraft] = useState(category.description || '');
+  const [error, setError] = useState('');
+  useEffect(() => { setDraft(category.description || ''); }, [category.description]);
+  const status = useAutoSave(
+    draft,
+    async (value) => {
+      setError('');
+      try {
+        const updated = await updateXeroCategoryDescription(orgId, category.id, {
+          name: category.name,
+          code: category.code,
+          description: value,
+        });
+        onSaved(category.id, (updated && updated.description) ?? value);
+      } catch (err) {
+        setError((err && err.message) || 'Update failed');
+        throw err; // keeps the status on 'error' — retried on the next edit
+      }
+    },
+    { delay: 1200 },
+  );
+  return (
+    <div>
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="Add a description…"
+        className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      {error ? (
+        <p className="mt-1 text-xs text-destructive">{error}</p>
+      ) : (
+        <SaveStatus status={status} className="mt-1" />
+      )}
+    </div>
+  );
+}
+
 // Categories = the active org's Xero expense accounts. Each Description is
 // editable here and written straight back to Xero. Pulled live per org (so CYBM
 // shows CYBM's chart). Name/Code come from Xero and are read-only.
@@ -100,14 +144,16 @@ function CategoriesFromXero() {
   const orgId = (organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0])?.id || '';
   const { data: categories, isLoading, isError, error } = useXeroCategories(orgId);
   const [query, setQuery] = useState('');
-  const [edits, setEdits] = useState({}); // id -> edited description
   // Visibility is CYBills-side (Xero has no such flag), keyed by account CODE —
   // the one field the categories endpoint and the accounts endpoint share, so a
   // category switched off here also leaves the document pickers and the
   // extractor's allowed list.
   const hidden = useHiddenSet('categories');
-  const [status, setStatus] = useState({}); // id -> 'saving' | 'saved' | 'error'
-  const [errMsg, setErrMsg] = useState({}); // id -> message
+  // Adopt a saved description into the react-query cache so the row doesn't
+  // snap back to the old text on the next render.
+  const adopt = (id, description) =>
+    qc.setQueryData(['xero-categories', orgId], (prev) =>
+      (/** @type {any[]} */ (prev) || []).map((x) => (x.id === id ? { ...x, description } : x)));
 
   const notice = (msg) => (
     <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">{msg}</div>
@@ -122,28 +168,13 @@ function CategoriesFromXero() {
 
   const q = query.trim().toLowerCase();
   const rows = (categories || []).filter((c) => !q || c.name.toLowerCase().includes(q) || (c.code || '').toLowerCase().includes(q));
-  const descOf = (c) => (edits[c.id] !== undefined ? edits[c.id] : c.description);
-  const dirty = (c) => edits[c.id] !== undefined && edits[c.id] !== c.description;
-  const setDesc = (id, v) => { setEdits((e) => ({ ...e, [id]: v })); setStatus((s) => ({ ...s, [id]: undefined })); };
   const visKey = (c) => c.code || c.name;
 
-  const save = async (c) => {
-    setStatus((s) => ({ ...s, [c.id]: 'saving' }));
-    try {
-      const updated = await updateXeroCategoryDescription(orgId, c.id, { name: c.name, code: c.code, description: edits[c.id] });
-      qc.setQueryData(['xero-categories', orgId], (prev) => (/** @type {any[]} */ (prev) || []).map((x) => (x.id === c.id ? { ...x, description: (updated && updated.description) ?? edits[c.id] } : x)));
-      setEdits((e) => { const n = { ...e }; delete n[c.id]; return n; });
-      setStatus((s) => ({ ...s, [c.id]: 'saved' }));
-    } catch (err) {
-      setErrMsg((m) => ({ ...m, [c.id]: (err && err.message) || 'Update failed' }));
-      setStatus((s) => ({ ...s, [c.id]: 'error' }));
-    }
-  };
 
   return (
     <div>
       <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
-        Categories are your connected Xero organisation’s expense accounts. Edit a <span className="font-medium text-foreground">Description</span> and Save to write it straight back to Xero. Switch{' '}
+        Categories are your connected Xero organisation’s expense accounts. Edit a <span className="font-medium text-foreground">Description</span> and it writes straight back to Xero on its own. Switch{' '}
         <span className="font-medium text-foreground">Visible</span> off to drop a category from the document pickers and stop CYBills coding anything to it — the account stays untouched in Xero.
       </p>
       <div className="mb-3 flex items-center">
@@ -157,7 +188,7 @@ function CategoriesFromXero() {
           <thead className="border-b bg-muted/40 text-left text-muted-foreground">
             {/* Description is the greedy column (w-full) so it fills the row; the
                 others shrink to their content. */}
-            <tr><th className="whitespace-nowrap px-3 py-2.5 font-medium">Code</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Name</th><th className="w-full px-3 py-2.5 font-medium">Description</th><th className="w-24 px-3 py-2.5" /><th className="whitespace-nowrap px-3 py-2.5 font-medium">Visible</th></tr>
+            <tr><th className="whitespace-nowrap px-3 py-2.5 font-medium">Code</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Name</th><th className="w-full px-3 py-2.5 font-medium">Description</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Visible</th></tr>
           </thead>
           <tbody>
             {rows.map((c) => (
@@ -165,14 +196,7 @@ function CategoriesFromXero() {
                 <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{c.code || '—'}</td>
                 <td className="px-3 py-3 font-medium">{c.name}</td>
                 <td className="px-3 py-2">
-                  <input value={descOf(c)} onChange={(e) => setDesc(c.id, e.target.value)} placeholder="Add a description…" className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-                  {status[c.id] === 'error' && <p className="mt-1 text-xs text-destructive">{errMsg[c.id]}</p>}
-                  {status[c.id] === 'saved' && <p className="mt-1 text-xs text-muted-foreground">Saved to Xero.</p>}
-                </td>
-                <td className="px-3 py-2">
-                  <button type="button" onClick={() => save(c)} disabled={!dirty(c) || status[c.id] === 'saving'} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50">
-                    {status[c.id] === 'saving' ? 'Saving…' : 'Save'}
-                  </button>
+                  <CategoryDescriptionCell category={c} orgId={orgId} onSaved={adopt} />
                 </td>
                 <td className="px-3 py-3">
                   <VisibleToggle on={!hidden.has(visKey(c))} onToggle={() => setListVisible('categories', visKey(c), hidden.has(visKey(c)))} />
@@ -180,7 +204,7 @@ function CategoriesFromXero() {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">No categories{q ? ' match your search' : ''}.</td></tr>
+              <tr><td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">No categories{q ? ' match your search' : ''}.</td></tr>
             )}
           </tbody>
         </table>
@@ -196,27 +220,19 @@ function CategoriesFromXero() {
 // standard-rated codes and No Tax). Saved on blur, keyed by rate name.
 function RulesCell({ row }) {
   const [draft, setDraft] = useState(row.rules || '');
-  const [saved, setSaved] = useState(false);
   // Re-sync when the stored value changes underneath us (another tab, a refetch).
   useEffect(() => { setDraft(row.rules || ''); }, [row.rules]);
-  const commit = () => {
-    const next = draft.trim();
-    if (next === (row.rules || '')) return;
-    setMetaField('taxRates', row.id, 'rules', next);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-  };
+  const status = useAutoSave(draft, (v) => setMetaField('taxRates', row.id, 'rules', v.trim()));
   return (
     <div>
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
         rows={2}
         placeholder="When should this code be used?"
         className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
       />
-      {saved && <p className="mt-1 text-xs text-muted-foreground">Saved.</p>}
+      <SaveStatus status={status} className="mt-1" />
     </div>
   );
 }
@@ -398,15 +414,12 @@ function ReviewInstructions() {
   const org = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
   const orgId = org ? org.id : '';
   const { text, setText, loading } = useReviewInstructions(orgId);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  const save = async () => {
-    setSaving(true);
-    await saveReviewInstructions(orgId, text);
-    setSaving(false);
-    setSaved(true);
-  };
+  // Auto-saved like everything else. Held off until the org's text has loaded,
+  // so the empty box we show while loading is never written back over it.
+  const status = useAutoSave(text, (v) => saveReviewInstructions(orgId, v), {
+    delay: 1000,
+    enabled: !loading && Boolean(orgId),
+  });
 
   if (!orgId) {
     return (
@@ -423,21 +436,13 @@ function ReviewInstructions() {
       </p>
       <textarea
         value={loading ? '' : text}
-        onChange={(e) => { setText(e.target.value); setSaved(false); }}
+        onChange={(e) => setText(e.target.value)}
         rows={16}
         placeholder={loading ? 'Loading…' : 'e.g. Excellence A.S runs a beauty facial and cosmetic retail business. The outlets are at Vivocity and CK Tangs. Vendor name should be the other identified party.\n\nGST overriding instructions — discard the GST amount and substitute "0" for: any activity involving a motor vehicle; medical treatment for employees; …'}
         className="w-full rounded-lg border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <div className="mt-3 flex items-center justify-end gap-3">
-        {saved && <span className="text-sm text-muted-foreground">Saved.</span>}
-        <button
-          type="button"
-          onClick={save}
-          disabled={saving || loading}
-          className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {saving ? 'Saving…' : 'Save instructions'}
-        </button>
+        <SaveStatus status={status} />
       </div>
     </div>
   );
