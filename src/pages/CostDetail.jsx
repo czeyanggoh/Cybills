@@ -751,6 +751,12 @@ export default function CostDetail() {
         taxRateReason: d.taxRate ? d.taxRateReason : ex.taxRateReason || d.taxRateReason,
         description: descr || d.description,
         cardLast4: ex.cardLast4 || d.cardLast4,
+        // A re-read is the way a rule written AFTER the upload reaches a
+        // document — writing a "When to use" rule and pressing this is the
+        // whole point — so an allocation it returns wins. Returning nothing
+        // leaves whatever is already there.
+        project: ex.project || d.project,
+        dueDate: ex.dueDate || d.dueDate,
       }));
       if (doc?.persisted) {
         const patch = {};
@@ -767,6 +773,8 @@ export default function CostDetail() {
         if (!data.taxRate && ex.taxRateReason) patch.taxRateReason = ex.taxRateReason;
         if (descr) patch.description = descr;
         if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
+        if (ex.project) patch.project = ex.project;
+        if (ex.dueDate) patch.dueDate = ex.dueDate;
         const r = await updateBill(doc.id, patch).catch(() => null);
         if (r?.bill) {
           setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
