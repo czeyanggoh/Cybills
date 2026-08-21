@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, ChevronDown, Settings2, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -13,6 +13,36 @@ import { cn } from '@/lib/utils';
 // (de)activate, remove).
 function ManageMenu({ user, onEdit, onToast }) {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef(null);
+  const [pos, setPos] = useState(null);
+  // The table scrolls (overflow-x-auto), and a browser that clips one axis
+  // clips the other with it — so an absolutely-positioned menu was cut off at
+  // the bottom edge of the table, which on the last row hid the whole thing.
+  // Measure the button and render the menu fixed, flipping above when there
+  // isn't room below.
+  useEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const r = buttonRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const width = 208; // w-52
+      const height = 300; // enough to decide which side has room
+      const left = Math.min(Math.max(8, r.right - width), window.innerWidth - width - 8);
+      const below = window.innerHeight - r.bottom;
+      setPos(
+        below < height && r.top > below
+          ? { left, width, bottom: window.innerHeight - r.top + 4 }
+          : { left, width, top: r.bottom + 4 }
+      );
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
   const item = 'flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted';
   const run = (fn) => { setOpen(false); fn(); };
 
@@ -45,13 +75,16 @@ function ManageMenu({ user, onEdit, onToast }) {
 
   return (
     <div className="relative">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-muted">
+      <button type="button" ref={buttonRef} onClick={() => setOpen((o) => !o)} className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-muted">
         Manage <ChevronDown className="h-3.5 w-3.5" />
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
-          <div className="absolute right-0 z-20 mt-1 w-52 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div
+            style={pos ? { top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width } : { visibility: 'hidden' }}
+            className="fixed z-40 max-h-[70vh] overflow-auto rounded-md border bg-background py-1 shadow-lg"
+          >
             <button type="button" className={item} onClick={() => run(() => onEdit('details'))}>Edit user details</button>
             <button type="button" className={item} onClick={() => run(() => onEdit('privileges'))}>Edit privileges</button>
             <button type="button" className={item} onClick={() => run(sendInvite)}>
