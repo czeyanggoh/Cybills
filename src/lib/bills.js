@@ -158,6 +158,7 @@ export function billToDoc(b) {
     type: b.documentType || 'Document',
     category: b.category || 'Uncategorised',
     categoryReason: b.categoryReason || '',
+    projectReason: b.projectReason || '',
     taxRateReason: b.taxRateReason || '',
     currency: b.currency || 'SGD',
     total: b.total != null ? String(b.total) : '—',

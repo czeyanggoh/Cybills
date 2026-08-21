@@ -24,6 +24,7 @@ export type Bill = {
   date: string; // as extracted, ISO YYYY-MM-DD when determinable
   category: string;
   categoryReason?: string; // why the AI chose this category (account/rule cited)
+  projectReason?: string; // why this project/PIC — the rule or the evidence cited
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   taxRateReason?: string; // why that tax code — the "when to use" rule it matched
   description?: string; // plain-language summary of what was purchased
@@ -225,7 +226,7 @@ export function scrubFillerText(): number {
   let n = 0;
   for (const b of bills) {
     let touched = false;
-    for (const key of ['description', 'categoryReason', 'taxRateReason'] as const) {
+    for (const key of ['description', 'categoryReason', 'taxRateReason', 'projectReason'] as const) {
       const before = b[key];
       if (before && notFiller(before) === '') {
         // A description is the one of the three worth replacing rather than
@@ -490,6 +491,7 @@ const EDITABLE: (keyof Bill)[] = [
   'date',
   'category',
   'categoryReason',
+  'projectReason',
   'taxRate',
   'taxRateReason',
   'description',

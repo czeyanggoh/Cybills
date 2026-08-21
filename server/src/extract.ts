@@ -306,7 +306,8 @@ extractRouter.post('/extract', async (req, res) => {
   const projectsGuide = projects.length
     ? '\n\nPROJECT (PIC) ALLOCATION. This organisation allocates documents to the projects below. Set `project` to the ONE this document belongs to, and `projectReason` to the evidence on the document that says so. Decide in this order:\n' +
       '1. A project whose written rule the document plainly satisfies.\n' +
-      '2. Otherwise, a project the document plainly identifies by name — the site, property, entity, unit or person it is addressed to, billed for, or delivered to, matching the project name or an obvious abbreviation of it.\n' +
+      '2. Otherwise, a project the document plainly identifies by name — the site, property, unit or job the charge is FOR, matching the project name or an obvious abbreviation of it.\n' +
+      'IGNORE who the document is billed TO. The "Bill to" party, the "Attn:" contact and the recipient address are this organisation and its staff, not the project — a person named there must never decide the allocation, even when their name or initials resemble a project. Match only what the charge is about.\n' +
       'A shared word, a near-miss, or "it could be" is NOT a match. When nothing on the document points to one project, return an empty string for both fields — the document is then allocated to the uploader\'s own project, which is safer than a guess.\n' +
       projects.map((p) => `- "${p.name}"${p.rules ? `: ${p.rules}` : ' (no rule written — match by name only)'}`).join('\n')
     : '';

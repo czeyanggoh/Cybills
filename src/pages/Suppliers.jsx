@@ -3,7 +3,7 @@ import { Search, Filter, Settings2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SearchSelect from '@/components/SearchSelect';
-import { useCategoryOptions, useXeroSuppliers, useXeroCustomers } from '@/lib/organisations';
+import { useCategoryOptions, useXeroSuppliers, useXeroCustomers, useXeroProjectOptions } from '@/lib/organisations';
 import { useCostsDocs } from '@/lib/costsData';
 import { getSupplierRule, setSupplierRule, useSupplierRules } from '@/lib/supplierRules';
 import { cn } from '@/lib/utils';
@@ -43,6 +43,7 @@ export default function Suppliers() {
   // Suppliers + customers come from the active org's (CYBM) live Xero contacts.
   const supplierNames = useXeroSuppliers();
   const customerOptions = useXeroCustomers();
+  const projectOptions = useXeroProjectOptions(0);
   const { allDocs } = useCostsDocs();
   useSupplierRules(); // re-render when a supplier's category/customer changes
 
@@ -99,6 +100,7 @@ export default function Suppliers() {
               <th className="px-3 py-2.5 font-medium">Extract supplier statements</th>
               <th className="px-3 py-2.5 font-medium">Category</th>
               <th className="px-3 py-2.5 font-medium">Customer</th>
+              <th className="px-3 py-2.5 font-medium">Project</th>
             </tr>
           </thead>
           <tbody>
@@ -128,6 +130,16 @@ export default function Suppliers() {
                       value={getSupplierRule(s.id).customer || ''}
                       options={customerOptions}
                       onChange={(v) => setSupplierRule(s.id, { customer: v })}
+                    />
+                  </div>
+                </td>
+                <td className="px-3 py-3">
+                  <div className="w-40">
+                    <SearchSelect
+                      compact
+                      value={getSupplierRule(s.id).project || ''}
+                      options={projectOptions}
+                      onChange={(v) => setSupplierRule(s.id, { project: v })}
                     />
                   </div>
                 </td>

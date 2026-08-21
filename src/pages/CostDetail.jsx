@@ -33,6 +33,7 @@ import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
+import { matchSupplierRule } from '@/lib/supplierRules';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
 import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
 import { useGstRegistered } from '@/lib/businessProfile';
@@ -177,6 +178,7 @@ function initialData(doc) {
     cardLast4: doc.cardLast4 ?? '',
     customer: doc.customer ?? '',
     project: doc.project ?? '',
+    projectReason: doc.projectReason ?? '',
     note: doc.note ?? '',
     dueDate: doc.dueDate ?? '',
     lineItems: Array.isArray(doc.lineItems) ? doc.lineItems : [],
@@ -351,7 +353,7 @@ export default function CostDetail() {
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
     taxRate: 'taxRate', taxRateReason: 'taxRateReason', description: 'description', user: 'createdBy',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
-    customer: 'customer', project: 'project', cardLast4: 'cardLast4',
+    customer: 'customer', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
   };
   const set = (key, value) => {
     setData((d) => ({ ...d, [key]: value }));
@@ -465,6 +467,7 @@ export default function CostDetail() {
           paid: data.paid,
           customer: data.customer,
           project: data.project,
+          projectReason: data.projectReason,
           lineItems: data.lineItems,
         });
         notifyBillsChanged();
@@ -736,6 +739,12 @@ export default function CostDetail() {
       // Not GST-registered: there's no input tax to record, so don't carry the
       // printed GST onto the bill either.
       const exTaxOut = gstRegistered ? exTax : 0;
+      // Standing instructions for this vendor (Suppliers → Category / Customer
+      // / Project) — they outrank what the reader worked out for itself.
+      const vendorRule = matchSupplierRule(ex.supplier || data.supplier);
+      const projectReason = vendorRule.project
+        ? `Standing rule: everything from ${ex.supplier || data.supplier} goes to ${vendorRule.project}.`
+        : String(ex.projectReason || '').trim();
       setData((d) => ({
         ...d,
         supplier: ex.supplier || d.supplier,
@@ -743,8 +752,9 @@ export default function CostDetail() {
         type: ex.documentType || d.type,
         ref: ex.invoiceNumber || d.ref,
         currency: ex.currency || d.currency,
-        category: ex.category || d.category,
+        category: vendorRule.category || ex.category || d.category,
         categoryReason: ex.categoryReason || d.categoryReason,
+        customer: vendorRule.customer || d.customer,
         total: ex.total != null ? String(ex.total) : d.total,
         tax: !gstRegistered ? '0.00' : ex.tax != null ? String(ex.tax) : d.tax,
         taxRate: d.taxRate || inferredRate,
@@ -752,10 +762,11 @@ export default function CostDetail() {
         description: descr || d.description,
         cardLast4: ex.cardLast4 || d.cardLast4,
         // A re-read is the way a rule written AFTER the upload reaches a
-        // document — writing a "When to use" rule and pressing this is the
-        // whole point — so an allocation it returns wins. Returning nothing
-        // leaves whatever is already there.
-        project: ex.project || d.project,
+        // document — writing a rule and pressing this is the whole point — so
+        // an allocation it returns wins. Returning nothing leaves what's there.
+        // A supplier rule outranks both: it's a standing instruction.
+        project: vendorRule.project || ex.project || d.project,
+        projectReason: projectReason || d.projectReason,
         dueDate: ex.dueDate || d.dueDate,
       }));
       if (doc?.persisted) {
@@ -767,13 +778,18 @@ export default function CostDetail() {
         if (ex.currency) patch.currency = ex.currency;
         if (ex.category) patch.category = ex.category;
         if (ex.categoryReason) patch.categoryReason = ex.categoryReason;
+        if (vendorRule.category) patch.category = vendorRule.category;
+        if (vendorRule.customer) patch.customer = vendorRule.customer;
         if (ex.total != null) patch.total = ex.total;
         if (ex.tax != null || !gstRegistered) patch.tax = exTaxOut;
         if (!data.taxRate && inferredRate) patch.taxRate = inferredRate;
         if (!data.taxRate && ex.taxRateReason) patch.taxRateReason = ex.taxRateReason;
         if (descr) patch.description = descr;
         if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
-        if (ex.project) patch.project = ex.project;
+        if (vendorRule.project || ex.project) {
+          patch.project = vendorRule.project || ex.project;
+          patch.projectReason = projectReason;
+        }
         if (ex.dueDate) patch.dueDate = ex.dueDate;
         const r = await updateBill(doc.id, patch).catch(() => null);
         if (r?.bill) {
@@ -1200,6 +1216,15 @@ export default function CostDetail() {
               <SectionHeading>Allocation</SectionHeading>
               <Field label="Customer"><EditableSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
               <Field label="Project"><EditableSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} /></Field>
+              <Field label="Reason">
+                <textarea
+                  rows={2}
+                  value={data.projectReason || ''}
+                  onChange={(e) => set('projectReason', e.target.value)}
+                  placeholder="Why this project — filled in by the AI, editable"
+                  className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </Field>
               <Field label="Description">
                 <textarea
                   rows={2}

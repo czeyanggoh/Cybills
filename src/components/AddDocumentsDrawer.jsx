@@ -18,6 +18,7 @@ import { getExtractionAccounts, useVisibleTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { autoPublishAfterRead, xeroBillUrl } from '@/lib/autoPublish';
 import { getCustomerRule } from '@/lib/customerRules';
+import { matchSupplierRule } from '@/lib/supplierRules';
 import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, resolveTaxRate } from '@/lib/extractionSettings';
 import { useUsers } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
@@ -367,18 +368,35 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       const printedDue = /^\d{4}-\d{2}-\d{2}$/.test(String(extracted?.dueDate || '')) ? extracted.dueDate : '';
       const due = printedDue || dueDateForNewDoc(settings, kind, iso);
       if (due && due !== iso) p.dueDate = due;
+      // A supplier rule (Suppliers → Category / Customer / Project) is a standing
+      // instruction about that vendor, so it beats anything the reader worked
+      // out for itself. Only for costs — sales have their own customer rules.
+      const vendorRule = kind === 'cost' ? matchSupplierRule(cur?.supplier) : {};
+      if (vendorRule.category) p.category = vendorRule.category;
+      if (vendorRule.customer) p.customer = vendorRule.customer;
+
       // Project (Xero PIC), in order of what the evidence supports:
-      //   1. a "When to use" rule the document plainly matched (Lists → Projects)
-      //   2. the uploader's own assigned project (Users → Project)
-      // A rule is a statement about the DOCUMENT, so it outranks a default that
-      // is only about who happened to upload it.
+      //   1. a rule set against the supplier (Suppliers → Project)
+      //   2. a project the reader matched — a "When to use" rule, or the
+      //      document naming it (Lists → Projects)
+      //   3. the uploader's own assigned project (Users → Project)
+      // The first two are statements about the DOCUMENT; the last is only about
+      // who happened to upload it.
       if (!String(cur?.project || '')) {
-        const byRule = String(extracted?.project || '').trim();
-        if (byRule) p.project = byRule;
-        else {
+        const readerPick = String(extracted?.project || '').trim();
+        if (vendorRule.project) {
+          p.project = vendorRule.project;
+          p.projectReason = `Standing rule: everything from ${cur?.supplier || 'this supplier'} goes to ${vendorRule.project}.`;
+        } else if (readerPick) {
+          p.project = readerPick;
+          p.projectReason = String(extracted?.projectReason || '').trim();
+        } else {
           const ownerName = owner || meName;
           const ownerUser = users.find((u) => u.name === ownerName || u.email === ownerName);
-          if (ownerUser?.project) p.project = ownerUser.project;
+          if (ownerUser?.project) {
+            p.project = ownerUser.project;
+            p.projectReason = `Nothing on the document pointed to a project, so it follows ${ownerName}'s own (Users → Project).`;
+          }
         }
       }
       const r = await updateBill(billId, p).then((res) => res?.bill).catch(() => null);
