@@ -69,6 +69,19 @@ export function useCostsDocs() {
     };
   }, [reload]);
 
+  // While anything is still being read, poll. Reading is driven by the
+  // UPLOADER's browser, so a document another person (or another tab) is
+  // uploading only reaches this one through a refetch — without this, a
+  // finished document sits on screen as "processing" indefinitely, and the
+  // server's stuck-document sweep never runs either, because that also only
+  // happens on a fetch. Stops the moment nothing is processing.
+  const processingCount = uploaded.filter((d) => d.status === 'processing').length;
+  useEffect(() => {
+    if (!processingCount) return undefined;
+    const t = setInterval(reload, 4000);
+    return () => clearInterval(t);
+  }, [processingCount, reload]);
+
   return { allDocs: uploaded, sampleDocs: [], uploaded, reload };
 }
 

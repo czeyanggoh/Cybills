@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import ExtractionProgress, { SALES_FIELDS } from '@/components/ExtractionProgress';
 import { useNavigate } from 'react-router-dom';
 import { Flag, Image, ChevronDown, Search, Filter, Settings2 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
@@ -19,11 +20,7 @@ import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
 // How many of the six key fields Claude managed to extract, Dext-style.
-function extractedCount(d) {
-  const present = (v) => v != null && v !== '' && v !== '—' && v !== 'Unknown supplier' && v !== 'Uncategorised';
-  const fields = [d.customer, d.date, d.ref, d.category, d.total, d.currency];
-  return fields.filter(present).length;
-}
+
 
 // Shape a persisted sales bill (kind==='sales') into the row form this table
 // renders. The sales table keys on "customer"/"ref" where a bill carries
@@ -382,9 +379,7 @@ function ProcessingView({ rows, onMoveOne, onMoveAll }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((d) => {
-              const done = extractedCount(d);
-              return (
+            {rows.map((d) => (
                 <tr key={d.id} className="group border-b last:border-0">
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-1.5">
@@ -397,12 +392,7 @@ function ProcessingView({ rows, onMoveOne, onMoveAll }) {
                   <td className="px-3 py-3">{d.fileName || '—'}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">Via web</td>
                   <td className="px-3 py-3">
-                    <div className="w-56">
-                      <div className="mb-1 text-xs text-muted-foreground">{done} out of 6 fields extracted</div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                        <div className="h-full rounded-full bg-foreground transition-all" style={{ width: `${(done / 6) * 100}%` }} />
-                      </div>
-                    </div>
+                    <ExtractionProgress doc={d} fieldSet={SALES_FIELDS} />
                   </td>
                   <td className="px-3 py-3 text-right">
                     <button
@@ -414,8 +404,7 @@ function ProcessingView({ rows, onMoveOne, onMoveAll }) {
                     </button>
                   </td>
                 </tr>
-              );
-            })}
+              ))}
             {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">

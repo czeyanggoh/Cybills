@@ -31,6 +31,7 @@ import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
+import ExtractionProgress from '@/components/ExtractionProgress';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { cn } from '@/lib/utils';
@@ -409,10 +410,6 @@ function ApprovalsPanel() {
 // extraction progress and a manual "Move to inbox" step (they also auto-advance
 // to the inbox a moment after upload). Mirrors the Sales processing view.
 function CostProcessingView({ rows, onMoveOne, onMoveAll, meName = 'You' }) {
-  const doneCount = (d) => {
-    const present = (v) => v != null && v !== '' && v !== '—' && v !== 'Unknown supplier' && v !== 'Uncategorised';
-    return [d.supplier, d.date, d.invoiceNumber, d.category, d.total, d.currency].filter(present).length;
-  };
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -435,9 +432,7 @@ function CostProcessingView({ rows, onMoveOne, onMoveAll, meName = 'You' }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((d) => {
-              const done = doneCount(d);
-              return (
+            {rows.map((d) => (
                 <tr key={d.id} className="group border-b last:border-0">
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-1.5">
@@ -450,12 +445,7 @@ function CostProcessingView({ rows, onMoveOne, onMoveAll, meName = 'You' }) {
                   <td className="px-3 py-3">{d.fileName || '—'}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">Via web</td>
                   <td className="px-3 py-3">
-                    <div className="w-56">
-                      <div className="mb-1 text-xs text-muted-foreground">{done} out of 6 fields extracted</div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                        <div className="h-full rounded-full bg-foreground transition-all" style={{ width: `${(done / 6) * 100}%` }} />
-                      </div>
-                    </div>
+                    <ExtractionProgress doc={d} />
                   </td>
                   <td className="px-3 py-3 text-right">
                     <button
@@ -467,8 +457,7 @@ function CostProcessingView({ rows, onMoveOne, onMoveAll, meName = 'You' }) {
                     </button>
                   </td>
                 </tr>
-              );
-            })}
+              ))}
             {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">

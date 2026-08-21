@@ -277,7 +277,6 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   // cursor (Dext's behaviour), so a narrow browser spends its width on the
   // document rather than on two nav columns. Roomy window → nothing changes.
   const tight = useMediaQuery('(max-width: 1279px)');
-  const subnavColumnHidden = useMediaQuery('(max-width: 1023px)');
   const [railHover, setRailHover] = useState(false);
   const flyout = tight && railHover; // expanded, floating over the content
   const showLabels = !tight || railHover;
@@ -315,7 +314,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
           onMouseLeave={() => setRailHover(false)}
           className={cn(
             'relative hidden shrink-0 flex-col border-r bg-background transition-[width] duration-150',
-            tight ? 'w-14' : 'w-48',
+            tight ? 'w-14' : 'w-56',
             hideSidebar ? 'hidden' : 'md:flex',
           )}
         >
@@ -348,13 +347,14 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                 <SidebarLink key={item.to} {...item} showLabel={showLabels} />
               ))}
             </nav>
-            {/* Below lg the second column is gone, so the section's own nav
-                (Costs inbox, Expense claims…) rides along in the fly-out —
-                otherwise a narrow window loses it entirely. */}
-            {flyout && subnav && subnavColumnHidden && (
+            {/* The section's own nav (Costs inbox, Expense claims…) sits INSIDE
+                this column rather than in a second one beside it — one list to
+                read, and the content gets the width back. Collapsed to the rail
+                it would be labels in 56px, so it waits for the fly-out. */}
+            {showLabels && subnav && (
               <div className="mt-2 min-h-0 flex-1 overflow-auto border-t">{subnav}</div>
             )}
-            <div className={cn('flex flex-col gap-1 border-t', showLabels ? 'p-3' : 'px-2 py-3', !(flyout && subnav && subnavColumnHidden) && 'mt-auto')}>
+            <div className={cn('flex flex-col gap-1 border-t', showLabels ? 'p-3' : 'px-2 py-3', !(showLabels && subnav) && 'mt-auto')}>
               {bottomNav.map((item) => (
                 <button
                   key={item.label}
@@ -468,11 +468,6 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
           </header>
 
           <div className="flex min-h-0 flex-1">
-            {subnav && (
-              <aside className="hidden w-48 shrink-0 overflow-auto border-r bg-background lg:block">
-                {subnav}
-              </aside>
-            )}
             <main className="min-w-0 flex-1 overflow-auto p-4 md:p-6">
               <JoinRequestBanner />
               <ApprovalReminderBanner />
