@@ -27,6 +27,10 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   const [error, setError] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [done, setDone] = useState(null); // { invoiceNumber, status }
+  // Whether the document's own file made it onto the Xero bill. Reported rather
+  // than swallowed: a bill in the ledger without its paper is worth knowing
+  // about at the moment it happens, not weeks later in an audit.
+  const [attachment, setAttachment] = useState(null);
   // A company that isn't GST-registered publishes everything as No Tax, whatever
   // the bill still carries — the last gate before a stale code reaches Xero.
   const gstRegistered = useGstRegistered();
@@ -130,6 +134,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
         dueDate: dueDate || undefined,
       });
       setDone(result.invoice);
+      setAttachment(result.attachment ?? null);
       onPublished?.(result);
     } catch (err) {
       setError(err.message);
@@ -165,6 +170,15 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
               a {done.status === 'DRAFT' ? 'draft ' : ''}bill
               {done.invoiceNumber ? ` (${done.invoiceNumber})` : ''}.
             </p>
+            {attachment?.ok && (
+              <p className="text-xs text-muted-foreground">The document is attached to it under Related Files.</p>
+            )}
+            {attachment && !attachment.ok && (
+              <p className="max-w-sm text-xs text-amber-700">
+                The bill posted, but its file could not be attached: {attachment.error} You can retry with
+                “Send file to Xero” on the document, or attach it by hand in Xero.
+              </p>
+            )}
             <button
               type="button"
               onClick={onClose}

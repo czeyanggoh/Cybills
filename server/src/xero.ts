@@ -391,11 +391,18 @@ async function attachBillFile(
   tenantId: string,
   invoiceId: string,
   bill: Bill
-): Promise<{ ok: boolean; error?: string } | null> {
+): Promise<{ ok: boolean; error?: string; bytes?: number } | null> {
   if (!invoiceId) return null;
   try {
     const file = await billFileBytes(bill);
     if (!file) return null; // nothing stored (or too big) — nothing to attach
+    // Never hand Xero an empty body: it answers with a validation error that
+    // reads as if the ATTACHMENT was rejected, when the real fault is upstream
+    // of the call. Say which end lost the bytes.
+    if (!file.bytes.length) {
+      console.error('[xero] attachment skipped — read 0 bytes from storage', bill.id, bill.storageKey);
+      return { ok: false, error: 'The stored file read back empty, so there was nothing to send.', bytes: 0 };
+    }
     const name = attachmentName(bill, file.contentType);
     const att = await relay(`Invoices/${invoiceId}/Attachments/${encodeURIComponent(name)}`, {
       method: 'POST',
@@ -403,11 +410,26 @@ async function attachBillFile(
       rawBody: file.bytes,
       contentType: file.contentType,
     });
-    if (!att.ok) console.error('[xero] bill attachment failed', att.status, att.message);
-    return att.ok ? { ok: true } : { ok: false, error: att.message };
+    if (!att.ok) {
+      // The byte count is the whole diagnosis: if Xero reports ContentLength 0
+      // while this says we sent thousands, the body was dropped in transit (the
+      // relay), not produced empty here.
+      console.error(
+        '[xero] bill attachment failed',
+        att.status,
+        att.message,
+        `— CYBills sent ${file.bytes.length} bytes of ${file.contentType} as ${name}`
+      );
+      return {
+        ok: false,
+        error: `${att.message} (CYBills sent ${file.bytes.length} bytes of ${file.contentType})`,
+        bytes: file.bytes.length,
+      };
+    }
+    return { ok: true, bytes: file.bytes.length };
   } catch (err) {
     console.error('[xero] bill attachment error', err);
-    return { ok: false, error: 'attach_failed' };
+    return { ok: false, error: 'The file could not be read or sent.' };
   }
 }
 

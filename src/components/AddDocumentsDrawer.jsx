@@ -154,7 +154,7 @@ function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, a
 
 // One row per uploaded file, reflecting its place in the pipeline.
 function UploadItem({ item, onForce, onSkip }) {
-  const { status, file, error, duplicate, xeroInvoiceId } = item;
+  const { status, file, error, duplicate, xeroInvoiceId, attachError } = item;
   return (
     <div className="rounded-md border p-3">
       <div className="flex items-center gap-3">
@@ -198,6 +198,13 @@ function UploadItem({ item, onForce, onSkip }) {
           </span>
         )}
       </div>
+
+      {status === 'added' && attachError && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-700">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>Posted to Xero, but its file could not be attached: {attachError} Open the document and use “Send file to Xero” to retry.</span>
+        </p>
+      )}
 
       {(status === 'uploading' || status === 'extracting') && (
         <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
@@ -476,6 +483,9 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               status: 'added',
               bill: posted?.bill ?? withDefaults,
               xeroInvoiceId: posted?.invoice?.invoiceId || posted?.bill?.xeroInvoiceId || '',
+              // A published bill without its paper attached is worth saying out
+              // loud here, rather than leaving it to be noticed in Xero.
+              attachError: posted?.attachment && !posted.attachment.ok ? posted.attachment.error : '',
             });
           } else {
             // Nothing read (extraction off/failed) — move straight to the inbox;
