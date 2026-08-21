@@ -330,7 +330,7 @@ function CostsToolbar({ query, setQuery, flagFilter, setFlagFilter, adv, setAdv 
         {filterOpen && (
           <>
             <div className="fixed inset-0 z-10" onClick={() => setFilterOpen(false)} aria-hidden="true" />
-            <div className="absolute right-0 z-20 mt-1 w-64 rounded-lg border bg-background p-4 shadow-lg">
+            <div className="absolute left-0 z-30 mt-1 w-64 rounded-lg border bg-background p-4 shadow-lg">
               <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filter</p>
               <div className="grid grid-cols-[60px_1fr] items-center gap-2 text-sm">
                 <span>Flag</span>
@@ -935,7 +935,9 @@ export default function Costs() {
             <table className="w-full min-w-[1000px] text-sm">
               <thead className="border-b bg-muted/40 text-left">
                 <tr className="text-muted-foreground">
-                  <th className="w-24 px-3 py-2.5">
+                  {/* Sticky: with the optional columns on, the table scrolls
+                      sideways — the checkboxes have to stay reachable. */}
+                  <th className="sticky left-0 z-10 w-24 bg-muted/40 px-3 py-2.5">
                     <input
                       type="checkbox"
                       checked={rows.length > 0 && selected.size === rows.length}
@@ -960,7 +962,7 @@ export default function Costs() {
                     onClick={() => navigate(`/costs/${d.id}`)}
                     className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
                   >
-                    <td className={densityClass} onClick={(e) => e.stopPropagation()}>
+                    <td className={cn('sticky left-0 z-10 bg-background', densityClass)} onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
                         <span className={cn('h-2 w-2 rounded-full', d.unread ? 'bg-foreground' : 'bg-transparent')} />
                         <input
