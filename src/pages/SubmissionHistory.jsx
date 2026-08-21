@@ -98,12 +98,17 @@ export default function SubmissionHistory() {
     tab === 'Supplier statements' ? d.kind === 'supplier_statement' : d.kind === 'cost' || d.kind === 'sales'
   );
   const q = query.trim().toLowerCase();
+  // Newest submission on top, always — don't rely on the store's order.
+  const sortByNewest = (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
   const rows = (q
     ? forTab.filter((d) =>
         [d.supplier, d.user, d.customer, displayItemId(d.id)].some((v) => String(v || '').toLowerCase().includes(q))
       )
     : forTab
-  ).map((d) => ({
+  )
+    .slice()
+    .sort(sortByNewest)
+    .map((d) => ({
     doc: d,
     id: displayItemId(d.id),
     status: d.status,
