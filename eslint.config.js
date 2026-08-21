@@ -36,6 +36,13 @@ export default [
     },
     rules: {
       "no-unused-vars": "off",
+      // Catches the class of bug that white-screened the Lists page: `useEffect`
+      // used but never imported. It builds fine (it's valid JS) and only throws
+      // at render, so nothing but this rule stands between it and production.
+      // Off by accident before — the js/react recommended configs are spread in
+      // above, but each spread replaces `rules` wholesale, so only this block
+      // ever applied.
+      "no-undef": "error",
       "react/jsx-uses-vars": "error",
       "react/jsx-uses-react": "error",
       "unused-imports/no-unused-imports": "error",

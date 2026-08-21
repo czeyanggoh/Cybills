@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
 import { addToList, removeFromList, setListVisible, setMetaField, useHiddenSet } from '@/lib/listsStore';

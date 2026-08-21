@@ -53,9 +53,26 @@ export const SEED_PROJECTS = [
 let seq = 0;
 const genId = (p) => `${p}_${Date.now().toString(36)}_${(seq += 1)}`;
 
+// A plain object, whatever the stored blob actually holds. Spreading the saved
+// value over the defaults isn't enough: a stored `hidden: null` REPLACES the
+// default `{}`, and the next `hidden[kind]` throws — which white-screens the
+// whole Lists page rather than degrading. Same for an array, or a blob written
+// by an older shape.
+const asObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+
 function read() {
-  return { added: {}, hidden: {}, meta: {}, ...(store.get() || {}) };
+  const saved = asObject(store.get());
+  return {
+    ...saved,
+    added: asObject(saved.added),
+    hidden: asObject(saved.hidden),
+    meta: asObject(saved.meta),
+  };
 }
+
+// The ids switched off for one list. Anything that isn't a list of ids (an
+// object, a string, null) means "none hidden" rather than an exception.
+const hiddenIds = (hidden, kind) => (Array.isArray(hidden?.[kind]) ? hidden[kind] : []);
 function write(state) {
   store.set(state);
   emit();
@@ -69,16 +86,16 @@ const seedId = (kind, row) => `${kind}:${row.name}`;
 
 export function getList(kind) {
   const { added, hidden } = read();
-  const hiddenSet = new Set(hidden[kind] || []);
-  const seed = SEEDS[kind].map((row) => ({ ...row, id: row.id || seedId(kind, row), seed: true }));
-  const userAdded = (added[kind] || []).map((row) => ({ ...row, seed: false }));
+  const hiddenSet = new Set(hiddenIds(hidden, kind));
+  const seed = (SEEDS[kind] || []).map((row) => ({ ...row, id: row.id || seedId(kind, row), seed: true }));
+  const userAdded = (Array.isArray(added[kind]) ? added[kind] : []).map((row) => ({ ...row, seed: false }));
   return [...seed, ...userAdded].map((row) => ({ ...row, visible: !hiddenSet.has(row.id) }));
 }
 
 export function addToList(kind, row) {
   const state = read();
   const added = { ...(state.added || {}) };
-  added[kind] = [...(added[kind] || []), { ...row, id: genId(kind) }];
+  added[kind] = [...(Array.isArray(added[kind]) ? added[kind] : []), { ...row, id: genId(kind) }];
   write({ ...state, added });
 }
 
@@ -86,17 +103,17 @@ export function removeFromList(kind, ids) {
   const state = read();
   const set = new Set(ids);
   const added = { ...(state.added || {}) };
-  added[kind] = (added[kind] || []).filter((r) => !set.has(r.id));
+  added[kind] = (Array.isArray(added[kind]) ? added[kind] : []).filter((r) => !set.has(r.id));
   // Seed rows can't be deleted outright — hide them instead.
   const hidden = { ...(state.hidden || {}) };
-  hidden[kind] = [...new Set([...(hidden[kind] || []), ...ids])];
+  hidden[kind] = [...new Set([...hiddenIds(hidden, kind), ...ids])];
   write({ ...state, added, hidden });
 }
 
 // The hidden-id set for a list kind (ids the user switched off). Used by the
 // live-Xero-backed tax-rate list so the picker and Lists page share one source.
 export function getHiddenSet(kind) {
-  return new Set(read().hidden[kind] || []);
+  return new Set(hiddenIds(read().hidden, kind));
 }
 // Reactive form of getHiddenSet, for views built on a LIVE Xero list (categories,
 // tax rates) rather than on getList().
@@ -112,7 +129,8 @@ export function useHiddenSet(kind) {
 
 // User-added rows for a list kind (not from the seed / Xero).
 export function getAddedRows(kind) {
-  return read().added[kind] || [];
+  const rows = read().added[kind];
+  return Array.isArray(rows) ? rows : [];
 }
 
 // Per-row extras that CYBills owns rather than Xero — today just a tax rate's
@@ -120,7 +138,7 @@ export function getAddedRows(kind) {
 // same key the hidden-set uses), so a rule survives the live Xero list being
 // refetched and reordered.
 export function getMeta(kind) {
-  return read().meta?.[kind] || {};
+  return asObject(read().meta[kind]);
 }
 
 export function setMetaField(kind, id, field, value) {
@@ -138,7 +156,7 @@ export function setMetaField(kind, id, field, value) {
 export function setListVisible(kind, id, visible) {
   const state = read();
   const hidden = { ...(state.hidden || {}) };
-  const set = new Set(hidden[kind] || []);
+  const set = new Set(hiddenIds(hidden, kind));
   if (visible) set.delete(id);
   else set.add(id);
   hidden[kind] = [...set];
