@@ -488,6 +488,10 @@ function CostProcessingView({ rows, onMoveOne, onMoveAll, meName = 'You' }) {
 }
 
 export default function Costs() {
+  // Read before the column list is built below — shownColumns evaluates
+  // immediately, so these have to exist by then.
+  const tablePrefs = useTablePrefs('costs');
+  const densityClass = DENSITY_CLASS[tablePrefs.density] || DENSITY_CLASS.Medium;
   const navigate = useNavigate();
   const { user } = useAuth();
   // Label for uploads with no recorded creator ("You" = whoever is viewing).
@@ -591,8 +595,6 @@ export default function Costs() {
   const { allDocs, reload } = useCostsDocs();
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
-  const tablePrefs = useTablePrefs('costs');
-  const densityClass = DENSITY_CLASS[tablePrefs.density] || DENSITY_CLASS.Medium;
   const taxRates = useVisibleTaxRates(); // shared managed list (Lists → Tax rates)
   // Not GST-registered → No Tax is the only code on offer, and the row shows it
   // even for a document coded before the profile said so (opening the document
