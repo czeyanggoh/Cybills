@@ -144,7 +144,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
-      <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-background shadow-xl">
+      <div className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-lg bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h2 className="text-base font-semibold tracking-tight">Publish to Xero</h2>
           <button
