@@ -83,21 +83,48 @@ function initialsFrom(user) {
   return chars.toUpperCase();
 }
 
-function SidebarLink({ to, label, icon: Icon }) {
+// Live matchMedia, so the shell reacts to a window being dragged narrower
+// rather than only to a reload.
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    try {
+      return window.matchMedia(query).matches;
+    } catch {
+      return false; // no matchMedia (SSR/tests) — assume the roomy layout
+    }
+  });
+  useEffect(() => {
+    let mq;
+    try {
+      mq = window.matchMedia(query);
+    } catch {
+      return undefined;
+    }
+    const sync = () => setMatches(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, [query]);
+  return matches;
+}
+
+function SidebarLink({ to, label, icon: Icon, showLabel = true }) {
   return (
     <NavLink
       to={to}
+      title={showLabel ? undefined : label}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+          'flex items-center gap-3 rounded-md py-2 text-sm transition-colors',
+          showLabel ? 'px-3' : 'justify-center px-0',
           isActive
             ? 'bg-muted font-medium text-foreground'
             : 'text-muted-foreground hover:bg-muted hover:text-foreground'
         )
       }
     >
-      <Icon className="h-4 w-4" strokeWidth={1.75} />
-      {label}
+      <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+      {showLabel && label}
     </NavLink>
   );
 }
@@ -246,6 +273,14 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   const navigate = useNavigate();
   const [addOpen, setAddOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
+  // Tight window → the sidebar drops to an icon rail and flies out under the
+  // cursor (Dext's behaviour), so a narrow browser spends its width on the
+  // document rather than on two nav columns. Roomy window → nothing changes.
+  const tight = useMediaQuery('(max-width: 1279px)');
+  const subnavColumnHidden = useMediaQuery('(max-width: 1023px)');
+  const [railHover, setRailHover] = useState(false);
+  const flyout = tight && railHover; // expanded, floating over the content
+  const showLabels = !tight || railHover;
 
   // Admin surfaces are hidden from those who can't use them: Business settings
   // is Business Admin only, Users is either admin tier. A signed-in user's real
@@ -275,48 +310,81 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
       <div className="flex h-screen overflow-hidden bg-background text-foreground">
         {/* Primary sidebar — hidden in full-width chrome (e.g. Settings, which
             shows its own nav column + a Back link, like Dext). */}
-        <aside className={cn('hidden w-48 shrink-0 flex-col border-r bg-background', hideSidebar ? 'hidden' : 'md:flex')}>
-          <div className="flex h-14 items-center gap-2 border-b px-4">
-            <Receipt className="h-5 w-5" />
-            <span className="text-sm font-semibold tracking-tight">CYBills</span>
-          </div>
-          <div className="p-3">
-            <button
-              type="button"
-              onClick={() => setAddOpen(true)}
-              className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              <Plus className="h-4 w-4" strokeWidth={2} />
-              Add documents
-            </button>
-          </div>
-          <nav className="flex flex-1 flex-col gap-1 px-3">
-            {NAV.map((item) => (
-              <SidebarLink key={item.to} {...item} />
-            ))}
-          </nav>
-          <div className="flex flex-col gap-1 border-t p-3">
-            {bottomNav.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={item.to ? () => navigate(item.to) : undefined}
-                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <item.icon className="h-4 w-4" strokeWidth={1.75} />
-                {item.label}
-              </button>
-            ))}
-            {user && (
-              <button
-                type="button"
-                onClick={handleSignOut}
-                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <LogOut className="h-4 w-4" strokeWidth={1.75} />
-                Sign out
-              </button>
+        <aside
+          onMouseEnter={() => setRailHover(true)}
+          onMouseLeave={() => setRailHover(false)}
+          className={cn(
+            'relative hidden shrink-0 flex-col border-r bg-background transition-[width] duration-150',
+            tight ? 'w-14' : 'w-48',
+            hideSidebar ? 'hidden' : 'md:flex',
+          )}
+        >
+          {/* Collapsed, this fills the rail. Hovered, it lifts out of the flow
+              and floats over the content at full width — the rail keeps its
+              place, so nothing reflows underneath. */}
+          <div
+            className={cn(
+              'flex h-full flex-col',
+              flyout && 'absolute inset-y-0 left-0 z-40 w-56 border-r bg-background shadow-xl',
             )}
+          >
+            <div className={cn('flex h-14 shrink-0 items-center gap-2 border-b', showLabels ? 'px-4' : 'justify-center px-0')}>
+              <Receipt className="h-5 w-5 shrink-0" />
+              {showLabels && <span className="text-sm font-semibold tracking-tight">CYBills</span>}
+            </div>
+            <div className={cn('shrink-0', showLabels ? 'p-3' : 'px-2 py-3')}>
+              <button
+                type="button"
+                onClick={() => setAddOpen(true)}
+                title={showLabels ? undefined : 'Add documents'}
+                className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                <Plus className="h-4 w-4 shrink-0" strokeWidth={2} />
+                {showLabels && 'Add documents'}
+              </button>
+            </div>
+            <nav className={cn('flex flex-col gap-1', showLabels ? 'px-3' : 'px-2')}>
+              {NAV.map((item) => (
+                <SidebarLink key={item.to} {...item} showLabel={showLabels} />
+              ))}
+            </nav>
+            {/* Below lg the second column is gone, so the section's own nav
+                (Costs inbox, Expense claims…) rides along in the fly-out —
+                otherwise a narrow window loses it entirely. */}
+            {flyout && subnav && subnavColumnHidden && (
+              <div className="mt-2 min-h-0 flex-1 overflow-auto border-t">{subnav}</div>
+            )}
+            <div className={cn('flex flex-col gap-1 border-t', showLabels ? 'p-3' : 'px-2 py-3', !(flyout && subnav && subnavColumnHidden) && 'mt-auto')}>
+              {bottomNav.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={item.to ? () => navigate(item.to) : undefined}
+                  title={showLabels ? undefined : item.label}
+                  className={cn(
+                    'flex w-full items-center gap-3 rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+                    showLabels ? 'px-3' : 'justify-center px-0',
+                  )}
+                >
+                  <item.icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                  {showLabels && item.label}
+                </button>
+              ))}
+              {user && (
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  title={showLabels ? undefined : 'Sign out'}
+                  className={cn(
+                    'flex w-full items-center gap-3 rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+                    showLabels ? 'px-3' : 'justify-center px-0',
+                  )}
+                >
+                  <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                  {showLabels && 'Sign out'}
+                </button>
+              )}
+            </div>
           </div>
         </aside>
 
