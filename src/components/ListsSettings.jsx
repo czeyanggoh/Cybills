@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
-import { addToList, removeFromList, setListVisible } from '@/lib/listsStore';
+import { addToList, removeFromList, setListVisible, setMetaField, useHiddenSet } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
@@ -101,6 +101,11 @@ function CategoriesFromXero() {
   const { data: categories, isLoading, isError, error } = useXeroCategories(orgId);
   const [query, setQuery] = useState('');
   const [edits, setEdits] = useState({}); // id -> edited description
+  // Visibility is CYBills-side (Xero has no such flag), keyed by account CODE —
+  // the one field the categories endpoint and the accounts endpoint share, so a
+  // category switched off here also leaves the document pickers and the
+  // extractor's allowed list.
+  const hidden = useHiddenSet('categories');
   const [status, setStatus] = useState({}); // id -> 'saving' | 'saved' | 'error'
   const [errMsg, setErrMsg] = useState({}); // id -> message
 
@@ -120,6 +125,7 @@ function CategoriesFromXero() {
   const descOf = (c) => (edits[c.id] !== undefined ? edits[c.id] : c.description);
   const dirty = (c) => edits[c.id] !== undefined && edits[c.id] !== c.description;
   const setDesc = (id, v) => { setEdits((e) => ({ ...e, [id]: v })); setStatus((s) => ({ ...s, [id]: undefined })); };
+  const visKey = (c) => c.code || c.name;
 
   const save = async (c) => {
     setStatus((s) => ({ ...s, [c.id]: 'saving' }));
@@ -137,7 +143,8 @@ function CategoriesFromXero() {
   return (
     <div>
       <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
-        Categories are your connected Xero organisation’s expense accounts. Edit a <span className="font-medium text-foreground">Description</span> and Save to write it straight back to Xero.
+        Categories are your connected Xero organisation’s expense accounts. Edit a <span className="font-medium text-foreground">Description</span> and Save to write it straight back to Xero. Switch{' '}
+        <span className="font-medium text-foreground">Visible</span> off to drop a category from the document pickers and stop CYBills coding anything to it — the account stays untouched in Xero.
       </p>
       <div className="mb-3 flex items-center">
         <div className="relative ml-auto">
@@ -146,11 +153,11 @@ function CategoriesFromXero() {
         </div>
       </div>
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[440px] text-sm">
+        <table className="w-full min-w-[620px] text-sm">
           <thead className="border-b bg-muted/40 text-left text-muted-foreground">
             {/* Description is the greedy column (w-full) so it fills the row; the
                 others shrink to their content. */}
-            <tr><th className="whitespace-nowrap px-3 py-2.5 font-medium">Code</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Name</th><th className="w-full px-3 py-2.5 font-medium">Description</th><th className="w-24 px-3 py-2.5" /></tr>
+            <tr><th className="whitespace-nowrap px-3 py-2.5 font-medium">Code</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Name</th><th className="w-full px-3 py-2.5 font-medium">Description</th><th className="w-24 px-3 py-2.5" /><th className="whitespace-nowrap px-3 py-2.5 font-medium">Visible</th></tr>
           </thead>
           <tbody>
             {rows.map((c) => (
@@ -167,15 +174,49 @@ function CategoriesFromXero() {
                     {status[c.id] === 'saving' ? 'Saving…' : 'Save'}
                   </button>
                 </td>
+                <td className="px-3 py-3">
+                  <VisibleToggle on={!hidden.has(visKey(c))} onToggle={() => setListVisible('categories', visKey(c), hidden.has(visKey(c)))} />
+                </td>
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">No categories{q ? ' match your search' : ''}.</td></tr>
+              <tr><td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">No categories{q ? ' match your search' : ''}.</td></tr>
             )}
           </tbody>
         </table>
       </div>
       <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {(categories || []).length} categories</p>
+    </div>
+  );
+}
+
+// The "when to use" rule for one tax rate. Free text the org writes itself —
+// it rides along to the extractor, which may pick a code whose rule clearly
+// matches the document (the arithmetic fallback only ever reaches the
+// standard-rated codes and No Tax). Saved on blur, keyed by rate name.
+function RulesCell({ row }) {
+  const [draft, setDraft] = useState(row.rules || '');
+  const [saved, setSaved] = useState(false);
+  // Re-sync when the stored value changes underneath us (another tab, a refetch).
+  useEffect(() => { setDraft(row.rules || ''); }, [row.rules]);
+  const commit = () => {
+    const next = draft.trim();
+    if (next === (row.rules || '')) return;
+    setMetaField('taxRates', row.id, 'rules', next);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+  return (
+    <div>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        rows={2}
+        placeholder="When should this code be used?"
+        className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      {saved && <p className="mt-1 text-xs text-muted-foreground">Saved.</p>}
     </div>
   );
 }
@@ -192,6 +233,13 @@ function TaxRatesList() {
 
   return (
     <div>
+      <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
+        Tax rates come from your connected Xero organisation. Write a{' '}
+        <span className="font-medium text-foreground">When to use</span> rule to teach CYBills when a
+        code applies — e.g. “Overseas supplier billing services performed in Singapore — reverse
+        charge.” Documents matching a rule are coded to it automatically; codes with no rule are only
+        auto-picked when the printed GST matches a standard rate.
+      </p>
       <Toolbar
         hasSelection={selected.size > 0}
         onDelete={() => { removeFromList('taxRates', [...selected]); clear(); }}
@@ -201,17 +249,19 @@ function TaxRatesList() {
         <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Add tax rate</button>
       </Toolbar>
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[560px] text-sm">
+        <table className="w-full min-w-[820px] text-sm">
           <thead className="border-b bg-muted/40 text-left text-muted-foreground">
-            <tr><th className="w-10 px-3 py-2.5" /><th className="px-3 py-2.5 font-medium">Name</th><th className="px-3 py-2.5 font-medium">Code</th><th className="px-3 py-2.5 font-medium">Rate %</th><th className="px-3 py-2.5 font-medium">Visible</th></tr>
+            {/* "When to use" is the greedy column (w-full); the rest shrink. */}
+            <tr><th className="w-10 px-3 py-2.5" /><th className="whitespace-nowrap px-3 py-2.5 font-medium">Name</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Code</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Rate %</th><th className="w-full min-w-[280px] px-3 py-2.5 font-medium">When to use</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Visible</th></tr>
           </thead>
           <tbody>
             {filtered.map((r) => (
-              <tr key={r.id} className="border-b last:border-0 hover:bg-muted/40">
+              <tr key={r.id} className="border-b align-top last:border-0 hover:bg-muted/40">
                 <td className="px-3 py-3"><input type="checkbox" checked={selected.has(r.id)} onChange={() => toggle(r.id)} className="h-4 w-4 accent-black" /></td>
                 <td className="px-3 py-3 font-medium">{r.name}</td>
                 <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{r.code}</td>
                 <td className="px-3 py-3 tabular-nums">{Number(r.rate).toFixed(1)}</td>
+                <td className="px-3 py-2"><RulesCell row={r} /></td>
                 <td className="px-3 py-3"><VisibleToggle on={r.visible} onToggle={() => setListVisible('taxRates', r.id, !r.visible)} /></td>
               </tr>
             ))}
@@ -222,10 +272,14 @@ function TaxRatesList() {
       <AddDialog
         open={addOpen}
         title="Add tax rate"
-        fields={[{ key: 'name', label: 'Name' }, { key: 'code', label: 'Code' }, { key: 'rate', label: 'Rate %', type: 'number', placeholder: '0.0' }]}
+        fields={[{ key: 'name', label: 'Name' }, { key: 'code', label: 'Code' }, { key: 'rate', label: 'Rate %', type: 'number', placeholder: '0.0' }, { key: 'rules', label: 'When to use (optional)', placeholder: 'When should this code be used?' }]}
         required={['name', 'code']}
         onClose={() => setAddOpen(false)}
-        onAdd={(f) => addToList('taxRates', { name: f.name.trim(), id: (f.code || '').trim().toUpperCase(), code: (f.code || '').trim().toUpperCase(), rate: Number(f.rate) || 0 })}
+        onAdd={(f) => {
+          const name = f.name.trim();
+          addToList('taxRates', { name, id: (f.code || '').trim().toUpperCase(), code: (f.code || '').trim().toUpperCase(), rate: Number(f.rate) || 0 });
+          if ((f.rules || '').trim()) setMetaField('taxRates', name, 'rules', f.rules.trim());
+        }}
       />
     </div>
   );

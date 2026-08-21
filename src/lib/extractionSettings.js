@@ -130,8 +130,10 @@ const autoMatches = (rule, row) => {
 // rate isn't in the chart gets No Tax, because foreign GST isn't domestic input
 // tax. Tax charged at a rate no standard-rated code matches is left BLANK for a
 // human — that's import GST, reverse charge or partial exemption territory. With
-// no tax, use the configured default, then No Tax.
-export function inferTaxRateName(total, tax, rates, defaultName = '', currency = '', baseCurrency = 'SGD', kind = 'cost') {
+// no tax, use the configured default, then No Tax. `opts` is
+// { defaultName, currency, baseCurrency, kind }.
+export function inferTaxRateName(total, tax, rates, opts = {}) {
+  const { defaultName = '', currency = '', baseCurrency = 'SGD', kind = 'cost' } = opts;
   const t = Number(String(total ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const x = Number(String(tax ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const list = Array.isArray(rates) ? rates : [];
@@ -164,4 +166,27 @@ export function inferTaxRateName(total, tax, rates, defaultName = '', currency =
   }
   // No tax charged: honour the configured default, else No Tax.
   return useDefault() || (noTax ? noTax.name : '');
+}
+
+// The one place a document's tax rate is decided, so every entry point (upload,
+// re-read, merge) applies the same precedence:
+//
+//   1. Not GST-registered  → "No Tax", always. Nothing to claim, nothing to
+//      analyse (Business profile → GST registered?).
+//   2. A rule the org wrote → the extractor matched this document against a tax
+//      rate's "when to use" rule (Lists → Tax rates). Only ever a rate that is
+//      visible, so a hidden code can't come back through the model.
+//   3. Arithmetic          → the standard-rated code matching the printed GST,
+//      or the configured default. See inferTaxRateName.
+//
+// `suggested` is the model's pick (may be ''), `gstRegistered` the profile flag.
+export function resolveTaxRate({ total, tax, rates, suggested = '', gstRegistered = true, ...opts }) {
+  const list = Array.isArray(rates) ? rates : [];
+  if (!gstRegistered) {
+    const noTax = list.find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));
+    return noTax ? noTax.name : '';
+  }
+  const picked = String(suggested || '').trim();
+  if (picked && list.some((r) => r.name === picked)) return picked;
+  return inferTaxRateName(total, tax, list, opts);
 }

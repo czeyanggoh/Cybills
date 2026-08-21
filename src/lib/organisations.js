@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
-import { getHiddenSet, getAddedRows, LISTS_EVENT, SEED_TAX_RATES } from '@/lib/listsStore';
+import { getHiddenSet, getAddedRows, getMeta, useHiddenSet, LISTS_EVENT, SEED_TAX_RATES } from '@/lib/listsStore';
 import { useCustomCategories } from '@/lib/customCategories';
 import { useCategorySortMode, sortCategories } from '@/lib/categoryDisplay';
 import { useBankAccounts } from '@/lib/bankAccounts';
@@ -193,19 +193,29 @@ export function useManagedTaxRates() {
   }, []);
   return useMemo(() => {
     void tick; // re-run when the managed list changes
-    const hidden = getHiddenSet('taxRates');
-    const base = xero.length
-      ? xero.map((t) => ({ name: t.name, code: t.taxType || '', rate: Number(t.rate) || 0 }))
-      : SEED_TAX_RATES.map((t) => ({ name: t.name, code: t.code, rate: Number(t.rate) || 0 }));
-    const added = getAddedRows('taxRates').map((a) => ({ name: a.name, code: a.code || '', rate: Number(a.rate) || 0 }));
-    const seen = new Set();
-    return [...base, ...added]
-      .filter((t) => t.name && !seen.has(t.name) && seen.add(t.name))
-      .map((t) => ({ ...t, id: t.name, visible: !hidden.has(t.name) }));
+    return mergeManagedTaxRates(xero);
   }, [xero, tick]);
 }
 
-// Just the visible rates (what the pickers offer).
+// The merge itself, free of React so the upload path (getExtractionTaxRates) and
+// the hook can't drift apart. `xero` is the live relay list ([{name, taxType,
+// rate}]); empty falls back to the bundled seed.
+function mergeManagedTaxRates(xero) {
+  const hidden = getHiddenSet('taxRates');
+  const meta = getMeta('taxRates'); // per-rate "when to use" rules, keyed by name
+  const base = xero.length
+    ? xero.map((t) => ({ name: t.name, code: t.taxType || '', rate: Number(t.rate) || 0 }))
+    : SEED_TAX_RATES.map((t) => ({ name: t.name, code: t.code, rate: Number(t.rate) || 0 }));
+  const added = getAddedRows('taxRates').map((a) => ({ name: a.name, code: a.code || '', rate: Number(a.rate) || 0 }));
+  const seen = new Set();
+  return [...base, ...added]
+    .filter((t) => t.name && !seen.has(t.name) && seen.add(t.name))
+    .map((t) => ({ ...t, id: t.name, visible: !hidden.has(t.name), rules: meta[t.name]?.rules || '' }));
+}
+
+// Just the visible rates (what the pickers offer). Each carries its `rules`
+// string — the org's own note on when that code applies, which rides along to
+// the extractor so it can pick codes arithmetic can't reach.
 export function useVisibleTaxRates() {
   return useManagedTaxRates().filter((t) => t.visible);
 }
@@ -319,8 +329,12 @@ export async function getExtractionAccounts() {
   if (!orgId) return XERO_ACCOUNTS;
   try {
     const accounts = await fetchXeroAccounts(orgId);
-    const expense = accounts.filter((a) => isExpenseType(a.type));
-    const list = (expense.length ? expense : accounts).map((a) => ({
+    // A category hidden in Lists is off-limits to the extractor too, so it can't
+    // classify a document into an account the user has retired.
+    const hidden = getHiddenSet('categories');
+    const shown = accounts.filter((a) => !hidden.has(a.code || a.name));
+    const expense = shown.filter((a) => isExpenseType(a.type));
+    const list = (expense.length ? expense : shown).map((a) => ({
       code: a.code,
       name: a.name,
       description: a.description || '',
@@ -329,6 +343,22 @@ export async function getExtractionAccounts() {
   } catch {
     return XERO_ACCOUNTS;
   }
+}
+
+// The visible tax rates for the upload path (fetchExtract), where hooks aren't
+// available. Same list the pickers show, each carrying its "when to use" rules.
+// Must never throw — any failure yields the seed-backed list.
+export async function getExtractionTaxRates() {
+  const orgId = await resolveCategorisationOrgId();
+  let live = [];
+  if (orgId) {
+    try {
+      live = await fetchXeroTaxRates(orgId);
+    } catch {
+      live = [];
+    }
+  }
+  return mergeManagedTaxRates(live).filter((t) => t.visible);
 }
 
 // Category-dropdown options for the active org's live chart (expense accounts),
@@ -344,7 +374,11 @@ export function useCategoryOptions() {
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
-  const expense = (data ?? []).filter((a) => isExpenseType(a.type));
+  // Categories switched off in Business settings → Lists → Categories are keyed
+  // by account code, and drop out of the picker entirely.
+  const hidden = useHiddenSet('categories');
+  const shown = (data ?? []).filter((a) => !hidden.has(a.code || a.name));
+  const expense = shown.filter((a) => isExpenseType(a.type));
   const labels = expense.length ? expense.map(accountLabel) : XERO_ACCOUNTS.map(accountLabel);
   // The category dropdown always follows the Xero chart of accounts. Only
   // categories the user explicitly adds via "Add category" are appended; the

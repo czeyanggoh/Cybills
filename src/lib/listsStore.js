@@ -9,7 +9,7 @@ import { blobStore } from '@/lib/blobStore';
 const KEY = 'cybills.lists.v1';
 export const LISTS_EVENT = 'cybills:lists-changed';
 const emit = () => window.dispatchEvent(new Event(LISTS_EVENT));
-const store = blobStore(KEY, { added: {}, hidden: {} }, emit);
+const store = blobStore(KEY, { added: {}, hidden: {}, meta: {} }, emit);
 
 // --- Seeds (from the client's ST Eng workspace) -----------------------------
 export const SEED_CATEGORIES = [
@@ -54,7 +54,7 @@ let seq = 0;
 const genId = (p) => `${p}_${Date.now().toString(36)}_${(seq += 1)}`;
 
 function read() {
-  return { added: {}, hidden: {}, ...(store.get() || {}) };
+  return { added: {}, hidden: {}, meta: {}, ...(store.get() || {}) };
 }
 function write(state) {
   store.set(state);
@@ -98,9 +98,41 @@ export function removeFromList(kind, ids) {
 export function getHiddenSet(kind) {
   return new Set(read().hidden[kind] || []);
 }
+// Reactive form of getHiddenSet, for views built on a LIVE Xero list (categories,
+// tax rates) rather than on getList().
+export function useHiddenSet(kind) {
+  const [set, setSet] = useState(() => getHiddenSet(kind));
+  useEffect(() => {
+    const sync = () => setSet(getHiddenSet(kind));
+    window.addEventListener(LISTS_EVENT, sync);
+    return () => window.removeEventListener(LISTS_EVENT, sync);
+  }, [kind]);
+  return set;
+}
+
 // User-added rows for a list kind (not from the seed / Xero).
 export function getAddedRows(kind) {
   return read().added[kind] || [];
+}
+
+// Per-row extras that CYBills owns rather than Xero — today just a tax rate's
+// "when to use" rules. Keyed by row id (for tax rates that's the rate NAME, the
+// same key the hidden-set uses), so a rule survives the live Xero list being
+// refetched and reordered.
+export function getMeta(kind) {
+  return read().meta?.[kind] || {};
+}
+
+export function setMetaField(kind, id, field, value) {
+  const state = read();
+  const meta = { ...(state.meta || {}) };
+  const forKind = { ...(meta[kind] || {}) };
+  const row = { ...(forKind[id] || {}), [field]: value };
+  // Don't accumulate empty rows — a cleared rule removes the entry entirely.
+  if (Object.values(row).every((v) => !String(v ?? '').trim())) delete forKind[id];
+  else forKind[id] = row;
+  meta[kind] = forKind;
+  write({ ...state, meta });
 }
 
 export function setListVisible(kind, id, visible) {

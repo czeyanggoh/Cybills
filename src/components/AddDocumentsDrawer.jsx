@@ -15,8 +15,9 @@ import {
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts, useVisibleTaxRates } from '@/lib/organisations';
+import { useGstRegistered } from '@/lib/businessProfile';
 import { getCustomerRule } from '@/lib/customerRules';
-import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, inferTaxRateName } from '@/lib/extractionSettings';
+import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, resolveTaxRate } from '@/lib/extractionSettings';
 import { useUsers } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
@@ -263,6 +264,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const users = useUsers();
   const settings = useExtractionSettings();
   const visibleTaxRates = useVisibleTaxRates();
+  const gstRegistered = useGstRegistered();
   const [tab, setTab] = useState('Costs');
   const [items, setItems] = useState([]);
   // Who the uploaded documents are attributed to. Stored as the display name
@@ -313,18 +315,28 @@ export default function AddDocumentsDrawer({ open, onClose }) {
     // cost/sales doc: default tax rate (only when extraction didn't read one),
     // clear tax when "Extract tax" is off, default paid status by document type,
     // and a due date computed from the invoice date. Skipped for statements.
-    const applyExtractionDefaults = async (billId, cur) => {
+    const applyExtractionDefaults = async (billId, cur, extracted = null) => {
       if (isStatement) return cur;
       const p = {};
       const defRate = kind === 'sales' ? settings.defaultTaxRateSales : settings.defaultTaxRateCosts;
-      // Auto-populate the tax rate from the extracted total/tax — only ever a
-      // standard-rated purchases/supplies vintage or No Tax — falling back to
-      // the configured default.
+      // Tax rate: a rule the extractor matched, else the arithmetic fallback
+      // (standard-rated vintages / No Tax only), else the configured default.
       if (!String(cur?.taxRate || '')) {
-        const inferred = inferTaxRateName(cur?.total, cur?.tax, visibleTaxRates, defRate, cur?.currency, 'SGD', kind);
-        if (inferred) p.taxRate = inferred;
+        const resolved = resolveTaxRate({
+          total: cur?.total,
+          tax: cur?.tax,
+          rates: visibleTaxRates,
+          suggested: cur?.taxRate || extracted?.taxRate,
+          gstRegistered,
+          defaultName: defRate,
+          currency: cur?.currency,
+          kind,
+        });
+        if (resolved) p.taxRate = resolved;
+        if (resolved && extracted?.taxRateReason) p.taxRateReason = extracted.taxRateReason;
       }
-      if (!settings.extractTax) p.tax = 0;
+      // No GST registration → nothing to claim, so never carry a tax amount.
+      if (!settings.extractTax || !gstRegistered) p.tax = 0;
       p.paid = defaultPaidFor(settings, cur?.documentType);
       const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(cur?.date || '')) ? cur.date : '';
       const due = dueDateForNewDoc(settings, kind, iso);
@@ -418,7 +430,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               patch(it.id, { status: 'duplicate', duplicate: fin.duplicate });
               return;
             }
-            const withDefaults = await applyExtractionDefaults(bill.id, fin?.bill ?? bill);
+            const withDefaults = await applyExtractionDefaults(bill.id, fin?.bill ?? bill, fields);
             notifyBillsChanged();
             patch(it.id, { status: 'added', bill: withDefaults });
           } else {

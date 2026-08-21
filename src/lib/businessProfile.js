@@ -14,6 +14,7 @@ export const DEFAULT_BUSINESS_PROFILE = {
   businessName: '',
   crn: '',
   taxNumber: '',
+  gstRegistered: 'Yes', // 'Yes' | 'No' — drives whether tax codes are analysed at all
   practiceCode: '',
   country: 'Singapore',
   baseCurrency: 'SGD — Singapore, Dollars',
@@ -33,6 +34,21 @@ export function getBusinessProfile() {
     ...v,
     address: { ...DEFAULT_BUSINESS_PROFILE.address, ...(v.address || {}) },
   };
+}
+
+// Is the company GST-registered? When it isn't, there's no input tax to claim,
+// so every document it submits codes to "No Tax" and nothing is analysed —
+// see resolveTaxRate in extractionSettings.js. Anything other than an explicit
+// 'No' counts as registered, so a profile saved before this field existed keeps
+// its current behaviour.
+export function isGstRegistered() {
+  return String(getBusinessProfile().gstRegistered || 'Yes').toLowerCase() !== 'no';
+}
+
+// Reactive form of isGstRegistered() for components.
+export function useGstRegistered() {
+  const p = useBusinessProfile();
+  return String(p.gstRegistered || 'Yes').toLowerCase() !== 'no';
 }
 
 export function saveBusinessProfile(profile) {
@@ -72,6 +88,9 @@ export function mergeXeroProfile(current, xero) {
     businessName: xero.name || current.businessName,
     crn: xero.registrationNumber || current.crn,
     taxNumber: xero.taxNumber || current.taxNumber,
+    // Xero holding a GST number is decent evidence of registration, but the
+    // user's own answer always wins — only fill a blank.
+    gstRegistered: current.gstRegistered || (xero.taxNumber ? 'Yes' : ''),
     country,
     baseCurrency: CURRENCY_LABEL[xero.baseCurrency] || current.baseCurrency,
     address: {

@@ -307,6 +307,14 @@ function BusinessProfile() {
         <Row label="CRN"><TextInput value={form.crn} onChange={(v) => set('crn', v)} placeholder="Company registration no." /></Row>
         <Row label="Business name" required><TextInput value={form.businessName} onChange={(v) => set('businessName', v)} /></Row>
         <Row label="Tax / GST number"><TextInput value={form.taxNumber} onChange={(v) => set('taxNumber', v)} placeholder="—" /></Row>
+        <Row label="GST registered?">
+          <SelectBox value={form.gstRegistered || 'Yes'} onChange={(v) => set('gstRegistered', v)} options={['Yes', 'No']} />
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {String(form.gstRegistered).toLowerCase() === 'no'
+              ? 'Not registered — every document is coded “No Tax” and no GST is split out.'
+              : 'Registered — tax codes are analysed from each document.'}
+          </p>
+        </Row>
         <Row label="Practice code"><TextInput value={form.practiceCode} onChange={(v) => set('practiceCode', v)} /></Row>
         <Row label="Country of registration" required>
           <SelectBox value={form.country} onChange={(v) => set('country', v)} options={['Singapore', 'Malaysia', 'United Kingdom', 'Australia']} />
