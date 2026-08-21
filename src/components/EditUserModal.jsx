@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, ChevronDown, HelpCircle } from 'lucide-react';
 import { ROLES, ROLE_INFO, updateUser } from '@/lib/userStore';
+import { useOrganisations } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 function Toggle({ on, onToggle }) {
@@ -31,8 +32,14 @@ export default function EditUserModal({ open, mode, user, onClose }) {
   const [email, setEmail] = useState(user?.email || '');
   const [role, setRole] = useState(user?.role || 'Standard');
   const [priv, setPriv] = useState(user?.privileges || { accessAll: false, createClaims: false, canPublish: false });
+  // Rosters are per-organisation, so an admin can move someone to another entity
+  // — the row then only appears (and is only manageable) under that one.
+  const { data: organisations = [] } = useOrganisations();
+  const [organisationId, setOrganisationId] = useState(user?.organisationId || '');
 
   if (!open || !user) return null;
+
+  const movingOut = organisationId && organisationId !== user.organisationId;
 
   const input = 'h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
   const isDetails = mode === 'details';
@@ -41,7 +48,13 @@ export default function EditUserModal({ open, mode, user, onClose }) {
 
   const save = () => {
     if (isDetails) {
-      updateUser(user.id, { firstName, lastName, login: login ? 'Yes' : 'No', email: login ? email : '' });
+      updateUser(user.id, {
+        firstName,
+        lastName,
+        login: login ? 'Yes' : 'No',
+        email: login ? email : '',
+        ...(movingOut ? { organisationId } : {}),
+      });
     } else {
       updateUser(user.id, { role, privileges: priv });
     }
@@ -71,6 +84,27 @@ export default function EditUserModal({ open, mode, user, onClose }) {
                 <span>Last name <span className="text-destructive">*</span></span>
                 <input value={lastName} onChange={(e) => setLastName(e.target.value)} className={input} />
               </label>
+              {organisations.length > 1 && (
+                <label className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
+                  <span>Organisation</span>
+                  <div className="relative">
+                    <select
+                      value={organisationId}
+                      onChange={(e) => setOrganisationId(e.target.value)}
+                      className="h-10 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {organisations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  </div>
+                </label>
+              )}
+              {movingOut && (
+                <p className="rounded-md border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
+                  Moving {user.name} to another organisation removes them from this
+                  one&apos;s user list, and clears their direct-manager links.
+                </p>
+              )}
               <div className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
                 <span className="flex items-center gap-1">Login access <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" /></span>
                 <Toggle on={login} onToggle={() => setLogin((v) => !v)} />

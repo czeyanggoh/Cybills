@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID, randomBytes, createHash, scryptSync, timingSafeEqual } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId } from './workspace.js';
+import { getOrganisation, primaryOrgId } from './organisations.js';
 import { setSession, readSession } from './auth.js';
 import { env } from './env.js';
 import { sendMail, inviteEmail, passwordResetEmail, passwordChangedEmail } from './mailer.js';
@@ -87,6 +88,11 @@ type User = {
   // Self-signup: a user who joined via /join is `pending` until an admin
   // approves them, and is tied to the company (organisation) they picked.
   pending: boolean;
+  // The organisation (linked Xero tenant) this row belongs to. Users are
+  // tenant-specific: the Users page lists only the selected organisation's
+  // people, and a new user is created under whichever one is selected. Empty
+  // only while no organisation is linked yet.
+  organisationId: string;
   companyId: string;
   companyName: string;
   // The user's direct manager (another user's id) — the approver a claim is
@@ -147,10 +153,50 @@ function full(u: Partial<User>, ws: string): User {
     deactivated: Boolean(u.deactivated),
     removed: Boolean(u.removed),
     pending: Boolean(u.pending),
+    organisationId: u.organisationId || '',
     companyId: u.companyId || '',
     companyName: u.companyName || '',
     project: u.project || '',
   };
+}
+
+// --- Tenancy -----------------------------------------------------------------
+// Every roster row belongs to one organisation (a linked Xero tenant), so the
+// Users page is that client entity's own people list rather than one list shared
+// across every entity. The client names the selected organisation with the same
+// X-Org-Id header the bills API uses; an absent or unknown value falls back to
+// the primary organisation, so a caller that predates the picker still lands
+// somewhere sensible. Before the first organisation is linked the scope is '' —
+// every row shares it, and the roster behaves exactly as it did.
+export function orgScope(req: Request): string {
+  const requested = (req.header('X-Org-Id') || '').trim();
+  if (requested && getOrganisation(workspaceId(req), requested)) return requested;
+  return primaryOrgId();
+}
+
+const inOrg = (u: User, org: string) => (u.organisationId || '') === org;
+
+// Give every row an organisation it can actually be found under. Two cases:
+// rows that predate tenant scoping (a self-signup already picked their company
+// on /join, so honour that when it names a linked organisation; the seed and
+// anyone an admin added belong to the primary organisation, where the account's
+// data has always lived), and rows whose organisation was later unlinked, which
+// would otherwise be invisible in every tenant. Does nothing until an
+// organisation exists to assign them to — '' still matches '', so an unlinked
+// account keeps working — and runs on every load, so rows created before the
+// first organisation was linked are adopted as soon as one is.
+function assignOrganisations(items: User[], ws: string): boolean {
+  const primary = primaryOrgId();
+  if (!primary) return false;
+  let changed = false;
+  for (const u of items) {
+    if (u.workspaceId !== ws) continue;
+    if (u.organisationId && getOrganisation(ws, u.organisationId)) continue;
+    u.organisationId = u.companyId && getOrganisation(ws, u.companyId) ? u.companyId : primary;
+    u.companyName = getOrganisation(ws, u.organisationId)?.name || u.companyName || '';
+    changed = true;
+  }
+  return changed;
 }
 
 // Collapse duplicate rows for the same person (same name) into a single row, so
@@ -164,16 +210,19 @@ function normalizeRoster(items: User[], ws: string): boolean {
   const groups = new Map<string, User[]>();
   for (const u of items) {
     if (u.workspaceId !== ws || u.removed) continue;
-    const key = norm(u.name);
-    if (!key) continue;
+    const name = norm(u.name);
+    if (!name) continue;
+    // Keyed by organisation as well: the same name under two client entities is
+    // two different people, not a duplicate to collapse.
+    const key = `${u.organisationId || ''}|${name}`;
     const g = groups.get(key);
     if (g) g.push(u);
     else groups.set(key, [u]);
   }
   let changed = false;
-  for (const [name, dups] of groups) {
+  for (const [key, dups] of groups) {
     if (dups.length < 2) continue; // already one row — nothing to unify
-    const seedEmail = SEED_EMAIL_BY_NAME.get(name);
+    const seedEmail = SEED_EMAIL_BY_NAME.get(key.slice(key.indexOf('|') + 1));
     const keeper =
       (seedEmail ? dups.find((d) => norm(d.email) === seedEmail) : undefined) ||
       dups.find((d) => d.passwordHash) ||
@@ -243,9 +292,13 @@ function ensure(ws: string): User[] {
   const items = load();
   let changed = false;
   if (!items.some((u) => u.workspaceId === ws)) {
-    items.push(...SEED.map((s) => full(s, ws)));
+    // Seeded into the primary organisation only — the firm's own staff, not a
+    // roster copied into every client entity that gets linked later.
+    const org = primaryOrgId();
+    items.push(...SEED.map((s) => full({ ...s, organisationId: org }, ws)));
     changed = true;
   }
+  if (assignOrganisations(items, ws)) changed = true;
   if (normalizeRoster(items, ws)) changed = true;
   if (normalizeRoles(items, ws)) changed = true;
   if (reconcileSeedAdmins(items, ws)) changed = true;
@@ -255,6 +308,9 @@ function ensure(ws: string): User[] {
 
 // The roster member for the signed-in caller (by session email), or null in a
 // session-less (mock/dev) context. Used for role-based access control.
+// Deliberately NOT tenant-scoped: identity and access are account-wide, so an
+// admin whose row lives under one organisation keeps their role while working in
+// another. Only the roster itself (listing and managing people) is per-tenant.
 export function memberForSession(req: Request): User | null {
   const s = readSession(req);
   if (!s?.email) return null;
@@ -305,7 +361,7 @@ function normalizeRoles(items: User[], ws: string): boolean {
   return changed;
 }
 
-const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'companyId', 'companyName', 'managerId', 'project'];
+const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'project'];
 
 // The direct manager to route a claim to, given the claimant's display name.
 // Resolves the claimant's row, then their managerId to a roster member. Returns
@@ -332,19 +388,33 @@ export function emailForName(ws: string, name: string): string {
 
 // Apply the editable fields present in `b` onto a user, keeping name in sync
 // with first/last. Shared by the add-merge path and PATCH.
-function applyEditable(user: User, b: Partial<User>) {
+function applyEditable(user: User, b: Partial<User>, ws: string) {
   for (const k of EDITABLE) if (k in b) (user as Record<string, unknown>)[k] = (b as Record<string, unknown>)[k];
   if ('firstName' in b || 'lastName' in b) {
     const nm = `${user.firstName || ''} ${user.lastName || ''}`.trim();
     if (nm) user.name = nm;
   }
+  // Moving someone to another organisation relabels the company on their row,
+  // so the roster can never show the entity they used to belong to.
+  if ('organisationId' in b) {
+    user.companyId = user.organisationId;
+    user.companyName = getOrganisation(ws, user.organisationId)?.name || '';
+  }
 }
 
 export const usersRouter = Router();
 
+// GET /api/users — the selected organisation's people. Tenant-scoped, so
+// switching organisations switches the roster (and with it the direct-manager
+// options) instead of showing every entity's staff in one list.
 usersRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
-  res.json({ users: ensure(ws).filter((u) => u.workspaceId === ws && !u.removed).map(publicUser) });
+  const org = orgScope(req);
+  res.json({
+    users: ensure(ws)
+      .filter((u) => u.workspaceId === ws && !u.removed && inOrg(u, org))
+      .map(publicUser),
+  });
 });
 
 // GET /api/users/me — the signed-in user's membership status, used to gate the
@@ -388,12 +458,17 @@ usersRouter.post('/join', (req, res) => {
   const b = req.body ?? {};
   const firstName = String(b.firstName || '').trim();
   const lastName = String(b.lastName || '').trim();
+  const companyId = String(b.companyId || '').trim();
   const fields = {
     firstName,
     lastName,
     name: `${firstName} ${lastName}`.trim() || session.name || session.email,
     mobile: String(b.mobile || '').trim(),
-    companyId: String(b.companyId || '').trim(),
+    // The company they picked IS the tenant they join, when it names a linked
+    // organisation; a free-typed company name (nothing linked yet) falls back to
+    // the primary organisation so the request still reaches an admin's roster.
+    organisationId: companyId && getOrganisation(ws, companyId) ? companyId : primaryOrgId(),
+    companyId,
     companyName: String(b.companyName || '').trim(),
     role: String(b.role || 'Standard'),
   };
@@ -430,23 +505,37 @@ usersRouter.post('/:id/approve', (req, res) => {
 // configured, else the link is returned so an admin can share it).
 usersRouter.post('/', async (req, res) => {
   const ws = workspaceId(req);
+  const org = orgScope(req);
+  const orgLabel = getOrganisation(ws, org)?.name || '';
   const items = ensure(ws);
   const incoming: Partial<User>[] = Array.isArray(req.body?.users) ? req.body.users : [req.body ?? {}];
   const notify = req.body?.notify !== false;
   const orgName = String(req.body?.orgName || '').trim();
   const message = String(req.body?.message || '').trim();
   const created: User[] = [];
-  const duplicates: Array<{ email: string; name: string }> = [];
+  const duplicates: Array<{ email: string; name: string; organisationName: string }> = [];
   for (const u of incoming) {
     const email = norm(String(u.email || ''));
     if (email) {
+      // Checked across the whole account, not just this organisation: sign-in is
+      // by email, so one address must resolve to exactly one person. Report
+      // which organisation already has them so the admin knows where to look.
       const dup = items.find((x) => x.workspaceId === ws && !x.removed && norm(x.email) === email);
       if (dup) {
-        duplicates.push({ email: dup.email, name: dup.name });
+        duplicates.push({
+          email: dup.email,
+          name: dup.name,
+          organisationName: getOrganisation(ws, dup.organisationId)?.name || dup.companyName || '',
+        });
         continue;
       }
     }
-    const newUser = full({ ...u, id: undefined }, ws);
+    // Stamped with the selected organisation — an admin adds people to the
+    // entity they are currently working in.
+    const newUser = full(
+      { ...u, id: undefined, organisationId: org, companyId: u.companyId || org, companyName: u.companyName || orgLabel },
+      ws
+    );
     items.unshift(newUser);
     created.push(newUser);
   }
@@ -527,7 +616,7 @@ usersRouter.post('/:id/invite', async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const ws = workspaceId(req);
   const items = ensure(ws);
-  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws && !u.removed);
+  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws && !u.removed && inOrg(u, orgScope(req)));
   if (!user) return res.status(404).json({ error: 'not_found' });
   if (!user.email) return res.status(400).json({ error: 'no_email' });
 
@@ -639,7 +728,7 @@ usersRouter.post('/:id/password', async (req, res) => {
 
   const ws = workspaceId(req);
   const items = ensure(ws);
-  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws);
+  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws && inOrg(u, orgScope(req)));
   if (!user) return res.status(404).json({ error: 'not_found' });
 
   user.passwordHash = hashPassword(password);
@@ -654,12 +743,32 @@ usersRouter.post('/:id/password', async (req, res) => {
   return res.json({ user: publicUser(user), notified: sent });
 });
 
-function mutate(req: Request, res: Response, fn: (u: User) => void) {
+// A direct manager is the colleague a claim routes to for approval, so it only
+// makes sense within one organisation. Moving someone to another entity drops
+// their own manager and detaches anyone who reported to them, rather than
+// leaving approvals pointing across a tenant boundary.
+function detachManagerLinks(items: User[], moved: User) {
+  moved.managerId = '';
+  for (const u of items) {
+    if (u.managerId === moved.id && !inOrg(u, moved.organisationId)) u.managerId = '';
+  }
+}
+
+// Roster edits are tenant-scoped: someone else's row is only reachable from the
+// organisation it belongs to, so an id from one entity can't be edited while
+// another is selected. Your OWN row is always reachable — editing your profile
+// (Profile page, own password) can't depend on which client entity you happen to
+// have open.
+function mutate(req: Request, res: Response, fn: (u: User, items: User[]) => void) {
   const ws = workspaceId(req);
+  const org = orgScope(req);
   const items = ensure(ws);
-  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws);
+  const meId = memberForSession(req)?.id;
+  const user = items.find(
+    (u) => u.id === req.params.id && u.workspaceId === ws && (inOrg(u, org) || u.id === meId)
+  );
   if (!user) return res.status(404).json({ error: 'not_found' });
-  fn(user);
+  fn(user, items);
   save(items);
   return res.json({ user: publicUser(user) });
 }
@@ -679,7 +788,11 @@ usersRouter.patch('/:id', (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const filtered: Partial<User> = {};
   for (const k of allowed) if (k in body) (filtered as Record<string, unknown>)[k] = body[k];
-  return mutate(req, res, (user) => applyEditable(user, filtered));
+  return mutate(req, res, (user, items) => {
+    const from = user.organisationId;
+    applyEditable(user, filtered, workspaceId(req));
+    if (user.organisationId !== from) detachManagerLinks(items, user);
+  });
 });
 
 usersRouter.post('/:id/active', (req, res) => {
