@@ -68,6 +68,19 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
   return data ?? null;
 }
 
+// Re-check every stored document against every other and record the verdicts.
+// Returns { flagged, changed }.
+export async function scanDuplicates() {
+  const res = await fetch('/api/costs/bills/scan-duplicates', { method: 'POST', headers: orgHeaders() });
+  if (!res.ok) return { flagged: 0, changed: 0 };
+  return res.json();
+}
+
+// The reviewer's "these are different documents" — clears the flag for good.
+export function markNotDuplicate(id) {
+  return updateBill(id, { duplicateDismissed: true });
+}
+
 export async function fetchBills() {
   const res = await fetch('/api/costs/bills', { headers: orgHeaders() });
   if (!res.ok) return [];
@@ -95,11 +108,13 @@ export async function addBill(payload, { force = false } = {}) {
 
 // Apply the Vision-read fields to a doc created up-front (in Processing), then
 // run the fuzzy duplicate check. Returns { ok, bill, duplicate }.
-export async function finalizeBill(id, fields) {
+// `checkDuplicates:false` (Business settings → Extraction → Duplicate detection
+// "Off") skips recording a duplicate verdict on the document.
+export async function finalizeBill(id, fields, { checkDuplicates = true } = {}) {
   const res = await fetch(`/api/costs/bills/${id}/finalize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify(fields),
+    body: JSON.stringify({ ...fields, checkDuplicates }),
   });
   if (!res.ok) return { ok: false, duplicate: null };
   return res.json();
@@ -144,6 +159,10 @@ export function billToDoc(b) {
     hasFile: Boolean(b.hasFile),
     contentType: b.contentType || '',
     // Xero provenance (set once published through the cyworkspace relay).
+    // Duplicate detection, as recorded on the document by the server.
+    duplicateOfId: b.duplicateOfId || '',
+    duplicateType: b.duplicateType || '',
+    duplicateDismissed: Boolean(b.duplicateDismissed),
     xeroInvoiceId: b.xeroInvoiceId || '',
     xeroTenantName: b.xeroTenantName || '',
     xeroPostedAt: b.xeroPostedAt || '',

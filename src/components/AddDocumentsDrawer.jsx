@@ -403,7 +403,15 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             ...(owner ? { owner } : {}),
           };
           patch(it.id, { status: 'uploading', payload });
-          const result = await addBill(payload);
+          // Business settings → Extraction → Duplicate detection decides what a
+          // match DOES: Automatic stops the upload for review, Review manually
+          // lets it in carrying a flag, Off doesn't look. A byte-identical file
+          // is rejected under every mode — that one needs no judgement.
+          const dupMode = settings.duplicateMode;
+          let result = await addBill(payload, { force: dupMode === 'Off' });
+          if (result.duplicate && !result.rejected && dupMode !== 'Automatic') {
+            result = await addBill(payload, { force: true });
+          }
           if (result.rejected) {
             // Byte-identical file already in the account — hard reject, no override.
             patch(it.id, { status: 'rejected', duplicate: result.duplicate });
@@ -442,8 +450,10 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             }
           }
           if (fields) {
-            const fin = await finalizeBill(bill.id, fields);
-            if (fin?.duplicate) {
+            const fin = await finalizeBill(bill.id, fields, { checkDuplicates: dupMode !== 'Off' });
+            // Only Automatic pulls the document back out for review; the other
+            // modes keep it and let the flag on the row speak for itself.
+            if (fin?.duplicate && dupMode === 'Automatic') {
               await updateBill(bill.id, { status: 'deleted' }).catch(() => {});
               notifyBillsChanged();
               patch(it.id, { status: 'duplicate', duplicate: fin.duplicate });

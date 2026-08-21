@@ -43,6 +43,13 @@ export type Bill = {
   contentType: string; // MIME type of the stored file, or ''
   status: string; // workflow state: 'new' (inbox) | 'ready' | 'archived' | 'merged'
   kind: string; // 'cost' (default) | 'sales' — which workspace inbox it belongs to
+  // Duplicate detection, recorded on the document rather than shown once at
+  // upload and forgotten. Set on the LATER of a matching pair, so the original
+  // stays clean. `duplicateDismissed` is the reviewer saying "not a duplicate",
+  // which survives re-checks.
+  duplicateOfId?: string;
+  duplicateType?: string; // exact_file | same_invoice | likely_duplicate
+  duplicateDismissed?: boolean;
   // Set on a merged document: the ids of the originals it combined. Their own
   // status becomes 'merged' (out of the active inbox); Unmerge restores them.
   mergedFrom?: string[];
@@ -197,6 +204,58 @@ export function findDuplicate(orgId: string, cand: Candidate, excludeId?: string
   return null;
 }
 
+// Re-check ONE bill against every other stored document and record the verdict
+// on it. Only the later of a pair is flagged — the earlier one is the original,
+// and marking both would double every duplicate in the list. A reviewer's
+// "not a duplicate" is never overwritten. Returns the updated bill.
+export function flagDuplicate(orgId: string, id: string): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  if (bill.duplicateDismissed) return bill;
+
+  const match = findDuplicate(
+    orgId,
+    {
+      fileHash: bill.fileHash,
+      supplier: bill.supplier,
+      invoiceNumber: bill.invoiceNumber,
+      total: bill.total,
+      date: bill.date,
+    },
+    bill.id
+  );
+  // A match that arrived AFTER this one means this is the original: leave it
+  // alone and let the newer document carry the flag.
+  const isLater = match ? String(match.bill.createdAt) <= String(bill.createdAt) : false;
+  const nextId = match && isLater ? match.bill.id : '';
+  const nextType = match && isLater ? match.type : '';
+  if ((bill.duplicateOfId ?? '') === nextId && (bill.duplicateType ?? '') === nextType) return bill;
+
+  bill.duplicateOfId = nextId || undefined;
+  bill.duplicateType = nextType || undefined;
+  persist(bills);
+  return bill;
+}
+
+// Re-check EVERY stored document, oldest first, so a corpus that predates
+// duplicate flagging (or was added with "Add anyway") gets marked. Returns how
+// many documents carry a flag afterwards, and how many changed.
+export function scanDuplicates(orgId: string): { flagged: number; changed: number } {
+  const ordered = load()
+    .filter((b) => b.orgId === orgId && b.status !== 'deleted')
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  let changed = 0;
+  let flagged = 0;
+  for (const b of ordered) {
+    const before = b.duplicateOfId ?? '';
+    const after = flagDuplicate(orgId, b.id);
+    if ((after?.duplicateOfId ?? '') !== before) changed += 1;
+    if (after?.duplicateOfId) flagged += 1;
+  }
+  return { flagged, changed };
+}
+
 export type BillInput = Omit<Bill, 'id' | 'createdAt'>;
 
 // A cost is "Ready" when it carries the fields the rest of the workflow needs.
@@ -296,6 +355,9 @@ const EDITABLE: (keyof Bill)[] = [
   'cardLast4',
   'note',
   'dueDate',
+  'duplicateDismissed',
+  'duplicateOfId',
+  'duplicateType',
 ];
 
 // Attach (or replace) the stored file on an existing bill. Returns null if not

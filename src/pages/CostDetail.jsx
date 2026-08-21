@@ -30,7 +30,7 @@ import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, markNotDuplicate } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
@@ -413,6 +413,23 @@ export default function CostDetail() {
     events.push({ text: 'This document was viewed', by: user?.name || user?.email || 'you', at: '' });
     return events.reverse(); // newest first
   })();
+
+  // Why this document was flagged, in the reviewer's terms.
+  const DUPLICATE_REASON = {
+    exact_file: 'The identical file has already been submitted.',
+    same_invoice: 'The same supplier and document reference, for the same amount, is already on file.',
+    likely_duplicate: 'The same supplier, amount and date is already on file.',
+  };
+
+  // "These are different documents" — clears the flag for good, so later
+  // re-checks don't keep raising it.
+  const dismissDuplicate = async () => {
+    const r = await markNotDuplicate(doc.id).catch(() => null);
+    if (r?.bill) {
+      setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+      notifyBillsChanged();
+    }
+  };
 
   // billToDoc shows an empty date as the placeholder '—'; never persist that
   // literal back — coerce anything that isn't a real ISO date to blank.
@@ -842,6 +859,30 @@ export default function CostDetail() {
           <button type="button" onClick={() => setReadyError([])} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
         </div>
       )}
+      {doc.duplicateOfId && !doc.duplicateDismissed && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {DUPLICATE_REASON[doc.duplicateType] || 'This looks like a document already submitted.'}{' '}
+            <button
+              type="button"
+              onClick={() => navigate(`/costs/${doc.duplicateOfId}`)}
+              className="font-medium underline underline-offset-2"
+            >
+              Open the one it matches
+            </button>{' '}
+            to compare.
+          </span>
+          <button
+            type="button"
+            onClick={dismissDuplicate}
+            className="ml-auto whitespace-nowrap text-destructive/70 hover:text-destructive"
+          >
+            Not a duplicate
+          </button>
+        </div>
+      )}
+
       {/* Action bar */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <TopButton subtle onClick={() => navigate(claimForItem ? `/expense-claims/${claimForItem.id}` : '/costs')}>

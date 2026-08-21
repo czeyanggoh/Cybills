@@ -408,7 +408,7 @@ function Extraction() {
       <Card title="Duplicate items">
         <Row
           label="Duplicate cost items"
-          hint="Supplier rules take priority when identifying duplicate items."
+          hint="Every document is checked against the ones already submitted: the identical file, the same supplier + reference + amount, or the same supplier + amount + date. Automatic holds a match back for review; Review manually lets it in carrying a “Possible duplicate” flag; Off skips the check. An identical file is always refused."
         >
           <SelectBox value={form.duplicateMode} onChange={(v) => set('duplicateMode', v)} options={DUP_MODES} />
         </Row>

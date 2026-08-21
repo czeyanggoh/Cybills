@@ -10,6 +10,7 @@ import {
   ListChecks,
   Info,
   Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -22,7 +23,7 @@ import { useCategoryOptions, useVisibleTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
-import { updateBill, deleteBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
+import { updateBill, deleteBill, notifyBillsChanged, displayItemId, scanDuplicates } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
@@ -159,6 +160,9 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   // Always enabled — scans every doc in the view for likely merges (no selection
   // needed) and opens the review modal on what it finds.
   const scanBtn = <ToolbarButton onClick={a.scanMerges}>Scan for merges</ToolbarButton>;
+  // Re-checks documents already in the list — the read-time check only ever saw
+  // the documents that existed when each one was uploaded.
+  const dupBtn = <ToolbarButton onClick={a.scanDuplicates}>Scan for duplicates</ToolbarButton>;
   const moveTo = [
     { label: 'To review', onClick: () => a.move('review') },
     { label: 'Ready', onClick: () => a.move('ready') },
@@ -185,6 +189,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
         <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
         {mergeBtn}
         {scanBtn}
+        {dupBtn}
         <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
         <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
       </>
@@ -212,6 +217,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
       {mergeBtn}
       {scanBtn}
+      {dupBtn}
       <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
       <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
     </>
@@ -490,7 +496,21 @@ export default function Costs() {
   // Every column the table can show, with how it renders. What's actually on
   // screen (and how tightly) comes from the gear menu — see tablePrefs.js.
   const CELLS = {
-    status: { cell: (d) => <StatusBadge status={d.status} /> },
+    status: {
+      cell: (d) => (
+        <div className="flex flex-col items-start gap-1">
+          <StatusBadge status={d.status} />
+          {d.duplicateOfId && !d.duplicateDismissed && (
+            <span
+              title="Matches a document already submitted — open it to compare"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[11px] font-medium text-destructive"
+            >
+              <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Possible duplicate
+            </span>
+          )}
+        </div>
+      ),
+    },
     user: { cellClass: 'whitespace-nowrap', cell: (d) => <span className={cn(d.unread && 'font-semibold')}>{uploaderLabel(d)}</span> },
     date: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => formatDate(d.date) },
     supplier: { cell: (d) => <span className={cn(d.unread && 'font-semibold')}>{d.supplier}</span> },
@@ -810,6 +830,19 @@ export default function Costs() {
     }
   };
 
+  // Re-check the whole book, then say what it found. Flags land on the newer of
+  // each pair, so the original stays clean.
+  const runDuplicateScan = async () => {
+    setMergeNote('Checking every document against the rest…');
+    const { flagged = 0, changed = 0 } = await scanDuplicates().catch(() => ({}));
+    await reload();
+    setMergeNote(
+      flagged === 0
+        ? 'No duplicates found — every document is unique on file, supplier + reference, or supplier + amount + date.'
+        : `${flagged} document${flagged === 1 ? '' : 's'} flagged as a possible duplicate${changed ? ` (${changed} newly)` : ''}. They're marked in the list — open one to compare, or mark it "Not a duplicate".`,
+    );
+  };
+
   const actions = {
     move: moveSelected,
     del: deleteSelected,
@@ -817,8 +850,10 @@ export default function Costs() {
     exportCsv: () => setExportOpen(true),
     merge: mergeSelected,
     scanMerges: scanForMerges,
+    scanDuplicates: runDuplicateScan,
     navigate,
   };
+
 
   const toggle = (id) =>
     setSelected((prev) => {

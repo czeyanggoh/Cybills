@@ -7,6 +7,8 @@ import {
   reconcileReadiness,
   costComplete,
   sweepStuckProcessing,
+  flagDuplicate,
+  scanDuplicates,
   setBillFile,
   listBills,
   getBillById,
@@ -121,6 +123,13 @@ billsRouter.patch('/bills/:id', (req, res) => {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   if (typeof b.paid === 'boolean') patch.paid = b.paid;
+  // "Not a duplicate" — the reviewer's verdict, which clears the flag and
+  // survives every later re-check.
+  if (b.duplicateDismissed === true) {
+    patch.duplicateDismissed = true;
+    patch.duplicateOfId = '';
+    patch.duplicateType = '';
+  }
   if (Array.isArray(b.lineItems)) {
     patch.lineItems = b.lineItems.map((li: any) => ({
       description: String(li?.description ?? ''),
@@ -140,6 +149,10 @@ billsRouter.patch('/bills/:id', (req, res) => {
   // A field edit (no explicit status) lets the system re-derive ready vs inbox
   // from completeness; an explicit status is a manual override, left untouched.
   if (!explicitStatus) updated = reconcileReadiness(orgId, req.params.id) || updated;
+  // Editing what identifies a document can make it a duplicate — or clear one.
+  if (['supplier', 'invoiceNumber', 'total', 'date'].some((k) => k in patch)) {
+    updated = flagDuplicate(orgId, req.params.id) || updated;
+  }
   res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
 });
 
@@ -154,6 +167,15 @@ billsRouter.delete('/bills/:id', async (req, res) => {
   if (!removed) return res.status(404).json({ error: 'not_found' });
   if (removed.storageKey) await deleteBillFile(removed.storageKey);
   res.json({ ok: true, id: removed.id, fileRemoved: Boolean(removed.storageKey) });
+});
+
+// POST /api/costs/bills/scan-duplicates — re-check every stored document
+// against every other and record the verdicts. Catches a corpus that predates
+// flagging, anything added with "Add anyway", and pairs whose fields were
+// edited into matching after upload.
+billsRouter.post('/bills/scan-duplicates', (req, res) => {
+  const orgId = orgIdFor(req);
+  res.json({ ok: true, ...scanDuplicates(orgId) });
 });
 
 // POST /api/costs/bills/:id/finalize — apply the fields Vision just read to a
@@ -181,6 +203,10 @@ billsRouter.post('/bills/:id/finalize', (req, res) => {
     { fileHash: '', supplier: updated.supplier, invoiceNumber: updated.invoiceNumber, total: updated.total, date: updated.date },
     updated.id
   );
+  // Record it on the document too. The drawer may let the upload through
+  // ("Add anyway", or Review-manually mode), and a verdict that exists only in
+  // that response is lost the moment the drawer closes.
+  if (b.checkDuplicates !== false) flagDuplicate(orgId, updated.id);
   // Advance out of Processing now that Vision has read it: a complete document
   // lands straight in Ready, an incomplete one in the inbox (New). (Reconcile on
   // its own only toggles new↔ready, never leaves 'processing'.)
