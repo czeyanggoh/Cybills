@@ -4,7 +4,7 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
 import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
-import { getBillByIdAny, markBillsClaimed } from './store.js';
+import { getBillByIdAny, markBillsClaimed, unmarkBillsClaimed } from './store.js';
 
 // Server-backed expense claims, shared across the workspace (same JSON-store
 // pattern as bills). Replaces the old per-browser localStorage claim store, so
@@ -473,5 +473,8 @@ claimsRouter.post('/:id/archive', (req, res) =>
 claimsRouter.delete('/:id', (req, res) =>
   mutate(req, res, (claim) => {
     claim.deleted = true;
+    // Return the claim's items to the Costs inbox so they aren't stranded in the
+    // 'expenseclaim' state with no claim to belong to.
+    unmarkBillsClaimed(claim.transactions.map((t) => String(t.itemId)));
   })
 );

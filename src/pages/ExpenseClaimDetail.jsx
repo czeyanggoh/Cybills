@@ -32,6 +32,8 @@ import {
   markClaimSentToHr,
   notifyClaimsChanged,
   updateClaim,
+  archiveClaims,
+  deleteClaims,
   formatClaimDate,
   toIsoClaimDate,
 } from '@/lib/claimStore';
@@ -447,7 +449,7 @@ export default function ExpenseClaimDetail() {
         ) : (
           <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>
         )}
-        <TopButton onClick={() => navigate('/expense-claims')}>Archive</TopButton>
+        <TopButton onClick={async () => { await archiveClaims([claim.id], true).catch(() => {}); navigate('/expense-claims'); }}>Archive</TopButton>
         <div className="relative">
           <TopButton onClick={() => setExportMenu((o) => !o)} dropdown>Export</TopButton>
           {exportMenu && (
@@ -472,7 +474,11 @@ export default function ExpenseClaimDetail() {
             </>
           )}
         </div>
-        <TopButton danger onClick={() => navigate('/expense-claims')}>Delete claim</TopButton>
+        <TopButton danger onClick={async () => {
+          if (!window.confirm('Delete this expense claim? Its items return to the Costs inbox. This cannot be undone.')) return;
+          await deleteClaims([claim.id]).catch(() => {});
+          navigate('/expense-claims');
+        }}>Delete claim</TopButton>
         <div className="ml-auto flex items-center gap-3 text-sm">
           <button
             type="button"

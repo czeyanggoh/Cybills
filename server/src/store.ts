@@ -417,6 +417,25 @@ export function markBillsClaimed(ids: string[]): number {
   return n;
 }
 
+// Inverse of markBillsClaimed: return the given bills from a claim back to the
+// Costs inbox (→ 'new', then auto-promoted to 'ready' if they're complete). Used
+// when a claim is deleted so its items aren't orphaned in the 'expenseclaim'
+// state with no claim to belong to.
+export function unmarkBillsClaimed(ids: string[]): number {
+  const wanted = new Set(ids.map(String));
+  if (!wanted.size) return 0;
+  const bills = load();
+  let n = 0;
+  for (const bill of bills) {
+    if (!wanted.has(bill.id) || bill.status !== 'expenseclaim') continue;
+    bill.status = 'new';
+    applyAutoReady(bill);
+    n += 1;
+  }
+  if (n) persist(bills);
+  return n;
+}
+
 // Update an existing bill's editable fields in place. Returns null if not found.
 export function updateBill(orgId: string, id: string, patch: Partial<Bill>): Bill | null {
   const bills = load();

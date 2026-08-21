@@ -186,6 +186,7 @@ export async function deleteClaims(ids) {
     ids.map((id) => fetch(`/api/claims/${id}`, { method: 'DELETE' }).catch(() => {}))
   );
   notifyClaimsChanged();
+  notifyBillsChanged(); // deleted claims return their items to the Costs inbox
 }
 
 // Build a claim transaction row from a cost document's edited fields (pure).
