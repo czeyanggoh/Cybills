@@ -36,7 +36,7 @@ import {
   toIsoClaimDate,
 } from '@/lib/claimStore';
 import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
-import { useUsers } from '@/lib/userStore';
+import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId, publishClaimToXero } from '@/lib/organisations';
 import { CATEGORIES } from '@/data/categories';
@@ -123,7 +123,7 @@ function CategorySelect({ value, onChange }) {
 export default function ExpenseClaimDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, membership, googleEnabled } = useAuth();
   const claims = useClaims();
   const claim = claims.find((c) => String(c.id) === String(id)) || null;
   const [tab, setTab] = useState('details');
@@ -356,13 +356,17 @@ export default function ExpenseClaimDetail() {
   const otherClaims = claims.filter((c) => c.id !== claim.id && !c.archived && !c.deleted);
 
   // Only the assigned approver may approve/reject (enforced server-side too).
-  // With no specific approver on the claim, anyone can decide.
+  // When no specific approver is set, the decision falls to a Business/User
+  // Admin — but never the claimant approving their own claim (mirrors the
+  // server's ensureApprover rule).
   const meEmail = (user?.email || '').toLowerCase();
   const meName = (user?.name || '').toLowerCase();
+  const iAmClaimant = Boolean(meName && claim.claimFor && claim.claimFor.toLowerCase() === meName);
+  const iAmAdmin = canManageUsers(membership, googleEnabled);
   const iAmApprover =
     (claim.approverEmail && meEmail && claim.approverEmail.toLowerCase() === meEmail) ||
     (claim.approver && meName && claim.approver.toLowerCase() === meName) ||
-    (!claim.approverEmail && !claim.approver);
+    (!claim.approverEmail && !claim.approver && iAmAdmin && !iAmClaimant);
   const decide = async (fn) => {
     setPayNote('');
     try {
@@ -783,9 +787,21 @@ export default function ExpenseClaimDetail() {
         claims={[claim]}
         onSubmit={async (ids) => {
           setApprovalOpen(false);
-          // Routes to the claimant's direct manager, resolved server-side.
-          if (ids.length) await submitForApproval(claim.id).catch(() => {});
-          setTab('history');
+          if (!ids.length) return;
+          // Routes to the claimant's direct manager, resolved server-side. If the
+          // claimant has no direct manager set, there's no one to approve — surface
+          // that instead of silently doing nothing.
+          setPayNote('');
+          try {
+            await submitForApproval(claim.id);
+            setTab('history');
+          } catch (e) {
+            setPayNote(
+              e.code === 'no_manager'
+                ? `No direct manager set for ${e.claimant || claim.claimFor || 'this claimant'}. Assign one in Users before submitting for approval.`
+                : 'Could not submit this claim for approval.'
+            );
+          }
         }}
       />
 

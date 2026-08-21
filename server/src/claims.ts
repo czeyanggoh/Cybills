@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
-import { directManagerFor, appOrigin, emailForName } from './users.js';
+import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail } from './mailer.js';
 import { getBillByIdAny, markBillsClaimed } from './store.js';
 
@@ -333,9 +333,24 @@ claimsRouter.post('/:id/submit', (req, res) =>
 // vs a work address) — matching only on email would then lock out the real
 // approver. Permissive when no approver is assigned, or in a session-less
 // mock/dev context.
-function ensureApprover(claim: Claim, me: { email: string; name: string }, res: Response): Response | void {
-  if (!claim.approverEmail && !claim.approver) return; // open claim — anyone may decide
+function ensureApprover(
+  req: Request,
+  claim: Claim,
+  me: { email: string; name: string },
+  res: Response
+): Response | void {
   const norm = (s: string) => s.trim().toLowerCase();
+  // Open claim (no assigned approver — e.g. a legacy claim, or the claimant has
+  // no direct manager). Only a non-claimant ADMIN may decide it: never the
+  // claimant on their own claim, never a random Standard user. A session-less
+  // mock/dev context (no resolvable member) stays permissive so the demo works.
+  if (!claim.approverEmail && !claim.approver) {
+    const member = memberForSession(req);
+    if (!member) return; // mock/dev — no real auth to gate on
+    const isClaimant = Boolean(me.name && claim.claimFor && norm(me.name) === norm(claim.claimFor));
+    if (isAdminRole(member.role) && !isClaimant) return;
+    return res.status(403).json({ error: 'not_approver', approver: claim.approver });
+  }
   const emailMatch = Boolean(me.email && claim.approverEmail && norm(me.email) === norm(claim.approverEmail));
   const nameMatch = Boolean(me.name && claim.approver && norm(me.name) === norm(claim.approver));
   if (emailMatch || nameMatch) return;
@@ -344,7 +359,7 @@ function ensureApprover(claim: Claim, me: { email: string; name: string }, res: 
 
 claimsRouter.post('/:id/approve', (req, res) =>
   mutate(req, res, (claim, me) => {
-    const blocked = ensureApprover(claim, me, res);
+    const blocked = ensureApprover(req, claim, me, res);
     if (blocked) return blocked;
     claim.approvalStatus = 'approved';
     claim.decidedBy = me.name;
@@ -357,7 +372,7 @@ claimsRouter.post('/:id/approve', (req, res) =>
 
 claimsRouter.post('/:id/reject', (req, res) =>
   mutate(req, res, (claim, me) => {
-    const blocked = ensureApprover(claim, me, res);
+    const blocked = ensureApprover(req, claim, me, res);
     if (blocked) return blocked;
     const reason = String(req.body?.reason || '').trim().slice(0, 500);
     claim.approvalStatus = 'rejected';

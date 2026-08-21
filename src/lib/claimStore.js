@@ -52,6 +52,7 @@ async function post(path, body) {
     const err = /** @type {any} */ (new Error(b.error || `Request failed (${res.status})`));
     err.code = b.error;
     err.approver = b.approver;
+    err.claimant = b.claimant;
     throw err;
   }
   return res.json();

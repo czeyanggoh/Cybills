@@ -117,7 +117,19 @@ export default function Users() {
     if (sent.length && !notSent.length) {
       showToast(`Added — invitation emailed to ${sent.map((i) => i.email).join(', ')}.`);
     } else if (notSent.length) {
-      showToast(`Added, but email isn’t configured — send the invite link(s) manually via Manage → Send invitation.`);
+      // The mailbox isn't connected (Settings → Email), so the server couldn't
+      // email the invite and returned a shareable link instead. Don't bury it —
+      // copy it to the clipboard so the admin can paste it to the user directly.
+      const links = notSent.filter((i) => i.link).map((i) => i.link);
+      const who = notSent.map((i) => i.email).join(', ');
+      if (links.length) {
+        navigator.clipboard?.writeText(links.join('\n')).catch(() => {});
+        showToast(
+          `Added ${who}, but email isn’t connected — invite link${links.length === 1 ? '' : 's'} copied to your clipboard. Send it to them, or connect the mailbox in Settings → Email to email invites automatically.`
+        );
+      } else {
+        showToast(`Added ${who}, but email isn’t connected — connect the mailbox in Settings → Email to send invites.`);
+      }
     } else {
       showToast('User(s) added.');
     }
