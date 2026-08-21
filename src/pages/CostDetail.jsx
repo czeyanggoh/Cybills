@@ -42,13 +42,16 @@ import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
 
-function TopButton({ children, onClick = () => {}, subtle = false }) {
+function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
+      title={title || undefined}
       className={cn(
-        'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-muted',
+        'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
+        disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted',
         subtle && 'border-transparent'
       )}
     >
@@ -943,9 +946,23 @@ export default function CostDetail() {
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
           ) : (
-            <TopButton onClick={openPublish}>Publish to Xero</TopButton>
+            // On a claim, this cost reaches Xero as a line of the claim's own
+            // bill — publishing it separately would post it twice.
+            <TopButton
+              onClick={openPublish}
+              disabled={Boolean(claimForItem)}
+              title={claimForItem ? 'On an expense claim — the claim posts this cost to Xero. Remove it from the claim to publish it on its own.' : ''}
+            >
+              Publish to Xero
+            </TopButton>
           ))}
-        <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>
+        <TopButton
+          onClick={() => setClaimOpen(true)}
+          disabled={Boolean(doc.xeroInvoiceId)}
+          title={doc.xeroInvoiceId ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.` : ''}
+        >
+          Add to expense claim
+        </TopButton>
         <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
         {doc.mergedFrom?.length > 0 && <TopButton onClick={doUnmerge}>Unmerge</TopButton>}
         <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
@@ -1330,7 +1347,13 @@ export default function CostDetail() {
                   </button>
                 )}
                 {doc.persisted && <SaveStatus status={fieldSave} className="px-1" />}
-                <TopButton onClick={() => setClaimOpen(true)}>Add to expense claim</TopButton>
+                <TopButton
+                  onClick={() => setClaimOpen(true)}
+                  disabled={Boolean(doc.xeroInvoiceId)}
+                  title={doc.xeroInvoiceId ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.` : ''}
+                >
+                  Add to expense claim
+                </TopButton>
                 <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
                 <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
               </div>
@@ -1410,7 +1433,9 @@ export default function CostDetail() {
             setAiError(
               err?.code === 'claim_locked'
                 ? 'That claim is already approved, so items can’t be added to it.'
-                : 'Could not add this item to the claim — please try again.'
+                : err?.code === 'published_to_xero'
+                  ? 'This document is already published to Xero, so it can’t also go on an expense claim.'
+                  : 'Could not add this item to the claim — please try again.'
             );
           }
         }}

@@ -3,7 +3,7 @@ import { env, xeroEnabled } from './env.js';
 import { orgIdFor } from './bills.js';
 import { getOrganisation } from './organisations.js';
 import { getBillById, getBillByIdAny, markBillPosted, parseAmount } from './store.js';
-import { getClaimForXero, saveClaimXero } from './claims.js';
+import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
 import { workspaceId } from './workspace.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
@@ -414,6 +414,17 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
       error: 'already_posted',
       message: `Already posted to ${bill.xeroTenantName || 'Xero'} on ${bill.xeroPostedAt ?? ''}.`,
       xeroInvoiceId: bill.xeroInvoiceId,
+    });
+  }
+  // On an expense claim, this cost reaches Xero as a line of that claim's bill.
+  // Publishing it separately would post it twice, so the two are mutually
+  // exclusive: take it off the claim first, or let the claim carry it.
+  const onClaim = claimForBill(workspaceId(req), bill.id);
+  if (onClaim) {
+    return res.status(409).json({
+      error: 'in_expense_claim',
+      message: `This document is on the expense claim “${onClaim.name}”, so it can’t also be published as a bill. Remove it from the claim first, or publish the claim.`,
+      claimId: onClaim.id,
     });
   }
 

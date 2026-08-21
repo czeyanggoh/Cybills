@@ -391,8 +391,30 @@ export function markBillPosted(
   bill.xeroTenantId = info.xeroTenantId;
   bill.xeroTenantName = info.xeroTenantName;
   bill.xeroPostedAt = new Date().toISOString();
+  // Publishing finishes a document: it drops out of the inbox into Archive, and
+  // (see the claims route) can no longer be put on an expense claim. Publishing
+  // and claiming are two routes for the same cost to reach the ledger — a
+  // document takes one of them, never both.
+  if (bill.status !== 'deleted') bill.status = 'archived';
   persist(bills);
   return bill;
+}
+
+// Mark cost documents as sitting on an expense claim. Same finishing move as a
+// publish: they leave the inbox for Archive, and the claim — not the document —
+// is what reaches Xero from here. One pass over the store for the whole batch.
+export function markBillsClaimed(ids: string[]): number {
+  const wanted = new Set(ids.map(String));
+  if (!wanted.size) return 0;
+  const bills = load();
+  let n = 0;
+  for (const bill of bills) {
+    if (!wanted.has(bill.id) || bill.status === 'deleted' || bill.status === 'expenseclaim') continue;
+    bill.status = 'expenseclaim';
+    n += 1;
+  }
+  if (n) persist(bills);
+  return n;
 }
 
 // Update an existing bill's editable fields in place. Returns null if not found.

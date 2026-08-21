@@ -4,7 +4,7 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
 import { directManagerFor, appOrigin, emailForName } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail } from './mailer.js';
-import { getBillByIdAny } from './store.js';
+import { getBillByIdAny, markBillsClaimed } from './store.js';
 
 // Server-backed expense claims, shared across the workspace (same JSON-store
 // pattern as bills). Replaces the old per-browser localStorage claim store, so
@@ -77,6 +77,17 @@ const COLLECTION = 'claims';
 const load = () => loadCollection<Claim>(COLLECTION);
 const save = (items: Claim[]) => saveCollection(COLLECTION, items);
 const nowIso = () => new Date().toISOString();
+
+// The claim (if any) carrying this cost document. A document on a claim can't
+// also be published as a bill in its own right — the claim posts it — so the
+// Xero route asks here before publishing.
+export function claimForBill(ws: string, billId: string): { id: string; name: string } | null {
+  const key = String(billId);
+  const claim = load().find(
+    (c) => c.workspaceId === ws && !c.deleted && c.transactions.some((t) => String(t.itemId) === key)
+  );
+  return claim ? { id: claim.id, name: claim.name } : null;
+}
 
 export const claimsRouter = Router();
 
@@ -198,15 +209,37 @@ claimsRouter.post('/:id/items', (req, res) =>
   mutate(req, res, (claim, me) => {
     if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
     const incoming: Txn[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    // A document already published to Xero is in the ledger as a bill; putting
+    // it on a claim would pay the same cost twice. Refuse the request rather
+    // than quietly dropping the item — the person adding it needs to know.
+    const published = incoming
+      .map((t) => getBillByIdAny(String(t?.itemId ?? '')))
+      .filter((b) => Boolean(b?.xeroInvoiceId));
+    if (published.length) {
+      return res.status(409).json({
+        error: 'published_to_xero',
+        message:
+          published.length === 1
+            ? 'That document is already published to Xero, so it can’t also go on an expense claim.'
+            : `${published.length} of those documents are already published to Xero, so they can’t also go on an expense claim.`,
+      });
+    }
     const seen = new Set(claim.transactions.map((t) => t.itemId));
     let added = 0;
+    const claimed: string[] = [];
     for (const t of incoming) {
       if (!t || seen.has(t.itemId)) continue;
       claim.transactions.push({ ...t, addedBy: t.addedBy || me.name });
       claim.history.unshift({ text: `Item ${t.itemId} was added to the expense claim`, by: t.addedBy || me.name, at: nowIso() });
       seen.add(t.itemId);
+      claimed.push(String(t.itemId));
       added += 1;
     }
+    // Claiming finishes a document the same way publishing does: out of the
+    // inbox, into Archive. Done here rather than left to the caller so it holds
+    // however the item arrived (Costs list, document page, moved from another
+    // claim) and can't be lost to a half-finished round of requests.
+    markBillsClaimed(claimed);
     // Adding to a submitted claim changes its total — flag it so the assigned
     // approver re-reviews. It stays in their approval queue (still awaiting).
     if (added && claim.approvalStatus === 'awaiting_approval' && claim.approver) {

@@ -67,7 +67,17 @@ const TABS = [
   { key: 'archive', label: 'Archive', counted: true },
 ];
 
-function StatusBadge({ status }) {
+// `published` distinguishes the two ways a document leaves the inbox for
+// Archive: published to Xero, or carried by an expense claim. Both are finished
+// states, and each rules the other out — so the row says which one it is.
+function StatusBadge({ status, published = false }) {
+  if (published) {
+    return (
+      <span className="inline-flex whitespace-nowrap rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+        Published to Xero
+      </span>
+    );
+  }
   const map = {
     new: 'border border-foreground font-medium text-foreground',
     viewed: 'bg-muted text-muted-foreground',
@@ -499,7 +509,7 @@ export default function Costs() {
     status: {
       cell: (d) => (
         <div className="flex flex-col items-start gap-1">
-          <StatusBadge status={d.status} />
+          <StatusBadge status={d.status} published={Boolean(d.xeroInvoiceId)} />
           {d.duplicateOfId && !d.duplicateDismissed && (
             <span
               title="Matches a document already submitted — open it to compare"
@@ -691,10 +701,10 @@ export default function Costs() {
 
   // Move every selected document to a workflow status (the pipeline step) —
   // persisted bills via the server, sample docs via localStorage overrides.
-  const moveSelected = async (status) => {
+  const moveSelected = async (status, ids = null) => {
     const byId = new Map(allRows.map((r) => [r.id, r]));
     await Promise.all(
-      [...selected].map((id) => {
+      (ids ?? [...selected]).map((id) => {
         const d = byId.get(id);
         if (!d) return null;
         if (d.persisted) return updateBill(d.id, { status }).catch(() => {});
@@ -737,15 +747,44 @@ export default function Costs() {
   };
 
   // Add the selected docs to a chosen expense claim, then mark them accordingly.
+  // A document already published to Xero is left out: that cost is in the ledger
+  // as a bill, and claiming it as well would pay for it twice. The server
+  // refuses those outright, so filter here and say which ones were skipped
+  // rather than let the whole batch fail on one of them.
   const addSelectedToClaim = async (targetId) => {
     const actor = user?.name || user?.email || 'You';
     const byId = new Map(allRows.map((r) => [r.id, r]));
-    for (const id of selected) {
-      const d = byId.get(id);
-      // eslint-disable-next-line no-await-in-loop
-      if (d) await addItemToClaim(targetId, docToClaimTxn(d, d, actor));
+    const picked = [...selected].map((id) => byId.get(id)).filter(Boolean);
+    const published = picked.filter((d) => d.xeroInvoiceId);
+    const claimable = picked.filter((d) => !d.xeroInvoiceId);
+    if (!claimable.length) {
+      setMergeNote(
+        published.length === 1
+          ? 'That document is already published to Xero, so it can’t also go on an expense claim.'
+          : 'Those documents are already published to Xero, so they can’t also go on an expense claim.'
+      );
+      return;
     }
-    moveSelected('expenseclaim');
+    try {
+      for (const d of claimable) {
+        // eslint-disable-next-line no-await-in-loop
+        await addItemToClaim(targetId, docToClaimTxn(d, d, actor));
+      }
+    } catch (err) {
+      setMergeNote(
+        err?.code === 'claim_locked'
+          ? 'That claim is already approved, so items can’t be added to it.'
+          : 'Could not add every item to the claim — please try again.'
+      );
+      notifyBillsChanged();
+      return;
+    }
+    setMergeNote(
+      published.length
+        ? `Added ${claimable.length} item(s). ${published.length} already published to Xero — those can’t also go on a claim.`
+        : ''
+    );
+    moveSelected('expenseclaim', claimable.map((d) => d.id));
   };
 
   // Merge: open the Dext-style review screen for the selected documents (page 1 +

@@ -18,12 +18,15 @@ export function xeroBillUrl(invoiceId) {
 
 // Post a freshly-read bill to Xero as Awaiting Approval (Xero's SUBMITTED), so
 // a document that's been read is already waiting in the ledger rather than
-// sitting here until someone publishes it by hand.
+// sitting here until someone publishes it by hand. Publishing finishes the
+// document: the server archives it, and it can no longer go on an expense
+// claim.
 //
 // Deliberately conservative — this writes to a live ledger, so it declines
 // rather than guesses:
 //   - off unless Business settings → Extraction has auto-publish on
 //   - never twice (a bill carrying a Xero id is skipped)
+//   - never a document that's on an expense claim — the claim posts that cost
 //   - only a COMPLETE document: supplier, date, a real category, a total > 0.
 //     An incomplete one has no account code to post to, and a half-read bill in
 //     Xero is worse than one still sitting in the inbox.
@@ -39,6 +42,9 @@ export async function autoPublishAfterRead(bill) {
     if (!getExtractionSettings().autoPublishXero) return null;
     if (!bill?.id || bill.xeroInvoiceId) return null;
     if (['archived', 'deleted', 'merged'].includes(String(bill.status || ''))) return null;
+    // On an expense claim, this cost reaches Xero as a line of the claim's bill.
+    // Publishing it separately would post it twice.
+    if (String(bill.status || '') === 'expenseclaim') return null;
     if (!isComplete(bill)) return null;
 
     const accountCode = accountCodeFromCategory(bill.category);
