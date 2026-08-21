@@ -451,7 +451,7 @@ usersRouter.post('/', async (req, res) => {
     created.push(newUser);
   }
   // Invite the new users (best-effort): issue a set-password link and email it.
-  const invites: Array<{ email: string; name: string; sent: boolean; link?: string }> = [];
+  const invites: Array<{ email: string; name: string; sent: boolean; link?: string; error?: string }> = [];
   if (notify) {
     const inviter = memberForSession(req)?.name || readSession(req)?.name;
     for (const nu of created) {
@@ -460,8 +460,18 @@ usersRouter.post('/', async (req, res) => {
       nu.invitedAt = new Date().toISOString();
       const link = resetUrl(req, raw);
       const mail = inviteEmail({ name: nu.name, url: link, inviterName: inviter, expiresInDays: env.INVITE_TTL_DAYS, orgName, message });
-      const result = await sendMail({ to: { email: nu.email, name: nu.name }, ...mail }).catch(() => ({ sent: false }));
-      invites.push({ email: nu.email, name: nu.name, sent: Boolean(result.sent), link: result.sent ? undefined : link });
+      const result = await sendMail({ to: { email: nu.email, name: nu.name }, ...mail }).catch(
+        (e): { sent: boolean; error?: string } => ({ sent: false, error: e instanceof Error ? e.message : String(e) })
+      );
+      invites.push({
+        email: nu.email,
+        name: nu.name,
+        sent: Boolean(result.sent),
+        // Surface WHY it didn't send (SMTP rejection, not-configured, etc.) so
+        // the admin isn't left guessing, plus the link they can share by hand.
+        error: result.sent ? undefined : (result as { error?: string }).error,
+        link: result.sent ? undefined : link,
+      });
     }
   }
   save(items);

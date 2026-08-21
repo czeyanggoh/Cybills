@@ -117,18 +117,24 @@ export default function Users() {
     if (sent.length && !notSent.length) {
       showToast(`Added — invitation emailed to ${sent.map((i) => i.email).join(', ')}.`);
     } else if (notSent.length) {
-      // The mailbox isn't connected (Settings → Email), so the server couldn't
-      // email the invite and returned a shareable link instead. Don't bury it —
-      // copy it to the clipboard so the admin can paste it to the user directly.
+      // The invite couldn't be emailed. Surface WHY (the server returns the SMTP
+      // error / not-configured reason) and copy the shareable link so the admin
+      // can send it by hand instead of guessing.
       const links = notSent.filter((i) => i.link).map((i) => i.link);
       const who = notSent.map((i) => i.email).join(', ');
+      const raw = notSent.map((i) => i.error).find(Boolean) || '';
+      const reason = /not[_ ]configured|not[_ ]connected/i.test(raw)
+        ? 'email isn’t set up — connect the mailbox in Settings → Email'
+        : raw
+          ? `the mail server rejected it (${raw})`
+          : 'the mail server didn’t accept it';
       if (links.length) {
         navigator.clipboard?.writeText(links.join('\n')).catch(() => {});
         showToast(
-          `Added ${who}, but email isn’t connected — invite link${links.length === 1 ? '' : 's'} copied to your clipboard. Send it to them, or connect the mailbox in Settings → Email to email invites automatically.`
+          `Added ${who}, but the invite email didn’t go out — ${reason}. Invite link${links.length === 1 ? '' : 's'} copied to your clipboard so you can send it directly.`
         );
       } else {
-        showToast(`Added ${who}, but email isn’t connected — connect the mailbox in Settings → Email to send invites.`);
+        showToast(`Added ${who}, but the invite email didn’t go out — ${reason}.`);
       }
     } else {
       showToast('User(s) added.');
