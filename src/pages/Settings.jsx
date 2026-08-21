@@ -418,6 +418,12 @@ function Extraction() {
         <Row label="Extract tax" hint="Extract the tax value from new costs and sales documents.">
           <Toggle on={form.extractTax} onChange={(v) => set('extractTax', v)} />
         </Row>
+        <Row
+          label="Publish to Xero after reading"
+          hint="A document that's been read is posted to Xero as Awaiting Approval, so it's already in the ledger. Only complete documents are posted — a missing supplier, date, category or total leaves it here to publish by hand."
+        >
+          <Toggle on={form.autoPublishXero} onChange={(v) => set('autoPublishXero', v)} />
+        </Row>
         <Row label="Default tax rate for costs">
           <SelectBox value={form.defaultTaxRateCosts || '— None —'} onChange={(v) => set('defaultTaxRateCosts', v === '— None —' ? '' : v)} options={taxRateOptions} />
         </Row>

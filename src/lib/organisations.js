@@ -312,7 +312,7 @@ export async function updateXeroCategoryDescription(organisationId, accountId, {
 
 // The org whose chart drives categorisation: the active org, else the first
 // linked one. Returns '' when none are linked / Xero isn't configured.
-async function resolveCategorisationOrgId() {
+export async function resolveCategorisationOrgId() {
   try {
     const orgs = (await getJson('/api/organisations')).organisations ?? [];
     if (!orgs.length) return '';

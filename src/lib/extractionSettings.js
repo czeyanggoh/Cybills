@@ -23,6 +23,9 @@ export const DEFAULT_EXTRACTION_SETTINGS = {
   showReviewReadyTabs: true,
   duplicateMode: 'Automatic',
   extractTax: true,
+  // Post a document to Xero as Awaiting Approval as soon as it's been read —
+  // see autoPublish.js for the conditions it insists on first.
+  autoPublishXero: true,
   defaultTaxRateCosts: '', // '' = None; otherwise a tax-rate name from the list
   defaultTaxRateSales: '',
   dueCostsMode: DUE_MODES[0],

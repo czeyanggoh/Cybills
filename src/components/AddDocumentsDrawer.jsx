@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { X, FileText, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { X, FileText, Loader2, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import {
@@ -16,6 +16,7 @@ import {
 import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts, useVisibleTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
+import { autoPublishAfterRead, xeroBillUrl } from '@/lib/autoPublish';
 import { getCustomerRule } from '@/lib/customerRules';
 import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, resolveTaxRate } from '@/lib/extractionSettings';
 import { useUsers } from '@/lib/userStore';
@@ -153,7 +154,7 @@ function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, a
 
 // One row per uploaded file, reflecting its place in the pipeline.
 function UploadItem({ item, onForce, onSkip }) {
-  const { status, file, error, duplicate } = item;
+  const { status, file, error, duplicate, xeroInvoiceId } = item;
   return (
     <div className="rounded-md border p-3">
       <div className="flex items-center gap-3">
@@ -171,8 +172,19 @@ function UploadItem({ item, onForce, onSkip }) {
         )}
         {status === 'added' && (
           <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Added
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {xeroInvoiceId ? 'Added · awaiting approval in Xero' : 'Added'}
           </span>
+        )}
+        {status === 'added' && xeroInvoiceId && (
+          <a
+            href={xeroBillUrl(xeroInvoiceId)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs font-medium text-foreground underline underline-offset-2"
+          >
+            View in Xero <ExternalLink className="h-3 w-3" />
+          </a>
         )}
         {status === 'skipped' && <span className="text-xs text-muted-foreground">Skipped</span>}
         {status === 'rejected' && (
@@ -431,8 +443,16 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               return;
             }
             const withDefaults = await applyExtractionDefaults(bill.id, fin?.bill ?? bill, fields);
+            // Reading is done: send it to Xero as Awaiting Approval. Declines
+            // quietly (and leaves the document alone) when it isn't complete
+            // enough to post — see autoPublishAfterRead.
+            const posted = await autoPublishAfterRead(withDefaults);
             notifyBillsChanged();
-            patch(it.id, { status: 'added', bill: withDefaults });
+            patch(it.id, {
+              status: 'added',
+              bill: posted?.bill ?? withDefaults,
+              xeroInvoiceId: posted?.invoice?.invoiceId || posted?.bill?.xeroInvoiceId || '',
+            });
           } else {
             // Nothing read (extraction off/failed) — move straight to the inbox;
             // no fuzzy dedup on empty fields.

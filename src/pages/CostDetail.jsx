@@ -14,6 +14,7 @@ import {
   Plus,
   Trash2,
   Loader2,
+  ExternalLink,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -35,6 +36,7 @@ import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useAutoSave } from '@/lib/useAutoSave';
+import { xeroBillUrl } from '@/lib/autoPublish';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -889,9 +891,16 @@ export default function CostDetail() {
         )}
         {doc.persisted &&
           (doc.xeroInvoiceId ? (
-            <span className="inline-flex h-8 items-center gap-1 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700">
-              Posted to {doc.xeroTenantName || 'Xero'}
-            </span>
+            <a
+              href={xeroBillUrl(doc.xeroInvoiceId)}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open this bill in ${doc.xeroTenantName || 'Xero'}`}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700 transition-colors hover:bg-green-600/20"
+            >
+              View in {doc.xeroTenantName || 'Xero'}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
           ) : (
             <TopButton onClick={openPublish}>Publish to Xero</TopButton>
           ))}
