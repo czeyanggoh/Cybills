@@ -188,6 +188,20 @@ export const notFiller = (v: unknown): string => {
   return FILLER.has(base) || FILLER.has(base.replace(/\./g, '')) ? '' : text;
 };
 
+// A description assembled from what was actually read, for when the reader gives
+// nothing back: "Singtel — Telephone & Internet", or "Singtel invoice" when the
+// document isn't categorised. Derived from the document, never invented. Empty
+// when there isn't even a supplier to build on.
+export function derivedDescription(supplier: unknown, category: unknown, documentType: unknown): string {
+  const who = String(supplier ?? '').trim();
+  if (!who || who.toLowerCase() === 'unknown supplier') return '';
+  // Categories read "489 - Telephone & Internet"; the code adds nothing here.
+  const what = String(category ?? '').replace(/^\s*\d+\s*-\s*/, '').trim();
+  if (what && what.toLowerCase() !== 'uncategorised') return `${who} — ${what}`;
+  const type = String(documentType ?? '').trim().toLowerCase();
+  return type ? `${who} ${type}` : who;
+}
+
 // One-off cleanup for documents read before the reader stopped emitting filler.
 // Idempotent (a blank stays blank), so it is safe to run at every boot. Returns
 // how many documents it cleaned.
@@ -199,7 +213,9 @@ export function scrubFillerText(): number {
     for (const key of ['description', 'categoryReason', 'taxRateReason'] as const) {
       const before = b[key];
       if (before && notFiller(before) === '') {
-        b[key] = '';
+        // A description is the one of the three worth replacing rather than
+        // just clearing — it's what publishes to the ledger as the line.
+        b[key] = key === 'description' ? derivedDescription(b.supplier, b.category, b.documentType) : '';
         touched = true;
       }
     }

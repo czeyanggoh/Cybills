@@ -2,7 +2,7 @@ import { Router } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { env, visionEnabled } from './env.js';
-import { notFiller } from './store.js';
+import { notFiller, derivedDescription } from './store.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
 // the model classifies into a value that actually exists in the UI. These are
@@ -65,7 +65,7 @@ function buildSchema(categories: string[], taxRateNames: string[]) {
       description: {
         type: 'string',
         description:
-          'A concise plain-language summary of what was purchased, from the merchant, any visible items/services, and the document type. Examples: "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper", "Mobile and broadband subscription". For a bare card/payment slip with no itemisation, describe it from the merchant, e.g. "Card payment at Marina Bay Sands (Marquee)". If the document does not show enough to say, return an EMPTY STRING — never filler such as "placeholder", "N/A", "unknown" or "description". This text is published to the accounting ledger, where a made-up word is worse than a blank.',
+          'A concise plain-language summary of what was purchased. Always attempt one: the merchant and document type alone are enough for a useful answer, so itemisation is a bonus, not a requirement. Examples: "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper", "Monthly mobile and broadband charges" (a telco bill), "Annual company secretarial fee", "Card payment at Marina Bay Sands (Marquee)" (a bare payment slip). Return an EMPTY STRING ONLY if the document is illegible or you cannot tell what it is at all — and NEVER filler such as "placeholder", "N/A", "unknown" or "description". This text is published to the accounting ledger, where a made-up word is worse than a blank.',
       },
       cardLast4: {
         type: 'string',
@@ -290,10 +290,15 @@ extractRouter.post('/extract', async (req, res) => {
     }
     // Belt-and-suspenders: snap to a known category if the model somehow strays.
     const taxRate = taxRateSet.has(parsed.data.taxRate) ? parsed.data.taxRate : '';
+    const category = categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised';
     const data = {
       ...parsed.data,
-      category: categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised',
-      description: notFiller(parsed.data.description),
+      category,
+      // Nothing usable from the reader (it declined, or wrote filler) — compose
+      // one from the fields we did read rather than leave the field blank. It's
+      // derived from the document, not invented: supplier and the category it
+      // was coded to. Blank only when even that is unknown.
+      description: notFiller(parsed.data.description) || derivedDescription(parsed.data.supplier, category, parsed.data.documentType),
       categoryReason: notFiller(parsed.data.categoryReason),
       taxRate,
       taxRateReason: taxRate ? notFiller(parsed.data.taxRateReason) : '',
