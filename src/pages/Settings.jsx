@@ -494,17 +494,6 @@ function Automation() {
         </Row>
       </Card>
 
-      <Card title="Smart Suggestions">
-        <Row
-          label="Display Smart Suggestions?"
-          hint="Generate suggestions under certain fields; you choose to accept or ignore them."
-        >
-          <Toggle defaultOn />
-        </Row>
-        <Row label="Auto-apply for projects"><Toggle /></Row>
-        <Row label="Auto-apply for description of items"><Toggle /></Row>
-      </Card>
-
       <Card title="Line item grouping">
         <Row
           label="Group uncategorised lines"
@@ -512,27 +501,6 @@ function Automation() {
         >
           <Toggle />
         </Row>
-      </Card>
-
-      <Card title="Auto Expense claims">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-4 text-sm">
-            <div>
-              <p className="mb-1 font-medium">Summary</p>
-              <div className="grid grid-cols-[150px_1fr] gap-y-1 text-muted-foreground">
-                <span>Current claim end</span><span className="text-foreground">26 Jul 2026</span>
-                <span>Frequency</span><span className="text-foreground">Monthly</span>
-              </div>
-            </div>
-            <div>
-              <p className="mb-1 font-medium">Created for</p>
-              <div className="rounded-md border px-3 py-2 text-foreground">Sean Tan</div>
-            </div>
-          </div>
-          <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
-            Edit
-          </button>
-        </div>
       </Card>
 
       <Card title="Archive">
