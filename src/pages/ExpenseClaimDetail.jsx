@@ -5,11 +5,11 @@ import {
   ChevronRight,
   ChevronDown,
   Search,
-  Settings2,
   Plus,
   FileText,
   X,
   Lock,
+  Info,
   CheckCircle2,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -19,6 +19,7 @@ import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
+import TableSettingsMenu from '@/components/TableSettingsMenu';
 import {
   useClaims,
   submitForApproval,
@@ -42,6 +43,7 @@ import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
 import { claimExportName, claimRef } from '@/lib/exportFormat';
 import { useCategoryDisplayMode, useCategorySortMode, sortCategories, formatCategory } from '@/lib/categoryDisplay';
+import { CLAIM_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { cn } from '@/lib/utils';
 
 // The GL/account code CYHR should book the payable against — the leading number
@@ -145,6 +147,12 @@ export default function ExpenseClaimDetail() {
   const { data: organisations = [] } = useOrganisations();
   const [payNote, setPayNote] = useState('');
   const [publishing, setPublishing] = useState(false);
+  // Which columns this table shows and how tightly it packs them — the gear
+  // beside the search box, the same preference store as the Costs table.
+  // Declared up here with the other hooks: it has to run before the
+  // "claim not found" early return below.
+  const tablePrefs = useTablePrefs('claimItems');
+  const densityClass = DENSITY_CLASS[tablePrefs.density] ?? DENSITY_CLASS.Medium;
 
   // Keep the selection in sync with what actually exists: when items are removed
   // (here or in another tab) drop their ids so the count never counts phantoms.
@@ -231,10 +239,13 @@ export default function ExpenseClaimDetail() {
     );
   }
 
-  // A claim in the approval flow (submitted for approval, or approved) is locked
-  // from item edits — otherwise its total could drift after it's been approved
-  // and handed to CYHR for payment. Rejected/draft claims stay editable.
-  const locked = claim.approvalStatus === 'awaiting_approval' || claim.approvalStatus === 'approved';
+  // Only an APPROVED claim is locked from item edits — its total must not drift
+  // after it's been approved and handed to CYHR for payment. A claim merely
+  // awaiting approval stays editable: that's exactly when a wrongly-added
+  // receipt gets spotted, and taking it back out beats deleting the whole claim.
+  // The approver is told the total changed and re-reviews.
+  const locked = claim.approvalStatus === 'approved';
+  const submitted = claim.approvalStatus === 'awaiting_approval';
 
   // Apply any in-session category tweaks on top of the stored line items, then
   // filter by the search box (supplier / category / date / description / id).
@@ -256,6 +267,48 @@ export default function ExpenseClaimDetail() {
     setCatOverrides((o) => ({ ...o, [itemId]: category })); // optimistic
     updateClaimItems(claim.id, [itemId], { category }).catch(() => {}); // persist
   };
+
+  // Take one item off the claim. The document isn't deleted — it goes back to
+  // the Costs inbox (removeItemsFromClaim resets its status), so it can be
+  // re-filed, put on another claim, or published on its own.
+  const removeItem = (t) => {
+    if (!window.confirm(`Remove this item from the claim?\n\n${t.supplier || 'The document'} goes back to your Costs inbox — it isn't deleted.`)) return;
+    removeItemsFromClaim(claim.id, [t.itemId]).catch(() => {});
+    setSelected((sel) => {
+      const n = new Set(sel);
+      n.delete(t.itemId);
+      return n;
+    });
+  };
+
+  // How each toggleable column renders. `stopClick` keeps a cell's own controls
+  // from opening the document; the amounts are right-aligned as in the PDF.
+  const money = 'whitespace-nowrap text-right tabular-nums';
+  const CELLS = {
+    supplier: { cellClass: 'whitespace-nowrap', cell: (t) => t.supplier },
+    date: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (t) => t.date },
+    category: {
+      stopClick: true,
+      cell: (t) =>
+        locked ? (
+          <span className="text-muted-foreground">{t.category}</span>
+        ) : (
+          <CategorySelect value={t.category} onChange={(v) => setRowCategory(t.itemId, v)} />
+        ),
+    },
+    description: {
+      cellClass: 'max-w-[16rem] truncate text-muted-foreground',
+      title: (t) => t.description || '',
+      cell: (t) => t.description || '—',
+    },
+    net: { head: `Net (${claim.currency})`, headClass: 'text-right', cellClass: money, cell: (t) => t.net },
+    tax: { head: `Tax (${claim.currency})`, headClass: 'text-right', cellClass: money, cell: (t) => t.tax },
+    total: { head: `Total (${claim.currency})`, headClass: 'text-right', cellClass: cn(money, 'font-medium'), cell: (t) => t.total },
+    itemId: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (t) => t.displayId || t.itemId },
+    user: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (t) => t.addedBy || '—' },
+    project: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (t) => t.project || '—' },
+  };
+  const shownColumns = CLAIM_COLUMNS.filter((c) => !c.fixed && tablePrefs.columns[c.key] && CELLS[c.key]);
 
   // ── Item selection + bulk actions (Dext-style) ──────────────────────────────
   const toggleItem = (itemId) =>
@@ -477,7 +530,13 @@ export default function ExpenseClaimDetail() {
             {locked && (
               <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-muted px-3 text-xs text-muted-foreground">
                 <Lock className="h-3.5 w-3.5" />
-                {claim.approvalStatus === 'approved' ? 'Approved — items are locked' : 'Awaiting approval — items are locked'}
+                Approved — items are locked
+              </span>
+            )}
+            {submitted && (
+              <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-muted px-3 text-xs text-muted-foreground">
+                <Info className="h-3.5 w-3.5" />
+                Awaiting approval — a change sends it back to {claim.approver || 'the approver'} to re-review
               </span>
             )}
             {!locked && (
@@ -529,9 +588,7 @@ export default function ExpenseClaimDetail() {
                 Advanced <ChevronDown className="h-3 w-3" />
               </button>
             </div>
-            <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Table settings">
-              <Settings2 className="h-4 w-4" strokeWidth={1.75} />
-            </button>
+            <TableSettingsMenu table="claimItems" columns={CLAIM_COLUMNS} />
           </div>
 
           {/* Line items */}
@@ -542,10 +599,11 @@ export default function ExpenseClaimDetail() {
                   <th className="w-28 px-3 py-2.5">
                     <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={locked} className="h-4 w-4 accent-black disabled:opacity-40" aria-label="Select all" />
                   </th>
-                  <th className="px-3 py-2.5 font-medium">Supplier</th>
-                  <th className="px-3 py-2.5 font-medium">Description</th>
-                  <th className="px-3 py-2.5 font-medium">Date</th>
-                  <th className="px-3 py-2.5 font-medium">Category</th>
+                  {shownColumns.map((c) => (
+                    <th key={c.key} className={cn('px-3 py-2.5 font-medium', CELLS[c.key].headClass)}>
+                      {CELLS[c.key].head ?? c.label}
+                    </th>
+                  ))}
                   <th className="w-10 px-2 py-2.5"><span className="sr-only">Remove</span></th>
                 </tr>
               </thead>
@@ -556,7 +614,7 @@ export default function ExpenseClaimDetail() {
                     onClick={() => navigate(`/costs/${t.itemId}`)}
                     className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
                   >
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                    <td className={densityClass} onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
                         <input type="checkbox" checked={selected.has(t.itemId)} onChange={() => toggleItem(t.itemId)} disabled={locked} className="h-4 w-4 accent-black disabled:opacity-40" />
                         <FlagMenu id={t.itemId} />
@@ -564,22 +622,25 @@ export default function ExpenseClaimDetail() {
                         <span className="rounded bg-foreground px-2 py-0.5 text-xs text-background">Ready</span>
                       </div>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-3">{t.supplier}</td>
-                    <td className="max-w-[16rem] truncate px-3 py-3 text-muted-foreground" title={t.description || ''}>{t.description || '—'}</td>
-                    <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{t.date}</td>
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      {locked ? (
-                        <span className="text-muted-foreground">{t.category}</span>
-                      ) : (
-                        <CategorySelect value={t.category} onChange={(v) => setRowCategory(t.itemId, v)} />
-                      )}
-                    </td>
+                    {shownColumns.map((c) => {
+                      const cell = CELLS[c.key];
+                      return (
+                        <td
+                          key={c.key}
+                          className={cn(densityClass, cell.cellClass)}
+                          title={cell.title?.(t) || undefined}
+                          onClick={cell.stopClick ? (e) => e.stopPropagation() : undefined}
+                        >
+                          {cell.cell(t)}
+                        </td>
+                      );
+                    })}
                     <td className="px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                       {!locked && (
                         <button
                           type="button"
-                          onClick={() => removeItemsFromClaim(claim.id, [t.itemId])}
-                          title="Remove from claim"
+                          onClick={() => removeItem(t)}
+                          title="Remove from this claim — the document goes back to your Costs inbox"
                           aria-label="Remove from claim"
                           className="text-muted-foreground transition-colors hover:text-destructive"
                         >
@@ -591,19 +652,22 @@ export default function ExpenseClaimDetail() {
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                    <td colSpan={shownColumns.length + 2} className="px-4 py-12 text-center text-sm text-muted-foreground">
                       {q ? 'No items match your search.' : 'No items in this claim yet.'}
                     </td>
                   </tr>
                 )}
               </tbody>
               <tfoot>
+                {/* One spanning cell rather than a per-column layout: the total
+                    stays put however many columns the gear leaves showing. */}
                 <tr className="border-t bg-muted/20">
-                  <td colSpan={3} className="px-3 py-3 text-right text-sm font-medium">Expense total</td>
-                  <td className="px-3 py-3 text-sm font-semibold tabular-nums">
-                    {claim.currency} {claim.total}
+                  <td colSpan={shownColumns.length + 2} className="px-3 py-3 text-sm">
+                    <div className="flex items-center justify-end gap-6">
+                      <span className="font-medium">Expense total</span>
+                      <span className="font-semibold tabular-nums">{claim.currency} {claim.total}</span>
+                    </div>
                   </td>
-                  <td />
                 </tr>
               </tfoot>
             </table>

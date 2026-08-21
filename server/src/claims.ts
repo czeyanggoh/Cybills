@@ -159,9 +159,13 @@ function mutate(req: Request, res: Response, fn: (claim: Claim, me: { email: str
   return res.json({ claim });
 }
 
-// A claim that's been submitted for approval or approved is locked from item
-// edits — its total must not drift after approval / handoff to CYHR for payment.
-const isLocked = (c: Claim) => c.approvalStatus === 'awaiting_approval' || c.approvalStatus === 'approved';
+// A claim is locked from item edits once APPROVED — its total must not drift
+// after the handoff to CYHR for payment. While it's merely awaiting approval it
+// stays editable: items can be added, removed or recategorised, and the
+// approver is told the total changed and re-reviews. (Adding always worked this
+// way; removing and recategorising now match it, so a claimant who submitted a
+// wrong receipt can take it back out instead of deleting the whole claim.)
+const isLocked = (c: Claim) => c.approvalStatus === 'approved';
 
 const claimTotal = (c: Claim): string => c.transactions.reduce((n, t) => n + Number(t.total || 0), 0).toFixed(2);
 
@@ -199,6 +203,18 @@ function notifyClaimant(req: Request, claim: Claim, decision: 'approved' | 'reje
     url: `${appOrigin(req)}/expense-claims/${claim.id}`,
   });
   void sendMail({ to: { email, name: claim.claimFor }, ...mail }).catch(() => {});
+}
+
+// Record that a submitted claim changed under its approver, and email them to
+// re-review. It stays in their queue (still awaiting) — no re-submission needed.
+function noteChangeAfterSubmit(req: Request, claim: Claim, by: string, what: string): void {
+  if (claim.approvalStatus !== 'awaiting_approval' || !claim.approver) return;
+  claim.history.unshift({
+    text: `${what} after submission — ${claim.approver} to re-review the updated total`,
+    by,
+    at: nowIso(),
+  });
+  notifyApprover(req, claim, true);
 }
 
 // POST /api/claims/:id/items — attach cost items (idempotent per itemId).
@@ -240,16 +256,7 @@ claimsRouter.post('/:id/items', (req, res) =>
     // however the item arrived (Costs list, document page, moved from another
     // claim) and can't be lost to a half-finished round of requests.
     markBillsClaimed(claimed);
-    // Adding to a submitted claim changes its total — flag it so the assigned
-    // approver re-reviews. It stays in their approval queue (still awaiting).
-    if (added && claim.approvalStatus === 'awaiting_approval' && claim.approver) {
-      claim.history.unshift({
-        text: `${added} item(s) added after submission — ${claim.approver} to re-review the updated total`,
-        by: me.name,
-        at: nowIso(),
-      });
-      notifyApprover(req, claim, true);
-    }
+    if (added) noteChangeAfterSubmit(req, claim, me.name, `${added} item(s) added`);
   })
 );
 
@@ -261,7 +268,10 @@ claimsRouter.post('/:id/items/remove', (req, res) =>
     const before = claim.transactions.length;
     claim.transactions = claim.transactions.filter((t) => !ids.has(String(t.itemId)));
     const removed = before - claim.transactions.length;
-    if (removed) claim.history.unshift({ text: `${removed} item(s) removed from the expense claim`, by: me.name, at: nowIso() });
+    if (removed) {
+      claim.history.unshift({ text: `${removed} item(s) removed from the expense claim`, by: me.name, at: nowIso() });
+      noteChangeAfterSubmit(req, claim, me.name, `${removed} item(s) removed`);
+    }
   })
 );
 

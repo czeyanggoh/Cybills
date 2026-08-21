@@ -46,11 +46,29 @@ export const COST_COLUMNS = [
   { key: 'xero', label: 'Xero' },
 ];
 
+// An expense claim's line items. The same idea as the Costs table's gear, over
+// the fields a claim transaction actually carries — everything else about the
+// document lives on its own page, one click away through the row.
+export const CLAIM_COLUMNS = [
+  { key: 'status', label: 'Status', primary: true, fixed: true },
+  { key: 'supplier', label: 'Supplier', primary: true },
+  { key: 'date', label: 'Date', primary: true },
+  { key: 'category', label: 'Category', primary: true },
+  { key: 'description', label: 'Description', primary: true },
+  { key: 'net', label: 'Net', primary: true },
+  { key: 'tax', label: 'Tax', primary: true },
+  { key: 'total', label: 'Total', primary: true },
+  { key: 'itemId', label: 'Item ID' },
+  { key: 'user', label: 'User' },
+  { key: 'project', label: 'PIC' },
+];
+
 const defaultsFor = (columns) =>
   Object.fromEntries(columns.map((c) => [c.key, Boolean(c.primary)]));
 
 export const DEFAULT_TABLE_PREFS = {
   costs: { columns: defaultsFor(COST_COLUMNS), density: 'Medium' },
+  claimItems: { columns: defaultsFor(CLAIM_COLUMNS), density: 'Medium' },
 };
 
 const emit = () => window.dispatchEvent(new Event(TABLE_PREFS_EVENT));
