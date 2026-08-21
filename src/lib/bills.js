@@ -1,6 +1,6 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
 import { nameForEmail } from '@/lib/userStore';
-import { getActiveOrganisationId, getExtractionTaxRates } from '@/lib/organisations';
+import { getActiveOrganisationId, getExtractionTaxRates, getExtractionProjects } from '@/lib/organisations';
 import { isGstRegistered } from '@/lib/businessProfile';
 import { fetchReviewInstructions } from '@/lib/reviewInstructions';
 
@@ -58,10 +58,14 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
   const taxRates = isGstRegistered()
     ? await getExtractionTaxRates().then((rows) => rows.filter((t) => t.rules)).catch(() => [])
     : [];
+  // Projects the org wrote a "when to use" rule for (Lists → Projects), so a
+  // document can be allocated by what it says rather than only by who uploaded
+  // it. None written → the field isn't offered to the model at all.
+  const projects = await getExtractionProjects().catch(() => []);
   const res = await fetch('/api/costs/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ imageBase64, mediaType, accounts, instructions, taxRates }),
+    body: JSON.stringify({ imageBase64, mediaType, accounts, instructions, taxRates, projects }),
   });
   if (!res.ok) return null;
   const { data } = await res.json();

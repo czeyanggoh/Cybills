@@ -353,12 +353,19 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(cur?.date || '')) ? cur.date : '';
       const due = dueDateForNewDoc(settings, kind, iso);
       if (due) p.dueDate = due;
-      // Auto-allocate the project (Xero PIC) from the document owner's assigned
-      // project (Users → Project), so each uploader's docs are tagged to them.
+      // Project (Xero PIC), in order of what the evidence supports:
+      //   1. a "When to use" rule the document plainly matched (Lists → Projects)
+      //   2. the uploader's own assigned project (Users → Project)
+      // A rule is a statement about the DOCUMENT, so it outranks a default that
+      // is only about who happened to upload it.
       if (!String(cur?.project || '')) {
-        const ownerName = owner || meName;
-        const ownerUser = users.find((u) => u.name === ownerName || u.email === ownerName);
-        if (ownerUser?.project) p.project = ownerUser.project;
+        const byRule = String(extracted?.project || '').trim();
+        if (byRule) p.project = byRule;
+        else {
+          const ownerName = owner || meName;
+          const ownerUser = users.find((u) => u.name === ownerName || u.email === ownerName);
+          if (ownerUser?.project) p.project = ownerUser.project;
+        }
       }
       const r = await updateBill(billId, p).then((res) => res?.bill).catch(() => null);
       return r ?? cur;

@@ -13,7 +13,7 @@ const DEFAULT_CATEGORIES = ['Uncategorised', 'Others'];
 // categories so the model must return one that maps to a real dropdown value.
 // additionalProperties:false + required on every field is mandatory for strict
 // structured outputs.
-function buildSchema(categories: string[], taxRateNames: string[]) {
+function buildSchema(categories: string[], taxRateNames: string[], projectNames: string[]) {
   // Tax-rate picking is only offered when the org has written "when to use"
   // rules (Lists → Tax rates). No rules → the fields are left out of the schema
   // entirely, so the model is never asked to guess a tax code.
@@ -32,11 +32,27 @@ function buildSchema(categories: string[], taxRateNames: string[]) {
         },
       }
     : {};
+  const projectFields = projectNames.length
+    ? {
+        project: {
+          type: 'string',
+          enum: ['', ...projectNames],
+          description:
+            'The project / PIC whose "when to use" rule clearly applies to THIS document, from the rules listed in the prompt. Return an empty string unless a rule plainly matches — a near-miss or a guess must be an empty string, because the empty string falls back to the uploader\'s own assigned project.',
+        },
+        projectReason: {
+          type: 'string',
+          description:
+            'When project is non-empty, one short sentence quoting the part of the rule the document satisfies, e.g. "Invoice billed to the Yu Yu site — matches the Yu Yu rule." Empty string when project is empty.',
+        },
+      }
+    : {};
   return {
     type: 'object',
     additionalProperties: false,
     properties: {
       ...taxRateFields,
+      ...projectFields,
       supplier: { type: 'string', description: 'Merchant / supplier name, e.g. "Grab"' },
       date: {
         type: 'string',
@@ -113,6 +129,7 @@ function buildSchema(categories: string[], taxRateNames: string[]) {
       'cardLast4',
       'lineItems',
       ...(taxRateNames.length ? ['taxRate', 'taxRateReason'] : []),
+      ...(projectNames.length ? ['project', 'projectReason'] : []),
     ],
   };
 }
@@ -133,6 +150,8 @@ const ReceiptSchema = z.object({
   cardLast4: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
   taxRateReason: z.string().optional().default(''),
+  project: z.string().optional().default(''),
+  projectReason: z.string().optional().default(''),
   lineItems: z.array(
     z.object({
       description: z.string(),
@@ -193,7 +212,27 @@ function parseTaxRates(raw: unknown): TaxRateRef[] {
   return out;
 }
 
-// POST /api/costs/extract — body: { imageBase64, mediaType, accounts?, categories?, taxRates? }.
+type NamedRule = { name: string; rules: string };
+
+// Projects (Xero tracking-category options) the org has written a "when to use"
+// rule for. Same contract as the tax rates: no rule, no entry — an option with
+// nothing written about it is not something the model should be choosing.
+function parseNamedRules(raw: unknown): NamedRule[] {
+  if (!Array.isArray(raw)) return [];
+  const out: NamedRule[] = [];
+  const seen = new Set<string>();
+  for (const t of raw) {
+    const name = typeof t?.name === 'string' ? t.name.trim() : '';
+    const rules = typeof t?.rules === 'string' ? t.rules.trim() : '';
+    if (!name || !rules || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, rules: rules.slice(0, 600) }); // guard the prompt size
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+
+// POST /api/costs/extract — body: { imageBase64, mediaType, accounts?, categories?, taxRates?, projects? }.
 // Runs the receipt image OR PDF invoice through Claude and returns the extracted
 // fields, classified into the Xero chart of accounts (when `accounts` is given,
 // using each account's description) or a plain category list. 503 until an
@@ -250,6 +289,15 @@ extractRouter.post('/extract', async (req, res) => {
         .join('\n')
     : '';
 
+  // Projects the org has written rules for, and the guide that teaches them.
+  const projects = parseNamedRules(req.body?.projects);
+  const projectNames = projects.map((p) => p.name);
+  const projectSet = new Set(projectNames);
+  const projectsGuide = projects.length
+    ? '\n\nPROJECT (PIC) RULES. This organisation has written the following rules for when a project applies. Set `project` to the ONE project whose rule this document plainly satisfies, and `projectReason` to why. If no rule plainly applies, return an empty string for both — the document is then allocated to the uploader\'s own project, which is safer than a guess.\n' +
+      projects.map((p) => `- "${p.name}": ${p.rules}`).join('\n')
+    : '';
+
   const isPdf = mediaType === PDF_MEDIA;
   const fileBlock: Anthropic.ContentBlockParam = isPdf
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: imageBase64 } }
@@ -277,12 +325,13 @@ extractRouter.post('/extract', async (req, res) => {
                 'If a field is not present, use an empty string or 0. ' +
                 'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
                 accountsGuide +
-                taxRatesGuide,
+                taxRatesGuide +
+                projectsGuide,
             },
           ],
         },
       ],
-      output_config: { format: { type: 'json_schema', schema: buildSchema(categories, taxRateNames) } },
+      output_config: { format: { type: 'json_schema', schema: buildSchema(categories, taxRateNames, projectNames) } },
     });
 
     if (message.stop_reason === 'refusal') {
@@ -297,6 +346,7 @@ extractRouter.post('/extract', async (req, res) => {
     }
     // Belt-and-suspenders: snap to a known category if the model somehow strays.
     const taxRate = taxRateSet.has(parsed.data.taxRate) ? parsed.data.taxRate : '';
+    const project = projectSet.has(parsed.data.project) ? parsed.data.project : '';
     const category = categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised';
     const data = {
       ...parsed.data,
@@ -312,6 +362,8 @@ extractRouter.post('/extract', async (req, res) => {
       categoryReason: notFiller(parsed.data.categoryReason),
       taxRate,
       taxRateReason: taxRate ? notFiller(parsed.data.taxRateReason) : '',
+      project,
+      projectReason: project ? notFiller(parsed.data.projectReason) : '',
       lineItems: parsed.data.lineItems.map((li) => ({ ...li, description: notFiller(li.description) })),
     };
     return res.json({ ok: true, data });

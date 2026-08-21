@@ -368,6 +368,34 @@ export async function getExtractionTaxRates() {
   return mergeManagedTaxRates(live).filter((t) => t.visible);
 }
 
+// Projects (Xero tracking-category options) the org has written a "when to use"
+// rule for, for the upload path. `index` 0 = Projects, 1 = Projects 2 — both are
+// sent, so a rule on either can allocate a document. Only rules are returned:
+// an option nobody has written about is not something the model should pick.
+export async function getExtractionProjects() {
+  const orgId = await resolveCategorisationOrgId();
+  if (!orgId) return [];
+  let categories = [];
+  try {
+    categories = await fetchXeroTracking(orgId);
+  } catch {
+    return [];
+  }
+  const out = [];
+  const seen = new Set();
+  ['projects', 'projects2'].forEach((kind, i) => {
+    const meta = getMeta(kind);
+    for (const o of categories[i]?.options ?? []) {
+      const name = String(o?.name || '').trim();
+      const rules = String(meta[name]?.rules || '').trim();
+      if (!name || !rules || seen.has(name)) continue;
+      seen.add(name);
+      out.push({ name, rules });
+    }
+  });
+  return out;
+}
+
 // Category-dropdown options for the active org's live chart (expense accounts),
 // with the bundled standard chart as fallback. 'Uncategorised' is always first.
 export function useCategoryOptions() {

@@ -141,6 +141,18 @@ export function getMeta(kind) {
   return asObject(read().meta[kind]);
 }
 
+// Reactive form of getMeta, for a list built on LIVE Xero data (projects) whose
+// rows carry CYBills-side extras.
+export function useMeta(kind) {
+  const [meta, setMeta] = useState(() => getMeta(kind));
+  useEffect(() => {
+    const sync = () => setMeta(getMeta(kind));
+    window.addEventListener(LISTS_EVENT, sync);
+    return () => window.removeEventListener(LISTS_EVENT, sync);
+  }, [kind]);
+  return meta;
+}
+
 export function setMetaField(kind, id, field, value) {
   const state = read();
   const meta = { ...(state.meta || {}) };

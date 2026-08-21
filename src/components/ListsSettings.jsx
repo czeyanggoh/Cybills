@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
-import { addToList, removeFromList, setListVisible, setMetaField, useHiddenSet } from '@/lib/listsStore';
+import { addToList, removeFromList, setListVisible, setMetaField, useHiddenSet, useMeta } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
@@ -214,22 +214,23 @@ function CategoriesFromXero() {
   );
 }
 
-// The "when to use" rule for one tax rate. Free text the org writes itself —
-// it rides along to the extractor, which may pick a code whose rule clearly
-// matches the document (the arithmetic fallback only ever reaches the
-// standard-rated codes and No Tax). Saved on blur, keyed by rate name.
-function RulesCell({ row }) {
+// The "when to use" rule for one row. Free text the org writes itself — it rides
+// along to the extractor, which may pick the row whose rule clearly matches the
+// document. Used by Tax rates (where the arithmetic fallback only ever reaches
+// the standard-rated codes and No Tax) and by Projects (where the fallback is
+// the uploader's own assigned project). Auto-saved, keyed by name.
+function RulesCell({ row, kind = 'taxRates', placeholder = 'When should this code be used?' }) {
   const [draft, setDraft] = useState(row.rules || '');
   // Re-sync when the stored value changes underneath us (another tab, a refetch).
   useEffect(() => { setDraft(row.rules || ''); }, [row.rules]);
-  const status = useAutoSave(draft, (v) => setMetaField('taxRates', row.id, 'rules', v.trim()));
+  const status = useAutoSave(draft, (v) => setMetaField(kind, row.id, 'rules', v.trim()));
   return (
     <div>
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         rows={2}
-        placeholder="When should this code be used?"
+        placeholder={placeholder}
         className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
       />
       <SaveStatus status={status} className="mt-1" />
@@ -311,6 +312,10 @@ function ProjectsFromXero({ index }) {
   const orgId = (organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0])?.id || '';
   const { data: categories, isLoading, isError, error } = useXeroTracking(orgId);
   const [query, setQuery] = useState('');
+  // Rules live under their own kind per tracking category, so Projects and
+  // Projects 2 can't overwrite each other's notes for a same-named option.
+  const metaKind = index === 0 ? 'projects' : 'projects2';
+  const meta = useMeta(metaKind);
 
   const notice = (msg) => (
     <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">{msg}</div>
@@ -327,12 +332,16 @@ function ProjectsFromXero({ index }) {
   if (!cat) return notice(`The connected Xero organisation has no ${index === 0 ? 'first' : 'second'} tracking category.`);
 
   const q = query.trim().toLowerCase();
-  const options = cat.options.filter((o) => !q || o.name.toLowerCase().includes(q));
+  const options = (cat.options || [])
+    .filter((o) => !q || String(o.name || '').toLowerCase().includes(q))
+    // The rule is CYBills-side (Xero has no such field), keyed by option NAME.
+    .map((o) => ({ ...o, id: o.name, rules: meta[o.name]?.rules || '' }));
 
   return (
     <div>
       <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
-        Tracking category <span className="font-medium text-foreground">{cat.name}</span>, synced from the connected Xero organisation. Its options are managed in Xero.
+        Tracking category <span className="font-medium text-foreground">{cat.name}</span>, synced from the connected Xero organisation. Its options are managed in Xero. Write a{' '}
+        <span className="font-medium text-foreground">When to use</span> rule and CYBills will allocate a document to that option when the rule plainly matches — otherwise it falls back to the uploader&apos;s own project (Users → Project).
       </p>
       <div className="mb-3 flex items-center">
         <div className="relative ml-auto">
@@ -341,18 +350,24 @@ function ProjectsFromXero({ index }) {
         </div>
       </div>
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[360px] text-sm">
+        <table className="w-full min-w-[560px] text-sm">
           <thead className="border-b bg-muted/40 text-left text-muted-foreground">
-            <tr><th className="px-3 py-2.5 font-medium">Option</th></tr>
+            <tr>
+              <th className="whitespace-nowrap px-3 py-2.5 font-medium">Option</th>
+              <th className="w-full px-3 py-2.5 font-medium">When to use?</th>
+            </tr>
           </thead>
           <tbody>
             {options.map((o) => (
-              <tr key={o.id} className="border-b last:border-0 hover:bg-muted/40">
-                <td className="px-3 py-3 font-medium">{o.name}</td>
+              <tr key={o.id} className="border-b align-top last:border-0 hover:bg-muted/40">
+                <td className="whitespace-nowrap px-3 py-3 font-medium">{o.name}</td>
+                <td className="px-3 py-2">
+                  <RulesCell row={o} kind={metaKind} placeholder="When should this project be used? e.g. “Invoices addressed to the Yu Yu site”" />
+                </td>
               </tr>
             ))}
             {options.length === 0 && (
-              <tr><td className="px-3 py-8 text-center text-muted-foreground">No options{q ? ' match your search' : ' in this tracking category'}.</td></tr>
+              <tr><td colSpan={2} className="px-3 py-8 text-center text-muted-foreground">No options{q ? ' match your search' : ' in this tracking category'}.</td></tr>
             )}
           </tbody>
         </table>
