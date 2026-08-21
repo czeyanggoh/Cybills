@@ -94,15 +94,44 @@ export function dueDateForNewDoc(settings, kind, invoiceDate) {
     : computeDueDate(settings.dueCostsMode, settings.dueCostsDays, invoiceDate);
 }
 
+// --- Auto-pickable tax codes ------------------------------------------------
+// The ONLY codes CYBills is allowed to choose on its own: standard-rated
+// purchases and supplies at 7% / 8% / 9% (the 2022 / 2023 / current vintages),
+// plus No Tax. Everything else the org has in Xero — imports, IGDS, partially
+// exempt traders, reverse charge, bad debt relief, customer accounting — is a
+// judgement call about the underlying transaction that a percentage can't
+// settle, so auto-population never reaches for it and a human picks it from the
+// dropdown instead.
+//
+// Matched on the Xero TaxType (stable: INPUT / INPUTY23 / INPUTY24, OUTPUT /
+// OUTPUTY23 / OUTPUTY24, NONE), falling back to the name for manually-added
+// rates that carry no code. The regexes are anchored so near-misses in the same
+// chart — BLINPUT2 (Disallowed Expenses), EPINPUT, ZERORATEDINPUT — never slip
+// through.
+const AUTO_PURCHASE = { code: /^INPUT(Y\d{2})?$/i, name: /^(\d{4}\s+)?standard[- ]?rated purchases$/i };
+const AUTO_SUPPLY = { code: /^OUTPUT(Y\d{2})?$/i, name: /^(\d{4}\s+)?standard[- ]?rated supplies$/i };
+const AUTO_NO_TAX = { code: /^NONE$/i, name: /^no tax$/i };
+
+const autoMatches = (rule, row) => {
+  const code = String(row?.code || '').trim();
+  return code ? rule.code.test(code) : rule.name.test(String(row?.name || '').trim());
+};
+
 // Infer the tax-rate NAME for an extracted document from its total + tax amounts,
-// matched against the org's visible tax rates (`rates` = [{name, rate}]) and its
-// currency. When tax is charged, pick the rate whose % matches the effective
-// rate (tax / net) closely — tight tolerance so a 10% AU invoice never snaps to
-// a 9% SG rate. Currency-aware: a FOREIGN-currency invoice (≠ base, default SGD)
-// whose exact rate isn't in the chart falls back to a 0%/out-of-scope rate,
-// because foreign GST isn't domestic input tax (this is what Dext does). With no
-// tax, use the configured default, then a named 0% rate. '' when nothing fits.
-export function inferTaxRateName(total, tax, rates, defaultName = '', currency = '', baseCurrency = 'SGD') {
+// matched against the org's visible tax rates (`rates` = [{name, code, rate}]),
+// its currency, and whether it's a cost (purchases) or a sales (supplies) doc.
+// Only ever returns one of the auto-pickable codes above, or the configured
+// default — never an import / exempt / reverse-charge code.
+//
+// When tax is charged, pick the standard-rated vintage whose % matches the
+// effective rate (tax / net) closely — tight tolerance so a 10% AU invoice never
+// snaps to a 9% SG rate, and so 7% / 8% / 9% each land on their own year.
+// Currency-aware: a FOREIGN-currency invoice (≠ base, default SGD) whose exact
+// rate isn't in the chart gets No Tax, because foreign GST isn't domestic input
+// tax. Tax charged at a rate no standard-rated code matches is left BLANK for a
+// human — that's import GST, reverse charge or partial exemption territory. With
+// no tax, use the configured default, then No Tax.
+export function inferTaxRateName(total, tax, rates, defaultName = '', currency = '', baseCurrency = 'SGD', kind = 'cost') {
   const t = Number(String(total ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const x = Number(String(tax ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const list = Array.isArray(rates) ? rates : [];
@@ -110,28 +139,29 @@ export function inferTaxRateName(total, tax, rates, defaultName = '', currency =
   const cur = String(currency || '').toUpperCase().slice(0, 3);
   const base = String(baseCurrency || 'SGD').toUpperCase().slice(0, 3);
   const isForeign = Boolean(cur) && Boolean(base) && cur !== base;
-  const zeroRate = (re) => list.find((r) => Number(r.rate) === 0 && re.test(r.name));
+  // Sales docs code to supplies (output tax), everything else to purchases.
+  const wanted = kind === 'sales' ? AUTO_SUPPLY : AUTO_PURCHASE;
+  const noTax = list.find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));
+  const useDefault = () => (defaultName && list.some((r) => r.name === defaultName) ? defaultName : '');
   if (x > 0 && net > 0) {
     const pct = (x / net) * 100;
     let best = '';
     let bestDiff = Infinity;
     for (const r of list) {
       const rate = Number(r.rate);
-      if (!(rate > 0)) continue;
+      if (!(rate > 0) || !autoMatches(wanted, r)) continue;
       const d = Math.abs(rate - pct);
       if (d < bestDiff) { bestDiff = d; best = r.name; }
     }
-    // Tight tolerance: only a genuinely-matching domestic rate (e.g. 9% ~ 9%).
+    // Tight tolerance: only a genuinely-matching standard rate (e.g. 9% ~ 9%).
     if (best && bestDiff <= 0.6) return best;
-    // Foreign-currency invoice whose exact rate isn't in our chart → the tax is
-    // foreign GST, not SG input tax: code it out of scope / zero-rated.
-    if (isForeign) {
-      const oos = zeroRate(/out of scope|zero[- ]?rated|no tax/i);
-      if (oos) return oos.name;
-    }
+    // Foreign-currency invoice whose exact rate isn't in our chart: the tax is
+    // foreign GST, not SG input tax, so claim nothing.
+    if (isForeign && noTax) return noTax.name;
+    // Domestic tax at some other rate — an import, reverse-charge or partially
+    // exempt treatment. Not ours to guess: leave it for the reviewer.
+    return '';
   }
-  // No tax charged: honour the configured default, else a named 0% rate.
-  if (defaultName && list.some((r) => r.name === defaultName)) return defaultName;
-  const zero = list.find((r) => Number(r.rate) === 0 && /no tax|zero[- ]?rated/i.test(r.name));
-  return zero ? zero.name : defaultName || '';
+  // No tax charged: honour the configured default, else No Tax.
+  return useDefault() || (noTax ? noTax.name : '');
 }

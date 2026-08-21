@@ -317,10 +317,11 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       if (isStatement) return cur;
       const p = {};
       const defRate = kind === 'sales' ? settings.defaultTaxRateSales : settings.defaultTaxRateCosts;
-      // Auto-populate the tax rate from the extracted total/tax (matched to a
-      // visible rate), falling back to the configured default.
+      // Auto-populate the tax rate from the extracted total/tax — only ever a
+      // standard-rated purchases/supplies vintage or No Tax — falling back to
+      // the configured default.
       if (!String(cur?.taxRate || '')) {
-        const inferred = inferTaxRateName(cur?.total, cur?.tax, visibleTaxRates, defRate, cur?.currency);
+        const inferred = inferTaxRateName(cur?.total, cur?.tax, visibleTaxRates, defRate, cur?.currency, 'SGD', kind);
         if (inferred) p.taxRate = inferred;
       }
       if (!settings.extractTax) p.tax = 0;

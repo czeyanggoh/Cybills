@@ -635,10 +635,11 @@ export default function CostDetail() {
         ex.description ||
         (Array.isArray(ex.lineItems) ? ex.lineItems.map((li) => li.description).filter(Boolean).join(', ') : '');
       // Auto-populate the tax rate from the extracted total/tax when the doc
-      // doesn't already carry one (don't clobber a manual choice).
+      // doesn't already carry one (don't clobber a manual choice). Only the
+      // standard-rated codes and No Tax are auto-pickable — see inferTaxRateName.
       const exTotal = ex.total != null ? ex.total : data.total;
       const exTax = ex.tax != null ? ex.tax : data.tax;
-      const inferredRate = inferTaxRateName(exTotal, exTax, taxRateSource, extractionSettings.defaultTaxRateCosts, ex.currency || data.currency);
+      const inferredRate = inferTaxRateName(exTotal, exTax, taxRateSource, extractionSettings.defaultTaxRateCosts, ex.currency || data.currency, 'SGD', 'cost');
       setData((d) => ({
         ...d,
         supplier: ex.supplier || d.supplier,
