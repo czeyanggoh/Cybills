@@ -5,6 +5,43 @@
 import { csvDate, claimRef, claimExportName } from '@/lib/exportFormat';
 import { EXPORT_COLUMNS } from '@/lib/exportSettings';
 import { recordExport } from '@/lib/exportsStore';
+import { fetchBills, billToDoc } from '@/lib/bills';
+
+// A claim's line-item snapshots only carry a handful of fields (date, supplier,
+// category, description, amounts). The rest of the accounting substance — invoice
+// number, due date, payment method, customer, note — lives on the underlying cost
+// document. Pull it back in from the live docs so the export isn't full of blanks.
+// Best-effort: any item whose document can't be found keeps its snapshot as-is.
+export async function enrichClaimForExport(claim) {
+  let bills = [];
+  try {
+    bills = await fetchBills();
+  } catch {
+    bills = [];
+  }
+  const byId = new Map(bills.map((b) => [String(b.id), billToDoc(b)]));
+  const transactions = (claim.transactions || []).map((t) => {
+    const d = byId.get(String(t.itemId));
+    if (!d) return t;
+    return {
+      ...t,
+      date: t.date && t.date !== '—' ? t.date : d.date,
+      supplier: t.supplier || d.supplier,
+      category: t.category || d.category,
+      description: t.description || d.description,
+      project: t.project || d.project,
+      currency: t.currency || d.currency,
+      taxRate: t.taxRate || d.taxRate,
+      invoiceNumber: t.invoiceNumber || d.invoiceNumber,
+      dueDate: t.dueDate || d.dueDate,
+      paymentMethod: t.paymentMethod || d.paymentMethod,
+      customer: t.customer || d.customer,
+      note: t.note || d.note,
+      fileName: t.fileName || d.fileName,
+    };
+  });
+  return { ...claim, transactions };
+}
 
 // Escape a field for a given delimiter (',' default, ';' for comma-decimal CSV).
 function escFor(delimiter) {
@@ -38,20 +75,20 @@ function fmtDate(iso, dateFormat = '') {
 // no data for (kept so the column still appears if the user selected it).
 const CUSTOM_COL = {
   'Receipt ID': (c, t) => t.displayId || t.itemId,
-  'Invoice number': () => '',
+  'Invoice number': (c, t) => t.invoiceNumber || '',
   Type: () => 'Expense claim',
   Status: () => 'processed',
   Owner: (c, t) => t.addedBy || c.claimFor || '',
   Date: (c, t, cur, f) => fmtDate(t.date, f.dateFormat),
-  'Due date': () => '',
+  'Due date': (c, t, cur, f) => fmtDate(t.dueDate, f.dateFormat),
   Supplier: (c, t) => t.supplier || '',
-  Customer: () => '',
+  Customer: (c, t) => t.customer || '',
   Description: (c, t) => t.description || '',
   Category: (c, t) => t.category || '',
   'Product/Service': () => '',
   'Project 1': (c, t) => t.project || '',
-  'Payment method': () => '',
-  Currency: (c) => c.currency || 'SGD',
+  'Payment method': (c, t) => t.paymentMethod || '',
+  Currency: (c, t) => t.currency || c.currency || 'SGD',
   'Tax rate': (c, t) => t.taxRate || '',
   'Quantity (line items)': () => '',
   'Unit price (net)': (c, t, cur, f) => num(t.net, f.decimalSeparator),
@@ -64,8 +101,8 @@ const CUSTOM_COL = {
   'Total with currency': (c, t, cur, f) => `${cur} ${num(t.total, f.decimalSeparator)}`,
   'Base net amount': (c, t, cur, f) => num(t.net, f.decimalSeparator),
   'Base total amount': (c, t, cur, f) => num(t.total, f.decimalSeparator),
-  Note: () => '',
-  Image: () => '',
+  Note: (c, t) => t.note || '',
+  Image: (c, t) => t.fileName || '',
   'Project 2': () => '',
 };
 
@@ -95,24 +132,24 @@ function dextRow(claim, t) {
     t.displayId || t.itemId, // Receipt ID
     'Expense claim', // Type
     csvDate(t.date), // Date
-    '', // Due Date
-    '', // Invoice Number
+    csvDate(t.dueDate), // Due Date
+    t.invoiceNumber || '', // Invoice Number
     t.supplier, // Supplier
     t.category, // Category
-    '', // Customer
+    t.customer || '', // Customer
     t.project || '', // Project
-    '', // Payment Method
+    t.paymentMethod || '', // Payment Method
     '', // Bank Account
     t.tax, // Tax
     t.total, // Total
-    cur, // Currency
+    t.currency || cur, // Currency
     t.tax, // Tax (SGD)
     t.total, // Total (SGD)
     'processed', // Status
     t.addedBy || claim.claimFor || '', // Owner
-    '', // Note
+    t.note || '', // Note
     t.description || '', // Description
-    '', // Image
+    t.fileName || '', // Image
   ];
 }
 
@@ -120,10 +157,14 @@ function dextRow(claim, t) {
 // Mirrors Dext's expense-claim export: the claim as a single payable row.
 function claimRow(claim) {
   const cur = claim.currency || 'SGD';
+  // The claim's own date if set, else the most recent line-item date, so the
+  // summary row is never dateless.
+  const itemDates = (claim.transactions || []).map((t) => t.date).filter((d) => d && d !== '—');
+  const date = claim.endDate || claim.claimDate || itemDates[itemDates.length - 1] || '';
   return [
     claimRef(claim), // Receipt ID (the claim's id)
     'Expense claim', // Type
-    csvDate(claim.endDate || claim.claimDate), // Date
+    csvDate(date), // Date
     '', // Due Date
     '', // Invoice Number
     claim.claimFor || '', // Supplier (the claimant)
@@ -170,17 +211,22 @@ export function buildClaimCsv(claim, { detailLevel = 'summary', format = 'cybill
     rows.push(DEXT_COLUMNS);
     for (const t of claim.transactions) rows.push(dextRow(claim, t));
   } else {
-    // Claim summary: one row for the whole claim, same Dext columns.
+    // Claim summary: one row for the whole claim. When the claim has a single
+    // item there's nothing to roll up, so emit that item's full row (all its
+    // document fields) rather than the sparse claim-level row.
     rows.push(DEXT_COLUMNS);
-    rows.push(claimRow(claim));
+    const txns = claim.transactions || [];
+    rows.push(txns.length === 1 ? dextRow(claim, txns[0]) : claimRow(claim));
   }
   const name = claimExportName(claim, 'csv');
   const text = rows.map((r) => r.map(esc).join(delimiter)).join('\n');
   return { name, text };
 }
 
-export function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null, exportedBy = '' } = {}) {
-  const { name, text } = buildClaimCsv(claim, { detailLevel, format, settings });
+export async function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null, exportedBy = '' } = {}) {
+  // Pull each item's live document fields in before building the rows.
+  const enriched = await enrichClaimForExport(claim);
+  const { name, text } = buildClaimCsv(enriched, { detailLevel, format, settings });
   download(name, text);
   // Record it so it appears under Exports → Expense claims.
   void recordExport({

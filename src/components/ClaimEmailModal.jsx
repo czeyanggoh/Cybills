@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X, ChevronDown, CheckCircle2 } from 'lucide-react';
-import { buildClaimCsv } from '@/lib/claimCsv';
+import { buildClaimCsv, enrichClaimForExport } from '@/lib/claimCsv';
 import { buildClaimPdfBase64 } from '@/lib/claimPdf';
 import { claimExportName } from '@/lib/exportFormat';
 import { emailClaim } from '@/lib/claimStore';
@@ -68,8 +68,9 @@ export default function ClaimEmailModal({ open, onClose, defaultName = '', claim
     setError('');
     setSending(true);
     try {
-      const csv = buildClaimCsv(claim, { detailLevel: detail, format, settings });
-      const pdfBase64 = buildClaimPdfBase64(claim);
+      const enriched = await enrichClaimForExport(claim);
+      const csv = buildClaimCsv(enriched, { detailLevel: detail, format, settings });
+      const pdfBase64 = buildClaimPdfBase64(enriched);
       const attachments = [
         { filename: csv.name, content: toBase64(csv.text), contentType: 'text/csv' },
         ...(pdfBase64 ? [{ filename: claimExportName(claim, 'pdf'), content: pdfBase64, contentType: 'application/pdf' }] : []),

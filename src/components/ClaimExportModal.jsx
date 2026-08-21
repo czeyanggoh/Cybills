@@ -41,7 +41,13 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
     if (busy) return;
     const exportedBy = membership?.user?.name || user?.name || user?.email || 'You';
     if (tab === 'csv') {
-      generateClaimCsv(claim, { detailLevel: detail, format, settings, exportedBy });
+      // enrichment fetches the live docs, so this is async too.
+      setBusy(true);
+      try {
+        await generateClaimCsv(claim, { detailLevel: detail, format, settings, exportedBy });
+      } finally {
+        setBusy(false);
+      }
     } else {
       // Building "with receipts" fetches each receipt document, so it's async.
       setBusy(true);
