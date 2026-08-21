@@ -362,7 +362,7 @@ function ProjectsFromXero({ index }) {
               <tr key={o.id} className="border-b align-top last:border-0 hover:bg-muted/40">
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{o.name}</td>
                 <td className="px-3 py-2">
-                  <RulesCell row={o} kind={metaKind} placeholder="When should this project be used? e.g. “Invoices addressed to the Yu Yu site”" />
+                  <RulesCell row={o} kind={metaKind} placeholder="When should this project be used? e.g. “Documents for this site, client or cost centre”" />
                 </td>
               </tr>
             ))}

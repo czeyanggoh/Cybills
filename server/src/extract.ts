@@ -43,7 +43,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         projectReason: {
           type: 'string',
           description:
-            'When project is non-empty, one short sentence quoting the part of the rule the document satisfies, e.g. "Invoice billed to the Yu Yu site — matches the Yu Yu rule." Empty string when project is empty.',
+            'When project is non-empty, one short sentence quoting the part of the rule the document satisfies, e.g. "Billed to the site named in that project\'s rule." Empty string when project is empty.',
         },
       }
     : {};
