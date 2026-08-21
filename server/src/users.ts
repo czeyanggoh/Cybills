@@ -321,6 +321,15 @@ export function directManagerFor(ws: string, claimantName: string): { name: stri
   return { name: manager.name, email: manager.email };
 }
 
+// The roster email for a display name (e.g. a claim's `claimFor`), so a claimant
+// can be notified of a decision. Null when no matching active user has an email.
+export function emailForName(ws: string, name: string): string {
+  const key = norm(name);
+  if (!key) return '';
+  const u = ensure(ws).find((x) => x.workspaceId === ws && !x.removed && norm(x.name) === key);
+  return u?.email || '';
+}
+
 // Apply the editable fields present in `b` onto a user, keeping name in sync
 // with first/last. Shared by the add-merge path and PATCH.
 function applyEditable(user: User, b: Partial<User>) {

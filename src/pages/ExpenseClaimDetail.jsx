@@ -138,6 +138,8 @@ export default function ExpenseClaimDetail() {
   const [exportOpen, setExportOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
   const cyhrEnabled = useCyhrEnabled();
   const users = useUsers();
   const { data: organisations = [] } = useOrganisations();
@@ -334,6 +336,13 @@ export default function ExpenseClaimDetail() {
           Sent to HR for payment{claim.hrSentAmount ? ` · ${claim.currency} ${claim.hrSentAmount}` : ''}. Re-sending updates the same payable in CYHR by claim ID.
         </div>
       )}
+      {claim.approvalStatus === 'rejected' && (
+        <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          This claim was rejected{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}.
+          {claim.decisionReason ? <> <span className="font-medium">Reason:</span> {claim.decisionReason}</> : ' No reason was given.'}
+          {' '}Edit the items and re-submit for approval.
+        </div>
+      )}
       {/* Action bar */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <TopButton subtle onClick={() => navigate('/expense-claims')}>
@@ -348,7 +357,7 @@ export default function ExpenseClaimDetail() {
             {iAmApprover ? (
               <>
                 <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>
-                <TopButton danger onClick={() => { if (window.confirm('Reject this claim?')) decide(rejectClaim); }}>Reject</TopButton>
+                <TopButton danger onClick={() => { setRejectReason(''); setRejectOpen(true); }}>Reject</TopButton>
               </>
             ) : (
               <span className="text-sm text-muted-foreground">Only {claim.approver || 'the approver'} can approve</span>
@@ -370,7 +379,12 @@ export default function ExpenseClaimDetail() {
           </>
         ) : claim.approvalStatus === 'rejected' ? (
           <>
-            <span className="inline-flex h-8 items-center rounded-md border border-destructive px-3 text-sm text-destructive">Rejected</span>
+            <span
+              className="inline-flex h-8 items-center rounded-md border border-destructive px-3 text-sm text-destructive"
+              title={claim.decisionReason ? `Reason: ${claim.decisionReason}` : undefined}
+            >
+              Rejected{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
+            </span>
             <TopButton onClick={() => setApprovalOpen(true)}>Re-submit for approval</TopButton>
           </>
         ) : (
@@ -710,6 +724,37 @@ export default function ExpenseClaimDetail() {
           setTab('history');
         }}
       />
+
+      {/* Reject with an optional reason (shown to the claimant + emailed). */}
+      {rejectOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-foreground/20" onClick={() => setRejectOpen(false)} aria-hidden="true" />
+          <div className="relative w-full max-w-md rounded-lg bg-background p-6 shadow-xl">
+            <h2 className="text-base font-semibold tracking-tight">Reject this claim?</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Add a reason so {claim.claimFor || 'the claimant'} knows what to fix. They&rsquo;ll be notified and can re-submit.
+            </p>
+            <textarea
+              rows={3}
+              autoFocus
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Reason for rejection (optional)…"
+              className="mt-3 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setRejectOpen(false)} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">Cancel</button>
+              <button
+                type="button"
+                onClick={() => { setRejectOpen(false); decide(() => rejectClaim(claim.id, rejectReason)); }}
+                className="inline-flex h-9 items-center rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90"
+              >
+                Reject claim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk edit — set a category on the selected items */}
       {bulkCatOpen && (

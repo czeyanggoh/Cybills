@@ -2,8 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
-import { directManagerFor, appOrigin } from './users.js';
-import { sendMail, approvalRequestEmail } from './mailer.js';
+import { directManagerFor, appOrigin, emailForName } from './users.js';
+import { sendMail, approvalRequestEmail, claimDecisionEmail } from './mailer.js';
 import { getBillByIdAny } from './store.js';
 
 // Server-backed expense claims, shared across the workspace (same JSON-store
@@ -41,6 +41,7 @@ type Claim = {
   approverEmail: string;
   decidedBy: string;
   decidedAt: string;
+  decisionReason?: string; // the manager's reason when a claim is rejected
   archived: boolean;
   deleted: boolean;
   createdBy: string;
@@ -170,6 +171,25 @@ function notifyApprover(req: Request, claim: Claim, updated: boolean): void {
   void sendMail({ to: { email: claim.approverEmail, name: claim.approver }, ...mail }).catch(() => {});
 }
 
+// Email the claimant that their claim was approved or rejected (with the reason,
+// when rejected). Best-effort — no-ops when mail isn't configured or no email is
+// on file. Resolves the claimant's address from their roster row (by claimFor
+// name), falling back to whoever created the claim.
+function notifyClaimant(req: Request, claim: Claim, decision: 'approved' | 'rejected'): void {
+  const ws = claim.workspaceId;
+  const email = emailForName(ws, claim.claimFor) || claim.createdBy || '';
+  if (!email) return;
+  const mail = claimDecisionEmail({
+    claimantName: claim.claimFor,
+    claimName: claim.name,
+    decision,
+    deciderName: claim.decidedBy,
+    reason: claim.decisionReason,
+    url: `${appOrigin(req)}/expense-claims/${claim.id}`,
+  });
+  void sendMail({ to: { email, name: claim.claimFor }, ...mail }).catch(() => {});
+}
+
 // POST /api/claims/:id/items — attach cost items (idempotent per itemId).
 // Allowed until the claim is APPROVED — you can still add to a claim that's
 // awaiting approval (the total changes, so the approver re-reviews). Only an
@@ -286,7 +306,9 @@ claimsRouter.post('/:id/approve', (req, res) =>
     claim.approvalStatus = 'approved';
     claim.decidedBy = me.name;
     claim.decidedAt = nowIso();
+    claim.decisionReason = '';
     claim.history.unshift({ text: `This claim was approved by ${me.name}`, by: me.name, at: nowIso() });
+    notifyClaimant(req, claim, 'approved');
   })
 );
 
@@ -294,10 +316,17 @@ claimsRouter.post('/:id/reject', (req, res) =>
   mutate(req, res, (claim, me) => {
     const blocked = ensureApprover(claim, me, res);
     if (blocked) return blocked;
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
     claim.approvalStatus = 'rejected';
     claim.decidedBy = me.name;
     claim.decidedAt = nowIso();
-    claim.history.unshift({ text: `This claim was rejected by ${me.name}`, by: me.name, at: nowIso() });
+    claim.decisionReason = reason;
+    claim.history.unshift({
+      text: reason ? `This claim was rejected by ${me.name}: ${reason}` : `This claim was rejected by ${me.name}`,
+      by: me.name,
+      at: nowIso(),
+    });
+    notifyClaimant(req, claim, 'rejected');
   })
 );
 

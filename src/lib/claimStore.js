@@ -162,8 +162,8 @@ export async function approveClaim(claimId) {
   await post(`/${claimId}/approve`);
   notifyClaimsChanged();
 }
-export async function rejectClaim(claimId) {
-  await post(`/${claimId}/reject`);
+export async function rejectClaim(claimId, reason = '') {
+  await post(`/${claimId}/reject`, { reason });
   notifyClaimsChanged();
 }
 

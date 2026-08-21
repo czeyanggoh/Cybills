@@ -322,6 +322,36 @@ export function approvalRequestEmail(o: {
   };
 }
 
+// Sent to the claimant when their direct manager approves or rejects the claim.
+export function claimDecisionEmail(o: {
+  claimantName: string;
+  claimName: string;
+  decision: 'approved' | 'rejected';
+  deciderName: string;
+  reason?: string;
+  url: string;
+}) {
+  const approved = o.decision === 'approved';
+  const label = approved ? 'approved' : 'rejected';
+  const claim = o.claimName ? ` &ldquo;${esc(o.claimName)}&rdquo;` : '';
+  const reasonBlock =
+    !approved && o.reason
+      ? `<p style="margin:14px 0 0"><strong>Reason:</strong> ${esc(o.reason)}</p>`
+      : '';
+  const next = approved
+    ? '<p style="margin:14px 0 0">No action needed — it moves on for payment.</p>'
+    : '<p style="margin:14px 0 0">You can edit the items and re-submit it for approval.</p>';
+  return {
+    subject: `Expense claim ${label} — ${o.claimantName}`,
+    html: layout({
+      heading: `Hi ${esc(o.claimantName.split(' ')[0] || 'there')},`,
+      body: `<p style="margin:0">Your expense claim${claim} was <strong>${label}</strong> by ${esc(o.deciderName)}.</p>${reasonBlock}${next}`,
+      cta: { label: 'Open the claim', url: o.url },
+      footnote: 'You are receiving this because you are the claimant on this expense claim.',
+    }),
+  };
+}
+
 // Self-service reset requested from the sign-in page.
 export function passwordResetEmail(o: { name: string; url: string; expiresInDays: number }) {
   return {
