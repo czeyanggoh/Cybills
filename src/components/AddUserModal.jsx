@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, ChevronDown, HelpCircle } from 'lucide-react';
 import { ROLES, ROLE_INFO } from '@/lib/userStore';
+import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 const EMPTY = {
@@ -31,17 +32,23 @@ function Toggle({ on, onToggle }) {
 export default function AddUserModal({ open, onClose, onAdd }) {
   const [step, setStep] = useState('details');
   const [form, setForm] = useState(EMPTY);
+  const { data: organisations = [] } = useOrganisations();
   if (!open) return null;
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setPriv = (k, v) => setForm((f) => ({ ...f, privileges: { ...f.privileges, [k]: v } }));
   const close = () => { setStep('details'); setForm(EMPTY); onClose(); };
 
+  const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
+  const orgName = activeOrg?.name || '';
+
   const emailValid = !form.login || /.+@.+\..+/.test(form.email.trim());
   const canNext = form.firstName.trim() && form.lastName.trim() && emailValid;
   const isStandard = form.role === 'Standard';
 
-  const commit = () => { onAdd(form); close(); };
+  // Invite (notify) only when they have login access + an email; pass the active
+  // org name so the invite email names the right organisation.
+  const commit = () => { onAdd(form, form.login, '', orgName); close(); };
 
   const input = 'h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
   const TITLES = { details: 'Details', role: 'Role', review: 'Review and add' };

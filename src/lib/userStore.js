@@ -54,13 +54,13 @@ if (typeof window !== 'undefined') {
 // --- Mutations (async; notify so mounted lists refetch) ----------------------
 // Returns { users, duplicates, invites } so the caller can warn about an email
 // that already exists and report whether the invitation was emailed.
-export async function addUser(u, notify = true) {
-  const r = await req('/', 'POST', { ...u, notify });
+export async function addUser(u, notify = true, message = '', orgName = '') {
+  const r = await req('/', 'POST', { ...u, notify, message, orgName });
   notifyUsersChanged();
   return r;
 }
-export async function addUsers(users, notify = true) {
-  const r = await req('/', 'POST', { users, notify });
+export async function addUsers(users, notify = true, message = '', orgName = '') {
+  const r = await req('/', 'POST', { users, notify, message, orgName });
   notifyUsersChanged();
   return r;
 }

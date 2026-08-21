@@ -122,8 +122,10 @@ export default function Users() {
       showToast('User(s) added.');
     }
   };
-  const handleAddUser = async (form, notify = true) => reportAdd(await addUser(form, notify).catch(() => null));
-  const handleAddUsers = async (list, notify = true) => reportAdd(await addUsers(list, notify).catch(() => null));
+  const handleAddUser = async (form, notify = true, message = '', orgName = '') =>
+    reportAdd(await addUser(form, notify, message, orgName).catch(() => null));
+  const handleAddUsers = async (list, notify = true, message = '', orgName = '') =>
+    reportAdd(await addUsers(list, notify, message, orgName).catch(() => null));
 
   const filtered = users.filter(
     (u) =>

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
 import { ROLES } from '@/lib/userStore';
+import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 const blankRow = () => ({ firstName: '', lastName: '', email: '', mobile: '', role: 'Standard' });
@@ -40,6 +41,14 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
   const [rows, setRows] = useState([blankRow()]);
   const [notify, setNotify] = useState(true);
   const [showEmail, setShowEmail] = useState(false);
+  // The invite message is editable (different orgs word it differently) and
+  // defaults to the ACTIVE organisation's name — not a hardcoded one.
+  const { data: organisations = [] } = useOrganisations();
+  const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
+  const orgName = activeOrg?.name || 'CYBills';
+  const defaultMessage = `You've been invited to CYBills for ${orgName}. Click the link in this email to set your password and get started.`;
+  const [message, setMessage] = useState(null);
+  const effectiveMessage = message ?? defaultMessage;
 
   if (!open) return null;
 
@@ -61,7 +70,7 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
     const valid = rows.filter((r) => r.firstName.trim() || r.lastName.trim() || r.email.trim());
     // `notify` controls whether new users are emailed an invite — it is NOT the
     // login-access flag (that defaults to Yes on the server).
-    if (valid.length) onAdd(valid, notify);
+    if (valid.length) onAdd(valid, notify, effectiveMessage, orgName);
     close();
   };
 
@@ -111,10 +120,12 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
               View email <ChevronDown className={cn('h-4 w-4 transition-transform', showEmail && 'rotate-180')} />
             </button>
             {showEmail && (
-              <p className="mt-2 rounded-md border bg-muted/40 px-3 py-3 text-xs text-muted-foreground">
-                “You&rsquo;ve been invited to CYBills for Red Alpha Cybersecurity. Click the link in this email
-                to set your password and get started.”
-              </p>
+              <textarea
+                rows={3}
+                value={effectiveMessage}
+                onChange={(e) => setMessage(e.target.value)}
+                className="mt-2 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
             )}
           </div>
 

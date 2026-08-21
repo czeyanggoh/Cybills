@@ -267,14 +267,27 @@ function layout(opts: { heading: string; body: string; cta?: { label: string; ur
 
 // Invitation to a brand-new account: the recipient picks their own password on
 // the linked page, so no credential ever travels by email.
-export function inviteEmail(o: { name: string; url: string; inviterName?: string; expiresInDays: number }) {
+export function inviteEmail(o: {
+  name: string;
+  url: string;
+  inviterName?: string;
+  expiresInDays: number;
+  orgName?: string;
+  message?: string;
+}) {
+  const org = esc(o.orgName || 'CY Business Management');
   const from = o.inviterName ? `${esc(o.inviterName)} has invited you` : 'You have been invited';
+  // Use the admin's custom message when provided (different orgs word it their
+  // own way); otherwise the default, addressed to the actual organisation.
+  const body = o.message
+    ? `<p style="margin:0">${esc(o.message)}</p>`
+    : `<p style="margin:0">${from} to join <strong>CYBills</strong>, the billing workspace for ${org}.</p>
+       <p style="margin:14px 0 0">Set your password to activate your account and sign in.</p>`;
   return {
     subject: 'You have been invited to CYBills',
     html: layout({
       heading: `Hi ${esc(o.name.split(' ')[0] || 'there')},`,
-      body: `<p style="margin:0">${from} to join <strong>CYBills</strong>, the billing workspace for CY Business Management.</p>
-             <p style="margin:14px 0 0">Set your password to activate your account and sign in.</p>`,
+      body,
       cta: { label: 'Set your password', url: o.url },
       footnote: `This link expires in ${o.expiresInDays} days and can only be used once. If you weren&rsquo;t expecting this invitation you can ignore this email.`,
     }),

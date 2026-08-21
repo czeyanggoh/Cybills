@@ -424,6 +424,8 @@ usersRouter.post('/', async (req, res) => {
   const items = ensure(ws);
   const incoming: Partial<User>[] = Array.isArray(req.body?.users) ? req.body.users : [req.body ?? {}];
   const notify = req.body?.notify !== false;
+  const orgName = String(req.body?.orgName || '').trim();
+  const message = String(req.body?.message || '').trim();
   const created: User[] = [];
   const duplicates: Array<{ email: string; name: string }> = [];
   for (const u of incoming) {
@@ -448,7 +450,7 @@ usersRouter.post('/', async (req, res) => {
       const raw = issueToken(nu, 'invite');
       nu.invitedAt = new Date().toISOString();
       const link = resetUrl(req, raw);
-      const mail = inviteEmail({ name: nu.name, url: link, inviterName: inviter, expiresInDays: env.INVITE_TTL_DAYS });
+      const mail = inviteEmail({ name: nu.name, url: link, inviterName: inviter, expiresInDays: env.INVITE_TTL_DAYS, orgName, message });
       const result = await sendMail({ to: { email: nu.email, name: nu.name }, ...mail }).catch(() => ({ sent: false }));
       invites.push({ email: nu.email, name: nu.name, sent: Boolean(result.sent), link: result.sent ? undefined : link });
     }
