@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth';
 import ChangeEmailModal from '@/components/ChangeEmailModal';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
 import { useProfile, setBookkeepingFreq, setBookkeepingToggle, setApprovalFreq } from '@/lib/profileStore';
-import { updateUser, normalizeRole, isAdminAccess } from '@/lib/userStore';
+import { updateUser, normalizeRole, canManageBusiness, canManageUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -132,7 +132,7 @@ function EditInput({ value, onChange, placeholder = '' }) {
 }
 
 // --- Sections ---------------------------------------------------------------
-function PersonalDetails({ rosterUser, refresh, onSaved, isAdmin }) {
+function PersonalDetails({ rosterUser, refresh, onSaved, canBusiness, canUsers }) {
   const name0 = rosterUser?.name || '';
   const first0 = rosterUser?.firstName || name0.split(' ')[0] || '';
   const last0 = rosterUser?.lastName || name0.split(' ').slice(1).join(' ') || '';
@@ -174,16 +174,18 @@ function PersonalDetails({ rosterUser, refresh, onSaved, isAdmin }) {
       </Row>
       {/* Read-only — only an admin can change a role, in Users. Shown because
           the role is what decides whether Users + Business settings appear in
-          the sidebar; without it, losing admin looks like the buttons vanished. */}
+          the sidebar; without it, losing access looks like the buttons vanished. */}
       <Row label="Role">
         <div className="space-y-1">
           <span className="inline-flex h-9 items-center rounded-md border bg-muted px-3 text-sm">
             {normalizeRole(rosterUser?.role)}
           </span>
           <p className="text-xs text-muted-foreground">
-            {isAdmin
-              ? 'Admins can open Users and Business settings (categories, lists, exports).'
-              : 'Users and Business settings (categories, lists, exports) are Admin-only. Ask an admin to change your role in Users.'}
+            {canBusiness
+              ? 'Business Admins can open Users and Business settings (categories, lists, exports).'
+              : canUsers
+                ? 'User Admins can open Users. Business settings (categories, lists, exports) is Business Admin only.'
+                : 'Users and Business settings (categories, lists, exports) are admin-only. Ask a Business Admin to change your role in Users.'}
           </p>
         </div>
       </Row>
@@ -329,7 +331,8 @@ export default function Profile() {
 
   const props = {
     rosterUser,
-    isAdmin: isAdminAccess(membership, googleEnabled),
+    canBusiness: canManageBusiness(membership, googleEnabled),
+    canUsers: canManageUsers(membership, googleEnabled),
     refresh,
     onSaved: (msg) => setToast(msg),
     email,

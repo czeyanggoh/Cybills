@@ -1,6 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { isAdminAccess } from '@/lib/userStore';
+import { canManageBusiness, canManageUsers } from '@/lib/userStore';
 
 function Loading() {
   return (
@@ -39,10 +39,10 @@ export function RequireSignedIn({ children }) {
   return children;
 }
 
-// Admin-only pages (Users, Business settings). Runs the same auth/membership
-// gate as RequireAuth, then requires a Business/User Admin role; non-admins are
-// bounced to Costs. Mock mode (no real auth) stays open for the demo.
-export function RequireAdmin({ children }) {
+// Shared guard for the admin pages: the same auth/membership gate as
+// RequireAuth, then `allows` decides. Anyone who fails is bounced to Costs.
+// Mock mode (no real auth) stays open for the demo.
+function RequireAccess({ allows, children }) {
   const { loading, googleEnabled, user, membership } = useAuth();
 
   if (loading) return <Loading />;
@@ -50,9 +50,19 @@ export function RequireAdmin({ children }) {
   if (googleEnabled && user && (membership.status === 'none' || membership.status === 'pending')) {
     return <Navigate to="/join" replace />;
   }
-
-  const isAdmin = isAdminAccess(membership, googleEnabled);
-  if (!isAdmin) return <Navigate to="/costs" replace />;
+  if (!allows(membership, googleEnabled)) return <Navigate to="/costs" replace />;
 
   return children;
+}
+
+// The Users roster — Business Admin or User Admin.
+export function RequireAdmin({ children }) {
+  return <RequireAccess allows={canManageUsers}>{children}</RequireAccess>;
+}
+
+// Business settings (lists, categories, exports, extraction, email,
+// connections) — Business Admin only. A User Admin runs people, not the
+// business configuration.
+export function RequireBusinessAdmin({ children }) {
+  return <RequireAccess allows={canManageBusiness}>{children}</RequireAccess>;
 }

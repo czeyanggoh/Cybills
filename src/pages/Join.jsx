@@ -6,11 +6,11 @@ import { useOrganisations } from '@/lib/organisations';
 import { joinCompany } from '@/lib/userStore';
 
 // Self-signup asks for a simple role — an employee who submits, or an
-// admin/approver who reviews. The (CY) admin can fine-tune the exact role on
-// approval. Values map onto the app's underlying roles.
+// admin/approver who reviews. The (CY) admin can fine-tune the exact role
+// (Business Admin vs User Admin) on approval. Values map onto the app's roles.
 const JOIN_ROLES = [
   { value: 'Standard', label: 'Employee' },
-  { value: 'Admin', label: 'Admin' },
+  { value: 'Business Admin', label: 'Admin' },
 ];
 
 function Field({ label, children }) {

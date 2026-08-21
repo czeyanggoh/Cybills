@@ -115,8 +115,8 @@ const save = (items: User[]) => saveCollection(COLLECTION, items);
 // The real company employees (matching the CYHR/Talenox records). Seeded once
 // per workspace so the list is never empty.
 const SEED: Array<Partial<User>> = [
-  { id: 'astrid', name: 'Astrid Yang', email: 'astridy2004@gmail.com', login: 'Yes', role: 'Admin' },
-  { id: 'cze', name: 'Cze Yang Goh', email: 'czeyang.goh@cy-bm.sg', login: 'Yes', role: 'Admin' },
+  { id: 'astrid', name: 'Astrid Yang', email: 'astridy2004@gmail.com', login: 'Yes', role: 'Business Admin' },
+  { id: 'cze', name: 'Cze Yang Goh', email: 'czeyang.goh@cy-bm.sg', login: 'Yes', role: 'Business Admin' },
   { id: 'yeoh', name: 'Yeoh Lay Ean', email: 'joanne_yle@yahoo.com', login: 'Yes', role: 'Standard' },
   { id: 'yuyu', name: 'Yu Yu', email: 'yuyu@cy-bm.sg', login: 'Yes', role: 'Standard' },
 ];
@@ -197,7 +197,7 @@ function normalizeRoster(items: User[], ws: string): boolean {
 // carries neither the seed email nor the seed name — nothing in the code can
 // recognise them, so the operator names them in server/.env instead.
 function ownerEmails(): Set<string> {
-  const emails = SEED.filter((s) => isAdminRole(String(s.role))).map((s) => norm(String(s.email)));
+  const emails = SEED.filter((s) => isBusinessAdminRole(String(s.role))).map((s) => norm(String(s.email)));
   for (const e of env.OWNER_EMAILS.split(',')) {
     const v = norm(e);
     if (v) emails.push(v);
@@ -205,27 +205,29 @@ function ownerEmails(): Set<string> {
   return new Set(emails);
 }
 function ownerNames(): Set<string> {
-  return new Set(SEED.filter((s) => isAdminRole(String(s.role))).map((s) => norm(String(s.name))));
+  return new Set(SEED.filter((s) => isBusinessAdminRole(String(s.role))).map((s) => norm(String(s.name))));
 }
 
-// Guarantee the account owners never lose their admin role. Their row can drift
-// to a non-admin role — e.g. re-created via the /join self-signup flow, which
-// always sets 'Standard' — which would silently lock the owner out of Users and
-// Business settings. Runs on every load so it self-heals. Matches by email OR
-// name, so an owner who signed up under a different address than the seed email
-// is still recovered, and promotes EVERY matching row rather than just the first
-// — an owner with a second row (a /join signup alongside the seed row) was
-// previously left as Standard whenever the already-admin row came first.
-// Only ever promotes owners; never touches other users or demotes anyone.
+// Guarantee the account owners keep Business Admin — the only tier that can open
+// Business settings. Their row can drift to a lesser role, e.g. re-created via
+// the /join self-signup flow, which always sets 'Standard', silently locking the
+// owner out of Users and Business settings. Runs on every load so it self-heals.
+// Matches by email OR name, so an owner who signed up under a different address
+// than the seed email is still recovered, and promotes EVERY matching row rather
+// than just the first — an owner with a second row (a /join signup alongside the
+// seed row) was previously left as Standard whenever the already-admin row came
+// first. Only ever promotes owners; never touches other users or demotes anyone.
+// A consequence worth knowing: an owner can't be parked at User Admin — being an
+// owner means Business Admin, or the lockout this guards against comes back.
 function reconcileSeedAdmins(items: User[], ws: string): boolean {
   const emails = ownerEmails();
   const names = ownerNames();
   let changed = false;
   for (const u of items) {
     if (u.workspaceId !== ws || u.removed) continue;
-    if (isAdminRole(u.role)) continue;
+    if (isBusinessAdminRole(u.role)) continue;
     if (!emails.has(norm(u.email)) && !names.has(norm(u.name))) continue;
-    u.role = 'Admin';
+    u.role = 'Business Admin';
     changed = true;
   }
   return changed;
@@ -257,22 +259,35 @@ export function memberForSession(req: Request): User | null {
   return ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email) ?? null;
 }
 
-// Admins manage the account; everyone else is limited. Roles were simplified to
-// just Admin / Standard, so 'Admin' is the current form; the old 'Business Admin'
-// / 'User Admin' names are still honoured on any records not yet normalized.
+// Any admin tier — the coarse "not a Standard user" check. Prefer the two
+// specific predicates below wherever a surface belongs to one of them.
 export function isAdminRole(role: string | undefined): boolean {
-  return role === 'Admin' || role === 'Business Admin' || role === 'User Admin';
+  return currentRole(role) !== 'Standard';
 }
 
-// Collapse any legacy role onto the two current ones (Admin / Standard) so the
-// UI only ever shows a valid role. Any admin-tier legacy name → Admin; anything
-// else (Approver, Bookkeeper, blank, …) → Standard.
+// Change account-wide settings (Business settings). Business Admin only.
+export function isBusinessAdminRole(role: string | undefined): boolean {
+  return currentRole(role) === 'Business Admin';
+}
+
+// Add, suspend and edit people (the Users roster). Both admin tiers.
+export function canManageUsersRole(role: string | undefined): boolean {
+  return isAdminRole(role);
+}
+
+// Collapse any legacy role onto the three current ones (Business Admin / User
+// Admin / Standard) so the UI only ever shows a valid role. The interim 'Admin'
+// tier had full access, so it maps to Business Admin — a migration should never
+// quietly take away access someone already has. Anything else (Approver,
+// Bookkeeper, blank, …) → Standard.
 function currentRole(role: string | undefined): string {
-  return isAdminRole(role) ? 'Admin' : 'Standard';
+  if (role === 'Business Admin' || role === 'Admin') return 'Business Admin';
+  if (role === 'User Admin') return 'User Admin';
+  return 'Standard';
 }
 
-// Rewrite stored roles to the current two-role scheme in place. Runs on load so
-// old rosters self-heal to displaying Admin / Standard.
+// Rewrite stored roles to the current three-role scheme in place. Runs on load
+// so old rosters self-heal to Business Admin / User Admin / Standard.
 function normalizeRoles(items: User[], ws: string): boolean {
   let changed = false;
   for (const u of items) {
@@ -321,10 +336,11 @@ usersRouter.get('/', (req, res) => {
 
 // GET /api/users/me — the signed-in user's membership status, used to gate the
 // app: 'anonymous' (no session), 'none' (signed in but no roster profile — send
-// to /join), 'pending' (awaiting approval), 'deactivated', or 'active'. `admin`
-// is the server's own verdict on admin access (Users + Business settings); the
-// client trusts it rather than re-deriving access from the role string, so the
-// two can't disagree.
+// to /join), 'pending' (awaiting approval), 'deactivated', or 'active'. The
+// access flags are the server's own verdict — `businessAdmin` for account-wide
+// settings, `canManageUsers` for the roster, `admin` for either — and the client
+// trusts them rather than re-deriving access from the role string, so the two
+// can't disagree.
 usersRouter.get('/me', (req, res) => {
   const session = readSession(req);
   // No `admin` field on the identity-less branches: the client's fallback
@@ -336,7 +352,14 @@ usersRouter.get('/me', (req, res) => {
   const user = ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email);
   if (!user) return res.json({ status: 'none', user: null });
   const status = user.deactivated ? 'deactivated' : user.pending ? 'pending' : 'active';
-  return res.json({ status, user: publicUser(user), admin: status === 'active' && isAdminRole(user.role) });
+  const live = status === 'active';
+  return res.json({
+    status,
+    user: publicUser(user),
+    admin: live && isAdminRole(user.role),
+    businessAdmin: live && isBusinessAdminRole(user.role),
+    canManageUsers: live && canManageUsersRole(user.role),
+  });
 });
 
 // POST /api/users/join — self-signup onboarding. The signed-in user submits
@@ -439,16 +462,17 @@ usersRouter.post('/login', (req, res) => {
 
 const MIN_PASSWORD = 8;
 
-// Only Business/User Admins may invite or reset someone else's account. In
-// mock/dev (no session-backed roster member) the check is skipped, matching the
-// rest of the app's dev-open posture.
+// Only Business/User Admins may invite or reset someone else's account — both
+// tiers run the roster, which is the whole point of User Admin. In mock/dev (no
+// session-backed roster member) the check is skipped, matching the rest of the
+// app's dev-open posture.
 function requireAdmin(req: Request, res: Response): boolean {
   if (!readSession(req)) {
     res.status(401).json({ error: 'unauthenticated' });
     return false;
   }
   const me = memberForSession(req);
-  if (me && !isAdminRole(me.role)) {
+  if (me && !canManageUsersRole(me.role)) {
     res.status(403).json({ error: 'forbidden' });
     return false;
   }
@@ -601,14 +625,14 @@ function mutate(req: Request, res: Response, fn: (u: User) => void) {
 }
 
 // Fields a non-admin may change on their OWN profile. Everything else (role,
-// login, deactivation, company, manager, …) is admin-only — otherwise any
-// signed-in user could PATCH themselves to Admin.
+// login, deactivation, company, manager, …) needs roster rights — otherwise any
+// signed-in user could PATCH themselves to Business Admin.
 const SELF_EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'mobile'];
 
 usersRouter.patch('/:id', (req, res) => {
   const session = readSession(req);
   const me = session ? memberForSession(req) : null;
-  const admin = me ? isAdminRole(me.role) : !session; // sessionless mock stays open
+  const admin = me ? canManageUsersRole(me.role) : !session; // sessionless mock stays open
   const isSelf = Boolean(me && me.id === req.params.id);
   if (!admin && !isSelf) return res.status(403).json({ error: 'forbidden' });
   const allowed = admin ? EDITABLE : SELF_EDITABLE;

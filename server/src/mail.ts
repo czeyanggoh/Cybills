@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import { env, mailConfigured } from './env.js';
 import { readSession } from './auth.js';
-import { memberForSession, isAdminRole } from './users.js';
+import { memberForSession, isBusinessAdminRole } from './users.js';
 import {
   authorizeEndpoint,
   graphScopes,
@@ -32,7 +32,7 @@ function requireAdmin(req: Request, res: Response): boolean {
     return false;
   }
   const me = memberForSession(req);
-  if (me && !isAdminRole(me.role)) {
+  if (me && !isBusinessAdminRole(me.role)) {
     res.status(403).json({ error: 'forbidden' });
     return false;
   }
@@ -140,7 +140,7 @@ function requireAdminRedirect(
     return false;
   }
   const me = memberForSession(req);
-  if (me && !isAdminRole(me.role)) {
+  if (me && !isBusinessAdminRole(me.role)) {
     back({ mail: 'error', reason: 'forbidden' });
     return false;
   }

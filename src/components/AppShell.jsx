@@ -24,7 +24,7 @@ import {
   getActiveOrganisationId,
   setActiveOrganisationId,
 } from '@/lib/organisations';
-import { isAdminAccess } from '@/lib/userStore';
+import { canManageBusiness, canManageUsers } from '@/lib/userStore';
 import AddDocumentsDrawer from './AddDocumentsDrawer';
 import AddOrganisationModal from './AddOrganisationModal';
 import RemoveOrganisationModal from './RemoveOrganisationModal';
@@ -43,11 +43,13 @@ const TOP_TABS = [
   { to: '/support', label: 'Support Desk' },
 ];
 
+// `requires` names the access each item needs: 'users' (either admin tier) or
+// 'business' (Business Admin only). Unset = everyone.
 const BOTTOM = [
-  { label: 'Users', icon: Users, to: '/users', adminOnly: true },
+  { label: 'Users', icon: Users, to: '/users', requires: 'users' },
   { label: 'Exports', icon: Download, to: '/exports' },
   { label: 'Submission history', icon: History, to: '/submission-history' },
-  { label: 'Business settings', icon: Settings, to: '/settings', adminOnly: true },
+  { label: 'Business settings', icon: Settings, to: '/settings', requires: 'business' },
 ];
 
 // Lets any page open the "Add documents" drawer (e.g. the Costs header button).
@@ -106,6 +108,7 @@ function SidebarLink({ to, label, icon: Icon }) {
 // "Add organisation" entry point.
 function OrganisationSwitcher() {
   const { data: organisations = [] } = useOrganisations();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState(null);
@@ -115,9 +118,19 @@ function OrganisationSwitcher() {
   const label = active?.name || 'CYBM Workspace';
 
   const select = (id) => {
+    if (id === activeId) {
+      setOpen(false);
+      return;
+    }
     setActiveOrganisationId(id);
     setActiveId(id);
     setOpen(false);
+    // Land in the new organisation's Costs inbox. Staying put would leave you
+    // looking at a page scoped to the organisation you just left — worse, a
+    // detail route (/costs/:id, /expense-claims/:id) points at a document that
+    // doesn't exist over here. Costs is the app's home tab, so switching
+    // organisation behaves like opening it fresh.
+    navigate('/costs');
   };
 
   // After an organisation is unlinked, drop it as the active selection and fall
@@ -223,11 +236,14 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   const [addOpen, setAddOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
 
-  // Admin-only surfaces (Users, Business settings) are hidden from Standard
-  // employees. A signed-in user's real role decides this; mock mode (no real
-  // auth) shows everything so the demo works.
-  const isAdmin = isAdminAccess(membership, googleEnabled);
-  const bottomNav = BOTTOM.filter((item) => isAdmin || !item.adminOnly);
+  // Admin surfaces are hidden from those who can't use them: Business settings
+  // is Business Admin only, Users is either admin tier. A signed-in user's real
+  // role decides this; mock mode (no real auth) shows everything so the demo
+  // works.
+  const canBusiness = canManageBusiness(membership, googleEnabled);
+  const canUsers = canManageUsers(membership, googleEnabled);
+  const allowed = { business: canBusiness, users: canUsers };
+  const bottomNav = BOTTOM.filter((item) => !item.requires || allowed[item.requires]);
   // Prefer the CYBills roster identity (managed in Users) over the raw session,
   // whose name comes from the Google profile — which may differ (e.g. a Google
   // account named "Astrid Yang" signed in under a different roster user).
@@ -241,8 +257,9 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   return (
     <AppShellContext.Provider value={{ openAddDocuments: () => setAddOpen(true) }}>
       {/* Viewport-locked app shell: the frame stays the height of the window and
-          only <main> scrolls, so the sidebar's bottom nav (Get started, Users,
-          Business settings, Sign out) is always pinned in view on every tab —
+          only <main> scrolls, so the sidebar's bottom nav (Users, Exports,
+          Submission history, Business settings, Sign out) is always pinned in
+          view on every tab —
           not pushed below the fold on content-heavy pages like Costs. */}
       <div className="flex h-screen overflow-hidden bg-background text-foreground">
         {/* Primary sidebar — hidden in full-width chrome (e.g. Settings, which
@@ -346,7 +363,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                       >
                         <User className="h-4 w-4" strokeWidth={1.75} /> Profile
                       </button>
-                      {isAdmin && (
+                      {canBusiness && (
                         <button
                           type="button"
                           onClick={() => { setUserMenu(false); navigate('/settings'); }}

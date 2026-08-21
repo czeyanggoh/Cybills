@@ -219,40 +219,80 @@ export function useUsers() {
   return users;
 }
 
-// Just two roles — approval routing is a standalone "Direct manager" column now,
-// so we no longer need separate Approver / Bookkeeper / User Admin tiers.
-export const ROLES = ['Standard', 'Admin'];
+// The three Dext roles. Business Admin is the full-access tier — other people's
+// items, publishing, the user roster AND account-wide settings. User Admin runs
+// the roster (add / suspend / edit people) but can't change how the business is
+// configured. Standard works on their own items, extended by the optional
+// per-user privileges (access all documents, create claims, publish).
+// Approval routing is a standalone "Direct manager" column, not a role.
+export const ROLES = ['Business Admin', 'User Admin', 'Standard'];
 
-// Map any legacy role stored on old user records to one of the two current roles,
-// so the table + pickers always display a valid current role.
+// Map any legacy role stored on old user records onto one of the three, so the
+// table + pickers always show a valid current role. The collapsed 'Admin' tier
+// this replaces had full access, so it maps to Business Admin — a migration
+// should never quietly take away access someone already has.
 export function normalizeRole(role) {
-  return role === 'Business Admin' || role === 'User Admin' || role === 'Admin' ? 'Admin' : 'Standard';
+  if (role === 'Business Admin' || role === 'Admin') return 'Business Admin';
+  if (role === 'User Admin') return 'User Admin';
+  return 'Standard';
 }
 
-// Admin-tier role check (accepts the legacy names still on un-normalized rows).
+// Any admin tier — the coarse "not a Standard user" check.
 export function isAdminRole(role) {
-  return role === 'Admin' || role === 'Business Admin' || role === 'User Admin';
+  return normalizeRole(role) !== 'Standard';
 }
 
-// Whether the current session has admin access. The server decides it and says
-// so in `membership.admin` — trust that first, so the client never re-derives a
-// different answer from the role string than the API enforces. Older payloads
-// (no `admin` field) fall back to the signed-in user's real role — a Standard
-// user is never an admin, even in a password-only (no-Google) setup. Only when
+// Change account-wide settings (Business settings: lists, categories, exports,
+// extraction, email, connections). Business Admin only.
+export function isBusinessAdminRole(role) {
+  return normalizeRole(role) === 'Business Admin';
+}
+
+// Add, suspend and edit people (Users). Both admin tiers — it's the whole point
+// of User Admin.
+export function canManageUsersRole(role) {
+  return isAdminRole(role);
+}
+
+// One access question, answered the same way each time. The server decides and
+// says so on the membership payload — trust that first, so the client never
+// derives a different answer from the role string than the API enforces. Older
+// payloads (no flag) fall back to the signed-in user's real role. Only when
 // there is NO identified user (anonymous / mock demo) do we fall back to leaving
 // the app open when Google auth isn't configured.
-export function isAdminAccess(membership, googleEnabled) {
-  if (typeof membership?.admin === 'boolean') return membership.admin;
-  if (membership?.user) return isAdminRole(membership.user.role);
+function access(membership, googleEnabled, flag, roleAllows) {
+  if (typeof membership?.[flag] === 'boolean') return membership[flag];
+  if (membership?.user) return roleAllows(membership.user.role);
   return !googleEnabled;
 }
 
-// Short descriptions shown in the role step.
+// Any admin tier. Coarse — prefer canManageBusiness / canManageUsers when the
+// surface belongs to one of them, so a User Admin isn't shown Business settings.
+export function isAdminAccess(membership, googleEnabled) {
+  return access(membership, googleEnabled, 'admin', isAdminRole);
+}
+
+// Business settings (lists, categories, exports, extraction, email).
+export function canManageBusiness(membership, googleEnabled) {
+  return access(membership, googleEnabled, 'businessAdmin', isBusinessAdminRole);
+}
+
+// The Users page and everything that edits the roster.
+export function canManageUsers(membership, googleEnabled) {
+  return access(membership, googleEnabled, 'canManageUsers', canManageUsersRole);
+}
+
+// Short descriptions shown in the role step, mirroring Dext's wording.
 export const ROLE_INFO = {
-  Standard: ['Submit, view and edit their own items', 'Change their personal settings'],
-  Admin: [
+  'Business Admin': [
     'Submit, view, edit and publish other peoples’ items',
     'Add and suspend users',
     'Change account-wide settings',
   ],
+  'User Admin': [
+    'Submit, view and edit their own items',
+    'Add and suspend users',
+    'Change their personal settings',
+  ],
+  Standard: ['Submit, view and edit their own items', 'Change their personal settings'],
 };

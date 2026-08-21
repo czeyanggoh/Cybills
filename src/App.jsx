@@ -1,7 +1,7 @@
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth';
-import RequireAuth, { RequireSignedIn, RequireAdmin } from '@/components/RequireAuth';
+import RequireAuth, { RequireSignedIn, RequireAdmin, RequireBusinessAdmin } from '@/components/RequireAuth';
 import Login from './pages/Login';
 import SetPassword from './pages/SetPassword';
 import Join from './pages/Join';
@@ -65,7 +65,7 @@ function App() {
             <Route path="/exports" element={<Protected><Exports workspace="all" /></Protected>} />
             <Route path="/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
             <Route path="/submission-history" element={<Protected><SubmissionHistory /></Protected>} />
-            <Route path="/settings" element={<RequireAdmin><Settings /></RequireAdmin>} />
+            <Route path="/settings" element={<RequireBusinessAdmin><Settings /></RequireBusinessAdmin>} />
             <Route path="/profile" element={<Protected><Profile /></Protected>} />
             <Route path="/support" element={<Protected><SupportDesk /></Protected>} />
             {/* Feature Requests merged into Support Desk — keep old links working. */}

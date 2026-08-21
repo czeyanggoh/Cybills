@@ -8,7 +8,7 @@ import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
-import { isAdminAccess, useUsers } from '@/lib/userStore';
+import { canManageBusiness, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 // Status pill for a claim's approval state (Not submitted / Waiting / Approved / Rejected).
@@ -92,8 +92,9 @@ export default function ExpenseClaims() {
   const claimForOptions = Array.from(new Set([meName, ...roster.map((u) => u.name || u.email)].filter(Boolean)));
   const allClaims = useClaims();
   // Gatekeep: a submitted claim is visible only to its claimant and their direct
-  // manager. Admins keep full oversight (they process/export every claim).
-  const isAdmin = isAdminAccess(membership, googleEnabled);
+  // manager. Business Admins keep full oversight (they process/export every
+  // claim); a User Admin runs the roster, not other people's documents.
+  const isAdmin = canManageBusiness(membership, googleEnabled);
   const claims = isAdmin ? allClaims : visibleClaimsFor(allClaims, user);
 
   // Inbox = every claim that isn't approved yet — drafts, ones awaiting a

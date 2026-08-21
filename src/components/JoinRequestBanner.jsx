@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UserPlus, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { useUsers, isAdminAccess } from '@/lib/userStore';
+import { useUsers, canManageUsers } from '@/lib/userStore';
 
 // In-app notification to admins that self-signup requests are awaiting approval.
 // CYBills has no mail server, so alerts live in the app (same pattern as the
@@ -16,7 +16,7 @@ export default function JoinRequestBanner() {
   const navigate = useNavigate();
 
   const pending = users.filter((u) => u.pending && !u.deactivated);
-  const isAdmin = isAdminAccess(membership, googleEnabled);
+  const isAdmin = canManageUsers(membership, googleEnabled);
 
   if (!isAdmin || dismissed || pending.length === 0) return null;
 
