@@ -413,33 +413,48 @@ usersRouter.post('/:id/approve', (req, res) => {
   });
 });
 
-// Add one or many users. Body: a user object, or { users: [...] }. To keep one
-// email per teammate, an incoming user that matches an existing one (by email
-// or name) updates that teammate in place instead of creating a duplicate row.
-usersRouter.post('/', (req, res) => {
+// Add one or many users. Body: a user object, or { users: [...] }, plus an
+// optional top-level `notify` (default true) to email each new user an invite.
+// An incoming email that ALREADY belongs to a teammate is reported back in
+// `duplicates` (not silently merged) so the UI can warn "this user already
+// exists". New users with an email get an invitation link (emailed when mail is
+// configured, else the link is returned so an admin can share it).
+usersRouter.post('/', async (req, res) => {
   const ws = workspaceId(req);
   const items = ensure(ws);
   const incoming: Partial<User>[] = Array.isArray(req.body?.users) ? req.body.users : [req.body ?? {}];
-  const affected: User[] = [];
+  const notify = req.body?.notify !== false;
+  const created: User[] = [];
+  const duplicates: Array<{ email: string; name: string }> = [];
   for (const u of incoming) {
     const email = norm(String(u.email || ''));
-    const name = norm(String(u.name || `${u.firstName || ''} ${u.lastName || ''}`).trim());
-    const existing = items.find(
-      (x) =>
-        x.workspaceId === ws && !x.removed &&
-        ((email && norm(x.email) === email) || (name && norm(x.name) === name))
-    );
-    if (existing) {
-      applyEditable(existing, u);
-      affected.push(existing);
-    } else {
-      const created = full({ ...u, id: undefined }, ws);
-      items.unshift(created);
-      affected.push(created);
+    if (email) {
+      const dup = items.find((x) => x.workspaceId === ws && !x.removed && norm(x.email) === email);
+      if (dup) {
+        duplicates.push({ email: dup.email, name: dup.name });
+        continue;
+      }
+    }
+    const newUser = full({ ...u, id: undefined }, ws);
+    items.unshift(newUser);
+    created.push(newUser);
+  }
+  // Invite the new users (best-effort): issue a set-password link and email it.
+  const invites: Array<{ email: string; name: string; sent: boolean; link?: string }> = [];
+  if (notify) {
+    const inviter = memberForSession(req)?.name || readSession(req)?.name;
+    for (const nu of created) {
+      if (!nu.email) continue;
+      const raw = issueToken(nu, 'invite');
+      nu.invitedAt = new Date().toISOString();
+      const link = resetUrl(req, raw);
+      const mail = inviteEmail({ name: nu.name, url: link, inviterName: inviter, expiresInDays: env.INVITE_TTL_DAYS });
+      const result = await sendMail({ to: { email: nu.email, name: nu.name }, ...mail }).catch(() => ({ sent: false }));
+      invites.push({ email: nu.email, name: nu.name, sent: Boolean(result.sent), link: result.sent ? undefined : link });
     }
   }
   save(items);
-  res.json({ users: affected.map(publicUser) });
+  res.json({ users: created.map(publicUser), duplicates, invites });
 });
 
 // POST /api/users/login — non-Google sign-in with email + password. Issues the

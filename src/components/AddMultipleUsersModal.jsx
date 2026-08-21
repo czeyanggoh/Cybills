@@ -59,7 +59,9 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
   };
   const commit = () => {
     const valid = rows.filter((r) => r.firstName.trim() || r.lastName.trim() || r.email.trim());
-    if (valid.length) onAdd(valid.map((r) => ({ ...r, login: notify })));
+    // `notify` controls whether new users are emailed an invite — it is NOT the
+    // login-access flag (that defaults to Yes on the server).
+    if (valid.length) onAdd(valid, notify);
     close();
   };
 

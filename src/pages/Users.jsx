@@ -103,6 +103,28 @@ export default function Users() {
 
   const showToast = (msg) => setToast(msg);
 
+  // Summarise an add result: warn about emails that already exist, and report
+  // whether the invitation was emailed (or that mail isn't configured).
+  const reportAdd = (r) => {
+    const dups = r?.duplicates || [];
+    const invites = r?.invites || [];
+    if (dups.length) {
+      showToast(`Already a user: ${dups.map((d) => d.email).join(', ')} — not added again.`);
+      return;
+    }
+    const sent = invites.filter((i) => i.sent);
+    const notSent = invites.filter((i) => !i.sent);
+    if (sent.length && !notSent.length) {
+      showToast(`Added — invitation emailed to ${sent.map((i) => i.email).join(', ')}.`);
+    } else if (notSent.length) {
+      showToast(`Added, but email isn’t configured — send the invite link(s) manually via Manage → Send invitation.`);
+    } else {
+      showToast('User(s) added.');
+    }
+  };
+  const handleAddUser = async (form, notify = true) => reportAdd(await addUser(form, notify).catch(() => null));
+  const handleAddUsers = async (list, notify = true) => reportAdd(await addUsers(list, notify).catch(() => null));
+
   const filtered = users.filter(
     (u) =>
       u.name.toLowerCase().includes(query.toLowerCase()) ||
@@ -256,8 +278,8 @@ export default function Users() {
 
       {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>}
 
-      <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} onAdd={addUser} />
-      <AddMultipleUsersModal open={multiOpen} onClose={() => setMultiOpen(false)} onAdd={addUsers} />
+      <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} onAdd={handleAddUser} />
+      <AddMultipleUsersModal open={multiOpen} onClose={() => setMultiOpen(false)} onAdd={handleAddUsers} />
       <EditUserModal
         key={edit ? `${edit.user.id}-${edit.mode}` : 'closed'}
         open={Boolean(edit)}
