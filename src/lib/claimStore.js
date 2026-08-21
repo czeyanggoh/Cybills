@@ -215,6 +215,21 @@ export function directManagerFor(users, claimantName) {
 // Claims a user is allowed to see: their own (they're the claimant or created
 // it) plus ones awaiting/decided by them as approver. Gatekeeps the list so a
 // submitted claim is visible only to the claimant and their direct manager.
+// A claim is out of the inbox once it's archived — or published to Xero, which
+// archives it implicitly (true for claims published before auto-archiving
+// existed). Shared by the Expense claims tabs and the subnav badge so the number
+// and the list can't disagree.
+export function isClaimArchived(c) {
+  return Boolean(c?.archived) || Boolean(c?.xeroInvoiceId);
+}
+
+// The claims that belong in the Expense claims inbox for this user: what they're
+// allowed to see (admins see everything), minus the archived ones.
+export function inboxClaimsFor(claims, user, isAdmin = false) {
+  const visible = isAdmin ? claims || [] : visibleClaimsFor(claims, user);
+  return visible.filter((c) => !isClaimArchived(c));
+}
+
 export function visibleClaimsFor(claims, user) {
   const email = norm(user?.email);
   const name = norm(user?.name);

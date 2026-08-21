@@ -6,7 +6,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate } from '@/lib/claimStore';
+import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate, isClaimArchived } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
@@ -103,10 +103,10 @@ export default function ExpenseClaims() {
   // Newest claim on top (createdAt is an ISO stamp, so lexical sort = chrono).
   const byNewest = (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
   // A claim published to Xero belongs in Archive (out of the active inbox), even
-  // if it was published before auto-archiving was added.
-  const isArchived = (c) => c.archived || Boolean(c.xeroInvoiceId);
-  const inbox = claims.filter((c) => !isArchived(c)).sort(byNewest);
-  const archived = claims.filter((c) => isArchived(c)).sort(byNewest);
+  // if it was published before auto-archiving was added — isClaimArchived is the
+  // shared rule, so the subnav badge counts exactly what the Inbox tab lists.
+  const inbox = claims.filter((c) => !isClaimArchived(c)).sort(byNewest);
+  const archived = claims.filter(isClaimArchived).sort(byNewest);
 
   // Per-claim approval status shown in its column (Dext wording).
   const STATUS_LABEL = { awaiting_approval: 'Waiting', approved: 'Approved', rejected: 'Rejected' };

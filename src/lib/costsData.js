@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useClaims } from '@/lib/claimStore';
+import { useClaims, inboxClaimsFor } from '@/lib/claimStore';
+import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
-import { USERS_EVENT } from '@/lib/userStore';
+import { USERS_EVENT, canManageBusiness } from '@/lib/userStore';
 
 // The fields a cost document needs before it's "ready" (moves out of the inbox).
 // Surfaced in the UI so users know exactly why something is still in the inbox.
@@ -75,11 +76,16 @@ export function useCostsDocs() {
 export function useCostsCounts() {
   const { allDocs } = useCostsDocs();
   const claims = useClaims();
+  // The Expense claims badge counts the INBOX, not every claim ever made —
+  // archived and Xero-published ones drop out, exactly as they do from the tab,
+  // and a non-admin only counts the claims they're allowed to see.
+  const { user, googleEnabled, membership } = useAuth();
+  const isAdmin = canManageBusiness(membership, googleEnabled);
   return {
     inbox: rowsFor(allDocs, 'inbox').length,
     review: rowsFor(allDocs, 'review').length,
     ready: rowsFor(allDocs, 'ready').length,
     archive: rowsFor(allDocs, 'archive').length,
-    expenseClaims: claims.length,
+    expenseClaims: inboxClaimsFor(claims, user, isAdmin).length,
   };
 }
