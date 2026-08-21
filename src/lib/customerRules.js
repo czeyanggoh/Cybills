@@ -9,7 +9,7 @@ import { blobStore } from '@/lib/blobStore';
 const KEY = 'cybills.customer.rules.v1';
 export const CUSTOMER_RULES_EVENT = 'cybills:customer-rules-changed';
 const emit = () => window.dispatchEvent(new Event(CUSTOMER_RULES_EVENT));
-const store = blobStore(KEY, {}, emit);
+const store = blobStore(KEY, {}, emit, { perOrg: true });
 
 function normName(name) {
   return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');

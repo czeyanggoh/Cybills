@@ -25,7 +25,7 @@ export const DEFAULT_BUSINESS_PROFILE = {
 };
 
 const emit = () => window.dispatchEvent(new Event(BUSINESS_PROFILE_EVENT));
-const store = blobStore(KEY, DEFAULT_BUSINESS_PROFILE, emit);
+const store = blobStore(KEY, DEFAULT_BUSINESS_PROFILE, emit, { perOrg: true });
 
 export function getBusinessProfile() {
   const v = store.get() || {};

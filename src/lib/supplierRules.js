@@ -7,7 +7,7 @@ import { blobStore } from '@/lib/blobStore';
 const KEY = 'cybills.supplier.rules.v1';
 export const SUPPLIER_RULES_EVENT = 'cybills:supplier-rules-changed';
 const emit = () => window.dispatchEvent(new Event(SUPPLIER_RULES_EVENT));
-const store = blobStore(KEY, {}, emit);
+const store = blobStore(KEY, {}, emit, { perOrg: true });
 
 function read() {
   return store.get() || {};

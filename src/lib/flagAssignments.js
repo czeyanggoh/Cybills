@@ -11,7 +11,7 @@ const KEY = 'cybills.flag-assignments.v1';
 export const FLAG_ASSIGNMENTS_EVENT = 'cybills:flag-assignments-changed';
 
 const emit = () => window.dispatchEvent(new Event(FLAG_ASSIGNMENTS_EVENT));
-const store = blobStore(KEY, {}, emit);
+const store = blobStore(KEY, {}, emit, { perOrg: true });
 
 export function getFlagAssignments() {
   const v = store.get();

@@ -30,10 +30,13 @@ export function setActiveOrganisationId(id) {
   } catch {
     // localStorage unavailable — selection just won't persist
   }
-  // Costs/Sales books are per-org, so switching orgs must reload the lists.
-  // Dispatch by literal name to avoid importing bills.js (would cycle).
+  // Costs/Sales books are per-org, so switching orgs must reload the lists —
+  // and so must every per-org settings blob (business profile, lists, coding
+  // rules). Dispatch by literal name to avoid importing bills.js / blobStore.js
+  // (would cycle).
   try {
     window.dispatchEvent(new Event('cybills:bills-changed'));
+    window.dispatchEvent(new Event('cybills:organisation-changed'));
   } catch {
     // no window (SSR/tests) — nothing to refresh
   }

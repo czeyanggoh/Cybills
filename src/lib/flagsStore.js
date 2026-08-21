@@ -17,7 +17,7 @@ export const DEFAULT_FLAGS = [
 ];
 
 const emit = () => window.dispatchEvent(new Event(FLAGS_EVENT));
-const store = blobStore(KEY, DEFAULT_FLAGS, emit);
+const store = blobStore(KEY, DEFAULT_FLAGS, emit, { perOrg: true });
 
 export function getFlags() {
   const v = store.get();

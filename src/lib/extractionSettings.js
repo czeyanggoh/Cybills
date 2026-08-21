@@ -35,7 +35,7 @@ export const DEFAULT_EXTRACTION_SETTINGS = {
 };
 
 const emit = () => window.dispatchEvent(new Event(EXTRACTION_SETTINGS_EVENT));
-const store = blobStore(KEY, DEFAULT_EXTRACTION_SETTINGS, emit);
+const store = blobStore(KEY, DEFAULT_EXTRACTION_SETTINGS, emit, { perOrg: true });
 
 export function getExtractionSettings() {
   return { ...DEFAULT_EXTRACTION_SETTINGS, ...(store.get() || {}) };

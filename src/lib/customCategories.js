@@ -8,7 +8,7 @@ import { blobStore } from '@/lib/blobStore';
 const KEY = 'cybills.custom.categories.v1';
 export const CUSTOM_CATEGORIES_EVENT = 'cybills:custom-categories-changed';
 const emit = () => window.dispatchEvent(new Event(CUSTOM_CATEGORIES_EVENT));
-const store = blobStore(KEY, [], emit);
+const store = blobStore(KEY, [], emit, { perOrg: true });
 
 function readAll() {
   const v = store.get();

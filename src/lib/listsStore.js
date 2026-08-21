@@ -9,7 +9,7 @@ import { blobStore } from '@/lib/blobStore';
 const KEY = 'cybills.lists.v1';
 export const LISTS_EVENT = 'cybills:lists-changed';
 const emit = () => window.dispatchEvent(new Event(LISTS_EVENT));
-const store = blobStore(KEY, { added: {}, hidden: {}, meta: {} }, emit);
+const store = blobStore(KEY, { added: {}, hidden: {}, meta: {} }, emit, { perOrg: true });
 
 // --- Seeds (from the client's ST Eng workspace) -----------------------------
 export const SEED_CATEGORIES = [

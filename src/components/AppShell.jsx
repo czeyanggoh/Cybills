@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Receipt,
@@ -116,6 +116,17 @@ function OrganisationSwitcher() {
 
   const active = organisations.find((o) => o.id === activeId) ?? null;
   const label = active?.name || 'CYBM Workspace';
+
+  // Pin the implied selection. Everywhere else falls back to organisations[0]
+  // when nothing is stored, so an unset selection silently means "the first
+  // one" — except for per-org settings blobs, which would key to 'default' and
+  // then look wiped the day the user first opens this switcher. Writing it down
+  // makes every consumer agree on the same org from the start.
+  useEffect(() => {
+    if (activeId || !organisations.length) return;
+    setActiveOrganisationId(organisations[0].id);
+    setActiveId(organisations[0].id);
+  }, [activeId, organisations]);
 
   const select = (id) => {
     if (id === activeId) {
