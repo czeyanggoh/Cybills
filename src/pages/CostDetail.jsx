@@ -32,7 +32,7 @@ import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
-import { useExtractionSettings, resolveTaxRate } from '@/lib/extractionSettings';
+import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -197,9 +197,13 @@ export default function CostDetail() {
   // settings → Lists → Tax rates: the live Xero rates (seed fallback), showing
   // only the rates left Visible there. `rateFor` gives the % for the tax math.
   const taxRateSource = useVisibleTaxRates();
-  // Not GST-registered → every document codes to No Tax and no GST is split out.
+  // Not GST-registered → every document codes to No Tax and no GST is split out,
+  // and the picker offers nothing else.
   const gstRegistered = useGstRegistered();
-  const taxRateOptions = taxRateSource.map((t) => t.name);
+  const noTaxName = noTaxRateName(taxRateSource);
+  const taxRateOptions = gstRegistered
+    ? taxRateSource.map((t) => t.name)
+    : [noTaxName].filter(Boolean);
   const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
   const extractionSettings = useExtractionSettings();
   const [pmModalOpen, setPmModalOpen] = useState(false);
@@ -277,6 +281,30 @@ export default function CostDetail() {
       alive = false;
     };
   }, [id]);
+
+  // Not GST-registered: force the document onto No Tax with no GST split out,
+  // and persist it. The picker offers nothing else, but a document coded before
+  // the profile changed (or before it was answered) still carries the old rate —
+  // this is what actually corrects it, rather than just warning about it.
+  useEffect(() => {
+    if (gstRegistered || !doc || !noTaxName) return;
+    const staleRate = data.taxRate !== noTaxName;
+    const staleTax = (Number(String(data.tax ?? '').replace(/[^0-9.-]/g, '')) || 0) !== 0;
+    if (!staleRate && !staleTax) return;
+    setData((d) => ({ ...d, taxRate: noTaxName, tax: '0.00', taxRateReason: '' }));
+    if (doc.persisted) {
+      updateBill(doc.id, { taxRate: noTaxName, tax: '0.00', taxRateReason: '' })
+        .then((r) => {
+          if (r?.bill) {
+            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+            notifyBillsChanged();
+          }
+        })
+        .catch(() => {});
+    } else {
+      setDocOverride(doc.id, { taxRate: noTaxName, tax: '0.00' });
+    }
+  }, [gstRegistered, noTaxName, doc, data.taxRate, data.tax]);
 
   if (!doc) {
     return (
@@ -1060,8 +1088,8 @@ export default function CostDetail() {
                 <EditableSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
                 {!gstRegistered && (
                   <p className="mt-1.5 text-xs text-muted-foreground">
-                    This company isn’t GST-registered, so documents code to No Tax. Change that under
-                    Business settings → Business profile.
+                    Fixed to No Tax — this company isn’t GST-registered. Change that under Business
+                    settings → Business profile.
                   </p>
                 )}
                 {gstRegistered && data.taxRateReason && (

@@ -182,11 +182,18 @@ export function inferTaxRateName(total, tax, rates, opts = {}) {
 // `suggested` is the model's pick (may be ''), `gstRegistered` the profile flag.
 export function resolveTaxRate({ total, tax, rates, suggested = '', gstRegistered = true, ...opts }) {
   const list = Array.isArray(rates) ? rates : [];
-  if (!gstRegistered) {
-    const noTax = list.find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));
-    return noTax ? noTax.name : '';
-  }
+  if (!gstRegistered) return noTaxRateName(list);
   const picked = String(suggested || '').trim();
   if (picked && list.some((r) => r.name === picked)) return picked;
   return inferTaxRateName(total, tax, list, opts);
+}
+
+// The org's zero-rated "No Tax" code, by name — '' when the list doesn't have
+// one (it's hidden, or Xero isn't connected yet). The single answer for a
+// company that isn't GST-registered, so every screen agrees on it.
+export function noTaxRateName(rates) {
+  const row = (Array.isArray(rates) ? rates : []).find(
+    (r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r),
+  );
+  return row ? row.name : '';
 }

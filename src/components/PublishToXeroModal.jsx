@@ -7,6 +7,7 @@ import {
   fetchXeroTaxRates,
   publishBillToXero,
 } from '@/lib/organisations';
+import { useGstRegistered } from '@/lib/businessProfile';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 
 // "Publish to Xero" dialog — posts a stored cost document to the linked Xero
@@ -26,6 +27,9 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   const [error, setError] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [done, setDone] = useState(null); // { invoiceNumber, status }
+  // A company that isn't GST-registered publishes everything as No Tax, whatever
+  // the bill still carries — the last gate before a stale code reaches Xero.
+  const gstRegistered = useGstRegistered();
 
   // Reset + preselect the active organisation each time the dialog opens.
   useEffect(() => {
@@ -69,6 +73,11 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
         if (match) setAccountCode(match.code);
         // Tax rate: prefer the doc's own tax rate (matched by name), else fall
         // back to the selected account's default.
+        const noTax = rates.find((t) => t.taxType === 'NONE' || /^no tax$/i.test(t.name));
+        if (!gstRegistered) {
+          setTaxType(noTax?.taxType ?? '');
+          return;
+        }
         const byName = bill?.taxRate ? rates.find((t) => t.name === bill.taxRate) : null;
         if (byName) setTaxType(byName.taxType);
         else if (match?.taxType && rates.some((t) => t.taxType === match.taxType)) setTaxType(match.taxType);
@@ -96,6 +105,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   // default (exactly what Xero's UI does).
   const pickAccount = (code) => {
     setAccountCode(code);
+    if (!gstRegistered) return; // stays No Tax
     const acc = (accounts ?? []).find((a) => a.code === code);
     if (acc?.taxType && (taxRates ?? []).some((t) => t.taxType === acc.taxType)) {
       setTaxType(acc.taxType);
@@ -231,7 +241,9 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                         className={selectClass}
                       >
                         <option value="">{loadingRefs ? 'Loading tax rates…' : 'Select a tax rate'}</option>
-                        {(taxRates ?? []).map((t) => (
+                        {(taxRates ?? [])
+                          .filter((t) => gstRegistered || t.taxType === 'NONE' || /^no tax$/i.test(t.name))
+                          .map((t) => (
                           <option key={t.taxType} value={t.taxType}>
                             {t.name} ({t.rate}%)
                           </option>

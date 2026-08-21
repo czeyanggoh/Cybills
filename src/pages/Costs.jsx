@@ -19,7 +19,8 @@ import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useFlagAssignments } from '@/lib/flagAssignments';
 import { useCategoryOptions, useVisibleTaxRates } from '@/lib/organisations';
-import { useExtractionSettings } from '@/lib/extractionSettings';
+import { useGstRegistered } from '@/lib/businessProfile';
+import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
 import { updateBill, deleteBill, notifyBillsChanged, displayItemId } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
@@ -516,7 +517,12 @@ export default function Costs() {
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
   const taxRates = useVisibleTaxRates(); // shared managed list (Lists → Tax rates)
-  const taxRateOptions = taxRates.map((t) => t.name);
+  // Not GST-registered → No Tax is the only code on offer, and the row shows it
+  // even for a document coded before the profile said so (opening the document
+  // rewrites the stored value).
+  const gstRegistered = useGstRegistered();
+  const noTaxName = noTaxRateName(taxRates);
+  const taxRateOptions = gstRegistered ? taxRates.map((t) => t.name) : [noTaxName].filter(Boolean);
 
   // Every tab's rows, so its badge count ties to what the tab actually shows.
   const rowsByTab = {
@@ -903,12 +909,12 @@ export default function Costs() {
                     <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{d.tax}</td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <select
-                        value={d.taxRate || ''}
+                        value={(gstRegistered ? d.taxRate : noTaxName) || ''}
                         onChange={(e) => changeTaxRate(d, e.target.value)}
                         className="w-36 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <option value="">No tax rate</option>
-                        {!taxRateOptions.includes(d.taxRate) && d.taxRate && (
+                        {gstRegistered && !taxRateOptions.includes(d.taxRate) && d.taxRate && (
                           <option value={d.taxRate}>{d.taxRate}</option>
                         )}
                         {taxRateOptions.map((t) => (
