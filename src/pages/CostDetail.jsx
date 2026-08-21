@@ -21,6 +21,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import PublishToXeroModal from '@/components/PublishToXeroModal';
+import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
@@ -30,7 +31,7 @@ import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, markNotDuplicate } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, markNotDuplicate, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
@@ -238,6 +239,7 @@ export default function CostDetail() {
   const [gstOpen, setGstOpen] = useState(false); // GST-split panel open
   const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
   const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
+  const [compareOpen, setCompareOpen] = useState(false); // side-by-side duplicate review
 
   const doc = mockDoc ?? persisted;
   // If this document is a line item inside an expense claim, keep the page in
@@ -417,12 +419,12 @@ export default function CostDetail() {
     return events.reverse(); // newest first
   })();
 
-  // Why this document was flagged, in the reviewer's terms.
-  const DUPLICATE_REASON = {
-    exact_file: 'The identical file has already been submitted.',
-    same_invoice: 'The same supplier and document reference, for the same amount, is already on file.',
-    likely_duplicate: 'The same supplier, amount and date is already on file.',
-  };
+  // The document this one matched, for the side-by-side review. Resolved from
+  // the loaded Costs set; if it's since been deleted there's nothing to compare
+  // and the review stays shut.
+  const duplicateOf = doc?.duplicateOfId
+    ? inboxAllDocs.find((d) => String(d.id) === String(doc.duplicateOfId)) || null
+    : null;
 
   // "These are different documents" — clears the flag for good, so later
   // re-checks don't keep raising it.
@@ -869,12 +871,19 @@ export default function CostDetail() {
             {DUPLICATE_REASON[doc.duplicateType] || 'This looks like a document already submitted.'}{' '}
             <button
               type="button"
-              onClick={() => navigate(`/costs/${doc.duplicateOfId}`)}
+              onClick={() => setCompareOpen(true)}
               className="font-medium underline underline-offset-2"
             >
+              Compare side by side
+            </button>
+            {' · '}
+            <button
+              type="button"
+              onClick={() => navigate(`/costs/${doc.duplicateOfId}`)}
+              className="underline underline-offset-2"
+            >
               Open the one it matches
-            </button>{' '}
-            to compare.
+            </button>
           </span>
           <button
             type="button"
@@ -1440,6 +1449,13 @@ export default function CostDetail() {
           }
         }}
       />
+      <DuplicateReviewModal
+        open={compareOpen && Boolean(duplicateOf)}
+        pairs={duplicateOf ? [{ duplicate: doc, original: duplicateOf }] : []}
+        onClose={() => setCompareOpen(false)}
+        onResolved={() => { setCompareOpen(false); goToNextInbox(); }}
+      />
+
       <PublishToXeroModal
         open={publishOpen}
         onClose={() => setPublishOpen(false)}

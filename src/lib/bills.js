@@ -277,3 +277,11 @@ export function describeDuplicate(dup) {
         : `A ${bill.currency} ${bill.total} ${bill.supplier} document from ${bill.date} was already added`;
   return `${label}${when ? ` on ${when}` : ''}${who}.`;
 }
+
+// Why a document was flagged, in the reviewer's terms — one wording, shared by
+// the document page's banner and the side-by-side review.
+export const DUPLICATE_REASON = {
+  exact_file: 'The identical file has already been submitted.',
+  same_invoice: 'The same supplier and document reference, for the same amount, is already on file.',
+  likely_duplicate: 'The same supplier, amount and date is already on file.',
+};

@@ -28,6 +28,7 @@ import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
 import MergeModal from '@/components/MergeModal';
+import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
@@ -173,6 +174,11 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   // Re-checks documents already in the list — the read-time check only ever saw
   // the documents that existed when each one was uploaded.
   const dupBtn = <ToolbarButton onClick={a.scanDuplicates}>Scan for duplicates</ToolbarButton>;
+  // Only worth offering once something is flagged: opens the flagged documents
+  // beside what they matched, one pair at a time.
+  const reviewDupBtn = a.dupCount > 0 ? (
+    <ToolbarButton onClick={a.reviewDuplicates}>Review duplicates ({a.dupCount})</ToolbarButton>
+  ) : null;
   const moveTo = [
     { label: 'To review', onClick: () => a.move('review') },
     { label: 'Ready', onClick: () => a.move('ready') },
@@ -200,6 +206,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
         {mergeBtn}
         {scanBtn}
         {dupBtn}
+        {reviewDupBtn}
         <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
         <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
       </>
@@ -228,6 +235,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {mergeBtn}
       {scanBtn}
       {dupBtn}
+      {reviewDupBtn}
       <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
       <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
     </>
@@ -497,6 +505,10 @@ export default function Costs() {
   // immediately, so these have to exist by then.
   const tablePrefs = useTablePrefs('costs');
   const densityClass = DENSITY_CLASS[tablePrefs.density] || DENSITY_CLASS.Medium;
+  // Documents under side-by-side duplicate review — held as ids and paired with
+  // what they matched at render time, so the panes follow the live rows. Up here
+  // with tablePrefs because the column definitions below reference the setter.
+  const [dupIds, setDupIds] = useState(null);
   const navigate = useNavigate();
   const { user } = useAuth();
   // Label for uploads with no recorded creator ("You" = whoever is viewing).
@@ -511,12 +523,14 @@ export default function Costs() {
         <div className="flex flex-col items-start gap-1">
           <StatusBadge status={d.status} published={Boolean(d.xeroInvoiceId)} />
           {d.duplicateOfId && !d.duplicateDismissed && (
-            <span
-              title="Matches a document already submitted — open it to compare"
-              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[11px] font-medium text-destructive"
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setDupIds([d.id]); }}
+              title="Matches a document already submitted — compare them side by side"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/20"
             >
               <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Possible duplicate
-            </span>
+            </button>
           )}
         </div>
       ),
@@ -631,6 +645,20 @@ export default function Costs() {
     archive: rowsFor(allDocs, 'archive'),
   };
   const allRows = rowsByTab[tab] ?? [];
+  // Everything flagged across the whole book (not just this tab) — a duplicate
+  // and the document it matches often sit in different tabs, and reviewing one
+  // means seeing both.
+  const docById = new Map(allDocs.map((d) => [d.id, d]));
+  const flaggedDocs = allDocs.filter((d) => d.duplicateOfId && !d.duplicateDismissed && docById.has(d.duplicateOfId));
+  // Ids → { duplicate, original } for the review panes; a pair whose other half
+  // has since been deleted or cleared simply drops out.
+  const dupPairs = (dupIds || [])
+    .map((docId) => {
+      const duplicate = docById.get(docId);
+      const original = duplicate && docById.get(duplicate.duplicateOfId);
+      return duplicate && original && !duplicate.duplicateDismissed ? { duplicate, original } : null;
+    })
+    .filter(Boolean);
   const q = query.trim().toLowerCase();
   const toNum = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const toTime = (v) => { const t = new Date(v).getTime(); return Number.isNaN(t) ? 0 : t; };
@@ -878,7 +906,7 @@ export default function Costs() {
     setMergeNote(
       flagged === 0
         ? 'No duplicates found — every document is unique on file, supplier + reference, or supplier + amount + date.'
-        : `${flagged} document${flagged === 1 ? '' : 's'} flagged as a possible duplicate${changed ? ` (${changed} newly)` : ''}. They're marked in the list — open one to compare, or mark it "Not a duplicate".`,
+        : `${flagged} document${flagged === 1 ? '' : 's'} flagged as a possible duplicate${changed ? ` (${changed} newly)` : ''}. Use "Review duplicates" to see each one beside the document it matches.`,
     );
   };
 
@@ -890,6 +918,8 @@ export default function Costs() {
     merge: mergeSelected,
     scanMerges: scanForMerges,
     scanDuplicates: runDuplicateScan,
+    reviewDuplicates: () => setDupIds(flaggedDocs.map((d) => d.id)),
+    dupCount: flaggedDocs.length,
     navigate,
   };
 
@@ -1096,6 +1126,14 @@ export default function Costs() {
       />
 
       <DocsExportModal open={exportOpen} kind="costs" rows={rows} onClose={() => setExportOpen(false)} />
+
+      <DuplicateReviewModal
+        open={dupPairs.length > 0}
+        pairs={dupPairs}
+        onClose={() => setDupIds(null)}
+        onResolved={reload}
+        onMerge={(docs) => { setDupIds(null); setMergeModalDocs(docs); }}
+      />
 
       <MergeModal
         open={Boolean(mergeModalDocs)}
