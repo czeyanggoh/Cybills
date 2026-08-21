@@ -109,7 +109,12 @@ export default function Users() {
     const dups = r?.duplicates || [];
     const invites = r?.invites || [];
     if (dups.length) {
-      showToast(`Already a user: ${dups.map((d) => d.email).join(', ')} — not added again.`);
+      // One email = one person across the whole business (sign-in is by email),
+      // so name the organisation that already has them rather than just refusing.
+      const who = dups
+        .map((d) => (d.organisationName ? `${d.email} (already in ${d.organisationName})` : d.email))
+        .join(', ');
+      showToast(`Already a user: ${who} — not added again.`);
       return;
     }
     const sent = invites.filter((i) => i.sent);
@@ -154,8 +159,9 @@ export default function Users() {
   // Anyone active can be someone's direct manager (the approver claims route to).
   const managerOptions = users.filter((m) => !m.deactivated && !m.pending);
   const projectOptions = useXeroProjectOptions();
-  // Users without an explicit company (seeded / admin-added) belong to the
-  // active workspace organisation, so show that rather than a blank dash.
+  // The roster is tenant-specific — the server returns only the selected
+  // organisation's people — so a row without its own stored company name is
+  // shown under that organisation rather than a blank dash.
   const { data: organisations = [] } = useOrganisations();
   const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
   const workspaceCompany = activeOrg?.name || '';
@@ -168,7 +174,14 @@ export default function Users() {
   return (
     <AppShell>
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold tracking-tight">Users</h1>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Users</h1>
+          {activeOrg && (
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              People in {activeOrg.name}. Switch organisation to manage another entity&apos;s users.
+            </p>
+          )}
+        </div>
         <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
           Add a user
         </button>
@@ -288,7 +301,9 @@ export default function Users() {
                     ? 'No deactivated users.'
                     : tab === 'pending'
                       ? 'No pending join requests.'
-                      : 'No users found.'}
+                      : activeOrg
+                        ? `No users in ${activeOrg.name} yet — add one to get started.`
+                        : 'No users found.'}
                 </td>
               </tr>
             )}

@@ -47,7 +47,8 @@ export default function AddUserModal({ open, onClose, onAdd }) {
   const isStandard = form.role === 'Standard';
 
   // Invite (notify) only when they have login access + an email; pass the active
-  // org name so the invite email names the right organisation.
+  // org name so the invite email names the right organisation. The server files
+  // the new user under that same organisation — rosters are per-tenant.
   const commit = () => { onAdd(form, form.login, '', orgName); close(); };
 
   const input = 'h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -142,7 +143,11 @@ export default function AddUserModal({ open, onClose, onAdd }) {
 
           {step === 'review' && (
             <div className="space-y-4 p-6 text-sm">
-              <p>You are adding a user with the following details:</p>
+              <p>
+                You are adding a user to{' '}
+                <span className="font-medium">{orgName || 'this organisation'}</span> with the
+                following details:
+              </p>
               <div className="pl-4">
                 <p><span className="font-medium">First name:</span> {form.firstName}</p>
                 <p><span className="font-medium">Last name:</span> {form.lastName}</p>

@@ -1,18 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
+import { getActiveOrganisationId, ORGANISATION_EVENT } from '@/lib/organisations';
 
-// Server-backed users, shared across the workspace. Talks to /api/users;
-// mirrors the bills/claims client pattern (fetch + a change event). The people
-// list + approver roster is now central instead of per-browser localStorage.
+// Server-backed users. Talks to /api/users; mirrors the bills/claims client
+// pattern (fetch + a change event). The people list + approver roster is
+// central instead of per-browser localStorage, and is tenant-specific: each
+// linked organisation has its own roster.
 
 export const USERS_EVENT = 'cybills:users-changed';
 function notifyUsersChanged() {
   window.dispatchEvent(new Event(USERS_EVENT));
 }
 
+// Every roster request names the selected organisation, so the server reads and
+// writes that entity's own people list — the same header the bills API uses.
+// Omitted when nothing is selected; the server then falls back to the primary
+// organisation.
+function orgHeaders() {
+  const id = getActiveOrganisationId();
+  return id ? { 'X-Org-Id': id } : {};
+}
+
 async function req(path, method = 'GET', body) {
   const res = await fetch(`/api/users${path}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: { ...orgHeaders(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(`users ${method} ${path} failed (${res.status})`);
@@ -49,6 +60,10 @@ async function fetchUsers() {
 // rendered (e.g. the Costs "User" column) re-resolve with real names.
 if (typeof window !== 'undefined') {
   fetchUsers().then(() => notifyUsersChanged());
+  // The cache holds one organisation's names, so re-warm it on a switch.
+  window.addEventListener(ORGANISATION_EVENT, () => {
+    fetchUsers().then(() => notifyUsersChanged());
+  });
 }
 
 // --- Mutations (async; notify so mounted lists refetch) ----------------------
@@ -88,7 +103,7 @@ export async function approveUser(id) {
 export async function joinCompany(payload) {
   const res = await fetch('/api/users/join', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...orgHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload ?? {}),
   });
   if (!res.ok) throw new Error(`join failed (${res.status})`);
@@ -119,7 +134,7 @@ export async function setUserPassword(id, password) {
   try {
     const res = await fetch(`/api/users/${id}/password`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...orgHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
     });
     if (res.ok) notifyUsersChanged();
@@ -136,7 +151,7 @@ export async function setUserPassword(id, password) {
 // admin can pass it on by hand when mail is off or delivery failed.
 export async function inviteUser(id) {
   try {
-    const res = await fetch(`/api/users/${id}/invite`, { method: 'POST' });
+    const res = await fetch(`/api/users/${id}/invite`, { method: 'POST', headers: orgHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { sent: false, error: data.error || `http_${res.status}` };
     notifyUsersChanged();
@@ -218,7 +233,12 @@ export function useUsers() {
   useEffect(() => {
     reload();
     window.addEventListener(USERS_EVENT, reload);
-    return () => window.removeEventListener(USERS_EVENT, reload);
+    // Rosters are per-organisation, so switching entities loads a different list.
+    window.addEventListener(ORGANISATION_EVENT, reload);
+    return () => {
+      window.removeEventListener(USERS_EVENT, reload);
+      window.removeEventListener(ORGANISATION_EVENT, reload);
+    };
   }, [reload]);
   return users;
 }

@@ -12,6 +12,10 @@ import { BANK_ACCOUNTS, usePaymentMethods } from '@/lib/paymentMethods';
 
 const ACTIVE_KEY = 'cybills:active-organisation';
 
+// Fired when the selected organisation changes. Per-org data (books, settings,
+// and the user roster) refetches on it.
+export const ORGANISATION_EVENT = 'cybills:organisation-changed';
+
 // Supplier bills post to expense-type accounts, so those drive categorisation.
 const isExpenseType = (t) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(String(t || '').toUpperCase());
 
@@ -32,11 +36,11 @@ export function setActiveOrganisationId(id) {
   }
   // Costs/Sales books are per-org, so switching orgs must reload the lists —
   // and so must every per-org settings blob (business profile, lists, coding
-  // rules). Dispatch by literal name to avoid importing bills.js / blobStore.js
-  // (would cycle).
+  // rules) and the user roster. The bills event is dispatched by literal name to
+  // avoid importing bills.js / blobStore.js (would cycle).
   try {
     window.dispatchEvent(new Event('cybills:bills-changed'));
-    window.dispatchEvent(new Event('cybills:organisation-changed'));
+    window.dispatchEvent(new Event(ORGANISATION_EVENT));
   } catch {
     // no window (SSR/tests) — nothing to refresh
   }
