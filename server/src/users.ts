@@ -92,6 +92,9 @@ type User = {
   // The user's direct manager (another user's id) — the approver a claim is
   // auto-routed to when this person submits it for approval.
   managerId?: string;
+  // The Xero project / PIC tracking option assigned to this user. New documents
+  // they upload are auto-allocated to it.
+  project?: string;
   passwordHash?: string; // set by an admin; never returned to the client
   // Single-use invitation / password-reset link. Only the SHA-256 of the token
   // is stored, so a leaked data file can't be replayed into an account.
@@ -146,6 +149,7 @@ function full(u: Partial<User>, ws: string): User {
     pending: Boolean(u.pending),
     companyId: u.companyId || '',
     companyName: u.companyName || '',
+    project: u.project || '',
   };
 }
 
@@ -301,7 +305,7 @@ function normalizeRoles(items: User[], ws: string): boolean {
   return changed;
 }
 
-const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'companyId', 'companyName', 'managerId'];
+const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'companyId', 'companyName', 'managerId', 'project'];
 
 // The direct manager to route a claim to, given the claimant's display name.
 // Resolves the claimant's row, then their managerId to a roster member. Returns

@@ -358,6 +358,32 @@ function xeroLineDescription(supplier: string, id: string, description: string):
   return out.trim();
 }
 
+// The org's first ACTIVE tracking category (the "PIC" list) + its valid option
+// names, for tagging bill lines with a project/PIC on publish.
+async function firstTrackingCategory(
+  tenantId: string
+): Promise<{ name: string; options: Set<string> } | null> {
+  const result = await relay('TrackingCategories', { tenantId });
+  if (!result.ok) return null;
+  const cat = (result.data?.TrackingCategories ?? []).find((c: any) => c.Status === 'ACTIVE');
+  if (!cat || !cat.Name) return null;
+  const options = new Set<string>(
+    (cat.Options ?? []).filter((o: any) => o.Status === 'ACTIVE').map((o: any) => String(o.Name))
+  );
+  return { name: String(cat.Name), options };
+}
+
+// A Xero line Tracking entry for a project/PIC value, or null when the value
+// isn't a valid option of the tracking category.
+function trackingFor(
+  tc: { name: string; options: Set<string> } | null,
+  project: string
+): Array<{ Name: string; Option: string }> | null {
+  const p = String(project || '').trim();
+  if (tc && p && tc.options.has(p)) return [{ Name: tc.name, Option: p }];
+  return null;
+}
+
 // POST /api/xero/organisations/:id/publish-bill — publish a stored cost
 // document to the linked Xero org as a supplier bill (ACCPAY invoice).
 // Body: { billId, accountCode, taxType, status?, dueDate?, description?,
@@ -415,6 +441,11 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     TaxType: taxType,
     TaxAmount: tax,
   };
+  // Tag the line with the doc's project (PIC tracking category) when set.
+  if (bill.project) {
+    const tracking = trackingFor(await firstTrackingCategory(organisation.tenantId), bill.project);
+    if (tracking) line.Tracking = tracking;
+  }
 
   const payload: Record<string, unknown> = {
     Type: 'ACCPAY',
@@ -518,11 +549,13 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       'Expense'
     );
   };
+  const tc = await firstTrackingCategory(organisation.tenantId);
   const lineItems = (claim.transactions ?? [])
     .map((t) => {
       const total = parseAmount(t.total);
       const tax = parseAmount(t.tax);
-      return {
+      const bill = getBillByIdAny(String(t.itemId));
+      const line = {
         Description: describe(t),
         Quantity: 1,
         // Tax-exclusive: net unit amount + explicit tax, so Xero renders a Tax
@@ -532,6 +565,10 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
         TaxAmount: tax,
         __total: total,
       } as Record<string, unknown>;
+      // Tag the PIC (tracking category) from the underlying cost doc's project.
+      const tracking = trackingFor(tc, String(bill?.project || t.project || ''));
+      if (tracking) line.Tracking = tracking;
+      return line;
     })
     .filter((l) => l.AccountCode && Number(l.__total) > 0)
     .map(({ __total, ...line }) => line);

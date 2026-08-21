@@ -6,7 +6,7 @@ import AddUserModal from '@/components/AddUserModal';
 import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
 import EditUserModal from '@/components/EditUserModal';
 import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser, updateUser } from '@/lib/userStore';
-import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
+import { useOrganisations, getActiveOrganisationId, useXeroProjectOptions } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 // Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
@@ -111,6 +111,7 @@ export default function Users() {
   const pendingCount = users.filter((u) => u.pending && !u.deactivated).length;
   // Anyone active can be someone's direct manager (the approver claims route to).
   const managerOptions = users.filter((m) => !m.deactivated && !m.pending);
+  const projectOptions = useXeroProjectOptions();
   // Users without an explicit company (seeded / admin-added) belong to the
   // active workspace organisation, so show that rather than a blank dash.
   const { data: organisations = [] } = useOrganisations();
@@ -179,6 +180,7 @@ export default function Users() {
               <th className="px-3 py-2.5 font-medium">Login access</th>
               <th className="px-3 py-2.5 font-medium">Role</th>
               <th className="px-3 py-2.5 font-medium">Direct manager</th>
+              <th className="px-3 py-2.5 font-medium">Project (PIC)</th>
               <th className="px-3 py-2.5 font-medium">Last login</th>
               <th className="px-3 py-2.5 font-medium">Manage</th>
             </tr>
@@ -206,6 +208,21 @@ export default function Users() {
                     ))}
                   </select>
                 </td>
+                <td className="px-3 py-3">
+                  <select
+                    value={u.project || ''}
+                    onChange={async (e) => {
+                      await updateUser(u.id, { project: e.target.value });
+                      showToast(e.target.value ? `Project ${e.target.value} set for ${u.name}.` : `Project cleared for ${u.name}.`);
+                    }}
+                    className="h-8 w-40 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <option value="">— None —</option>
+                    {(u.project && !projectOptions.includes(u.project) ? [u.project, ...projectOptions] : projectOptions).map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{u.lastLogin}</td>
                 <td className="px-3 py-3">
                   {u.pending ? (
@@ -224,7 +241,7 @@ export default function Users() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={9} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {tab === 'deactivated'
                     ? 'No deactivated users.'
                     : tab === 'pending'
