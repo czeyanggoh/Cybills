@@ -171,6 +171,50 @@ export function getBillByIdAny(id: string): Bill | null {
   return load().find((b) => b.id === id) ?? null;
 }
 
+// Filler a language model reaches for when a field is described as "never empty"
+// and it has nothing real to say. These are worse than a blank: `description` is
+// published to the ledger as the bill's line description, where "placeholder"
+// reads as a genuine answer. Blank them and let the fallbacks take over.
+const FILLER = new Set([
+  'placeholder', 'place holder', 'n/a', 'na', 'n.a.', 'none', 'nil', 'null', 'undefined',
+  'unknown', 'unspecified', 'not specified', 'not available', 'no description',
+  'description', 'summary', 'tbd', 'tba', 'todo', 'xxx', '-', '--', '.',
+]);
+export const notFiller = (v: unknown): string => {
+  const text = String(v ?? '').trim();
+  const base = text.toLowerCase().replace(/[.!]+$/, '');
+  // Also compare with the dots gone, so "n.a." lands on "na". Whole-string
+  // matches only — "Placeholder Ltd — office rent" is a real description.
+  return FILLER.has(base) || FILLER.has(base.replace(/\./g, '')) ? '' : text;
+};
+
+// One-off cleanup for documents read before the reader stopped emitting filler.
+// Idempotent (a blank stays blank), so it is safe to run at every boot. Returns
+// how many documents it cleaned.
+export function scrubFillerText(): number {
+  const bills = load();
+  let n = 0;
+  for (const b of bills) {
+    let touched = false;
+    for (const key of ['description', 'categoryReason', 'taxRateReason'] as const) {
+      const before = b[key];
+      if (before && notFiller(before) === '') {
+        b[key] = '';
+        touched = true;
+      }
+    }
+    for (const li of b.lineItems ?? []) {
+      if (li.description && notFiller(li.description) === '') {
+        li.description = '';
+        touched = true;
+      }
+    }
+    if (touched) n += 1;
+  }
+  if (n) persist(bills);
+  return n;
+}
+
 // The inbox: documents still being worked on. One that has LEFT it — archived,
 // published to Xero (which archives it), sitting on an expense claim, or merged
 // away — is settled, and re-raising a duplicate flag on it is noise about a

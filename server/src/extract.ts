@@ -2,6 +2,7 @@ import { Router } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { env, visionEnabled } from './env.js';
+import { notFiller } from './store.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
 // the model classifies into a value that actually exists in the UI. These are
@@ -59,12 +60,12 @@ function buildSchema(categories: string[], taxRateNames: string[]) {
       categoryReason: {
         type: 'string',
         description:
-          'ALWAYS give one short sentence (never empty) explaining WHY this category fits — cite the account name/description it matched or the merchant/purchase type, e.g. "Software subscription invoice — matched the 485 Subscriptions account." or "Restaurant dining — matched Business meetings / staff meals." If uncategorised, say why nothing fit.',
+          'One short sentence explaining WHY this category fits — cite the account name/description it matched or the merchant/purchase type, e.g. "Software subscription invoice — matched the 485 Subscriptions account." or "Restaurant dining — matched Business meetings / staff meals." If uncategorised, say why nothing fit. If you genuinely cannot say, return an EMPTY STRING rather than filler such as "placeholder" or "N/A".',
       },
       description: {
         type: 'string',
         description:
-          'ALWAYS provide a concise plain-language summary of what was purchased (never empty) — base it on the merchant, any visible items/services, and the document type. Examples: "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper". For a bare card/payment slip with no itemisation, describe it from the merchant, e.g. "Card payment at Marina Bay Sands (Marquee)".',
+          'A concise plain-language summary of what was purchased, from the merchant, any visible items/services, and the document type. Examples: "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper", "Mobile and broadband subscription". For a bare card/payment slip with no itemisation, describe it from the merchant, e.g. "Card payment at Marina Bay Sands (Marquee)". If the document does not show enough to say, return an EMPTY STRING — never filler such as "placeholder", "N/A", "unknown" or "description". This text is published to the accounting ledger, where a made-up word is worse than a blank.',
       },
       cardLast4: {
         type: 'string',
@@ -292,8 +293,11 @@ extractRouter.post('/extract', async (req, res) => {
     const data = {
       ...parsed.data,
       category: categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised',
+      description: notFiller(parsed.data.description),
+      categoryReason: notFiller(parsed.data.categoryReason),
       taxRate,
-      taxRateReason: taxRate ? parsed.data.taxRateReason : '',
+      taxRateReason: taxRate ? notFiller(parsed.data.taxRateReason) : '',
+      lineItems: parsed.data.lineItems.map((li) => ({ ...li, description: notFiller(li.description) })),
     };
     return res.json({ ok: true, data });
   } catch (err) {

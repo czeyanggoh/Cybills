@@ -15,6 +15,7 @@ import { usersRouter } from './users.js';
 import { mailRouter } from './mail.js';
 import { settingsRouter } from './settings.js';
 import { boardRouter } from './board.js';
+import { scrubFillerText } from './store.js';
 
 const app = express();
 
@@ -97,4 +98,9 @@ app.use('/api/board', boardRouter);
 
 app.listen(env.PORT, () => {
   console.log(`[cybills] server listening on :${env.PORT} (${env.NODE_ENV})`);
+  // Documents read before the extractor stopped emitting filler carry literal
+  // "placeholder" text, which publishes to Xero as the bill's line description.
+  // Idempotent, so it just no-ops on every boot after the first.
+  const scrubbed = scrubFillerText();
+  if (scrubbed) console.log(`[cybills] cleared filler text on ${scrubbed} document(s)`);
 });
