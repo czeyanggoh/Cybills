@@ -173,9 +173,12 @@ billsRouter.delete('/bills/:id', async (req, res) => {
 // against every other and record the verdicts. Catches a corpus that predates
 // flagging, anything added with "Add anyway", and pairs whose fields were
 // edited into matching after upload.
+// `kind` picks the book to walk (default Costs) — Costs, Sales and Supplier
+// statements are checked separately, so the count always matches the list the
+// scan was launched from.
 billsRouter.post('/bills/scan-duplicates', (req, res) => {
   const orgId = orgIdFor(req);
-  res.json({ ok: true, ...scanDuplicates(orgId) });
+  res.json({ ok: true, ...scanDuplicates(orgId, String(req.query.kind ?? req.body?.kind ?? 'cost')) });
 });
 
 // POST /api/costs/bills/:id/finalize — apply the fields Vision just read to a
@@ -200,7 +203,7 @@ billsRouter.post('/bills/:id/finalize', (req, res) => {
   // ran at create). Exclude this row so it can't match itself.
   const dup = findDuplicate(
     orgId,
-    { fileHash: '', supplier: updated.supplier, invoiceNumber: updated.invoiceNumber, total: updated.total, date: updated.date },
+    { fileHash: '', supplier: updated.supplier, invoiceNumber: updated.invoiceNumber, total: updated.total, date: updated.date, kind: updated.kind },
     updated.id
   );
   // Record it on the document too. The drawer may let the upload through
@@ -234,6 +237,7 @@ billsRouter.post('/bills', async (req, res) => {
     invoiceNumber: String(b.invoiceNumber ?? ''),
     total: parseAmount(b.total),
     date: String(b.date ?? ''),
+    kind: b.kind,
   };
 
   const dup = findDuplicate(orgId, candidate);

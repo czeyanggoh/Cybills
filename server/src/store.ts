@@ -68,6 +68,15 @@ export type Candidate = {
   invoiceNumber: string;
   total: number;
   date: string;
+  // Which book the document belongs to. Duplicate checking never crosses books:
+  // an invoice you ISSUED is not a duplicate of a bill you RECEIVED, even when
+  // the supplier, amount and date line up — and a match the Costs list can't
+  // show is a flag nobody can act on.
+  kind?: string;
+  // Id of a stored document to search BEFORE: only documents that arrived
+  // earlier than it are considered. Whatever comes back is then, by
+  // construction, the original — so only the later of a pair is ever marked.
+  beforeId?: string;
 };
 
 export type DuplicateMatch = {
@@ -173,6 +182,11 @@ export function getBillByIdAny(id: string): Bill | null {
 const INBOX_STATUSES = new Set(['new', 'viewed', 'processing', 'review', 'ready']);
 const inInbox = (b: Bill) => INBOX_STATUSES.has(String(b.status || 'new'));
 
+// Costs / Sales / Supplier statements are separate books; anything unrecognised
+// is a cost, matching how insertBill normalises it.
+export const billKind = (k: unknown): string =>
+  k === 'sales' ? 'sales' : k === 'supplier_statement' ? 'supplier_statement' : 'cost';
+
 // First (highest-confidence) duplicate for `cand`, or null. Cheapest checks
 // first; each tier requires the fields it keys on to actually be present.
 export function findDuplicate(orgId: string, cand: Candidate, excludeId?: string): DuplicateMatch | null {
@@ -181,8 +195,22 @@ export function findDuplicate(orgId: string, cand: Candidate, excludeId?: string
   // superseded by the document it was merged into, which carries the same
   // fields — matching it would raise the same pair twice. `excludeId` skips the
   // row being finalized so a doc never matches itself after its fields are read.
-  const bills = load().filter(
-    (b) => b.orgId === orgId && b.status !== 'deleted' && b.status !== 'merged' && b.id !== excludeId
+  const kind = billKind(cand.kind);
+  const all = load();
+  // "Earlier" is position in the store, which is insertion order — not the
+  // createdAt timestamp, which a batch upload gives several documents at once,
+  // and not the id, whose random suffix makes same-millisecond ids sort
+  // arbitrarily. This way each pair has exactly one original, and it's the one
+  // that really did arrive first.
+  const cutoff = cand.beforeId ? all.findIndex((b) => b.id === cand.beforeId) : -1;
+  const bills = all.filter(
+    (b, i) =>
+      b.orgId === orgId &&
+      billKind(b.kind) === kind &&
+      b.status !== 'deleted' &&
+      b.status !== 'merged' &&
+      b.id !== excludeId &&
+      (cutoff < 0 || i < cutoff)
   );
 
   if (cand.fileHash) {
@@ -225,16 +253,22 @@ export function flagDuplicate(orgId: string, id: string): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
   if (!bill) return null;
-  if (bill.duplicateDismissed) return bill;
-  // Settled document: never flag it, and drop any flag it picked up before it
-  // was archived / claimed / merged, so nothing stale is left behind.
-  if (!inInbox(bill)) {
+  // Drop a pointer the document is no longer entitled to carry, so nothing
+  // counts or renders it. Two cases end up here:
+  //   - the reviewer said "not a duplicate", which is final; and
+  //   - the document has left the inbox (archived / claimed / merged), which
+  //     settles it either way.
+  const clearFlag = (): Bill => {
     if (!bill.duplicateOfId && !bill.duplicateType) return bill;
     bill.duplicateOfId = undefined;
     bill.duplicateType = undefined;
     persist(bills);
     return bill;
-  }
+  };
+  if (bill.duplicateDismissed) return clearFlag();
+  // Settled document: never flag it, and drop any flag it picked up before it
+  // was archived / claimed / merged, so nothing stale is left behind.
+  if (!inInbox(bill)) return clearFlag();
 
   const match = findDuplicate(
     orgId,
@@ -244,14 +278,19 @@ export function flagDuplicate(orgId: string, id: string): Bill | null {
       invoiceNumber: bill.invoiceNumber,
       total: bill.total,
       date: bill.date,
+      kind: bill.kind,
+      // Only documents that arrived before this one, so a match IS the original
+      // and this one carries the flag. The search used to run over the whole
+      // book and its single result was then tested for age — so a document
+      // whose first match happened to be a NEWER copy came back clean even when
+      // an older copy existed, and three copies of one invoice flagged one or
+      // two of themselves depending on store order.
+      beforeId: bill.id,
     },
     bill.id
   );
-  // A match that arrived AFTER this one means this is the original: leave it
-  // alone and let the newer document carry the flag.
-  const isLater = match ? String(match.bill.createdAt) <= String(bill.createdAt) : false;
-  const nextId = match && isLater ? match.bill.id : '';
-  const nextType = match && isLater ? match.type : '';
+  const nextId = match ? match.bill.id : '';
+  const nextType = match ? match.type : '';
   if ((bill.duplicateOfId ?? '') === nextId && (bill.duplicateType ?? '') === nextType) return bill;
 
   bill.duplicateOfId = nextId || undefined;
@@ -262,20 +301,30 @@ export function flagDuplicate(orgId: string, id: string): Bill | null {
 
 // Re-check EVERY stored document, oldest first, so a corpus that predates
 // duplicate flagging (or was added with "Add anyway") gets marked. Settled
-// documents are walked too — not to flag them, but so flagDuplicate clears any
-// flag they are still carrying from their time in the inbox. Returns how many
-// documents carry a flag afterwards, and how many changed.
-export function scanDuplicates(orgId: string): { flagged: number; changed: number } {
+// documents (and dismissed ones) are walked too — not to flag them, but so
+// flagDuplicate drops any pointer they are still carrying.
+//
+// Walks ONE book (Costs by default), so the number it reports is a number the
+// list in front of you can be reconciled against.
+//
+// `flagged` counts what the list will actually show a chip for, and `changed`
+// only documents that GAINED a flag. Counting every write here is what made a
+// scan report "1 document flagged" over a list showing none: a document the
+// reviewer had marked "not a duplicate" still carried its pointer, so it was
+// counted while the UI — correctly — hid it.
+export function scanDuplicates(orgId: string, kind = 'cost'): { flagged: number; changed: number } {
+  const wanted = billKind(kind);
   const ordered = load()
-    .filter((b) => b.orgId === orgId && b.status !== 'deleted')
+    .filter((b) => b.orgId === orgId && billKind(b.kind) === wanted && b.status !== 'deleted')
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   let changed = 0;
   let flagged = 0;
   for (const b of ordered) {
     const before = b.duplicateOfId ?? '';
     const after = flagDuplicate(orgId, b.id);
-    if ((after?.duplicateOfId ?? '') !== before) changed += 1;
-    if (after?.duplicateOfId) flagged += 1;
+    if (!after?.duplicateOfId) continue;
+    flagged += 1;
+    if (after.duplicateOfId !== before) changed += 1;
   }
   return { flagged, changed };
 }

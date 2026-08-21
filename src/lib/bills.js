@@ -68,10 +68,13 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
   return data ?? null;
 }
 
-// Re-check every stored document against every other and record the verdicts.
+// Re-check every stored document in ONE book against every other in it, and
+// record the verdicts. Costs, Sales and Supplier statements are separate books —
+// a bill you received is never a duplicate of an invoice you issued — so the
+// count comes back matching the list the scan was launched from.
 // Returns { flagged, changed }.
-export async function scanDuplicates() {
-  const res = await fetch('/api/costs/bills/scan-duplicates', { method: 'POST', headers: orgHeaders() });
+export async function scanDuplicates(kind = 'cost') {
+  const res = await fetch(`/api/costs/bills/scan-duplicates?kind=${encodeURIComponent(kind)}`, { method: 'POST', headers: orgHeaders() });
   if (!res.ok) return { flagged: 0, changed: 0 };
   return res.json();
 }
