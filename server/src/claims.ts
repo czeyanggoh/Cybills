@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
 import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole } from './users.js';
-import { sendMail, approvalRequestEmail, claimDecisionEmail } from './mailer.js';
+import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
 import { getBillByIdAny, markBillsClaimed } from './store.js';
 
 // Server-backed expense claims, shared across the workspace (same JSON-store
@@ -392,6 +392,58 @@ claimsRouter.post('/:id/reject', (req, res) =>
 // payable was handed to CYHR. Re-callable: CYHR upserts by claimId, so
 // re-sending updates the existing payable (and its amount) rather than
 // creating a duplicate. Only meaningful once the claim is approved.
+// POST /api/claims/:id/email — email a copy of the claim, with the CSV + PDF
+// attached, to any recipient. The client generates the files (reusing the same
+// export code as the download button), so the server just composes the message,
+// sends it, and records the send on the claim's history.
+claimsRouter.post('/:id/email', async (req, res) => {
+  const ws = workspaceId(req);
+  const me = actor(req);
+  const claim = load().find((c) => c.id === req.params.id && c.workspaceId === ws && !c.deleted);
+  if (!claim) return res.status(404).json({ error: 'not_found' });
+
+  const toEmail = String(req.body?.toEmail || '').trim();
+  const toName = String(req.body?.toName || '').trim() || toEmail;
+  const fromName = String(req.body?.fromName || '').trim() || me.name || 'CYBills';
+  const message = String(req.body?.message || '').trim().slice(0, 2000);
+  if (!/.+@.+\..+/.test(toEmail)) return res.status(400).json({ error: 'bad_recipient' });
+
+  // Validate attachments (base64 bytes). Cap count + total size so a bad client
+  // can't hand the mail server something enormous.
+  const raw: unknown[] = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
+  const attachments = raw
+    .filter((a: unknown): a is { filename: string; content: string; contentType?: string } => {
+      const x = a as { filename?: unknown; content?: unknown };
+      return typeof x?.filename === 'string' && typeof x?.content === 'string' && x.content.length > 0;
+    })
+    .slice(0, 5)
+    .map((a) => ({ filename: String(a.filename).slice(0, 200), content: a.content, contentType: a.contentType ? String(a.contentType) : undefined }));
+  const totalBytes = attachments.reduce((n, a) => n + Math.ceil((a.content.length * 3) / 4), 0);
+  if (totalBytes > 20 * 1024 * 1024) return res.status(413).json({ error: 'too_large' });
+
+  const mail = claimShareEmail({
+    fromName,
+    toName,
+    claimName: claim.name || '',
+    claimFor: claim.claimFor || '',
+    currency: claim.currency || 'SGD',
+    total: String(req.body?.total ?? ''),
+    message,
+  });
+  const result = await sendMail({ to: { email: toEmail, name: toName }, ...mail, attachments });
+  if (!result.sent) return res.status(502).json({ error: result.error || 'send_failed' });
+
+  // Audit trail: who mailed the claim, to whom.
+  const items = load();
+  const stored = items.find((c) => c.id === claim.id && c.workspaceId === ws);
+  if (stored) {
+    stored.history = stored.history || [];
+    stored.history.unshift({ text: `This claim was emailed to ${toName} (${toEmail})`, by: me.name, at: nowIso() });
+    save(items);
+  }
+  return res.json({ sent: true });
+});
+
 claimsRouter.post('/:id/mark-hr-sent', (req, res) =>
   mutate(req, res, (claim, me) => {
     const wasSent = Boolean(claim.hrSentAt);

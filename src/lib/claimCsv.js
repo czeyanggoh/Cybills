@@ -148,7 +148,9 @@ function claimRow(claim) {
 // format: 'cybills' (fixed accounting schema) | 'custom' (the Business-settings
 // column selection). `settings` are the Exports settings (columns, decimal
 // separator, date format) — required for the 'custom' format.
-export function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null, exportedBy = '' } = {}) {
+// Build the CSV text (and its filename) for a claim without touching the DOM,
+// so it can be downloaded OR emailed as an attachment. Pure.
+export function buildClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null } = {}) {
   const f = settings || {};
   // Comma decimals need a non-comma field delimiter, so switch to ';'.
   const delimiter = f.decimalSeparator === 'Comma (,)' ? ';' : ',';
@@ -174,6 +176,11 @@ export function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cyb
   }
   const name = claimExportName(claim, 'csv');
   const text = rows.map((r) => r.map(esc).join(delimiter)).join('\n');
+  return { name, text };
+}
+
+export function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null, exportedBy = '' } = {}) {
+  const { name, text } = buildClaimCsv(claim, { detailLevel, format, settings });
   download(name, text);
   // Record it so it appears under Exports → Expense claims.
   void recordExport({

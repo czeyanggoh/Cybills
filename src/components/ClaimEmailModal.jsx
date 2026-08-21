@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { X, ChevronDown, CheckCircle2 } from 'lucide-react';
+import { buildClaimCsv } from '@/lib/claimCsv';
+import { buildClaimPdfBase64 } from '@/lib/claimPdf';
+import { claimExportName } from '@/lib/exportFormat';
+import { emailClaim } from '@/lib/claimStore';
+import { useExportSettings } from '@/lib/exportSettings';
 import { cn } from '@/lib/utils';
+
+// UTF-8 safe base64 of a string (btoa alone mangles non-Latin1 characters).
+const toBase64 = (str) => btoa(unescape(encodeURIComponent(str)));
 
 function Field({ label, required = false, children }) {
   return (
@@ -30,23 +38,56 @@ function Select({ value, onChange, options }) {
   );
 }
 
-// "Send by email" dialog. This is a UI mock — CYBills has no mail backend, so
-// nothing is actually transmitted; on send we just confirm to the user.
-export default function ClaimEmailModal({ open, onClose, defaultName = '' }) {
+// "Send by email" dialog. Generates the claim's CSV + PDF in the browser (same
+// export code as the download buttons) and posts them to the server, which mails
+// them as attachments via SMTP.
+export default function ClaimEmailModal({ open, onClose, defaultName = '', claim = null }) {
+  const settings = useExportSettings();
   const [name, setName] = useState(defaultName);
   const [toName, setToName] = useState('');
   const [toEmail, setToEmail] = useState('');
   const [message, setMessage] = useState('');
   const [detail, setDetail] = useState('summary');
-  const [format, setFormat] = useState('dext');
+  const [format, setFormat] = useState('cybills');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
 
   if (!open) return null;
 
-  const valid = toName.trim() && /.+@.+\..+/.test(toEmail);
+  const valid = name.trim() && toName.trim() && /.+@.+\..+/.test(toEmail) && claim;
   const close = () => {
     setSent(false);
+    setError('');
+    setSending(false);
     onClose();
+  };
+
+  const send = async () => {
+    if (!valid || sending) return;
+    setError('');
+    setSending(true);
+    try {
+      const csv = buildClaimCsv(claim, { detailLevel: detail, format, settings });
+      const pdfBase64 = buildClaimPdfBase64(claim);
+      const attachments = [
+        { filename: csv.name, content: toBase64(csv.text), contentType: 'text/csv' },
+        ...(pdfBase64 ? [{ filename: claimExportName(claim, 'pdf'), content: pdfBase64, contentType: 'application/pdf' }] : []),
+      ];
+      await emailClaim(claim.id, {
+        fromName: name.trim(),
+        toName: toName.trim(),
+        toEmail: toEmail.trim(),
+        message: message.trim(),
+        total: claim.total,
+        attachments,
+      });
+      setSent(true);
+    } catch (e) {
+      setError(e?.code ? `The mail server didn’t accept it (${e.code}).` : 'Couldn’t send the email. Please try again.');
+    } finally {
+      setSending(false);
+    }
   };
 
   const input = 'h-9 w-full rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring';
@@ -65,9 +106,9 @@ export default function ClaimEmailModal({ open, onClose, defaultName = '' }) {
         {sent ? (
           <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
             <CheckCircle2 className="h-10 w-10" strokeWidth={1.5} />
-            <p className="text-sm font-medium">Email queued to {toName}</p>
+            <p className="text-sm font-medium">Sent to {toName}</p>
             <p className="max-w-xs text-xs text-muted-foreground">
-              This is a demo build — no message was actually sent.
+              {toEmail} will receive the claim with the CSV and PDF attached.
             </p>
             <button type="button" onClick={close} className="mt-2 inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
               Done
@@ -97,12 +138,21 @@ export default function ClaimEmailModal({ open, onClose, defaultName = '' }) {
                   <Select value={detail} onChange={setDetail} options={[{ value: 'summary', label: 'Report summary' }, { value: 'items', label: 'Itemised line items' }]} />
                 </Field>
                 <Field label="CSV format">
-                  <Select value={format} onChange={setFormat} options={[{ value: 'dext', label: 'CYBills default' }]} />
+                  <Select
+                    value={format}
+                    onChange={setFormat}
+                    options={[
+                      { value: 'cybills', label: 'CYBills Default' },
+                      { value: 'custom', label: 'Custom CSV (from Export settings)' },
+                    ]}
+                  />
                 </Field>
                 <p className="text-xs text-muted-foreground">
-                  We&rsquo;ll send an email with links to download a CSV and PDF of the selected items.
-                  Those links will expire after 30 days.
+                  We&rsquo;ll email {toName || 'the recipient'} the claim with the CSV and PDF attached.
                 </p>
+                {error && (
+                  <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>
+                )}
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t px-6 py-4">
@@ -111,14 +161,14 @@ export default function ClaimEmailModal({ open, onClose, defaultName = '' }) {
               </button>
               <button
                 type="button"
-                disabled={!valid}
-                onClick={() => setSent(true)}
+                disabled={!valid || sending}
+                onClick={send}
                 className={cn(
                   'inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90',
-                  !valid && 'opacity-50'
+                  (!valid || sending) && 'opacity-50'
                 )}
               >
-                Send
+                {sending ? 'Sending…' : 'Send'}
               </button>
             </div>
           </>

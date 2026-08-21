@@ -168,6 +168,15 @@ export async function rejectClaim(claimId, reason = '') {
   notifyClaimsChanged();
 }
 
+// Email a copy of the claim (CSV + PDF attached) to a recipient. `payload` is
+// { fromName, toName, toEmail, message, total, attachments:[{filename,content,contentType}] }.
+// Throws (err.code carries the server reason) when the mail server refuses it.
+export async function emailClaim(claimId, payload) {
+  const res = await post(`/${claimId}/email`, payload);
+  notifyClaimsChanged(); // the send is recorded on the claim's history
+  return res;
+}
+
 export async function archiveClaims(ids, archived = true) {
   await Promise.all(ids.map((id) => post(`/${id}/archive`, { archived }).catch(() => {})));
   notifyClaimsChanged();
