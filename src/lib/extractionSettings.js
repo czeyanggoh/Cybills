@@ -24,8 +24,17 @@ export const DEFAULT_EXTRACTION_SETTINGS = {
   duplicateMode: 'Automatic',
   extractTax: true,
   // Post a document to Xero as Awaiting Approval as soon as it's been read —
-  // see autoPublish.js for the conditions it insists on first.
-  autoPublishXero: true,
+  // see autoPublish.js for the conditions it insists on first. OFF by default:
+  // publishing writes to a live ledger and finishes the document (it archives,
+  // and can no longer go on an expense claim), so nobody should get that
+  // without asking for it.
+  //
+  // Deliberately a NEW key. The old `autoPublishXero` was on by default, and
+  // saving anything on the Extraction page persisted `true` into the settings
+  // blob — so flipping the default alone would have left it running for every
+  // workspace that had ever opened that page. The old key is simply ignored;
+  // the rest of the blob is untouched.
+  publishToXeroAfterReading: false,
   defaultTaxRateCosts: '', // '' = None; otherwise a tax-rate name from the list
   defaultTaxRateSales: '',
   dueCostsMode: DUE_MODES[0],

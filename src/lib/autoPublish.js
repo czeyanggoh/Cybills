@@ -24,7 +24,7 @@ export function xeroBillUrl(invoiceId) {
 //
 // Deliberately conservative — this writes to a live ledger, so it declines
 // rather than guesses:
-//   - off unless Business settings → Extraction has auto-publish on
+//   - off unless Business settings → Extraction turns it on (off by default)
 //   - never twice (a bill carrying a Xero id is skipped)
 //   - never a document that's on an expense claim — the claim posts that cost
 //   - only a COMPLETE document: supplier, date, a real category, a total > 0.
@@ -39,7 +39,7 @@ export function xeroBillUrl(invoiceId) {
 // throws: reading a document must not fail because Xero was unreachable.
 export async function autoPublishAfterRead(bill) {
   try {
-    if (!getExtractionSettings().autoPublishXero) return null;
+    if (!getExtractionSettings().publishToXeroAfterReading) return null;
     if (!bill?.id || bill.xeroInvoiceId) return null;
     if (['archived', 'deleted', 'merged'].includes(String(bill.status || ''))) return null;
     // On an expense claim, this cost reaches Xero as a line of the claim's bill.
