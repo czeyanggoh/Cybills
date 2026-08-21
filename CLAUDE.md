@@ -57,13 +57,45 @@ every linked entity for the client-access picker).
 Env (server/.env): `PRACTICE_NAME`, `PRACTICE_DOMAIN` (only used to recognise
 pre-existing rows as practice staff on first run), `PRACTICE_TIMEZONE`.
 
-## Claude API spend
+## The document reader: Claude or OpenAI
 
-Every Anthropic call records its token usage (`server/src/usage.ts`), attributed
-to the client entity it was made for and priced at the published per-model
-rates. Practice -> Clients shows today's and month-to-date cost per client.
-There is no billing API behind this — it is an estimate from real token counts.
-Override a rate with `ANTHROPIC_PRICES='{"claude-sonnet-5":{"input":2,"output":10}}'`.
+Uploaded receipts, invoices and Vault documents are read by one of two
+interchangeable engines. `server/src/llm.ts` is the whole abstraction: it takes
+a file + prompt + JSON schema and returns parsed JSON plus normalised token
+counts, so `extract.ts` never branches on provider and a document read by either
+comes back in one shape. Notable differences it papers over:
+
+- OpenAI's structured outputs are **strict** — every property of every object
+  must be in `required` — so `strictify()` tightens a copy of the schema on the
+  way out (Anthropic accepts the looser original).
+- A reasoning model (`gpt-5*`, `o*`) spends part of its output budget thinking,
+  so the cap is raised and `reasoning.effort` is sent only to those families.
+- OpenAI counts cached tokens inside `input_tokens`; they're subtracted back out
+  so the 0.1x cache rate isn't charged on top of the full input rate.
+
+Which engine runs is decided per client entity in Business settings ->
+Extraction -> **Document reader**, saved in the extraction-settings blob
+(`readerProvider`: `'claude'` / `'openai'` / `''` = server default) and sent on
+each request. `resolveProvider` has the last word server-side, so a saved choice
+whose API key was later removed degrades to a working reader instead of failing
+the read. The settings card only offers a provider whose key is present —
+`GET /api/auth/status` returns `readerProviders` + `defaultReaderProvider`.
+
+Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
+`claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5`),
+`OPENAI_REASONING_EFFORT` (default `low`), optional `OPENAI_BASE_URL` for an
+OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default.
+Either key alone switches extraction on; both means the toggle appears.
+
+## AI API spend
+
+Every model call records its token usage (`server/src/usage.ts`), attributed to
+the client entity it was made for and priced at the published per-model rates —
+Claude and OpenAI models are both in the table. Practice -> Clients shows today's
+and month-to-date cost per client. There is no billing API behind this — it is an
+estimate from real token counts. Override a rate with
+`LLM_PRICES='{"gpt-5":{"input":1.25,"output":10}}'` (`ANTHROPIC_PRICES` still
+works; the two are merged).
 
 ## Xero via the cyworkspace relay
 

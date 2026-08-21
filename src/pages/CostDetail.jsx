@@ -25,6 +25,7 @@ import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
+import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
 import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useXeroProjectOptions } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
@@ -189,6 +190,7 @@ export default function CostDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { visionEnabled, user } = useAuth();
+  const readerName = useReaderName();
   const teamUsers = useUsers();
   const ownerOptions = Array.from(
     new Set([user?.name || user?.email, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
@@ -852,7 +854,7 @@ export default function CostDetail() {
     fileInputRef.current?.click();
   };
 
-  // Re-read the EXISTING receipt with Claude (no file replacement) — for fixing
+  // Re-read the EXISTING receipt with the configured reader (no file replacement) — for fixing
   // a wrong field the AI read (date, category, description…) without re-uploading.
   const reReadExisting = async () => {
     setAiError('');
@@ -885,7 +887,7 @@ export default function CostDetail() {
         setAiError('Could not save the receipt to this document. Please try uploading again.');
       }
     }
-    // Only run Claude Vision auto-fill when it's configured; otherwise the user
+    // Only run auto-fill when a reader is configured; otherwise the user
     // fills the (editable) fields manually.
     if (!visionEnabled) return;
     await extractAndApply(imageBase64, mediaType);
@@ -1139,7 +1141,7 @@ export default function CostDetail() {
 
           {tab === 'details' && (
             <div>
-              {/* Upload a receipt image (always) + Claude Vision auto-fill (when on) */}
+              {/* Upload a receipt image (always) + AI auto-fill (when a reader is on) */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1157,8 +1159,8 @@ export default function CostDetail() {
                 {extracting
                   ? 'Reading receipt…'
                   : imageUrl
-                    ? visionEnabled ? 'Re-read with Claude' : 'Replace file'
-                    : visionEnabled ? 'Upload receipt & auto-fill with Claude' : 'Upload receipt'}
+                    ? visionEnabled ? `Re-read with ${readerName}` : 'Replace file'
+                    : visionEnabled ? `Upload receipt & auto-fill with ${readerName}` : 'Upload receipt'}
               </button>
               {imageUrl && visionEnabled ? (
                 <p className="mb-2 text-center text-xs text-muted-foreground">
@@ -1423,7 +1425,9 @@ export default function CostDetail() {
               </div>
               {!visionEnabled && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Line-item extraction needs an <span className="font-mono">ANTHROPIC_API_KEY</span>. You can still add lines manually.
+                  Line-item extraction needs a reader API key on the server (
+                  <span className="font-mono">ANTHROPIC_API_KEY</span> or{' '}
+                  <span className="font-mono">OPENAI_API_KEY</span>). You can still add lines manually.
                 </p>
               )}
 

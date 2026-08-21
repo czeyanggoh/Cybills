@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
-import { env, visionEnabled } from './env.js';
+import { visionEnabled } from './env.js';
 import { notFiller, derivedDescription, withPeriod } from './store.js';
 import { recordUsage } from './usage.js';
+import { readDocument, resolveProvider } from './llm.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
 // the model classifies into a value that actually exists in the UI. These are
@@ -174,7 +174,6 @@ const ReceiptSchema = z.object({
 const IMAGE_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
 const PDF_MEDIA = 'application/pdf';
 const ALLOWED_MEDIA = [...IMAGE_MEDIA, PDF_MEDIA];
-type ImageMedia = (typeof IMAGE_MEDIA)[number];
 
 export const extractRouter = Router();
 
@@ -242,11 +241,13 @@ function parseNamedRules(raw: unknown): NamedRule[] {
   return out;
 }
 
-// POST /api/costs/extract — body: { imageBase64, mediaType, accounts?, categories?, taxRates?, projects? }.
-// Runs the receipt image OR PDF invoice through Claude and returns the extracted
-// fields, classified into the Xero chart of accounts (when `accounts` is given,
-// using each account's description) or a plain category list. 503 until an
-// ANTHROPIC_API_KEY is configured.
+// POST /api/costs/extract — body: { imageBase64, mediaType, accounts?, categories?,
+// taxRates?, projects?, provider? }.
+// Runs the receipt image OR PDF invoice through the org's chosen reader (Claude
+// or OpenAI — see llm.ts) and returns the extracted fields, classified into the
+// Xero chart of accounts (when `accounts` is given, using each account's
+// description) or a plain category list. 503 until at least one of
+// ANTHROPIC_API_KEY / OPENAI_API_KEY is configured.
 extractRouter.post('/extract', async (req, res) => {
   if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
 
@@ -313,53 +314,51 @@ extractRouter.post('/extract', async (req, res) => {
     : '';
 
   const isPdf = mediaType === PDF_MEDIA;
-  const fileBlock: Anthropic.ContentBlockParam = isPdf
-    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: imageBase64 } }
-    : { type: 'image', source: { type: 'base64', media_type: mediaType as ImageMedia, data: imageBase64 } };
+  // Which reader does the work. The org picks it in Business settings ->
+  // Extraction and the client sends the choice along; resolveProvider falls back
+  // to the deploy's default when the named one has no API key configured.
+  const provider = resolveProvider(req.body?.provider);
 
   try {
-    const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-    const message = await client.messages.create({
-      model: env.ANTHROPIC_EXTRACT_MODEL,
-      max_tokens: 1024,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            fileBlock,
-            {
-              type: 'text',
-              text:
-                contextBlock +
-                `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. ` +
-                'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
-                `Today is ${new Date().toISOString().slice(0, 10)}. Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ` +
-                'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
-                'pick "Uncategorised" only when none reasonably fit. ' +
-                'If a field is not present, use an empty string or 0. ' +
-                'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
-                accountsGuide +
-                taxRatesGuide +
-                projectsGuide,
-            },
-          ],
-        },
-      ],
-      output_config: { format: { type: 'json_schema', schema: buildSchema(categories, taxRateNames, projectNames) } },
+    const outcome = await readDocument({
+      provider,
+      fileBase64: imageBase64,
+      mediaType,
+      maxTokens: 1024,
+      schemaName: 'expense_document',
+      schema: buildSchema(categories, taxRateNames, projectNames),
+      prompt:
+        contextBlock +
+        `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. ` +
+        'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
+        `Today is ${new Date().toISOString().slice(0, 10)}. Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ` +
+        'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
+        'pick "Uncategorised" only when none reasonably fit. ' +
+        'If a field is not present, use an empty string or 0. ' +
+        'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
+        accountsGuide +
+        taxRatesGuide +
+        projectsGuide,
     });
 
     // What this document cost to read. Recorded per call and attributed to the
     // client entity it was uploaded for — the practice's Clients page has no
-    // other source for API spend.
-    recordUsage(req, { feature: 'extract', model: env.ANTHROPIC_EXTRACT_MODEL, usage: message.usage });
+    // other source for API spend. A refused or unparseable read still burned
+    // tokens, so it is recorded before the outcome is acted on.
+    recordUsage(req, {
+      feature: 'extract',
+      provider: outcome.provider,
+      model: outcome.model,
+      usage: outcome.usage,
+    });
 
-    if (message.stop_reason === 'refusal') {
-      return res.status(422).json({ error: 'refused' });
+    if (!outcome.ok) {
+      return outcome.reason === 'refused'
+        ? res.status(422).json({ error: 'refused' })
+        : res.status(502).json({ error: 'no_data' });
     }
 
-    const textBlock = message.content.find((b) => b.type === 'text');
-    const raw = textBlock && textBlock.type === 'text' ? textBlock.text : '';
-    const parsed = ReceiptSchema.safeParse(raw ? JSON.parse(raw) : null);
+    const parsed = ReceiptSchema.safeParse(outcome.json);
     if (!parsed.success) {
       return res.status(502).json({ error: 'no_data' });
     }
@@ -402,9 +401,9 @@ extractRouter.post('/extract', async (req, res) => {
 });
 
 // --- Vault document summariser ----------------------------------------------
-// POST /api/vault/summarize — body: { imageBase64, mediaType }. Returns a short
-// Subject line + a few-sentence Summary for a stored Vault document (Dext's
-// document auto-fill). 503 until an ANTHROPIC_API_KEY is configured.
+// POST /api/vault/summarize — body: { imageBase64, mediaType, provider? }. Returns
+// a short Subject line + a few-sentence Summary for a stored Vault document
+// (Dext's document auto-fill). 503 until a reader API key is configured.
 const SummarySchema = z.object({ subject: z.string(), summary: z.string() });
 
 export const vaultRouter = Router();
@@ -418,53 +417,43 @@ vaultRouter.post('/summarize', async (req, res) => {
     return res.status(400).json({ error: 'invalid_image' });
   }
 
-  const isPdf = mediaType === PDF_MEDIA;
-  const fileBlock: Anthropic.ContentBlockParam = isPdf
-    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: imageBase64 } }
-    : { type: 'image', source: { type: 'base64', media_type: mediaType as ImageMedia, data: imageBase64 } };
+  const provider = resolveProvider(req.body?.provider);
 
   try {
-    const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-    const message = await client.messages.create({
-      model: env.ANTHROPIC_EXTRACT_MODEL,
-      max_tokens: 512,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            fileBlock,
-            {
-              type: 'text',
-              text:
-                'Summarise this document. Return a concise "subject" line (like an email subject, ' +
-                'under 12 words) and a "summary" of 2–4 sentences describing what the document is, ' +
-                'who it is from, and the key figures or purpose.',
-            },
-          ],
+    const outcome = await readDocument({
+      provider,
+      fileBase64: imageBase64,
+      mediaType,
+      maxTokens: 512,
+      schemaName: 'document_summary',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          subject: { type: 'string', description: 'Short subject line' },
+          summary: { type: 'string', description: '2–4 sentence summary' },
         },
-      ],
-      output_config: {
-        format: {
-          type: 'json_schema',
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              subject: { type: 'string', description: 'Short subject line' },
-              summary: { type: 'string', description: '2–4 sentence summary' },
-            },
-            required: ['subject', 'summary'],
-          },
-        },
+        required: ['subject', 'summary'],
       },
+      prompt:
+        'Summarise this document. Return a concise "subject" line (like an email subject, ' +
+        'under 12 words) and a "summary" of 2–4 sentences describing what the document is, ' +
+        'who it is from, and the key figures or purpose.',
     });
 
-    recordUsage(req, { feature: 'summarize', model: env.ANTHROPIC_EXTRACT_MODEL, usage: message.usage });
+    recordUsage(req, {
+      feature: 'summarize',
+      provider: outcome.provider,
+      model: outcome.model,
+      usage: outcome.usage,
+    });
 
-    if (message.stop_reason === 'refusal') return res.status(422).json({ error: 'refused' });
-    const textBlock = message.content.find((b) => b.type === 'text');
-    const raw = textBlock && textBlock.type === 'text' ? textBlock.text : '';
-    const parsed = SummarySchema.safeParse(raw ? JSON.parse(raw) : null);
+    if (!outcome.ok) {
+      return outcome.reason === 'refused'
+        ? res.status(422).json({ error: 'refused' })
+        : res.status(502).json({ error: 'no_data' });
+    }
+    const parsed = SummarySchema.safeParse(outcome.json);
     if (!parsed.success) return res.status(502).json({ error: 'no_data' });
     return res.json({ ok: true, data: parsed.data });
   } catch (err) {

@@ -19,6 +19,7 @@ import { getVaultBlob } from '@/lib/vaultBlobs';
 import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts } from '@/lib/organisations';
 import { displayItemId, sha256Hex, fetchExtract, addBill, notifyBillsChanged } from '@/lib/bills';
+import { requestedProvider, useReaderName } from '@/lib/readerProvider';
 import { cn } from '@/lib/utils';
 
 function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false, disabled = false }) {
@@ -80,17 +81,20 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const EXTRACT_ERRORS = {
+// Named after whichever reader the org picked, so "OpenAI declined" doesn't
+// come back reading "Claude declined".
+const extractErrors = (reader) => ({
   vision_not_configured: 'Auto-fill isn’t configured on the server yet.',
   invalid_image: 'That file type can’t be read — use a PDF or image.',
-  refused: 'Claude declined to read that document.',
+  refused: `${reader} declined to read that document.`,
   no_data: 'Couldn’t summarise that document.',
-};
+});
 
 export default function VaultDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { visionEnabled } = useAuth();
+  const readerName = useReaderName();
   const users = useUsers();
   const folders = useVaultFolders();
   const [file, setFile] = useState(() => getVaultFileById(id));
@@ -136,14 +140,14 @@ export default function VaultDetail() {
           const res = await fetch('/api/vault/summarize', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ imageBase64: base64, mediaType }),
+            body: JSON.stringify({ imageBase64: base64, mediaType, provider: requestedProvider() }),
           });
           if (res.ok) {
             const { data } = await res.json();
             if (data && live) setVaultOverride(id, { subject: data.subject, summary: data.summary });
           } else {
             const body = await res.json().catch(() => ({}));
-            if (live) setAiError(EXTRACT_ERRORS[body.error] || 'Auto-fill failed.');
+            if (live) setAiError(extractErrors(readerName)[body.error] || 'Auto-fill failed.');
           }
         } catch {
           if (live) setAiError('Could not read that file.');

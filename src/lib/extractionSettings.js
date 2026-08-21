@@ -21,6 +21,11 @@ export const PAID_OPTIONS = ['Not paid', 'Paid'];
 
 export const DEFAULT_EXTRACTION_SETTINGS = {
   showReviewReadyTabs: true,
+  // Which engine reads this client entity's documents: 'claude', 'openai', or
+  // '' for whatever the server defaults to. Blank by default so nothing changes
+  // for a workspace that never opens the setting, and so a deploy that switches
+  // its own default (LLM_PROVIDER) carries every untouched org with it.
+  readerProvider: '',
   duplicateMode: 'Automatic',
   extractTax: true,
   // Post a document to Xero as Awaiting Approval as soon as it's been read —

@@ -28,10 +28,15 @@ export const env = {
   // "cy-bm.sg"). Empty = any Google account allowed.
   ALLOWED_HOSTED_DOMAIN: process.env.ALLOWED_HOSTED_DOMAIN ?? '',
 
-  // --- Claude Vision (receipt extraction) -----------------------------------
-  // Set ANTHROPIC_API_KEY to switch on the /api/costs/extract endpoint. Model
-  // defaults to Opus 4.8; set ANTHROPIC_MODEL=claude-sonnet-5 for a cheaper/
-  // faster option.
+  // --- Document reader (receipt/invoice extraction) -------------------------
+  // Two interchangeable readers sit behind the extract + summarise endpoints:
+  // Claude (Anthropic) and OpenAI. Configure either or both — whichever keys
+  // are present is what the app offers (see `readerProviders` below), and
+  // Business settings -> Extraction -> "Document reader" picks between them per
+  // client entity. LLM_PROVIDER is the fallback when a request doesn't name one.
+  //
+  // Set ANTHROPIC_API_KEY to switch on the Claude reader. Model defaults to
+  // Opus 4.8; set ANTHROPIC_MODEL=claude-sonnet-5 for a cheaper/faster option.
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
   ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
   // Receipt/invoice extraction defaults to Sonnet 5 — Haiku was fast but misread
@@ -40,6 +45,26 @@ export const env = {
   // ANTHROPIC_EXTRACT_MODEL=claude-opus-4-8 for the most accurate (slower) read,
   // or =claude-haiku-4-5-20251001 to trade accuracy for speed.
   ANTHROPIC_EXTRACT_MODEL: process.env.ANTHROPIC_EXTRACT_MODEL ?? 'claude-sonnet-5',
+
+  // Set OPENAI_API_KEY to switch on the OpenAI reader. It reads the same images
+  // and PDFs against the same JSON schema, through the Responses API, so a
+  // document read by either provider comes back in one shape.
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
+  // Defaults to gpt-5 — cheaper per token than the Claude default and strong on
+  // messy scans. Set OPENAI_EXTRACT_MODEL=gpt-5-mini to trade some accuracy for
+  // cost/speed. Whatever you pick must accept image + PDF input.
+  OPENAI_EXTRACT_MODEL: process.env.OPENAI_EXTRACT_MODEL ?? 'gpt-5',
+  // How hard a reasoning model thinks before answering. Extraction is a reading
+  // task, not a puzzle, so 'low' keeps it quick; raise to 'medium' if invoices
+  // with awkward layouts are being misread. Ignored by non-reasoning models.
+  OPENAI_REASONING_EFFORT: process.env.OPENAI_REASONING_EFFORT ?? 'low',
+  // Optional: point at an OpenAI-compatible gateway (Azure OpenAI's v1 surface,
+  // a proxy, a self-hosted endpoint). Blank = api.openai.com.
+  OPENAI_BASE_URL: process.env.OPENAI_BASE_URL ?? '',
+  // Which reader a request that doesn't name one gets: 'claude' or 'openai'.
+  // Falls back to whichever is actually configured, so this can't strand the
+  // feature by naming a provider with no key.
+  LLM_PROVIDER: (process.env.LLM_PROVIDER ?? 'claude').trim().toLowerCase(),
 
   // --- The practice (CYBM) --------------------------------------------------
   // CYBills is run BY an accounting practice FOR its clients. The practice's own
@@ -58,8 +83,11 @@ export const env = {
   PRACTICE_TIMEZONE: process.env.PRACTICE_TIMEZONE ?? 'Asia/Singapore',
   // Optional per-model price overrides for the API-cost estimate, USD per
   // million tokens: '{"claude-sonnet-5":{"input":2,"output":10}}'. Unset uses
-  // the published list prices in usage.ts.
+  // the published list prices in usage.ts. LLM_PRICES is the provider-neutral
+  // name and covers OpenAI models too ('{"gpt-5":{"input":1.25,"output":10}}');
+  // ANTHROPIC_PRICES still works and the two are merged.
   ANTHROPIC_PRICES: process.env.ANTHROPIC_PRICES ?? '',
+  LLM_PRICES: process.env.LLM_PRICES ?? '',
 
   // --- Org roster (assignable users) ----------------------------------------
   // Optional comma-separated roster of org members for the Support Desk
@@ -175,8 +203,28 @@ export const googleEnabled = Boolean(
   env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.SESSION_SECRET
 );
 
-// Claude Vision receipt extraction is enabled once an Anthropic API key is set.
-export const visionEnabled = Boolean(env.ANTHROPIC_API_KEY);
+// The document readers, each switched on by its own API key. Either alone is
+// enough for extraction to work; both means the org gets to choose.
+export const claudeEnabled = Boolean(env.ANTHROPIC_API_KEY);
+export const openaiEnabled = Boolean(env.OPENAI_API_KEY);
+
+// Receipt extraction / document summarising is available once ANY reader is
+// configured. Until then those endpoints return 503 vision_not_configured.
+export const visionEnabled = claudeEnabled || openaiEnabled;
+
+// The readers this deploy can actually use, in offer order. Sent to the client
+// so Business settings only offers a provider whose key is present.
+export const readerProviders: Array<'claude' | 'openai'> = [
+  ...(claudeEnabled ? (['claude'] as const) : []),
+  ...(openaiEnabled ? (['openai'] as const) : []),
+];
+
+// The reader used when a request doesn't name one — the configured preference
+// when it has a key, otherwise the first reader that does.
+export const defaultReaderProvider: 'claude' | 'openai' =
+  (env.LLM_PROVIDER === 'openai' && openaiEnabled) || (env.LLM_PROVIDER === 'claude' && claudeEnabled)
+    ? (env.LLM_PROVIDER as 'claude' | 'openai')
+    : (readerProviders[0] ?? 'claude');
 
 // Xero (via the cyworkspace relay) switches on once the shared webhook API key
 // is configured. Until then the Xero endpoints return 503 xero_not_configured.

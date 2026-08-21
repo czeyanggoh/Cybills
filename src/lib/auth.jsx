@@ -3,14 +3,18 @@ import { fetchMembership } from '@/lib/userStore';
 import { ORGANISATION_EVENT } from '@/lib/organisations';
 
 // App-wide auth state. Loads once: which backend capabilities are configured
-// (`googleEnabled`, `visionEnabled`, `mailEnabled`), the current signed-in user
-// (or null), and the user's roster membership (`membership.status`: anonymous|none|pending|active).
+// (`googleEnabled`, `visionEnabled`, `mailEnabled`), which document readers have
+// an API key on the server (`readerProviders`, `defaultReaderProvider` — see
+// lib/readerProvider.js), the current signed-in user (or null), and the user's
+// roster membership (`membership.status`: anonymous|none|pending|active).
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
+  const [readerProviders, setReaderProviders] = useState([]);
+  const [defaultReaderProvider, setDefaultReaderProvider] = useState('claude');
   const [mailEnabled, setMailEnabled] = useState(false);
   const [user, setUser] = useState(null);
   const [membership, setMembership] = useState({ status: 'anonymous', user: null });
@@ -26,6 +30,8 @@ export function AuthProvider({ children }) {
         const s = await statusRes.json();
         setGoogleEnabled(Boolean(s.googleEnabled));
         setVisionEnabled(Boolean(s.visionEnabled));
+        setReaderProviders(Array.isArray(s.readerProviders) ? s.readerProviders : []);
+        setDefaultReaderProvider(s.defaultReaderProvider || 'claude');
         setMailEnabled(Boolean(s.mailEnabled));
       }
       setUser(meRes.ok ? (await meRes.json()).user : null);
@@ -37,6 +43,7 @@ export function AuthProvider({ children }) {
       // Backend unreachable — treat as signed-out, mock mode.
       setGoogleEnabled(false);
       setVisionEnabled(false);
+      setReaderProviders([]);
       setMailEnabled(false);
       setUser(null);
     } finally {
@@ -74,7 +81,21 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ loading, googleEnabled, visionEnabled, mailEnabled, user, membership, refresh, signOut, loginWithPassword }}>
+    <AuthContext.Provider
+      value={{
+        loading,
+        googleEnabled,
+        visionEnabled,
+        readerProviders,
+        defaultReaderProvider,
+        mailEnabled,
+        user,
+        membership,
+        refresh,
+        signOut,
+        loginWithPassword,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

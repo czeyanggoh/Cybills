@@ -1,6 +1,6 @@
 // A standard Xero chart of accounts (expense / direct-cost / overhead
 // accounts), used as the categorisation taxonomy for OCR. Each account carries
-// its Xero description — Claude uses those descriptions to classify an expense
+// its Xero description — the reader uses those descriptions to classify an expense
 // into the single best-matching account. Codes follow Xero's default chart, so
 // they line up with a Xero org on the standard chart at publish time. When an
 // org is linked to Xero, its live chart can be used instead (same shape).

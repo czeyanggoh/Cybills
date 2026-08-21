@@ -19,7 +19,7 @@ import DocsExportModal from '@/components/DocsExportModal';
 import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
 
-// How many of the six key fields Claude managed to extract, Dext-style.
+// How many of the six key fields the reader managed to extract, Dext-style.
 
 
 // Shape a persisted sales bill (kind==='sales') into the row form this table

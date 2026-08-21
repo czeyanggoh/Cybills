@@ -24,7 +24,7 @@ function StatCard({ label, value, sub }) {
 }
 
 // The practice's client list: every Xero tenant CYBills is connected to, who on
-// the team works on it, and what it has cost in Claude API usage today and this
+// the team works on it, and what it has cost in AI API usage today and this
 // month. The cost is an estimate — it is priced from the tokens each extraction
 // actually reported, at the published per-model rates, so it tracks the bill
 // without being the bill.
@@ -56,7 +56,7 @@ export default function Clients() {
         <h1 className="text-xl font-semibold tracking-tight">Clients</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Every Xero organisation {practiceName} is connected to, who works on it, and what
-          it has cost in Claude API usage.
+          it has cost in AI API usage.
         </p>
       </div>
 
@@ -67,12 +67,12 @@ export default function Clients() {
           sub="Linked Xero organisations"
         />
         <StatCard
-          label="Claude API — today"
+          label="AI API — today"
           value={usage ? formatUsd(usage.today.costUsd) : '—'}
           sub={usage ? `${usage.today.calls} call${usage.today.calls === 1 ? '' : 's'} · ${formatTokens(usage.today.inputTokens + usage.today.outputTokens)} tokens` : ' '}
         />
         <StatCard
-          label="Claude API — month to date"
+          label="AI API — month to date"
           value={usage ? formatUsd(usage.monthToDate.costUsd) : '—'}
           sub={usage ? `${usage.monthToDate.calls} call${usage.monthToDate.calls === 1 ? '' : 's'} · ${formatTokens(usage.monthToDate.inputTokens + usage.monthToDate.outputTokens)} tokens` : ' '}
         />

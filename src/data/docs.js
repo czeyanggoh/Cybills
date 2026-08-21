@@ -1,6 +1,6 @@
 // Mock extracted cost documents, shared by the Costs list and the detail view.
 // UI only — these stand in for OCR output until a real extraction backend
-// (e.g. Claude Vision) is wired up. `status` drives which Costs tab a row
+// (Claude or OpenAI) is wired up. `status` drives which Costs tab a row
 // appears under: new/viewed -> Inbox, review -> To review, ready -> Ready,
 // expenseclaim -> Archive.
 export const DOCS = [

@@ -95,7 +95,7 @@ export function useColleagues() {
   return query;
 }
 
-// Every connected client, with the colleagues on it and its Claude API spend
+// Every connected client, with the colleagues on it and its AI API spend
 // (today and month-to-date). Refetched on organisation changes so linking or
 // unlinking a client is reflected straight away.
 export function useClients() {

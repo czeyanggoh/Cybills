@@ -9,6 +9,7 @@ import AddCategoryModal from '@/components/AddCategoryModal';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { currencyLabel } from '@/lib/customerRules';
 import { useAuth } from '@/lib/auth';
+import { useReaderName } from '@/lib/readerProvider';
 import { SALES, getSale } from '@/data/sales';
 import { useCategoryOptions, getExtractionAccounts, useXeroPaymentMethods, useXeroCustomers, useXeroProjectOptions } from '@/lib/organisations';
 import { fetchBills, billToDoc, billFileUrl, displayItemId, updateBill, notifyBillsChanged } from '@/lib/bills';
@@ -146,12 +147,14 @@ function ReceiptPreview({ sale, imageUrl, previewType }) {
   );
 }
 
-const EXTRACT_ERRORS = {
-  vision_not_configured: 'Vision extraction isn’t configured on the server yet.',
+// Named after whichever reader the org picked (Business settings → Extraction →
+// Document reader), so the message matches the engine that actually answered.
+const extractErrors = (reader) => ({
+  vision_not_configured: 'Document reading isn’t configured on the server yet.',
   invalid_image: 'That file type isn’t supported — use a PNG, JPG, WebP or PDF.',
-  refused: 'Claude declined to read that document.',
+  refused: `${reader} declined to read that document.`,
   no_data: 'Couldn’t read fields from that document — try a clearer file.',
-};
+});
 
 function initialData(s) {
   return {
@@ -217,6 +220,7 @@ export default function SalesDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { visionEnabled } = useAuth();
+  const readerName = useReaderName();
   const categoryOptions = useCategoryOptions();
   const projectOptions = useXeroProjectOptions();
   const customerOptions = useXeroCustomers();
@@ -330,7 +334,7 @@ export default function SalesDetail() {
     const { base64: imageBase64, mediaType, previewUrl } = await prepareUpload(file);
     setPreviewType(mediaType.includes('pdf') ? 'pdf' : 'image');
     setImageUrl(previewUrl);
-    // Auto-fill from the uploaded document when Claude Vision is configured.
+    // Auto-fill from the uploaded document when a reader is configured.
     if (!visionEnabled) return;
     setExtracting(true);
     try {
@@ -342,7 +346,7 @@ export default function SalesDetail() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setAiError(EXTRACT_ERRORS[body.error] ?? 'Extraction failed — please try again.');
+        setAiError(extractErrors(readerName)[body.error] ?? 'Extraction failed — please try again.');
         return;
       }
       const { data: ex } = await res.json();
@@ -460,7 +464,7 @@ export default function SalesDetail() {
 
           {tab === 'details' && (
             <div>
-              {/* Upload an invoice/receipt image or PDF + Claude auto-fill. */}
+              {/* Upload an invoice/receipt image or PDF + AI auto-fill. */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -478,7 +482,7 @@ export default function SalesDetail() {
                 {extracting
                   ? 'Reading document…'
                   : visionEnabled
-                    ? 'Upload document & auto-fill with Claude'
+                    ? `Upload document & auto-fill with ${readerName}`
                     : 'Upload document'}
               </button>
               {aiError && (

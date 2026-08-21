@@ -2,7 +2,14 @@ import { Router, type Request, type Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 import jwt from 'jsonwebtoken';
-import { env, googleEnabled, visionEnabled, smtpConfigured } from './env.js';
+import {
+  env,
+  googleEnabled,
+  visionEnabled,
+  smtpConfigured,
+  readerProviders,
+  defaultReaderProvider,
+} from './env.js';
 import { isMailConnected } from './mailAccount.js';
 
 // Real Google OAuth 2.0 (authorization-code flow), server-side. The whole router
@@ -55,15 +62,24 @@ export function readSession(req: Request): SessionUser | null {
 
 export const authRouter = Router();
 
-// Capability probe: real OAuth vs mock sign-in, whether Claude Vision receipt
-// extraction is available, and whether a sending mailbox is connected (drives
-// the "Forgot password?" link and the invite copy). Fetched once by
-// AuthProvider. `mailEnabled` is a live check: delegated mail depends on an
-// admin-granted connection that can lapse, not just on static config.
+// Capability probe: real OAuth vs mock sign-in, whether document extraction is
+// available and which readers can do it, and whether a sending mailbox is
+// connected (drives the "Forgot password?" link and the invite copy). Fetched
+// once by AuthProvider. `mailEnabled` is a live check: delegated mail depends on
+// an admin-granted connection that can lapse, not just on static config.
 authRouter.get('/status', (_req, res) => {
   // Mail works via SMTP (static config, always ready) or via a connected Graph
   // mailbox (delegated, can lapse). Either one enables the mail-dependent UI.
-  res.json({ googleEnabled, visionEnabled, mailEnabled: smtpConfigured || isMailConnected() });
+  res.json({
+    googleEnabled,
+    visionEnabled,
+    // Which readers have an API key here, and the one used when nobody chooses.
+    // Business settings only offers a provider that appears in this list, so a
+    // deploy with one key configured shows no toggle at all.
+    readerProviders,
+    defaultReaderProvider,
+    mailEnabled: smtpConfigured || isMailConnected(),
+  });
 });
 
 // Who am I? Reads the session cookie. 401 when signed out.

@@ -3,6 +3,7 @@ import { nameForEmail } from '@/lib/userStore';
 import { getActiveOrganisationId, getExtractionTaxRates, getExtractionProjects } from '@/lib/organisations';
 import { isGstRegistered } from '@/lib/businessProfile';
 import { fetchReviewInstructions } from '@/lib/reviewInstructions';
+import { requestedProvider } from '@/lib/readerProvider';
 
 // Every bill request carries the selected organisation so the server serves that
 // org's own Costs/Sales books (separate per client entity). Omitted when no org
@@ -43,7 +44,9 @@ export function fileToBase64(file) {
 
 export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
 
-// Run a receipt image or PDF invoice through the Claude extract endpoint.
+// Run a receipt image or PDF invoice through the extract endpoint, read by the
+// engine this client entity picked (Business settings → Extraction → Document
+// reader): Claude or OpenAI.
 // `accounts` is the Xero chart of accounts (code/name/description) so the model
 // classifies each expense into the account it should post to, using the
 // descriptions. Returns the extracted fields object, or null if extraction is
@@ -65,7 +68,16 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
   const res = await fetch('/api/costs/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ imageBase64, mediaType, accounts, instructions, taxRates, projects }),
+    body: JSON.stringify({
+      imageBase64,
+      mediaType,
+      accounts,
+      instructions,
+      taxRates,
+      projects,
+      // '' = no org preference; the server applies its own default.
+      provider: requestedProvider(),
+    }),
   });
   if (!res.ok) return null;
   const { data } = await res.json();

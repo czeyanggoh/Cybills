@@ -1,6 +1,6 @@
 // Prepare an uploaded file for sending to the backend: downscale large images
 // so the base64 payload stays well under the server body limit (a phone photo
-// can be several MB → >10MB once base64-encoded). Also keeps Claude Vision fast
+// can be several MB → >10MB once base64-encoded). Also keeps the reader fast
 // and cheap. Non-images (PDFs) pass through unchanged.
 
 function readDataUrl(file) {

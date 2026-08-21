@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { X, FileText, Loader2, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { useReaderName } from '@/lib/readerProvider';
 import {
   sha256Hex,
   fetchExtract,
@@ -155,6 +156,7 @@ function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, a
 
 // One row per uploaded file, reflecting its place in the pipeline.
 function UploadItem({ item, onForce, onSkip }) {
+  const readerName = useReaderName();
   const { status, file, error, duplicate, xeroInvoiceId, attachError } = item;
   return (
     <div className="rounded-md border p-3">
@@ -210,7 +212,7 @@ function UploadItem({ item, onForce, onSkip }) {
       {(status === 'uploading' || status === 'extracting') && (
         <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />
-          <span>Received — it’s in Processing while Claude reads it, and moves to your inbox when done.</span>
+          <span>Received — it’s in Processing while {readerName} reads it, and moves to your inbox when done.</span>
         </p>
       )}
 
@@ -280,6 +282,7 @@ function tabForPath(pathname) {
 
 export default function AddDocumentsDrawer({ open, onClose }) {
   const { visionEnabled, user } = useAuth();
+  const readerName = useReaderName();
   const { pathname } = useLocation();
   const users = useUsers();
   const settings = useExtractionSettings();
@@ -430,7 +433,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
 
           // 1) Accept the document immediately — create it in "Processing" before
           //    reading, so it lands on the Processing page right away (received).
-          //    Claude Vision then reads it in the background (boss's request).
+          //    The configured reader then reads it in the background (boss's request).
           /** @type {any} */
           const payload = {
             fileHash,
@@ -463,7 +466,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           const bill = result.bill;
           notifyBillsChanged(); // now visible on the Processing page
 
-          // 2) Read with Claude Vision (when available), then finalize — which
+          // 2) Read with the configured reader (when available), then finalize — which
           //    applies the fields, re-checks for a duplicate now that
           //    supplier/amount/date are known, and advances the doc out of
           //    Processing: straight to Ready when complete, else the inbox. No
@@ -682,8 +685,10 @@ export default function AddDocumentsDrawer({ open, onClose }) {
 
             {showModes && !visionEnabled && (
               <p className="mt-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-                Field extraction is off (no <span className="font-mono">ANTHROPIC_API_KEY</span>). Files
-                are still stored and checked for exact-file duplicates.
+                Field extraction is off — no reader is configured on the server (
+                <span className="font-mono">ANTHROPIC_API_KEY</span> or{' '}
+                <span className="font-mono">OPENAI_API_KEY</span>). Files are still stored and
+                checked for exact-file duplicates.
               </p>
             )}
 

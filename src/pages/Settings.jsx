@@ -32,6 +32,8 @@ import {
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
+import { useAuth } from '@/lib/auth';
+import { READER_PROVIDERS, readerLabel, effectiveProvider } from '@/lib/readerProvider';
 
 const NAV = [
   {
@@ -356,6 +358,68 @@ function BusinessProfile() {
   );
 }
 
+// The engine that reads uploaded documents, chosen per client entity. Only the
+// providers the SERVER has an API key for are offered, so this card shows a
+// picker on a deploy with both keys configured, a plain statement of fact on one
+// with a single key, and nothing at all when extraction is switched off. The
+// server re-checks the choice on every call, so picking one whose key is later
+// removed degrades to the working reader rather than failing the read.
+const SERVER_DEFAULT_LABEL = 'Server default';
+
+function DocumentReaderCard({ value, onChange }) {
+  const { visionEnabled, readerProviders = [], defaultReaderProvider } = useAuth();
+  const offered = READER_PROVIDERS.filter((p) => readerProviders.includes(p.id));
+  const inUse = readerLabel(effectiveProvider(value, readerProviders, defaultReaderProvider));
+
+  if (!visionEnabled) {
+    return (
+      <Card title="Document reader">
+        <p className="text-sm text-muted-foreground">
+          No reader is configured on the server yet, so uploaded documents aren&apos;t read
+          automatically. Add an Anthropic or OpenAI API key to switch auto-fill on.
+        </p>
+      </Card>
+    );
+  }
+
+  if (offered.length < 2) {
+    return (
+      <Card title="Document reader">
+        <p className="text-sm text-muted-foreground">
+          Receipts and invoices are read by <span className="font-medium text-foreground">{inUse}</span>.
+          Configure a second provider&apos;s API key on the server to be able to switch between them.
+        </p>
+      </Card>
+    );
+  }
+
+  const labelFor = (id) => (id ? `${readerLabel(id)}${optionHint(id)}` : `${SERVER_DEFAULT_LABEL} (${readerLabel(defaultReaderProvider)})`);
+  const options = [labelFor(''), ...offered.map((p) => labelFor(p.id))];
+  const fromLabel = (label) =>
+    label.startsWith(SERVER_DEFAULT_LABEL) ? '' : offered.find((p) => label.startsWith(p.label))?.id ?? '';
+
+  return (
+    <Card title="Document reader">
+      <p className="text-sm text-muted-foreground">
+        Which AI reads the receipts and invoices you upload. Both read the same file against the
+        same fields, so you can switch at any time — only documents read from now on are affected,
+        and anything already read keeps what it got.
+      </p>
+      <Row
+        label="Reader"
+        hint="Applies to this client entity only, and to the Vault document summaries as well."
+      >
+        <SelectBox value={labelFor(value)} onChange={(v) => onChange(fromLabel(v))} options={options} />
+      </Row>
+    </Card>
+  );
+}
+
+const optionHint = (id) => {
+  const hint = READER_PROVIDERS.find((p) => p.id === id)?.hint;
+  return hint ? ` (${hint})` : '';
+};
+
 function Extraction() {
   const stored = useExtractionSettings();
   const [form, setForm] = useState(stored);
@@ -370,6 +434,8 @@ function Extraction() {
 
   return (
     <div className="space-y-6">
+      <DocumentReaderCard value={form.readerProvider} onChange={(v) => set('readerProvider', v)} />
+
       <Card title="Extract by Email">
         <p className="text-sm text-muted-foreground">
           Add documents to your account by emailing them to the addresses below.
