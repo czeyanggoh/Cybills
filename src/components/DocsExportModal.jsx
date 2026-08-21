@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
 import { exportDocs } from '@/lib/docsExport';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
 // Export dialog for Costs/Sales — CSV / PDF / ZIP. Runs fully client-side and
 // records the file in the Exports tab. `kind` is 'costs' | 'sales'.
 export default function DocsExportModal({ open, kind, rows, onClose, onArchive = () => {} }) {
   const defaultLabel = kind === 'sales' ? 'CYBills sales default' : 'CYBills default';
+  const { user, membership } = useAuth();
   const [tab, setTab] = useState('csv');
   // Default to "Custom CSV" so the columns configured in Business settings →
   // Exports actually drive the file. The full fixed template stays selectable.
@@ -16,9 +18,12 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
   if (!open) return null;
 
   const doExport = async () => {
+    // Record the export under the signed-in user's name (not the generic "You"),
+    // matching the claim export dialogs.
+    const exportedBy = membership?.user?.name || user?.name || user?.email || 'You';
     setBusy(true);
     try {
-      await exportDocs(rows, { kind, format: tab, csvFormat });
+      await exportDocs(rows, { kind, format: tab, csvFormat, exportedBy });
       if (archiveAfter) onArchive?.();
     } finally {
       setBusy(false);
