@@ -278,8 +278,13 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   // document rather than on two nav columns. Roomy window → nothing changes.
   const tight = useMediaQuery('(max-width: 1279px)');
   const [railHover, setRailHover] = useState(false);
-  const flyout = tight && railHover; // expanded, floating over the content
-  const showLabels = !tight || railHover;
+  // Settings (hideSidebar) still needs its OWN nav column — the sub-nav now lives
+  // inside this sidebar, so hiding the whole thing left Business settings with no
+  // tabs. In that mode show a dedicated, always-expanded column of just the
+  // sub-nav (which carries its own Back link); no rail, no primary/bottom nav.
+  const settingsCol = hideSidebar && Boolean(subnav);
+  const flyout = tight && railHover && !settingsCol; // expanded, floating over the content
+  const showLabels = !tight || railHover || settingsCol;
 
   // Admin surfaces are hidden from those who can't use them: Business settings
   // is Business Admin only, Users is either admin tier. A signed-in user's real
@@ -314,8 +319,8 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
           onMouseLeave={() => setRailHover(false)}
           className={cn(
             'relative hidden shrink-0 flex-col border-r bg-background transition-[width] duration-150',
-            tight ? 'w-14' : 'w-56',
-            hideSidebar ? 'hidden' : 'md:flex',
+            tight && !settingsCol ? 'w-14' : 'w-56',
+            hideSidebar && !subnav ? 'hidden' : 'md:flex',
           )}
         >
           {/* Collapsed, this fills the rail. Hovered, it lifts out of the flow
@@ -331,29 +336,34 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
               <Receipt className="h-5 w-5 shrink-0" />
               {showLabels && <span className="text-sm font-semibold tracking-tight">CYBills</span>}
             </div>
-            <div className={cn('shrink-0', showLabels ? 'p-3' : 'px-2 py-3')}>
-              <button
-                type="button"
-                onClick={() => setAddOpen(true)}
-                title={showLabels ? undefined : 'Add documents'}
-                className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-              >
-                <Plus className="h-4 w-4 shrink-0" strokeWidth={2} />
-                {showLabels && 'Add documents'}
-              </button>
-            </div>
-            <nav className={cn('flex flex-col gap-1', showLabels ? 'px-3' : 'px-2')}>
-              {NAV.map((item) => (
-                <SidebarLink key={item.to} {...item} showLabel={showLabels} />
-              ))}
-            </nav>
+            {!settingsCol && (
+              <div className={cn('shrink-0', showLabels ? 'p-3' : 'px-2 py-3')}>
+                <button
+                  type="button"
+                  onClick={() => setAddOpen(true)}
+                  title={showLabels ? undefined : 'Add documents'}
+                  className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                >
+                  <Plus className="h-4 w-4 shrink-0" strokeWidth={2} />
+                  {showLabels && 'Add documents'}
+                </button>
+              </div>
+            )}
+            {!settingsCol && (
+              <nav className={cn('flex flex-col gap-1', showLabels ? 'px-3' : 'px-2')}>
+                {NAV.map((item) => (
+                  <SidebarLink key={item.to} {...item} showLabel={showLabels} />
+                ))}
+              </nav>
+            )}
             {/* The section's own nav (Costs inbox, Expense claims…) sits INSIDE
                 this column rather than in a second one beside it — one list to
                 read, and the content gets the width back. Collapsed to the rail
                 it would be labels in 56px, so it waits for the fly-out. */}
             {showLabels && subnav && (
-              <div className="mt-2 min-h-0 flex-1 overflow-auto border-t">{subnav}</div>
+              <div className={cn('min-h-0 flex-1 overflow-auto border-t', !settingsCol && 'mt-2')}>{subnav}</div>
             )}
+            {!settingsCol && (
             <div className={cn('flex flex-col gap-1 border-t', showLabels ? 'p-3' : 'px-2 py-3', !(showLabels && subnav) && 'mt-auto')}>
               {bottomNav.map((item) => (
                 <button
@@ -385,6 +395,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                 </button>
               )}
             </div>
+            )}
           </div>
         </aside>
 
