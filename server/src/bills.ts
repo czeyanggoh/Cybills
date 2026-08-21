@@ -117,7 +117,7 @@ billsRouter.post('/bills/:id/file', async (req, res) => {
 billsRouter.patch('/bills/:id', (req, res) => {
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'description', 'status', 'createdBy', 'paymentMethod', 'customer', 'project', 'cardLast4', 'note', 'dueDate']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'createdBy', 'paymentMethod', 'customer', 'project', 'cardLast4', 'note', 'dueDate']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   if (typeof b.paid === 'boolean') patch.paid = b.paid;
@@ -252,6 +252,7 @@ billsRouter.post('/bills', async (req, res) => {
     category: String(b.category ?? ''),
     categoryReason: String(b.categoryReason ?? ''),
     taxRate: String(b.taxRate ?? ''),
+    taxRateReason: String(b.taxRateReason ?? ''),
     description: String(b.description ?? ''),
     // Attribute to the chosen "Document owner" from the drawer when provided,
     // else the signed-in uploader.

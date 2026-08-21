@@ -32,7 +32,8 @@ import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
-import { useExtractionSettings, inferTaxRateName } from '@/lib/extractionSettings';
+import { useExtractionSettings, resolveTaxRate } from '@/lib/extractionSettings';
+import { useGstRegistered } from '@/lib/businessProfile';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
@@ -161,6 +162,7 @@ function initialData(doc) {
     total: doc.total,
     tax: doc.tax,
     taxRate: doc.taxRate ?? '',
+    taxRateReason: doc.taxRateReason ?? '',
     description: doc.description ?? '',
     paymentMethod: doc.paymentMethod ?? '',
     paid: Boolean(doc.paid),
@@ -195,6 +197,8 @@ export default function CostDetail() {
   // settings → Lists → Tax rates: the live Xero rates (seed fallback), showing
   // only the rates left Visible there. `rateFor` gives the % for the tax math.
   const taxRateSource = useVisibleTaxRates();
+  // Not GST-registered → every document codes to No Tax and no GST is split out.
+  const gstRegistered = useGstRegistered();
   const taxRateOptions = taxRateSource.map((t) => t.name);
   const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
   const extractionSettings = useExtractionSettings();
@@ -290,7 +294,7 @@ export default function CostDetail() {
   const SERVER_FIELDS = {
     supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
-    taxRate: 'taxRate', description: 'description', user: 'createdBy',
+    taxRate: 'taxRate', taxRateReason: 'taxRateReason', description: 'description', user: 'createdBy',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
     customer: 'customer', project: 'project', cardLast4: 'cardLast4',
   };
@@ -404,6 +408,7 @@ export default function CostDetail() {
           tax: data.tax,
           invoiceNumber: data.ref,
           taxRate: data.taxRate,
+          taxRateReason: data.taxRateReason,
           description: data.description,
           paymentMethod: data.paymentMethod,
           paid: data.paid,
@@ -635,10 +640,23 @@ export default function CostDetail() {
         ex.description ||
         (Array.isArray(ex.lineItems) ? ex.lineItems.map((li) => li.description).filter(Boolean).join(', ') : '');
       // Auto-populate the tax rate from the extracted total/tax when the doc
-      // doesn't already carry one (don't clobber a manual choice).
+      // doesn't already carry one (don't clobber a manual choice). Only the
+      // standard-rated codes and No Tax are auto-pickable — see inferTaxRateName.
       const exTotal = ex.total != null ? ex.total : data.total;
       const exTax = ex.tax != null ? ex.tax : data.tax;
-      const inferredRate = inferTaxRateName(exTotal, exTax, taxRateSource, extractionSettings.defaultTaxRateCosts, ex.currency || data.currency);
+      const inferredRate = resolveTaxRate({
+        total: exTotal,
+        tax: exTax,
+        rates: taxRateSource,
+        suggested: ex.taxRate,
+        gstRegistered,
+        defaultName: extractionSettings.defaultTaxRateCosts,
+        currency: ex.currency || data.currency,
+        kind: 'cost',
+      });
+      // Not GST-registered: there's no input tax to record, so don't carry the
+      // printed GST onto the bill either.
+      const exTaxOut = gstRegistered ? exTax : 0;
       setData((d) => ({
         ...d,
         supplier: ex.supplier || d.supplier,
@@ -649,8 +667,9 @@ export default function CostDetail() {
         category: ex.category || d.category,
         categoryReason: ex.categoryReason || d.categoryReason,
         total: ex.total != null ? String(ex.total) : d.total,
-        tax: ex.tax != null ? String(ex.tax) : d.tax,
+        tax: !gstRegistered ? '0.00' : ex.tax != null ? String(ex.tax) : d.tax,
         taxRate: d.taxRate || inferredRate,
+        taxRateReason: d.taxRate ? d.taxRateReason : ex.taxRateReason || d.taxRateReason,
         description: descr || d.description,
         cardLast4: ex.cardLast4 || d.cardLast4,
       }));
@@ -664,8 +683,9 @@ export default function CostDetail() {
         if (ex.category) patch.category = ex.category;
         if (ex.categoryReason) patch.categoryReason = ex.categoryReason;
         if (ex.total != null) patch.total = ex.total;
-        if (ex.tax != null) patch.tax = ex.tax;
+        if (ex.tax != null || !gstRegistered) patch.tax = exTaxOut;
         if (!data.taxRate && inferredRate) patch.taxRate = inferredRate;
+        if (!data.taxRate && ex.taxRateReason) patch.taxRateReason = ex.taxRateReason;
         if (descr) patch.description = descr;
         if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
         const r = await updateBill(doc.id, patch).catch(() => null);
@@ -1038,6 +1058,15 @@ export default function CostDetail() {
               <Field label="Total amount"><Input value={data.total} onChange={(v) => set('total', v)} /></Field>
               <Field label="Tax rate">
                 <EditableSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
+                {!gstRegistered && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    This company isn’t GST-registered, so documents code to No Tax. Change that under
+                    Business settings → Business profile.
+                  </p>
+                )}
+                {gstRegistered && data.taxRateReason && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">{data.taxRateReason}</p>
+                )}
               </Field>
               <Field label="Tax amount"><Input value={data.tax} onChange={(v) => set('tax', v)} /></Field>
               <Field label="Net amount"><Input value={(num(data.total) - num(data.tax)).toFixed(2)} readOnly /></Field>

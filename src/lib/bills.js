@@ -1,6 +1,7 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
 import { nameForEmail } from '@/lib/userStore';
-import { getActiveOrganisationId } from '@/lib/organisations';
+import { getActiveOrganisationId, getExtractionTaxRates } from '@/lib/organisations';
+import { isGstRegistered } from '@/lib/businessProfile';
 import { fetchReviewInstructions } from '@/lib/reviewInstructions';
 
 // Every bill request carries the selected organisation so the server serves that
@@ -51,10 +52,16 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
   // The active org's Review instructions (business context + GST/coding rules)
   // ride along so the model classifies with that context. Best-effort.
   const instructions = await fetchReviewInstructions(getActiveOrganisationId());
+  // Tax codes the org wrote a "when to use" rule for (Lists → Tax rates), so the
+  // model can reach codes the arithmetic fallback deliberately won't. A company
+  // that isn't GST-registered sends none — every document codes to No Tax.
+  const taxRates = isGstRegistered()
+    ? await getExtractionTaxRates().then((rows) => rows.filter((t) => t.rules)).catch(() => [])
+    : [];
   const res = await fetch('/api/costs/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ imageBase64, mediaType, accounts, instructions }),
+    body: JSON.stringify({ imageBase64, mediaType, accounts, instructions, taxRates }),
   });
   if (!res.ok) return null;
   const { data } = await res.json();
@@ -119,6 +126,7 @@ export function billToDoc(b) {
     type: b.documentType || 'Document',
     category: b.category || 'Uncategorised',
     categoryReason: b.categoryReason || '',
+    taxRateReason: b.taxRateReason || '',
     currency: b.currency || 'SGD',
     total: b.total != null ? String(b.total) : '—',
     tax: b.tax != null ? String(b.tax) : '0.00',

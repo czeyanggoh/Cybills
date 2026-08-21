@@ -12,11 +12,30 @@ const DEFAULT_CATEGORIES = ['Uncategorised', 'Others'];
 // categories so the model must return one that maps to a real dropdown value.
 // additionalProperties:false + required on every field is mandatory for strict
 // structured outputs.
-function buildSchema(categories: string[]) {
+function buildSchema(categories: string[], taxRateNames: string[]) {
+  // Tax-rate picking is only offered when the org has written "when to use"
+  // rules (Lists → Tax rates). No rules → the fields are left out of the schema
+  // entirely, so the model is never asked to guess a tax code.
+  const taxRateFields = taxRateNames.length
+    ? {
+        taxRate: {
+          type: 'string',
+          enum: ['', ...taxRateNames],
+          description:
+            'The tax code whose "when to use" rule clearly applies to THIS document, from the rules listed in the prompt. Return an empty string unless a rule plainly matches — a near-miss, a guess, or "it could be" must be an empty string, because the empty string falls back to a safe calculation from the printed GST.',
+        },
+        taxRateReason: {
+          type: 'string',
+          description:
+            'When taxRate is non-empty, one short sentence quoting the part of the rule the document satisfies, e.g. "Overseas supplier (US) billing services used in Singapore — matches the reverse charge rule." Empty string when taxRate is empty.',
+        },
+      }
+    : {};
   return {
     type: 'object',
     additionalProperties: false,
     properties: {
+      ...taxRateFields,
       supplier: { type: 'string', description: 'Merchant / supplier name, e.g. "Grab"' },
       date: {
         type: 'string',
@@ -86,6 +105,7 @@ function buildSchema(categories: string[]) {
       'description',
       'cardLast4',
       'lineItems',
+      ...(taxRateNames.length ? ['taxRate', 'taxRateReason'] : []),
     ],
   };
 }
@@ -103,6 +123,8 @@ const ReceiptSchema = z.object({
   categoryReason: z.string().optional().default(''),
   description: z.string().optional().default(''),
   cardLast4: z.string().optional().default(''),
+  taxRate: z.string().optional().default(''),
+  taxRateReason: z.string().optional().default(''),
   lineItems: z.array(
     z.object({
       description: z.string(),
@@ -138,7 +160,32 @@ function parseAccounts(raw: unknown): AccountRef[] {
   return out;
 }
 
-// POST /api/costs/extract — body: { imageBase64, mediaType, accounts?, categories? }.
+type TaxRateRef = { name: string; code: string; rate: number; rules: string };
+
+// Parse the optional tax-rate list from the request body. ONLY rates the org has
+// written a "when to use" rule for are kept — a rate with no rule is the
+// client's arithmetic job, not the model's.
+function parseTaxRates(raw: unknown): TaxRateRef[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TaxRateRef[] = [];
+  const seen = new Set<string>();
+  for (const t of raw) {
+    const name = typeof t?.name === 'string' ? t.name.trim() : '';
+    const rules = typeof t?.rules === 'string' ? t.rules.trim() : '';
+    if (!name || !rules || seen.has(name)) continue;
+    seen.add(name);
+    out.push({
+      name,
+      code: typeof t?.code === 'string' ? t.code.trim() : '',
+      rate: Number(t?.rate) || 0,
+      rules: rules.slice(0, 600), // guard the prompt size
+    });
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+
+// POST /api/costs/extract — body: { imageBase64, mediaType, accounts?, categories?, taxRates? }.
 // Runs the receipt image OR PDF invoice through Claude and returns the extracted
 // fields, classified into the Xero chart of accounts (when `accounts` is given,
 // using each account's description) or a plain category list. 503 until an
@@ -184,6 +231,17 @@ extractRouter.post('/extract', async (req, res) => {
         .join('\n')
     : '';
 
+  // Tax rates the org has written rules for, and the guide that teaches them.
+  const taxRates = parseTaxRates(req.body?.taxRates);
+  const taxRateNames = taxRates.map((t) => t.name);
+  const taxRateSet = new Set(taxRateNames);
+  const taxRatesGuide = taxRates.length
+    ? '\n\nTAX CODE RULES. This organisation has written the following rules for when a tax code applies. Set `taxRate` to the ONE code whose rule this document plainly satisfies, and `taxRateReason` to why. If no rule plainly applies — including when the document just shows ordinary GST at the standard rate — return an empty string for both; the correct code is then worked out from the printed GST amount, which is safer than a guess.\n' +
+      taxRates
+        .map((t) => `- "${t.name}" (${[t.code, `${t.rate}%`].filter(Boolean).join(', ')}): ${t.rules}`)
+        .join('\n')
+    : '';
+
   const isPdf = mediaType === PDF_MEDIA;
   const fileBlock: Anthropic.ContentBlockParam = isPdf
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: imageBase64 } }
@@ -210,12 +268,13 @@ extractRouter.post('/extract', async (req, res) => {
                 'pick "Uncategorised" only when none reasonably fit. ' +
                 'If a field is not present, use an empty string or 0. ' +
                 'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
-                accountsGuide,
+                accountsGuide +
+                taxRatesGuide,
             },
           ],
         },
       ],
-      output_config: { format: { type: 'json_schema', schema: buildSchema(categories) } },
+      output_config: { format: { type: 'json_schema', schema: buildSchema(categories, taxRateNames) } },
     });
 
     if (message.stop_reason === 'refusal') {
@@ -229,7 +288,13 @@ extractRouter.post('/extract', async (req, res) => {
       return res.status(502).json({ error: 'no_data' });
     }
     // Belt-and-suspenders: snap to a known category if the model somehow strays.
-    const data = { ...parsed.data, category: categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised' };
+    const taxRate = taxRateSet.has(parsed.data.taxRate) ? parsed.data.taxRate : '';
+    const data = {
+      ...parsed.data,
+      category: categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised',
+      taxRate,
+      taxRateReason: taxRate ? parsed.data.taxRateReason : '',
+    };
     return res.json({ ok: true, data });
   } catch (err) {
     console.error('[extract] failed', err);

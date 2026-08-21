@@ -25,6 +25,7 @@ export type Bill = {
   category: string;
   categoryReason?: string; // why the AI chose this category (account/rule cited)
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
+  taxRateReason?: string; // why that tax code — the "when to use" rule it matched
   description?: string; // plain-language summary of what was purchased
   paymentMethod?: string; // Xero payment account label the cost was paid from
   paid?: boolean; // whether the cost has been paid
@@ -283,6 +284,7 @@ const EDITABLE: (keyof Bill)[] = [
   'category',
   'categoryReason',
   'taxRate',
+  'taxRateReason',
   'description',
   'status',
   'createdBy',
