@@ -4,10 +4,12 @@ import { ROLES } from '@/lib/userStore';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
-const blankRow = () => ({ firstName: '', lastName: '', email: '', mobile: '', role: 'Standard' });
+const blankPriv = () => ({ accessAll: false, createClaims: false, canPublish: false });
+const blankRow = () => ({ firstName: '', lastName: '', email: '', mobile: '', role: 'Standard', privileges: blankPriv() });
 
 // Parse a simple CSV (First name, Last name, Email, Mobile, Role). A header row
-// containing "first" is skipped.
+// containing "first" is skipped. Privileges aren't in the CSV — they default off
+// and are set per row in the grid, same as the single "Add a user" dialog.
 function parseCsv(text) {
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
   const rows = [];
@@ -16,7 +18,7 @@ function parseCsv(text) {
     if (rows.length === 0 && /first/i.test(cols[0] || '')) continue; // header
     const [firstName = '', lastName = '', email = '', mobile = '', role = 'Standard'] = cols;
     if (firstName || lastName || email) {
-      rows.push({ firstName, lastName, email, mobile, role: ROLES.includes(role) ? role : 'Standard' });
+      rows.push({ firstName, lastName, email, mobile, role: ROLES.includes(role) ? role : 'Standard', privileges: blankPriv() });
     }
   }
   return rows;
@@ -53,6 +55,8 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
   if (!open) return null;
 
   const setCell = (i, k, v) => setRows((r) => r.map((row, idx) => (idx === i ? { ...row, [k]: v } : row)));
+  const setPriv = (i, k, v) =>
+    setRows((r) => r.map((row, idx) => (idx === i ? { ...row, privileges: { ...(row.privileges || {}), [k]: v } } : row)));
   const addRow = () => setRows((r) => [...r, blankRow()]);
   const close = () => {
     setRows([blankRow()]);
@@ -131,35 +135,57 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
 
           {/* Editable grid */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[980px] text-sm">
               <thead>
                 <tr className="text-left text-muted-foreground">
                   <th className="pb-2 pr-3 font-medium">First name</th>
                   <th className="pb-2 pr-3 font-medium">Last name</th>
                   <th className="pb-2 pr-3 font-medium">Email</th>
                   <th className="pb-2 pr-3 font-medium">Mobile number</th>
-                  <th className="pb-2 font-medium">Role</th>
+                  <th className="pb-2 pr-3 font-medium">Role</th>
+                  <th className="pb-2 pr-3 text-center font-medium" title="Access all documents in the account, not just their own">Access&nbsp;all</th>
+                  <th className="pb-2 pr-3 text-center font-medium" title="Create expense claims">Create&nbsp;claims</th>
+                  <th className="pb-2 text-center font-medium" title="Publish items and expense claims to accounting software">Can&nbsp;publish</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i}>
-                    <td className="py-1 pr-3"><input value={r.firstName} onChange={(e) => setCell(i, 'firstName', e.target.value)} className={cell} /></td>
-                    <td className="py-1 pr-3"><input value={r.lastName} onChange={(e) => setCell(i, 'lastName', e.target.value)} className={cell} /></td>
-                    <td className="py-1 pr-3"><input value={r.email} onChange={(e) => setCell(i, 'email', e.target.value)} type="email" className={cell} /></td>
-                    <td className="py-1 pr-3"><input value={r.mobile} onChange={(e) => setCell(i, 'mobile', e.target.value)} className={cell} /></td>
-                    <td className="py-1">
-                      <div className="relative">
-                        <select value={r.role} onChange={(e) => setCell(i, 'role', e.target.value)} className="h-9 w-full appearance-none rounded-md border bg-background px-2.5 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                          {ROLES.map((role) => (
-                            <option key={role} value={role}>{role}</option>
-                          ))}
-                        </select>
-                        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((r, i) => {
+                  // Privileges only apply to Standard users — admin roles already
+                  // have full access, so the toggles are disabled (and shown on)
+                  // for them, mirroring the single "Add a user" dialog.
+                  const isStandard = r.role === 'Standard';
+                  const priv = r.privileges || {};
+                  const check = (k) => (
+                    <input
+                      type="checkbox"
+                      checked={isStandard ? Boolean(priv[k]) : true}
+                      disabled={!isStandard}
+                      onChange={(e) => setPriv(i, k, e.target.checked)}
+                      className="h-4 w-4 accent-black disabled:opacity-40"
+                    />
+                  );
+                  return (
+                    <tr key={i}>
+                      <td className="py-1 pr-3"><input value={r.firstName} onChange={(e) => setCell(i, 'firstName', e.target.value)} className={cell} /></td>
+                      <td className="py-1 pr-3"><input value={r.lastName} onChange={(e) => setCell(i, 'lastName', e.target.value)} className={cell} /></td>
+                      <td className="py-1 pr-3"><input value={r.email} onChange={(e) => setCell(i, 'email', e.target.value)} type="email" className={cell} /></td>
+                      <td className="py-1 pr-3"><input value={r.mobile} onChange={(e) => setCell(i, 'mobile', e.target.value)} className={cell} /></td>
+                      <td className="py-1 pr-3">
+                        <div className="relative">
+                          <select value={r.role} onChange={(e) => setCell(i, 'role', e.target.value)} className="h-9 w-full appearance-none rounded-md border bg-background px-2.5 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            {ROLES.map((role) => (
+                              <option key={role} value={role}>{role}</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        </div>
+                      </td>
+                      <td className="py-1 pr-3 text-center">{check('accessAll')}</td>
+                      <td className="py-1 pr-3 text-center">{check('createClaims')}</td>
+                      <td className="py-1 text-center">{check('canPublish')}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
