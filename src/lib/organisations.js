@@ -65,6 +65,16 @@ export function useOrganisations() {
   });
 }
 
+// Every linked client entity, not just the ones the signed-in user can open —
+// for the practice's client-access picker, where you assign entities you may not
+// work in yourself. Practice managers only; anyone else gets their own list back.
+export function useAllOrganisations() {
+  return useQuery({
+    queryKey: ['organisations', 'all'],
+    queryFn: async () => (await getJson('/api/organisations?all=1')).organisations ?? [],
+  });
+}
+
 export function useInvalidateOrganisations() {
   const qc = useQueryClient();
   return () => qc.invalidateQueries({ queryKey: ['organisations'] });

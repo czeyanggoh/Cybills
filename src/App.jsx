@@ -1,7 +1,7 @@
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth';
-import RequireAuth, { RequireSignedIn, RequireAdmin, RequireBusinessAdmin } from '@/components/RequireAuth';
+import RequireAuth, { RequireSignedIn, RequireAdmin, RequireBusinessAdmin, RequirePracticeTeam, RequirePracticeAdmin } from '@/components/RequireAuth';
 import Login from './pages/Login';
 import SetPassword from './pages/SetPassword';
 import Join from './pages/Join';
@@ -21,6 +21,8 @@ import VaultDetail from './pages/VaultDetail';
 import VaultTags from './pages/VaultTags';
 import VaultDownloads from './pages/VaultDownloads';
 import UsersPage from './pages/Users';
+import Colleagues from './pages/Colleagues';
+import Clients from './pages/Clients';
 import SubmissionHistory from './pages/SubmissionHistory';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
@@ -64,6 +66,9 @@ function App() {
             <Route path="/suppliers" element={<Protected><Suppliers /></Protected>} />
             <Route path="/exports" element={<Protected><Exports workspace="all" /></Protected>} />
             <Route path="/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
+            {/* The practice (CYBM) itself: its own team, and its client list. */}
+            <Route path="/colleagues" element={<RequirePracticeAdmin><Colleagues /></RequirePracticeAdmin>} />
+            <Route path="/clients" element={<RequirePracticeTeam><Clients /></RequirePracticeTeam>} />
             <Route path="/submission-history" element={<Protected><SubmissionHistory /></Protected>} />
             <Route path="/settings" element={<RequireBusinessAdmin><Settings /></RequireBusinessAdmin>} />
             <Route path="/profile" element={<Protected><Profile /></Protected>} />

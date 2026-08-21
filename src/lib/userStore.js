@@ -119,7 +119,10 @@ export async function joinCompany(payload) {
 // last known membership in that case.
 export async function fetchMembership() {
   try {
-    const res = await fetch('/api/users/me');
+    // Named with the selected organisation: a colleague's access comes from
+    // client access, so "what may I do" is only answerable against the entity
+    // they currently have open.
+    const res = await fetch('/api/users/me', { headers: orgHeaders() });
     if (!res.ok) return { status: 'error', user: null };
     return res.json();
   } catch {

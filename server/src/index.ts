@@ -11,7 +11,8 @@ import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { cyhrRouter } from './cyhr.js';
 import { claimsRouter } from './claims.js';
-import { usersRouter } from './users.js';
+import { usersRouter, memberForSession, canAccessOrg } from './users.js';
+import { practiceRouter } from './practice.js';
 import { mailRouter } from './mail.js';
 import { settingsRouter } from './settings.js';
 import { boardRouter } from './board.js';
@@ -47,6 +48,22 @@ app.use((req, res, next) => {
   if (/^\/api\/costs\/bills\/[^/]+\/file$/.test(p)) return next();
   if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
   return next();
+});
+
+// Client-access guard. Every per-entity API (bills, Xero, settings, claims, the
+// user roster) names the entity it is working in with an X-Org-Id header, so
+// one check here covers all of them: a client entity's staff can only ever
+// address their own entity, and a practice colleague only the clients they have
+// been given. Deliberately narrow — it judges nothing when there's no header,
+// no session, or no roster row for the caller, so every pre-existing caller
+// behaves exactly as before.
+app.use((req, res, next) => {
+  if (!googleEnabled || !req.path.startsWith('/api/')) return next();
+  const requested = (req.header('X-Org-Id') || '').trim();
+  if (!requested) return next();
+  const me = memberForSession(req);
+  if (!me || canAccessOrg(me, requested)) return next();
+  return res.status(403).json({ error: 'no_client_access' });
 });
 
 // Health check — nginx proxies /api/* here, and deploy.sh curls this to
@@ -85,6 +102,10 @@ app.use('/api/claims', claimsRouter);
 
 // Users — server-backed + shared (people list + approver roster).
 app.use('/api/users', usersRouter);
+
+// The practice (CYBM) itself: its colleagues, their client access, and the
+// connected-client list with what each has cost in Claude API usage.
+app.use('/api/practice', practiceRouter);
 
 // Connecting the Microsoft 365 sending mailbox (delegated Mail.Send). 503s
 // until the GRAPH_* app-registration vars are set.

@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { env, visionEnabled } from './env.js';
 import { notFiller, derivedDescription, withPeriod } from './store.js';
+import { recordUsage } from './usage.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
 // the model classifies into a value that actually exists in the UI. These are
@@ -341,6 +342,11 @@ extractRouter.post('/extract', async (req, res) => {
       output_config: { format: { type: 'json_schema', schema: buildSchema(categories, taxRateNames, projectNames) } },
     });
 
+    // What this document cost to read. Recorded per call and attributed to the
+    // client entity it was uploaded for — the practice's Clients page has no
+    // other source for API spend.
+    recordUsage(req, { feature: 'extract', model: env.ANTHROPIC_EXTRACT_MODEL, usage: message.usage });
+
     if (message.stop_reason === 'refusal') {
       return res.status(422).json({ error: 'refused' });
     }
@@ -446,6 +452,8 @@ vaultRouter.post('/summarize', async (req, res) => {
         },
       },
     });
+
+    recordUsage(req, { feature: 'summarize', model: env.ANTHROPIC_EXTRACT_MODEL, usage: message.usage });
 
     if (message.stop_reason === 'refusal') return res.status(422).json({ error: 'refused' });
     const textBlock = message.content.find((b) => b.type === 'text');

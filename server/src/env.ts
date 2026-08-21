@@ -41,6 +41,26 @@ export const env = {
   // or =claude-haiku-4-5-20251001 to trade accuracy for speed.
   ANTHROPIC_EXTRACT_MODEL: process.env.ANTHROPIC_EXTRACT_MODEL ?? 'claude-sonnet-5',
 
+  // --- The practice (CYBM) --------------------------------------------------
+  // CYBills is run BY an accounting practice FOR its clients. The practice's own
+  // team are "colleagues" (Practice > Colleagues); each colleague is granted
+  // "client access" to the client entities they work on, where they act as a
+  // Business Admin. Everyone else on the roster is an employee of one client
+  // entity and never leaves it.
+  //
+  // PRACTICE_DOMAIN is only used to recognise existing rows as practice staff
+  // the first time this runs (the seeded team is matched by name/email too);
+  // after that, membership is whatever the Colleagues page says.
+  PRACTICE_NAME: process.env.PRACTICE_NAME ?? 'CYBM',
+  PRACTICE_DOMAIN: process.env.PRACTICE_DOMAIN ?? 'cy-bm.sg',
+  // Timezone the practice's day rolls over in — used to bucket "today's" Claude
+  // API spend on the Clients page.
+  PRACTICE_TIMEZONE: process.env.PRACTICE_TIMEZONE ?? 'Asia/Singapore',
+  // Optional per-model price overrides for the API-cost estimate, USD per
+  // million tokens: '{"claude-sonnet-5":{"input":2,"output":10}}'. Unset uses
+  // the published list prices in usage.ts.
+  ANTHROPIC_PRICES: process.env.ANTHROPIC_PRICES ?? '',
+
   // --- Org roster (assignable users) ----------------------------------------
   // Optional comma-separated roster of org members for the Support Desk
   // "Assignee" dropdown. Each entry is `email` or `email:Display Name`, e.g.

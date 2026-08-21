@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID, randomBytes, createHash, scryptSync, timingSafeEqual } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId } from './workspace.js';
-import { getOrganisation, primaryOrgId } from './organisations.js';
+import { getOrganisation, primaryOrgId, listOrganisations } from './organisations.js';
 import { setSession, readSession } from './auth.js';
 import { env } from './env.js';
 import { sendMail, inviteEmail, passwordResetEmail, passwordChangedEmail } from './mailer.js';
@@ -71,7 +71,7 @@ function findByToken(items: User[], raw: string): User | undefined {
 // claims). This is the company's people list + approver roster + Users-page
 // data — now central and shared instead of per-browser localStorage.
 
-type User = {
+export type User = {
   id: string;
   workspaceId: string;
   name: string;
@@ -95,6 +95,21 @@ type User = {
   organisationId: string;
   companyId: string;
   companyName: string;
+  // --- Practice membership ---------------------------------------------------
+  // A colleague is a member of the practice (CYBM) rather than an employee of a
+  // client entity: they don't belong to one tenant, they work across the ones
+  // they're given client access to. `practice` is what the two rosters split on
+  // — Users lists the selected entity's employees, Colleagues lists the practice.
+  practice: boolean;
+  // Owner / Practice Admin run the practice itself (the Colleagues page and the
+  // client list); Standard colleagues just work on their assigned clients.
+  practiceRole: string;
+  // The client entities (organisation ids) this colleague may open. They are a
+  // Business Admin inside each one — that's the point of being on the practice
+  // team. Ignored for client employees, who are confined to their own entity.
+  clientAccess: string[];
+  // Access to every linked client, including ones added later.
+  allClients: boolean;
   // The user's direct manager (another user's id) — the approver a claim is
   // auto-routed to when this person submits it for approval.
   managerId?: string;
@@ -112,14 +127,14 @@ type User = {
 
 // Public shape sent to the client — never leak the password hash or the reset
 // token; expose only whether a password has been set.
-function publicUser(u: User) {
+export function publicUser(u: User) {
   const { passwordHash, resetTokenHash, resetTokenExpires, resetTokenKind, ...rest } = u;
   return { ...rest, hasPassword: Boolean(passwordHash) };
 }
 
 const COLLECTION = 'users';
 const load = () => loadCollection<User>(COLLECTION);
-const save = (items: User[]) => saveCollection(COLLECTION, items);
+export const save = (items: User[]) => saveCollection(COLLECTION, items);
 
 // The real company employees (matching the CYHR/Talenox records). Seeded once
 // per workspace so the list is never empty.
@@ -136,7 +151,7 @@ const norm = (s: string) => String(s ?? '').trim().toLowerCase();
 const SEED_EMAIL_BY_NAME = new Map(SEED.map((s) => [norm(String(s.name)), norm(String(s.email))]));
 const SEED_IDS = new Set(SEED.map((s) => s.id));
 
-function full(u: Partial<User>, ws: string): User {
+export function full(u: Partial<User>, ws: string): User {
   const name = (u.name || `${u.firstName || ''} ${u.lastName || ''}`).trim() || 'New user';
   return {
     id: u.id || `nu_${randomUUID().slice(0, 8)}`,
@@ -153,6 +168,10 @@ function full(u: Partial<User>, ws: string): User {
     deactivated: Boolean(u.deactivated),
     removed: Boolean(u.removed),
     pending: Boolean(u.pending),
+    practice: Boolean(u.practice),
+    practiceRole: currentPracticeRole(u.practiceRole),
+    clientAccess: Array.isArray(u.clientAccess) ? u.clientAccess.filter(Boolean) : [],
+    allClients: Boolean(u.allClients),
     organisationId: u.organisationId || '',
     companyId: u.companyId || '',
     companyName: u.companyName || '',
@@ -169,12 +188,97 @@ function full(u: Partial<User>, ws: string): User {
 // somewhere sensible. Before the first organisation is linked the scope is '' —
 // every row shares it, and the roster behaves exactly as it did.
 export function orgScope(req: Request): string {
+  const ws = workspaceId(req);
   const requested = (req.header('X-Org-Id') || '').trim();
-  if (requested && getOrganisation(workspaceId(req), requested)) return requested;
-  return primaryOrgId();
+  const me = memberForSession(req);
+  if (requested && getOrganisation(ws, requested) && canAccessOrg(me, requested)) return requested;
+  return defaultOrgFor(ws, me);
 }
 
 const inOrg = (u: User, org: string) => (u.organisationId || '') === org;
+
+// Whose row the caller can act on from where. A client entity's people are
+// reachable from that entity; your own row is always reachable (editing your
+// profile can't depend on which client you have open); and a colleague's row
+// belongs to the practice, so it is reachable to whoever runs the practice
+// wherever they happen to be working.
+function reachable(u: User, req: Request): boolean {
+  const me = memberForSession(req);
+  if (me && u.id === me.id) return true;
+  if (u.practice) return !readSession(req) || canManagePractice(me);
+  return inOrg(u, orgScope(req));
+}
+
+// --- Practice membership + client access -------------------------------------
+// CYBills is run by a practice (CYBM) for its clients. Two kinds of person are
+// on the roster, and they are not variations of one another:
+//
+//   * a client employee — belongs to exactly one client entity, never sees
+//     another one, and carries the role their own admin gave them;
+//   * a colleague — a member of the practice, who belongs to no single entity
+//     and instead holds "client access" to the entities they work on. Inside
+//     one of those they act as a Business Admin, because doing the client's
+//     books is the job.
+//
+// Everything below answers the two questions that follow from that: which
+// entities may this person open, and what may they do once inside one.
+
+export const PRACTICE_ROLES = ['Owner', 'Practice Admin', 'Standard'];
+
+// Collapse a stored practice role onto the three current ones.
+function currentPracticeRole(role: string | undefined): string {
+  if (role === 'Owner') return 'Owner';
+  if (role === 'Practice Admin' || role === 'Admin') return 'Practice Admin';
+  return 'Standard';
+}
+
+// Run the practice itself — the Colleagues roster and the client list. Owners
+// and Practice Admins only; a Standard colleague does client work.
+export function canManagePractice(u: User | null | undefined): boolean {
+  if (!u || u.removed || u.deactivated || !u.practice) return false;
+  const role = currentPracticeRole(u.practiceRole);
+  return role === 'Owner' || role === 'Practice Admin';
+}
+
+// May this person open this client entity? A null user is the session-less
+// mock/dev context, which stays open like the rest of the app.
+export function canAccessOrg(u: User | null | undefined, orgId: string): boolean {
+  if (!u) return true;
+  if (!orgId) return true; // nothing linked yet — one implicit scope everyone shares
+  if (u.practice) return Boolean(u.allClients) || (u.clientAccess || []).includes(orgId);
+  return (u.organisationId || '') === orgId;
+}
+
+// The entities this person may open, in the order the client should offer them.
+export function accessibleOrgIds(ws: string, u: User | null | undefined): string[] {
+  const all = listOrganisations(ws).map((o) => o.id);
+  if (!u) return all;
+  return all.filter((id) => canAccessOrg(u, id));
+}
+
+// Where someone lands when they haven't named an entity (or named one they
+// can't open): their first accessible client, else the primary organisation so
+// a caller with no roster row behaves exactly as it did before client access.
+function defaultOrgFor(ws: string, u: User | null | undefined): string {
+  if (!u) return primaryOrgId();
+  const mine = accessibleOrgIds(ws, u);
+  if (!mine.length) return u.practice ? '' : u.organisationId || '';
+  const primary = primaryOrgId();
+  return mine.includes(primary) ? primary : mine[0];
+}
+
+// What this person may do INSIDE a given entity. A colleague with access is a
+// Business Admin there; everyone else carries their own stored role.
+export function effectiveRoleFor(u: User | null | undefined, orgId: string): string {
+  if (!u) return 'Business Admin';
+  if (u.practice) return canAccessOrg(u, orgId) ? 'Business Admin' : 'Standard';
+  return currentRole(u.role);
+}
+
+// The caller's role in the entity they currently have selected.
+export function effectiveRole(req: Request): string {
+  return effectiveRoleFor(memberForSession(req), orgScope(req));
+}
 
 // Give every row an organisation it can actually be found under. Two cases:
 // rows that predate tenant scoping (a self-signup already picked their company
@@ -286,22 +390,109 @@ function reconcileSeedAdmins(items: User[], ws: string): boolean {
   return changed;
 }
 
+// Recognise a row that predates the practice/client split as one of the firm's
+// own people: the seeded team (matched by id, canonical email, or name — two of
+// them sign in with personal addresses), anyone named in OWNER_EMAILS, and any
+// address on the practice's own domain. Only ever consulted once per row; after
+// that, membership is whatever the Colleagues page says.
+function looksLikePracticeMember(u: User): boolean {
+  if (SEED_IDS.has(u.id)) return true;
+  const email = norm(u.email);
+  if (!email) return false;
+  if (ownerEmails().has(email)) return true;
+  if (SEED_EMAIL_BY_NAME.get(norm(u.name)) === email) return true;
+  const domain = norm(env.PRACTICE_DOMAIN);
+  return Boolean(domain) && email.endsWith(`@${domain}`);
+}
+
+// Backfill practice membership + client access onto rows written before either
+// existed, and keep the account owners able to run the practice. Runs on every
+// load, but decides membership for a given row exactly once (`practice` becomes
+// a boolean and is then left alone) so an admin's later "this person is a client
+// employee, not a colleague" is never undone. Migrated colleagues keep working
+// on the entity they were already in; owners get every client, present and
+// future, which is also the guard against locking the practice out of itself.
+function assignPractice(items: User[], ws: string): boolean {
+  const owners = ownerEmails();
+  let changed = false;
+  for (const u of items) {
+    if (u.workspaceId !== ws || u.removed) continue;
+    if (typeof u.practice !== 'boolean') {
+      u.practice = looksLikePracticeMember(u);
+      changed = true;
+    }
+    if (!u.practice) {
+      if (u.clientAccess?.length || u.allClients) {
+        u.clientAccess = [];
+        u.allClients = false;
+        changed = true;
+      }
+      continue;
+    }
+    if (!u.practiceRole) {
+      u.practiceRole = isBusinessAdminRole(u.role) ? 'Owner' : 'Standard';
+      changed = true;
+    }
+    if (!Array.isArray(u.clientAccess)) {
+      u.clientAccess = u.organisationId ? [u.organisationId] : [];
+      changed = true;
+    }
+    if (typeof u.allClients !== 'boolean') {
+      u.allClients = currentPracticeRole(u.practiceRole) === 'Owner';
+      changed = true;
+    }
+    // Break-glass, same spirit as reconcileSeedAdmins: an account owner is
+    // always a practice Owner with every client, so no edit can leave the
+    // practice with nobody able to manage it.
+    if (owners.has(norm(u.email))) {
+      if (u.practiceRole !== 'Owner') {
+        u.practiceRole = 'Owner';
+        changed = true;
+      }
+      if (!u.allClients) {
+        u.allClients = true;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 // Return the workspace's users, seeding the real employees on first use and
 // keeping the roster de-duplicated (one email per teammate).
-function ensure(ws: string): User[] {
+export function ensure(ws: string): User[] {
   const items = load();
   let changed = false;
   if (!items.some((u) => u.workspaceId === ws)) {
-    // Seeded into the primary organisation only — the firm's own staff, not a
-    // roster copied into every client entity that gets linked later.
+    // The seed IS the practice's own staff, so they're seeded as colleagues
+    // rather than as some client's employees: the account owners with every
+    // client, everyone else with the practice's own entity to start from.
+    // (assignPractice can't infer this later — `full` writes a concrete
+    // `practice: false`, which it then rightly leaves alone.)
     const org = primaryOrgId();
-    items.push(...SEED.map((s) => full({ ...s, organisationId: org }, ws)));
+    items.push(
+      ...SEED.map((s) => {
+        const owner = isBusinessAdminRole(String(s.role));
+        return full(
+          {
+            ...s,
+            organisationId: org,
+            practice: true,
+            practiceRole: owner ? 'Owner' : 'Standard',
+            allClients: owner,
+            clientAccess: org ? [org] : [],
+          },
+          ws
+        );
+      })
+    );
     changed = true;
   }
   if (assignOrganisations(items, ws)) changed = true;
   if (normalizeRoster(items, ws)) changed = true;
   if (normalizeRoles(items, ws)) changed = true;
   if (reconcileSeedAdmins(items, ws)) changed = true;
+  if (assignPractice(items, ws)) changed = true;
   if (changed) save(items);
   return items;
 }
@@ -363,6 +554,11 @@ function normalizeRoles(items: User[], ws: string): boolean {
 
 const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'project'];
 
+// Who is on the practice team, what they may run, and which clients they may
+// open. Only whoever manages the practice may touch these — a client entity's
+// own admin runs their staff, not the firm's.
+const PRACTICE_EDITABLE: (keyof User)[] = ['practice', 'practiceRole', 'clientAccess', 'allClients'];
+
 // The direct manager to route a claim to, given the claimant's display name.
 // Resolves the claimant's row, then their managerId to a roster member. Returns
 // the approver's { name, email } or null when no manager is set / found.
@@ -394,6 +590,13 @@ function applyEditable(user: User, b: Partial<User>, ws: string) {
     const nm = `${user.firstName || ''} ${user.lastName || ''}`.trim();
     if (nm) user.name = nm;
   }
+  // Client access only ever names entities that are actually linked, so an
+  // unlinked (or invented) id can't sit on a row granting nothing.
+  if ('clientAccess' in b) {
+    const wanted = Array.isArray(b.clientAccess) ? b.clientAccess : [];
+    user.clientAccess = [...new Set(wanted.map(String))].filter((id) => getOrganisation(ws, id));
+  }
+  if ('practiceRole' in b) user.practiceRole = currentPracticeRole(user.practiceRole);
   // Moving someone to another organisation relabels the company on their row,
   // so the roster can never show the entity they used to belong to.
   if ('organisationId' in b) {
@@ -402,17 +605,60 @@ function applyEditable(user: User, b: Partial<User>, ws: string) {
   }
 }
 
+export type InviteResult = { email: string; name: string; sent: boolean; link?: string; error?: string };
+
+// Invite freshly-created people (best-effort): issue a set-password link and
+// email it. The rows are mutated with the token; the caller saves. Shared by the
+// Users roster and the practice's Colleagues roster.
+export async function sendInvites(
+  req: Request,
+  created: User[],
+  opts: { orgName?: string; message?: string } = {}
+): Promise<InviteResult[]> {
+  const invites: InviteResult[] = [];
+  const inviter = memberForSession(req)?.name || readSession(req)?.name;
+  for (const nu of created) {
+    if (!nu.email) continue;
+    const raw = issueToken(nu, 'invite');
+    nu.invitedAt = new Date().toISOString();
+    const link = resetUrl(req, raw);
+    const mail = inviteEmail({
+      name: nu.name,
+      url: link,
+      inviterName: inviter,
+      expiresInDays: env.INVITE_TTL_DAYS,
+      orgName: opts.orgName || '',
+      message: opts.message || '',
+    });
+    const result = await sendMail({ to: { email: nu.email, name: nu.name }, ...mail }).catch(
+      (e): { sent: boolean; error?: string } => ({ sent: false, error: e instanceof Error ? e.message : String(e) })
+    );
+    invites.push({
+      email: nu.email,
+      name: nu.name,
+      sent: Boolean(result.sent),
+      // Surface WHY it didn't send (SMTP rejection, not-configured, etc.) so
+      // the admin isn't left guessing, plus the link they can share by hand.
+      error: result.sent ? undefined : (result as { error?: string }).error,
+      link: result.sent ? undefined : link,
+    });
+  }
+  return invites;
+}
+
 export const usersRouter = Router();
 
-// GET /api/users — the selected organisation's people. Tenant-scoped, so
+// GET /api/users — the selected organisation's OWN people. Tenant-scoped, so
 // switching organisations switches the roster (and with it the direct-manager
-// options) instead of showing every entity's staff in one list.
+// options) instead of showing every entity's staff in one list. Practice
+// colleagues are deliberately absent: they aren't this client's employees, they
+// work across clients, and they have their own roster at /api/practice.
 usersRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
   const org = orgScope(req);
   res.json({
     users: ensure(ws)
-      .filter((u) => u.workspaceId === ws && !u.removed && inOrg(u, org))
+      .filter((u) => u.workspaceId === ws && !u.removed && !u.practice && inOrg(u, org))
       .map(publicUser),
   });
 });
@@ -436,12 +682,19 @@ usersRouter.get('/me', (req, res) => {
   if (!user) return res.json({ status: 'none', user: null });
   const status = user.deactivated ? 'deactivated' : user.pending ? 'pending' : 'active';
   const live = status === 'active';
+  // Access is answered for the entity the caller currently has open, because a
+  // colleague's rights come from client access rather than from their own row:
+  // Business Admin inside an assigned client, nothing at all outside one.
+  const role = effectiveRoleFor(user, orgScope(req));
   return res.json({
     status,
     user: publicUser(user),
-    admin: live && isAdminRole(user.role),
-    businessAdmin: live && isBusinessAdminRole(user.role),
-    canManageUsers: live && canManageUsersRole(user.role),
+    admin: live && isAdminRole(role),
+    businessAdmin: live && isBusinessAdminRole(role),
+    canManageUsers: live && canManageUsersRole(role),
+    // The practice surfaces (Colleagues, Clients) — practice team only.
+    practice: live && Boolean(user.practice),
+    managePractice: live && canManagePractice(user),
   });
 });
 
@@ -539,30 +792,7 @@ usersRouter.post('/', async (req, res) => {
     items.unshift(newUser);
     created.push(newUser);
   }
-  // Invite the new users (best-effort): issue a set-password link and email it.
-  const invites: Array<{ email: string; name: string; sent: boolean; link?: string; error?: string }> = [];
-  if (notify) {
-    const inviter = memberForSession(req)?.name || readSession(req)?.name;
-    for (const nu of created) {
-      if (!nu.email) continue;
-      const raw = issueToken(nu, 'invite');
-      nu.invitedAt = new Date().toISOString();
-      const link = resetUrl(req, raw);
-      const mail = inviteEmail({ name: nu.name, url: link, inviterName: inviter, expiresInDays: env.INVITE_TTL_DAYS, orgName, message });
-      const result = await sendMail({ to: { email: nu.email, name: nu.name }, ...mail }).catch(
-        (e): { sent: boolean; error?: string } => ({ sent: false, error: e instanceof Error ? e.message : String(e) })
-      );
-      invites.push({
-        email: nu.email,
-        name: nu.name,
-        sent: Boolean(result.sent),
-        // Surface WHY it didn't send (SMTP rejection, not-configured, etc.) so
-        // the admin isn't left guessing, plus the link they can share by hand.
-        error: result.sent ? undefined : (result as { error?: string }).error,
-        link: result.sent ? undefined : link,
-      });
-    }
-  }
+  const invites = notify ? await sendInvites(req, created, { orgName, message }) : [];
   save(items);
   res.json({ users: created.map(publicUser), duplicates, invites });
 });
@@ -601,7 +831,7 @@ function requireAdmin(req: Request, res: Response): boolean {
     return false;
   }
   const me = memberForSession(req);
-  if (me && !canManageUsersRole(me.role)) {
+  if (me && !canManageUsersRole(effectiveRoleFor(me, orgScope(req))) && !canManagePractice(me)) {
     res.status(403).json({ error: 'forbidden' });
     return false;
   }
@@ -616,7 +846,7 @@ usersRouter.post('/:id/invite', async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const ws = workspaceId(req);
   const items = ensure(ws);
-  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws && !u.removed && inOrg(u, orgScope(req)));
+  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws && !u.removed && reachable(u, req));
   if (!user) return res.status(404).json({ error: 'not_found' });
   if (!user.email) return res.status(400).json({ error: 'no_email' });
 
@@ -728,7 +958,7 @@ usersRouter.post('/:id/password', async (req, res) => {
 
   const ws = workspaceId(req);
   const items = ensure(ws);
-  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws && inOrg(u, orgScope(req)));
+  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws && reachable(u, req));
   if (!user) return res.status(404).json({ error: 'not_found' });
 
   user.passwordHash = hashPassword(password);
@@ -761,12 +991,8 @@ function detachManagerLinks(items: User[], moved: User) {
 // have open.
 function mutate(req: Request, res: Response, fn: (u: User, items: User[]) => void) {
   const ws = workspaceId(req);
-  const org = orgScope(req);
   const items = ensure(ws);
-  const meId = memberForSession(req)?.id;
-  const user = items.find(
-    (u) => u.id === req.params.id && u.workspaceId === ws && (inOrg(u, org) || u.id === meId)
-  );
+  const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws && reachable(u, req));
   if (!user) return res.status(404).json({ error: 'not_found' });
   fn(user, items);
   save(items);
@@ -781,10 +1007,13 @@ const SELF_EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'mobile'
 usersRouter.patch('/:id', (req, res) => {
   const session = readSession(req);
   const me = session ? memberForSession(req) : null;
-  const admin = me ? canManageUsersRole(me.role) : !session; // sessionless mock stays open
+  // Judged by the caller's role in the entity they have open, so a colleague
+  // manages the roster of a client they've been given, and of no other.
+  const admin = me ? canManageUsersRole(effectiveRoleFor(me, orgScope(req))) || canManagePractice(me) : !session; // sessionless mock stays open
   const isSelf = Boolean(me && me.id === req.params.id);
   if (!admin && !isSelf) return res.status(403).json({ error: 'forbidden' });
-  const allowed = admin ? EDITABLE : SELF_EDITABLE;
+  const practiceAdmin = me ? canManagePractice(me) : !session;
+  const allowed = admin ? (practiceAdmin ? [...EDITABLE, ...PRACTICE_EDITABLE] : EDITABLE) : SELF_EDITABLE;
   const body = (req.body ?? {}) as Record<string, unknown>;
   const filtered: Partial<User> = {};
   for (const k of allowed) if (k in body) (filtered as Record<string, unknown>)[k] = body[k];

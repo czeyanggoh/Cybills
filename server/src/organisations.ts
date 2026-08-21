@@ -5,6 +5,11 @@ import { Router } from 'express';
 import { env } from './env.js';
 import { readSession } from './auth.js';
 import { WORKSPACE_ID, workspaceId } from './workspace.js';
+// Who may open which client entity is a fact about the roster, so it is decided
+// in users.ts next to the rows it reads. (users.ts imports this module back for
+// the org lookups — neither one calls the other while loading, so the cycle is
+// inert.)
+import { memberForSession, canAccessOrg, canManagePractice } from './users.js';
 
 // Organisations = the client entities bills are published for. Each one is
 // linked to a Xero organisation (tenant) that cyworkspace holds a connection
@@ -93,14 +98,21 @@ export function dataScopeForOrg(requestedOrgId: string): string {
 
 export const organisationsRouter = Router();
 
-// GET /api/organisations — the caller's linked organisations, A→Z. Flags the
-// primary org so the client can keep the legacy demo/sample docs there only.
+// GET /api/organisations — the linked organisations the CALLER may open, A→Z.
+// A client entity's own staff see only their entity; a practice colleague sees
+// the clients they've been given access to. Flags the primary org so the client
+// can keep the legacy demo/sample docs there only.
+//
+// `?all=1` returns every linked entity regardless of access, for whoever runs
+// the practice — assigning client access means choosing from the full list,
+// which is not the same as being able to work in all of them.
 organisationsRouter.get('/', (req, res) => {
   const primary = primaryOrgId();
-  const organisations = listOrganisations(workspaceId(req)).map((o) => ({
-    ...o,
-    isPrimary: o.id === primary,
-  }));
+  const me = memberForSession(req);
+  const wantsAll = req.query.all === '1' && (!me || canManagePractice(me));
+  const organisations = listOrganisations(workspaceId(req))
+    .filter((o) => wantsAll || canAccessOrg(me, o.id))
+    .map((o) => ({ ...o, isPrimary: o.id === primary }));
   res.json({ organisations });
 });
 

@@ -1,6 +1,7 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, canManageUsers } from '@/lib/userStore';
+import { isPracticeTeam, canManagePractice } from '@/lib/practiceStore';
 
 function Loading() {
   return (
@@ -65,4 +66,16 @@ export function RequireAdmin({ children }) {
 // business configuration.
 export function RequireBusinessAdmin({ children }) {
   return <RequireAccess allows={canManageBusiness}>{children}</RequireAccess>;
+}
+
+// The practice's client list — anyone on the practice team (CYBM), since it's
+// how a colleague finds the clients they work on.
+export function RequirePracticeTeam({ children }) {
+  return <RequireAccess allows={isPracticeTeam}>{children}</RequireAccess>;
+}
+
+// The colleague roster and client access — Owner / Practice Admin only. A
+// Standard colleague does client work; they don't run the practice.
+export function RequirePracticeAdmin({ children }) {
+  return <RequireAccess allows={canManagePractice}>{children}</RequireAccess>;
 }

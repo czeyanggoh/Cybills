@@ -31,6 +31,40 @@ Then act based on result:
   `git diff`) before overwriting.
 - **Diverged** → STOP and let the user choose rebase/merge/discard.
 
+## The practice (CYBM) vs. its clients
+
+CYBills is run BY an accounting practice FOR its clients, so there are two
+kinds of person on the roster and they are not variations of one another:
+
+- **Client employees** — belong to exactly one organisation (a linked Xero
+  tenant), never see another, and carry the role their own admin gave them.
+  This is the Users page (`/users`), which is tenant-scoped.
+- **Colleagues** — the practice's own team (`/colleagues`). They belong to no
+  single entity; they hold **client access** to the entities they work on, and
+  are a **Business Admin** inside each one. Practice roles are Owner /
+  Practice Admin / Standard; the first two also run the practice itself.
+
+Server side: roster rows carry `practice` / `practiceRole` / `clientAccess` /
+`allClients`, and the predicates that read them (`canAccessOrg`,
+`effectiveRoleFor`, `canManagePractice`) live in `server/src/users.ts` next to
+the rows. `server/src/practice.ts` is the practice-facing surface over them
+(`/api/practice/colleagues`, `/api/practice/clients`). Access is enforced in
+one place: an `X-Org-Id` guard in `index.ts` rejects any per-entity API call
+naming a client the caller can't open, and `GET /api/organisations` returns
+only the entities they may open (`?all=1`, practice managers only, returns
+every linked entity for the client-access picker).
+
+Env (server/.env): `PRACTICE_NAME`, `PRACTICE_DOMAIN` (only used to recognise
+pre-existing rows as practice staff on first run), `PRACTICE_TIMEZONE`.
+
+## Claude API spend
+
+Every Anthropic call records its token usage (`server/src/usage.ts`), attributed
+to the client entity it was made for and priced at the published per-model
+rates. Practice -> Clients shows today's and month-to-date cost per client.
+There is no billing API behind this — it is an estimate from real token counts.
+Override a rate with `ANTHROPIC_PRICES='{"claude-sonnet-5":{"input":2,"output":10}}'`.
+
 ## Xero via the cyworkspace relay
 
 CYBills never holds Xero credentials. All Xero traffic goes through

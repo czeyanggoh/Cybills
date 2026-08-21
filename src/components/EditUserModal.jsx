@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, ChevronDown, HelpCircle } from 'lucide-react';
 import { ROLES, ROLE_INFO, updateUser } from '@/lib/userStore';
+import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
 import { useOrganisations } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
@@ -24,13 +25,19 @@ function splitName(user) {
 
 // Edit an existing user's details or privileges (Manage → Edit user details /
 // Edit privileges). `mode` is 'details' or 'privileges'.
-export default function EditUserModal({ open, mode, user, onClose }) {
+//
+// `practice` switches this to a colleague: the role being edited is then their
+// role in the PRACTICE (Owner / Practice Admin / Standard), not a role inside a
+// client entity — a colleague is a Business Admin in every client they're given,
+// and which clients those are is granted separately (Manage → Client access).
+// There is no organisation to move them to either, since they belong to none.
+export default function EditUserModal({ open, mode, user, practice = false, onClose }) {
   const seed = user ? splitName(user) : { first: '', last: '' };
   const [firstName, setFirstName] = useState(seed.first);
   const [lastName, setLastName] = useState(seed.last);
   const [login, setLogin] = useState(user?.login === 'Yes');
   const [email, setEmail] = useState(user?.email || '');
-  const [role, setRole] = useState(user?.role || 'Standard');
+  const [role, setRole] = useState((practice ? user?.practiceRole : user?.role) || 'Standard');
   const [priv, setPriv] = useState(user?.privileges || { accessAll: false, createClaims: false, canPublish: false });
   // Rosters are per-organisation, so an admin can move someone to another entity
   // — the row then only appears (and is only manageable) under that one.
@@ -56,7 +63,7 @@ export default function EditUserModal({ open, mode, user, onClose }) {
         ...(movingOut ? { organisationId } : {}),
       });
     } else {
-      updateUser(user.id, { role, privileges: priv });
+      updateUser(user.id, practice ? { practiceRole: role, privileges: priv } : { role, privileges: priv });
     }
     onClose();
   };
@@ -67,7 +74,9 @@ export default function EditUserModal({ open, mode, user, onClose }) {
       <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
       <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-lg bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
-          <h2 className="text-base font-semibold tracking-tight">{isDetails ? 'Edit user details' : 'Edit privileges'}</h2>
+          <h2 className="text-base font-semibold tracking-tight">
+            {isDetails ? (practice ? 'Edit colleague details' : 'Edit user details') : 'Edit privileges'}
+          </h2>
           <button type="button" onClick={onClose} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
             <X className="h-5 w-5" />
           </button>
@@ -84,7 +93,7 @@ export default function EditUserModal({ open, mode, user, onClose }) {
                 <span>Last name <span className="text-destructive">*</span></span>
                 <input value={lastName} onChange={(e) => setLastName(e.target.value)} className={input} />
               </label>
-              {organisations.length > 1 && (
+              {!practice && organisations.length > 1 && (
                 <label className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
                   <span>Organisation</span>
                   <div className="relative">
@@ -116,7 +125,7 @@ export default function EditUserModal({ open, mode, user, onClose }) {
                 </label>
               ) : (
                 <p className="rounded-md border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
-                  Without login access this user can’t sign in — no email is required.
+                  Without login access this {practice ? 'colleague' : 'user'} can’t sign in — no email is required.
                 </p>
               )}
             </div>
@@ -126,18 +135,18 @@ export default function EditUserModal({ open, mode, user, onClose }) {
                 <span>Role</span>
                 <div className="relative">
                   <select value={role} onChange={(e) => setRole(e.target.value)} className="h-10 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                    {(practice ? PRACTICE_ROLES : ROLES).map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 </div>
               </label>
               <div className="text-sm">
-                <p className="font-medium">{role} users can:</p>
+                <p className="font-medium">{role} {practice ? 'colleagues' : 'users'} can:</p>
                 <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
-                  {(ROLE_INFO[role] || []).map((line) => <li key={line}>{line}</li>)}
+                  {((practice ? PRACTICE_ROLE_INFO : ROLE_INFO)[role] || []).map((line) => <li key={line}>{line}</li>)}
                 </ul>
               </div>
-              {role === 'Standard' && (
+              {role === 'Standard' && !practice && (
                 <div className="space-y-4">
                   <p className="text-sm font-medium">and optionally:</p>
                   <div className="flex items-center justify-between">

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { fetchMembership } from '@/lib/userStore';
+import { ORGANISATION_EVENT } from '@/lib/organisations';
 
 // App-wide auth state. Loads once: which backend capabilities are configured
 // (`googleEnabled`, `visionEnabled`, `mailEnabled`), the current signed-in user
@@ -45,6 +46,10 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     refresh();
+    // Access is answered per client entity, so switching one re-asks the server
+    // rather than carrying the previous entity's verdict across.
+    window.addEventListener(ORGANISATION_EVENT, refresh);
+    return () => window.removeEventListener(ORGANISATION_EVENT, refresh);
   }, [refresh]);
 
   const signOut = useCallback(async () => {

@@ -15,6 +15,8 @@ import {
   LogOut,
   Check,
   Building2,
+  Briefcase,
+  UserCog,
   Trash2,
   Menu,
   X,
@@ -27,6 +29,7 @@ import {
   setActiveOrganisationId,
 } from '@/lib/organisations';
 import { canManageBusiness, canManageUsers } from '@/lib/userStore';
+import { isPracticeTeam, canManagePractice } from '@/lib/practiceStore';
 import AddDocumentsDrawer from './AddDocumentsDrawer';
 import AddOrganisationModal from './AddOrganisationModal';
 import RemoveOrganisationModal from './RemoveOrganisationModal';
@@ -45,9 +48,12 @@ const TOP_TABS = [
   { to: '/support', label: 'Support Desk' },
 ];
 
-// `requires` names the access each item needs: 'users' (either admin tier) or
-// 'business' (Business Admin only). Unset = everyone.
+// `requires` names the access each item needs: 'users' (either admin tier),
+// 'business' (Business Admin only), 'practiceTeam' (any colleague of the
+// practice) or 'practice' (the colleagues who run it). Unset = everyone.
 const BOTTOM = [
+  { label: 'Clients', icon: Briefcase, to: '/clients', requires: 'practiceTeam' },
+  { label: 'Colleagues', icon: UserCog, to: '/colleagues', requires: 'practice' },
   { label: 'Users', icon: Users, to: '/users', requires: 'users' },
   { label: 'Exports', icon: Download, to: '/exports' },
   { label: 'Submission history', icon: History, to: '/submission-history' },
@@ -152,7 +158,11 @@ function OrganisationSwitcher() {
   // then look wiped the day the user first opens this switcher. Writing it down
   // makes every consumer agree on the same org from the start.
   useEffect(() => {
-    if (activeId || !organisations.length) return;
+    if (!organisations.length) return;
+    // Also covers a selection that is no longer offered — an entity that was
+    // unlinked, or one this user's client access no longer includes. Left
+    // pinned, every request would carry an org header the server rejects.
+    if (activeId && organisations.some((o) => o.id === activeId)) return;
     setActiveOrganisationId(organisations[0].id);
     setActiveId(organisations[0].id);
   }, [activeId, organisations]);
@@ -295,7 +305,15 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   // works.
   const canBusiness = canManageBusiness(membership, googleEnabled);
   const canUsers = canManageUsers(membership, googleEnabled);
-  const allowed = { business: canBusiness, users: canUsers };
+  // The practice surfaces belong to CYBM's own team: Clients to any colleague,
+  // Colleagues to the ones who run the practice. A client's own staff never see
+  // either — from inside a client entity, the practice doesn't exist.
+  const allowed = {
+    business: canBusiness,
+    users: canUsers,
+    practiceTeam: isPracticeTeam(membership, googleEnabled),
+    practice: canManagePractice(membership, googleEnabled),
+  };
   const bottomNav = BOTTOM.filter((item) => !item.requires || allowed[item.requires]);
   // Prefer the CYBills roster identity (managed in Users) over the raw session,
   // whose name comes from the Google profile — which may differ (e.g. a Google
