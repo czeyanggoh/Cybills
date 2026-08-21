@@ -509,6 +509,27 @@ export function unmarkBillsClaimed(ids: string[]): number {
   return n;
 }
 
+// Forget that a bill was ever published: clears the Xero provenance and brings
+// the document back out of Archive. Purely local — it does NOT delete anything
+// in Xero. For the case where the bill was deleted (or voided) at the Xero end
+// and the document needs to be publishable again.
+export function clearBillPosted(orgId: string, id: string): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  const wasPublished = Boolean(bill.xeroInvoiceId);
+  bill.xeroInvoiceId = undefined;
+  bill.xeroTenantId = undefined;
+  bill.xeroTenantName = undefined;
+  bill.xeroPostedAt = undefined;
+  // Publishing is what archived it, so undoing the publish undoes that too —
+  // but only if there was a publish to undo. A document parked in Archive by
+  // hand stays there, and one sitting on an expense claim stays on it.
+  if (wasPublished && bill.status === 'archived') bill.status = 'new';
+  persist(bills);
+  return bill;
+}
+
 // Update an existing bill's editable fields in place. Returns null if not found.
 export function updateBill(orgId: string, id: string, patch: Partial<Bill>): Bill | null {
   const bills = load();

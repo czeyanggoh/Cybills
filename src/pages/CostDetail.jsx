@@ -26,12 +26,12 @@ import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/cla
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
-import { getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useXeroProjectOptions } from '@/lib/organisations';
+import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useXeroProjectOptions } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, markNotDuplicate, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
 import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
@@ -240,6 +240,8 @@ export default function CostDetail() {
   const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
   const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
   const [compareOpen, setCompareOpen] = useState(false); // side-by-side duplicate review
+  const [xeroBusy, setXeroBusy] = useState(''); // '' | 'attach' | 'clear'
+  const [xeroNote, setXeroNote] = useState('');
 
   const doc = mockDoc ?? persisted;
   // If this document is a line item inside an expense claim, keep the page in
@@ -553,6 +555,44 @@ export default function CostDetail() {
     await persistStatus(persisted?.status ?? 'new');
     setPublishOpen(true);
   };
+  // Put the stored file on the Xero bill. For documents published before
+  // attachments were sent, or when that upload failed at publish time.
+  const sendFileToXero = async () => {
+    setXeroBusy('attach');
+    setXeroNote('');
+    try {
+      const orgId = await resolveCategorisationOrgId();
+      if (!orgId) throw new Error('No Xero organisation is linked.');
+      await attachBillFileToXero(orgId, doc.id);
+      // Name mid-sentence: a tenant name ending in "Ltd." would otherwise give
+      // the line two full stops.
+      setXeroNote(`File attached to the bill in ${doc.xeroTenantName || 'Xero'} — it shows there under Related Files.`);
+    } catch (err) {
+      setXeroNote(err?.message || 'Could not attach the file to Xero.');
+    } finally {
+      setXeroBusy('');
+    }
+  };
+
+  // "This bill no longer exists in Xero" — clear the provenance so the document
+  // comes back out of Archive and can be published again. Nothing is deleted in
+  // Xero from here, so say so before doing it.
+  const clearXeroLink = async () => {
+    if (!window.confirm(`Clear this document's Xero link?\n\nIt goes back to your Costs inbox and can be published again. Nothing is deleted in ${doc.xeroTenantName || 'Xero'} — if the bill is still there, delete or void it in Xero first, or you'll end up with two.`)) return;
+    setXeroBusy('clear');
+    setXeroNote('');
+    try {
+      const r = await clearXeroPublish(doc.id);
+      if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+      notifyBillsChanged();
+      setXeroNote('Xero link cleared — this document is back in your inbox.');
+    } catch {
+      setXeroNote('Could not clear the Xero link — please try again.');
+    } finally {
+      setXeroBusy('');
+    }
+  };
+
   const onPublished = ({ bill }) => {
     if (bill) setPersisted(billToDoc({ ...bill, hasFile: Boolean(bill.storageKey) }));
     notifyBillsChanged();
@@ -965,6 +1005,16 @@ export default function CostDetail() {
               Publish to Xero
             </TopButton>
           ))}
+        {doc.persisted && doc.xeroInvoiceId && doc.hasFile && (
+          <TopButton onClick={sendFileToXero} disabled={xeroBusy} title="Upload this document's file to the Xero bill as an attachment">
+            {xeroBusy === 'attach' ? 'Sending…' : 'Send file to Xero'}
+          </TopButton>
+        )}
+        {doc.persisted && doc.xeroInvoiceId && (
+          <TopButton onClick={clearXeroLink} disabled={xeroBusy} title="Forget that this was published — does not delete anything in Xero">
+            {xeroBusy === 'clear' ? 'Clearing…' : 'Clear Xero link'}
+          </TopButton>
+        )}
         <TopButton
           onClick={() => setClaimOpen(true)}
           disabled={Boolean(doc.xeroInvoiceId)}
@@ -1019,6 +1069,13 @@ export default function CostDetail() {
           </button>
         </div>
       </div>
+      {xeroNote && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted px-3 py-2 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{xeroNote}</span>
+          <button type="button" onClick={() => setXeroNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
+        </div>
+      )}
       <div className="mb-4">
         <button
           type="button"

@@ -441,6 +441,23 @@ export async function publishClaimToXero(organisationId, payload) {
   return body;
 }
 
+// Put a published document's original file on the Xero bill it was posted as.
+// For bills published before attachments were sent, or when that upload failed.
+export async function attachBillFileToXero(organisationId, billId) {
+  const res = await fetch(`/api/xero/organisations/${organisationId}/attach-file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ billId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = /** @type {any} */ (new Error(body.message || 'Could not attach the file.'));
+    err.code = body.error;
+    throw err;
+  }
+  return body;
+}
+
 export async function publishBillToXero(organisationId, payload) {
   const res = await fetch(`/api/xero/organisations/${organisationId}/publish-bill`, {
     method: 'POST',

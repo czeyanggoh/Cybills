@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { env, xeroEnabled } from './env.js';
 import { orgIdFor } from './bills.js';
 import { getOrganisation } from './organisations.js';
-import { getBillById, getBillByIdAny, markBillPosted, parseAmount } from './store.js';
+import { getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
+import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
 import { workspaceId } from './workspace.js';
 
@@ -348,6 +349,68 @@ function displayIdOf(id: string): string {
   return String(21000000000 + (h % 1000000000));
 }
 
+// Xero rejects attachments over 25 MB. Buffer up to that and no further — a
+// runaway file must not take the process with it.
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+// A stored document's bytes, for attaching to the Xero bill it was published as.
+async function billFileBytes(bill: Bill): Promise<{ bytes: Buffer; contentType: string } | null> {
+  if (!bill.storageKey) return null;
+  const obj = await getBillFile(bill.storageKey, bill.contentType);
+  if (!obj) return null;
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of obj.body) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_ATTACHMENT_BYTES) {
+      obj.body.destroy();
+      return null;
+    }
+    chunks.push(Buffer.from(chunk as Buffer));
+  }
+  return {
+    bytes: Buffer.concat(chunks),
+    contentType: bill.contentType || obj.contentType || 'application/octet-stream',
+  };
+}
+
+// Xero's attachment filenames are part of the URL: keep them plain, and make
+// sure the extension matches what we're actually sending.
+function attachmentName(bill: Bill, contentType: string): string {
+  const ext = extFor(contentType) || 'pdf';
+  const base = String(bill.fileName || bill.supplier || 'document')
+    .replace(/\.[^./\\]+$/, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(0, 80) || 'document';
+  return `${base}.${ext}`;
+}
+
+// Put the original document on a Xero invoice. Best-effort by design: every
+// caller has already posted the invoice, and a failed upload must not undo that.
+async function attachBillFile(
+  tenantId: string,
+  invoiceId: string,
+  bill: Bill
+): Promise<{ ok: boolean; error?: string } | null> {
+  if (!invoiceId) return null;
+  try {
+    const file = await billFileBytes(bill);
+    if (!file) return null; // nothing stored (or too big) — nothing to attach
+    const name = attachmentName(bill, file.contentType);
+    const att = await relay(`Invoices/${invoiceId}/Attachments/${encodeURIComponent(name)}`, {
+      method: 'POST',
+      tenantId,
+      rawBody: file.bytes,
+      contentType: file.contentType,
+    });
+    if (!att.ok) console.error('[xero] bill attachment failed', att.status, att.message);
+    return att.ok ? { ok: true } : { ok: false, error: att.message };
+  } catch (err) {
+    console.error('[xero] bill attachment error', err);
+    return { ok: false, error: 'attach_failed' };
+  }
+}
+
 // Dext-style Xero line description: "<Supplier> #<ItemID> - <Description>".
 function xeroLineDescription(supplier: string, id: string, description: string): string {
   let out = String(supplier || '').trim();
@@ -440,9 +503,13 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
 
   const net = Math.max(0, total - tax);
   const line: Record<string, unknown> = {
+    // A bill published on its own reads as its own document: the description
+    // from the paper, nothing prepended. The "<Supplier> #<ItemID> - …" form is
+    // for EXPENSE CLAIM lines, where one Xero bill carries many people's
+    // receipts and each line has to say which document it came from.
     Description:
       String(b.description ?? '').trim() ||
-      xeroLineDescription(bill.supplier, bill.id, bill.description || '') ||
+      String(bill.description ?? '').trim() ||
       [bill.category || bill.documentType || 'Supplier bill', bill.invoiceNumber].filter(Boolean).join(' — '),
     Quantity: 1,
     // Post tax-EXCLUSIVE (net unit amount + explicit tax) so Xero shows a Tax
@@ -502,6 +569,15 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     xeroTenantName: organisation.tenantName || organisation.name,
   });
 
+  // Send the original document up as an attachment, so the paper sits on the
+  // bill in Xero rather than only here. Best-effort: the bill stays posted even
+  // if the upload fails, and /attach-file can retry it.
+  const attachment = await attachBillFile(
+    organisation.tenantId,
+    String(invoice.InvoiceID ?? ''),
+    updated ?? bill
+  );
+
   res.json({
     ok: true,
     invoice: {
@@ -509,8 +585,37 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
       invoiceNumber: String(invoice.InvoiceNumber ?? ''),
       status: String(invoice.Status ?? status),
     },
+    attachment,
     bill: updated,
   });
+});
+
+// POST /api/xero/organisations/:id/attach-file — put a published document's
+// original file on the Xero bill it was posted as. For bills published before
+// attachments were sent, or when the upload failed at publish time.
+// Body: { billId }.
+xeroRouter.post('/organisations/:id/attach-file', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+
+  const bill = getBillById(orgIdFor(req), String(req.body?.billId ?? ''));
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  if (!bill.xeroInvoiceId) {
+    return res.status(400).json({ error: 'not_published', message: 'This document has not been published to Xero yet.' });
+  }
+  if (!bill.storageKey) {
+    return res.status(400).json({ error: 'no_file', message: 'There is no stored file on this document to attach.' });
+  }
+
+  const attachment = await attachBillFile(organisation.tenantId, bill.xeroInvoiceId, bill);
+  if (!attachment?.ok) {
+    return res.status(502).json({
+      error: attachment?.error ? 'attach_failed' : 'file_unavailable',
+      message: attachment?.error || 'The stored file could not be read (it may be over Xero’s 25 MB limit).',
+    });
+  }
+  res.json({ ok: true, attachment });
 });
 
 // POST /api/xero/organisations/:id/publish-claim — post an APPROVED expense

@@ -84,6 +84,16 @@ export function markNotDuplicate(id) {
   return updateBill(id, { duplicateDismissed: true });
 }
 
+// Forget that a document was published to Xero: clears the stored invoice id,
+// tenant and date, and brings it back out of Archive so it can be published
+// again. Local only — it does NOT delete or void the bill in Xero. Use it when
+// the bill was removed at the Xero end.
+export async function clearXeroPublish(id) {
+  const res = await fetch(`/api/costs/bills/${id}/unpublish`, { method: 'POST', headers: orgHeaders() });
+  if (!res.ok) throw new Error('unpublish_failed');
+  return res.json();
+}
+
 export async function fetchBills() {
   const res = await fetch('/api/costs/bills', { headers: orgHeaders() });
   if (!res.ok) return [];

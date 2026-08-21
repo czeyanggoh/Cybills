@@ -5,6 +5,7 @@ import {
   insertBill,
   updateBill,
   reconcileReadiness,
+  clearBillPosted,
   costComplete,
   sweepStuckProcessing,
   flagDuplicate,
@@ -167,6 +168,18 @@ billsRouter.delete('/bills/:id', async (req, res) => {
   if (!removed) return res.status(404).json({ error: 'not_found' });
   if (removed.storageKey) await deleteBillFile(removed.storageKey);
   res.json({ ok: true, id: removed.id, fileRemoved: Boolean(removed.storageKey) });
+});
+
+// POST /api/costs/bills/:id/unpublish — forget that this document was published
+// to Xero: clears the stored invoice id / tenant / date and brings it back out
+// of Archive so it can be published again. Local only — it does NOT delete or
+// void anything in Xero. For when the bill was removed at the Xero end.
+billsRouter.post('/bills/:id/unpublish', (req, res) => {
+  const orgId = orgIdFor(req);
+  const cleared = clearBillPosted(orgId, req.params.id);
+  if (!cleared) return res.status(404).json({ error: 'not_found' });
+  const bill = reconcileReadiness(orgId, req.params.id) || cleared;
+  res.json({ ok: true, bill: { ...bill, hasFile: Boolean(bill.storageKey) } });
 });
 
 // POST /api/costs/bills/scan-duplicates — re-check every stored document
