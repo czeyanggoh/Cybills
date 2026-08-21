@@ -16,6 +16,8 @@ import {
   Check,
   Building2,
   Trash2,
+  Menu,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -273,6 +275,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   const navigate = useNavigate();
   const [addOpen, setAddOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
+  const [mobileNav, setMobileNav] = useState(false); // phone (<md) nav drawer
   // Tight window → the sidebar drops to an icon rail and flies out under the
   // cursor (Dext's behaviour), so a narrow browser spends its width on the
   // document rather than on two nav columns. Roomy window → nothing changes.
@@ -403,6 +406,16 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Global top bar: workspace switcher + help + user */}
           <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4 md:px-6">
+            {/* Phone (<md): the sidebar is hidden, so this is the only way to
+                navigate. Opens a full nav drawer. */}
+            <button
+              type="button"
+              onClick={() => setMobileNav(true)}
+              className="-ml-1 flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:hidden"
+              aria-label="Open menu"
+            >
+              <Menu className="h-5 w-5" strokeWidth={1.75} />
+            </button>
             <OrganisationSwitcher />
             <div className="ml-auto flex items-center gap-3">
               <nav className="flex items-center gap-1">
@@ -487,6 +500,68 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
           </div>
         </div>
       </div>
+
+      {/* Phone nav drawer (<md). The desktop sidebar is hidden at this width, so
+          this overlay is the navigation: primary tabs, the page's own sub-nav,
+          the admin/bottom links, and sign out. */}
+      {mobileNav && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-foreground/30" onClick={() => setMobileNav(false)} aria-hidden="true" />
+          <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col overflow-y-auto bg-background shadow-xl">
+            <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
+              <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+                <Receipt className="h-5 w-5" /> CYBills
+              </span>
+              <button type="button" onClick={() => setMobileNav(false)} className="text-muted-foreground hover:text-foreground" aria-label="Close menu">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-3">
+              <button
+                type="button"
+                onClick={() => { setMobileNav(false); setAddOpen(true); }}
+                className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground"
+              >
+                <Plus className="h-4 w-4" strokeWidth={2} /> Add documents
+              </button>
+              <nav className="flex flex-col gap-1">
+                {NAV.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    onClick={() => setMobileNav(false)}
+                    className={({ isActive }) => cn('flex items-center gap-3 rounded-md px-3 py-2 text-sm', isActive ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted')}
+                  >
+                    <item.icon className="h-4 w-4" strokeWidth={1.75} /> {item.label}
+                  </NavLink>
+                ))}
+              </nav>
+              {subnav && <div className="mt-2 border-t pt-2" onClick={() => setMobileNav(false)}>{subnav}</div>}
+              <div className="mt-2 flex flex-col gap-1 border-t pt-2">
+                {bottomNav.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => { setMobileNav(false); if (item.to) navigate(item.to); }}
+                    className="flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <item.icon className="h-4 w-4" strokeWidth={1.75} /> {item.label}
+                  </button>
+                ))}
+                {user && (
+                  <button
+                    type="button"
+                    onClick={() => { setMobileNav(false); handleSignOut(); }}
+                    className="flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <LogOut className="h-4 w-4" strokeWidth={1.75} /> Sign out
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AddDocumentsDrawer open={addOpen} onClose={() => setAddOpen(false)} />
     </AppShellContext.Provider>
