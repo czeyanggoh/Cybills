@@ -30,6 +30,12 @@ export function missingFields(d) {
   return out;
 }
 
+// The inbox statuses: documents still being worked on. Anything else — archived,
+// on an expense claim, merged away — is settled, and the automatic duplicate and
+// merge scans leave it alone (you can still merge archived documents by hand).
+export const INBOX_STATUSES = ['new', 'viewed', 'review', 'ready'];
+export const isInInbox = (d) => INBOX_STATUSES.includes(d?.status);
+
 export function rowsFor(docs, key) {
   // Dext-style: the Inbox is the whole "not ready for export" pool, and
   // "To review" is a FILTER within it (items flagged for a human) — not a
@@ -38,7 +44,7 @@ export function rowsFor(docs, key) {
   // Dext-style: the Inbox is the master list of everything not archived — it's
   // the sum of the other tabs (Ready, To review, new/viewed). A Ready item shows
   // here too, just carrying its "Ready" status tag; the Ready tab is a filter.
-  if (key === 'inbox') return docs.filter((d) => ['new', 'viewed', 'review', 'ready'].includes(d.status));
+  if (key === 'inbox') return docs.filter(isInInbox);
   if (key === 'review') return docs.filter((d) => d.status === 'review');
   if (key === 'ready') return docs.filter((d) => d.status === 'ready');
   if (key === 'archive') return docs.filter((d) => d.status === 'expenseclaim' || d.status === 'archived' || d.status === 'merged');

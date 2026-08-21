@@ -29,7 +29,7 @@ import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
 import MergeModal from '@/components/MergeModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
-import { useCostsDocs, rowsFor } from '@/lib/costsData';
+import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
@@ -522,7 +522,7 @@ export default function Costs() {
       cell: (d) => (
         <div className="flex flex-col items-start gap-1">
           <StatusBadge status={d.status} published={Boolean(d.xeroInvoiceId)} />
-          {d.duplicateOfId && !d.duplicateDismissed && (
+          {isInInbox(d) && d.duplicateOfId && !d.duplicateDismissed && (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setDupIds([d.id]); }}
@@ -645,11 +645,15 @@ export default function Costs() {
     archive: rowsFor(allDocs, 'archive'),
   };
   const allRows = rowsByTab[tab] ?? [];
-  // Everything flagged across the whole book (not just this tab) — a duplicate
-  // and the document it matches often sit in different tabs, and reviewing one
-  // means seeing both.
+  // Everything flagged, whichever tab it's in — a flag raised on an inbox
+  // document often points at one that's since been archived, and reviewing it
+  // means seeing both. Only inbox documents carry a flag: a settled one's
+  // verdict is spent, so a flag left on it from before is ignored here (and
+  // cleared for good by the next scan).
   const docById = new Map(allDocs.map((d) => [d.id, d]));
-  const flaggedDocs = allDocs.filter((d) => d.duplicateOfId && !d.duplicateDismissed && docById.has(d.duplicateOfId));
+  const flaggedDocs = allDocs.filter(
+    (d) => isInInbox(d) && d.duplicateOfId && !d.duplicateDismissed && docById.has(d.duplicateOfId)
+  );
   // Ids → { duplicate, original } for the review panes; a pair whose other half
   // has since been deleted or cleared simply drops out.
   const dupPairs = (dupIds || [])
@@ -839,7 +843,11 @@ export default function Costs() {
     const norm = (s) => String(s ?? '').trim().toLowerCase();
     const amt = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
     const last4 = (d) => (String(d.cardLast4 ?? '').match(/\d{4}/) || [''])[0];
-    const docs = allRows.filter((d) => d.persisted && d.hasFile && d.status !== 'merged');
+    // Inbox only, whatever tab you're standing on: an archived or claimed
+    // document is settled, and merging two of them changes nothing anyone is
+    // still working on. Merging archived documents by hand still works — pick
+    // them and press Merge.
+    const docs = rowsByTab.inbox.filter((d) => d.persisted && d.hasFile);
     // Group by TOTAL only — it's the one field reliable across an itemised
     // receipt and its card slip. Their dates and suppliers differ (merchant vs
     // card issuer), and extraction can misread the date on one half, so matching
@@ -865,7 +873,7 @@ export default function Costs() {
       return cards.size <= 1;
     });
     if (!found.length) {
-      setMergeNote('Scanned this view — no receipt + card-slip pairs found (same total, different documents, no conflicting card).');
+      setMergeNote('Scanned the inbox — no receipt + card-slip pairs found (same total, different documents, no conflicting card).');
       return;
     }
     setSelected(new Set(found[0].map((d) => d.id)));

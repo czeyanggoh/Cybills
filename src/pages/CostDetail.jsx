@@ -33,7 +33,7 @@ import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, markNotDuplicate, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
-import { useCostsDocs, rowsFor } from '@/lib/costsData';
+import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
 import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useAutoSave } from '@/lib/useAutoSave';
@@ -864,7 +864,7 @@ export default function CostDetail() {
           <button type="button" onClick={() => setReadyError([])} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
         </div>
       )}
-      {doc.duplicateOfId && !doc.duplicateDismissed && (
+      {isInInbox(doc) && doc.duplicateOfId && !doc.duplicateDismissed && (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>

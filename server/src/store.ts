@@ -162,14 +162,27 @@ export function getBillByIdAny(id: string): Bill | null {
   return load().find((b) => b.id === id) ?? null;
 }
 
+// The inbox: documents still being worked on. One that has LEFT it — archived,
+// published to Xero (which archives it), sitting on an expense claim, or merged
+// away — is settled, and re-raising a duplicate flag on it is noise about a
+// decision already taken. So the automatic check only ever flags an inbox
+// document. Settled documents stay in the corpus it compares against, because
+// re-submitting an invoice that was published last month is exactly the
+// duplicate worth catching — what never happens is archived being matched
+// against archived.
+const INBOX_STATUSES = new Set(['new', 'viewed', 'processing', 'review', 'ready']);
+const inInbox = (b: Bill) => INBOX_STATUSES.has(String(b.status || 'new'));
+
 // First (highest-confidence) duplicate for `cand`, or null. Cheapest checks
 // first; each tier requires the fields it keys on to actually be present.
 export function findDuplicate(orgId: string, cand: Candidate, excludeId?: string): DuplicateMatch | null {
   // A deleted bill must not block re-uploading the same file, or a receipt the
-  // user removed becomes impossible to add back. `excludeId` skips the row being
-  // finalized so a doc never matches itself after its fields are read.
+  // user removed becomes impossible to add back. A merged-away source is
+  // superseded by the document it was merged into, which carries the same
+  // fields — matching it would raise the same pair twice. `excludeId` skips the
+  // row being finalized so a doc never matches itself after its fields are read.
   const bills = load().filter(
-    (b) => b.orgId === orgId && b.status !== 'deleted' && b.id !== excludeId
+    (b) => b.orgId === orgId && b.status !== 'deleted' && b.status !== 'merged' && b.id !== excludeId
   );
 
   if (cand.fileHash) {
@@ -213,6 +226,15 @@ export function flagDuplicate(orgId: string, id: string): Bill | null {
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
   if (!bill) return null;
   if (bill.duplicateDismissed) return bill;
+  // Settled document: never flag it, and drop any flag it picked up before it
+  // was archived / claimed / merged, so nothing stale is left behind.
+  if (!inInbox(bill)) {
+    if (!bill.duplicateOfId && !bill.duplicateType) return bill;
+    bill.duplicateOfId = undefined;
+    bill.duplicateType = undefined;
+    persist(bills);
+    return bill;
+  }
 
   const match = findDuplicate(
     orgId,
@@ -239,8 +261,10 @@ export function flagDuplicate(orgId: string, id: string): Bill | null {
 }
 
 // Re-check EVERY stored document, oldest first, so a corpus that predates
-// duplicate flagging (or was added with "Add anyway") gets marked. Returns how
-// many documents carry a flag afterwards, and how many changed.
+// duplicate flagging (or was added with "Add anyway") gets marked. Settled
+// documents are walked too — not to flag them, but so flagDuplicate clears any
+// flag they are still carrying from their time in the inbox. Returns how many
+// documents carry a flag afterwards, and how many changed.
 export function scanDuplicates(orgId: string): { flagged: number; changed: number } {
   const ordered = load()
     .filter((b) => b.orgId === orgId && b.status !== 'deleted')
