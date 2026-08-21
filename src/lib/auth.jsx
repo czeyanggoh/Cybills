@@ -28,14 +28,16 @@ export function AuthProvider({ children }) {
         setMailEnabled(Boolean(s.mailEnabled));
       }
       setUser(meRes.ok ? (await meRes.json()).user : null);
-      setMembership(mem || { status: 'anonymous', user: null });
+      // A failed roster lookup ('error') is not evidence of being signed out —
+      // keep the last known membership rather than downgrading to anonymous,
+      // which would hide Users + Business settings from an admin mid-session.
+      if (mem && mem.status !== 'error') setMembership(mem);
     } catch {
       // Backend unreachable — treat as signed-out, mock mode.
       setGoogleEnabled(false);
       setVisionEnabled(false);
       setMailEnabled(false);
       setUser(null);
-      setMembership({ status: 'anonymous', user: null });
     } finally {
       setLoading(false);
     }

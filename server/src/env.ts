@@ -48,6 +48,15 @@ export const env = {
   // (see org.ts) when unset. The signed-in user is always included.
   ORG_MEMBERS: process.env.ORG_MEMBERS ?? '',
 
+  // --- Admin recovery -------------------------------------------------------
+  // Optional comma-separated emails that are always treated as account owners
+  // (Admin role), e.g. "czeyang.goh@cy-bm.sg,astrid@cy-bm.sg". Break-glass for
+  // the case where an owner's roster row drifted to Standard under an address
+  // the built-in seed doesn't know (e.g. signed up through /join with a
+  // different Google account) — which silently hides Users and Business
+  // settings from them. Their row is promoted on load; nobody is ever demoted.
+  OWNER_EMAILS: process.env.OWNER_EMAILS ?? '',
+
   // --- Bills store ----------------------------------------------------------
   // Directory for the persisted-bills JSON file (uploaded cost documents +
   // duplicate-detection index). Empty = default to server/.data (gitignored, so

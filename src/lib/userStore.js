@@ -94,13 +94,17 @@ export async function joinCompany(payload) {
 
 // The signed-in user's membership status (anonymous | none | pending |
 // deactivated | active) plus their roster profile, used to gate the app.
+// `status: 'error'` (not 'anonymous') when the roster lookup itself failed, so a
+// blip can't be mistaken for "signed out" and quietly strip the admin surfaces
+// from someone who is, in fact, an admin — see AuthProvider, which keeps the
+// last known membership in that case.
 export async function fetchMembership() {
   try {
     const res = await fetch('/api/users/me');
-    if (!res.ok) return { status: 'anonymous', user: null };
+    if (!res.ok) return { status: 'error', user: null };
     return res.json();
   } catch {
-    return { status: 'anonymous', user: null };
+    return { status: 'error', user: null };
   }
 }
 
@@ -230,12 +234,15 @@ export function isAdminRole(role) {
   return role === 'Admin' || role === 'Business Admin' || role === 'User Admin';
 }
 
-// Whether the current session has admin access. When someone is actually signed
-// in (a roster membership exists), their real role decides it — a Standard user
-// is never an admin, even in a password-only (no-Google) setup. Only when there
-// is NO identified user (anonymous / mock demo) do we fall back to leaving the
-// app open when Google auth isn't configured.
+// Whether the current session has admin access. The server decides it and says
+// so in `membership.admin` — trust that first, so the client never re-derives a
+// different answer from the role string than the API enforces. Older payloads
+// (no `admin` field) fall back to the signed-in user's real role — a Standard
+// user is never an admin, even in a password-only (no-Google) setup. Only when
+// there is NO identified user (anonymous / mock demo) do we fall back to leaving
+// the app open when Google auth isn't configured.
 export function isAdminAccess(membership, googleEnabled) {
+  if (typeof membership?.admin === 'boolean') return membership.admin;
   if (membership?.user) return isAdminRole(membership.user.role);
   return !googleEnabled;
 }

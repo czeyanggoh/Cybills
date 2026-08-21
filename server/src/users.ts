@@ -192,26 +192,41 @@ function normalizeRoster(items: User[], ws: string): boolean {
   return changed;
 }
 
-// Guarantee the seeded owners (Astrid, Cze) never lose their admin role. Their
-// row can drift to a non-admin role — e.g. re-created via the /join self-signup
-// flow, which always sets 'Standard' — which would silently lock the account
-// owner out of Users and Business settings. Runs on every load so it self-heals.
-// Matches by email OR name, so an owner who signed up under a different address
-// than the seed email is still recovered. Only ever promotes seed admins; never
-// touches other users or demotes anyone.
+// The account owners: the seeded admins (Astrid, Cze) plus anyone listed in
+// OWNER_EMAILS. The env list is the break-glass for an owner whose roster row
+// carries neither the seed email nor the seed name — nothing in the code can
+// recognise them, so the operator names them in server/.env instead.
+function ownerEmails(): Set<string> {
+  const emails = SEED.filter((s) => isAdminRole(String(s.role))).map((s) => norm(String(s.email)));
+  for (const e of env.OWNER_EMAILS.split(',')) {
+    const v = norm(e);
+    if (v) emails.push(v);
+  }
+  return new Set(emails);
+}
+function ownerNames(): Set<string> {
+  return new Set(SEED.filter((s) => isAdminRole(String(s.role))).map((s) => norm(String(s.name))));
+}
+
+// Guarantee the account owners never lose their admin role. Their row can drift
+// to a non-admin role — e.g. re-created via the /join self-signup flow, which
+// always sets 'Standard' — which would silently lock the owner out of Users and
+// Business settings. Runs on every load so it self-heals. Matches by email OR
+// name, so an owner who signed up under a different address than the seed email
+// is still recovered, and promotes EVERY matching row rather than just the first
+// — an owner with a second row (a /join signup alongside the seed row) was
+// previously left as Standard whenever the already-admin row came first.
+// Only ever promotes owners; never touches other users or demotes anyone.
 function reconcileSeedAdmins(items: User[], ws: string): boolean {
+  const emails = ownerEmails();
+  const names = ownerNames();
   let changed = false;
-  for (const s of SEED) {
-    if (!isAdminRole(String(s.role))) continue;
-    const email = norm(String(s.email));
-    const name = norm(String(s.name));
-    const row = items.find(
-      (u) => u.workspaceId === ws && !u.removed && (norm(u.email) === email || norm(u.name) === name)
-    );
-    if (row && !isAdminRole(row.role)) {
-      row.role = String(s.role);
-      changed = true;
-    }
+  for (const u of items) {
+    if (u.workspaceId !== ws || u.removed) continue;
+    if (isAdminRole(u.role)) continue;
+    if (!emails.has(norm(u.email)) && !names.has(norm(u.name))) continue;
+    u.role = 'Admin';
+    changed = true;
   }
   return changed;
 }
@@ -306,16 +321,22 @@ usersRouter.get('/', (req, res) => {
 
 // GET /api/users/me — the signed-in user's membership status, used to gate the
 // app: 'anonymous' (no session), 'none' (signed in but no roster profile — send
-// to /join), 'pending' (awaiting approval), 'deactivated', or 'active'.
+// to /join), 'pending' (awaiting approval), 'deactivated', or 'active'. `admin`
+// is the server's own verdict on admin access (Users + Business settings); the
+// client trusts it rather than re-deriving access from the role string, so the
+// two can't disagree.
 usersRouter.get('/me', (req, res) => {
   const session = readSession(req);
+  // No `admin` field on the identity-less branches: the client's fallback
+  // (open when Google auth isn't configured) has to stay in charge there, or
+  // mock/dev mode would lose its admin surfaces.
   if (!session?.email) return res.json({ status: 'anonymous', user: null });
   const ws = workspaceId(req);
   const email = norm(session.email);
   const user = ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email);
   if (!user) return res.json({ status: 'none', user: null });
   const status = user.deactivated ? 'deactivated' : user.pending ? 'pending' : 'active';
-  return res.json({ status, user: publicUser(user) });
+  return res.json({ status, user: publicUser(user), admin: status === 'active' && isAdminRole(user.role) });
 });
 
 // POST /api/users/join — self-signup onboarding. The signed-in user submits

@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth';
 import ChangeEmailModal from '@/components/ChangeEmailModal';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
 import { useProfile, setBookkeepingFreq, setBookkeepingToggle, setApprovalFreq } from '@/lib/profileStore';
-import { updateUser } from '@/lib/userStore';
+import { updateUser, normalizeRole, isAdminAccess } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -132,7 +132,7 @@ function EditInput({ value, onChange, placeholder = '' }) {
 }
 
 // --- Sections ---------------------------------------------------------------
-function PersonalDetails({ rosterUser, refresh, onSaved }) {
+function PersonalDetails({ rosterUser, refresh, onSaved, isAdmin }) {
   const name0 = rosterUser?.name || '';
   const first0 = rosterUser?.firstName || name0.split(' ')[0] || '';
   const last0 = rosterUser?.lastName || name0.split(' ').slice(1).join(' ') || '';
@@ -170,6 +170,21 @@ function PersonalDetails({ rosterUser, refresh, onSaved }) {
         <div className="flex gap-2">
           <div className="w-24"><Select defaultValue="+65" options={['+65', '+60', '+1', '+44', '+61']} /></div>
           <div className="flex-1"><EditInput value={mobile} onChange={setMobile} placeholder="Mobile number" /></div>
+        </div>
+      </Row>
+      {/* Read-only — only an admin can change a role, in Users. Shown because
+          the role is what decides whether Users + Business settings appear in
+          the sidebar; without it, losing admin looks like the buttons vanished. */}
+      <Row label="Role">
+        <div className="space-y-1">
+          <span className="inline-flex h-9 items-center rounded-md border bg-muted px-3 text-sm">
+            {normalizeRole(rosterUser?.role)}
+          </span>
+          <p className="text-xs text-muted-foreground">
+            {isAdmin
+              ? 'Admins can open Users and Business settings (categories, lists, exports).'
+              : 'Users and Business settings (categories, lists, exports) are Admin-only. Ask an admin to change your role in Users.'}
+          </p>
         </div>
       </Row>
       <div className="flex items-center justify-end gap-3 border-t pt-4">
@@ -298,7 +313,7 @@ const SECTIONS = {
 };
 
 export default function Profile() {
-  const { user, membership, refresh } = useAuth();
+  const { user, membership, googleEnabled, refresh } = useAuth();
   const profile = useProfile();
   const [section, setSection] = useState('personal');
   const [emailModal, setEmailModal] = useState(false);
@@ -314,6 +329,7 @@ export default function Profile() {
 
   const props = {
     rosterUser,
+    isAdmin: isAdminAccess(membership, googleEnabled),
     refresh,
     onSaved: (msg) => setToast(msg),
     email,
