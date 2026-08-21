@@ -378,10 +378,15 @@ export async function getExtractionTaxRates() {
   return mergeManagedTaxRates(live).filter((t) => t.visible);
 }
 
-// Projects (Xero tracking-category options) the org has written a "when to use"
-// rule for, for the upload path. `index` 0 = Projects, 1 = Projects 2 — both are
-// sent, so a rule on either can allocate a document. Only rules are returned:
-// an option nobody has written about is not something the model should pick.
+// The project (Xero tracking) options a document can be allocated to, for the
+// upload path — EVERY option, each carrying whatever "when to use" rule the org
+// has written for it (Lists → Projects). The reader is given the whole list so
+// it can allocate a bill the document plainly identifies, and the rules sharpen
+// that rather than gate it.
+//
+// Only the FIRST tracking category is offered, because that is the only one the
+// publish path tags a bill with — offering options from the second would let a
+// document be allocated to something that never reaches Xero.
 export async function getExtractionProjects() {
   const orgId = await resolveCategorisationOrgId();
   if (!orgId) return [];
@@ -391,18 +396,15 @@ export async function getExtractionProjects() {
   } catch {
     return [];
   }
-  const out = [];
+  const meta = getMeta('projects');
   const seen = new Set();
-  ['projects', 'projects2'].forEach((kind, i) => {
-    const meta = getMeta(kind);
-    for (const o of categories[i]?.options ?? []) {
-      const name = String(o?.name || '').trim();
-      const rules = String(meta[name]?.rules || '').trim();
-      if (!name || !rules || seen.has(name)) continue;
-      seen.add(name);
-      out.push({ name, rules });
-    }
-  });
+  const out = [];
+  for (const o of categories[0]?.options ?? []) {
+    const name = String(o?.name || '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, rules: String(meta[name]?.rules || '').trim() });
+  }
   return out;
 }
 

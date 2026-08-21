@@ -39,12 +39,12 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
           type: 'string',
           enum: ['', ...projectNames],
           description:
-            'The project / PIC whose "when to use" rule clearly applies to THIS document, from the rules listed in the prompt. Return an empty string unless a rule plainly matches — a near-miss or a guess must be an empty string, because the empty string falls back to the uploader\'s own assigned project.',
+            'The project / PIC this document belongs to, from the list in the prompt — by a written rule it satisfies, or by the document plainly naming that site, property, entity or person. Return an empty string unless one plainly applies: a near-miss or a guess must be an empty string, because the empty string falls back to the uploader\'s own assigned project.',
         },
         projectReason: {
           type: 'string',
           description:
-            'When project is non-empty, one short sentence quoting the part of the rule the document satisfies, e.g. "Billed to the site named in that project\'s rule." Empty string when project is empty.',
+            'When project is non-empty, one short sentence naming the evidence on the document — the rule it satisfies, or where the project is named on it, e.g. "Billed for the unit at that project\'s address." Empty string when project is empty.',
         },
       }
     : {};
@@ -222,20 +222,22 @@ function parseTaxRates(raw: unknown): TaxRateRef[] {
 
 type NamedRule = { name: string; rules: string };
 
-// Projects (Xero tracking-category options) the org has written a "when to use"
-// rule for. Same contract as the tax rates: no rule, no entry — an option with
-// nothing written about it is not something the model should be choosing.
+// The project (Xero tracking) options a document may be allocated to. Unlike the
+// tax rates — where a code without a written rule is arithmetic's job, not the
+// model's — EVERY option is passed through here, rule or not. A bill that names
+// its site or entity on its face can be allocated from the name alone; a written
+// rule makes that judgement sharper, it isn't the price of entry.
 function parseNamedRules(raw: unknown): NamedRule[] {
   if (!Array.isArray(raw)) return [];
   const out: NamedRule[] = [];
   const seen = new Set<string>();
   for (const t of raw) {
     const name = typeof t?.name === 'string' ? t.name.trim() : '';
-    const rules = typeof t?.rules === 'string' ? t.rules.trim() : '';
-    if (!name || !rules || seen.has(name)) continue;
+    if (!name || seen.has(name)) continue;
     seen.add(name);
+    const rules = typeof t?.rules === 'string' ? t.rules.trim() : '';
     out.push({ name, rules: rules.slice(0, 600) }); // guard the prompt size
-    if (out.length >= 40) break;
+    if (out.length >= 60) break;
   }
   return out;
 }
@@ -302,8 +304,11 @@ extractRouter.post('/extract', async (req, res) => {
   const projectNames = projects.map((p) => p.name);
   const projectSet = new Set(projectNames);
   const projectsGuide = projects.length
-    ? '\n\nPROJECT (PIC) RULES. This organisation has written the following rules for when a project applies. Set `project` to the ONE project whose rule this document plainly satisfies, and `projectReason` to why. If no rule plainly applies, return an empty string for both — the document is then allocated to the uploader\'s own project, which is safer than a guess.\n' +
-      projects.map((p) => `- "${p.name}": ${p.rules}`).join('\n')
+    ? '\n\nPROJECT (PIC) ALLOCATION. This organisation allocates documents to the projects below. Set `project` to the ONE this document belongs to, and `projectReason` to the evidence on the document that says so. Decide in this order:\n' +
+      '1. A project whose written rule the document plainly satisfies.\n' +
+      '2. Otherwise, a project the document plainly identifies by name — the site, property, entity, unit or person it is addressed to, billed for, or delivered to, matching the project name or an obvious abbreviation of it.\n' +
+      'A shared word, a near-miss, or "it could be" is NOT a match. When nothing on the document points to one project, return an empty string for both fields — the document is then allocated to the uploader\'s own project, which is safer than a guess.\n' +
+      projects.map((p) => `- "${p.name}"${p.rules ? `: ${p.rules}` : ' (no rule written — match by name only)'}`).join('\n')
     : '';
 
   const isPdf = mediaType === PDF_MEDIA;

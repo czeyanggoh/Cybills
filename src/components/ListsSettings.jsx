@@ -340,8 +340,17 @@ function ProjectsFromXero({ index }) {
   return (
     <div>
       <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
-        Tracking category <span className="font-medium text-foreground">{cat.name}</span>, synced from the connected Xero organisation. Its options are managed in Xero. Write a{' '}
-        <span className="font-medium text-foreground">When to use</span> rule and CYBills will allocate a document to that option when the rule plainly matches — otherwise it falls back to the uploader&apos;s own project (Users → Project).
+        Tracking category <span className="font-medium text-foreground">{cat.name}</span>, synced from the connected Xero organisation. Its options are managed in Xero.
+        {index === 0 ? (
+          <>
+            {' '}CYBills allocates a document to the option it plainly belongs to — by name, or by a{' '}
+            <span className="font-medium text-foreground">When to use</span> rule you write here for the cases a name can&apos;t settle. Nothing on the document pointing to one? It falls back to the uploader&apos;s own project (Users → Project).
+          </>
+        ) : (
+          <>
+            {' '}Rules here are for reference only: a published bill is tagged with the first tracking category, so only those options reach Xero.
+          </>
+        )}
       </p>
       <div className="mb-3 flex items-center">
         <div className="relative ml-auto">
