@@ -202,6 +202,21 @@ export function derivedDescription(supplier: unknown, category: unknown, documen
   return type ? `${who} ${type}` : who;
 }
 
+// A bill for a stretch of service reads very differently with its period on it:
+// "Singtel — Telephone & Internet (25 May – 24 Jun 2026)" says which month's
+// charge this is, which matters when twelve of them look otherwise identical.
+// Appended rather than asked for inline, so the reader can't fold it in twice.
+export function withPeriod(description: unknown, period: unknown): string {
+  const text = String(description ?? '').trim();
+  const span = String(period ?? '').trim().slice(0, 60);
+  if (!span || !text) return text;
+  // Already said it — a reader that worked the dates into its own sentence
+  // keeps its wording rather than getting them twice.
+  const loose = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (loose(text).includes(loose(span))) return text;
+  return `${text} (${span})`;
+}
+
 // One-off cleanup for documents read before the reader stopped emitting filler.
 // Idempotent (a blank stays blank), so it is safe to run at every boot. Returns
 // how many documents it cleaned.

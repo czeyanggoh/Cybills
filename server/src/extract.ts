@@ -2,7 +2,7 @@ import { Router } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { env, visionEnabled } from './env.js';
-import { notFiller, derivedDescription } from './store.js';
+import { notFiller, derivedDescription, withPeriod } from './store.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
 // the model classifies into a value that actually exists in the UI. These are
@@ -67,6 +67,11 @@ function buildSchema(categories: string[], taxRateNames: string[]) {
         description:
           'A concise plain-language summary of what was purchased. Always attempt one: the merchant and document type alone are enough for a useful answer, so itemisation is a bonus, not a requirement. Examples: "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper", "Monthly mobile and broadband charges" (a telco bill), "Annual company secretarial fee", "Card payment at Marina Bay Sands (Marquee)" (a bare payment slip). Return an EMPTY STRING ONLY if the document is illegible or you cannot tell what it is at all — and NEVER filler such as "placeholder", "N/A", "unknown" or "description". This text is published to the accounting ledger, where a made-up word is worse than a blank.',
       },
+      period: {
+        type: 'string',
+        description:
+          'The service / billing period the document covers, if it shows one — copy the dates as printed, e.g. "Bill Period 25 May - 24 Jun 2026" → "25 May – 24 Jun 2026"; "Billing period: August 2026" → "August 2026"; "Subscription 01/09/2026 to 31/08/2027" → "1 Sep 2026 – 31 Aug 2027". Empty string when the document shows no period. NEVER infer one from the invoice or due date — a bill dated 28 Jun with no stated period has no period.',
+      },
       cardLast4: {
         type: 'string',
         description:
@@ -104,6 +109,7 @@ function buildSchema(categories: string[], taxRateNames: string[]) {
       'category',
       'categoryReason',
       'description',
+      'period',
       'cardLast4',
       'lineItems',
       ...(taxRateNames.length ? ['taxRate', 'taxRateReason'] : []),
@@ -123,6 +129,7 @@ const ReceiptSchema = z.object({
   category: z.string(),
   categoryReason: z.string().optional().default(''),
   description: z.string().optional().default(''),
+  period: z.string().optional().default(''),
   cardLast4: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
   taxRateReason: z.string().optional().default(''),
@@ -298,7 +305,10 @@ extractRouter.post('/extract', async (req, res) => {
       // one from the fields we did read rather than leave the field blank. It's
       // derived from the document, not invented: supplier and the category it
       // was coded to. Blank only when even that is unknown.
-      description: notFiller(parsed.data.description) || derivedDescription(parsed.data.supplier, category, parsed.data.documentType),
+      description: withPeriod(
+        notFiller(parsed.data.description) || derivedDescription(parsed.data.supplier, category, parsed.data.documentType),
+        notFiller(parsed.data.period)
+      ),
       categoryReason: notFiller(parsed.data.categoryReason),
       taxRate,
       taxRateReason: taxRate ? notFiller(parsed.data.taxRateReason) : '',
