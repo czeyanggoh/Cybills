@@ -30,6 +30,9 @@ import MergeModal from '@/components/MergeModal';
 import { useCostsDocs, rowsFor } from '@/lib/costsData';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
+import TableSettingsMenu from '@/components/TableSettingsMenu';
+import { xeroBillUrl } from '@/lib/autoPublish';
+import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { cn } from '@/lib/utils';
 
 // Native (working) category dropdown styled to match the row cells. `options`
@@ -344,9 +347,7 @@ function CostsToolbar({ query, setQuery, flagFilter, setFlagFilter, adv, setAdv 
           </>
         )}
       </div>
-      <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Table settings">
-        <Settings2 className="h-4 w-4" strokeWidth={1.75} />
-      </button>
+      <TableSettingsMenu table="costs" />
     </>
   );
 }
@@ -492,6 +493,80 @@ export default function Costs() {
   // Label for uploads with no recorded creator ("You" = whoever is viewing).
   const meName = user?.name || user?.email || 'You';
   const uploaderLabel = (d) => (d.user && d.user !== 'You' ? d.user : meName);
+
+  // Every column the table can show, with how it renders. What's actually on
+  // screen (and how tightly) comes from the gear menu — see tablePrefs.js.
+  const CELLS = {
+    status: { cell: (d) => <StatusBadge status={d.status} /> },
+    user: { cellClass: 'whitespace-nowrap', cell: (d) => <span className={cn(d.unread && 'font-semibold')}>{uploaderLabel(d)}</span> },
+    date: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => formatDate(d.date) },
+    supplier: { cell: (d) => <span className={cn(d.unread && 'font-semibold')}>{d.supplier}</span> },
+    category: {
+      interactive: true,
+      cell: (d) => (
+        <CategorySelect value={d.category || 'Uncategorised'} onChange={(v) => changeCategory(d, v)} options={categoryOptions} />
+      ),
+    },
+    total: {
+      align: 'right',
+      cellClass: 'whitespace-nowrap tabular-nums',
+      cell: (d) => (
+        <>
+          <span className="text-xs text-muted-foreground">{d.currency || 'SGD'} </span>
+          <span className={cn(d.unread && 'font-semibold')}>{d.total}</span>
+        </>
+      ),
+    },
+    tax: { align: 'right', cellClass: 'tabular-nums text-muted-foreground', cell: (d) => d.tax },
+    taxRate: {
+      sortable: false,
+      interactive: true,
+      cell: (d) => (
+        <select
+          value={(gstRegistered ? d.taxRate : noTaxName) || ''}
+          onChange={(e) => changeTaxRate(d, e.target.value)}
+          className="w-36 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <option value="">No tax rate</option>
+          {gstRegistered && !taxRateOptions.includes(d.taxRate) && d.taxRate && (
+            <option value={d.taxRate}>{d.taxRate}</option>
+          )}
+          {taxRateOptions.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+      ),
+    },
+    ref: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.invoiceNumber || '—' },
+    description: { cellClass: 'max-w-[22rem] truncate text-muted-foreground', cell: (d) => d.description || '—' },
+    itemId: { cellClass: 'whitespace-nowrap font-mono text-xs text-muted-foreground', cell: (d) => displayItemId(d.id) },
+    type: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.type || '—' },
+    dueDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.dueDate ? formatDate(d.dueDate) : '—') },
+    paid: { sortable: false, cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => (d.paid ? 'Paid' : 'Not paid') },
+    paymentMethod: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.paymentMethod || '—' },
+    customer: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.customer || '—' },
+    project: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.project || '—' },
+    cardLast4: { sortable: false, cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => (d.cardLast4 ? `•••• ${d.cardLast4}` : '—') },
+    note: { sortable: false, cellClass: 'max-w-[18rem] truncate text-muted-foreground', cell: (d) => d.note || '—' },
+    uploadDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.createdAt ? formatDate(d.createdAt.slice(0, 10)) : '—') },
+    publishDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.xeroPostedAt ? formatDate(d.xeroPostedAt.slice(0, 10)) : '—') },
+    xero: {
+      sortable: false,
+      interactive: true,
+      cell: (d) =>
+        d.xeroInvoiceId ? (
+          <a href={xeroBillUrl(d.xeroInvoiceId)} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
+            View
+          </a>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+  };
+  const shownColumns = COST_COLUMNS
+    .filter((c) => c.fixed || tablePrefs.columns[c.key])
+    .map((c) => ({ ...c, ...CELLS[c.key] }))
+    .filter((c) => typeof c.cell === 'function');
   const [tab, setTab] = useState('inbox');
   const settings = useExtractionSettings();
   // Business settings → Extraction can hide the To review + Ready tabs (their
@@ -516,6 +591,8 @@ export default function Costs() {
   const { allDocs, reload } = useCostsDocs();
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
+  const tablePrefs = useTablePrefs('costs');
+  const densityClass = DENSITY_CLASS[tablePrefs.density] || DENSITY_CLASS.Medium;
   const taxRates = useVisibleTaxRates(); // shared managed list (Lists → Tax rates)
   // Not GST-registered → No Tax is the only code on offer, and the row shows it
   // even for a document coded before the profile said so (opening the document
@@ -555,10 +632,14 @@ export default function Costs() {
   }
   if (sort.key) {
     const dir = sort.dir === 'asc' ? 1 : -1;
+    // Columns whose key isn't the field name they sort on.
+    const FIELD = { ref: 'invoiceNumber', itemId: 'id', uploadDate: 'createdAt', publishDate: 'xeroPostedAt' };
+    const DATES = new Set(['date', 'dueDate', 'uploadDate', 'publishDate']);
+    const field = FIELD[sort.key] || sort.key;
     rows = [...rows].sort((a, b) => {
-      if (sort.key === 'total' || sort.key === 'tax') return (toNum(a[sort.key]) - toNum(b[sort.key])) * dir;
-      if (sort.key === 'date') return (toTime(a.date) - toTime(b.date)) * dir;
-      return String(a[sort.key] || '').localeCompare(String(b[sort.key] || '')) * dir;
+      if (sort.key === 'total' || sort.key === 'tax') return (toNum(a[field]) - toNum(b[field])) * dir;
+      if (DATES.has(sort.key)) return (toTime(a[field]) - toTime(b[field])) * dir;
+      return String(a[field] || '').localeCompare(String(b[field] || '')) * dir;
     });
   }
   const hasSelection = selected.size > 0;
@@ -860,14 +941,13 @@ export default function Costs() {
                       className="h-4 w-4 accent-black"
                     />
                   </th>
-                  <SortTh label="Status" sortKey="status" sort={sort} setSort={setSort} />
-                  <SortTh label="User" sortKey="user" sort={sort} setSort={setSort} />
-                  <SortTh label="Date" sortKey="date" sort={sort} setSort={setSort} />
-                  <SortTh label="Supplier" sortKey="supplier" sort={sort} setSort={setSort} />
-                  <SortTh label="Category" sortKey="category" sort={sort} setSort={setSort} />
-                  <SortTh label="Total" sortKey="total" sort={sort} setSort={setSort} align="right" />
-                  <SortTh label="Tax" sortKey="tax" sort={sort} setSort={setSort} align="right" />
-                  <th className="px-3 py-2.5 font-medium">Tax rate</th>
+                  {shownColumns.map((c) =>
+                    c.sortable === false ? (
+                      <th key={c.key} className={cn('whitespace-nowrap px-3 py-2.5 font-medium', c.align === 'right' && 'text-right')}>{c.label}</th>
+                    ) : (
+                      <SortTh key={c.key} label={c.label} sortKey={c.key} sort={sort} setSort={setSort} align={c.align || 'left'} />
+                    ),
+                  )}
                   <th className="w-10 px-2 py-2.5"><span className="sr-only">Delete</span></th>
                 </tr>
               </thead>
@@ -878,7 +958,7 @@ export default function Costs() {
                     onClick={() => navigate(`/costs/${d.id}`)}
                     className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
                   >
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                    <td className={densityClass} onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
                         <span className={cn('h-2 w-2 rounded-full', d.unread ? 'bg-foreground' : 'bg-transparent')} />
                         <input
@@ -891,38 +971,16 @@ export default function Costs() {
                         <ReceiptViewer itemIds={d.id} />
                       </div>
                     </td>
-                    <td className="px-3 py-3"><StatusBadge status={d.status} /></td>
-                    <td className={cn('whitespace-nowrap px-3 py-3', d.unread && 'font-semibold')}>{uploaderLabel(d)}</td>
-                    <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{formatDate(d.date)}</td>
-                    <td className={cn('px-3 py-3', d.unread && 'font-semibold')}>{d.supplier}</td>
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <CategorySelect
-                        value={d.category || 'Uncategorised'}
-                        onChange={(v) => changeCategory(d, v)}
-                        options={categoryOptions}
-                      />
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                      <span className="text-xs text-muted-foreground">SGD </span>
-                      <span className={cn(d.unread && 'font-semibold')}>{d.total}</span>
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{d.tax}</td>
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <select
-                        value={(gstRegistered ? d.taxRate : noTaxName) || ''}
-                        onChange={(e) => changeTaxRate(d, e.target.value)}
-                        className="w-36 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    {shownColumns.map((c) => (
+                      <td
+                        key={c.key}
+                        onClick={c.interactive ? (e) => e.stopPropagation() : undefined}
+                        className={cn(densityClass, c.cellClass, c.align === 'right' && 'text-right')}
                       >
-                        <option value="">No tax rate</option>
-                        {gstRegistered && !taxRateOptions.includes(d.taxRate) && d.taxRate && (
-                          <option value={d.taxRate}>{d.taxRate}</option>
-                        )}
-                        {taxRateOptions.map((t) => (
-                          <option key={t} value={t}>{t}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        {c.cell(d)}
+                      </td>
+                    ))}
+                    <td className={cn(densityClass, 'px-2 text-center')} onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
                         onClick={() => deleteOne(d)}
@@ -937,7 +995,7 @@ export default function Costs() {
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                    <td colSpan={shownColumns.length + 2} className="px-4 py-16 text-center text-sm text-muted-foreground">
                       <Plus className="mx-auto mb-2 h-5 w-5" strokeWidth={1.5} />
                       {tab === 'processing'
                         ? 'Nothing processing right now.'
