@@ -357,9 +357,16 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // No GST registration → nothing to claim, so never carry a tax amount.
       if (!settings.extractTax || !gstRegistered) p.tax = 0;
       p.paid = defaultPaidFor(settings, cur?.documentType);
+      // Due date, in order of what the evidence supports:
+      //   1. the date printed on the document (or what its stated terms resolve
+      //      to) — the supplier's own answer, so nothing beats it
+      //   2. the org's payment-terms rule (Extraction settings)
+      // Neither → left blank, and the Xero publish omits DueDate so the
+      // supplier's own terms apply. It is never silently the invoice date.
       const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(cur?.date || '')) ? cur.date : '';
-      const due = dueDateForNewDoc(settings, kind, iso);
-      if (due) p.dueDate = due;
+      const printedDue = /^\d{4}-\d{2}-\d{2}$/.test(String(extracted?.dueDate || '')) ? extracted.dueDate : '';
+      const due = printedDue || dueDateForNewDoc(settings, kind, iso);
+      if (due && due !== iso) p.dueDate = due;
       // Project (Xero PIC), in order of what the evidence supports:
       //   1. a "When to use" rule the document plainly matched (Lists → Projects)
       //   2. the uploader's own assigned project (Users → Project)

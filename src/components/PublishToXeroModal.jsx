@@ -43,15 +43,11 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
       organisations.some((o) => o.id === active) ? active : organisations[0]?.id ?? ''
     );
     setStatus('DRAFT');
-    // Prefer the doc's computed due date (from Extraction settings), else the
-    // invoice date.
-    setDueDate(
-      /^\d{4}-\d{2}-\d{2}$/.test(bill?.dueDate ?? '')
-        ? bill.dueDate
-        : /^\d{4}-\d{2}-\d{2}$/.test(bill?.date ?? '')
-          ? bill.date
-          : ''
-    );
+    // The document's own due date — printed on it, or derived from the org's
+    // payment terms. Deliberately NOT falling back to the invoice date: that
+    // posted every bill as due the day it was issued. Left blank, Xero applies
+    // the supplier's default terms.
+    setDueDate(/^\d{4}-\d{2}-\d{2}$/.test(bill?.dueDate ?? '') ? bill.dueDate : '');
     setError('');
     setDone(null);
   }, [open]);
@@ -273,6 +269,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                       type="date"
                       value={dueDate}
                       onChange={(e) => setDueDate(e.target.value)}
+                      title="Leave blank to let the supplier's own payment terms in Xero decide"
                       className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>

@@ -83,6 +83,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'A concise plain-language summary of what was purchased. Always attempt one: the merchant and document type alone are enough for a useful answer, so itemisation is a bonus, not a requirement. Examples: "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper", "Monthly mobile and broadband charges" (a telco bill), "Annual company secretarial fee", "Card payment at Marina Bay Sands (Marquee)" (a bare payment slip). Return an EMPTY STRING ONLY if the document is illegible or you cannot tell what it is at all — and NEVER filler such as "placeholder", "N/A", "unknown" or "description". This text is published to the accounting ledger, where a made-up word is worse than a blank.',
       },
+      dueDate: {
+        type: 'string',
+        description:
+          'The payment due date PRINTED on the document, as ISO YYYY-MM-DD — a stated "Due Date"/"Payment Due", or the date explicit payment terms resolve to ("Net 15" / "15 days from invoice date" counted from the invoice date, "Due on receipt" = the invoice date). Singapore format DD/MM/YYYY, day first. Empty string when the document states neither a due date nor terms — never guess one, and never just repeat the invoice date, because an empty string lets the organisation\'s own payment terms apply instead.',
+      },
       period: {
         type: 'string',
         description:
@@ -125,6 +130,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'category',
       'categoryReason',
       'description',
+      'dueDate',
       'period',
       'cardLast4',
       'lineItems',
@@ -146,6 +152,7 @@ const ReceiptSchema = z.object({
   category: z.string(),
   categoryReason: z.string().optional().default(''),
   description: z.string().optional().default(''),
+  dueDate: z.string().optional().default(''),
   period: z.string().optional().default(''),
   cardLast4: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
@@ -347,6 +354,14 @@ extractRouter.post('/extract', async (req, res) => {
     // Belt-and-suspenders: snap to a known category if the model somehow strays.
     const taxRate = taxRateSet.has(parsed.data.taxRate) ? parsed.data.taxRate : '';
     const project = projectSet.has(parsed.data.project) ? parsed.data.project : '';
+    // A due date that isn't a real ISO date is no due date. Same for one that
+    // merely echoes the invoice date, which is what the model produces when it
+    // feels obliged to fill the field — and which posts to Xero as "due the day
+    // it was issued" rather than "terms unknown".
+    const dueDate =
+      /^\d{4}-\d{2}-\d{2}$/.test(parsed.data.dueDate) && parsed.data.dueDate !== parsed.data.date
+        ? parsed.data.dueDate
+        : '';
     const category = categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised';
     const data = {
       ...parsed.data,
@@ -364,6 +379,7 @@ extractRouter.post('/extract', async (req, res) => {
       taxRateReason: taxRate ? notFiller(parsed.data.taxRateReason) : '',
       project,
       projectReason: project ? notFiller(parsed.data.projectReason) : '',
+      dueDate,
       lineItems: parsed.data.lineItems.map((li) => ({ ...li, description: notFiller(li.description) })),
     };
     return res.json({ ok: true, data });

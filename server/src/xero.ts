@@ -520,7 +520,13 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(bill.date) ? bill.date : today;
-  const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(b.dueDate ?? '')) ? String(b.dueDate) : date;
+  // The due date, in order of what actually knows it: the request (the publish
+  // dialog, where a human may have typed one), then the document's own stored
+  // due date — printed on the paper, or derived from the org's payment terms.
+  // NOT the invoice date: falling back to that posted every bill as due the day
+  // it was issued, which is a claim about payment terms nobody made.
+  const iso = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : '');
+  const dueDate = iso(b.dueDate) || iso(bill.dueDate);
   const tax = parseAmount(bill.tax);
 
   const net = Math.max(0, total - tax);
@@ -551,7 +557,9 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     Type: 'ACCPAY',
     Contact: { Name: bill.supplier || 'Unknown supplier' },
     Date: date,
-    DueDate: dueDate,
+    // Omitted when unknown, so Xero applies the supplier's own default terms
+    // rather than being told the bill is due on issue.
+    ...(dueDate ? { DueDate: dueDate } : {}),
     LineAmountTypes: 'Exclusive',
     LineItems: [line],
     Status: status,
