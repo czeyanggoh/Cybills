@@ -8,11 +8,9 @@ import CustomerRulesModal from '@/components/CustomerRulesModal';
 import AddCategoryModal from '@/components/AddCategoryModal';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { currencyLabel } from '@/lib/customerRules';
-import { useProjectOptions } from '@/lib/listsStore';
-import { CUSTOMERS } from '@/data/customers';
 import { useAuth } from '@/lib/auth';
 import { SALES, getSale } from '@/data/sales';
-import { useCategoryOptions, getExtractionAccounts, useXeroPaymentMethods } from '@/lib/organisations';
+import { useCategoryOptions, getExtractionAccounts, useXeroPaymentMethods, useXeroCustomers, useXeroProjectOptions } from '@/lib/organisations';
 import { fetchBills, billToDoc, billFileUrl, displayItemId, updateBill, notifyBillsChanged } from '@/lib/bills';
 import {
   getSalesHistory,
@@ -220,8 +218,8 @@ export default function SalesDetail() {
   const navigate = useNavigate();
   const { visionEnabled } = useAuth();
   const categoryOptions = useCategoryOptions();
-  const projectOptions = useProjectOptions();
-  const customerOptions = CUSTOMERS.map((c) => c.name);
+  const projectOptions = useXeroProjectOptions();
+  const customerOptions = useXeroCustomers();
   const fileInputRef = useRef(null);
   const mockSale = getSale(id);
   const [persistedSale, setPersistedSale] = useState(null);

@@ -3,34 +3,36 @@ import { Search, Filter } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
 import SearchSelect from '@/components/SearchSelect';
-import { CUSTOMERS } from '@/data/customers';
-import { useCategoryOptions } from '@/lib/organisations';
+import { useCategoryOptions, useXeroCustomers, useXeroProjectOptions } from '@/lib/organisations';
 import { getCustomerRule, saveCustomerRule, useCustomerRulesVersion } from '@/lib/customerRules';
-import { useProjectOptions } from '@/lib/listsStore';
 import { cn } from '@/lib/utils';
 
 export default function Customers() {
   const [selected, setSelected] = useState(() => new Set());
   const [query, setQuery] = useState('');
   const categoryOptions = useCategoryOptions();
-  const PROJECTS = useProjectOptions();
+  const PROJECTS = useXeroProjectOptions();
+  // Customers come from the active org's (CYBM) live Xero customer contacts.
+  const customerNames = useXeroCustomers();
+  const customers = customerNames.map((name) => ({ id: name, name }));
   // Per-customer Category/Project, seeded from any saved customer rule. Editing a
   // cell writes back to that customer's rule so it also applies to new uploads.
   const [assign, setAssign] = useState({});
   // Re-seed the per-customer cells from saved rules whenever rules hydrate from
-  // the server (or change), since the rule store is now async.
+  // the server (or change), or the Xero customer list loads.
   const rulesVersion = useCustomerRulesVersion();
   useEffect(() => {
     const init = {};
-    for (const c of CUSTOMERS) {
+    for (const c of customers) {
       const rule = getCustomerRule(c.name);
       init[c.id] = { category: rule?.category || '', project: rule?.project || '' };
     }
     setAssign(init);
-  }, [rulesVersion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rulesVersion, customerNames.length]);
 
   const q = query.trim().toLowerCase();
-  const rows = CUSTOMERS.filter((c) => !q || c.name.toLowerCase().includes(q));
+  const rows = customers.filter((c) => !q || c.name.toLowerCase().includes(q));
   const hasSelection = selected.size > 0;
 
   const setField = (customer, field, value) => {
@@ -120,7 +122,7 @@ export default function Customers() {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-16 text-center text-sm text-muted-foreground">
-                  No customers match “{query}”.
+                  {q ? `No customers match “${query}”.` : 'No Xero customer contacts found for this organisation.'}
                 </td>
               </tr>
             )}
