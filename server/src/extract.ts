@@ -141,6 +141,20 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
   };
 }
 
+// The API caches a prefix only past a minimum length (~1024 tokens); asking
+// below that just adds a no-op breakpoint. ~3.6 chars/token is a deliberate
+// under-estimate, so a borderline prompt still gets the breakpoint.
+const cacheable = (text: string) => text.length >= 4000;
+
+// `effort` is rejected outright by some models rather than ignored, and the
+// extract model is an env var — so name the ones that take it.
+const EFFORT_MODELS = [
+  'claude-fable-5', 'claude-mythos-5',
+  'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5',
+  'claude-sonnet-5', 'claude-sonnet-4-6',
+];
+const supportsEffort = (model: string) => EFFORT_MODELS.includes(String(model || '').trim());
+
 // Validates the model's JSON before we trust it.
 const ReceiptSchema = z.object({
   supplier: z.string(),
@@ -312,6 +326,28 @@ extractRouter.post('/extract', async (req, res) => {
       projects.map((p) => `- "${p.name}"${p.rules ? `: ${p.rules}` : ' (no rule written — match by name only)'}`).join('\n')
     : '';
 
+  // Everything identical for every document in this organisation, in one block:
+  // the fixed reading instructions, the org's own review instructions, and the
+  // account / tax-code / project guides. Sent as a CACHED system prefix so it is
+  // billed once per cache window instead of once per document — the guides run
+  // to thousands of tokens and were previously re-bought on every upload.
+  //
+  // Nothing per-document may appear here. Today's date and whether the file is a
+  // PDF both go in the message below: the date would invalidate the cache daily,
+  // and the PDF/image wording would split one cache entry into two.
+  const stablePrompt =
+    contextBlock +
+    'You extract purchase and expense details from receipts and invoices. ' +
+    'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
+    'Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ' +
+    'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
+    'pick "Uncategorised" only when none reasonably fit. ' +
+    'If a field is not present, use an empty string or 0. ' +
+    'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
+    accountsGuide +
+    taxRatesGuide +
+    projectsGuide;
+
   const isPdf = mediaType === PDF_MEDIA;
   const fileBlock: Anthropic.ContentBlockParam = isPdf
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: imageBase64 } }
@@ -322,6 +358,13 @@ extractRouter.post('/extract', async (req, res) => {
     const message = await client.messages.create({
       model: env.ANTHROPIC_EXTRACT_MODEL,
       max_tokens: 1024,
+      // A cache breakpoint only pays off past the API's minimum cacheable prefix
+      // (~1024 tokens); below that it silently doesn't cache, so don't ask.
+      system: [
+        cacheable(stablePrompt)
+          ? { type: 'text' as const, text: stablePrompt, cache_control: { type: 'ephemeral' as const } }
+          : { type: 'text' as const, text: stablePrompt },
+      ],
       messages: [
         {
           role: 'user',
@@ -330,22 +373,19 @@ extractRouter.post('/extract', async (req, res) => {
             {
               type: 'text',
               text:
-                contextBlock +
                 `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. ` +
-                'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
-                `Today is ${new Date().toISOString().slice(0, 10)}. Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ` +
-                'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
-                'pick "Uncategorised" only when none reasonably fit. ' +
-                'If a field is not present, use an empty string or 0. ' +
-                'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
-                accountsGuide +
-                taxRatesGuide +
-                projectsGuide,
+                `Today is ${new Date().toISOString().slice(0, 10)}.`,
             },
           ],
         },
       ],
-      output_config: { format: { type: 'json_schema', schema: buildSchema(categories, taxRateNames, projectNames) } },
+      output_config: {
+        format: { type: 'json_schema', schema: buildSchema(categories, taxRateNames, projectNames) },
+        // Reading a fixed set of fields off an invoice is not work that wants
+        // deep reasoning, and thinking tokens bill as output. Omitted on models
+        // that reject the parameter outright (Haiku 4.5, Sonnet 4.5).
+        ...(supportsEffort(env.ANTHROPIC_EXTRACT_MODEL) ? { effort: 'low' as const } : {}),
+      },
     });
 
     // What this document cost to read. Recorded per call and attributed to the
