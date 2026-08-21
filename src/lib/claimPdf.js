@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { PDFDocument } from 'pdf-lib';
 import { pdfDate, claimRef, claimExportName, cleanHistoryText } from '@/lib/exportFormat';
 import { recordExport } from '@/lib/exportsStore';
 
@@ -262,14 +263,86 @@ export function buildClaimPdfBase64(claim) {
   }
 }
 
-// Generate + open the claim PDF. Opens in a new tab; falls back to a download
-// if the popup is blocked. Returns the claim id.
-export function generateClaimPdf(claim, { exportedBy = '' } = {}) {
-  const doc = buildClaimDoc(claim);
-  const url = doc.output('bloburl');
+// A4 in points, for placing receipt images one-per-page.
+const A4 = [W, H];
+
+// Fetch a transaction's original receipt document and append it to `out` (a
+// pdf-lib doc). PDFs are copied page-for-page; images are placed one per page,
+// scaled to fit. Best-effort: demo docs and missing files are silently skipped.
+// Returns true if at least one page was appended.
+async function appendReceipt(out, itemId) {
+  try {
+    const res = await fetch(`/api/costs/bills/${encodeURIComponent(itemId)}/file`);
+    if (!res.ok) return false;
+    const type = (res.headers.get('Content-Type') || '').toLowerCase();
+    const buf = await res.arrayBuffer();
+    if (type.includes('pdf')) {
+      const src = await PDFDocument.load(buf, { ignoreEncryption: true });
+      const pages = await out.copyPages(src, src.getPageIndices());
+      pages.forEach((p) => out.addPage(p));
+      return pages.length > 0;
+    }
+    if (type.includes('png') || type.includes('jpg') || type.includes('jpeg')) {
+      const img = type.includes('png') ? await out.embedPng(buf) : await out.embedJpg(buf);
+      const page = out.addPage(A4);
+      const s = Math.min((W - 64) / img.width, (H - 64) / img.height, 1);
+      const w = img.width * s;
+      const h = img.height * s;
+      page.drawImage(img, { x: (W - w) / 2, y: (H - h) / 2, width: w, height: h });
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// Copy the CYBills report (jsPDF) pages into a pdf-lib doc.
+async function addReportPages(out, claim) {
+  const bytes = buildClaimDoc(claim).output('arraybuffer');
+  const report = await PDFDocument.load(bytes);
+  const pages = await out.copyPages(report, report.getPageIndices());
+  pages.forEach((p) => out.addPage(p));
+}
+
+// Assemble the export PDF per Dext's three detail levels:
+//   'summary'       — the report (summary + transactions + approval history) only
+//   'with_receipts' — the report, then every receipt document appended at the back
+//   'receipts'      — the receipt documents only
+// Returns a Blob. Falls back to the report alone if no receipts resolve, so the
+// file is never empty.
+export async function assembleClaimPdf(claim, { detailLevel = 'with_receipts' } = {}) {
+  const out = await PDFDocument.create();
+  if (detailLevel !== 'receipts') await addReportPages(out, claim);
+  if (detailLevel !== 'summary') {
+    for (const t of claim.transactions || []) {
+      // eslint-disable-next-line no-await-in-loop
+      await appendReceipt(out, t.itemId);
+    }
+  }
+  if (out.getPageCount() === 0) await addReportPages(out, claim);
+  const bytes = await out.save();
+  return new Blob([bytes], { type: 'application/pdf' });
+}
+
+// Generate + open the claim PDF. Opens in a new tab; falls back to a download if
+// the popup is blocked. `detailLevel` follows Dext (see assembleClaimPdf). Async
+// because the receipt documents are fetched. Returns the claim id.
+export async function generateClaimPdf(claim, { exportedBy = '', detailLevel = 'with_receipts' } = {}) {
+  const blob = await assembleClaimPdf(claim, { detailLevel });
+  const url = URL.createObjectURL(blob);
   const win = window.open(url, '_blank');
   const name = claimExportName(claim, 'pdf');
-  if (!win) doc.save(name);
+  if (!win) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  // Keep the URL alive long enough for the opened tab to load it.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
   // Record it so it appears under Exports → Expense claims.
   void recordExport({
     kind: 'claims',
@@ -279,7 +352,7 @@ export function generateClaimPdf(claim, { exportedBy = '' } = {}) {
     csvFormat: '-',
     count: Array.isArray(claim.transactions) ? claim.transactions.length : 1,
     exportedBy: exportedBy || claim.claimFor || 'You',
-    blob: doc.output('blob'),
+    blob,
   });
   return claim.id;
 }

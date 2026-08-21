@@ -28,17 +28,29 @@ function Select({ value, onChange, options }) {
 export default function ClaimExportModal({ open, onClose, claim, onExported }) {
   const [tab, setTab] = useState('csv');
   const [detail, setDetail] = useState('summary');
+  const [pdfDetail, setPdfDetail] = useState('with_receipts');
   const [format, setFormat] = useState('cybills');
   const [archiveAfter, setArchiveAfter] = useState(false);
+  const [busy, setBusy] = useState(false);
   const settings = useExportSettings();
   const { user, membership } = useAuth();
 
   if (!open) return null;
 
-  const doExport = () => {
+  const doExport = async () => {
+    if (busy) return;
     const exportedBy = membership?.user?.name || user?.name || user?.email || 'You';
-    if (tab === 'csv') generateClaimCsv(claim, { detailLevel: detail, format, settings, exportedBy });
-    else generateClaimPdf(claim, { exportedBy });
+    if (tab === 'csv') {
+      generateClaimCsv(claim, { detailLevel: detail, format, settings, exportedBy });
+    } else {
+      // Building "with receipts" fetches each receipt document, so it's async.
+      setBusy(true);
+      try {
+        await generateClaimPdf(claim, { exportedBy, detailLevel: pdfDetail });
+      } finally {
+        setBusy(false);
+      }
+    }
     onClose();
     if (archiveAfter) onExported?.();
   };
@@ -103,9 +115,33 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
               </label>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              Export this claim as a formatted PDF report (Dext layout).
-            </p>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">Export your data as a PDF file.</p>
+              <label className="flex items-center gap-3 text-sm">
+                <span className="w-28 shrink-0 text-muted-foreground">Detail level</span>
+                <Select
+                  value={pdfDetail}
+                  onChange={setPdfDetail}
+                  options={[
+                    { value: 'with_receipts', label: 'Report with receipts' },
+                    { value: 'summary', label: 'Report summary' },
+                    { value: 'receipts', label: 'Receipts' },
+                  ]}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={archiveAfter}
+                  onChange={(e) => setArchiveAfter(e.target.checked)}
+                  className="h-4 w-4 accent-black"
+                />
+                Archive items after export
+              </label>
+              <p className="text-xs text-muted-foreground">
+                &ldquo;Report with receipts&rdquo; appends each item&rsquo;s original receipt document after the report.
+              </p>
+            </div>
           )}
         </div>
 
@@ -113,8 +149,8 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
           <button type="button" onClick={onClose} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">
             Cancel
           </button>
-          <button type="button" onClick={doExport} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
-            Export
+          <button type="button" disabled={busy} onClick={doExport} className={cn('inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90', busy && 'opacity-50')}>
+            {busy ? 'Preparing…' : 'Export'}
           </button>
         </div>
       </div>

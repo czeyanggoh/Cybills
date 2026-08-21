@@ -521,7 +521,7 @@ export default function ExpenseClaimDetail() {
             </div>
             <button
               type="button"
-              onClick={() => generateClaimPdf({ ...claim, transactions: rows })}
+              onClick={() => { void generateClaimPdf({ ...claim, transactions: rows }, { detailLevel: 'summary' }); }}
               className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
             >
               <FileText className="h-4 w-4" strokeWidth={1.75} />
