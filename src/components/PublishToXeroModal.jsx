@@ -43,11 +43,11 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
       organisations.some((o) => o.id === active) ? active : organisations[0]?.id ?? ''
     );
     setStatus('DRAFT');
-    // The document's own due date — printed on it, or derived from the org's
-    // payment terms. Deliberately NOT falling back to the invoice date: that
-    // posted every bill as due the day it was issued. Left blank, Xero applies
-    // the supplier's default terms.
-    setDueDate(/^\d{4}-\d{2}-\d{2}$/.test(bill?.dueDate ?? '') ? bill.dueDate : '');
+    // Shows the invoice date, because that is what will post: the due date
+    // follows the date actually sent to Xero, so a date shifted for a locked
+    // period can't leave the due date sitting before the bill. Change it here to
+    // post something else.
+    setDueDate(/^\d{4}-\d{2}-\d{2}$/.test(bill?.date ?? '') ? bill.date : '');
     setError('');
     setDone(null);
   }, [open]);
@@ -269,7 +269,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                       type="date"
                       value={dueDate}
                       onChange={(e) => setDueDate(e.target.value)}
-                      title="Leave blank to let the supplier's own payment terms in Xero decide"
+                      title="Defaults to the invoice date, so the pair stays together if the date shifts for a locked period"
                       className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>

@@ -70,7 +70,8 @@ export async function autoPublishAfterRead(bill) {
       accountCode,
       taxType,
       status: 'SUBMITTED', // "Awaiting approval" in Xero
-      dueDate: bill.dueDate || undefined,
+      // No dueDate: the server sets it to the date it actually posts, so the two
+      // stay together when a locked period shifts the date.
     });
   } catch {
     return null; // best-effort: publish by hand instead

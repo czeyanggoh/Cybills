@@ -520,13 +520,13 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(bill.date) ? bill.date : today;
-  // The due date, in order of what actually knows it: the request (the publish
-  // dialog, where a human may have typed one), then the document's own stored
-  // due date — printed on the paper, or derived from the org's payment terms.
-  // NOT the invoice date: falling back to that posted every bill as due the day
-  // it was issued, which is a claim about payment terms nobody made.
+  // Due date follows the date actually POSTED, not the one on the paper. When a
+  // period is locked, `date` above has already moved to something postable — and
+  // a due date left on the original date would then sit BEFORE the bill itself.
+  // Tying them together means the pair stays coherent however the date shifts.
+  // A date typed into the publish dialog still wins; nothing else does.
   const iso = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : '');
-  const dueDate = iso(b.dueDate) || iso(bill.dueDate);
+  const dueDate = iso(b.dueDate) || date;
   const tax = parseAmount(bill.tax);
 
   const net = Math.max(0, total - tax);
@@ -557,9 +557,7 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     Type: 'ACCPAY',
     Contact: { Name: bill.supplier || 'Unknown supplier' },
     Date: date,
-    // Omitted when unknown, so Xero applies the supplier's own default terms
-    // rather than being told the bill is due on issue.
-    ...(dueDate ? { DueDate: dueDate } : {}),
+    DueDate: dueDate,
     LineAmountTypes: 'Exclusive',
     LineItems: [line],
     Status: status,
