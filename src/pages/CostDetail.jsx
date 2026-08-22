@@ -35,6 +35,7 @@ import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import { matchSupplierRule } from '@/lib/supplierRules';
+import TeachRule from '@/components/TeachRule';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
 import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
 import { useGstRegistered } from '@/lib/businessProfile';
@@ -246,6 +247,7 @@ export default function CostDetail() {
   const [compareOpen, setCompareOpen] = useState(false); // side-by-side duplicate review
   const [xeroBusy, setXeroBusy] = useState(''); // '' | 'attach' | 'clear'
   const [xeroNote, setXeroNote] = useState('');
+  const [teach, setTeach] = useState(null); // { field, value } after a manual correction
 
   const doc = mockDoc ?? persisted;
   // If this document is a line item inside an expense claim, keep the page in
@@ -358,6 +360,11 @@ export default function CostDetail() {
     customer: 'customer', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
   };
   const set = (key, value) => {
+    // Overruling the reader on an allocation is the one moment both halves of a
+    // rule are known — what it got wrong and what's right. Offer to keep it.
+    if ((key === 'category' || key === 'project') && doc?.persisted && value && value !== data[key]) {
+      setTeach({ field: key, value });
+    }
     setData((d) => ({ ...d, [key]: value }));
     if (readyError.length) setReadyError([]); // fixing a field clears the "not ready" banner
     const sf = SERVER_FIELDS[key];
@@ -1204,6 +1211,9 @@ export default function CostDetail() {
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
                 <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
+                {teach?.field === 'category' && (
+                  <TeachRule field="category" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
+                )}
               </Field>
               <Field label="Reason">
                 <textarea
@@ -1217,7 +1227,12 @@ export default function CostDetail() {
 
               <SectionHeading>Allocation</SectionHeading>
               <Field label="Customer"><EditableSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
-              <Field label="Project"><EditableSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} /></Field>
+              <Field label="Project">
+                <EditableSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} />
+                {teach?.field === 'project' && (
+                  <TeachRule field="project" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
+                )}
+              </Field>
               <Field label="Reason">
                 <textarea
                   rows={2}
