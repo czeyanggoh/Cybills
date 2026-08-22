@@ -15,7 +15,7 @@ import {
   supplierRuleCategoryReason,
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
-import { resolveTaxRate } from '@/lib/extractionSettings';
+import { taxRateOutcome } from '@/lib/extractionSettings';
 
 // What a re-read decided, given the document as it stands (`current`) and what
 // the reader returned (`ex`). `patch` is what to save; the rest is the working
@@ -29,7 +29,11 @@ import { resolveTaxRate } from '@/lib/extractionSettings';
 //   3. What the reader read this time.
 //   4. What the document already carried (a hand-edited tax rate, existing
 //      line items) — never clobbered.
-export function readDecisions(current, ex, { gstRegistered = true, taxRates = [], defaultTaxRateCosts = '' } = {}) {
+export function readDecisions(
+  current,
+  ex,
+  { gstRegistered = true, taxRates = [], defaultTaxRateCosts = '', accounts = [] } = {}
+) {
   const descr =
     ex.description ||
     (Array.isArray(ex.lineItems) ? ex.lineItems.map((li) => li.description).filter(Boolean).join(', ') : '');
@@ -37,7 +41,13 @@ export function readDecisions(current, ex, { gstRegistered = true, taxRates = []
   // doesn't already carry one (don't clobber a manual choice).
   const exTotal = ex.total != null ? ex.total : current.total;
   const exTax = ex.tax != null ? ex.tax : current.tax;
-  const inferredRate = resolveTaxRate({
+  // The account this document was coded to decides its tax code when the printed
+  // GST agrees with it — what Xero's own UI does when you pick an account.
+  const codedTo = String(ex.category || current.category || '');
+  const account = (accounts ?? []).find(
+    (a) => `${a.code} - ${a.name}` === codedTo || a.code === codedTo
+  );
+  const rate = taxRateOutcome({
     total: exTotal,
     tax: exTax,
     rates: taxRates,
@@ -46,7 +56,10 @@ export function readDecisions(current, ex, { gstRegistered = true, taxRates = []
     defaultName: defaultTaxRateCosts,
     currency: ex.currency || current.currency,
     kind: 'cost',
+    accountTaxType: account?.taxType || '',
+    accountLabel: account?.code || '',
   });
+  const inferredRate = rate.name;
   // Not GST-registered: there's no input tax to record, so don't carry the
   // printed GST onto the bill either.
   const exTaxOut = gstRegistered ? exTax : 0;
@@ -73,7 +86,9 @@ export function readDecisions(current, ex, { gstRegistered = true, taxRates = []
   if (ex.total != null) patch.total = ex.total;
   if (ex.tax != null || !gstRegistered) patch.tax = exTaxOut;
   if (!current.taxRate && inferredRate) patch.taxRate = inferredRate;
-  if (!current.taxRate && ex.taxRateReason) patch.taxRateReason = ex.taxRateReason;
+  // Why it was coded that way — or, when nothing could be, why not. A blank tax
+  // rate with no explanation is indistinguishable from a bug.
+  if (!current.taxRate) patch.taxRateReason = ex.taxRateReason || rate.reason || '';
   if (descr) patch.description = descr;
   if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
   if (ex.project) {
@@ -89,7 +104,10 @@ export function readDecisions(current, ex, { gstRegistered = true, taxRates = []
   if (ex.dueDate) patch.dueDate = ex.dueDate;
   if (ruleLines.length && !current.lineItems?.length) patch.lineItems = ruleLines;
 
-  return { patch, rule, descr, inferredRate, exTaxOut, supplierName, categoryReason, projectReason, ruleLines };
+  return {
+    patch, rule, descr, inferredRate, rateReason: rate.reason, exTaxOut,
+    supplierName, categoryReason, projectReason, ruleLines,
+  };
 }
 
 // The document's stored file, downscaled the same way an upload is (a raw phone

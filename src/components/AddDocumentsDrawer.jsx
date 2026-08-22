@@ -27,7 +27,7 @@ import {
   supplierRulePatch,
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
-import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, resolveTaxRate } from '@/lib/extractionSettings';
+import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome } from '@/lib/extractionSettings';
 import { useUsers } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
@@ -352,7 +352,13 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // Tax rate: a rule the extractor matched, else the arithmetic fallback
       // (standard-rated vintages / No Tax only), else the configured default.
       if (!String(cur?.taxRate || '')) {
-        const resolved = resolveTaxRate({
+        // The account it was coded to decides the code when the printed GST
+        // agrees with it — the same rule the detail page's re-read follows.
+        const codedTo = String(cur?.category || '');
+        const account = (await accountsPromise).find(
+          (a) => `${a.code} - ${a.name}` === codedTo || a.code === codedTo
+        );
+        const outcome = taxRateOutcome({
           total: cur?.total,
           tax: cur?.tax,
           rates: visibleTaxRates,
@@ -361,9 +367,13 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           defaultName: defRate,
           currency: cur?.currency,
           kind,
+          accountTaxType: account?.taxType || '',
+          accountLabel: account?.code || '',
         });
-        if (resolved) p.taxRate = resolved;
-        if (resolved && extracted?.taxRateReason) p.taxRateReason = extracted.taxRateReason;
+        if (outcome.name) p.taxRate = outcome.name;
+        // Say why — including when nothing could be picked, which is otherwise
+        // a blank field with no way to tell what went wrong.
+        p.taxRateReason = extracted?.taxRateReason || outcome.reason || '';
       }
       // No GST registration → nothing to claim, so never carry a tax amount.
       if (!settings.extractTax || !gstRegistered) p.tax = 0;
