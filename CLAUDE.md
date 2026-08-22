@@ -159,13 +159,23 @@ substantive field present on exactly one side, and a positive tie (a shared
 reference, a shared total, or the same supplier uploaded in one go) — that last
 one is what stops two half-read documents pairing just for being incomplete.
 
-Pages chain (a three-page document is one group); a payment pair does NOT — it
-is offered only when the two are each other's ONLY candidate, so three documents
-at one total is left to the reviewer rather than guessed at. Detection runs
-continuously over the inbox in `Costs.jsx` (`mergeGroups`), so a row wears a
-badge instead of the reviewer having to press a button; nothing is combined
-until the merge review modal is confirmed. `npm test` at the repo root runs the
-rules.
+When the reader gets NOTHING off one half (a blank row — no supplier, total,
+date or reference), there is no shared fact left to tie it with, so provenance
+carries it: arriving in the same upload as the other half. That evidence is much
+weaker, so such a pair is **provisional** — offered only where each side has
+exactly one candidate. Several blank rows in one upload is genuinely unknowable
+and gets nothing rather than a guess; the rows wear a **"Nothing read"** badge
+instead, so the reviewer can re-read the document (Cost detail → Re-read) or
+pick the two halves by hand.
+
+So three passes, strongest evidence first, and they never chain into each other:
+pages tied by a shared fact (these DO chain — a three-page document is one
+group), then provisional blank pairs, then a receipt with its card slip. The
+last two are forced-choice only, so three documents at one total is left to the
+reviewer. Detection runs continuously over the inbox in `Costs.jsx`
+(`mergeGroups`), so a row wears a badge instead of the reviewer having to press
+a button; nothing is combined until the merge review modal is confirmed.
+`npm test` at the repo root runs the rules.
 
 ## AI API spend
 
