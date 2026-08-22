@@ -123,6 +123,38 @@ doesn't add up to its tax) are refused outright, 422, in the dialog and in the
 API: a breakdown that disagrees with its own paper is a mistake to fix, not to
 post around. Covered by `npm test` in `server/`.
 
+## The Costs inbox's bulk actions
+
+The toolbar's **Actions** menu is everything you can do to a SELECTION, in one
+place (Dext's shape). Beyond move/archive/claim/delete it carries **Bulk edit**
+(`BulkEditModal.jsx`), Mark as paid / not paid, a bulk **Re-read**, **Publish to
+Xero**, and Export/download over just the ticked rows.
+
+Two rules run through all of them:
+
+- **A tick is what makes a field part of the edit.** An untouched field is not
+  sent, so "code these forty receipts to Entertainment" can't also blank forty
+  different suppliers. Ticking a field and leaving it empty clears it on purpose.
+- **A document already published to Xero is left alone**, and the result says how
+  many were skipped. Its figures are in the ledger; editing the copy here would
+  only make the two disagree.
+
+Changing a field never sets a status: the server re-derives ready vs inbox from
+completeness (`reconcileReadiness`), so bulk-coding a category moves those
+documents to Ready by itself. A bulk tax-rate change computes each document's tax
+from its OWN total, the same sum the inline Tax rate cell does.
+
+**Re-reading is decided in one place.** `src/lib/reRead.js` (`readDecisions`) owns
+the precedence a re-read applies — supplier rule, then the document's own printed
+due date, then this read, then what the document already carried (a hand-edited
+tax rate, existing line items are never clobbered). The document page's single
+re-read and the inbox's bulk one both call it, so they can't drift. The bulk run
+goes one document at a time: each read is a model call billed to that client
+entity. Publishing in bulk is as conservative as the automatic publish — it skips
+rather than guesses (already published, on an expense claim, incomplete, or a
+category that isn't in the org's chart) and the server enforces the same gates
+again.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to
