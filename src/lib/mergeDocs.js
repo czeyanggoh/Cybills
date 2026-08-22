@@ -1,6 +1,7 @@
 import { buildReceiptsPdf } from '@/lib/docsExport';
 import { fetchExtract, addBill, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { getExtractionAccounts } from '@/lib/organisations';
+import { looksLikeDuplicates, mergeKind, orderForMerge } from '@/lib/mergeDetect';
 
 // "Merge documents" (Dext-style): combine 2+ cost documents that are really one
 // receipt (page 1 + page 2, an invoice + its backup, a re-upload) into a single
@@ -23,40 +24,41 @@ function uint8ToBase64(bytes) {
   return btoa(binary);
 }
 
-// Sensible defaults for the review form. Merge combines the PAGES of ONE
-// document (same supplier, uploaded separately), so the merged amount is the
-// document's GRAND TOTAL — the largest source total (the summary/last page) —
-// NOT the sum of the pages (which would double-count a repeated total or a
-// duplicate). Always editable; the combined-PDF re-read overrides it when it
-// succeeds.
-// Page order: the itemised invoice/receipt first, the card-payment slip second.
-// The itemised doc is the one that carries line items / tax / an "Invoice" type;
-// a card slip has none of those. Sorting invoice-first also makes docs[0] the
-// merchant (not the bank), so the merged document takes the merchant's identity.
-function invoiceScore(d) {
-  const lines = Array.isArray(d.lineItems) ? d.lineItems.length : 0;
-  const type = String(d.type || d.documentType || '').toLowerCase();
-  return (lines > 0 ? 4 : 0) + (num(d.tax) > 0 ? 2 : 0) + (type === 'invoice' ? 1 : 0);
-}
-export function orderInvoiceFirst(docs) {
-  return [...docs].sort((a, b) => invoiceScore(b) - invoiceScore(a));
+// Page order depends on WHAT the set is, so it comes from the detector
+// (`orderForMerge`): a receipt and its card slip lead with the itemised document
+// — that way docs[0] is the merchant, not the bank, and the merged document
+// takes the merchant's identity. Two halves of one document lead with the half
+// carrying its header (reference, date, supplier), so the pages read in order.
+export function orderPages(docs) {
+  return orderForMerge(docs, mergeKind(docs));
 }
 
+// Sensible defaults for the review form. Merge combines the PAGES of ONE
+// document (uploaded separately), so the merged amount is the document's GRAND
+// TOTAL — the largest source total (the summary/last page) — NOT the sum of the
+// pages (which would double-count a repeated total or a duplicate). Always
+// editable; the combined-PDF re-read overrides it when it succeeds.
 function aggregateFields(docs) {
   const first = docs[0] || {};
   const grand = [...docs].sort((a, b) => num(b.total) - num(a.total))[0] || {};
+  // Take each field from the first document that actually STATES it, in page
+  // order — not from docs[0] alone. Two halves of one document each hold what
+  // the other is missing (the header page has the reference and the date, the
+  // details page has the rows), so reading only the first page would throw away
+  // half the document it just combined.
+  const firstOf = (pick) => docs.map(pick).find(Boolean) || '';
   // Inherit a real category from the already-coded source docs; only blank when
   // none of them are categorised.
   const category = docs.map((d) => d.category).find((c) => c && c !== 'Uncategorised') || '';
   return {
-    supplier: first.supplier && first.supplier !== 'Unknown supplier' ? first.supplier : '',
-    date: first.date && first.date !== '—' ? first.date : '',
+    supplier: firstOf((d) => (d.supplier && d.supplier !== 'Unknown supplier' ? d.supplier : '')),
+    date: firstOf((d) => (d.date && d.date !== '—' ? d.date : '')),
     category,
-    categoryReason: docs.map((d) => d.categoryReason).find(Boolean) || '',
-    description: docs.map((d) => d.description).find(Boolean) || '',
+    categoryReason: firstOf((d) => d.categoryReason),
+    description: firstOf((d) => d.description),
     currency: first.currency || 'SGD',
     documentType: first.type || 'Receipt',
-    invoiceNumber: first.invoiceNumber || first.ref || '',
+    invoiceNumber: firstOf((d) => d.invoiceNumber || d.ref),
     total: num(grand.total),
     tax: num(grand.tax),
   };
@@ -65,11 +67,17 @@ function aggregateFields(docs) {
 // Dext shows a warning when the selected items look unrelated. Flag the same
 // mismatches so the reviewer double-checks before combining.
 function mergeWarnings(docs) {
-  const uniq = (vals) => [...new Set(vals.filter((v) => v != null && v !== ''))];
+  // Only what a document actually STATES can disagree with another. A half-read
+  // page with no total is silent, not contradictory — counting its blank as 0
+  // put "different total amounts" on every page pair, which is the opposite of
+  // the truth about them.
+  const stated = (vals) => [...new Set(vals.filter((v) => v != null && v !== ''))];
   const w = [];
-  if (uniq(docs.map((d) => num(d.total))).length > 1) w.push('different total amounts');
-  if (uniq(docs.map((d) => (d.date && d.date !== '—' ? d.date : ''))).length > 1) w.push('different dates');
-  if (uniq(docs.map((d) => d.user)).length > 1) w.push('different users');
+  if (stated(docs.map((d) => (num(d.total) > 0 ? num(d.total).toFixed(2) : ''))).length > 1) {
+    w.push('different total amounts');
+  }
+  if (stated(docs.map((d) => (d.date && d.date !== '—' ? d.date : ''))).length > 1) w.push('different dates');
+  if (stated(docs.map((d) => d.user)).length > 1) w.push('different users');
   return w;
 }
 
@@ -77,7 +85,7 @@ function mergeWarnings(docs) {
 // to pre-fill the combined details, and surface any mismatch warnings. Returns
 // null if fewer than 2 of the selected docs carry a file.
 export async function buildMergePreview(docs) {
-  const mergeable = orderInvoiceFirst(docs.filter((d) => d.persisted && d.hasFile));
+  const mergeable = orderPages(docs.filter((d) => d.persisted && d.hasFile));
   if (mergeable.length < 2) return null;
 
   const { bytes, added } = await buildReceiptsPdf(mergeable);
@@ -111,16 +119,13 @@ export async function buildMergePreview(docs) {
       }
     : { ...agg, total: String(agg.total), tax: String(agg.tax) };
 
-  // Only warn about duplicates when the sources are the SAME supplier AND the
-  // same amount — that's a re-upload of one document. Same amount from DIFFERENT
-  // suppliers (e.g. an itemised receipt + its card slip) is a legitimate merge,
-  // so it must NOT be flagged as a duplicate.
+  // Warn about a re-upload only when the sources really are the same document
+  // twice — same supplier, same amount, and neither one filling a blank in the
+  // other. Two halves of ONE document share a supplier and a total as well, and
+  // telling the reviewer to archive one of those would lose half the paper.
   const warnings = mergeWarnings(mergeable);
-  const norm = (s) => String(s ?? '').trim().toLowerCase();
-  const totalsSet = new Set(mergeable.map((d) => num(d.total).toFixed(2)));
-  const suppliersSet = new Set(mergeable.map((d) => norm(d.supplier)));
-  if (mergeable.length > 1 && totalsSet.size === 1 && suppliersSet.size === 1) {
-    warnings.unshift('these look like the same document (same supplier + amount) — if they are duplicates, keep one and archive the rest instead of merging');
+  if (looksLikeDuplicates(mergeable)) {
+    warnings.unshift('these look like the same document (same supplier + amount, neither adding anything the other is missing) — if they are duplicates, keep one and archive the rest instead of merging');
   }
 
   return {

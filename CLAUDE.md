@@ -123,6 +123,33 @@ doesn't add up to its tax) are refused outright, 422, in the dialog and in the
 API: a breakdown that disagrees with its own paper is a mistake to fix, not to
 post around. Covered by `npm test` in `server/`.
 
+## Merge detection: which uploads are really one document
+
+Two separate uploads are often one cost, and the two ways that happens do not
+look alike, so `src/lib/mergeDetect.js` looks for both:
+
+- **Pages of one document** — page 1 (supplier, reference, date) and page 2
+  (line items, totals), e.g. a forwarded order confirmation screenshotted in
+  halves. SAME supplier.
+- **A payment papered twice** — the merchant's itemised receipt and the card
+  slip for it. Same total, DIFFERENT suppliers.
+
+The distinction between "pages of one document" and "the same document uploaded
+twice" is **complementarity**: pages fill each other's blanks, a re-upload
+repeats them. So a page pair needs compatible suppliers, nothing that both
+documents state contradicting (total / reference / date / card), at least one
+substantive field present on exactly one side, and a positive tie (a shared
+reference, a shared total, or the same supplier uploaded in one go) — that last
+one is what stops two half-read documents pairing just for being incomplete.
+
+Pages chain (a three-page document is one group); a payment pair does NOT — it
+is offered only when the two are each other's ONLY candidate, so three documents
+at one total is left to the reviewer rather than guessed at. Detection runs
+continuously over the inbox in `Costs.jsx` (`mergeGroups`), so a row wears a
+badge instead of the reviewer having to press a button; nothing is combined
+until the merge review modal is confirmed. `npm test` at the repo root runs the
+rules.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to
