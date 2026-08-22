@@ -25,7 +25,12 @@ export const DEFAULT_BUSINESS_PROFILE = {
 };
 
 const emit = () => window.dispatchEvent(new Event(BUSINESS_PROFILE_EVENT));
-const store = blobStore(KEY, DEFAULT_BUSINESS_PROFILE, emit, { perOrg: true });
+// Per entity, and deliberately NOT inherited from the workspace-wide blob this
+// used to be: a CRN, a GST number and a company name identify ONE company, so a
+// client that hasn't filled its profile in must show an empty one — never the
+// practice's. Empty also means `syncedAt` is empty, which is what makes the
+// page pull the entity's real details from Xero on first open.
+const store = blobStore(KEY, DEFAULT_BUSINESS_PROFILE, emit, { perOrg: true, inheritLegacy: false });
 
 export function getBusinessProfile() {
   const v = store.get() || {};
