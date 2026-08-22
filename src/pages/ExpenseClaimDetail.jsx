@@ -61,15 +61,18 @@ function glCodeForClaim(transactions) {
   return codes.every((c) => c === codes[0]) ? codes[0] : '';
 }
 
-function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false }) {
+function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false, disabled = false, title = '' }) {
   return (
     <button
       type="button"
+      disabled={disabled}
+      title={title}
       onClick={onClick}
       className={cn(
-        'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-muted',
+        'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
+        disabled ? 'cursor-not-allowed text-muted-foreground/60' : 'hover:bg-muted',
         subtle && 'border-transparent',
-        danger && 'border-transparent text-destructive hover:bg-destructive/10'
+        danger && !disabled && 'border-transparent text-destructive hover:bg-destructive/10'
       )}
     >
       {children}
@@ -246,6 +249,34 @@ export default function ExpenseClaimDetail() {
   const locked = claim.approvalStatus === 'approved';
   const submitted = claim.approvalStatus === 'awaiting_approval';
 
+  // Publish to Xero, in every state. An unapproved claim can't post — a claim
+  // is a bill payable to an employee, and approval is the thing that says the
+  // company owes it, so the server refuses one outright. Rather than hide the
+  // button until then (which reads as the feature being missing), it is shown
+  // disabled and says what it is waiting for.
+  const publishBtn = claim.xeroInvoiceId ? (
+    <span
+      className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm font-medium text-foreground"
+      title={`Xero bill ${claim.xeroInvoiceId}`}
+    >
+      <CheckCircle2 className="h-4 w-4" /> Published to Xero
+    </span>
+  ) : (
+    <TopButton
+      disabled={!locked || publishing}
+      title={
+        locked
+          ? 'Post this claim to Xero as a draft bill payable to the employee'
+          : submitted
+            ? 'Waiting on the approver — an approved claim can be published to Xero'
+            : 'Submit this claim for approval first — only an approved claim can be published to Xero'
+      }
+      onClick={publishXero}
+    >
+      {publishing ? 'Publishing…' : 'Publish to Xero'}
+    </TopButton>
+  );
+
   // Apply any in-session category tweaks on top of the stored line items, then
   // filter by the search box (supplier / category / date / description / id).
   const q = query.trim().toLowerCase();
@@ -399,6 +430,11 @@ export default function ExpenseClaimDetail() {
           {' '}Edit the items and re-submit for approval.
         </div>
       )}
+      {/* Publishing a claim posts a bill payable to the employee, so it waits for
+          the approval — the server refuses an unapproved claim outright. It is
+          shown in every state anyway, disabled and saying why: a button that
+          simply isn't there reads as a missing feature, which is exactly how it
+          was reported. */}
       {/* Action bar */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <TopButton subtle onClick={() => navigate('/expense-claims')}>
@@ -425,13 +461,6 @@ export default function ExpenseClaimDetail() {
               Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
             </span>
             <TopButton onClick={sendToHr}>{claim.hrSentAt ? 'Re-send to HR (update)' : 'Send to HR for payment'}</TopButton>
-            {claim.xeroInvoiceId ? (
-              <span className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm font-medium text-foreground" title={`Xero bill ${claim.xeroInvoiceId}`}>
-                <CheckCircle2 className="h-4 w-4" /> Published to Xero
-              </span>
-            ) : (
-              <TopButton onClick={publishXero}>{publishing ? 'Publishing…' : 'Publish to Xero'}</TopButton>
-            )}
           </>
         ) : claim.approvalStatus === 'rejected' ? (
           <>
@@ -446,6 +475,7 @@ export default function ExpenseClaimDetail() {
         ) : (
           <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>
         )}
+        {publishBtn}
         <TopButton onClick={async () => { await archiveClaims([claim.id], true).catch(() => {}); navigate('/expense-claims'); }}>Archive</TopButton>
         <div className="relative">
           <TopButton onClick={() => setExportMenu((o) => !o)} dropdown>Export</TopButton>

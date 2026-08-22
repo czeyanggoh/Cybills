@@ -1,6 +1,8 @@
 import { jsPDF } from 'jspdf';
 import { PDFDocument } from 'pdf-lib';
 import { pdfDate, claimRef, claimExportName, cleanHistoryText } from '@/lib/exportFormat';
+import { approvalHistory } from '@/lib/approvalHistory';
+import { costPath } from '@/lib/bills';
 import { recordExport } from '@/lib/exportsStore';
 
 // A4 in points, with a comfortable margin.
@@ -12,6 +14,12 @@ const BOTTOM = H - 56;
 const LINK = [37, 99, 235];
 
 const n2 = (v) => Number(v || 0).toFixed(2);
+
+// A claim PDF is opened from a mail client or a file, not from inside the app,
+// so an item's link has to carry the host — a bare /costs/… path resolves
+// against nothing and is why the Item ID looked like a link but did nothing.
+const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
+const itemUrl = (id) => (id ? `${ORIGIN}${costPath(id)}` : '');
 
 // Roll the line items up into per-category net/tax/total.
 function summarise(txns) {
@@ -69,15 +77,6 @@ export function buildClaimDoc(claim) {
     doc.setTextColor(20);
     y += 18;
   };
-  // Trim text to fit a column width, adding an ellipsis, so cells never bleed
-  // into the next column (the transactions table is tight in portrait A4).
-  const clip = (text, width) => {
-    let s = String(text ?? '');
-    if (doc.getTextWidth(s) <= width) return s;
-    while (s.length > 1 && doc.getTextWidth(`${s}…`) > width) s = s.slice(0, -1);
-    return `${s}…`;
-  };
-
   chrome();
 
   // ---- Claim meta ------------------------------------------------------
@@ -129,13 +128,19 @@ export function buildClaimDoc(claim) {
   // ---- Transactions ----------------------------------------------------
   section('TRANSACTIONS');
   const hasProject = claim.transactions.some((t) => t.project);
+  // The amount columns need only their header's width ("Net (SGD)" ≈ 46pt), so
+  // they are pulled right to leave the free-text columns as much room as
+  // possible — supplier and category are the two that were being cut off.
   const tc = hasProject
-    ? { date: M, item: 98, supplier: 162, category: 236, project: 338, net: 432, tax: 498, total: RIGHT }
-    : { date: M, item: 98, supplier: 172, category: 252, net: 432, tax: 498, total: RIGHT };
-  // How wide each free-text cell may draw before the next column starts.
-  const catWidth = (hasProject ? tc.project : tc.net - 44) - tc.category - 6;
-  const supWidth = tc.category - tc.supplier - 6;
-  const projWidth = hasProject ? tc.net - 44 - tc.project - 6 : 0;
+    ? { date: M, item: 92, supplier: 168, category: 258, project: 330, net: 420, tax: 492, total: RIGHT }
+    : { date: M, item: 92, supplier: 168, category: 272, net: 420, tax: 492, total: RIGHT };
+  // How wide each free-text cell may draw before the next column starts. They
+  // WRAP within it rather than being clipped: a claim someone signs has to show
+  // which supplier and which account, and "The Ice Cream …" is neither.
+  const textRight = tc.net - 52; // where the right-aligned amounts' text begins
+  const catWidth = (hasProject ? tc.project : textRight) - tc.category - 8;
+  const supWidth = tc.category - tc.supplier - 8;
+  const projWidth = hasProject ? textRight - tc.project - 8 : 0;
 
   const txnHeader = () => {
     doc.setFont('helvetica', 'bold');
@@ -155,26 +160,39 @@ export function buildClaimDoc(claim) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   for (const t of claim.transactions) {
-    ensure(18);
+    // Wrapped cells decide the row's height, so a two-line supplier can't be
+    // written over by the row beneath it.
+    const supLines = doc.splitTextToSize(String(t.supplier ?? ''), supWidth);
+    const catLines = doc.splitTextToSize(String(t.category ?? ''), catWidth);
+    const projLines = hasProject ? doc.splitTextToSize(String(t.project ?? ''), projWidth) : [];
+    const rowLines = Math.max(1, supLines.length, catLines.length, projLines.length);
+    ensure(rowLines * 11 + 7);
     if (y === 80) txnHeader(); // header was redrawn after a page break
+    const top = y;
     doc.setTextColor(60);
-    doc.text(pdfDate(t.date), tc.date, y);
+    doc.text(pdfDate(t.date), tc.date, top);
+    // A real link annotation, not just link-coloured text — the blue Item ID
+    // used to be painted on and clicked through to nothing.
+    const itemId = String(t.displayId || t.itemId || '');
     doc.setTextColor(LINK[0], LINK[1], LINK[2]);
-    doc.text(String(t.displayId || t.itemId), tc.item, y);
+    const url = itemUrl(t.itemId || t.displayId);
+    if (url) doc.textWithLink(itemId, tc.item, top, { url });
+    else doc.text(itemId, tc.item, top);
     doc.setTextColor(60);
-    doc.text(clip(t.supplier, supWidth), tc.supplier, y);
-    doc.text(clip(t.category, catWidth), tc.category, y);
-    if (hasProject) doc.text(clip(t.project || '', projWidth), tc.project, y);
-    doc.text(n2(t.net), tc.net, y, { align: 'right' });
-    doc.text(n2(t.tax), tc.tax, y, { align: 'right' });
-    doc.text(n2(t.total), tc.total, y, { align: 'right' });
-    y += 16;
+    const column = (lines, x) => lines.forEach((ln, i) => doc.text(ln, x, top + i * 11));
+    column(supLines, tc.supplier);
+    column(catLines, tc.category);
+    if (hasProject) column(projLines, tc.project);
+    doc.text(n2(t.net), tc.net, top, { align: 'right' });
+    doc.text(n2(t.tax), tc.tax, top, { align: 'right' });
+    doc.text(n2(t.total), tc.total, top, { align: 'right' });
+    y = top + rowLines * 11 + 5;
     // Item description on its own wrapped line beneath the row (matches Dext).
     if (t.description) {
       doc.setFont('helvetica', 'italic');
       doc.setFontSize(8);
       doc.setTextColor(120);
-      const lines = doc.splitTextToSize(String(t.description), tc.net - 50 - tc.supplier);
+      const lines = doc.splitTextToSize(String(t.description), textRight - tc.supplier);
       for (const ln of lines) {
         ensure(11);
         doc.text(ln, tc.supplier, y);
@@ -219,7 +237,18 @@ export function buildClaimDoc(claim) {
   nextPage();
   section('APPROVAL HISTORY');
   y += 4;
-  const events = claim.history || [];
+  // The approval trail only — not the whole activity log. Five lines of "Item …
+  // was added" tell an approver nothing about the approval and bury the two
+  // lines that do. See approvalHistory.js for what counts.
+  const events = approvalHistory(claim.history);
+  if (!events.length) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    doc.setTextColor(110);
+    doc.text('This claim has not been submitted for approval yet.', M, y);
+    doc.setTextColor(20);
+    y += 24;
+  }
   events.forEach((e, i) => {
     ensure(34);
     // timeline dot + connector
