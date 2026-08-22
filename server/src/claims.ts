@@ -126,10 +126,10 @@ export function claimForBill(org: string, billId: string): { id: string; name: s
 // Every bill id that already sits on a claim in this workspace. The auto-claim
 // runner asks once per sweep rather than per document, and it catches an item
 // whose bill status drifted out of 'expenseclaim' but which is still on a claim.
-export function claimedBillIds(ws: string): Set<string> {
+export function claimedBillIds(org: string): Set<string> {
   const out = new Set<string>();
   for (const c of load()) {
-    if (c.workspaceId !== ws || c.deleted) continue;
+    if (c.orgId !== org || c.deleted) continue;
     for (const t of c.transactions) out.add(String(t.itemId));
   }
   return out;
@@ -145,6 +145,7 @@ export function claimedBillIds(ws: string): Set<string> {
 // a late item files onto a fresh claim for the same period instead.
 export function fileAutoClaim(
   ws: string,
+  org: string,
   f: { claimFor: string; periodEnd: string; periodLabel: string; name: string; txns: Txn[]; by: string }
 ): { claimId: string; created: boolean; added: number } {
   const items = load();
@@ -152,7 +153,7 @@ export function fileAutoClaim(
   let claim =
     items.find(
       (c) =>
-        c.workspaceId === ws &&
+        c.orgId === org &&
         !c.deleted &&
         !c.archived &&
         c.auto === true &&
@@ -165,6 +166,7 @@ export function fileAutoClaim(
     claim = {
       id: randomUUID(),
       workspaceId: ws,
+      orgId: org,
       claimFor: f.claimFor,
       type: 'Regular',
       name: f.name,

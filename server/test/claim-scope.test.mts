@@ -124,6 +124,23 @@ check('adding its own entity’s bill works', addedOwn.status, 200);
 const red = (await list('org-red')).find((c) => c.id === made.body.claim.id);
 check('the line description comes from Red Alpha’s bill', red.transactions[0].description, 'Red Alpha hosting');
 
+// 6) The scheduled auto-filer builds claims too, so it files into an entity —
+// and never folds one entity's documents into another's open auto claim.
+const { fileAutoClaim } = await import('../src/claims.ts');
+const auto = (org: string) =>
+  fileAutoClaim('cybm', org, {
+    claimFor: 'Astrid', periodEnd: '2026-08-31', periodLabel: '31 Aug 2026',
+    name: 'Auto claim — 31 Aug 2026', txns: [], by: 'Automation',
+  });
+const autoRed = auto('org-red');
+check('the auto-filer creates a claim', autoRed.created, true);
+check('it belongs to the entity it filed for', (await list('org-red')).some((c) => c.id === autoRed.claimId), true);
+check('and not to the other entity', (await list('org-cybm')).some((c) => c.id === autoRed.claimId), false);
+
+const autoCybm = auto('org-cybm');
+check('the same period in another entity gets its own claim', [autoCybm.created, autoCybm.claimId !== autoRed.claimId], [true, true]);
+check('filing Red Alpha’s period again reuses its own open claim', auto('org-red').claimId, autoRed.claimId);
+
 server.close();
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);
