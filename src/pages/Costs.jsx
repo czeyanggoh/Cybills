@@ -44,7 +44,7 @@ import MergeModal from '@/components/MergeModal';
 import BulkEditModal from '@/components/BulkEditModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { useCostsDocs, rowsFor, isInInbox, isComplete } from '@/lib/costsData';
-import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount } from '@/lib/costFilters';
+import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
@@ -337,25 +337,7 @@ function SortTh({ label, sortKey, sort, setSort, align = 'left' }) {
 
 // Advanced search, empty. The `user` here is the document's OWNER (the User
 // column), which is editable per document — not whoever happened to upload it.
-const ANYONE = 'Anyone';
 const emptyAdv = () => ({ min: '', max: '', from: '', to: '', supplier: '', user: '' });
-
-// Does this document belong to the person picked in Advanced search? The picker
-// offers display names; the row also carries the owner's email and, where no
-// owner was ever set, the uploader's. Any of the three identifying them counts.
-const isOwnedBy = (d, who) => {
-  const want = String(who || '').trim().toLowerCase();
-  if (!want) return true;
-  return [d.user, d.ownerEmail, d.createdByEmail].some((v) => String(v || '').trim().toLowerCase() === want);
-};
-
-// Every person who owns a document here, A–Z. Built from the whole set rather
-// than the open tab, so a name doesn't vanish from the picker when you switch
-// tabs — and the picker can only ever offer someone who has documents.
-const ownersOf = (docs) =>
-  Array.from(new Set((docs || []).map((d) => String(d.user || '').trim()).filter(Boolean))).sort((a, b) =>
-    a.localeCompare(b)
-  );
 
 // Search + Filter popover + Advanced-search popover for the Costs table.
 function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv, userOptions }) {
@@ -607,7 +589,10 @@ export default function Costs() {
   const { user, visionEnabled } = useAuth();
   // Label for uploads with no recorded creator ("You" = whoever is viewing).
   const meName = user?.name || user?.email || 'You';
-  const uploaderLabel = (d) => (d.user && d.user !== 'You' ? d.user : meName);
+  // A row with nobody recorded is UNASSIGNED, not you. This used to substitute
+  // the signed-in person's own name, so the same document read as "Cze Yang
+  // Goh" to one colleague and "Astrid Yang" to the next.
+  const uploaderLabel = (d) => (d.user && d.user !== 'You' ? d.user : UNASSIGNED);
 
   // Every column the table can show, with how it renders. What's actually on
   // screen (and how tightly) comes from the gear menu — see tablePrefs.js.

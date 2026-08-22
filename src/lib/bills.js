@@ -231,7 +231,10 @@ export function lineItemRows(rows, fallbackCategory = '') {
   });
 }
 
-const ownerName = (who) => (who ? nameForEmail(who) || who : 'You');
+// '' when the document records nobody — it was stored with no signed-in user,
+// so there is no owner to name. It used to read "You", which is not a person:
+// every viewer saw it as themselves.
+const ownerName = (who) => (who ? nameForEmail(who) || who : '');
 
 // Shape a persisted bill into the row/doc form the Costs list + detail expect.
 export function billToDoc(b) {
