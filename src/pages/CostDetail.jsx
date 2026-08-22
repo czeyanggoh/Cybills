@@ -24,7 +24,7 @@ import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
-import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useXeroProjectOptions } from '@/lib/organisations';
+import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
@@ -211,6 +211,9 @@ export default function CostDetail() {
   // settings → Lists → Tax rates: the live Xero rates (seed fallback), showing
   // only the rates left Visible there. `rateFor` gives the % for the tax math.
   const taxRateSource = useVisibleTaxRates();
+  // The unfiltered list too: a code switched off in Lists is still the standard
+  // one for its rate, and this is how the org's own name for it is found.
+  const allTaxRates = useManagedTaxRates();
   // Not GST-registered → every document codes to No Tax and no GST is split out,
   // and the picker offers nothing else.
   const gstRegistered = useGstRegistered();
@@ -828,6 +831,7 @@ export default function CostDetail() {
       } = readDecisions(data, ex, {
         gstRegistered,
         taxRates: taxRateSource,
+        allTaxRates,
         defaultTaxRateCosts: extractionSettings.defaultTaxRateCosts,
         accounts,
       });

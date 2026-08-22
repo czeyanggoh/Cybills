@@ -185,9 +185,15 @@ arithmetic must not guess, e.g. an account defaulting to Disallowed Expenses at
 9%; then the standard-rated vintage at that percentage; then No Tax for a
 foreign-currency document whose rate isn't in the chart. Import GST, reverse
 charge and partial exemption all print as a percentage too, so anything else is
-left for a human — but no longer silently: `taxRateOutcome` returns a `reason`
-either way, and a decline names the rate, what IS visible at it, and points at
-Business settings → Lists → Tax rates. A blank field with no explanation is
+left for a human — but only when the rate isn't a standard one at all. A
+standard rate always answers: `INPUTY24` IS 9% standard-rated purchases in every
+Singapore Xero (7% `INPUT`, 8% `INPUTY23`; `OUTPUT*` on the sales side), so when
+an org has written no rule and its visible list can't supply the code — switched
+off in Lists, or not loaded — the standard code for the printed rate is used
+anyway, named the way that org names it when the unfiltered list can say.
+Nothing is silent either way: `taxRateOutcome` returns a `reason`, and a decline
+names the rate, what IS visible at it, and points at Business settings → Lists →
+Tax rates. A blank field with no explanation is
 indistinguishable from a bug, which is exactly how one was reported.
 
 ## The Costs inbox's bulk actions

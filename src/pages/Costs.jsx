@@ -22,7 +22,7 @@ import ReceiptViewer from '@/components/ReceiptViewer';
 import { useFlagAssignments } from '@/lib/flagAssignments';
 import {
   useCategoryOptions,
-  useVisibleTaxRates,
+  useVisibleTaxRates, useManagedTaxRates,
   getExtractionAccounts,
   resolveCategorisationOrgId,
   fetchXeroAccounts,
@@ -694,6 +694,7 @@ export default function Costs() {
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
   const taxRates = useVisibleTaxRates(); // shared managed list (Lists → Tax rates)
+  const allTaxRates = useManagedTaxRates(); // …and the same list unfiltered
   // Not GST-registered → No Tax is the only code on offer, and the row shows it
   // even for a document coded before the profile said so (opening the document
   // rewrites the stored value).
@@ -1039,6 +1040,7 @@ export default function Costs() {
       accounts: await getExtractionAccounts().catch(() => []),
       gstRegistered,
       taxRates,
+      allTaxRates,
       defaultTaxRateCosts: settings.defaultTaxRateCosts,
     };
     const tally = { ok: 0, blank: 0, nofile: 0, failed: 0 };
