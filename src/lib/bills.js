@@ -149,6 +149,28 @@ export async function finalizeBill(id, fields, { checkDuplicates = true } = {}) 
   return res.json();
 }
 
+// Read the itemised table off a document — its own pass, not a field on the
+// general read (see server/src/extract.ts). Returns { lines, grandTotal,
+// linesTotal, reconciled, note } so the caller can say whether the rows can be
+// trusted, or null when the read failed.
+export async function fetchExtractLines(imageBase64, mediaType, accounts) {
+  const instructions = await fetchReviewInstructions(getActiveOrganisationId());
+  const res = await fetch('/api/costs/extract-lines', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({
+      imageBase64,
+      mediaType,
+      accounts,
+      instructions,
+      provider: requestedProvider(),
+    }),
+  });
+  if (!res.ok) return null;
+  const { data } = await res.json();
+  return data ?? null;
+}
+
 // Turn the reader's line items into the editable rows a bill stores: amounts as
 // fixed-2 strings, and a category on every row (the document's own when the
 // reader didn't code that line). Used by the manual "Extract line items" button

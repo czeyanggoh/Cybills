@@ -81,6 +81,17 @@ whose API key was later removed degrades to a working reader instead of failing
 the read. The settings card only offers a provider whose key is present —
 `GET /api/auth/status` returns `readerProviders` + `defaultReaderProvider`.
 
+**Line items are their own pass.** `POST /api/costs/extract-lines` reads the
+itemised table and nothing else — the general read gave line items three words
+of schema description, which is how a "Balance brought forward" row ended up in
+the grid as a charge. Its prompt names the rows that are NOT charges, and the
+server adds the lines up against the document's own grand total before
+returning them: a set that doesn't reconcile is re-read once, told what it got
+wrong, and only the better of the two answers is kept. What comes back carries
+`reconciled` + `linesTotal` + `grandTotal`, so the caller can say so out loud
+rather than pasting rows that don't add up. `npm test` in `server/` runs that
+path end to end against a stubbed reader.
+
 Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
 `claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5`),
 `OPENAI_REASONING_EFFORT` (default `low`), optional `OPENAI_BASE_URL` for an

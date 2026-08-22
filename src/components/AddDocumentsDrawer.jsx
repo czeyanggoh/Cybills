@@ -12,6 +12,7 @@ import {
   finalizeBill,
   notifyBillsChanged,
   describeDuplicate,
+  fetchExtractLines,
   lineItemRows,
   VISION_MEDIA,
 } from '@/lib/bills';
@@ -344,7 +345,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
     // cost/sales doc: default tax rate (only when extraction didn't read one),
     // clear tax when "Extract tax" is off, default paid status by document type,
     // and a due date computed from the invoice date. Skipped for statements.
-    const applyExtractionDefaults = async (billId, cur, extracted = null) => {
+    const applyExtractionDefaults = async (billId, cur, extracted = null, file = null) => {
       if (isStatement) return cur;
       const p = {};
       const defRate = kind === 'sales' ? settings.defaultTaxRateSales : settings.defaultTaxRateCosts;
@@ -396,9 +397,14 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       if (!printedDue && rule.dueDate) p.dueDate = rule.dueDate;
       // "Extract line items" is opt-in per supplier: a document is otherwise a
       // single coded total, and the printed lines are pulled on demand from the
-      // detail page.
-      if (vendorRule.extractLineItems && Array.isArray(extracted?.lineItems) && extracted.lineItems.length) {
-        p.lineItems = lineItemRows(extracted.lineItems, p.category || cur?.category);
+      // detail page. It runs the dedicated line-items pass — the same one the
+      // detail page's button uses — rather than the general read's summary of
+      // them, so an opted-in supplier gets rows that were checked against the
+      // document's own total. A second reader call, which is why it is a rule
+      // someone turns on and not the default.
+      if (vendorRule.extractLineItems && file?.base64) {
+        const lines = await fetchExtractLines(file.base64, file.mediaType, await accountsPromise).catch(() => null);
+        if (lines?.lines?.length) p.lineItems = lineItemRows(lines.lines, p.category || cur?.category);
       }
 
       // Project (Xero PIC), in order of what the evidence supports:
@@ -524,7 +530,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               patch(it.id, { status: 'duplicate', duplicate: fin.duplicate });
               return;
             }
-            const withDefaults = await applyExtractionDefaults(bill.id, fin?.bill ?? bill, fields);
+            const withDefaults = await applyExtractionDefaults(bill.id, fin?.bill ?? bill, fields, { base64: fileBase64, mediaType });
             // Reading is done: send it to Xero as Awaiting Approval. Declines
             // quietly (and leaves the document alone) when it isn't complete
             // enough to post — see autoPublishAfterRead.
@@ -542,7 +548,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             // Nothing read (extraction off/failed) — move straight to the inbox;
             // no fuzzy dedup on empty fields.
             const advanced = await updateBill(bill.id, { status: 'new' }).then((r) => r?.bill).catch(() => null);
-            const withDefaults = await applyExtractionDefaults(bill.id, advanced ?? bill);
+            const withDefaults = await applyExtractionDefaults(bill.id, advanced ?? bill, null, { base64: fileBase64, mediaType });
             notifyBillsChanged();
             patch(it.id, { status: 'added', bill: withDefaults });
           }

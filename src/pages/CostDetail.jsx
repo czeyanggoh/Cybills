@@ -32,7 +32,7 @@ import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, fetchExtractLines, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import {
@@ -907,6 +907,9 @@ export default function CostDetail() {
   const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
 
   // Read the attached receipt and turn its printed lines into editable rows.
+  // Its own pass (see server/src/extract.ts): the rows come back already checked
+  // against the document's own grand total, so anything that doesn't add up is
+  // said out loud here rather than left for the "Out by" row to be noticed.
   const extractLineItems = async () => {
     setAiError('');
     const rec = await receiptToUpload();
@@ -914,10 +917,24 @@ export default function CostDetail() {
     setExtractingLines(true);
     try {
       const accounts = await getExtractionAccounts();
-      const ex = await fetchExtract(rec.base64, rec.mediaType, accounts);
-      const rows = Array.isArray(ex?.lineItems) ? ex.lineItems : [];
-      if (!rows.length) { setAiError('No line items found on this document.'); return; }
+      const ex = await fetchExtractLines(rec.base64, rec.mediaType, accounts);
+      const rows = Array.isArray(ex?.lines) ? ex.lines : [];
+      if (!rows.length) { setAiError('No itemised charges found on this document.'); return; }
       setLineItems(lineItemRows(rows, data.category));
+      const money = (n) => Number(n || 0).toFixed(2);
+      if (!ex.reconciled) {
+        setAiError(
+          `Read ${rows.length} line${rows.length === 1 ? '' : 's'} totalling ${money(ex.linesTotal)}, but the ` +
+            `document's total reads as ${money(ex.grandTotal)}. ` +
+            (ex.note || 'Check for a row that was missed, or one that is really a subtotal.')
+        );
+      } else if (Math.abs(num(data.total) - Number(ex.grandTotal || 0)) > 0.005) {
+        // The lines agree with the document; it's this bill's total that doesn't.
+        setAiError(
+          `The lines add up to ${money(ex.linesTotal)}, which is the document's own total — but this bill ` +
+            `says ${money(data.total)}. Check the Total amount field.`
+        );
+      }
     } catch {
       setAiError('Could not extract line items.');
     } finally {
