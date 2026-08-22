@@ -824,11 +824,12 @@ export default function CostDetail() {
       // read, or what the document already carried — is decided in one place
       // (readDecisions), so this page and the inbox's bulk re-read agree.
       const {
-        patch, rule, descr, inferredRate, supplierName, categoryReason, projectReason, ruleLines,
+        patch, rule, descr, inferredRate, rateReason, supplierName, categoryReason, projectReason, ruleLines,
       } = readDecisions(data, ex, {
         gstRegistered,
         taxRates: taxRateSource,
         defaultTaxRateCosts: extractionSettings.defaultTaxRateCosts,
+        accounts,
       });
       setData((d) => ({
         ...d,
@@ -847,7 +848,7 @@ export default function CostDetail() {
           ? `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`
           : d.taxRate
             ? d.taxRateReason
-            : ex.taxRateReason || d.taxRateReason,
+            : ex.taxRateReason || rateReason || d.taxRateReason,
         description: rule.description || descr || d.description,
         paymentMethod: rule.paymentMethod || d.paymentMethod,
         paid: 'paid' in rule ? rule.paid : d.paid,

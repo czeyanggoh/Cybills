@@ -9,7 +9,7 @@
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",
-    "test": "node test/merge-detect.test.mjs && node test/extraction-jobs.test.mjs",
+    "test": "node test/merge-detect.test.mjs && node test/extraction-jobs.test.mjs && node test/tax-rate-rules.test.mjs && node test/cost-filters.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

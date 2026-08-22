@@ -29,7 +29,7 @@ import {
   fetchXeroTaxRates,
   publishBillToXero,
 } from '@/lib/organisations';
-import { useGstRegistered } from '@/lib/businessProfile';
+import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument } from '@/lib/reRead';
@@ -44,6 +44,7 @@ import MergeModal from '@/components/MergeModal';
 import BulkEditModal from '@/components/BulkEditModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { useCostsDocs, rowsFor, isInInbox, isComplete } from '@/lib/costsData';
+import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
@@ -335,10 +336,11 @@ function SortTh({ label, sortKey, sort, setSort, align = 'left' }) {
 }
 
 // Search + Filter popover + Advanced-search popover for the Costs table.
-function CostsToolbar({ query, setQuery, flagFilter, setFlagFilter, adv, setAdv }) {
+function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [advOpen, setAdvOpen] = useState(false);
-  const chip = (on) => cn('rounded-md border px-3 py-1 text-sm transition-colors', on ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted');
+  const chip = (on) => cn('rounded-md border px-2.5 py-1 text-xs transition-colors', on ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted');
+  const chosen = filterCount(filters);
   const field = 'h-8 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
   return (
@@ -386,23 +388,40 @@ function CostsToolbar({ query, setQuery, flagFilter, setFlagFilter, adv, setAdv 
       </div>
 
       <div className="relative">
-        <button type="button" onClick={() => { setFilterOpen((o) => !o); setAdvOpen(false); }} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Filter">
-          <Filter className={cn('h-4 w-4', flagFilter !== 'all' && 'text-foreground')} strokeWidth={1.75} />
+        <button type="button" onClick={() => { setFilterOpen((o) => !o); setAdvOpen(false); }} className="relative flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Filter">
+          <Filter className={cn('h-4 w-4', chosen > 0 && 'text-foreground')} strokeWidth={1.75} />
+          {chosen > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground px-1 text-[10px] font-medium text-background">
+              {chosen}
+            </span>
+          )}
         </button>
         {filterOpen && (
           <>
             <div className="fixed inset-0 z-10" onClick={() => setFilterOpen(false)} aria-hidden="true" />
-            <div className="absolute left-0 z-30 mt-1 w-64 rounded-lg border bg-background p-4 shadow-lg">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filter</p>
-              <div className="grid grid-cols-[60px_1fr] items-center gap-2 text-sm">
-                <span>Flag</span>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setFlagFilter(flagFilter === 'flagged' ? 'all' : 'flagged')} className={chip(flagFilter === 'flagged')}>Flagged</button>
-                  <button type="button" onClick={() => setFlagFilter(flagFilter === 'unflagged' ? 'all' : 'unflagged')} className={chip(flagFilter === 'unflagged')}>Unflagged</button>
-                </div>
+            <div className="absolute right-0 z-30 mt-1 flex max-h-[min(70vh,32rem)] w-[22rem] max-w-[calc(100vw-2rem)] flex-col rounded-lg border bg-background shadow-lg">
+              <p className="shrink-0 px-4 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filter</p>
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4 text-sm">
+                {FILTER_IDS.map((id) => (
+                  <div key={id} className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <span className="text-muted-foreground">{COST_FILTERS[id].label}</span>
+                    <div className="flex flex-wrap gap-2">
+                      {COST_FILTERS[id].options.map((o) => (
+                        <button
+                          key={o.value}
+                          type="button"
+                          onClick={() => setFilters((f) => ({ ...f, [id]: f[id] === o.value ? '' : o.value }))}
+                          className={chip(filters[id] === o.value)}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="mt-4 flex justify-end gap-2">
-                <button type="button" onClick={() => setFlagFilter('all')} className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Reset</button>
+              <div className="flex shrink-0 justify-end gap-2 border-t px-4 py-3">
+                <button type="button" onClick={() => setFilters(emptyFilters())} className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Reset</button>
                 <button type="button" onClick={() => setFilterOpen(false)} className="inline-flex h-8 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">Apply</button>
               </div>
             </div>
@@ -679,7 +698,7 @@ export default function Costs() {
   const [claimOpen, setClaimOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [sort, setSort] = useState({ key: '', dir: 'asc' });
-  const [flagFilter, setFlagFilter] = useState('all'); // all | flagged | unflagged
+  const [filters, setFilters] = useState(emptyFilters); // Filter popover: id -> chosen chip
   const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', supplier: '' });
   const [mergeModalDocs, setMergeModalDocs] = useState(null); // docs under review in the merge modal
   const [mergeNote, setMergeNote] = useState('');
@@ -698,6 +717,8 @@ export default function Costs() {
   // even for a document coded before the profile said so (opening the document
   // rewrites the stored value).
   const gstRegistered = useGstRegistered();
+  // The org's own currency, so "Foreign currency" means foreign to THIS entity.
+  const baseCurrency = useBusinessProfile().baseCurrency;
   const readerName = useReaderName();
   const noTaxName = noTaxRateName(taxRates);
   const taxRateOptions = gstRegistered ? taxRates.map((t) => t.name) : [noTaxName].filter(Boolean);
@@ -751,9 +772,10 @@ export default function Costs() {
         [d.supplier, d.user, d.category, d.date].some((v) => String(v || '').toLowerCase().includes(q))
       )
     : allRows;
-  // Filter popover (flag) + Advanced search (amount / date / supplier).
-  if (flagFilter === 'flagged') rows = rows.filter((d) => flagAssignments[d.id]);
-  if (flagFilter === 'unflagged') rows = rows.filter((d) => !flagAssignments[d.id]);
+  // Filter popover (flag, tax, category, publishing, …) + Advanced search
+  // (amount / date / supplier). The popover's rules live in one list so a chip
+  // can't be offered without being applied.
+  rows = applyCostFilters(rows, filters, { flags: flagAssignments, baseCurrency });
   if (adv.min) rows = rows.filter((d) => toNum(d.total) >= toNum(adv.min));
   if (adv.max) rows = rows.filter((d) => toNum(d.total) <= toNum(adv.max));
   if (adv.from) rows = rows.filter((d) => toTime(d.date) >= toTime(adv.from));
@@ -1227,8 +1249,8 @@ export default function Costs() {
             <CostsToolbar
               query={query}
               setQuery={setQuery}
-              flagFilter={flagFilter}
-              setFlagFilter={setFlagFilter}
+              filters={filters}
+              setFilters={setFilters}
               adv={adv}
               setAdv={setAdv}
             />

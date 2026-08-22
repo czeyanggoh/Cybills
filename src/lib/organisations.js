@@ -355,6 +355,10 @@ export async function getExtractionAccounts() {
       code: a.code,
       name: a.name,
       description: a.description || '',
+      // The account's own default tax code in Xero. Not sent to the reader (the
+      // server ignores it) — it's for the tax-rate decision afterwards, which
+      // follows the account the same way Xero's own UI does.
+      taxType: a.taxType || '',
     }));
     return list.length ? list : XERO_ACCOUNTS;
   } catch {
