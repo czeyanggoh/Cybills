@@ -43,7 +43,7 @@ import {
 } from '@/lib/supplierRules';
 import TeachRule from '@/components/TeachRule';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
-import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
+import { useExtractionSettings, taxRateOutcome, noTaxRateName } from '@/lib/extractionSettings';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useAutoSave } from '@/lib/useAutoSave';
 import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
@@ -827,7 +827,11 @@ export default function CostDetail() {
       // standard-rated codes and No Tax are auto-pickable — see inferTaxRateName.
       const exTotal = ex.total != null ? ex.total : data.total;
       const exTax = ex.tax != null ? ex.tax : data.tax;
-      const inferredRate = resolveTaxRate({
+      // The account this document was coded to decides its tax code when the
+      // printed GST agrees with it — so look it up alongside the arithmetic.
+      const codedTo = String(ex.category || data.category || '');
+      const account = accounts.find((a) => `${a.code} - ${a.name}` === codedTo || a.code === codedTo);
+      const rateOutcome = taxRateOutcome({
         total: exTotal,
         tax: exTax,
         rates: taxRateSource,
@@ -836,7 +840,10 @@ export default function CostDetail() {
         defaultName: extractionSettings.defaultTaxRateCosts,
         currency: ex.currency || data.currency,
         kind: 'cost',
+        accountTaxType: account?.taxType || '',
+        accountLabel: account?.code || '',
       });
+      const inferredRate = rateOutcome.name;
       // Not GST-registered: there's no input tax to record, so don't carry the
       // printed GST onto the bill either.
       const exTaxOut = gstRegistered ? exTax : 0;
@@ -874,7 +881,7 @@ export default function CostDetail() {
           ? `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`
           : d.taxRate
             ? d.taxRateReason
-            : ex.taxRateReason || d.taxRateReason,
+            : ex.taxRateReason || rateOutcome.reason || d.taxRateReason,
         description: rule.description || descr || d.description,
         paymentMethod: rule.paymentMethod || d.paymentMethod,
         paid: 'paid' in rule ? rule.paid : d.paid,
@@ -905,7 +912,9 @@ export default function CostDetail() {
         if (ex.total != null) patch.total = ex.total;
         if (ex.tax != null || !gstRegistered) patch.tax = exTaxOut;
         if (!data.taxRate && inferredRate) patch.taxRate = inferredRate;
-        if (!data.taxRate && ex.taxRateReason) patch.taxRateReason = ex.taxRateReason;
+        // Why it was coded that way — or, when nothing could be, why not. A
+        // blank tax rate with no explanation is what sent someone hunting.
+        if (!data.taxRate) patch.taxRateReason = ex.taxRateReason || rateOutcome.reason || '';
         if (descr) patch.description = descr;
         if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
         if (ex.project) {

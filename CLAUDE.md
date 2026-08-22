@@ -177,6 +177,19 @@ reviewer. Detection runs continuously over the inbox in `Costs.jsx`
 a button; nothing is combined until the merge review modal is confirmed.
 `npm test` at the repo root runs the rules.
 
+**A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
+re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
+the ACCOUNT's own default tax code in Xero when the printed GST matches its rate
+— what Xero's own UI does, and the only route that can legitimately reach a code
+arithmetic must not guess, e.g. an account defaulting to Disallowed Expenses at
+9%; then the standard-rated vintage at that percentage; then No Tax for a
+foreign-currency document whose rate isn't in the chart. Import GST, reverse
+charge and partial exemption all print as a percentage too, so anything else is
+left for a human — but no longer silently: `taxRateOutcome` returns a `reason`
+either way, and a decline names the rate, what IS visible at it, and points at
+Business settings → Lists → Tax rates. A blank field with no explanation is
+indistinguishable from a bug, which is exactly how one was reported.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to
