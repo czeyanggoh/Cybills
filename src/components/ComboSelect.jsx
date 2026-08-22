@@ -137,6 +137,7 @@ export default function ComboSelect({
   };
 
   const box = {
+    lg: 'h-10 px-3 pr-8',
     md: 'h-9 px-3 pr-8',
     sm: 'h-8 min-w-[9rem] rounded px-2 pr-7',
     xs: 'h-[30px] px-2 pr-7 text-xs',
@@ -172,7 +173,7 @@ export default function ComboSelect({
       <ChevronDown
         className={cn(
           'pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground',
-          size === 'md' ? 'right-3' : 'right-2'
+          size === 'md' || size === 'lg' ? 'right-3' : 'right-2'
         )}
       />
       {open && rect && createPortal(
@@ -208,7 +209,9 @@ export default function ComboSelect({
               )}
             >
               <Check className={cn('h-3.5 w-3.5 shrink-0', o === value ? 'opacity-100' : 'opacity-0')} />
-              <span className="truncate">{format(o) || <span className="text-muted-foreground">(blank)</span>}</span>
+              <span className="truncate">
+                {format(o) || <span className="italic text-muted-foreground">{emptyLabel || '(blank)'}</span>}
+              </span>
             </li>
           ))}
         </ul>,
