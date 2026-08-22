@@ -110,8 +110,16 @@ async function fileForDoc(doc) {
 
 // Re-read ONE stored document and save what came back. Returns a reason code
 // rather than throwing, so a bulk caller can report "3 read, 1 had no file"
-// instead of stopping at the first document it can't handle.
-//   'ok' | 'nofile' (nothing to re-read) | 'failed' (the read didn't come back)
+// instead of stopping at the first document it can't handle:
+//
+//   'ok'     — read, and it found the document's identity
+//   'blank'  — the reader came back with neither a supplier nor a total. Saved
+//              anyway (it may still have read a date or a reference), but said
+//              out loud: a document that reads as nothing twice is a problem
+//              with the FILE — a dark photo, a scan of a scan — and no amount of
+//              running it again will fix that.
+//   'nofile' — nothing to re-read
+//   'failed' — the read didn't come back at all
 export async function reReadDocument(doc, ctx) {
   if (!doc?.persisted) return 'nofile';
   const rec = await fileForDoc(doc);
@@ -121,7 +129,7 @@ export async function reReadDocument(doc, ctx) {
     if (!ex) return 'failed';
     const { patch } = readDecisions(doc, ex, ctx);
     await updateBill(doc.id, patch);
-    return 'ok';
+    return ex.supplier || Number(ex.total) > 0 ? 'ok' : 'blank';
   } catch {
     return 'failed';
   }

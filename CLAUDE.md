@@ -128,16 +128,48 @@ doesn't add up to its tax) are refused outright, 422, in the dialog and in the
 API: a breakdown that disagrees with its own paper is a mistake to fix, not to
 post around. Covered by `npm test` in `server/`.
 
+## Merge detection: which uploads are really one document
+
+Two separate uploads are often one cost, and the two ways that happens do not
+look alike, so `src/lib/mergeDetect.js` looks for both:
+
+- **Pages of one document** — page 1 (supplier, reference, date) and page 2
+  (line items, totals), e.g. a forwarded order confirmation screenshotted in
+  halves. SAME supplier.
+- **A payment papered twice** — the merchant's itemised receipt and the card
+  slip for it. Same total, DIFFERENT suppliers.
+
+The distinction between "pages of one document" and "the same document uploaded
+twice" is **complementarity**: pages fill each other's blanks, a re-upload
+repeats them. So a page pair needs compatible suppliers, nothing that both
+documents state contradicting (total / reference / date / card), at least one
+substantive field present on exactly one side, and a positive tie (a shared
+reference, a shared total, or the same supplier uploaded in one go) — that last
+one is what stops two half-read documents pairing just for being incomplete.
+
+Pages chain (a three-page document is one group); a payment pair does NOT — it
+is offered only when the two are each other's ONLY candidate, so three documents
+at one total is left to the reviewer rather than guessed at. Detection runs
+continuously over the inbox in `Costs.jsx` (`mergeGroups`), so a row wears a
+badge instead of the reviewer having to press a button; nothing is combined
+until the merge review modal is confirmed. `npm test` at the repo root runs the
+rules.
+
 ## The Costs inbox's bulk actions
 
-The toolbar's **Actions** menu is everything you can do to a SELECTION, in one
-place (Dext's shape). Beyond move/archive/claim/delete it carries **Bulk edit**
-(`BulkEditModal.jsx`), Mark as paid / not paid, a bulk **Re-read**, **Publish to
-Xero**, and Export/download over just the ticked rows.
+Every bulk action is a **button**. The "Move to" and "Actions" dropdowns this
+replaced were a menu of things that are each one click on their own, so reaching
+them took a second click and a hunt through a list. The row wraps instead.
+
+Beyond move/archive/claim/merge, the toolbar carries **Bulk edit**
+(`BulkEditModal.jsx`), **Rerun processing**, Mark as paid / not paid, **Publish
+to Xero**, and **Delete** (red — it drops the stored file too, and confirms
+first). One **Export** button covers both cases: the ticked rows when anything is
+ticked, otherwise everything the tab shows.
 
 Two rules run through all of them:
 
-- **A tick is what makes a field part of the edit.** An untouched field is not
+- **A tick is what makes a field part of a bulk edit.** An untouched field is not
   sent, so "code these forty receipts to Entertainment" can't also blank forty
   different suppliers. Ticking a field and leaving it empty clears it on purpose.
 - **A document already published to Xero is left alone**, and the result says how
@@ -149,16 +181,24 @@ completeness (`reconcileReadiness`), so bulk-coding a category moves those
 documents to Ready by itself. A bulk tax-rate change computes each document's tax
 from its OWN total, the same sum the inline Tax rate cell does.
 
-**Re-reading is decided in one place.** `src/lib/reRead.js` (`readDecisions`) owns
-the precedence a re-read applies — supplier rule, then the document's own printed
-due date, then this read, then what the document already carried (a hand-edited
-tax rate, existing line items are never clobbered). The document page's single
-re-read and the inbox's bulk one both call it, so they can't drift. The bulk run
-goes one document at a time: each read is a model call billed to that client
-entity. Publishing in bulk is as conservative as the automatic publish — it skips
-rather than guesses (already published, on an expense claim, incomplete, or a
-category that isn't in the org's chart) and the server enforces the same gates
-again.
+**Rerun processing reads the documents again**, and the precedence it applies is
+decided in one place: `src/lib/reRead.js` (`readDecisions`) — supplier rule, then
+the document's own printed due date, then this read, then what the document
+already carried (a hand-edited tax rate, existing line items are never
+clobbered). The document page's single re-read and the inbox's bulk one both call
+it, so they can't drift. It exists because a first read can come back with
+nothing — a dark photo, a PDF that is really a scan — leaving the document in the
+inbox as "Unknown supplier / 0.00" with no way forward but typing it in; it is
+also how a supplier rule written AFTER the upload reaches the documents it was
+written for. A read that comes back with neither a supplier nor a total is
+reported as such rather than counted as a success: twice blank is the FILE's
+fault, and running it a third time won't help. The run goes one document at a
+time — each read is a model call billed to that client entity.
+
+Publishing in bulk is as conservative as the automatic publish: it skips rather
+than guesses (already published, on an expense claim, incomplete, or a category
+that isn't in the org's chart), asks first because it writes to a live ledger,
+and the server enforces the same gates again.
 
 ## AI API spend
 

@@ -9,6 +9,7 @@
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",
+    "test": "node test/merge-detect.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
