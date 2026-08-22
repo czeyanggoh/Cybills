@@ -246,6 +246,23 @@ export function displayItemId(id) {
   return String(21000000000 + (h % 1000000000));
 }
 
+// The address of a cost document: the path carries the ITEM ID the page itself
+// shows (/costs/260822123051), not the internal storage key, so a URL copied out
+// of the address bar is the number you can search the list for.
+export function costPath(id) {
+  return `/costs/${displayItemId(id)}`;
+}
+
+// Does a document answer to this URL key? Links now carry the item id, but the
+// internal id still resolves it — older bookmarks hold one, and an expense
+// claim's line item stores one as its `itemId`.
+export function isItemKey(id, key) {
+  const a = String(id ?? '');
+  const b = String(key ?? '');
+  if (!b) return false;
+  return a === b || displayItemId(a) === b;
+}
+
 // URL that streams a persisted bill's original file from the server.
 export function billFileUrl(id) {
   return `/api/costs/bills/${id}/file`;

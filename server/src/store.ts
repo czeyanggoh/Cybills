@@ -160,8 +160,34 @@ export function listBills(orgId: string): Bill[] {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+// The public item id for a bill: the number the UI shows and the URL carries —
+// its creation time in Singapore as YYMMDDHHMMSS (e.g. 260822123051). Derived
+// from the ms embedded in the id, so it needs no storage and matches
+// displayItemId() on the client exactly.
+export function itemIdFor(id: string): string {
+  const m = /^bill_([0-9a-z]+)_/.exec(String(id ?? ''));
+  if (!m) return '';
+  const ms = parseInt(m[1], 36);
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const d = new Date(ms + 8 * 60 * 60 * 1000); // shift to SGT, then read UTC parts
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+}
+
+// A bill answers to two keys: its internal id and its item id. Detail URLs carry
+// the item id (/costs/260822123051), so every by-id lookup accepts it. The two
+// can't be confused — an internal id always starts "bill_", an item id is all
+// digits. Documents stored before insertBill started spacing them out can still
+// share a second; the oldest wins, so the same URL always opens the same
+// document (the other stays reachable by its internal id).
+function byItemId(rows: Bill[], key: string): Bill | null {
+  if (!/^\d+$/.test(key)) return null;
+  return rows.filter((b) => itemIdFor(b.id) === key).sort((a, b) => a.id.localeCompare(b.id))[0] ?? null;
+}
+
 export function getBillById(orgId: string, id: string): Bill | null {
-  return load().find((b) => b.orgId === orgId && b.id === id) ?? null;
+  const rows = load().filter((b) => b.orgId === orgId);
+  return rows.find((b) => b.id === id) ?? byItemId(rows, id);
 }
 
 // Look up a bill by id alone, across every org. The bill id is a long,
@@ -169,7 +195,8 @@ export function getBillById(orgId: string, id: string): Bill | null {
 // receipt file when the caller's session/org can't be resolved (e.g. an
 // exported CSV link opened in a browser that isn't signed in).
 export function getBillByIdAny(id: string): Bill | null {
-  return load().find((b) => b.id === id) ?? null;
+  const rows = load();
+  return rows.find((b) => b.id === id) ?? byItemId(rows, id);
 }
 
 // Filler a language model reaches for when a field is described as "never empty"
@@ -433,10 +460,17 @@ function applyAutoReady(b: Bill): boolean {
 
 export function insertBill(input: BillInput): Bill {
   const bills = load();
+  // The item id — and the detail URL built from it — is the creation time to the
+  // second, so two files uploaded within the same second would answer to one
+  // URL. Step the stamp on to the first free second: a batch upload keeps its
+  // order and every document keeps an item id of its own.
+  const taken = new Set(bills.map((b) => itemIdFor(b.id)));
+  let ms = Date.now();
+  while (taken.has(itemIdFor(`bill_${ms.toString(36)}_`))) ms += 1000;
   const bill: Bill = {
     ...input,
-    id: `bill_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`,
-    createdAt: new Date().toISOString(),
+    id: `bill_${ms.toString(36)}_${randomUUID().slice(0, 8)}`,
+    createdAt: new Date(ms).toISOString(),
   };
   applyAutoReady(bill); // a fully-extracted upload lands straight in Ready
   bills.push(bill);

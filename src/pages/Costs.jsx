@@ -23,7 +23,7 @@ import { useCategoryOptions, useVisibleTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
-import { updateBill, deleteBill, notifyBillsChanged, displayItemId, scanDuplicates } from '@/lib/bills';
+import { updateBill, deleteBill, notifyBillsChanged, displayItemId, costPath, scanDuplicates } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
@@ -1060,7 +1060,7 @@ export default function Costs() {
                 {rows.map((d) => (
                   <tr
                     key={d.id}
-                    onClick={() => navigate(`/costs/${d.id}`)}
+                    onClick={() => navigate(costPath(d.id))}
                     className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
                   >
                     <td className={cn('sticky left-0 z-10 bg-background', densityClass)} onClick={(e) => e.stopPropagation()}>
