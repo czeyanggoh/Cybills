@@ -160,14 +160,14 @@ export function LineItemsGrid({
 }
 
 // The Extract / Create / Expand row that sits under the grid.
-export function LineItemsActions({ onExtract, onAdd, onExpand, extracting, visionEnabled, canExpand }) {
+export function LineItemsActions({ onExtract, onAdd, onExpand, extracting, busy = false, visionEnabled, canExpand }) {
   return (
     <>
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={onExtract}
-          disabled={extracting || !visionEnabled}
+          disabled={extracting || busy || !visionEnabled}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         >
           {extracting ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Extracting…</> : <><Sparkles className="h-3.5 w-3.5" /> Extract line items</>}
