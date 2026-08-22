@@ -54,6 +54,17 @@ billsRouter.get('/bills', (req, res) => {
   res.json({ bills });
 });
 
+// Content-Disposition for a stored file. Node rejects any header value outside
+// latin1 (ERR_INVALID_CHAR) and throws mid-response, which the browser sees as
+// a dead connection — nginx turns that into a 502 on the preview iframe. Split
+// PDF by page names its pages "scan — p1.pdf", and plenty of real uploads
+// carry accented or CJK names, so the name is sent the way RFC 6266 says: an
+// ASCII-only `filename` for old clients plus a UTF-8 `filename*` for the rest.
+function contentDisposition(name: string): string {
+  const safe = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  return `inline; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
 // GET /api/costs/bills/:id/file — stream the original file (R2 or local disk).
 // 404 when the bill has no stored file.
 billsRouter.get('/bills/:id/file', async (req, res) => {
@@ -66,8 +77,9 @@ billsRouter.get('/bills/:id/file', async (req, res) => {
   const obj = await getBillFile(bill.storageKey, bill.contentType);
   if (!obj) return res.status(502).json({ error: 'file_unavailable' });
 
-  res.setHeader('Content-Type', bill.contentType || obj.contentType);
-  res.setHeader('Content-Disposition', `inline; filename="${bill.fileName || bill.id}"`);
+  const type = String(bill.contentType || obj.contentType || 'application/octet-stream');
+  res.setHeader('Content-Type', /^[\x20-\x7e]+$/.test(type) ? type : 'application/octet-stream');
+  res.setHeader('Content-Disposition', contentDisposition(bill.fileName || bill.id));
   obj.body.on('error', () => res.destroy());
   obj.body.pipe(res);
 });
