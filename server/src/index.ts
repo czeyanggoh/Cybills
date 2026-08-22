@@ -15,7 +15,7 @@ import { autoClaimsRouter } from './autoClaims.js';
 import { usersRouter, memberForSession, canAccessOrg } from './users.js';
 import { practiceRouter } from './practice.js';
 import { mailRouter } from './mail.js';
-import { settingsRouter } from './settings.js';
+import { settingsRouter, adoptLegacySettings } from './settings.js';
 import { boardRouter } from './board.js';
 import { scrubFillerText } from './store.js';
 
@@ -129,4 +129,8 @@ app.listen(env.PORT, () => {
   // Idempotent, so it just no-ops on every boot after the first.
   const scrubbed = scrubFillerText();
   if (scrubbed) console.log(`[cybills] cleared filler text on ${scrubbed} document(s)`);
+  // The Business profile is per-entity now; hand the one saved before that to
+  // the entity it actually describes. Idempotent, so it no-ops after the first.
+  const adopted = adoptLegacySettings();
+  if (adopted) console.log(`[cybills] primary organisation adopted ${adopted} legacy setting(s)`);
 });

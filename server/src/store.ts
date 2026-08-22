@@ -37,7 +37,16 @@ export type Bill = {
   dueDate?: string; // ISO YYYY-MM-DD payment due date (from Extraction settings)
   // Per-line breakdown of the document (Dext-style). Stored as strings so they
   // round-trip through the editable form unchanged.
-  lineItems?: Array<{ description: string; category: string; net: string; tax: string; total: string }>;
+  lineItems?: Array<{
+    description: string;
+    category: string;
+    // The two Xero tracking categories, per line ('' = follow the bill's own).
+    project?: string;
+    project2?: string;
+    net: string;
+    tax: string;
+    total: string;
+  }>;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
   storageKey: string; // storage key for the original file (r2:/local: prefixed), or ''
@@ -96,6 +105,26 @@ export function normInvoice(s: string): string {
   return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 // Coerce "SGD 1,240.00" / "1240" / 1240 → 1240 (0 when unparseable).
+// Split a money total across weighted parts, in CENTS, so the parts sum to the
+// whole exactly. Largest remainder: each part gets its floor share, and the
+// spare cents go to the parts whose exact share was cut by the most (ties to
+// the bigger part), so every part is the nearest cent to its true share.
+//
+// Used wherever one stated figure has to become per-line figures — a GST total
+// printed once at the foot of an invoice, most of all. Weights are cents too;
+// a non-positive total or weight-sum yields all zeroes.
+export function apportion(totalCents: number, weights: number[]): number[] {
+  const w = weights.map((x) => Math.max(0, Math.round(x)));
+  const wSum = w.reduce((a, b) => a + b, 0);
+  if (!Number.isFinite(totalCents) || totalCents === 0 || wSum <= 0) return w.map(() => 0);
+  const out = w.map((x) => Math.floor((totalCents * x) / wSum));
+  let left = totalCents - out.reduce((a, b) => a + b, 0);
+  const remainder = (i: number) => (totalCents * w[i]) % wSum;
+  const order = w.map((_, i) => i).sort((x, y) => remainder(y) - remainder(x) || w[y] - w[x]);
+  for (let k = 0; left > 0 && k < order.length; k++, left--) out[order[k]] += 1;
+  return out;
+}
+
 export function parseAmount(v: unknown): number {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
   const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));

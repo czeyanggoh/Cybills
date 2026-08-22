@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { X, AlertTriangle, Loader2 } from 'lucide-react';
 import { buildMergePreview } from '@/lib/mergeDocs';
 import { displayItemId } from '@/lib/bills';
-import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
 // Dext-style "Merge items" review screen: combined document preview on the left,
 // the combined details (editable) on the right, a "Merging N items" summary, and
@@ -124,12 +124,14 @@ export default function MergeModal({ open, docs, categoryOptions = [], onClose, 
                 <Row label="Date"><input className={inputCls} value={fields.date} onChange={(e) => set('date', e.target.value)} /></Row>
                 <Row label="Supplier"><input className={inputCls} value={fields.supplier} onChange={(e) => set('supplier', e.target.value)} /></Row>
                 <Row label="Category">
-                  <select className={cn(inputCls, 'appearance-none')} value={fields.category} onChange={(e) => set('category', e.target.value)}>
-                    <option value="">Uncategorised</option>
-                    {categoryOptions.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                  <ComboSelect
+                    aria-label="Category"
+                    value={fields.category}
+                    options={['', ...categoryOptions]}
+                    onChange={(v) => set('category', v)}
+                    format={(c) => c || 'Uncategorised'}
+                    emptyLabel="Uncategorised"
+                  />
                 </Row>
                 <p className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Amount</p>
                 <Row label="Currency"><input className={inputCls} value={fields.currency} onChange={(e) => set('currency', e.target.value)} /></Row>

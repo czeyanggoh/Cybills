@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { X, ChevronDown, CheckCircle2 } from 'lucide-react';
 import {
   useOrganisations,
@@ -7,8 +7,10 @@ import {
   fetchXeroTaxRates,
   publishBillToXero,
 } from '@/lib/organisations';
+import { lineItemsPostable } from '@/lib/bills';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
+import ComboSelect from '@/components/ComboSelect';
 
 // "Publish to Xero" dialog — posts a stored cost document to the linked Xero
 // organisation as a supplier bill (ACCPAY), through the cyworkspace relay.
@@ -27,6 +29,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   const [error, setError] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [done, setDone] = useState(null); // { invoiceNumber, status }
+  const [postedLines, setPostedLines] = useState(0); // how many lines actually went up
   // Whether the document's own file made it onto the Xero bill. Reported rather
   // than swallowed: a bill in the ledger without its paper is worth knowing
   // about at the moment it happens, not weeks later in an audit.
@@ -94,12 +97,37 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   }, [open, organisationId]);
 
   // Expense-y accounts first (that's what supplier bills code to), but keep
-  // the full chart available below a divider for the odd asset/other posting.
-  const groupedAccounts = useMemo(() => {
+  // the full chart available below for the odd asset/other posting.
+  const accountCodes = useMemo(() => {
     const list = accounts ?? [];
     const isExpense = (a) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(a.type);
-    return { expense: list.filter(isExpense), other: list.filter((a) => !isExpense(a)) };
+    return [...list.filter(isExpense), ...list.filter((a) => !isExpense(a))].map((a) => a.code);
   }, [accounts]);
+
+  // Non-GST orgs only ever post No Tax, so that's the whole list for them.
+  const taxTypes = useMemo(
+    () =>
+      (taxRates ?? [])
+        .filter((t) => gstRegistered || t.taxType === 'NONE' || /^no tax$/i.test(t.name))
+        .map((t) => t.taxType),
+    [taxRates, gstRegistered]
+  );
+
+  const taxRateLabel = useCallback(
+    (type) => {
+      const t = (taxRates ?? []).find((x) => x.taxType === type);
+      return t ? `${t.name} (${t.rate}%)` : String(type ?? '');
+    },
+    [taxRates]
+  );
+
+  const accountLabel = useCallback(
+    (code) => {
+      const a = (accounts ?? []).find((x) => x.code === code);
+      return a ? `${a.code} — ${a.name}` : String(code ?? '');
+    },
+    [accounts]
+  );
 
   // When an account is picked, default the tax rate to the account's own
   // default (exactly what Xero's UI does).
@@ -114,8 +142,20 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
 
   if (!open) return null;
 
+  // What the document's own line items will do on the way up — the server posts
+  // them as the bill's lines when they are provably the same money as the
+  // document, and one summary line when they aren't. Said here, before the
+  // button, because losing a breakdown you can see on screen is a bad surprise.
+  const lines = lineItemsPostable(bill?.lineItems, bill?.total, bill?.tax);
+  const money = (v) => `${bill?.currency || ''} ${(Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0).toFixed(2)}`.trim();
+
   const loadingRefs = organisationId && (accounts === null || taxRates === null);
-  const canPublish = Boolean(organisationId && accountCode && taxType && !publishing && !done);
+  // Line items that contradict the document block the publish outright — the
+  // server refuses it too (see perLineItems in server/src/xero.ts); this is so
+  // the button says why instead of the request failing after the click.
+  const canPublish = Boolean(
+    organisationId && accountCode && taxType && !publishing && !done && (lines.rows === 0 || lines.postable)
+  );
   const organisation = organisations.find((o) => o.id === organisationId);
 
   const publish = async () => {
@@ -130,6 +170,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
         dueDate: dueDate || undefined,
       });
       setDone(result.invoice);
+      setPostedLines(Number(result.lines) || 0);
       setAttachment(result.attachment ?? null);
       onPublished?.(result);
     } catch (err) {
@@ -164,7 +205,8 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
             <p className="text-sm">
               Posted to <span className="font-medium">{organisation?.tenantName || 'Xero'}</span> as
               a {done.status === 'DRAFT' ? 'draft ' : ''}bill
-              {done.invoiceNumber ? ` (${done.invoiceNumber})` : ''}.
+              {done.invoiceNumber ? ` (${done.invoiceNumber})` : ''}
+              {postedLines > 1 ? `, as ${postedLines} line items` : ''}.
             </p>
             {attachment?.ok && (
               <p className="text-xs text-muted-foreground">The document is attached to it under Related Files.</p>
@@ -190,6 +232,31 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                 Posts <span className="font-medium text-foreground">{bill?.supplier || 'this document'}</span>
                 {bill?.total ? ` · ${bill.currency || ''} ${bill.total}` : ''} as a supplier bill.
               </p>
+
+              {lines.rows > 0 &&
+                (lines.postable ? (
+                  <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    As <span className="font-medium text-foreground">{lines.rows} line items</span>, each with its own
+                    account{lines.hasProjects ? ' and project' : ''} — they add up to the document&rsquo;s total.
+                  </p>
+                ) : (
+                  <p className="rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {lines.reason === 'tax' ? (
+                      <>
+                        <span className="font-medium">Can&rsquo;t publish yet.</span> The {lines.rows} line items carry{' '}
+                        {money(lines.linesTax)} of tax, but this document&rsquo;s tax is {money(bill?.tax)}. Fix the Tax
+                        column on the document first.
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium">Can&rsquo;t publish yet.</span> The {lines.rows} line items add up
+                        to {money(lines.linesTotal)}, not {money(bill?.total)} — out by{' '}
+                        {money(Math.abs(lines.outBy))}. Fix the lines (or the document&rsquo;s total) first, so the bill
+                        in Xero adds up to the same money as the paper.
+                      </>
+                    )}
+                  </p>
+                ))}
 
               {organisations.length === 0 ? (
                 <p className="text-sm text-destructive">
@@ -218,48 +285,32 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                   <label className="flex items-center gap-3 text-sm">
                     <span className="w-28 shrink-0 text-muted-foreground">Account</span>
                     <div className="relative flex-1">
-                      <select
+                      <ComboSelect
+                        aria-label="Account"
                         value={accountCode}
-                        onChange={(e) => pickAccount(e.target.value)}
-                        disabled={loadingRefs}
-                        className={selectClass}
-                      >
-                        <option value="">{loadingRefs ? 'Loading accounts…' : 'Select an account'}</option>
-                        {groupedAccounts.expense.map((a) => (
-                          <option key={a.code} value={a.code}>
-                            {a.code} — {a.name}
-                          </option>
-                        ))}
-                        {groupedAccounts.other.length > 0 && <option disabled>──────────</option>}
-                        {groupedAccounts.other.map((a) => (
-                          <option key={a.code} value={a.code}>
-                            {a.code} — {a.name}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        options={accountCodes}
+                        onChange={pickAccount}
+                        format={accountLabel}
+                        disabled={Boolean(loadingRefs)}
+                        emptyLabel={loadingRefs ? 'Loading accounts…' : 'Select an account'}
+                        placeholder="Type a code or name…"
+                      />
                     </div>
                   </label>
 
                   <label className="flex items-center gap-3 text-sm">
                     <span className="w-28 shrink-0 text-muted-foreground">Tax rate</span>
                     <div className="relative flex-1">
-                      <select
+                      <ComboSelect
+                        aria-label="Tax rate"
                         value={taxType}
-                        onChange={(e) => setTaxType(e.target.value)}
-                        disabled={loadingRefs}
-                        className={selectClass}
-                      >
-                        <option value="">{loadingRefs ? 'Loading tax rates…' : 'Select a tax rate'}</option>
-                        {(taxRates ?? [])
-                          .filter((t) => gstRegistered || t.taxType === 'NONE' || /^no tax$/i.test(t.name))
-                          .map((t) => (
-                          <option key={t.taxType} value={t.taxType}>
-                            {t.name} ({t.rate}%)
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        options={taxTypes}
+                        onChange={setTaxType}
+                        format={taxRateLabel}
+                        disabled={Boolean(loadingRefs)}
+                        emptyLabel={loadingRefs ? 'Loading tax rates…' : 'Select a tax rate'}
+                        placeholder="Type a rate name…"
+                      />
                     </div>
                   </label>
 

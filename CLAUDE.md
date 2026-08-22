@@ -81,11 +81,79 @@ whose API key was later removed degrades to a working reader instead of failing
 the read. The settings card only offers a provider whose key is present —
 `GET /api/auth/status` returns `readerProviders` + `defaultReaderProvider`.
 
+**Line items are their own pass.** `POST /api/costs/extract-lines` reads the
+itemised table and nothing else — the general read gave line items three words
+of schema description, which is how a "Balance brought forward" row ended up in
+the grid as a charge. Its prompt names the rows that are NOT charges, and the
+server adds the lines up against the document's own grand total before
+returning them: a set that doesn't reconcile is re-read once, told what it got
+wrong, and only the better of the two answers is kept. What comes back carries
+`reconciled` + `linesTotal` + `grandTotal`, so the caller can say so out loud
+rather than pasting rows that don't add up. `npm test` in `server/` runs that
+path end to end against a stubbed reader.
+
+**One GST figure becomes per-line GST.** Nearly every SG invoice prints its rows
+excluding GST and states it once at the foot ("SUB TOTAL / GST 9% / TOTAL"), so
+the rows add up to the SUBTOTAL — and a reader told to make them add up to the
+total will load the whole GST onto the last row. The reader is asked for the
+summary block (`subTotal` / `taxTotal` / `grandTotal`) and told to leave per-row
+tax at 0 unless the document prints it; the server then shares the stated figure
+across the rows by net (`apportion` in `store.ts`, largest remainder, so the
+parts sum to the whole exactly). Rows printed gross have it taken back out
+instead, and a document that breaks tax down per row is left as printed.
+
 Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
 `claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5`),
 `OPENAI_REASONING_EFFORT` (default `low`), optional `OPENAI_BASE_URL` for an
 OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default.
 Either key alone switches extraction on; both means the toggle appears.
+
+**A bill's own lines can reach Xero.** Line items carry `project` + `project2`
+— the org's two Xero tracking categories, per line, editable in the grid and
+offered only where the linked org actually has that category. `project` is also
+READ per line: `extract-lines` is given the org's project list and asks which
+one each row is for, taken from what the row names or from the section heading
+above it (one laundry invoice bills Tangs, Vivo City and Four Seasons in three
+blocks — every row on the document's single project would throw that away).
+`project2` is set by hand. On publish,
+`perLineItems` (`xero.ts`) posts those rows as the Xero bill's line items
+instead of one summary line, each with its own account code and tracking. It
+does so ONLY when the rows are provably the same money as the document: they
+add up to its total, and their tax adds up to its tax (a single stated GST
+figure is apportioned across the rows by largest remainder, so the parts sum to
+the whole exactly). Anything that can't reconcile posts as the single summary
+line — a nicer breakdown is never worth changing a published total. Line items
+that CONTRADICT the document (they don't add up to its total, or their tax
+doesn't add up to its tax) are refused outright, 422, in the dialog and in the
+API: a breakdown that disagrees with its own paper is a mistake to fix, not to
+post around. Covered by `npm test` in `server/`.
+
+## Merge detection: which uploads are really one document
+
+Two separate uploads are often one cost, and the two ways that happens do not
+look alike, so `src/lib/mergeDetect.js` looks for both:
+
+- **Pages of one document** — page 1 (supplier, reference, date) and page 2
+  (line items, totals), e.g. a forwarded order confirmation screenshotted in
+  halves. SAME supplier.
+- **A payment papered twice** — the merchant's itemised receipt and the card
+  slip for it. Same total, DIFFERENT suppliers.
+
+The distinction between "pages of one document" and "the same document uploaded
+twice" is **complementarity**: pages fill each other's blanks, a re-upload
+repeats them. So a page pair needs compatible suppliers, nothing that both
+documents state contradicting (total / reference / date / card), at least one
+substantive field present on exactly one side, and a positive tie (a shared
+reference, a shared total, or the same supplier uploaded in one go) — that last
+one is what stops two half-read documents pairing just for being incomplete.
+
+Pages chain (a three-page document is one group); a payment pair does NOT — it
+is offered only when the two are each other's ONLY candidate, so three documents
+at one total is left to the reviewer rather than guessed at. Detection runs
+continuously over the inbox in `Costs.jsx` (`mergeGroups`), so a row wears a
+badge instead of the reviewer having to press a button; nothing is combined
+until the merge review modal is confirmed. `npm test` at the repo root runs the
+rules.
 
 ## AI API spend
 

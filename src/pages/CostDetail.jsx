@@ -11,9 +11,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Info,
-  Plus,
-  Trash2,
-  Loader2,
   ExternalLink,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -32,9 +29,10 @@ import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, displayItemId, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
+import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
 import {
   matchSupplierRule,
   supplierRuleCategoryReason,
@@ -53,6 +51,7 @@ import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
 function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
   return (
@@ -95,26 +94,6 @@ function Input({ value, onChange = null, readOnly = false }) {
   );
 }
 
-// Read-only dropdown-styled display of an extracted value.
-// Editable dropdown (native select) for pick-from-a-list fields like Category.
-function EditableSelect({ value, options, onChange, format = (x) => x }) {
-  const known = options.includes(value);
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {!known && <option value={value}>{format(value)}</option>}
-        {options.map((o) => (
-          <option key={o} value={o}>{format(o)}</option>
-        ))}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-    </div>
-  );
-}
 
 function SectionHeading({ children }) {
   return (
@@ -215,6 +194,14 @@ export default function CostDetail() {
   const xeroProjects = useXeroProjectOptions();
   const seedProjects = useProjectOptions();
   const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;
+  // Per-line tracking, one column per Xero tracking category the linked org
+  // actually has (Xero allows two; the second is its "Projects 2"). Deliberately
+  // NOT the seeded project list the document-level field falls back to: a
+  // per-line project only means something on publish, and publish can only tag a
+  // real Xero category. No Xero tracking, no columns — the grid is cramped
+  // enough without two dropdowns that could never reach the ledger.
+  const project2Options = useXeroProjectOptions(1);
+  const lineProjects = xeroProjects;
   // Customers come from the active org's (CYBM) live Xero customer contacts.
   const customerOptions = useXeroCustomers();
   const paymentMethods = useXeroPaymentMethods();
@@ -234,6 +221,7 @@ export default function CostDetail() {
   useSupplierRules(); // the Supplier field's rules link tracks whether a rule exists
   const [pmModalOpen, setPmModalOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [linesOpen, setLinesOpen] = useState(false); // full-screen line-item editor
   const fileInputRef = useRef(null);
 
   // Sample docs carry any local (localStorage) edits applied on top.
@@ -907,16 +895,33 @@ export default function CostDetail() {
   const supplierRuleN = supplierRuleCount(matchSupplierRule(data.supplier));
 
   const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
-  const lineTotal = lineItems.reduce((s, li) => s + num(li.total), 0);
-  const outBy = num(data.total) - lineTotal;
   const setLineItems = (rows) => set('lineItems', rows);
   const updateLineItem = (i, patch) =>
     setLineItems(lineItems.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
   const addLineItem = () =>
-    setLineItems([...lineItems, { description: '', category: data.category || 'Uncategorised', net: '', tax: '', total: '' }]);
+    setLineItems([
+      ...lineItems,
+      { description: '', category: data.category || 'Uncategorised', project: data.project || '', project2: '', net: '', tax: '', total: '' },
+    ]);
   const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
+  // One set of props for the grid, so the panel and the full-screen editor are
+  // rendering the same thing over the same state.
+  const lineGrid = {
+    rows: lineItems,
+    total: data.total,
+    onUpdate: updateLineItem,
+    onRemove: removeLineItem,
+    categoryOptions,
+    catMode,
+    lineProjects,
+    project2Options,
+    docProject: data.project || '',
+  };
 
   // Read the attached receipt and turn its printed lines into editable rows.
+  // Its own pass (see server/src/extract.ts): the rows come back already checked
+  // against the document's own grand total, so anything that doesn't add up is
+  // said out loud here rather than left for the "Out by" row to be noticed.
   const extractLineItems = async () => {
     setAiError('');
     const rec = await receiptToUpload();
@@ -924,10 +929,24 @@ export default function CostDetail() {
     setExtractingLines(true);
     try {
       const accounts = await getExtractionAccounts();
-      const ex = await fetchExtract(rec.base64, rec.mediaType, accounts);
-      const rows = Array.isArray(ex?.lineItems) ? ex.lineItems : [];
-      if (!rows.length) { setAiError('No line items found on this document.'); return; }
+      const ex = await fetchExtractLines(rec.base64, rec.mediaType, accounts);
+      const rows = Array.isArray(ex?.lines) ? ex.lines : [];
+      if (!rows.length) { setAiError('No itemised charges found on this document.'); return; }
       setLineItems(lineItemRows(rows, data.category));
+      const money = (n) => Number(n || 0).toFixed(2);
+      if (!ex.reconciled) {
+        setAiError(
+          `Read ${rows.length} line${rows.length === 1 ? '' : 's'} totalling ${money(ex.linesTotal)}, but the ` +
+            `document's total reads as ${money(ex.grandTotal)}. ` +
+            (ex.note || 'Check for a row that was missed, or one that is really a subtotal.')
+        );
+      } else if (Math.abs(num(data.total) - Number(ex.grandTotal || 0)) > 0.005) {
+        // The lines agree with the document; it's this bill's total that doesn't.
+        setAiError(
+          `The lines add up to ${money(ex.linesTotal)}, which is the document's own total — but this bill ` +
+            `says ${money(data.total)}. Check the Total amount field.`
+        );
+      }
     } catch {
       setAiError('Could not extract line items.');
     } finally {
@@ -1276,8 +1295,8 @@ export default function CostDetail() {
 
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={displayItemId(doc.id)} readOnly /></Field>
-              <Field label="Document owner"><EditableSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
-              <Field label="Type"><EditableSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
+              <Field label="Document owner"><ComboSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
+              <Field label="Type"><ComboSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date">
                 <input
                   type="date"
@@ -1303,7 +1322,7 @@ export default function CostDetail() {
               </Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
-                <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
+                <ComboSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
                 {teach?.field === 'category' && (
                   <TeachRule field="category" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
                 )}
@@ -1319,9 +1338,9 @@ export default function CostDetail() {
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>
-              <Field label="Customer"><EditableSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
+              <Field label="Customer"><ComboSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
               <Field label="Project">
-                <EditableSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} />
+                <ComboSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} />
                 {teach?.field === 'project' && (
                   <TeachRule field="project" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
                 )}
@@ -1348,7 +1367,7 @@ export default function CostDetail() {
               <Field label="Currency"><Input value={data.currency} onChange={(v) => set('currency', v)} /></Field>
               <Field label="Total amount"><Input value={data.total} onChange={(v) => set('total', v)} /></Field>
               <Field label="Tax rate">
-                <EditableSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
+                <ComboSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
                 {!gstRegistered && (
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     Fixed to No Tax — this company isn’t GST-registered. Change that under Business
@@ -1428,7 +1447,7 @@ export default function CostDetail() {
                 </button>
               </Field>
               <Field label="Payment method">
-                <EditableSelect
+                <ComboSelect
                   value={data.paymentMethod || ''}
                   options={paymentMethods.map((p) => p.label)}
                   onChange={(v) => set('paymentMethod', v)}
@@ -1443,101 +1462,15 @@ export default function CostDetail() {
               </Field>
 
               <SectionHeading>Line items</SectionHeading>
-              {lineItems.length > 0 && (
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
-                        <th className="px-2 py-2 font-medium">Description</th>
-                        <th className="px-2 py-2 font-medium">Category</th>
-                        <th className="px-2 py-2 text-right font-medium">Net</th>
-                        <th className="px-2 py-2 text-right font-medium">Tax</th>
-                        <th className="px-2 py-2 text-right font-medium">Total</th>
-                        <th className="w-8" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lineItems.map((li, i) => (
-                        <tr key={i} className="border-b last:border-0 align-top">
-                          <td className="px-2 py-1.5">
-                            <input
-                              value={li.description || ''}
-                              onChange={(e) => updateLineItem(i, { description: e.target.value })}
-                              className="h-8 w-full min-w-[9rem] rounded border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <select
-                              value={li.category || ''}
-                              onChange={(e) => updateLineItem(i, { category: e.target.value })}
-                              className="h-8 w-full min-w-[9rem] rounded border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            >
-                              {Array.from(new Set([li.category, ...categoryOptions].filter(Boolean))).map((c) => (
-                                <option key={c} value={c}>{formatCategory(c, catMode)}</option>
-                              ))}
-                            </select>
-                          </td>
-                          {['net', 'tax', 'total'].map((f) => (
-                            <td key={f} className="px-2 py-1.5">
-                              <input
-                                value={li[f] || ''}
-                                inputMode="decimal"
-                                onChange={(e) => updateLineItem(i, { [f]: e.target.value })}
-                                className="h-8 w-20 rounded border bg-background px-2 text-right text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              />
-                            </td>
-                          ))}
-                          <td className="px-1 py-1.5 text-center">
-                            <button type="button" onClick={() => removeLineItem(i)} aria-label="Remove line" className="text-muted-foreground transition-colors hover:text-destructive">
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t bg-muted/20 text-xs">
-                        <td className="px-2 py-2 font-medium" colSpan={4}>Item total</td>
-                        <td className="px-2 py-2 text-right font-semibold">{lineTotal.toFixed(2)}</td>
-                        <td />
-                      </tr>
-                      <tr className="text-xs">
-                        <td className={cn('px-2 py-2 font-medium', Math.abs(outBy) > 0.005 && 'text-destructive')} colSpan={4}>
-                          Out by
-                        </td>
-                        <td className={cn('px-2 py-2 text-right font-semibold', Math.abs(outBy) > 0.005 && 'text-destructive')}>
-                          {outBy.toFixed(2)}
-                        </td>
-                        <td />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={extractLineItems}
-                  disabled={extractingLines || !visionEnabled}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {extractingLines ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Extracting…</> : <><Sparkles className="h-3.5 w-3.5" /> Extract line items</>}
-                </button>
-                <button
-                  type="button"
-                  onClick={addLineItem}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Create line item
-                </button>
-              </div>
-              {!visionEnabled && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Line-item extraction needs a reader API key on the server (
-                  <span className="font-mono">ANTHROPIC_API_KEY</span> or{' '}
-                  <span className="font-mono">OPENAI_API_KEY</span>). You can still add lines manually.
-                </p>
-              )}
+              <LineItemsGrid {...lineGrid} />
+              <LineItemsActions
+                onExtract={extractLineItems}
+                onAdd={addLineItem}
+                onExpand={() => setLinesOpen(true)}
+                extracting={extractingLines}
+                visionEnabled={visionEnabled}
+                canExpand={lineItems.length > 0}
+              />
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 {doc.status === 'ready' ? (
@@ -1661,7 +1594,7 @@ export default function CostDetail() {
       <PublishToXeroModal
         open={publishOpen}
         onClose={() => setPublishOpen(false)}
-        bill={{ id: doc.id, supplier: data.supplier, total: data.total, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate }}
+        bill={{ id: doc.id, supplier: data.supplier, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems }}
         onPublished={onPublished}
       />
 
@@ -1694,6 +1627,22 @@ export default function CostDetail() {
           </div>
         </div>
       )}
+
+      <LineItemsEditor
+        open={linesOpen}
+        onClose={() => setLinesOpen(false)}
+        title={data.supplier}
+        preview={<ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} />}
+        actions={
+          <LineItemsActions
+            onExtract={extractLineItems}
+            onAdd={addLineItem}
+            extracting={extractingLines}
+            visionEnabled={visionEnabled}
+          />
+        }
+        {...lineGrid}
+      />
 
       <SupplierRulesModal
         open={rulesOpen}

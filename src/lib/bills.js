@@ -149,6 +149,64 @@ export async function finalizeBill(id, fields, { checkDuplicates = true } = {}) 
   return res.json();
 }
 
+// Read the itemised table off a document — its own pass, not a field on the
+// general read (see server/src/extract.ts). Returns { lines, grandTotal,
+// linesTotal, reconciled, note } so the caller can say whether the rows can be
+// trusted, or null when the read failed.
+export async function fetchExtractLines(imageBase64, mediaType, accounts) {
+  const instructions = await fetchReviewInstructions(getActiveOrganisationId());
+  // The org's projects (its first Xero tracking category), so each LINE can be
+  // allocated to the outlet or site it names — an invoice billing three outlets
+  // on one page is exactly what a per-line breakdown is for.
+  const projects = await getExtractionProjects().catch(() => []);
+  const res = await fetch('/api/costs/extract-lines', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({
+      imageBase64,
+      mediaType,
+      accounts,
+      instructions,
+      projects,
+      provider: requestedProvider(),
+    }),
+  });
+  if (!res.ok) return null;
+  const { data } = await res.json();
+  return data ?? null;
+}
+
+// Will this document's line items reach Xero as themselves? Mirrors the rule
+// the publish path enforces server-side (`perLineItems` in server/src/xero.ts,
+// which is the authority): the rows must add up to the document's total, and
+// their tax must add up to its tax — or carry no tax at all, in which case a
+// single stated GST figure is apportioned across them. This is here so the
+// publish dialog can say which of the two will happen BEFORE anyone presses the
+// button; a bill quietly losing its breakdown is the surprise worth avoiding.
+export function lineItemsPostable(lineItems, total, tax) {
+  const rows = Array.isArray(lineItems) ? lineItems : [];
+  const c = (v) => Math.round((Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0) * 100);
+  const linesTotal = rows.reduce((t, r) => t + (c(r.total) || c(r.net) + c(r.tax)), 0);
+  const billTotal = c(total);
+  const billTax = c(tax);
+  const rowTax = rows.reduce((t, r) => t + c(r.tax), 0);
+  const out = {
+    rows: rows.length,
+    linesTotal: linesTotal / 100,
+    linesTax: rowTax / 100,
+    outBy: (billTotal - linesTotal) / 100,
+    hasProjects: rows.some((r) => String(r.project || '').trim() || String(r.project2 || '').trim()),
+    postable: false,
+    reason: '',
+  };
+  if (!rows.length) return { ...out, reason: 'no-rows' };
+  if (linesTotal !== billTotal) return { ...out, reason: 'total' };
+  // Rows carrying SOME tax that isn't the document's is a disagreement, not a
+  // gap to fill — only "the document states one GST figure" is recoverable.
+  if (rowTax !== billTax && (rowTax !== 0 || billTax === 0)) return { ...out, reason: 'tax' };
+  return { ...out, postable: true };
+}
+
 // Turn the reader's line items into the editable rows a bill stores: amounts as
 // fixed-2 strings, and a category on every row (the document's own when the
 // reader didn't code that line). Used by the manual "Extract line items" button
@@ -162,6 +220,10 @@ export function lineItemRows(rows, fallbackCategory = '') {
     return {
       description: li?.description || '',
       category: li?.category || fallbackCategory || 'Uncategorised',
+      // Per-line tracking is set by hand on the detail page, not read off the
+      // document — blank means the line follows the document's own project.
+      project: li?.project || '',
+      project2: li?.project2 || '',
       net: net.toFixed(2),
       tax: tax.toFixed(2),
       total: total.toFixed(2),
