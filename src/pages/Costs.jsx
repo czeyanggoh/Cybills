@@ -35,7 +35,7 @@ import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument } from '@/lib/reRead';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
-import { updateBill, deleteBill, notifyBillsChanged, displayItemId, costPath, scanDuplicates } from '@/lib/bills';
+import { updateBill, deleteBill, notifyBillsChanged, displayItemId, costPath } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
@@ -182,13 +182,12 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   );
   // Detection runs on its own over the whole inbox, so this button reports what
   // has already been found rather than starting a search: it opens the review
-  // modal on the first suggestion. It stays enabled with none outstanding so it
-  // can say so.
-  const scanBtn = (
-    <ToolbarButton onClick={a.scanMerges}>
-      {a.mergeCount > 0 ? `Merge suggestions (${a.mergeCount})` : 'Scan for merges'}
-    </ToolbarButton>
-  );
+  // modal on the first suggestion. Detection runs by itself over the inbox, so
+  // there is nothing to "scan for" — the button appears only when there is
+  // something to review, and says how much.
+  const scanBtn = a.mergeCount > 0 ? (
+    <ToolbarButton onClick={a.scanMerges}>Merge suggestions ({a.mergeCount})</ToolbarButton>
+  ) : null;
   // Read the selected documents again. The first read can come back with
   // nothing (a dark photo, a PDF that turned out to be a scan), which lands the
   // document in the inbox as "Unknown supplier / 0.00" — this is the way out of
@@ -207,9 +206,8 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       Delete
     </ToolbarButton>
   );
-  // Re-checks documents already in the list — the read-time check only ever saw
-  // the documents that existed when each one was uploaded.
-  const dupBtn = <ToolbarButton onClick={a.scanDuplicates}>Scan for duplicates</ToolbarButton>;
+  // The whole-book duplicate check runs on the server whenever the book changes
+  // (see autoScanDuplicates), so there is no scan to start by hand either.
   // Only worth offering once something is flagged: opens the flagged documents
   // beside what they matched, one pair at a time.
   const reviewDupBtn = a.dupCount > 0 ? (
@@ -272,7 +270,6 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {publishBtn}
       {mergeBtn}
       {scanBtn}
-      {dupBtn}
       {reviewDupBtn}
       {archiveBtn}
       {deleteBtn}
@@ -1004,19 +1001,6 @@ export default function Costs() {
     }
   };
 
-  // Re-check the whole book, then say what it found. Flags land on the newer of
-  // each pair, so the original stays clean.
-  const runDuplicateScan = async () => {
-    setMergeNote('Checking every document against the rest…');
-    const { flagged = 0, changed = 0 } = await scanDuplicates().catch(() => ({}));
-    await reload();
-    setMergeNote(
-      flagged === 0
-        ? 'No duplicates found — every document is unique on file, supplier + reference, or supplier + amount + date.'
-        : `${flagged} document${flagged === 1 ? '' : 's'} flagged as a possible duplicate${changed ? ` (${changed} newly)` : ''}. Use "Review duplicates" to see each one beside the document it matches.`,
-    );
-  };
-
   // The selected documents, in the order the table shows them.
   const selectedDocs = () => {
     const byId = new Map(allRows.map((r) => [r.id, r]));
@@ -1202,7 +1186,6 @@ export default function Costs() {
     merge: mergeSelected,
     scanMerges: openNextMergeSuggestion,
     mergeCount: mergeGroups.length,
-    scanDuplicates: runDuplicateScan,
     reviewDuplicates: () => setDupIds(flaggedDocs.map((d) => d.id)),
     dupCount: flaggedDocs.length,
     navigate,

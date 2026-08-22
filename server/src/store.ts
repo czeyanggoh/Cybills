@@ -180,7 +180,14 @@ function load(): Bill[] {
 }
 
 // Atomic write: tmp file + rename, so a crash mid-write can't truncate the data.
+// Bumped on every write. Lets a caller skip work that only matters when the
+// book has actually changed — the automatic duplicate scan reads it, so a
+// listing that changed nothing costs nothing.
+let revision = 0;
+export const bookRevision = (): number => revision;
+
 function persist(bills: Bill[]): void {
+  revision += 1;
   mkdirSync(DATA_DIR, { recursive: true });
   const tmp = `${DATA_FILE}.tmp`;
   writeFileSync(tmp, JSON.stringify({ bills }, null, 2));

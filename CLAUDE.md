@@ -190,6 +190,16 @@ last two are forced-choice only, so three documents at one total is left to the
 reviewer. Detection runs continuously over the inbox in `Costs.jsx`
 (`mergeGroups`), so a row wears a badge instead of the reviewer having to press
 a button; nothing is combined until the merge review modal is confirmed.
+
+**Neither scan is a button any more.** Merge detection already ran on every
+change; the whole-book duplicate check now does too — `autoScanDuplicates` in
+`bills.ts`, off the listing endpoint, guarded by `bookRevision()` so an
+unchanged book costs nothing and honouring Duplicate items = Off. It matters
+because a document often becomes a duplicate AFTER it was uploaded (the second
+copy arrives later, or an edit makes two rows agree), which the read-time check
+can never see and a button only catches when somebody remembers to press it.
+The toolbar keeps only the review affordances — "Merge suggestions (N)" and
+"Review duplicates (N)", each shown only when there is something to review.
 `npm test` at the repo root runs the rules.
 
 **Input tax is claimed only on evidence.** GST is recorded only when the

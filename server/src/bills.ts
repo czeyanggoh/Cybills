@@ -10,6 +10,7 @@ import {
   sweepStuckProcessing,
   flagDuplicate,
   scanDuplicates,
+  bookRevision,
   setBillFile,
   listBills,
   getBillById,
@@ -23,6 +24,7 @@ import { dataScopeForOrg } from './organisations.js';
 import { workspaceId } from './workspace.js';
 import { emailForPerson, orgScope } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
+import { readSetting } from './settings.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -50,6 +52,28 @@ export const billsRouter = Router();
 // no longer matched their session — losing the document from every tab. The
 // "employees can't do admin things" requirement is enforced by gating the admin
 // pages (Users / Business settings), not by hiding receipts.
+// The duplicate scan used to be a button the reviewer had to remember, so a
+// document that became a duplicate AFTER it was uploaded — the second copy
+// arrives later, or an edit makes two rows agree — sat there unflagged until
+// somebody thought to check. It runs by itself now, on the listing, for every
+// surface at once.
+//
+// It is skipped unless the book changed since the last scan: comparing every
+// document with every other is cheap in memory but pointless to repeat over an
+// unchanged list. Off is honoured — a workspace that set Duplicate items to Off
+// asked for no duplicate checking, and this is duplicate checking.
+const scannedAt = new Map<string, number>();
+function autoScanDuplicates(ws: string, org: string, scope: string): void {
+  const settings = readSetting<{ duplicateMode?: string }>(ws, 'cybills.extraction-settings.v1', org);
+  if (String(settings?.duplicateMode ?? 'Automatic') === 'Off') return;
+  if (scannedAt.get(scope) === bookRevision()) return;
+  scanDuplicates(scope, 'cost');
+  scanDuplicates(scope, 'sales');
+  // Read AFTER the scan: flagging is itself a write, and the run that flags
+  // nothing new is the one that settles.
+  scannedAt.set(scope, bookRevision());
+}
+
 // One-time repair of the rows written before the owner had a field of its own.
 // Back then the drawer's "Document owner" and the detail page's owner edit both
 // wrote a DISPLAY NAME over createdBy, so the same person reached the User
@@ -72,6 +96,7 @@ billsRouter.get('/bills', (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
   backfillOwners(workspaceId(req), orgScope(req), orgId);
+  autoScanDuplicates(workspaceId(req), orgScope(req), orgId);
   // File any Auto Expense claim whose period has ended. Rides on the fetch every
   // list already makes rather than a background worker, so a period that ended
   // while nobody was looking is claimed the moment someone opens the app.

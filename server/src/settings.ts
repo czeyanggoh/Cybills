@@ -13,6 +13,18 @@ const COLLECTION = 'settings';
 
 export const settingsRouter = Router();
 
+// Read one settings blob server-side. The client's per-entity stores key on
+// `<key>::<orgId>` and fall back to the workspace-wide blob they used to share
+// (see blobStore.js), so this follows the same two steps — otherwise a setting
+// the user changed before entities existed would read as unset here.
+export function readSetting<T = unknown>(ws: string, key: string, org = ''): T | null {
+  const items = loadCollection<Setting>(COLLECTION);
+  const at = (k: string) => items.find((s) => s.workspaceId === ws && s.key === k)?.value;
+  const own = at(`${key}::${org || 'default'}`);
+  const value = own ?? at(key);
+  return (value ?? null) as T | null;
+}
+
 settingsRouter.get('/:key', (req, res) => {
   const ws = workspaceId(req);
   const rec = loadCollection<Setting>(COLLECTION).find((s) => s.workspaceId === ws && s.key === req.params.key);
