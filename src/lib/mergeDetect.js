@@ -58,6 +58,7 @@ export function docFacts(d) {
     card: (String(d?.cardLast4 ?? '').match(/\d{4}/) || [''])[0],
     by: norm(d?.createdByEmail),
     at: Date.parse(d?.createdAt || '') || 0,
+    file: String(d?.fileName || ''),
   };
 }
 
@@ -84,6 +85,15 @@ const PRESENT = [
 // Do these two fill in each other's blanks?
 export function complementary(a, b) {
   return PRESENT.some((has) => has(a) !== has(b));
+}
+
+// A document the reader got NOTHING from — no supplier, no total, no date, no
+// reference, no rows. It is not a half-read page, it is a blank row, and it has
+// no facts at all to be paired on. Half of a two-page upload lands like this
+// whenever the reader cannot make sense of one of the halves, which is exactly
+// when the reviewer most needs the two put back together.
+export function statesNothing(f) {
+  return !f.supplier && f.total == null && !f.date && !f.ref && f.lines === 0 && f.tax == null;
 }
 
 function arrivedTogether(a, b) {
@@ -117,51 +127,92 @@ export function pairMatch(a, b) {
   if (compatibleSupplier && !contradicts(a, b) && complementary(a, b)) {
     const why = tie(a, b);
     if (why) return { kind: 'pages', why };
+    // Nothing was read off one of them, so there is no shared fact to tie them
+    // with — only where they came from. Arriving in one upload is real evidence
+    // (you upload the halves of a document together), but it is much weaker than
+    // a shared reference, so the match is PROVISIONAL: it is offered only where
+    // the choice is forced, never picked out of several possibilities.
+    if ((statesNothing(a) || statesNothing(b)) && arrivedTogether(a, b)) {
+      return { kind: 'pages', why: 'they were uploaded together and one of them read as blank', provisional: true };
+    }
   }
   return null;
 }
 
+// Pair up documents on an edge list, but only where the choice is FORCED: each
+// side must have exactly one candidate left. Two possible partners is an
+// ambiguity for the reviewer to settle, not one for us to guess at — offering
+// the wrong half of a document is worse than offering nothing.
+function forcedPairs(edges, claimed) {
+  const open = edges.filter((e) => !claimed.has(e.i) && !claimed.has(e.j));
+  const partners = new Map();
+  const add = (a, b) => {
+    if (!partners.has(a)) partners.set(a, new Set());
+    partners.get(a).add(b);
+  };
+  open.forEach((e) => { add(e.i, e.j); add(e.j, e.i); });
+  const out = [];
+  const taken = new Set();
+  for (const e of open) {
+    if (taken.has(e.i) || taken.has(e.j)) continue;
+    if (partners.get(e.i)?.size !== 1 || partners.get(e.j)?.size !== 1) continue;
+    taken.add(e.i);
+    taken.add(e.j);
+    out.push(e);
+  }
+  return out;
+}
+
 // Every set of inbox documents worth combining. Returns [{ docs, kind, why }].
 //
-// The two rules are found in two passes, because they chain differently. Pages
-// chain: a three-page document is one group of three, so page-pair edges are
-// unioned. A payment pair does NOT chain — it is exactly one receipt and the one
-// slip that paid for it, and letting it chain would rope every document sharing
-// a total into a single group. So a payment pair is only offered when the two
-// documents are each other's ONLY candidate; three documents at the same total
-// is an ambiguity to leave to the reviewer, not a guess to make. A multi-page
-// document plus its card slip is likewise left as two steps: merge the pages,
-// then merge that with the slip — each one reviewed on its own.
+// Three passes, because the three kinds of evidence are not equally strong and
+// must not be allowed to chain into each other:
+//
+//   1. Pages tied by a shared FACT (a reference, a total, a supplier uploaded in
+//      one go). Strong, so these chain — a three-page document comes back as one
+//      group of three rather than two overlapping pairs.
+//   2. Pages tied only by PROVENANCE, because the reader got nothing off one of
+//      them. Weak, so these never chain: offered only where each side has
+//      exactly one candidate. Four screenshots uploaded at once, three of them
+//      blank, is genuinely unknowable — it gets nothing rather than a guess.
+//   3. A receipt and the card slip that paid for it. Also never chains, for the
+//      same reason: three documents at one total is an ambiguity, and letting it
+//      chain would rope every document sharing a total into one group.
+//
+// A multi-page document plus its card slip is left as two steps — merge the
+// pages, then merge that with the slip — each one reviewed on its own.
 export function findMergeCandidates(docs) {
   const pool = (docs || []).filter((d) => d && d.persisted && d.hasFile && d.status !== 'merged');
   const facts = pool.map(docFacts);
 
-  // Pass 1 — pages of one document, chained.
   const parent = pool.map((_, i) => i);
   const root = (i) => (parent[i] === i ? i : (parent[i] = root(parent[i])));
-  const why = new Map(); // group root -> why its first edge tied it
+  const why = new Map(); // doc index -> why its first firm edge tied it
+  const provisional = [];
   const payments = [];
   for (let i = 0; i < pool.length; i += 1) {
     for (let j = i + 1; j < pool.length; j += 1) {
       const m = pairMatch(facts[i], facts[j]);
       if (!m) continue;
-      if (m.kind === 'payment') {
-        payments.push({ i, j, why: m.why });
-        continue;
+      if (m.kind === 'payment') payments.push({ i, j, why: m.why });
+      else if (m.provisional) provisional.push({ i, j, why: m.why });
+      else {
+        if (!why.has(i)) why.set(i, m.why);
+        parent[root(i)] = root(j);
       }
-      if (!why.has(i)) why.set(i, m.why);
-      parent[root(i)] = root(j);
     }
   }
-  const pageGroups = new Map();
+
+  // Pass 1 — pages tied by a shared fact, chained.
+  const chains = new Map();
   pool.forEach((d, i) => {
     const r = root(i);
-    if (!pageGroups.has(r)) pageGroups.set(r, []);
-    pageGroups.get(r).push({ d, i });
+    if (!chains.has(r)) chains.set(r, []);
+    chains.get(r).push({ d, i });
   });
   const groups = [];
   const claimed = new Set();
-  for (const members of pageGroups.values()) {
+  for (const members of chains.values()) {
     if (members.length < 2) continue;
     members.forEach((m) => claimed.add(m.i));
     groups.push({
@@ -171,21 +222,15 @@ export function findMergeCandidates(docs) {
     });
   }
 
-  // Pass 2 — a receipt and its card slip, only where the pairing is unambiguous.
-  const counterparts = new Map(); // index -> Set of indexes it could pair with
-  const add = (a, b) => {
-    if (!counterparts.has(a)) counterparts.set(a, new Set());
-    counterparts.get(a).add(b);
-  };
-  payments.filter((p) => !claimed.has(p.i) && !claimed.has(p.j)).forEach((p) => { add(p.i, p.j); add(p.j, p.i); });
-  const seen = new Set();
-  for (const p of payments) {
-    if (claimed.has(p.i) || claimed.has(p.j) || seen.has(p.i) || seen.has(p.j)) continue;
-    if (counterparts.get(p.i)?.size !== 1 || counterparts.get(p.j)?.size !== 1) continue;
-    seen.add(p.i);
-    seen.add(p.j);
-    groups.push({ docs: orderForMerge([pool[p.i], pool[p.j]], 'payment'), kind: 'payment', why: p.why });
-  }
+  // Passes 2 and 3 — the weaker evidence, only where the choice is forced.
+  const emit = (edges, kind) =>
+    forcedPairs(edges, claimed).forEach((e) => {
+      claimed.add(e.i);
+      claimed.add(e.j);
+      groups.push({ docs: orderForMerge([pool[e.i], pool[e.j]], kind), kind, why: e.why });
+    });
+  emit(provisional, 'pages');
+  emit(payments, 'payment');
 
   return groups.sort(
     (a, b) => b.docs.length - a.docs.length || String(a.docs[0].id).localeCompare(String(b.docs[0].id)),
@@ -244,6 +289,18 @@ function invoiceScore(d) {
 export function orderForMerge(docs, kind) {
   const list = [...(docs || [])];
   if (kind === 'payment') return list.sort((a, b) => invoiceScore(b) - invoiceScore(a));
+  // A blank row has no header to score, and scoring it anyway would sort it last
+  // every time — wrong exactly when the blank IS the header page, which is the
+  // common way this happens. With nothing to read, fall back to the order they
+  // were uploaded in and let the preview speak for itself.
+  const facts = list.map(docFacts);
+  if (facts.some(statesNothing)) {
+    return list.sort((a, b) => {
+      const fa = docFacts(a);
+      const fb = docFacts(b);
+      return fa.at - fb.at || String(fa.id).localeCompare(String(fb.id));
+    });
+  }
   return list.sort((a, b) => {
     const fa = docFacts(a);
     const fb = docFacts(b);
