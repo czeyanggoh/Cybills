@@ -29,7 +29,7 @@ import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, fetchExtractLines, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, displayItemId, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -175,7 +175,11 @@ function initialData(doc) {
 }
 
 export default function CostDetail() {
-  const { id } = useParams();
+  // The URL carries the document's ITEM ID — the number shown on the page and in
+  // the list (/costs/260822123051). An internal id still resolves, so older
+  // links and links built from a claim line item keep working; once the document
+  // loads, `id` below is always the internal id the API is addressed by.
+  const { id: routeId } = useParams();
   const navigate = useNavigate();
   const { visionEnabled, user } = useAuth();
   const readerName = useReaderName();
@@ -221,8 +225,8 @@ export default function CostDetail() {
   const fileInputRef = useRef(null);
 
   // Sample docs carry any local (localStorage) edits applied on top.
-  const rawMock = getDoc(id);
-  const mockDoc = rawMock ? { ...rawMock, ...(getDocOverrides()[id] || {}) } : null;
+  const rawMock = getDoc(routeId);
+  const mockDoc = rawMock ? { ...rawMock, ...(getDocOverrides()[routeId] || {}) } : null;
   const [tab, setTab] = useState('details');
   const [persisted, setPersisted] = useState(null);
   const [loading, setLoading] = useState(!mockDoc);
@@ -248,11 +252,14 @@ export default function CostDetail() {
   const [teach, setTeach] = useState(null); // { field, value } after a manual correction
 
   const doc = mockDoc ?? persisted;
+  // The key everything server-side is addressed by. Falls back to the URL's key
+  // while the document is still loading.
+  const id = doc?.id ?? routeId;
   // If this document is a line item inside an expense claim, keep the page in
   // that context: a note links back to the claim, and Back returns to it.
   const claims = useClaims();
   const { allDocs: inboxAllDocs } = useCostsDocs();
-  const claimForItem = claims.find((c) => (c.transactions || []).some((t) => String(t.itemId) === String(id)));
+  const claimForItem = claims.find((c) => (c.transactions || []).some((t) => isItemKey(t.itemId, id)));
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
 
   // Reset the form when navigating between documents. Sample docs resolve from
@@ -260,9 +267,9 @@ export default function CostDetail() {
   useEffect(() => {
     setImageUrl('');
     setAiError('');
-    const raw = getDoc(id);
+    const raw = getDoc(routeId);
     if (raw) {
-      setData(initialData({ ...raw, ...(getDocOverrides()[id] || {}) }));
+      setData(initialData({ ...raw, ...(getDocOverrides()[routeId] || {}) }));
       setPersisted(null);
       setLoading(false);
       return;
@@ -274,14 +281,17 @@ export default function CostDetail() {
     // another org's book.
     fetchBills()
       .then(async (bills) => {
-        const match = bills.find((b) => b.id === id);
-        return match || (await fetchBillById(id));
+        const match = bills.find((b) => isItemKey(b.id, routeId));
+        return match || (await fetchBillById(routeId));
       })
       .then((match) => {
         if (!alive) return;
         const pd = match ? billToDoc(match) : null;
         setPersisted(pd);
         if (pd) {
+          // Opened by internal id (an old bookmark, or a claim line item): swap
+          // the address bar for the item-id form without adding a history entry.
+          if (String(routeId) !== displayItemId(pd.id)) navigate(costPath(pd.id), { replace: true });
           setData(initialData(pd));
           if (pd.hasFile) {
             setImageUrl(billFileUrl(pd.id));
@@ -293,7 +303,7 @@ export default function CostDetail() {
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [routeId, navigate]);
 
   // Not GST-registered: force the document onto No Tax with no GST split out,
   // and persist it. The picker offers nothing else, but a document coded before
@@ -422,7 +432,7 @@ export default function CostDetail() {
 
   const go = (delta) => {
     const next = DOCS[index + delta];
-    if (next) navigate(`/costs/${next.id}`);
+    if (next) navigate(costPath(next.id));
   };
 
   // After an action that finishes with this document (Add to expense claim,
@@ -433,7 +443,7 @@ export default function CostDetail() {
     const ids = rowsFor(inboxAllDocs, 'inbox').map((d) => String(d.id));
     const i = ids.indexOf(String(id));
     const nextId = i !== -1 ? (ids[i + 1] ?? ids[i - 1]) : ids[0];
-    navigate(nextId && nextId !== String(id) ? `/costs/${nextId}` : '/costs');
+    navigate(nextId && nextId !== String(id) ? costPath(nextId) : '/costs');
   };
 
   // Activity timeline for the History tab — a vertical, dotted feed (newest
@@ -1040,7 +1050,7 @@ export default function CostDetail() {
             {' · '}
             <button
               type="button"
-              onClick={() => navigate(`/costs/${doc.duplicateOfId}`)}
+              onClick={() => navigate(costPath(doc.duplicateOfId))}
               className="underline underline-offset-2"
             >
               Open the one it matches

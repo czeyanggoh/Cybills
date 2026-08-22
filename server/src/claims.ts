@@ -53,6 +53,11 @@ type Claim = {
   hrSentAmount: string;
   hrSentBy: string;
   hrRevision: number;
+  // Auto expense claims: set on a claim the schedule created (Manage Auto
+  // Expense claims), with the period end it was filed for. Only an OPEN auto
+  // claim for that exact period is topped up again, so re-running is idempotent.
+  auto?: boolean;
+  autoPeriodEnd?: string;
   // Xero handoff: set once the approved claim is posted as an ACCPAY bill.
   xeroInvoiceId?: string;
   xeroTenantName?: string;
@@ -87,6 +92,94 @@ export function claimForBill(ws: string, billId: string): { id: string; name: st
     (c) => c.workspaceId === ws && !c.deleted && c.transactions.some((t) => String(t.itemId) === key)
   );
   return claim ? { id: claim.id, name: claim.name } : null;
+}
+
+// Every bill id that already sits on a claim in this workspace. The auto-claim
+// runner asks once per sweep rather than per document, and it catches an item
+// whose bill status drifted out of 'expenseclaim' but which is still on a claim.
+export function claimedBillIds(ws: string): Set<string> {
+  const out = new Set<string>();
+  for (const c of load()) {
+    if (c.workspaceId !== ws || c.deleted) continue;
+    for (const t of c.transactions) out.add(String(t.itemId));
+  }
+  return out;
+}
+
+// File a set of items onto the auto claim for one person and one period,
+// creating that claim on first use. Called only by the auto-claim runner
+// (autoClaims.ts), which owns the schedule; this owns the claim shape, the
+// history line and finishing the documents, exactly as the manual add does.
+//
+// "Open" means: this person, this period end, still a draft (not submitted,
+// approved, archived or deleted). A claim that has moved on is never reopened —
+// a late item files onto a fresh claim for the same period instead.
+export function fileAutoClaim(
+  ws: string,
+  f: { claimFor: string; periodEnd: string; periodLabel: string; name: string; txns: Txn[]; by: string }
+): { claimId: string; created: boolean; added: number } {
+  const items = load();
+  const key = f.claimFor.trim().toLowerCase();
+  let claim =
+    items.find(
+      (c) =>
+        c.workspaceId === ws &&
+        !c.deleted &&
+        !c.archived &&
+        c.auto === true &&
+        c.autoPeriodEnd === f.periodEnd &&
+        c.approvalStatus === '' &&
+        c.claimFor.trim().toLowerCase() === key
+    ) ?? null;
+  const created = !claim;
+  if (!claim) {
+    claim = {
+      id: randomUUID(),
+      workspaceId: ws,
+      claimFor: f.claimFor,
+      type: 'Regular',
+      name: f.name,
+      claimDate: f.periodEnd,
+      endDate: f.periodEnd,
+      currency: 'SGD',
+      transactions: [],
+      history: [{ text: `This expense claim was created automatically for the period ending ${f.periodLabel}`, by: f.by, at: nowIso() }],
+      approvalStatus: '',
+      approver: '',
+      approverEmail: '',
+      decidedBy: '',
+      decidedAt: '',
+      archived: false,
+      deleted: false,
+      createdBy: '',
+      createdAt: nowIso(),
+      hrSentAt: '',
+      hrSentAmount: '',
+      hrSentBy: '',
+      hrRevision: 0,
+      auto: true,
+      autoPeriodEnd: f.periodEnd,
+    };
+    items.push(claim);
+  }
+  const seen = new Set(claim.transactions.map((t) => String(t.itemId)));
+  const filed: string[] = [];
+  for (const t of f.txns) {
+    if (!t || seen.has(String(t.itemId))) continue;
+    claim.transactions.push({ ...t, addedBy: f.by });
+    seen.add(String(t.itemId));
+    filed.push(String(t.itemId));
+  }
+  // One history line for the batch: an auto claim can arrive with dozens of
+  // items, and a line each would bury the claim's real events.
+  if (filed.length) {
+    claim.history.unshift({ text: `${filed.length} item(s) added automatically`, by: f.by, at: nowIso() });
+  }
+  if (created || filed.length) save(items);
+  // Claiming finishes a document the same way the manual add does: out of the
+  // inbox, into Archive.
+  markBillsClaimed(filed);
+  return { claimId: claim.id, created, added: filed.length };
 }
 
 export const claimsRouter = Router();
