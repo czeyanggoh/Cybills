@@ -18,6 +18,7 @@ import { recordMove } from '@/lib/salesEvents';
 import DocsExportModal from '@/components/DocsExportModal';
 import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
 // How many of the six key fields the reader managed to extract, Dext-style.
 
@@ -176,6 +177,13 @@ export default function Sales() {
     setSelected(new Set());
   };
 
+  // Recode a row's category in place. (The cell used to be an uncontrolled
+  // <select> that dropped the pick on the floor.)
+  const setCategory = (doc, category) => {
+    if (!doc?.persisted) return;
+    updateBill(doc.id, { category }).then(notifyBillsChanged).catch(() => {});
+  };
+
   // Move processing uploads into the inbox (Dext's "Move to inbox" step).
   const moveToInbox = (ids) => {
     const list = ids ?? processingRows.map((s) => s.id);
@@ -326,10 +334,14 @@ export default function Sales() {
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{formatDate(d.date)}</td>
                 <td className="px-3 py-3">{d.customer}</td>
                 <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                  <select defaultValue={d.category} className="w-44 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    {!categoryOptions.includes(d.category) && <option value={d.category}>{d.category}</option>}
-                    {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  <ComboSelect
+                    size="xs"
+                    className="w-44"
+                    aria-label="Category"
+                    value={d.category}
+                    options={categoryOptions}
+                    onChange={(v) => setCategory(d, v)}
+                  />
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-muted-foreground">{d.ref}</td>
               </tr>

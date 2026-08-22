@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { X, Info, ChevronDown, FileText } from 'lucide-react';
+import { X, Info, FileText } from 'lucide-react';
 import { CATEGORIES } from '@/data/categories';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
 // Field group used for both the current and the new item.
 function ItemFields({ heading, category, total, tax, onChange }) {
@@ -13,19 +14,14 @@ function ItemFields({ heading, category, total, tax, onChange }) {
       <div className="space-y-3">
         <label className="flex items-center gap-3 text-sm">
           <span className="w-28 shrink-0 text-muted-foreground">Category</span>
-          <div className="relative flex-1">
-            <select
+          <div className="flex-1">
+            <ComboSelect
+              aria-label="Category"
               value={category}
-              onChange={(e) => onChange('category', e.target.value)}
-              className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <option value="">Select a category</option>
-              {!CATEGORIES.includes(category) && category && <option value={category}>{category}</option>}
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              options={CATEGORIES}
+              onChange={(v) => onChange('category', v)}
+              emptyLabel="Select a category"
+            />
           </div>
         </label>
         <label className="flex items-center gap-3 text-sm">

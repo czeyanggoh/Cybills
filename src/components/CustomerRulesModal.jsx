@@ -10,6 +10,7 @@ import {
 } from '@/lib/customerRules';
 import { useProjectOptions } from '@/lib/listsStore';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
 function FieldLabel({ children }) {
   return <label className="mb-1.5 block text-sm text-muted-foreground">{children}</label>;
@@ -115,14 +116,7 @@ function SmartSplitModal({ open, customer, value, categoryOptions, onClose, onDo
 
   const cell = 'h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
   const CatCell = ({ v, onChange }) => (
-    <div className="relative">
-      <select value={v} onChange={(e) => onChange(e.target.value)} className={cn(cell, 'appearance-none pr-7')}>
-        <option value="">Select</option>
-        {v && !categoryOptions.includes(v) && <option value={v}>{v}</option>}
-        {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-    </div>
+    <ComboSelect aria-label="Category" value={v} options={categoryOptions} onChange={onChange} emptyLabel="Select" />
   );
 
   return (
@@ -264,11 +258,13 @@ export default function CustomerRulesModal({ open, customer, categoryOptions = [
             {/* Right column */}
             <div>
               <FieldLabel>Category</FieldLabel>
-              <Select value={rule.category} onChange={(v) => set('category', v)}>
-                <option value="">Select</option>
-                {rule.category && !categoryOptions.includes(rule.category) && <option value={rule.category}>{rule.category}</option>}
-                {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-              </Select>
+              <ComboSelect
+                aria-label="Category"
+                value={rule.category}
+                options={categoryOptions}
+                onChange={(v) => set('category', v)}
+                emptyLabel="Select"
+              />
             </div>
 
             <div>
