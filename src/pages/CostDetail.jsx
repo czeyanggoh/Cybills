@@ -27,7 +27,7 @@ import { DOCS, getDoc } from '@/data/docs';
 import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
-import { useUsers } from '@/lib/userStore';
+import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, displayItemId, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
@@ -186,8 +186,11 @@ export default function CostDetail() {
   const { visionEnabled, user } = useAuth();
   const readerName = useReaderName();
   const teamUsers = useUsers();
+  // Who this document can belong to: the entity's own people AND the practice
+  // colleagues with access to it, which is who actually uploads most of them.
+  const ownerNames = useOwnerNames();
   const ownerOptions = Array.from(
-    new Set([user?.name || user?.email, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
+    new Set([user?.name || user?.email, ...ownerNames, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
   );
   const categoryOptions = useCategoryOptions();
   const catMode = useCategoryDisplayMode();
@@ -407,7 +410,7 @@ export default function CostDetail() {
   const SERVER_FIELDS = {
     supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
-    taxRate: 'taxRate', taxRateReason: 'taxRateReason', description: 'description', user: 'createdBy',
+    taxRate: 'taxRate', taxRateReason: 'taxRateReason', description: 'description', user: 'owner',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
     customer: 'customer', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
     dueDate: 'dueDate',

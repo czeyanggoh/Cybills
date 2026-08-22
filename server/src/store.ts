@@ -48,7 +48,12 @@ export type Bill = {
     total: string;
   }>;
   createdAt: string; // ISO timestamp
-  createdBy: string; // signed-in email, or '' in mock mode
+  createdBy: string; // signed-in email of whoever UPLOADED it, or '' in mock mode
+  // The document's owner — the person the User column names and the Document
+  // owner field sets. Always an email, and separate from createdBy: an owner
+  // can be reassigned, but who uploaded a document is a fact that shouldn't be
+  // overwritten by doing so. Empty means "follow createdBy".
+  owner?: string;
   storageKey: string; // storage key for the original file (r2:/local: prefixed), or ''
   contentType: string; // MIME type of the stored file, or ''
   status: string; // workflow state: 'new' (inbox) | 'ready' | 'archived' | 'merged'
@@ -551,6 +556,7 @@ export function sweepStuckProcessing(orgId: string): void {
 
 // Fields a client is allowed to edit on an existing bill.
 const EDITABLE: (keyof Bill)[] = [
+  'owner',
   'supplier',
   'invoiceNumber',
   'documentType',

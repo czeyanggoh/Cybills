@@ -28,7 +28,7 @@ import {
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
 import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome } from '@/lib/extractionSettings';
-import { useUsers } from '@/lib/userStore';
+import { useUsers, useOwnerNames } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
@@ -314,8 +314,11 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   useEffect(() => {
     if (!ownerTouched.current && meName) setOwner(meName);
   }, [meName]);
+  // The entity's own people AND the practice colleagues with access to it —
+  // a colleague uploading for a client is the common case, not the exception.
+  const ownerNames = useOwnerNames();
   const ownerOptions = Array.from(
-    new Set([meName, ...users.map((u) => u.name || u.email)].filter(Boolean))
+    new Set([meName, ...ownerNames, ...users.map((u) => u.name || u.email)].filter(Boolean))
   );
 
   // Default the tab to the workspace the drawer was opened from (Sales page →

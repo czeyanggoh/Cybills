@@ -57,6 +57,21 @@ every linked entity for the client-access picker).
 Env (server/.env): `PRACTICE_NAME`, `PRACTICE_DOMAIN` (only used to recognise
 pre-existing rows as practice staff on first run), `PRACTICE_TIMEZONE`.
 
+**A person has one name, and a document has an owner.** `createdBy` on a bill is
+who UPLOADED it — always an email, never overwritten. The Document owner (the
+Costs "User" column, the drawer's picker, the detail field) is its own field,
+`owner`, also always an email, and reassigning it leaves the uploader alone.
+They were one field until both write paths started storing a display name in it,
+which is how a single colleague came to appear twice in one list — "Cze Yang
+Goh" on the documents whose owner had been set, "czeyang.goh" on the rest.
+Names are resolved through `GET /api/users/directory` (`peopleForOrg`), which is
+deliberately WIDER than the roster `GET /api/users` serves: the roster is a
+client entity's own employees, but most of its documents are uploaded by a
+practice colleague, who is on no client's roster. `emailForPerson` resolves
+either spelling to the one email and refuses to guess an ambiguous name; the
+rows written before the split are repaired on the next listing (`backfillOwners`
+in `bills.ts`). Covered by `npm test` in `server/`.
+
 ## The document reader: Claude or OpenAI
 
 Uploaded receipts, invoices and Vault documents are read by one of two

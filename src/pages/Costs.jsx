@@ -341,12 +341,12 @@ const ANYONE = 'Anyone';
 const emptyAdv = () => ({ min: '', max: '', from: '', to: '', supplier: '', user: '' });
 
 // Does this document belong to the person picked in Advanced search? The picker
-// offers display names, but a row whose owner was never renamed still carries
-// the uploader's email, so both are accepted.
+// offers display names; the row also carries the owner's email and, where no
+// owner was ever set, the uploader's. Any of the three identifying them counts.
 const isOwnedBy = (d, who) => {
   const want = String(who || '').trim().toLowerCase();
   if (!want) return true;
-  return [d.user, d.createdByEmail].some((v) => String(v || '').trim().toLowerCase() === want);
+  return [d.user, d.ownerEmail, d.createdByEmail].some((v) => String(v || '').trim().toLowerCase() === want);
 };
 
 // Every person who owns a document here, A–Z. Built from the whole set rather
@@ -811,7 +811,7 @@ export default function Costs() {
   // column shows AND by the email behind it, so "yoav" and "yoav@…" both land.
   let rows = q
     ? allRows.filter((d) =>
-        [d.supplier, d.user, d.createdByEmail, d.category, d.date].some((v) =>
+        [d.supplier, d.user, d.ownerEmail, d.createdByEmail, d.category, d.date].some((v) =>
           String(v || '').toLowerCase().includes(q)
         )
       )

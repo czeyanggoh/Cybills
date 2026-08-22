@@ -166,8 +166,10 @@ function billDay(b: Bill): string {
   return isIsoDay(b.date) ? b.date : String(b.createdAt || '').slice(0, 10);
 }
 
-// Who a document belongs to. `createdBy` holds the uploader's email, or the name
-// an editor picked in Document owner — so a person is matched on either.
+// Who a document belongs to. `owner` is the answer where one was set (an
+// email), and the uploader otherwise; a person is matched on their email or
+// their name, since documents written before `owner` existed can still carry a
+// display name the backfill couldn't place.
 function ownerKeys(u: User): string[] {
   return [norm(u.email), norm(u.name)].filter(Boolean);
 }
@@ -214,7 +216,7 @@ function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd:
   for (const user of roster) {
     const keys = new Set(ownerKeys(user));
     if (!keys.size) continue;
-    const mine = eligible.filter((b) => keys.has(norm(b.createdBy)));
+    const mine = eligible.filter((b) => keys.has(norm(b.owner || b.createdBy)));
     if (!mine.length) continue; // never file an empty claim
     const filed = fileAutoClaim(ws, s.orgId, {
       claimFor: user.name || user.email,

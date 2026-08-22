@@ -30,26 +30,71 @@ async function req(path, method = 'GET', body) {
   return res.json();
 }
 
-// Synchronous email → display-name lookup, so a row's uploader can be shown as
+// Synchronous person → display-name lookup, so a row's owner can be shown as
 // "Astrid Yang" instead of the raw "astridy2004" email local-part, without every
-// caller refetching the roster. Warmed on import + refreshed on every fetch.
-let rosterByEmail = {};
-function indexRoster(list) {
+// caller refetching. Warmed on import + refreshed on every fetch.
+//
+// It indexes the DIRECTORY, not the roster: the roster is one client entity's
+// own employees, and a document in that entity is very often owned by a
+// practice colleague, who isn't on it. An unresolvable name used to fall back
+// to the email local-part, which is how one person came to appear twice in the
+// same list. Names are indexed too, so a document written before the owner had
+// a field of its own — carrying a display name where an email belongs — still
+// resolves to the one person, and to the one spelling of them.
+let personByKey = {};
+function indexPeople(list) {
   const next = {};
-  for (const u of list) if (u?.email) next[String(u.email).toLowerCase()] = u.name || u.email;
-  rosterByEmail = next;
+  for (const u of list) {
+    const name = u?.name || u?.email;
+    if (u?.email) next[String(u.email).toLowerCase()] = name;
+    if (u?.name) next[String(u.name).toLowerCase()] = name;
+  }
+  personByKey = next;
 }
+// The display name for an email — or for a name an older document stored.
 export function nameForEmail(email) {
   if (!email) return '';
-  return rosterByEmail[String(email).toLowerCase()] || '';
+  return personByKey[String(email).trim().toLowerCase()] || '';
 }
+
+// Everyone who can own a document in the open entity: this entity's people plus
+// the practice colleagues with access to it. Separate from the roster on
+// purpose — see the server's GET /api/users/directory.
+async function fetchDirectory() {
+  try {
+    const { people } = await req('/directory');
+    return Array.isArray(people) ? people : [];
+  } catch {
+    return [];
+  }
+}
+
+let directory = [];
+export function getDirectory() {
+  return directory;
+}
+
+// The people who can own a document here, as display names, A–Z. What the
+// "Document owner" pickers offer — the roster alone would leave out the
+// colleagues who upload most of a client's documents.
+export function useOwnerNames() {
+  const [names, setNames] = useState(() => ownerNames());
+  useEffect(() => {
+    const sync = () => setNames(ownerNames());
+    sync();
+    window.addEventListener(USERS_EVENT, sync);
+    return () => window.removeEventListener(USERS_EVENT, sync);
+  }, []);
+  return names;
+}
+
+const ownerNames = () =>
+  Array.from(new Set(directory.map((p) => p.name || p.email).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
 async function fetchUsers() {
   try {
     const { users } = await req('/');
-    const list = Array.isArray(users) ? users : [];
-    indexRoster(list);
-    return list;
+    return Array.isArray(users) ? users : [];
   } catch {
     return [];
   }
@@ -58,12 +103,27 @@ async function fetchUsers() {
 // Warm the roster cache once on load so email→name resolution works before any
 // <useUsers> component mounts; the one-time notify makes lists that already
 // rendered (e.g. the Costs "User" column) re-resolve with real names.
+async function loadDirectory() {
+  directory = await fetchDirectory();
+  indexPeople(directory);
+}
+
+// A roster change can add, rename or remove a person, so the name index is
+// rebuilt BEFORE anything re-renders from it — otherwise a just-invited
+// teammate shows as their email local-part until the next reload.
+async function refreshPeople() {
+  await loadDirectory();
+  notifyUsersChanged();
+}
+
+async function warmDirectory() {
+  await loadDirectory();
+  notifyUsersChanged();
+}
 if (typeof window !== 'undefined') {
-  fetchUsers().then(() => notifyUsersChanged());
-  // The cache holds one organisation's names, so re-warm it on a switch.
-  window.addEventListener(ORGANISATION_EVENT, () => {
-    fetchUsers().then(() => notifyUsersChanged());
-  });
+  warmDirectory();
+  // The cache holds one organisation's people, so re-warm it on a switch.
+  window.addEventListener(ORGANISATION_EVENT, warmDirectory);
 }
 
 // --- Mutations (async; notify so mounted lists refetch) ----------------------
@@ -71,31 +131,31 @@ if (typeof window !== 'undefined') {
 // that already exists and report whether the invitation was emailed.
 export async function addUser(u, notify = true, message = '', orgName = '') {
   const r = await req('/', 'POST', { ...u, notify, message, orgName });
-  notifyUsersChanged();
+  await refreshPeople();
   return r;
 }
 export async function addUsers(users, notify = true, message = '', orgName = '') {
   const r = await req('/', 'POST', { users, notify, message, orgName });
-  notifyUsersChanged();
+  await refreshPeople();
   return r;
 }
 export async function updateUser(id, patch) {
   await req(`/${id}`, 'PATCH', patch);
-  notifyUsersChanged();
+  await refreshPeople();
 }
 export async function setUserActive(id, active) {
   await req(`/${id}/active`, 'POST', { active });
-  notifyUsersChanged();
+  await refreshPeople();
 }
 export async function removeUser(id) {
   await req(`/${id}`, 'DELETE');
-  notifyUsersChanged();
+  await refreshPeople();
 }
 
 // Approve a pending self-signup, granting them access.
 export async function approveUser(id) {
   await req(`/${id}/approve`, 'POST', {});
-  notifyUsersChanged();
+  await refreshPeople();
 }
 
 // Self-signup: the signed-in user submits their details + chosen company. They
@@ -107,7 +167,7 @@ export async function joinCompany(payload) {
     body: JSON.stringify(payload ?? {}),
   });
   if (!res.ok) throw new Error(`join failed (${res.status})`);
-  notifyUsersChanged();
+  await refreshPeople();
   return res.json();
 }
 
@@ -157,7 +217,7 @@ export async function inviteUser(id) {
     const res = await fetch(`/api/users/${id}/invite`, { method: 'POST', headers: orgHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { sent: false, error: data.error || `http_${res.status}` };
-    notifyUsersChanged();
+    await refreshPeople();
     return data;
   } catch {
     return { sent: false, error: 'network' };
@@ -203,7 +263,7 @@ export async function acceptReset(token, password) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: data.error || `http_${res.status}` };
-    notifyUsersChanged();
+    await refreshPeople();
     return { ok: true, user: data.user };
   } catch {
     return { ok: false, error: 'network' };

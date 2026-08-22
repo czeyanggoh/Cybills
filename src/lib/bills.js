@@ -231,6 +231,8 @@ export function lineItemRows(rows, fallbackCategory = '') {
   });
 }
 
+const ownerName = (who) => (who ? nameForEmail(who) || who : 'You');
+
 // Shape a persisted bill into the row/doc form the Costs list + detail expect.
 export function billToDoc(b) {
   return {
@@ -243,7 +245,13 @@ export function billToDoc(b) {
       ? b.status
       : 'new',
     mergedFrom: Array.isArray(b.mergedFrom) ? b.mergedFrom : [],
-    user: b.createdBy ? nameForEmail(b.createdBy) || b.createdBy.split('@')[0] : 'You',
+    // The owner if one was set, else whoever uploaded it — resolved to the one
+    // display name that person is known by. The old fallback to the email's
+    // local-part is gone: it is what listed "czeyang.goh" beside "Cze Yang Goh"
+    // as if they were two people. An address the directory can't place is shown
+    // whole, which at least reads as one person.
+    user: ownerName(b.owner || b.createdBy),
+    ownerEmail: b.owner || '',
     createdByEmail: b.createdBy || '',
     fileName: b.fileName || '',
     createdAt: b.createdAt || '',

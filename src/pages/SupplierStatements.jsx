@@ -80,7 +80,7 @@ export default function SupplierStatements() {
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-muted-foreground">
-                    {b.createdBy ? nameForEmail(b.createdBy) || b.createdBy.split('@')[0] : '—'}
+                    {b.owner || b.createdBy ? nameForEmail(b.owner || b.createdBy) || b.owner || b.createdBy : '—'}
                   </td>
                   <td className="px-4 py-2.5 text-muted-foreground">{fmtDate(b.createdAt)}</td>
                   <td className="px-4 py-2.5">
