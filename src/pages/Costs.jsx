@@ -28,7 +28,7 @@ import { updateBill, deleteBill, notifyBillsChanged, displayItemId, costPath, sc
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
-import { findMergeCandidates } from '@/lib/mergeDetect';
+import { findMergeCandidates, docFacts, statesNothing } from '@/lib/mergeDetect';
 import MergeModal from '@/components/MergeModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
@@ -556,6 +556,14 @@ export default function Costs() {
               <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Possible duplicate
             </button>
           )}
+          {isInInbox(d) && statesNothing(docFacts(d)) && (
+            <span
+              title="The reader got nothing off this document — no supplier, total, date or reference. Open it to read it again by hand, or merge it with the document it is a page of."
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-muted-foreground/30 bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+            >
+              <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Nothing read
+            </span>
+          )}
           {mergeGroupFor.has(d.id) && (
             <button
               type="button"
@@ -891,8 +899,11 @@ export default function Costs() {
   // when you would rather work through them from the toolbar than click a badge.
   const openNextMergeSuggestion = () => {
     if (!mergeGroups.length) {
+      const blanks = rowsFor(allDocs, 'inbox').filter((d) => statesNothing(docFacts(d))).length;
       setMergeNote(
-        'Nothing in the inbox looks like two halves of one document, or a receipt with its card slip. To combine documents anyway, select them and press Merge.',
+        blanks > 1
+          ? `Nothing could be paired up. ${blanks} documents in the inbox read as blank, so there is no way to tell which of them is a page of what — open one to read it again, or select it with its other half and press Merge.`
+          : 'Nothing in the inbox looks like two halves of one document, or a receipt with its card slip. To combine documents anyway, select them and press Merge.',
       );
       return;
     }

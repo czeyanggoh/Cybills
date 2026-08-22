@@ -198,7 +198,7 @@ export type AutoRunResult = { claims: number; items: number; periods: number; en
 // before `periodEnd` become their claim for it.
 function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd: string): { claims: number; items: number } {
   const statuses = new Set(s.includeInbox ? WITH_INBOX : READY_ONLY);
-  const claimed = claimedBillIds(ws);
+  const claimed = claimedBillIds(s.orgId);
   const eligible = listBills(s.orgId).filter(
     (b) =>
       (b.kind || 'cost') === 'cost' &&
@@ -216,7 +216,7 @@ function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd:
     if (!keys.size) continue;
     const mine = eligible.filter((b) => keys.has(norm(b.createdBy)));
     if (!mine.length) continue; // never file an empty claim
-    const filed = fileAutoClaim(ws, {
+    const filed = fileAutoClaim(ws, s.orgId, {
       claimFor: user.name || user.email,
       periodEnd,
       periodLabel: prettyDay(periodEnd),

@@ -1,11 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import { displayItemId, updateBill, notifyBillsChanged } from '@/lib/bills';
+import { getActiveOrganisationId, ORGANISATION_EVENT } from '@/lib/organisations';
 import { cleanHistoryText } from '@/lib/exportFormat';
 
-// Server-backed expense claims (shared across the workspace). Talks to
-// /api/claims; mirrors the bills client pattern — fetch + a change event that
-// mounted views subscribe to. The old per-browser localStorage store is gone,
-// so a claim one person creates/approves is visible to everyone.
+// Server-backed expense claims, shared by everyone working in one client entity.
+// Talks to /api/claims; mirrors the bills client pattern — fetch + a change
+// event that mounted views subscribe to. The old per-browser localStorage store
+// is gone, so a claim one person creates/approves is visible to their
+// colleagues.
+
+// Every claims request names the selected entity, exactly as the bills client
+// does, so the server serves that entity's own claims. Without it the server
+// falls back to the primary org and one entity sees another's claims.
+function orgHeaders() {
+  const id = getActiveOrganisationId();
+  return id ? { 'X-Org-Id': id } : {};
+}
 
 export const CLAIMS_EVENT = 'cybills:claims-changed';
 export function notifyClaimsChanged() {
@@ -32,7 +42,7 @@ function shape(c) {
 
 async function fetchClaims() {
   try {
-    const res = await fetch('/api/claims');
+    const res = await fetch('/api/claims', { headers: orgHeaders() });
     if (!res.ok) return [];
     const { claims } = await res.json();
     return Array.isArray(claims) ? claims.map(shape) : [];
@@ -44,7 +54,7 @@ async function fetchClaims() {
 async function post(path, body) {
   const res = await fetch(`/api/claims${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
     body: JSON.stringify(body ?? {}),
   });
   if (!res.ok) {
@@ -183,7 +193,7 @@ export async function archiveClaims(ids, archived = true) {
 }
 export async function deleteClaims(ids) {
   await Promise.all(
-    ids.map((id) => fetch(`/api/claims/${id}`, { method: 'DELETE' }).catch(() => {}))
+    ids.map((id) => fetch(`/api/claims/${id}`, { method: 'DELETE', headers: orgHeaders() }).catch(() => {}))
   );
   notifyClaimsChanged();
   notifyBillsChanged(); // deleted claims return their items to the Costs inbox
@@ -264,7 +274,8 @@ export function pendingApprovalsFor(claims, user) {
   });
 }
 
-// Reactive read of all claims: fetches on mount and refetches on any mutation.
+// Reactive read of the selected entity's claims: fetches on mount, refetches on
+// any mutation — and on an entity switch, which changes which claims these are.
 export function useClaims() {
   const [claims, setClaims] = useState([]);
   const reload = useCallback(() => {
@@ -273,7 +284,11 @@ export function useClaims() {
   useEffect(() => {
     reload();
     window.addEventListener(CLAIMS_EVENT, reload);
-    return () => window.removeEventListener(CLAIMS_EVENT, reload);
+    window.addEventListener(ORGANISATION_EVENT, reload);
+    return () => {
+      window.removeEventListener(CLAIMS_EVENT, reload);
+      window.removeEventListener(ORGANISATION_EVENT, reload);
+    };
   }, [reload]);
   return claims;
 }
