@@ -47,6 +47,7 @@ import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { readDecisions } from '@/lib/reRead';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useAutoSave } from '@/lib/useAutoSave';
+import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
@@ -234,8 +235,7 @@ export default function CostDetail() {
   const [data, setData] = useState(() => initialData(mockDoc ?? {}));
   const [imageUrl, setImageUrl] = useState('');
   const [previewType, setPreviewType] = useState('image');
-  const [extracting, setExtracting] = useState(false);
-  const [extractingLines, setExtractingLines] = useState(false);
+
   const [fieldSave, setFieldSave] = useState('idle'); // auto-save status for the document's fields
   const [aiError, setAiError] = useState('');
   const [splitOpen, setSplitOpen] = useState(false);
@@ -256,6 +256,18 @@ export default function CostDetail() {
   // The key everything server-side is addressed by. Falls back to the URL's key
   // while the document is still loading.
   const id = doc?.id ?? routeId;
+  // The read running for THIS document, if any — including one started before
+  // this page was mounted, or before the reviewer moved away and came back.
+  const job = useExtractionJob(id);
+  // Refs, because the handler below outlives the render it was created in: the
+  // read it waits on can finish long after this page last re-rendered.
+  const persistedIdRef = useRef(null);
+  persistedIdRef.current = persisted?.id ?? null;
+  const handledJob = useRef(null);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const extracting = job?.kind === 'read';
+  const extractingLines = job?.kind === 'lines';
   // If this document is a line item inside an expense claim, keep the page in
   // that context: a note links back to the claim, and Back returns to it.
   const claims = useClaims();
@@ -305,6 +317,34 @@ export default function CostDetail() {
       alive = false;
     };
   }, [routeId, navigate]);
+
+  // A read that finished while this page was elsewhere (or unmounted) wrote its
+  // answer to the server, not to this form. So when the job for this document
+  // settles, take the document back from the server rather than trusting what
+  // is on screen — otherwise the fields shown are the pre-read ones, and the
+  // next keystroke saves them back over the answer.
+  useEffect(() => {
+    // Attached once per job, and NOT torn down when the job clears — the job
+    // clearing is precisely the moment this has to run. Only unmounting stops
+    // it, and a later mount re-reads the document from the server anyway.
+    if (!job || handledJob.current === job) return;
+    handledJob.current = job;
+    const kind = job.kind;
+    job.promise.then(async (outcome) => {
+      if (!mounted.current) return;
+      if (!outcome.ok && outcome.error) setAiError(outcome.error);
+      const docId = persistedIdRef.current; // read now: it may have loaded since
+      if (!docId) return; // sample docs have nothing on the server to take back
+      const fresh = await fetchBillById(docId).catch(() => null);
+      if (!mounted.current || !fresh) return;
+      const pd = billToDoc(fresh);
+      setPersisted(pd);
+      // A line-items read only touched the rows; leave the rest of the form
+      // alone in case something else was being typed while it ran.
+      if (kind === 'lines') setData((d) => ({ ...d, lineItems: pd.lineItems }));
+      else setData(initialData(pd));
+    });
+  }, [job]);
 
   // Not GST-registered: force the document onto No Tax with no GST split out,
   // and persist it. The picker offers nothing else, but a document coded before
@@ -768,9 +808,14 @@ export default function CostDetail() {
 
   // Run extraction on the given bytes (with the org's Review instructions + live
   // chart), then apply + persist the results. Shared by upload and re-read.
-  const extractAndApply = async (imageBase64, mediaType) => {
+  // Runs as a JOB (extractionJobs.js), so leaving this page for the next
+  // document doesn't abandon the read: it keeps going, saves what it finds, and
+  // the page picks it back up whenever it returns. Everything inside here must
+  // therefore stand on its own — the setState calls are a courtesy to whoever
+  // is still watching, the updateBill is what actually makes it count.
+  const extractAndApply = (imageBase64, mediaType) =>
+    startExtraction(doc.id, 'read', async () => {
     setAiError('');
-    setExtracting(true);
     try {
       const accounts = await getExtractionAccounts();
       const ex = await fetchExtract(imageBase64, mediaType, accounts);
@@ -826,14 +871,15 @@ export default function CostDetail() {
         if (r?.bill) {
           setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
           notifyBillsChanged();
+          return r.bill;
         }
       }
+      return null;
     } catch {
       setAiError('Could not read that file.');
-    } finally {
-      setExtracting(false);
+      throw new Error('Could not read that file.');
     }
-  };
+  });
 
   // --- Line items (Dext-style per-line breakdown) --------------------------
   // The Supplier field's rules link labels itself from the rule this supplier
@@ -873,13 +919,26 @@ export default function CostDetail() {
     setAiError('');
     const rec = await receiptToUpload();
     if (!rec) { setAiError('Attach a receipt first, then extract line items.'); return; }
-    setExtractingLines(true);
+    // A job, like the whole-document read: long enough that nobody watches it,
+    // so it has to survive the reviewer moving on to the next document.
+    startExtraction(doc.id, 'lines', async () => {
     try {
       const accounts = await getExtractionAccounts();
       const ex = await fetchExtractLines(rec.base64, rec.mediaType, accounts);
       const rows = Array.isArray(ex?.lines) ? ex.lines : [];
-      if (!rows.length) { setAiError('No itemised charges found on this document.'); return; }
-      setLineItems(lineItemRows(rows, data.category));
+      if (!rows.length) { setAiError('No itemised charges found on this document.'); return null; }
+      // Saved here rather than through `set`, whose write is fire-and-forget:
+      // the job must not resolve before the rows are actually stored, or the
+      // page could re-sync itself from the server a moment too early.
+      const built = lineItemRows(rows, data.category);
+      setData((d) => ({ ...d, lineItems: built }));
+      if (doc?.persisted) {
+        const r = await updateBill(doc.id, { lineItems: built }).catch(() => null);
+        if (r?.bill) {
+          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+          notifyBillsChanged();
+        }
+      }
       const money = (n) => Number(n || 0).toFixed(2);
       if (!ex.reconciled) {
         setAiError(
@@ -894,11 +953,12 @@ export default function CostDetail() {
             `says ${money(data.total)}. Check the Total amount field.`
         );
       }
+      return built;
     } catch {
       setAiError('Could not extract line items.');
-    } finally {
-      setExtractingLines(false);
+      throw new Error('Could not extract line items.');
     }
+    });
   };
 
   const onUploadClick = () => {
@@ -1204,7 +1264,7 @@ export default function CostDetail() {
               <button
                 type="button"
                 onClick={imageUrl && visionEnabled ? reReadExisting : onUploadClick}
-                disabled={extracting}
+                disabled={Boolean(job)}
                 className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
               >
                 {visionEnabled ? <Sparkles className="h-4 w-4" strokeWidth={2} /> : <Upload className="h-4 w-4" strokeWidth={2} />}
@@ -1217,7 +1277,7 @@ export default function CostDetail() {
               {imageUrl && visionEnabled ? (
                 <p className="mb-2 text-center text-xs text-muted-foreground">
                   Re-reads the attached receipt to fix a wrong field —{' '}
-                  <button type="button" onClick={onUploadClick} disabled={extracting} className="font-medium text-emerald-600 hover:underline disabled:opacity-60">
+                  <button type="button" onClick={onUploadClick} disabled={Boolean(job)} className="font-medium text-emerald-600 hover:underline disabled:opacity-60">
                     replace the file
                   </button>{' '}
                   instead if the photo is unclear.
@@ -1415,6 +1475,7 @@ export default function CostDetail() {
                 onAdd={addLineItem}
                 onExpand={() => setLinesOpen(true)}
                 extracting={extractingLines}
+                busy={Boolean(job)}
                 visionEnabled={visionEnabled}
                 canExpand={lineItems.length > 0}
               />
@@ -1585,6 +1646,7 @@ export default function CostDetail() {
             onExtract={extractLineItems}
             onAdd={addLineItem}
             extracting={extractingLines}
+            busy={Boolean(job)}
             visionEnabled={visionEnabled}
           />
         }
