@@ -156,7 +156,7 @@ export default function BulkEditModal({
       // fields keep a text box beside the picker rather than only offering the list.
       const options = sources[f.source] ?? [];
       return (
-        <div className={cn('flex gap-2', !enabled && 'pointer-events-none opacity-40')}>
+        <div className={cn('flex flex-col gap-2 sm:flex-row', !enabled && 'pointer-events-none opacity-40')}>
           <div className="min-w-0 flex-1">
             <ComboSelect
               aria-label={f.label}
@@ -175,7 +175,7 @@ export default function BulkEditModal({
               value={value}
               onChange={(e) => set(e.target.value)}
               placeholder="or type a name"
-              className="h-9 w-36 shrink-0 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-9 w-full shrink-0 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-36"
             />
           )}
         </div>
@@ -196,7 +196,7 @@ export default function BulkEditModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
       <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg bg-background shadow-xl">
-        <div className="flex items-center justify-between border-b px-6 py-4">
+        <div className="flex items-center justify-between border-b px-4 py-4 sm:px-6">
           <h2 className="text-base font-semibold tracking-tight">
             Bulk edit {count} item{count === 1 ? '' : 's'}
           </h2>
@@ -210,7 +210,7 @@ export default function BulkEditModal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <p className="mb-4 text-sm text-muted-foreground">
             Tick a field to change it on every selected document. Untouched fields are left exactly
             as they are — tick a field and leave it empty to clear it.
@@ -226,8 +226,8 @@ export default function BulkEditModal({
           )}
           <div className="space-y-2">
             {FIELDS.map((f) => (
-              <div key={f.key} className="flex items-center gap-3">
-                <label className="flex w-40 shrink-0 items-center gap-2 text-sm">
+              <div key={f.key} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+                <label className="flex items-center gap-2 text-sm sm:w-40 sm:shrink-0">
                   <input
                     type="checkbox"
                     checked={Boolean(on[f.key])}
@@ -242,13 +242,13 @@ export default function BulkEditModal({
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t px-6 py-4">
+        <div className="flex flex-col gap-3 border-t px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <span className="text-sm text-muted-foreground">
             {picked.length === 0
               ? 'No fields selected'
               : `${picked.length} field${picked.length === 1 ? '' : 's'}: ${picked.map((f) => f.label).join(', ')}`}
           </span>
-          <div className="flex gap-3">
+          <div className="flex justify-end gap-3">
             <button
               type="button"
               onClick={onClose}

@@ -68,3 +68,17 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer base {
+  /* A screen-reader-only label is absolutely positioned at its static spot. In
+     a table that scrolls sideways that spot is a thousand pixels out, and
+     because a scroll box without `position` is not its containing block, the
+     label escapes the clip and stretches the PAGE sideways instead — which is
+     why the Vault opened on a phone already scrolled away from its own content,
+     from one invisible one-pixel span saying "Actions".
+     Pinning it to the origin keeps it inert wherever it is used. */
+  .sr-only {
+    top: 0;
+    left: 0;
+  }
+}

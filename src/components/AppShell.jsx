@@ -193,17 +193,21 @@ function OrganisationSwitcher() {
   };
 
   return (
-    <div className="relative flex items-center gap-2">
-      <span className="flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold">
+    <div className="relative flex min-w-0 items-center gap-2">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold">
         {label.slice(0, 1).toUpperCase()}
       </span>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1 text-sm font-medium"
+        title={label}
+        className="flex min-w-0 items-center gap-1 text-sm font-medium"
       >
-        {label}
-        <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', open && 'rotate-180')} />
+        {/* A client's full registered name ("Red Alpha Cybersecurity Pte. Ltd.")
+            wrapped the header onto two lines on a phone. It truncates instead —
+            the full name is one tap away in the list below. */}
+        <span className="truncate">{label}</span>
+        <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
         <>
@@ -423,7 +427,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
         {/* Everything right of the primary sidebar */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Global top bar: workspace switcher + help + user */}
-          <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4 md:px-6">
+          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 md:gap-3 md:px-6">
             {/* Phone (<md): the sidebar is hidden, so this is the only way to
                 navigate. Opens a full nav drawer. */}
             <button
@@ -435,8 +439,8 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
               <Menu className="h-5 w-5" strokeWidth={1.75} />
             </button>
             <OrganisationSwitcher />
-            <div className="ml-auto flex items-center gap-3">
-              <nav className="flex items-center gap-1">
+            <div className="ml-auto flex shrink-0 items-center gap-2 md:gap-3">
+              <nav className="hidden items-center gap-1 sm:flex">
                 {TOP_TABS.map(({ to, label }) => (
                   <NavLink
                     key={to}
@@ -556,6 +560,19 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
               </nav>
               {subnav && <div className="mt-2 border-t pt-2" onClick={() => setMobileNav(false)}>{subnav}</div>}
               <div className="mt-2 flex flex-col gap-1 border-t pt-2">
+                {/* The header's Support Desk tab is hidden at this width, so it
+                    has to live here — hiding a link is only acceptable when it
+                    is reachable somewhere else. */}
+                {TOP_TABS.map(({ to, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    onClick={() => setMobileNav(false)}
+                    className={({ isActive }) => cn('flex items-center gap-3 rounded-md px-3 py-2 text-sm', isActive ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
+                  >
+                    <HelpCircle className="h-4 w-4" strokeWidth={1.75} /> {label}
+                  </NavLink>
+                ))}
                 {bottomNav.map((item) => (
                   <button
                     key={item.label}

@@ -42,6 +42,7 @@ import { commitMerge } from '@/lib/mergeDocs';
 import { findMergeCandidates, docFacts, statesNothing } from '@/lib/mergeDetect';
 import MergeModal from '@/components/MergeModal';
 import BulkEditModal from '@/components/BulkEditModal';
+import DocCardList from '@/components/DocCardList';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { useCostsDocs, rowsFor, isInInbox, isComplete, needsReview, missingFields } from '@/lib/costsData';
 import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
@@ -126,7 +127,7 @@ function ToolbarButton({ children, disabled = false, dropdown = false, danger = 
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
+        'inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
         disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted',
         // Deleting reclaims the stored file too — it can't be undone, so it
         // shouldn't read as just another grey button in the row.
@@ -1249,7 +1250,10 @@ export default function Costs() {
       ) : (
         <>
           {/* Toolbar */}
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          {/* Phone: one row that scrolls sideways. Wrapping fourteen buttons
+              stacked them four deep and ate half the screen before any document
+              appeared. Every button is still here — just in a line. */}
+          <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-x-visible md:pb-0">
             <ToolbarActions tab={tab} hasSelection={hasSelection} canMerge={selected.size >= 2} a={actions} />
             <CostsToolbar
               query={query}
@@ -1270,7 +1274,9 @@ export default function Costs() {
           )}
 
           {(tab === 'inbox' || tab === 'review' || tab === 'ready') && (
-            <div className="mb-3 flex items-start gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            // Explanatory, not essential — on a phone it cost a screenful
+            // before the first document, so it waits for the room to say it.
+            <div className="mb-3 hidden items-start gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground md:flex">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
               <span>
                 A document moves to <span className="font-medium text-foreground">Ready</span> automatically once it has a{' '}
@@ -1285,8 +1291,24 @@ export default function Costs() {
             </div>
           )}
 
-          {/* Table */}
-          <div className="overflow-x-auto rounded-lg border">
+          {/* Phone: cards. The table below is a thousand pixels wide, which on a
+              390px screen pushed the page sideways and left Supplier, Category
+              and Total off the edge — you could see the three columns that tell
+              you least. Same rows, same selection, same actions. */}
+          <div className="md:hidden">
+            <DocCardList
+              rows={rows}
+              selected={selected}
+              onToggle={toggle}
+              onOpen={(d) => navigate(costPath(d))}
+              onDelete={deleteOne}
+              badge={(d) => CELLS.status.cell(d)}
+              emptyLabel={query || hasSelection ? 'No documents match.' : 'No documents in this tab.'}
+            />
+          </div>
+
+          {/* Table (md and up) */}
+          <div className="hidden overflow-x-auto rounded-lg border md:block">
             <table className="w-full min-w-[1000px] text-sm">
               <thead className="border-b bg-muted/40 text-left">
                 <tr className="text-muted-foreground">

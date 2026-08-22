@@ -69,7 +69,7 @@ function TopButton({ children, onClick = () => {}, subtle = false, danger = fals
       title={title}
       onClick={onClick}
       className={cn(
-        'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
+        'inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
         disabled ? 'cursor-not-allowed text-muted-foreground/60' : 'hover:bg-muted',
         subtle && 'border-transparent',
         danger && !disabled && 'border-transparent text-destructive hover:bg-destructive/10'
@@ -436,7 +436,8 @@ export default function ExpenseClaimDetail() {
           simply isn't there reads as a missing feature, which is exactly how it
           was reported. */}
       {/* Action bar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      {/* One scrolling row on a phone rather than four wrapped ones. */}
+      <div className="mb-4 flex items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-x-visible md:pb-0">
         <TopButton subtle onClick={() => navigate('/expense-claims')}>
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>

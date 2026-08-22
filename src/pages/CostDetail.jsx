@@ -63,7 +63,7 @@ function TopButton({ children, onClick = () => {}, subtle = false, disabled = fa
       disabled={disabled}
       title={title || undefined}
       className={cn(
-        'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
+        'inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
         disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted',
         subtle && 'border-transparent'
       )}
@@ -112,9 +112,9 @@ function ReceiptPreview({ doc, imageUrl, previewType }) {
       <div className="overflow-hidden rounded-lg border bg-background">
         <div className="border-b px-4 py-3 text-sm font-medium">Uploaded receipt</div>
         {previewType === 'pdf' ? (
-          <iframe src={imageUrl} title="Uploaded document" className="h-[560px] w-full" />
+          <iframe src={imageUrl} title="Uploaded document" className="h-[45vh] w-full md:h-[560px]" />
         ) : (
-          <img src={imageUrl} alt="Uploaded receipt" className="max-h-[560px] w-full object-contain" />
+          <img src={imageUrl} alt="Uploaded receipt" className="max-h-[45vh] w-full object-contain md:max-h-[560px]" />
         )}
       </div>
     );
@@ -1084,8 +1084,9 @@ export default function CostDetail() {
         </div>
       )}
 
-      {/* Action bar */}
-      <div className="mb-2 flex flex-wrap items-center gap-2">
+      {/* Action bar — one scrolling row on a phone, where wrapping stacked it
+          four deep above the document itself. */}
+      <div className="mb-2 flex items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-x-visible md:pb-0">
         <TopButton subtle onClick={() => navigate(claimForItem ? `/expense-claims/${claimForItem.id}` : '/costs')}>
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
