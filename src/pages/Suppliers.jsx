@@ -3,16 +3,18 @@ import { Search, Filter, Settings2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SearchSelect from '@/components/SearchSelect';
-import { useCategoryOptions, useXeroSuppliers, useXeroCustomers, useXeroProjectOptions } from '@/lib/organisations';
+import SupplierRulesModal from '@/components/SupplierRulesModal';
+import { useCategoryOptions, useXeroSuppliers, useXeroCustomers, useXeroProjectOptions, useXeroPaymentMethods, useVisibleTaxRates } from '@/lib/organisations';
+import { useGstRegistered } from '@/lib/businessProfile';
+import { noTaxRateName } from '@/lib/extractionSettings';
 import { useCostsDocs } from '@/lib/costsData';
-import { getSupplierRule, setSupplierRule, useSupplierRules } from '@/lib/supplierRules';
+import { getSupplierRule, setSupplierRule, supplierRuleCount, useSupplierRules } from '@/lib/supplierRules';
 import { cn } from '@/lib/utils';
 
 // Small b&w toggle used per-row.
-function RowToggle({ defaultOn = false }) {
-  const [on, setOn] = useState(defaultOn);
+function RowToggle({ on = false, onToggle = () => {} }) {
   return (
-    <button type="button" onClick={() => setOn((v) => !v)} className="inline-flex items-center gap-2 text-xs">
+    <button type="button" onClick={onToggle} className="inline-flex items-center gap-2 text-xs">
       <span className={cn('flex h-4 w-7 items-center rounded-full p-0.5 transition-colors', on ? 'justify-end bg-foreground' : 'justify-start bg-muted')}>
         <span className="h-3 w-3 rounded-full bg-background" />
       </span>
@@ -44,8 +46,15 @@ export default function Suppliers() {
   const supplierNames = useXeroSuppliers();
   const customerOptions = useXeroCustomers();
   const projectOptions = useXeroProjectOptions(0);
+  const paymentMethods = useXeroPaymentMethods();
+  const taxRateSource = useVisibleTaxRates();
+  const gstRegistered = useGstRegistered();
+  const taxRateOptions = gstRegistered
+    ? taxRateSource.map((t) => t.name)
+    : [noTaxRateName(taxRateSource)].filter(Boolean);
   const { allDocs } = useCostsDocs();
-  useSupplierRules(); // re-render when a supplier's category/customer changes
+  const [rulesFor, setRulesFor] = useState('');
+  useSupplierRules(); // re-render when a supplier's rules change
 
   // How many cost documents each supplier has, by name.
   const counts = {};
@@ -56,7 +65,7 @@ export default function Suppliers() {
   const q = query.trim().toLowerCase();
   const rows = supplierNames
     .filter((name) => !q || name.toLowerCase().includes(q))
-    .map((name) => ({ id: name, name, items: counts[name.trim().toLowerCase()] || 0, extractLines: false, extractStatements: true }));
+    .map((name) => ({ id: name, name, items: counts[name.trim().toLowerCase()] || 0 }));
   const hasSelection = selected.size > 0;
 
   const toggle = (id) =>
@@ -101,6 +110,7 @@ export default function Suppliers() {
               <th className="px-3 py-2.5 font-medium">Category</th>
               <th className="px-3 py-2.5 font-medium">Customer</th>
               <th className="px-3 py-2.5 font-medium">Project</th>
+              <th className="px-3 py-2.5 font-medium">Rules</th>
             </tr>
           </thead>
           <tbody>
@@ -111,8 +121,18 @@ export default function Suppliers() {
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{s.name}</td>
                 <td className="px-3 py-3 tabular-nums text-muted-foreground">{s.items}</td>
-                <td className="px-3 py-3"><RowToggle defaultOn={s.extractLines} /></td>
-                <td className="px-3 py-3"><RowToggle defaultOn={s.extractStatements} /></td>
+                <td className="px-3 py-3">
+                  <RowToggle
+                    on={Boolean(getSupplierRule(s.id).extractLineItems)}
+                    onToggle={() => setSupplierRule(s.id, { extractLineItems: !getSupplierRule(s.id).extractLineItems })}
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <RowToggle
+                    on={getSupplierRule(s.id).extractStatements !== false}
+                    onToggle={() => setSupplierRule(s.id, { extractStatements: getSupplierRule(s.id).extractStatements === false })}
+                  />
+                </td>
                 <td className="px-3 py-3">
                   <div className="w-40">
                     <SearchSelect
@@ -143,6 +163,15 @@ export default function Suppliers() {
                     />
                   </div>
                 </td>
+                <td className="px-3 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setRulesFor(s.id)}
+                    className="whitespace-nowrap text-xs font-medium text-emerald-600 hover:underline"
+                  >
+                    {supplierRuleCount(getSupplierRule(s.id)) > 0 ? 'Edit rules' : 'Set rules'}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -155,6 +184,18 @@ export default function Suppliers() {
         </p>
       )}
       <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} supplier{rows.length === 1 ? '' : 's'}</p>
+
+      <SupplierRulesModal
+        open={Boolean(rulesFor)}
+        supplier={rulesFor}
+        categoryOptions={categoryOptions}
+        customerOptions={customerOptions}
+        projectOptions={projectOptions}
+        taxRateOptions={taxRateOptions}
+        paymentMethodOptions={paymentMethods.map((p) => p.label)}
+        gstRegistered={gstRegistered}
+        onClose={() => setRulesFor('')}
+      />
     </AppShell>
   );
 }

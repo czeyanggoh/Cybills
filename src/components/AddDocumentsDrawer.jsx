@@ -12,6 +12,7 @@ import {
   finalizeBill,
   notifyBillsChanged,
   describeDuplicate,
+  lineItemRows,
   VISION_MEDIA,
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
@@ -19,7 +20,12 @@ import { getExtractionAccounts, useVisibleTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { autoPublishAfterRead, xeroBillUrl } from '@/lib/autoPublish';
 import { getCustomerRule } from '@/lib/customerRules';
-import { matchSupplierRule } from '@/lib/supplierRules';
+import {
+  matchSupplierRule,
+  supplierRuleCategoryReason,
+  supplierRulePatch,
+  supplierRuleProjectReason,
+} from '@/lib/supplierRules';
 import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, resolveTaxRate } from '@/lib/extractionSettings';
 import { useUsers } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
@@ -371,15 +377,32 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       const printedDue = /^\d{4}-\d{2}-\d{2}$/.test(String(extracted?.dueDate || '')) ? extracted.dueDate : '';
       const due = printedDue || dueDateForNewDoc(settings, kind, iso);
       if (due && due !== iso) p.dueDate = due;
-      // A supplier rule (Suppliers → Category / Customer / Project) is a standing
-      // instruction about that vendor, so it beats anything the reader worked
-      // out for itself. Only for costs — sales have their own customer rules.
+      // A supplier rule is a standing instruction about that vendor, so it beats
+      // anything the reader worked out for itself. Only for costs — sales have
+      // their own customer rules. `rule` carries only the fields it actually
+      // sets; the due date it implies is used only when the document printed
+      // none of its own (the `due` above already prefers the printed one).
       const vendorRule = kind === 'cost' ? matchSupplierRule(cur?.supplier) : {};
-      if (vendorRule.category) p.category = vendorRule.category;
-      if (vendorRule.customer) p.customer = vendorRule.customer;
+      const rule =
+        kind === 'cost'
+          ? supplierRulePatch(vendorRule, { invoiceDate: iso, gstRegistered })
+          : {};
+      for (const [k, v] of Object.entries(rule)) {
+        if (k === 'dueDate') continue;
+        p[k] = v;
+      }
+      if (rule.category) p.categoryReason = supplierRuleCategoryReason(vendorRule, cur?.supplier);
+      if (rule.taxRate) p.taxRateReason = `Standing rule: documents from ${cur?.supplier} are coded ${rule.taxRate}.`;
+      if (!printedDue && rule.dueDate) p.dueDate = rule.dueDate;
+      // "Extract line items" is opt-in per supplier: a document is otherwise a
+      // single coded total, and the printed lines are pulled on demand from the
+      // detail page.
+      if (vendorRule.extractLineItems && Array.isArray(extracted?.lineItems) && extracted.lineItems.length) {
+        p.lineItems = lineItemRows(extracted.lineItems, p.category || cur?.category);
+      }
 
       // Project (Xero PIC), in order of what the evidence supports:
-      //   1. a rule set against the supplier (Suppliers → Project)
+      //   1. a rule set against the supplier (its supplier rules → Project)
       //   2. a project the reader matched — a "When to use" rule, or the
       //      document naming it (Lists → Projects)
       //   3. the uploader's own assigned project (Users → Project)
@@ -387,9 +410,9 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // who happened to upload it.
       if (!String(cur?.project || '')) {
         const readerPick = String(extracted?.project || '').trim();
-        if (vendorRule.project) {
-          p.project = vendorRule.project;
-          p.projectReason = `Standing rule: everything from ${cur?.supplier || 'this supplier'} goes to ${vendorRule.project}.`;
+        if (rule.project) {
+          p.project = rule.project;
+          p.projectReason = supplierRuleProjectReason(vendorRule, cur?.supplier);
         } else if (readerPick) {
           p.project = readerPick;
           p.projectReason = String(extracted?.projectReason || '').trim();

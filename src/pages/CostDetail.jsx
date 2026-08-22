@@ -32,9 +32,17 @@ import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
-import { matchSupplierRule } from '@/lib/supplierRules';
+import SupplierRulesModal from '@/components/SupplierRulesModal';
+import {
+  matchSupplierRule,
+  supplierRuleCategoryReason,
+  supplierRuleCount,
+  supplierRulePatch,
+  supplierRuleProjectReason,
+  useSupplierRules,
+} from '@/lib/supplierRules';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
 import { useExtractionSettings, resolveTaxRate, noTaxRateName } from '@/lib/extractionSettings';
 import { useGstRegistered } from '@/lib/businessProfile';
@@ -218,7 +226,9 @@ export default function CostDetail() {
     : [noTaxName].filter(Boolean);
   const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
   const extractionSettings = useExtractionSettings();
+  useSupplierRules(); // the Supplier field's rules link tracks whether a rule exists
   const [pmModalOpen, setPmModalOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const fileInputRef = useRef(null);
 
   // Sample docs carry any local (localStorage) edits applied on top.
@@ -356,6 +366,7 @@ export default function CostDetail() {
     taxRate: 'taxRate', taxRateReason: 'taxRateReason', description: 'description', user: 'createdBy',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
     customer: 'customer', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
+    dueDate: 'dueDate',
   };
   const set = (key, value) => {
     setData((d) => ({ ...d, [key]: value }));
@@ -376,6 +387,44 @@ export default function CostDetail() {
         .catch(() => setFieldSave('error'));
     }
   };
+
+  // Several fields at once (applying a supplier rule) — one state update and
+  // one PATCH rather than a burst of single-field saves racing each other.
+  const setMany = (patch) => {
+    const entries = Object.entries(patch).filter(([k]) => k in data);
+    if (!entries.length) return;
+    setData((d) => ({ ...d, ...Object.fromEntries(entries) }));
+    if (readyError.length) setReadyError([]);
+    if (!doc?.persisted) return;
+    const server = {};
+    for (const [k, v] of entries) {
+      const sf = SERVER_FIELDS[k];
+      if (sf) server[sf] = v;
+    }
+    if (!Object.keys(server).length) return;
+    setFieldSave('saving');
+    updateBill(doc.id, server)
+      .then((r) => {
+        setFieldSave('saved');
+        if (r?.bill) {
+          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+          notifyBillsChanged();
+        }
+      })
+      .catch(() => setFieldSave('error'));
+  };
+
+  // A rule saved from the Supplier field lands on this document straight away —
+  // that's the point of writing it here rather than on the Suppliers list.
+  const applySupplierRuleToForm = (rule) => {
+    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered });
+    const categoryReason = supplierRuleCategoryReason(rule, data.supplier);
+    const projectReason = supplierRuleProjectReason(rule, data.supplier);
+    if (categoryReason) patch.categoryReason = categoryReason;
+    if (projectReason) patch.projectReason = projectReason;
+    setMany(patch);
+  };
+
   const go = (delta) => {
     const next = DOCS[index + delta];
     if (next) navigate(`/costs/${next.id}`);
@@ -741,35 +790,58 @@ export default function CostDetail() {
       // Not GST-registered: there's no input tax to record, so don't carry the
       // printed GST onto the bill either.
       const exTaxOut = gstRegistered ? exTax : 0;
-      // Standing instructions for this vendor (Suppliers → Category / Customer
-      // / Project) — they outrank what the reader worked out for itself.
-      const vendorRule = matchSupplierRule(ex.supplier || data.supplier);
-      const projectReason = vendorRule.project
-        ? `Standing rule: everything from ${ex.supplier || data.supplier} goes to ${vendorRule.project}.`
-        : String(ex.projectReason || '').trim();
+      // Standing instructions for this vendor (its supplier rules) — they
+      // outrank what the reader worked out for itself. `rule` holds only the
+      // fields the rule actually sets, so everything else is left to the read.
+      const supplierName = ex.supplier || data.supplier;
+      const vendorRule = matchSupplierRule(supplierName);
+      const rule = supplierRulePatch(vendorRule, {
+        invoiceDate: ex.date || data.date,
+        gstRegistered,
+      });
+      const projectReason =
+        supplierRuleProjectReason(vendorRule, supplierName) || String(ex.projectReason || '').trim();
+      const categoryReason =
+        supplierRuleCategoryReason(vendorRule, supplierName) || String(ex.categoryReason || '').trim();
+      const ruleLines =
+        vendorRule.extractLineItems && Array.isArray(ex.lineItems)
+          ? lineItemRows(ex.lineItems, rule.category || ex.category || data.category)
+          : [];
       setData((d) => ({
         ...d,
         supplier: ex.supplier || d.supplier,
         date: ex.date || d.date,
         type: ex.documentType || d.type,
         ref: ex.invoiceNumber || d.ref,
-        currency: ex.currency || d.currency,
-        category: vendorRule.category || ex.category || d.category,
-        categoryReason: ex.categoryReason || d.categoryReason,
-        customer: vendorRule.customer || d.customer,
+        currency: rule.currency || ex.currency || d.currency,
+        category: rule.category || ex.category || d.category,
+        categoryReason: categoryReason || d.categoryReason,
+        customer: rule.customer || d.customer,
         total: ex.total != null ? String(ex.total) : d.total,
         tax: !gstRegistered ? '0.00' : ex.tax != null ? String(ex.tax) : d.tax,
-        taxRate: d.taxRate || inferredRate,
-        taxRateReason: d.taxRate ? d.taxRateReason : ex.taxRateReason || d.taxRateReason,
-        description: descr || d.description,
+        taxRate: rule.taxRate || d.taxRate || inferredRate,
+        taxRateReason: rule.taxRate
+          ? `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`
+          : d.taxRate
+            ? d.taxRateReason
+            : ex.taxRateReason || d.taxRateReason,
+        description: rule.description || descr || d.description,
+        paymentMethod: rule.paymentMethod || d.paymentMethod,
+        paid: 'paid' in rule ? rule.paid : d.paid,
         cardLast4: ex.cardLast4 || d.cardLast4,
         // A re-read is the way a rule written AFTER the upload reaches a
         // document — writing a rule and pressing this is the whole point — so
         // an allocation it returns wins. Returning nothing leaves what's there.
         // A supplier rule outranks both: it's a standing instruction.
-        project: vendorRule.project || ex.project || d.project,
+        project: rule.project || ex.project || d.project,
         projectReason: projectReason || d.projectReason,
-        dueDate: ex.dueDate || d.dueDate,
+        // The due date printed on the document is the supplier's own answer, so
+        // the rule's payment terms only fill a gap it leaves.
+        dueDate: ex.dueDate || rule.dueDate || d.dueDate,
+        // "Extract line items" on the rule pulls the printed lines in with the
+        // read — but never over rows already on the document, which may have
+        // been edited by hand.
+        lineItems: ruleLines.length && !d.lineItems?.length ? ruleLines : d.lineItems,
       }));
       if (doc?.persisted) {
         const patch = {};
@@ -780,19 +852,24 @@ export default function CostDetail() {
         if (ex.currency) patch.currency = ex.currency;
         if (ex.category) patch.category = ex.category;
         if (ex.categoryReason) patch.categoryReason = ex.categoryReason;
-        if (vendorRule.category) patch.category = vendorRule.category;
-        if (vendorRule.customer) patch.customer = vendorRule.customer;
         if (ex.total != null) patch.total = ex.total;
         if (ex.tax != null || !gstRegistered) patch.tax = exTaxOut;
         if (!data.taxRate && inferredRate) patch.taxRate = inferredRate;
         if (!data.taxRate && ex.taxRateReason) patch.taxRateReason = ex.taxRateReason;
         if (descr) patch.description = descr;
         if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
-        if (vendorRule.project || ex.project) {
-          patch.project = vendorRule.project || ex.project;
+        if (ex.project) {
+          patch.project = ex.project;
           patch.projectReason = projectReason;
         }
+        // The rule has the last word on everything it sets…
+        Object.assign(patch, rule);
+        if (rule.category) patch.categoryReason = categoryReason;
+        if (rule.taxRate) patch.taxRateReason = `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`;
+        if (rule.project) patch.projectReason = projectReason;
+        // …except the due date, where the document's own beats the rule's terms.
         if (ex.dueDate) patch.dueDate = ex.dueDate;
+        if (ruleLines.length && !data.lineItems?.length) patch.lineItems = ruleLines;
         const r = await updateBill(doc.id, patch).catch(() => null);
         if (r?.bill) {
           setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
@@ -807,6 +884,11 @@ export default function CostDetail() {
   };
 
   // --- Line items (Dext-style per-line breakdown) --------------------------
+  // The Supplier field's rules link labels itself from the rule this supplier
+  // already carries.
+  const supplierNamed = String(data.supplier || '').trim();
+  const supplierRuleN = supplierRuleCount(matchSupplierRule(data.supplier));
+
   const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
   const lineTotal = lineItems.reduce((s, li) => s + num(li.total), 0);
   const outBy = num(data.total) - lineTotal;
@@ -828,20 +910,7 @@ export default function CostDetail() {
       const ex = await fetchExtract(rec.base64, rec.mediaType, accounts);
       const rows = Array.isArray(ex?.lineItems) ? ex.lineItems : [];
       if (!rows.length) { setAiError('No line items found on this document.'); return; }
-      setLineItems(
-        rows.map((li) => {
-          const total = li.amount != null ? Number(li.amount) : num(li.net) + num(li.tax);
-          const tax = li.tax != null ? Number(li.tax) : 0;
-          const net = li.net != null ? Number(li.net) : total - tax;
-          return {
-            description: li.description || '',
-            category: li.category || data.category || 'Uncategorised',
-            net: net.toFixed(2),
-            tax: tax.toFixed(2),
-            total: total.toFixed(2),
-          };
-        })
-      );
+      setLineItems(lineItemRows(rows, data.category));
     } catch {
       setAiError('Could not extract line items.');
     } finally {
@@ -1200,7 +1269,21 @@ export default function CostDetail() {
                   className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </Field>
-              <Field label="Supplier"><Input value={data.supplier} onChange={(v) => set('supplier', v)} /></Field>
+              <Field label="Supplier">
+                <Input value={data.supplier} onChange={(v) => set('supplier', v)} />
+                <button
+                  type="button"
+                  onClick={() => setRulesOpen(true)}
+                  disabled={!supplierNamed}
+                  title={supplierNamed ? '' : 'Fill in the supplier first'}
+                  className={cn(
+                    'mt-1 text-xs font-medium',
+                    supplierNamed ? 'text-emerald-600 hover:underline' : 'cursor-not-allowed text-muted-foreground/60'
+                  )}
+                >
+                  {supplierRuleN > 0 ? `Edit supplier rules (${supplierRuleN})` : 'Set supplier rules'}
+                </button>
+              </Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
                 <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
@@ -1586,6 +1669,19 @@ export default function CostDetail() {
           </div>
         </div>
       )}
+
+      <SupplierRulesModal
+        open={rulesOpen}
+        supplier={data.supplier}
+        categoryOptions={categoryOptions}
+        customerOptions={customerOptions}
+        projectOptions={projectOptions}
+        taxRateOptions={taxRateOptions}
+        paymentMethodOptions={paymentMethods.map((p) => p.label)}
+        gstRegistered={gstRegistered}
+        onClose={() => setRulesOpen(false)}
+        onApply={applySupplierRuleToForm}
+      />
 
       <AddPaymentMethodModal
         open={pmModalOpen}

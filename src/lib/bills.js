@@ -149,6 +149,26 @@ export async function finalizeBill(id, fields, { checkDuplicates = true } = {}) 
   return res.json();
 }
 
+// Turn the reader's line items into the editable rows a bill stores: amounts as
+// fixed-2 strings, and a category on every row (the document's own when the
+// reader didn't code that line). Used by the manual "Extract line items" button
+// and by the supplier rule that pulls them automatically.
+export function lineItemRows(rows, fallbackCategory = '') {
+  const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
+  return (Array.isArray(rows) ? rows : []).map((li) => {
+    const total = li?.amount != null ? Number(li.amount) : num(li?.net) + num(li?.tax);
+    const tax = li?.tax != null ? Number(li.tax) : 0;
+    const net = li?.net != null ? Number(li.net) : total - tax;
+    return {
+      description: li?.description || '',
+      category: li?.category || fallbackCategory || 'Uncategorised',
+      net: net.toFixed(2),
+      tax: tax.toFixed(2),
+      total: total.toFixed(2),
+    };
+  });
+}
+
 // Shape a persisted bill into the row/doc form the Costs list + detail expect.
 export function billToDoc(b) {
   return {
