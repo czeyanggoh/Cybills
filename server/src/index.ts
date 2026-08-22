@@ -11,6 +11,7 @@ import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { cyhrRouter } from './cyhr.js';
 import { claimsRouter } from './claims.js';
+import { autoClaimsRouter } from './autoClaims.js';
 import { usersRouter, memberForSession, canAccessOrg } from './users.js';
 import { practiceRouter } from './practice.js';
 import { mailRouter } from './mail.js';
@@ -99,6 +100,10 @@ app.use('/api/cyhr', cyhrRouter);
 
 // Expense claims — server-backed + shared across the workspace.
 app.use('/api/claims', claimsRouter);
+
+// Auto Expense claims — the schedule that files each person's finished cost
+// documents into a claim for them when a claims period ends.
+app.use('/api/auto-claims', autoClaimsRouter);
 
 // Users — server-backed + shared (people list + approver roster).
 app.use('/api/users', usersRouter);
