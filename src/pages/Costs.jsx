@@ -213,12 +213,6 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   const reviewDupBtn = a.dupCount > 0 ? (
     <ToolbarButton onClick={a.reviewDuplicates}>Review duplicates ({a.dupCount})</ToolbarButton>
   ) : null;
-  const paidBtns = (
-    <>
-      <ToolbarButton disabled={!hasSelection || a.busy} onClick={() => a.setPaid(true)}>Mark as paid</ToolbarButton>
-      <ToolbarButton disabled={!hasSelection || a.busy} onClick={() => a.setPaid(false)}>Mark as not paid</ToolbarButton>
-    </>
-  );
   const publishBtn = (
     <ToolbarButton disabled={!hasSelection || a.busy} onClick={a.publish}>
       Publish to Xero
@@ -229,18 +223,6 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   );
   const archiveBtn = (
     <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
-  );
-  // The pipeline step the tab you're standing on can't already see: no "Move to
-  // review" button on the To review tab.
-  const moveBtns = (
-    <>
-      {tab !== 'review' && (
-        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('review')}>Move to review</ToolbarButton>
-      )}
-      {tab !== 'ready' && (
-        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('ready')}>Move to ready</ToolbarButton>
-      )}
-    </>
   );
 
   if (tab === 'archive') {
@@ -264,8 +246,6 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {exportBtn}
       {bulkEditBtn}
       {reprocessBtn}
-      {paidBtns}
-      {moveBtns}
       {claimBtn}
       {publishBtn}
       {mergeBtn}
@@ -1177,7 +1157,6 @@ export default function Costs() {
     exportCsv: () => { setExportSelectionOnly(false); setExportOpen(true); },
     exportSelected: () => { setExportSelectionOnly(true); setExportOpen(true); },
     bulkEdit: () => hasSelection && setBulkOpen(true),
-    setPaid: (paid) => patchSelected({ paid }, paid ? 'Marked as paid' : 'Marked as not paid'),
     reRead: reReadSelected,
     publish: publishSelected,
     canReRead: visionEnabled,

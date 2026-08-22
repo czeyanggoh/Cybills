@@ -236,11 +236,18 @@ Every bulk action is a **button**. The "Move to" and "Actions" dropdowns this
 replaced were a menu of things that are each one click on their own, so reaching
 them took a second click and a hunt through a list. The row wraps instead.
 
-Beyond move/archive/claim/merge, the toolbar carries **Bulk edit**
-(`BulkEditModal.jsx`), **Rerun processing**, Mark as paid / not paid, **Publish
-to Xero**, and **Delete** (red — it drops the stored file too, and confirms
-first). One **Export** button covers both cases: the ticked rows when anything is
-ticked, otherwise everything the tab shows.
+Beyond archive/claim/merge, the toolbar carries **Bulk edit**
+(`BulkEditModal.jsx`), **Rerun processing**, **Publish to Xero**, and **Delete**
+(red — it drops the stored file too, and confirms first). One **Export** button
+covers both cases: the ticked rows when anything is ticked, otherwise everything
+the tab shows.
+
+Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
+field, set on the document or across a selection in Bulk edit; readiness is
+derived, so a "Move to ready" button could only ever agree with the server or
+be overruled by it a moment later. Nothing now writes the `review` status, so
+the To review tab is only ever empty (it can be hidden in Business settings →
+Inbox tabs).
 
 Two rules run through all of them:
 
