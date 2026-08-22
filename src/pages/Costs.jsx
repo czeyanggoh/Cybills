@@ -335,12 +335,35 @@ function SortTh({ label, sortKey, sort, setSort, align = 'left' }) {
   );
 }
 
+// Advanced search, empty. The `user` here is the document's OWNER (the User
+// column), which is editable per document — not whoever happened to upload it.
+const ANYONE = 'Anyone';
+const emptyAdv = () => ({ min: '', max: '', from: '', to: '', supplier: '', user: '' });
+
+// Does this document belong to the person picked in Advanced search? The picker
+// offers display names, but a row whose owner was never renamed still carries
+// the uploader's email, so both are accepted.
+const isOwnedBy = (d, who) => {
+  const want = String(who || '').trim().toLowerCase();
+  if (!want) return true;
+  return [d.user, d.createdByEmail].some((v) => String(v || '').trim().toLowerCase() === want);
+};
+
+// Every person who owns a document here, A–Z. Built from the whole set rather
+// than the open tab, so a name doesn't vanish from the picker when you switch
+// tabs — and the picker can only ever offer someone who has documents.
+const ownersOf = (docs) =>
+  Array.from(new Set((docs || []).map((d) => String(d.user || '').trim()).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b)
+  );
+
 // Search + Filter popover + Advanced-search popover for the Costs table.
-function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv }) {
+function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv, userOptions }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [advOpen, setAdvOpen] = useState(false);
   const chip = (on) => cn('rounded-md border px-2.5 py-1 text-xs transition-colors', on ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted');
   const chosen = filterCount(filters);
+  const advOn = Object.values(adv).some((v) => String(v).trim() !== '');
   const field = 'h-8 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
   return (
@@ -348,7 +371,8 @@ function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv }) {
       <div className="relative ml-auto hidden sm:block">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="h-8 w-52 rounded-md border bg-background pl-8 pr-20 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
-        <button type="button" onClick={() => { setAdvOpen((o) => !o); setFilterOpen(false); }} className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground">
+        <button type="button" onClick={() => { setAdvOpen((o) => !o); setFilterOpen(false); }} className={cn('absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs hover:text-foreground', advOn ? 'font-medium text-foreground' : 'text-muted-foreground')}>
+          {advOn && <span className="h-1.5 w-1.5 rounded-full bg-foreground" aria-hidden="true" />}
           Advanced <ChevronDown className="h-3 w-3" />
         </button>
         {advOpen && (
@@ -377,9 +401,23 @@ function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv }) {
                   <span className="mb-1 block text-muted-foreground">Supplier</span>
                   <input value={adv.supplier} onChange={(e) => setAdv((a) => ({ ...a, supplier: e.target.value }))} placeholder="Contains…" className={field} />
                 </label>
+                <div>
+                  {/* The people who actually own documents here — picking from
+                      the list beats typing a name that has to match exactly.
+                      ANYONE is the way back to "no user chosen". */}
+                  <span className="mb-1 block text-muted-foreground">User</span>
+                  <ComboSelect
+                    aria-label="User"
+                    size="sm"
+                    className="w-full"
+                    value={adv.user || ANYONE}
+                    options={[ANYONE, ...userOptions]}
+                    onChange={(v) => setAdv((a) => ({ ...a, user: v === ANYONE ? '' : v }))}
+                  />
+                </div>
               </div>
               <div className="mt-4 flex justify-end gap-2">
-                <button type="button" onClick={() => setAdv({ min: '', max: '', from: '', to: '', supplier: '' })} className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Reset</button>
+                <button type="button" onClick={() => setAdv(emptyAdv())} className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Reset</button>
                 <button type="button" onClick={() => setAdvOpen(false)} className="inline-flex h-8 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">Apply</button>
               </div>
             </div>
@@ -699,7 +737,7 @@ export default function Costs() {
   const [exportOpen, setExportOpen] = useState(false);
   const [sort, setSort] = useState({ key: '', dir: 'asc' });
   const [filters, setFilters] = useState(emptyFilters); // Filter popover: id -> chosen chip
-  const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', supplier: '' });
+  const [adv, setAdv] = useState(emptyAdv); // Advanced search: amount / date / supplier / user
   const [mergeModalDocs, setMergeModalDocs] = useState(null); // docs under review in the merge modal
   const [mergeNote, setMergeNote] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -739,6 +777,7 @@ export default function Costs() {
   // verdict is spent, so a flag left on it from before is ignored here (and
   // cleared for good by the next scan).
   const docById = new Map(allDocs.map((d) => [d.id, d]));
+  const userOptions = useMemo(() => ownersOf(allDocs), [allDocs]);
   const flaggedDocs = allDocs.filter(
     (d) => isInInbox(d) && d.duplicateOfId && !d.duplicateDismissed && docById.has(d.duplicateOfId)
   );
@@ -768,9 +807,13 @@ export default function Costs() {
   const toNum = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const toTime = (v) => { const t = new Date(v).getTime(); return Number.isNaN(t) ? 0 : t; };
 
+  // The quick search reads the document owner as well — by the name the User
+  // column shows AND by the email behind it, so "yoav" and "yoav@…" both land.
   let rows = q
     ? allRows.filter((d) =>
-        [d.supplier, d.user, d.category, d.date].some((v) => String(v || '').toLowerCase().includes(q))
+        [d.supplier, d.user, d.createdByEmail, d.category, d.date].some((v) =>
+          String(v || '').toLowerCase().includes(q)
+        )
       )
     : allRows;
   // Filter popover (flag, tax, category, publishing, …) + Advanced search
@@ -785,6 +828,7 @@ export default function Costs() {
     const s = adv.supplier.trim().toLowerCase();
     rows = rows.filter((d) => String(d.supplier || '').toLowerCase().includes(s));
   }
+  if (adv.user.trim()) rows = rows.filter((d) => isOwnedBy(d, adv.user));
   if (sort.key) {
     const dir = sort.dir === 'asc' ? 1 : -1;
     // Columns whose key isn't the field name they sort on.
@@ -1255,6 +1299,7 @@ export default function Costs() {
               setFilters={setFilters}
               adv={adv}
               setAdv={setAdv}
+              userOptions={userOptions}
             />
           </div>
 
