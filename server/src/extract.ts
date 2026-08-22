@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { visionEnabled } from './env.js';
-import { notFiller, derivedDescription, withPeriod } from './store.js';
+import { apportion, notFiller, derivedDescription, withPeriod } from './store.js';
 import { recordUsage } from './usage.js';
 import { readDocument, resolveProvider } from './llm.js';
 
@@ -436,6 +436,8 @@ extractRouter.post('/extract', async (req, res) => {
 // silently pasted into the grid.
 const LinesSchema = z.object({
   grandTotal: z.number(),
+  subTotal: z.number().optional().default(0),
+  taxTotal: z.number().optional().default(0),
   currency: z.string().optional().default(''),
   note: z.string().optional().default(''),
   lines: z.array(
@@ -470,6 +472,16 @@ function buildLinesSchema(categories: string[]) {
         description:
           "The document's own printed grand total, including tax — the final amount payable. Not a subtotal, and not a running balance.",
       },
+      subTotal: {
+        type: 'number',
+        description:
+          'The printed subtotal BEFORE tax, when the document shows one (e.g. "SUB TOTAL 1,045.00" above a "GST 9% 94.05" line). 0 when it shows no separate subtotal.',
+      },
+      taxTotal: {
+        type: 'number',
+        description:
+          'The single GST/tax figure printed for the whole document (e.g. "GST 9%  94.05"), when it states tax once at the foot rather than per row. 0 when the document shows no tax, or breaks tax down on every row instead.',
+      },
       currency: { type: 'string', description: '3-letter ISO currency code, e.g. SGD' },
       lines: {
         type: 'array',
@@ -502,16 +514,17 @@ function buildLinesSchema(categories: string[]) {
             net: {
               type: 'number',
               description:
-                "This row's amount EXCLUDING tax. When the document shows tax only as one figure for the whole invoice, put the row's printed amount here and 0 in tax.",
+                "This row's amount excluding tax, when the row itself prints both. Otherwise 0 — the server works it out from the document's tax figure.",
             },
             tax: {
               type: 'number',
-              description: 'Tax charged on THIS row; 0 when the document does not break tax down per row.',
+              description:
+                'Tax charged on THIS row, ONLY when the document prints a tax figure against this row. 0 when tax is stated once for the whole document — never split the document-level GST across rows yourself, and never put all of it on one row.',
             },
             amount: {
               type: 'number',
               description:
-                "This row's own extended amount EXACTLY as printed on it (net + its tax). Copy the printed figure — never multiply quantity by unit price yourself, because a printed row already accounts for discounts and rounding.",
+                "The figure printed in this row's amount column, EXACTLY as printed. Copy it — never multiply quantity by unit price yourself, because a printed row already accounts for discounts, minimum charges and rounding. Whether it includes tax is not your problem: the document's own subtotal and tax figures settle that.",
             },
           },
           required: ['description', 'category', 'quantity', 'unitAmount', 'net', 'tax', 'amount'],
@@ -520,10 +533,10 @@ function buildLinesSchema(categories: string[]) {
       note: {
         type: 'string',
         description:
-          "Empty string when the charge rows add up to grandTotal. Otherwise one short sentence saying what the document does that explains the gap (e.g. \"Invoice settles a prior balance of 250.00 shown above the itemised table\"). Never use this to excuse a row you were unsure about — leave that row out instead.",
+          "Empty string when the charge rows add up to the subtotal (or, on a document with no separate tax figure, to grandTotal). Otherwise one short sentence saying what the document does that explains the gap (e.g. \"Invoice settles a prior balance of 250.00 shown above the itemised table\"). Never use this to excuse a row you were unsure about — leave that row out instead.",
       },
     },
-    required: ['grandTotal', 'currency', 'lines', 'note'],
+    required: ['grandTotal', 'subTotal', 'taxTotal', 'currency', 'lines', 'note'],
   };
 }
 
@@ -567,9 +580,12 @@ extractRouter.post('/extract-lines', async (req, res) => {
     'These summarise other rows; returning one both invents an expense and hides the real ones.\n' +
     'Copy every figure exactly as printed. Do not compute an amount the document does not show — a printed row already accounts for discounts, minimum charges and rounding, so quantity times unit price is NOT a substitute for the printed line amount.\n' +
     'A charge split across pages is still one table: continue reading it, and ignore the carried-forward figures that join the pages.\n' +
-    'THE CHECK, before you answer: add up the `amount` of every line you are about to return. The sum must equal `grandTotal`. ' +
+    "Read the document's summary block as it is printed: `grandTotal` is the final amount payable, `subTotal` the figure before tax, and `taxTotal` the one GST/tax figure stated for the whole document. " +
+    'Most invoices state GST once at the foot. On those, every row\'s `tax` is 0 and the rows add up to the SUBTOTAL — that is correct and expected, and the GST is shared out across the rows afterwards. ' +
+    'Put a figure in a row\'s `tax` ONLY when the document prints tax against that row. NEVER split the document-level GST across the rows yourself, and NEVER load all of it onto one row to make a column add up.\n' +
+    'THE CHECK, before you answer: add up the `amount` of every line you are about to return. The sum must equal `subTotal` when the document prints one, otherwise `grandTotal`. ' +
     'If it is larger, you have included a summary row — find it and drop it. If it is smaller, you have missed charge rows — find them. ' +
-    'Only when neither is true (the document itself settles an earlier balance, say) may the two differ, and then `note` must say why.\n' +
+    'Only when neither is true (the document itself settles an earlier balance, say) may they differ, and then `note` must say why.\n' +
     'A document with no itemised table has no lines: return an empty array rather than one line for the total.' +
     accountsGuide;
 
@@ -578,6 +594,57 @@ extractRouter.post('/extract-lines', async (req, res) => {
   // Cents, so the comparison isn't at the mercy of binary floating point.
   const cents = (n: number) => Math.round(Number(n) * 100);
   const sumOf = (lines: Array<{ amount: number }>) => lines.reduce((t, l) => t + cents(l.amount), 0);
+
+  // Turn what the model read into rows that carry their own net, tax and total,
+  // and say whether they are the same money as the document.
+  //
+  // The shape nearly every Singapore invoice uses is: rows printed EXCLUDING
+  // GST, then "SUB TOTAL / GST 9% / TOTAL" at the foot. Read literally that
+  // means the rows add up to the subtotal, not the total — so the one GST
+  // figure is shared out across them here (by net, largest remainder, so the
+  // parts sum to the whole exactly). Without this the reader has to force the
+  // column to add up on its own, and what it does is dump the entire GST onto
+  // the last row: a 45.00 line carrying 94.05 of tax.
+  //
+  // Rows are gross instead when they add up to the grand total; rows that carry
+  // their own printed tax are left exactly as they are.
+  const settle = (data: z.infer<typeof LinesSchema>) => {
+    const rows = data.lines;
+    const amounts = rows.map((l) => cents(l.amount));
+    const rowsSum = amounts.reduce((a, b) => a + b, 0);
+    const grand = cents(data.grandTotal);
+    const stated = Math.max(0, cents(data.taxTotal));
+    const printedTax = rows.reduce((t, l) => t + cents(l.tax), 0);
+
+    // Tax the document itself put on the rows wins; anything else is settled
+    // from the single stated figure.
+    let taxes: number[];
+    let netBasis: number[];
+    if (printedTax > 0) {
+      taxes = rows.map((l) => cents(l.tax));
+      netBasis = amounts.map((a, i) => (rowsSum === grand ? a - taxes[i] : a));
+    } else if (stated > 0 && rowsSum !== grand && rowsSum + stated === grand) {
+      // Rows are net of GST (they add up to the subtotal) — share it out.
+      netBasis = amounts;
+      taxes = apportion(stated, amounts);
+    } else if (stated > 0 && rowsSum === grand) {
+      // Rows already include GST — share it out of them.
+      taxes = apportion(stated, amounts);
+      netBasis = amounts.map((a, i) => a - taxes[i]);
+    } else {
+      taxes = amounts.map(() => 0);
+      netBasis = amounts;
+    }
+
+    const settled = rows.map((l, i) => ({
+      ...l,
+      net: netBasis[i] / 100,
+      tax: taxes[i] / 100,
+      amount: (netBasis[i] + taxes[i]) / 100,
+    }));
+    const total = settled.reduce((t, l) => t + cents(l.amount), 0);
+    return { lines: settled, linesTotal: total / 100, reconciled: rows.length > 0 && total === grand };
+  };
 
   const read = async (feedback: string) => {
     const outcome = await readDocument({
@@ -612,38 +679,46 @@ extractRouter.post('/extract-lines', async (req, res) => {
     // The check the model was asked to do, done again here — because a model
     // that miscounts is exactly the one that won't notice it miscounted. One
     // re-read, told the arithmetic it got wrong; a second failure is reported,
-    // not hidden.
+    // not hidden. The comparison is against the SETTLED rows, so an invoice
+    // whose rows are net of a GST stated at the foot is right, not "short".
     let attempts = 1;
-    if (data.lines.length && cents(data.grandTotal) !== sumOf(data.lines)) {
-      const was = (sumOf(data.lines) / 100).toFixed(2);
-      const want = data.grandTotal.toFixed(2);
+    let out = settle(data);
+    if (data.lines.length && !out.reconciled) {
+      const target = cents(data.subTotal) && cents(data.subTotal) !== cents(data.grandTotal) ? data.subTotal : data.grandTotal;
       const retry = await read(
-        ` Your previous answer returned ${data.lines.length} lines adding up to ${was}, but the document's grand total is ${want}. ` +
-          'One of those lines is a summary row, or a charge row is missing. Read the table again and return only the charge rows that add up to the grand total.'
+        ` Your previous answer returned ${data.lines.length} lines whose amounts add up to ${(sumOf(data.lines) / 100).toFixed(2)}, ` +
+          `but this document's charge rows should add up to ${target.toFixed(2)}. ` +
+          'One of those lines is a summary row, or a charge row is missing. Read the table again and return only the charge rows.'
       );
       attempts = 2;
       // Keep the retry only when it actually did better — a second answer that
       // is further out is not an improvement.
-      if (retry && Math.abs(cents(retry.grandTotal) - sumOf(retry.lines)) < Math.abs(cents(data.grandTotal) - sumOf(data.lines))) {
-        data = retry;
+      if (retry) {
+        const alt = settle(retry);
+        const off = (r: { linesTotal: number }, d: { grandTotal: number }) => Math.abs(cents(r.linesTotal) - cents(d.grandTotal));
+        if (off(alt, retry) < off(out, data)) {
+          data = retry;
+          out = alt;
+        }
       }
     }
 
-    const lines = data.lines.map((li) => ({
+    const lines = out.lines.map((li) => ({
       ...li,
       description: notFiller(li.description),
       category: categorySet.has(li.category) ? li.category : 'Uncategorised',
     }));
-    const linesTotal = sumOf(lines) / 100;
     return res.json({
       ok: true,
       data: {
         lines,
         grandTotal: data.grandTotal,
+        subTotal: data.subTotal,
+        taxTotal: data.taxTotal,
         currency: data.currency,
-        linesTotal,
+        linesTotal: out.linesTotal,
         // Whether the grid can be trusted without a human adding it up.
-        reconciled: lines.length > 0 && cents(data.grandTotal) === sumOf(lines),
+        reconciled: out.reconciled,
         note: notFiller(data.note),
         attempts,
       },

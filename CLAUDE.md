@@ -92,6 +92,16 @@ wrong, and only the better of the two answers is kept. What comes back carries
 rather than pasting rows that don't add up. `npm test` in `server/` runs that
 path end to end against a stubbed reader.
 
+**One GST figure becomes per-line GST.** Nearly every SG invoice prints its rows
+excluding GST and states it once at the foot ("SUB TOTAL / GST 9% / TOTAL"), so
+the rows add up to the SUBTOTAL — and a reader told to make them add up to the
+total will load the whole GST onto the last row. The reader is asked for the
+summary block (`subTotal` / `taxTotal` / `grandTotal`) and told to leave per-row
+tax at 0 unless the document prints it; the server then shares the stated figure
+across the rows by net (`apportion` in `store.ts`, largest remainder, so the
+parts sum to the whole exactly). Rows printed gross have it taken back out
+instead, and a document that breaks tax down per row is left as printed.
+
 Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
 `claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5`),
 `OPENAI_REASONING_EFFORT` (default `low`), optional `OPENAI_BASE_URL` for an
@@ -107,8 +117,11 @@ does so ONLY when the rows are provably the same money as the document: they
 add up to its total, and their tax adds up to its tax (a single stated GST
 figure is apportioned across the rows by largest remainder, so the parts sum to
 the whole exactly). Anything that can't reconcile posts as the single summary
-line, exactly as before — a nicer breakdown is never worth changing a
-published total. Covered by `npm test` in `server/`.
+line — a nicer breakdown is never worth changing a published total. Line items
+that CONTRADICT the document (they don't add up to its total, or their tax
+doesn't add up to its tax) are refused outright, 422, in the dialog and in the
+API: a breakdown that disagrees with its own paper is a mistake to fix, not to
+post around. Covered by `npm test` in `server/`.
 
 ## AI API spend
 

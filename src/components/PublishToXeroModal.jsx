@@ -150,7 +150,12 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   const money = (v) => `${bill?.currency || ''} ${(Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0).toFixed(2)}`.trim();
 
   const loadingRefs = organisationId && (accounts === null || taxRates === null);
-  const canPublish = Boolean(organisationId && accountCode && taxType && !publishing && !done);
+  // Line items that contradict the document block the publish outright — the
+  // server refuses it too (see perLineItems in server/src/xero.ts); this is so
+  // the button says why instead of the request failing after the click.
+  const canPublish = Boolean(
+    organisationId && accountCode && taxType && !publishing && !done && (lines.rows === 0 || lines.postable)
+  );
   const organisation = organisations.find((o) => o.id === organisationId);
 
   const publish = async () => {
@@ -238,16 +243,16 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                   <p className="rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                     {lines.reason === 'tax' ? (
                       <>
-                        The {lines.rows} line items&rsquo; tax doesn&rsquo;t add up to this document&rsquo;s tax, so
-                        they&rsquo;ll post as <span className="font-medium">one summary line</span>. Fix the Tax column
-                        to post them individually.
+                        <span className="font-medium">Can&rsquo;t publish yet.</span> The {lines.rows} line items carry{' '}
+                        {money(lines.linesTax)} of tax, but this document&rsquo;s tax is {money(bill?.tax)}. Fix the Tax
+                        column on the document first.
                       </>
                     ) : (
                       <>
-                        The {lines.rows} line items add up to {money(lines.linesTotal)}, not {money(bill?.total)} — out
-                        by {money(Math.abs(lines.outBy))}. They&rsquo;ll post as{' '}
-                        <span className="font-medium">one summary line</span> until that&rsquo;s fixed, so the bill in
-                        Xero still shows the document&rsquo;s own total.
+                        <span className="font-medium">Can&rsquo;t publish yet.</span> The {lines.rows} line items add up
+                        to {money(lines.linesTotal)}, not {money(bill?.total)} — out by{' '}
+                        {money(Math.abs(lines.outBy))}. Fix the lines (or the document&rsquo;s total) first, so the bill
+                        in Xero adds up to the same money as the paper.
                       </>
                     )}
                   </p>

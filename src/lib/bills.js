@@ -188,6 +188,7 @@ export function lineItemsPostable(lineItems, total, tax) {
   const out = {
     rows: rows.length,
     linesTotal: linesTotal / 100,
+    linesTax: rowTax / 100,
     outBy: (billTotal - linesTotal) / 100,
     hasProjects: rows.some((r) => String(r.project || '').trim() || String(r.project2 || '').trim()),
     postable: false,

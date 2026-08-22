@@ -1,7 +1,8 @@
 // What POST /publish-bill actually sends to Xero. The arithmetic has its own
 // test (publish-lines); this one is about the wiring: a bill whose line items
-// are populated must reach the ledger AS those lines, and a bill without them —
-// or with rows that don't add up — must still go up as the single summary line.
+// are populated must reach the ledger AS those lines, a bill without them still
+// goes up as one summary line, and a bill whose lines contradict it is refused
+// outright rather than posted around.
 import http from 'node:http';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -120,11 +121,18 @@ check('GST spread: two lines', r.posted.LineItems.length, 2);
 check('GST spread: tax sums to the document', r.posted.LineItems.reduce((t: number, l: any) => t + l.TaxAmount, 0), 9);
 check('GST spread: total sums to the document', r.posted.LineItems.reduce((t: number, l: any) => t + l.UnitAmount + l.TaxAmount, 0), 109);
 
-// 3) Rows that don't add up -> one summary line, the document's own total.
+// 3) Rows that don't add up -> nothing is posted at all. A breakdown that
+//    contradicts its own document is a mistake to fix, not to publish around.
 r = await publish(bill({ total: '1139.05', tax: '0', lineItems: [row({ total: '315' }), row({ total: '3045' })] }).id);
-check('unreconciled: one line', r.posted.LineItems.length, 1);
-check('unreconciled: reported as a summary post', [r.body.lines, r.body.perLine], [1, false]);
-check('unreconciled: the document total, not the rows', r.posted.LineItems[0].UnitAmount, 1139.05);
+check('unreconciled: refused', r.status, 422);
+check('unreconciled: nothing sent to Xero', r.posted, null);
+check('unreconciled: says which way it is wrong', r.body.error, 'line_items_unreconciled');
+check('unreconciled: names both figures', [r.body.linesTotal, r.body.reason], [3360, 'total']);
+
+// 3b) Rows whose tax contradicts the document are refused the same way.
+r = await publish(bill({ total: '218', tax: '18', lineItems: [row({ total: '109', tax: '9' }), row({ total: '109', tax: '5' })] }).id);
+check('tax mismatch: refused', [r.status, r.body.reason], [422, 'tax']);
+check('tax mismatch: nothing sent to Xero', r.posted, null);
 
 // 4) No line items at all -> unchanged behaviour.
 r = await publish(bill({ total: '50', tax: '0', project: 'ASTP 01' }).id);

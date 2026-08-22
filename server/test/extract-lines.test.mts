@@ -72,6 +72,7 @@ const call = async () => {
 const line = (description: string, amount: number, category = '315 - Outlet Laundry') => ({
   description, category, quantity: 1, unitAmount: amount, net: amount, tax: 0, amount,
 });
+const answer = (o: Record<string, unknown>) => ({ grandTotal: 0, subTotal: 0, taxTotal: 0, currency: 'SGD', note: '', lines: [], ...o });
 
 let failures = 0;
 const check = (name: string, got: unknown, want: unknown) => {
@@ -139,6 +140,58 @@ answers = [{ grandTotal: 0.3, currency: 'SGD', note: '', lines: [line('A', 0.1),
 r = await call();
 check('float-safe reconciliation', r.body.data.reconciled, true);
 check('float-safe: no retry', calls.length, 1);
+
+// 7) The Xtreme Laundry invoice: rows printed NET, one "GST 9% 94.05" at the
+//    foot. The rows add up to the SUBTOTAL, which is correct — the stated GST is
+//    shared across them here rather than dumped on the last row.
+calls = [];
+answers = [answer({
+  grandTotal: 1139.05,
+  subTotal: 1045,
+  taxTotal: 94.05,
+  lines: [
+    line('Alternate Service - Every Mon & Thurs (Tangs)', 270),
+    line('Chemical wash (Oxi Bleach & Rinse)', 45),
+    ...Array.from({ length: 8 }, (_, i) => line(`0${i + 1}/06/26: 1 bag extra`, 30)),
+    line('Alternate Service - Every Thu (Vivo City)', 150),
+    line('Chemical wash (Oxi Bleach & Rinse)', 25),
+    line('Alternate Service - Every Tues & Thurs (Four Seasons)', 270),
+    line('Chemical wash (Oxi Bleach & Rinse)', 45),
+  ],
+})];
+r = await call();
+check('net rows + GST at the foot: reconciled', r.body.data.reconciled, true);
+check('net rows + GST at the foot: no retry needed', calls.length, 1);
+check('GST shared out, not dumped on one row', r.body.data.lines.map((l: any) => l.tax).slice(0, 3), [24.3, 4.05, 2.7]);
+check('every row taxed', r.body.data.lines.every((l: any) => l.tax > 0), true);
+check('the shares sum to the stated GST', Math.round(r.body.data.lines.reduce((t: number, l: any) => t + l.tax * 100, 0)) / 100, 94.05);
+check('the rows now sum to the grand total', r.body.data.linesTotal, 1139.05);
+check('nets are untouched', r.body.data.lines.map((l: any) => l.net).slice(0, 3), [270, 45, 30]);
+
+// 8) Rows printed GROSS with the tax stated once: the GST comes out of them.
+calls = [];
+answers = [answer({ grandTotal: 109, subTotal: 100, taxTotal: 9, lines: [line('A', 65.4), line('B', 43.6)] })];
+r = await call();
+check('gross rows: reconciled', r.body.data.reconciled, true);
+check('gross rows: tax pulled out', r.body.data.lines.map((l: any) => l.tax), [5.4, 3.6]);
+check('gross rows: nets net off', r.body.data.lines.map((l: any) => l.net), [60, 40]);
+
+// 9) A document that breaks tax down per row is left exactly as printed.
+calls = [];
+answers = [answer({
+  grandTotal: 218, subTotal: 200, taxTotal: 18,
+  lines: [{ ...line('A', 109), net: 100, tax: 9 }, { ...line('B', 109), net: 100, tax: 9 }],
+})];
+r = await call();
+check('per-row tax kept as printed', r.body.data.lines.map((l: any) => [l.net, l.tax]), [[100, 9], [100, 9]]);
+check('per-row tax: reconciled', r.body.data.reconciled, true);
+
+// 10) An odd GST that doesn't divide cleanly still sums to the printed figure.
+calls = [];
+answers = [answer({ grandTotal: 109.01, subTotal: 100.01, taxTotal: 9, lines: [line('A', 33.34), line('B', 33.34), line('C', 33.33)] })];
+r = await call();
+check('indivisible GST sums to the printed figure', Math.round(r.body.data.lines.reduce((t: number, l: any) => t + l.tax * 100, 0)) / 100, 9);
+check('indivisible GST: rows reach the grand total', r.body.data.linesTotal, 109.01);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 server.close();

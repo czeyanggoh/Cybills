@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { env, xeroEnabled } from './env.js';
 import { orgIdFor } from './bills.js';
 import { getOrganisation } from './organisations.js';
-import { getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
+import { apportion, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
 import { workspaceId } from './workspace.js';
@@ -510,55 +510,64 @@ function codeFromCategory(category: unknown): string {
 }
 
 // Build the Xero lines for a bill that has its own line items, so each one
-// carries its own account and its own project(s). Returns null — and the caller
-// falls back to the single summary line — unless the rows are provably the same
-// money as the bill:
+// carries its own account and its own project(s). Three outcomes, and the
+// caller treats them very differently:
 //
-//   - they add up to the bill's total, to the cent, and
-//   - their tax adds up to the bill's tax, to the cent.
+//   'none'     — no line items. Posts as the single summary line, as always.
+//   'lines'    — the rows are provably the same money as the bill, so they go
+//                up as the bill's own lines.
+//   'mismatch' — the rows contradict the bill. The publish is REFUSED.
 //
-// The second one is usually satisfied by distributing: a reader fills in a
-// per-row tax only when the document breaks tax down per row, and most don't —
-// so the bill's single GST figure is spread across the rows in proportion to
-// their net, with the odd cents going to the largest. Anything that can't be
-// made to reconcile posts as one line, exactly as before. A published bill must
-// show the same total and the same GST as the document it came from; a nicer
-// breakdown is never worth changing either.
+// Same money means: they add up to the bill's total to the cent, and their tax
+// adds up to its tax to the cent. The second is usually satisfied by
+// distributing — a reader fills in per-row tax only when the document breaks
+// tax down per row, and most don't, so the bill's single GST figure is spread
+// across the rows in proportion to their net, the odd cents going by largest
+// remainder.
+//
+// Rows that can't be reconciled used to post as one summary line. They don't
+// any more: a breakdown that disagrees with its own total is a mistake
+// somewhere, and posting around it puts a bill in a client's ledger whose lines
+// nobody can tie back to the paper. Better to say so and let it be fixed.
 // Exported for the reconciliation test in server/test — this arithmetic decides
 // what lands in a live ledger.
+export type LineBuild =
+  | { kind: 'none' }
+  | { kind: 'lines'; lines: Array<Record<string, unknown>> }
+  | { kind: 'mismatch'; reason: 'total' | 'tax'; linesTotal: number; linesTax: number };
+
 export async function perLineItems(
   bill: Bill,
   opts: { accountCode: string; taxType: string; tenantId: string; fallbackDescription: string }
-): Promise<Array<Record<string, unknown>> | null> {
+): Promise<LineBuild> {
   const rows = Array.isArray(bill.lineItems) ? bill.lineItems : [];
-  if (!rows.length) return null;
+  if (!rows.length) return { kind: 'none' };
 
   const c = (n: number) => Math.round(n * 100);
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
   const totals = rows.map((r) => c(parseAmount(r.total) || parseAmount(r.net) + parseAmount(r.tax)));
-  if (totals.reduce((a, b) => a + b, 0) !== c(parseAmount(bill.total))) return null;
+  const rowTax = rows.map((r) => c(parseAmount(r.tax)));
+  const mismatch = (reason: 'total' | 'tax'): LineBuild => ({
+    kind: 'mismatch',
+    reason,
+    linesTotal: sum(totals) / 100,
+    linesTax: sum(rowTax) / 100,
+  });
+  if (sum(totals) !== c(parseAmount(bill.total))) return mismatch('total');
 
   const billTax = c(parseAmount(bill.tax));
-  let taxes = rows.map((r) => c(parseAmount(r.tax)));
-  if (taxes.reduce((a, b) => a + b, 0) !== billTax) {
+  let taxes = rowTax;
+  if (sum(taxes) !== billTax) {
     // Only the "document states one GST figure" case is recoverable. Rows that
     // carry SOME tax but not the bill's are a disagreement, not a gap.
-    if (taxes.some((t) => t !== 0) || billTax === 0) return null;
-    const base = totals.map((t) => Math.max(0, t));
-    const baseSum = base.reduce((a, b) => a + b, 0);
-    if (baseSum <= 0) return null;
-    taxes = base.map((b) => Math.floor((billTax * b) / baseSum));
-    // Largest remainder: the spare cents go to the lines whose exact share was
-    // cut by the most, so every line's tax is the nearest cent to its true share
-    // and the parts still sum to the whole. Ties break towards the bigger line.
-    let left = billTax - taxes.reduce((a, b) => a + b, 0);
-    const remainder = (i: number) => (billTax * base[i]) % baseSum;
-    const order = base.map((_, i) => i).sort((x, y) => remainder(y) - remainder(x) || base[y] - base[x]);
-    for (let k = 0; left > 0 && k < order.length; k++, left--) taxes[order[k]] += 1;
-    if (taxes.reduce((a, b) => a + b, 0) !== billTax) return null;
+    if (taxes.some((t) => t !== 0) || billTax === 0) return mismatch('tax');
+    if (sum(totals.map((t) => Math.max(0, t))) <= 0) return mismatch('tax');
+    taxes = apportion(billTax, totals);
+    if (sum(taxes) !== billTax) return mismatch('tax');
   }
 
   const [codes, cats] = await Promise.all([activeAccountCodes(opts.tenantId), trackingCategories(opts.tenantId)]);
-  return rows.map((row, i) => {
+  const lines = rows.map((row, i) => {
     const own = codeFromCategory(row.category);
     const line: Record<string, unknown> = {
       Description: String(row.description ?? '').trim() || opts.fallbackDescription,
@@ -581,6 +590,7 @@ export async function perLineItems(
     if (tracking.length) line.Tracking = tracking;
     return line;
   });
+  return { kind: 'lines', lines };
 }
 
 // POST /api/xero/organisations/:id/publish-bill — publish a stored cost
@@ -668,15 +678,30 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   }
 
   // A bill with its own line items posts as those lines — each with its own
-  // account and its own project(s) — but only when they add up to the same
-  // money as the document. Anything else posts as the single summary line.
-  const perLine = await perLineItems(bill, {
+  // account and its own project(s). Line items that contradict the document are
+  // refused rather than posted around: a breakdown that doesn't add up to its
+  // own total is a mistake somewhere on the document, and one summary line
+  // silently standing in for it hides that from whoever reconciles the ledger.
+  const built = await perLineItems(bill, {
     accountCode,
     taxType,
     tenantId: organisation.tenantId,
     fallbackDescription: String(line.Description ?? ''),
   });
-  const lineItems = perLine ?? [line];
+  if (built.kind === 'mismatch') {
+    const money = (n: number) => n.toFixed(2);
+    return res.status(422).json({
+      error: 'line_items_unreconciled',
+      reason: built.reason,
+      linesTotal: built.linesTotal,
+      linesTax: built.linesTax,
+      message:
+        built.reason === 'total'
+          ? `This document's ${(bill.lineItems ?? []).length} line items add up to ${money(built.linesTotal)}, not the document's total of ${money(parseAmount(bill.total))}. Fix the lines (or the total) before publishing — a bill whose lines don't add up to it can't be posted.`
+          : `This document's line items carry ${money(built.linesTax)} of tax, but the document's tax is ${money(parseAmount(bill.tax))}. Fix the Tax column before publishing.`,
+    });
+  }
+  const lineItems = built.kind === 'lines' ? built.lines : [line];
 
   const payload: Record<string, unknown> = {
     Type: 'ACCPAY',
@@ -740,7 +765,7 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     },
     // How it went up: the document's own lines, or one summary line.
     lines: lineItems.length,
-    perLine: Boolean(perLine),
+    perLine: built.kind === 'lines',
     attachment,
     bill: updated,
   });
