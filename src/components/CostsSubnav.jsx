@@ -2,6 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useCostsCounts } from '@/lib/costsData';
 import { useClaims, pendingApprovalsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
+import { isItemKey } from '@/lib/bills';
 import { cn } from '@/lib/utils';
 
 export default function CostsSubnav() {
@@ -13,12 +14,13 @@ export default function CostsSubnav() {
   // Claims awaiting the signed-in user's approval — shown as a red badge so a
   // pending approval stays visible even after the reminder banner is dismissed.
   const pendingApprovals = pendingApprovalsFor(claims, user).length;
-  // A cost document opened from inside a claim (/costs/<id> where <id> is a
-  // claim line item) belongs to Expense claims, so highlight that — not Inbox.
+  // A cost document opened from inside a claim (/costs/<key>, where <key> is the
+  // item id of a claim line item) belongs to Expense claims, so highlight that —
+  // not Inbox. Claims store the internal id, so match on either form.
   const costItemId = pathname.startsWith('/costs/') ? pathname.slice('/costs/'.length) : '';
   const itemInClaim =
     Boolean(costItemId) &&
-    claims.some((c) => (c.transactions || []).some((t) => String(t.itemId) === costItemId));
+    claims.some((c) => (c.transactions || []).some((t) => isItemKey(t.itemId, costItemId)));
   const isActive = (item) => {
     if (item.to === '/costs') {
       return (

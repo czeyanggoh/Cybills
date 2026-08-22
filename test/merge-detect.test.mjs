@@ -3,6 +3,7 @@
 // combines two unrelated costs into one — so the rules are tested directly.
 import {
   findMergeCandidates,
+  statesNothing,
   looksLikeDuplicates,
   mergeKind,
   orderForMerge,
@@ -71,6 +72,44 @@ check('pages still pair when one half states no total', kindOf(page1NoTotal, pag
 // ...but not once they are days apart with nothing else in common.
 const page1Later = doc({ ...page1NoTotal, createdAt: '2026-09-30T09:05:00.000Z' });
 check('a blank half from another week does not pair on supplier alone', kindOf(page1Later, page2), null);
+
+// --- when the reader got nothing off one half ---------------------------------
+// What the live inbox actually looked like: the details half read fine, the
+// header half read as a completely blank row. There is no shared fact left to
+// tie them with, so provenance has to carry it.
+const blankHalf = doc({ id: 'blankHalf', createdAt: '2026-08-12T09:05:30.000Z' });
+check('a blank row is recognised as nothing read', statesNothing(docFacts(blankHalf)), true);
+check('the details half is not', statesNothing(docFacts(page2)), false);
+check('a blank pairs with what it was uploaded beside', kindOf(blankHalf, page2), 'pages');
+check(
+  'that pairing is provisional',
+  pairMatch(docFacts(blankHalf), docFacts(page2))?.provisional,
+  true,
+);
+check(
+  'the scan offers the blank pair when the choice is forced',
+  findMergeCandidates([blankHalf, page2]).map((g) => ids(g.docs)),
+  [['blankHalf', 'page2']],
+);
+
+// ...but three blank rows uploaded alongside it is genuinely unknowable. Which
+// blank is the coffee order's other half cannot be told from an upload time, so
+// nothing is offered rather than two thirds of a wrong answer.
+const blank2 = doc({ id: 'blank2', createdAt: '2026-08-12T09:05:40.000Z' });
+const blank3 = doc({ id: 'blank3', createdAt: '2026-08-12T09:05:50.000Z' });
+check('several blanks in one upload offer nothing', findMergeCandidates([blankHalf, blank2, blank3, page2]).length, 0);
+
+// A blank uploaded on its own, days from anything, is just a blank row.
+const strayBlank = doc({ id: 'stray', createdAt: '2026-09-30T09:05:00.000Z' });
+check('a stray blank pairs with nothing', findMergeCandidates([strayBlank, page2]).length, 0);
+
+// Weak evidence never overrides strong: a blank in the same upload does not get
+// bolted onto a pair that already tied on a shared fact.
+check(
+  'a firm page pair is not chained to a blank beside it',
+  findMergeCandidates([page1, page2, blankHalf]).map((g) => ids(g.docs)),
+  [['page1', 'page2']],
+);
 
 // --- the case the old scan already handled -----------------------------------
 const receipt = doc({

@@ -20,6 +20,8 @@ import {
 } from './store.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { dataScopeForOrg } from './organisations.js';
+import { workspaceId } from './workspace.js';
+import { runAutoClaims } from './autoClaims.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -50,6 +52,14 @@ export const billsRouter = Router();
 billsRouter.get('/bills', (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
+  // File any Auto Expense claim whose period has ended. Rides on the fetch every
+  // list already makes rather than a background worker, so a period that ended
+  // while nobody was looking is claimed the moment someone opens the app.
+  try {
+    runAutoClaims(workspaceId(req), orgId);
+  } catch (err) {
+    console.error('[autoClaims] sweep failed', err);
+  }
   const bills = listBills(orgId).map((b) => ({ ...b, hasFile: Boolean(b.storageKey) }));
   res.json({ bills });
 });

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Image, Download, FileClock, Search, ChevronDown } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import HistoryModal from '@/components/HistoryModal';
-import { fetchBills, billToDoc, displayItemId, billFileUrl, BILLS_CHANGED_EVENT } from '@/lib/bills';
+import { fetchBills, billToDoc, displayItemId, costPath, billFileUrl, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { cn } from '@/lib/utils';
 
 const TABS = ['Costs and sales', 'Supplier statements'];
@@ -123,7 +123,7 @@ export default function SubmissionHistory() {
     workspace: d.kind === 'sales' ? 'Sales' : d.kind === 'supplier_statement' ? 'Supplier statements' : 'Costs',
   }));
 
-  const showDoc = (d) => navigate(d.kind === 'sales' ? `/sales/${d.id}` : `/costs/${d.id}`);
+  const showDoc = (d) => navigate(d.kind === 'sales' ? `/sales/${d.id}` : costPath(d.id));
 
   return (
     <AppShell>
