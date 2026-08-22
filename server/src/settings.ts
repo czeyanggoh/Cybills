@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { loadCollection, saveCollection } from './jsonStore.js';
-import { workspaceId } from './workspace.js';
+import { workspaceId, WORKSPACE_ID } from './workspace.js';
+import { primaryOrgId } from './organisations.js';
 
 // Generic per-workspace settings blobs (shared). Backs the small "settings-like"
 // client stores — Lists (categories/tax rates/projects), custom categories, and
@@ -28,3 +29,36 @@ settingsRouter.put('/:key', (req, res) => {
   saveCollection(COLLECTION, items);
   res.json({ ok: true });
 });
+
+// One-off migration. These blobs were workspace-wide before they became
+// per-entity (`<key>::<orgId>`), and that one saved copy is the PRIMARY entity's
+// — the practice's own books, where all of this was filled in. Hand it to that
+// entity explicitly, so the client no longer has to fall back to it: a
+// registration number, a GST number and a company name identify ONE company,
+// and inheriting them showed the practice's details under every client that
+// hadn't filled its own profile in yet.
+//
+// Never overwrites an entity that already has its own value, and leaves the
+// legacy key in place for the stores that still (rightly) fall back to it —
+// category lists and coding rules, where starting from the practice's is a
+// convenience rather than a wrong answer. Idempotent: no-ops on every boot
+// after the first.
+const ADOPTED_BY_PRIMARY = ['cybills.business-profile.v1'];
+
+export function adoptLegacySettings(): number {
+  const primary = primaryOrgId();
+  if (!primary) return 0; // nothing linked yet — nothing to adopt
+  const ws = WORKSPACE_ID;
+  const items = loadCollection<Setting>(COLLECTION);
+  let adopted = 0;
+  for (const key of ADOPTED_BY_PRIMARY) {
+    const legacy = items.find((s) => s.workspaceId === ws && s.key === key);
+    if (!legacy || legacy.value == null) continue;
+    const owned = `${key}::${primary}`;
+    if (items.some((s) => s.workspaceId === ws && s.key === owned)) continue;
+    items.push({ workspaceId: ws, key: owned, value: legacy.value });
+    adopted += 1;
+  }
+  if (adopted) saveCollection(COLLECTION, items);
+  return adopted;
+}

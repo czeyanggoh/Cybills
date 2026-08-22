@@ -9,6 +9,14 @@
 // describes ONE client entity — its registration details, its Xero-derived tax
 // rates and categories, its coding rules — so switching organisation switches
 // the settings with it. Those keys are suffixed with the active org id.
+//
+// A per-org store falls back to the workspace-wide blob it used to share, so
+// nothing appeared to vanish the day it became per-org. Pass
+// { inheritLegacy: false } for anything that IDENTIFIES the entity — a
+// registration number, a GST number, a company name — where borrowing another
+// company's value is worse than showing nothing. (The legacy blob belongs to
+// the primary entity; the server hands it to that entity on boot, see
+// adoptLegacySettings in settings.ts.)
 
 // Mirrors organisations.js. Read straight from localStorage rather than
 // imported, because organisations.js → listsStore.js → blobStore.js would
@@ -25,7 +33,7 @@ function activeOrg() {
   }
 }
 
-export function blobStore(key, fallback, onHydrate = () => {}, { perOrg = false } = {}) {
+export function blobStore(key, fallback, onHydrate = () => {}, { perOrg = false, inheritLegacy = true } = {}) {
   const cache = new Map(); // org id ('' when workspace-wide) -> value
   let org = perOrg ? activeOrg() : '';
   const url = (o) => `/api/settings/${encodeURIComponent(perOrg ? `${key}::${o || 'default'}` : key)}`;
@@ -35,7 +43,7 @@ export function blobStore(key, fallback, onHydrate = () => {}, { perOrg = false 
       const res = await fetch(url(o));
       if (!res.ok) return;
       let { value } = await res.json();
-      if (value == null && perOrg) {
+      if (value == null && perOrg && inheritLegacy) {
         // This org has no value of its own yet, so inherit the workspace-wide
         // one this store used to share. Nothing appears to vanish the day a
         // store becomes per-org; the first save writes to the org's own key and
