@@ -11,9 +11,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Info,
-  Plus,
-  Trash2,
-  Loader2,
   ExternalLink,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -35,6 +32,7 @@ import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, displayItemId, fetchExtractLines, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
+import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
 import {
   matchSupplierRule,
   supplierRuleCategoryReason,
@@ -97,27 +95,6 @@ function Input({ value, onChange = null, readOnly = false }) {
   );
 }
 
-
-// A line's tracking-category picker. Blank is meaningful — it means "whatever
-// the document says" — so the empty option says so rather than reading as an
-// unfilled field.
-function LineProjectSelect({ value, options, placeholder = 'None', onChange }) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        'h-8 w-full min-w-[8rem] rounded border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        !value && 'text-muted-foreground'
-      )}
-    >
-      <option value="">{placeholder}</option>
-      {Array.from(new Set([value, ...options].filter(Boolean))).map((o) => (
-        <option key={o} value={o}>{o}</option>
-      ))}
-    </select>
-  );
-}
 
 function SectionHeading({ children }) {
   return (
@@ -241,6 +218,7 @@ export default function CostDetail() {
   useSupplierRules(); // the Supplier field's rules link tracks whether a rule exists
   const [pmModalOpen, setPmModalOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [linesOpen, setLinesOpen] = useState(false); // full-screen line-item editor
   const fileInputRef = useRef(null);
 
   // Sample docs carry any local (localStorage) edits applied on top.
@@ -854,8 +832,6 @@ export default function CostDetail() {
   const supplierRuleN = supplierRuleCount(matchSupplierRule(data.supplier));
 
   const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
-  const lineTotal = lineItems.reduce((s, li) => s + num(li.total), 0);
-  const outBy = num(data.total) - lineTotal;
   const setLineItems = (rows) => set('lineItems', rows);
   const updateLineItem = (i, patch) =>
     setLineItems(lineItems.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
@@ -865,6 +841,19 @@ export default function CostDetail() {
       { description: '', category: data.category || 'Uncategorised', project: data.project || '', project2: '', net: '', tax: '', total: '' },
     ]);
   const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
+  // One set of props for the grid, so the panel and the full-screen editor are
+  // rendering the same thing over the same state.
+  const lineGrid = {
+    rows: lineItems,
+    total: data.total,
+    onUpdate: updateLineItem,
+    onRemove: removeLineItem,
+    categoryOptions,
+    catMode,
+    lineProjects,
+    project2Options,
+    docProject: data.project || '',
+  };
 
   // Read the attached receipt and turn its printed lines into editable rows.
   // Its own pass (see server/src/extract.ts): the rows come back already checked
@@ -1410,121 +1399,15 @@ export default function CostDetail() {
               </Field>
 
               <SectionHeading>Line items</SectionHeading>
-              {lineItems.length > 0 && (
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
-                        <th className="px-2 py-2 font-medium">Description</th>
-                        <th className="px-2 py-2 font-medium">Category</th>
-                        {lineProjects.length > 0 && <th className="px-2 py-2 font-medium">Project</th>}
-                        {project2Options.length > 0 && <th className="px-2 py-2 font-medium">Project 2</th>}
-                        <th className="px-2 py-2 text-right font-medium">Net</th>
-                        <th className="px-2 py-2 text-right font-medium">Tax</th>
-                        <th className="px-2 py-2 text-right font-medium">Total</th>
-                        <th className="w-8" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lineItems.map((li, i) => (
-                        <tr key={i} className="border-b last:border-0 align-top">
-                          <td className="px-2 py-1.5">
-                            <input
-                              value={li.description || ''}
-                              onChange={(e) => updateLineItem(i, { description: e.target.value })}
-                              className="h-8 w-full min-w-[9rem] rounded border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <ComboSelect
-                              size="sm"
-                              aria-label="Line item category"
-                              value={li.category || ''}
-                              options={Array.from(new Set([li.category, ...categoryOptions].filter(Boolean)))}
-                              onChange={(v) => updateLineItem(i, { category: v })}
-                              format={(c) => formatCategory(c, catMode)}
-                            />
-                          </td>
-                          {lineProjects.length > 0 && (
-                            <td className="px-2 py-1.5">
-                              <LineProjectSelect
-                                value={li.project || ''}
-                                options={lineProjects}
-                                placeholder={data.project ? `${data.project} (document)` : 'None'}
-                                onChange={(v) => updateLineItem(i, { project: v })}
-                              />
-                            </td>
-                          )}
-                          {project2Options.length > 0 && (
-                            <td className="px-2 py-1.5">
-                              <LineProjectSelect
-                                value={li.project2 || ''}
-                                options={project2Options}
-                                onChange={(v) => updateLineItem(i, { project2: v })}
-                              />
-                            </td>
-                          )}
-                          {['net', 'tax', 'total'].map((f) => (
-                            <td key={f} className="px-2 py-1.5">
-                              <input
-                                value={li[f] || ''}
-                                inputMode="decimal"
-                                onChange={(e) => updateLineItem(i, { [f]: e.target.value })}
-                                className="h-8 w-20 rounded border bg-background px-2 text-right text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              />
-                            </td>
-                          ))}
-                          <td className="px-1 py-1.5 text-center">
-                            <button type="button" onClick={() => removeLineItem(i)} aria-label="Remove line" className="text-muted-foreground transition-colors hover:text-destructive">
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t bg-muted/20 text-xs">
-                        <td className="px-2 py-2 font-medium" colSpan={4 + (lineProjects.length > 0 ? 1 : 0) + (project2Options.length > 0 ? 1 : 0)}>Item total</td>
-                        <td className="px-2 py-2 text-right font-semibold">{lineTotal.toFixed(2)}</td>
-                        <td />
-                      </tr>
-                      <tr className="text-xs">
-                        <td className={cn('px-2 py-2 font-medium', Math.abs(outBy) > 0.005 && 'text-destructive')} colSpan={4 + (lineProjects.length > 0 ? 1 : 0) + (project2Options.length > 0 ? 1 : 0)}>
-                          Out by
-                        </td>
-                        <td className={cn('px-2 py-2 text-right font-semibold', Math.abs(outBy) > 0.005 && 'text-destructive')}>
-                          {outBy.toFixed(2)}
-                        </td>
-                        <td />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={extractLineItems}
-                  disabled={extractingLines || !visionEnabled}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {extractingLines ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Extracting…</> : <><Sparkles className="h-3.5 w-3.5" /> Extract line items</>}
-                </button>
-                <button
-                  type="button"
-                  onClick={addLineItem}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Create line item
-                </button>
-              </div>
-              {!visionEnabled && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Line-item extraction needs a reader API key on the server (
-                  <span className="font-mono">ANTHROPIC_API_KEY</span> or{' '}
-                  <span className="font-mono">OPENAI_API_KEY</span>). You can still add lines manually.
-                </p>
-              )}
+              <LineItemsGrid {...lineGrid} />
+              <LineItemsActions
+                onExtract={extractLineItems}
+                onAdd={addLineItem}
+                onExpand={() => setLinesOpen(true)}
+                extracting={extractingLines}
+                visionEnabled={visionEnabled}
+                canExpand={lineItems.length > 0}
+              />
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 {doc.status === 'ready' ? (
@@ -1681,6 +1564,22 @@ export default function CostDetail() {
           </div>
         </div>
       )}
+
+      <LineItemsEditor
+        open={linesOpen}
+        onClose={() => setLinesOpen(false)}
+        title={data.supplier}
+        preview={<ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} />}
+        actions={
+          <LineItemsActions
+            onExtract={extractLineItems}
+            onAdd={addLineItem}
+            extracting={extractingLines}
+            visionEnabled={visionEnabled}
+          />
+        }
+        {...lineGrid}
+      />
 
       <SupplierRulesModal
         open={rulesOpen}

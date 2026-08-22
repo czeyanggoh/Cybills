@@ -444,6 +444,7 @@ const LinesSchema = z.object({
     z.object({
       description: z.string(),
       category: z.string().optional().default(''),
+      project: z.string().optional().default(''),
       quantity: z.number().optional().default(1),
       unitAmount: z.number().optional().default(0),
       net: z.number().optional().default(0),
@@ -462,7 +463,19 @@ const NOT_A_CHARGE =
   'Payment received, Credit applied, Deposit, Rounding, a GST/tax summary row, ' +
   'and any per-page or section total on a multi-page document';
 
-function buildLinesSchema(categories: string[]) {
+function buildLinesSchema(categories: string[], projectNames: string[]) {
+  // Only offered when the org actually has tracking options to choose from —
+  // an enum of one empty string would just be a field to get wrong.
+  const projectField = projectNames.length
+    ? {
+        project: {
+          type: 'string',
+          enum: ['', ...projectNames],
+          description:
+            'The project / site / outlet THIS line is for, from the list in the prompt — taken from what the row itself names, or from the section heading it sits under. Empty string when nothing on the row or above it points to one; the line then follows the document\'s own project.',
+        },
+      }
+    : {};
   return {
     type: 'object',
     additionalProperties: false,
@@ -502,6 +515,7 @@ function buildLinesSchema(categories: string[]) {
               description:
                 'Best-matching category for THIS line from the allowed list; "Uncategorised" if unclear.',
             },
+            ...projectField,
             quantity: {
               type: 'number',
               description: 'The quantity PRINTED on the row; 1 when the row shows no quantity.',
@@ -527,7 +541,7 @@ function buildLinesSchema(categories: string[]) {
                 "The figure printed in this row's amount column, EXACTLY as printed. Copy it — never multiply quantity by unit price yourself, because a printed row already accounts for discounts, minimum charges and rounding. Whether it includes tax is not your problem: the document's own subtotal and tax figures settle that.",
             },
           },
-          required: ['description', 'category', 'quantity', 'unitAmount', 'net', 'tax', 'amount'],
+          required: ['description', 'category', ...Object.keys(projectField), 'quantity', 'unitAmount', 'net', 'tax', 'amount'],
         },
       },
       note: {
@@ -566,6 +580,23 @@ extractRouter.post('/extract-lines', async (req, res) => {
   const contextBlock = instructions
     ? `Business context and coding rules for this organisation — apply these when classifying each line:\n${instructions}\n\n`
     : '';
+
+  // The org's projects (its first Xero tracking category — outlets, sites,
+  // properties), so each LINE can be allocated to the one it is for. An invoice
+  // that bills three outlets on one page is the whole reason line items exist
+  // here; leaving every row on the document's single project throws that away.
+  const projects = parseNamedRules(req.body?.projects);
+  const projectNames = projects.map((p) => p.name);
+  const projectSet = new Set(projectNames);
+  const projectsGuide = projects.length
+    ? '\n\nPER-LINE PROJECT. This organisation allocates work to the projects below (its sites / outlets / jobs). Set each line\'s `project` to the ONE that line is for:\n' +
+      '1. What the row itself names — the site, property, unit or outlet the charge is FOR, matching a project name or an obvious abbreviation of it (e.g. a row reading "Alternate Service - Every Mon & Thurs (Tangs Plaza #04-04)" is the Tangs project).\n' +
+      '2. Otherwise the SECTION it sits under. Itemised invoices group rows beneath a heading that names the site, and every row below that heading belongs to it until the next heading — the unlabelled "Additional bag" rows under a Tangs Plaza heading are Tangs, not the document\'s default.\n' +
+      '3. A project whose written rule the row plainly satisfies.\n' +
+      'IGNORE who the document is billed TO: the "Bill to" address is this organisation, not the project, even when it names a place that resembles one.\n' +
+      'A shared word, a near-miss or "it could be" is NOT a match — return an empty string for that line and it follows the document\'s own project, which is safer than a guess.\n' +
+      projects.map((p) => `- "${p.name}"${p.rules ? `: ${p.rules}` : ''}`).join('\n')
+    : '';
   const accountsGuide = accounts.length
     ? '\n\nClassify each line\'s `category` into exactly one of these Xero accounts, choosing by the description that best matches what THAT LINE is for:\n' +
       accounts.map((a) => `- "${a.code} - ${a.name}"${a.description ? `: ${a.description}` : ''}`).join('\n')
@@ -587,7 +618,8 @@ extractRouter.post('/extract-lines', async (req, res) => {
     'If it is larger, you have included a summary row — find it and drop it. If it is smaller, you have missed charge rows — find them. ' +
     'Only when neither is true (the document itself settles an earlier balance, say) may they differ, and then `note` must say why.\n' +
     'A document with no itemised table has no lines: return an empty array rather than one line for the total.' +
-    accountsGuide;
+    accountsGuide +
+    projectsGuide;
 
   const isPdf = mediaType === PDF_MEDIA;
   const provider = resolveProvider(req.body?.provider);
@@ -655,7 +687,7 @@ extractRouter.post('/extract-lines', async (req, res) => {
       // a long invoice is many rows — /extract's 1024 would truncate the JSON.
       maxTokens: 4096,
       schemaName: 'document_line_items',
-      schema: buildLinesSchema(categories),
+      schema: buildLinesSchema(categories, projectNames),
       systemPrompt: stablePrompt,
       prompt:
         `Read the itemised charge rows from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}.` +
@@ -707,6 +739,9 @@ extractRouter.post('/extract-lines', async (req, res) => {
       ...li,
       description: notFiller(li.description),
       category: categorySet.has(li.category) ? li.category : 'Uncategorised',
+      // Belt and braces: a project the org doesn't have is no project, and the
+      // line falls back to the document's.
+      project: projectSet.has(li.project) ? li.project : '',
     }));
     return res.json({
       ok: true,

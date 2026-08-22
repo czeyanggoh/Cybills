@@ -110,7 +110,12 @@ Either key alone switches extraction on; both means the toggle appears.
 
 **A bill's own lines can reach Xero.** Line items carry `project` + `project2`
 — the org's two Xero tracking categories, per line, editable in the grid and
-offered only where the linked org actually has that category. On publish,
+offered only where the linked org actually has that category. `project` is also
+READ per line: `extract-lines` is given the org's project list and asks which
+one each row is for, taken from what the row names or from the section heading
+above it (one laundry invoice bills Tangs, Vivo City and Four Seasons in three
+blocks — every row on the document's single project would throw that away).
+`project2` is set by hand. On publish,
 `perLineItems` (`xero.ts`) posts those rows as the Xero bill's line items
 instead of one summary line, each with its own account code and tracking. It
 does so ONLY when the rows are provably the same money as the document: they
