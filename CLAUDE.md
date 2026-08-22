@@ -190,6 +190,51 @@ either way, and a decline names the rate, what IS visible at it, and points at
 Business settings → Lists → Tax rates. A blank field with no explanation is
 indistinguishable from a bug, which is exactly how one was reported.
 
+## The Costs inbox's bulk actions
+
+Every bulk action is a **button**. The "Move to" and "Actions" dropdowns this
+replaced were a menu of things that are each one click on their own, so reaching
+them took a second click and a hunt through a list. The row wraps instead.
+
+Beyond move/archive/claim/merge, the toolbar carries **Bulk edit**
+(`BulkEditModal.jsx`), **Rerun processing**, Mark as paid / not paid, **Publish
+to Xero**, and **Delete** (red — it drops the stored file too, and confirms
+first). One **Export** button covers both cases: the ticked rows when anything is
+ticked, otherwise everything the tab shows.
+
+Two rules run through all of them:
+
+- **A tick is what makes a field part of a bulk edit.** An untouched field is not
+  sent, so "code these forty receipts to Entertainment" can't also blank forty
+  different suppliers. Ticking a field and leaving it empty clears it on purpose.
+- **A document already published to Xero is left alone**, and the result says how
+  many were skipped. Its figures are in the ledger; editing the copy here would
+  only make the two disagree.
+
+Changing a field never sets a status: the server re-derives ready vs inbox from
+completeness (`reconcileReadiness`), so bulk-coding a category moves those
+documents to Ready by itself. A bulk tax-rate change computes each document's tax
+from its OWN total, the same sum the inline Tax rate cell does.
+
+**Rerun processing reads the documents again**, and the precedence it applies is
+decided in one place: `src/lib/reRead.js` (`readDecisions`) — supplier rule, then
+the document's own printed due date, then this read, then what the document
+already carried (a hand-edited tax rate, existing line items are never
+clobbered). The document page's single re-read and the inbox's bulk one both call
+it, so they can't drift. It exists because a first read can come back with
+nothing — a dark photo, a PDF that is really a scan — leaving the document in the
+inbox as "Unknown supplier / 0.00" with no way forward but typing it in; it is
+also how a supplier rule written AFTER the upload reaches the documents it was
+written for. A read that comes back with neither a supplier nor a total is
+reported as such rather than counted as a success: twice blank is the FILE's
+fault, and running it a third time won't help. The run goes one document at a
+time — each read is a model call billed to that client entity.
+
+Publishing in bulk is as conservative as the automatic publish: it skips rather
+than guesses (already published, on an expense claim, incomplete, or a category
+that isn't in the org's chart), asks first because it writes to a live ledger,
+and the server enforces the same gates again.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to

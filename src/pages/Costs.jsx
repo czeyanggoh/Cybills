@@ -20,9 +20,20 @@ import DocsExportModal from '@/components/DocsExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useFlagAssignments } from '@/lib/flagAssignments';
-import { useCategoryOptions, useVisibleTaxRates } from '@/lib/organisations';
+import {
+  useCategoryOptions,
+  useVisibleTaxRates,
+  getExtractionAccounts,
+  resolveCategorisationOrgId,
+  fetchXeroAccounts,
+  fetchXeroTaxRates,
+  publishBillToXero,
+} from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
+import { useReaderName } from '@/lib/readerProvider';
+import { reReadDocument } from '@/lib/reRead';
+import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
 import { updateBill, deleteBill, notifyBillsChanged, displayItemId, costPath, scanDuplicates } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
@@ -30,8 +41,9 @@ import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
 import { findMergeCandidates, docFacts, statesNothing } from '@/lib/mergeDetect';
 import MergeModal from '@/components/MergeModal';
+import BulkEditModal from '@/components/BulkEditModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
-import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
+import { useCostsDocs, rowsFor, isInInbox, isComplete } from '@/lib/costsData';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
@@ -106,7 +118,7 @@ function StatusBadge({ status, published = false }) {
   );
 }
 
-function ToolbarButton({ children, disabled = false, dropdown = false, onClick = () => {} }) {
+function ToolbarButton({ children, disabled = false, dropdown = false, danger = false, onClick = () => {} }) {
   return (
     <button
       type="button"
@@ -114,51 +126,15 @@ function ToolbarButton({ children, disabled = false, dropdown = false, onClick =
       onClick={onClick}
       className={cn(
         'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
-        disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted'
+        disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted',
+        // Deleting reclaims the stored file too — it can't be undone, so it
+        // shouldn't read as just another grey button in the row.
+        !disabled && danger && 'text-destructive'
       )}
     >
       {children}
       {dropdown && <ChevronDown className="h-3.5 w-3.5" />}
     </button>
-  );
-}
-
-// A small toolbar dropdown menu.
-function Dropdown({ label, disabled = false, items }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="relative">
-      <ToolbarButton disabled={disabled} dropdown onClick={() => !disabled && setOpen((o) => !o)}>
-        {label}
-      </ToolbarButton>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
-          <div className="absolute left-0 z-20 mt-1 w-48 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
-            {items.map((it, i) =>
-              it.divider ? (
-                <div key={`d${i}`} className="my-1 h-px bg-border" />
-              ) : (
-                <button
-                  key={it.label}
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    it.onClick();
-                  }}
-                  className={cn(
-                    'flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted',
-                    it.danger && 'text-destructive'
-                  )}
-                >
-                  {it.label}
-                </button>
-              )
-            )}
-          </div>
-        </>
-      )}
-    </div>
   );
 }
 
@@ -180,7 +156,24 @@ function mergeBadgeLabel(g) {
 
 // Left-hand toolbar actions differ per tab (mirrors Dext). `a` holds the wired
 // bulk-action handlers; all operate on the current selection.
+//
+// Every action is a BUTTON. The "Move to" and "Actions" dropdowns this replaces
+// were a menu of things that are each one click on their own — a second click
+// and a hunt through a list to reach them was pure overhead. The row wraps.
 function ToolbarActions({ tab, hasSelection, canMerge, a }) {
+  // One export, over whatever you're pointing at: the ticked rows if any are
+  // ticked, otherwise everything the tab is showing. (Two separate buttons for
+  // that were only ever a way to pick the wrong one.)
+  const exportBtn = (
+    <ToolbarButton onClick={hasSelection ? a.exportSelected : a.exportCsv}>
+      {hasSelection ? 'Export selected' : 'Export all'}
+    </ToolbarButton>
+  );
+  const bulkEditBtn = (
+    <ToolbarButton disabled={!hasSelection} onClick={a.bulkEdit}>
+      Bulk edit
+    </ToolbarButton>
+  );
   const mergeBtn = (
     <ToolbarButton disabled={!canMerge} onClick={a.merge}>
       Merge
@@ -195,6 +188,24 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {a.mergeCount > 0 ? `Merge suggestions (${a.mergeCount})` : 'Scan for merges'}
     </ToolbarButton>
   );
+  // Read the selected documents again. The first read can come back with
+  // nothing (a dark photo, a PDF that turned out to be a scan), which lands the
+  // document in the inbox as "Unknown supplier / 0.00" — this is the way out of
+  // that, and the way a supplier rule written afterwards reaches the documents
+  // it was written for. Hidden when no reader is configured: there would be
+  // nothing to process WITH.
+  const reprocessBtn = a.canReRead ? (
+    <ToolbarButton disabled={!hasSelection || a.busy} onClick={a.reRead}>
+      Rerun processing
+    </ToolbarButton>
+  ) : null;
+  // Permanent delete, sat at the end of the row away from the everyday buttons.
+  // It confirms before it does anything (it also drops the stored file).
+  const deleteBtn = (
+    <ToolbarButton danger disabled={!hasSelection} onClick={a.del}>
+      Delete
+    </ToolbarButton>
+  );
   // Re-checks documents already in the list — the read-time check only ever saw
   // the documents that existed when each one was uploaded.
   const dupBtn = <ToolbarButton onClick={a.scanDuplicates}>Scan for duplicates</ToolbarButton>;
@@ -203,65 +214,67 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   const reviewDupBtn = a.dupCount > 0 ? (
     <ToolbarButton onClick={a.reviewDuplicates}>Review duplicates ({a.dupCount})</ToolbarButton>
   ) : null;
-  const moveTo = [
-    { label: 'To review', onClick: () => a.move('review') },
-    { label: 'Ready', onClick: () => a.move('ready') },
-    { divider: true },
-    { label: 'Archive', onClick: () => a.move('archived') },
-  ];
-  const actions = [
-    { label: 'Move to review', onClick: () => a.move('review') },
-    { label: 'Move to ready', onClick: () => a.move('ready') },
-    { label: 'Add to expense claim', onClick: a.addClaim },
-    { divider: true },
-    { label: 'Archive', onClick: () => a.move('archived') },
-    { label: 'Delete', onClick: a.del, danger: true },
-  ];
+  const paidBtns = (
+    <>
+      <ToolbarButton disabled={!hasSelection || a.busy} onClick={() => a.setPaid(true)}>Mark as paid</ToolbarButton>
+      <ToolbarButton disabled={!hasSelection || a.busy} onClick={() => a.setPaid(false)}>Mark as not paid</ToolbarButton>
+    </>
+  );
+  const publishBtn = (
+    <ToolbarButton disabled={!hasSelection || a.busy} onClick={a.publish}>
+      Publish to Xero
+    </ToolbarButton>
+  );
+  const claimBtn = (
+    <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
+  );
+  const archiveBtn = (
+    <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
+  );
+  // The pipeline step the tab you're standing on can't already see: no "Move to
+  // review" button on the To review tab.
+  const moveBtns = (
+    <>
+      {tab !== 'review' && (
+        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('review')}>Move to review</ToolbarButton>
+      )}
+      {tab !== 'ready' && (
+        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('ready')}>Move to ready</ToolbarButton>
+      )}
+    </>
+  );
 
-  if (tab === 'review' || tab === 'ready') {
-    return (
-      <>
-        <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection} onClick={() => a.move(tab === 'review' ? 'ready' : 'review')}>
-          {tab === 'review' ? 'Move to ready' : 'Move to review'}
-        </ToolbarButton>
-        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
-        {mergeBtn}
-        {scanBtn}
-        {dupBtn}
-        {reviewDupBtn}
-        <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
-        <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
-      </>
-    );
-  }
   if (tab === 'archive') {
     return (
       <>
-        <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>
+        {exportBtn}
+        {bulkEditBtn}
         <ToolbarButton disabled={!hasSelection} onClick={() => a.move('new')}>Unarchive</ToolbarButton>
-        <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
-        <ToolbarButton disabled={!hasSelection} onClick={a.del}>Delete</ToolbarButton>
         <ToolbarButton onClick={() => a.navigate('/submission-history')}>See submission history</ToolbarButton>
+        {deleteBtn}
       </>
     );
   }
   if (tab === 'processing') {
     return <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>;
   }
-  // inbox
+  // Inbox / To review / Ready share one row — they are the same pool of work
+  // seen through different filters.
   return (
     <>
-      <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>
-      <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
-      <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
+      {exportBtn}
+      {bulkEditBtn}
+      {reprocessBtn}
+      {paidBtns}
+      {moveBtns}
+      {claimBtn}
+      {publishBtn}
       {mergeBtn}
       {scanBtn}
       {dupBtn}
       {reviewDupBtn}
-      <Dropdown label="Move to" disabled={!hasSelection} items={moveTo} />
-      <Dropdown label="Actions" disabled={!hasSelection} items={actions} />
+      {archiveBtn}
+      {deleteBtn}
     </>
   );
 }
@@ -534,7 +547,7 @@ export default function Costs() {
   // with tablePrefs because the column definitions below reference the setter.
   const [dupIds, setDupIds] = useState(null);
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, visionEnabled } = useAuth();
   // Label for uploads with no recorded creator ("You" = whoever is viewing).
   const meName = user?.name || user?.email || 'You';
   const uploaderLabel = (d) => (d.user && d.user !== 'You' ? d.user : meName);
@@ -670,6 +683,11 @@ export default function Costs() {
   const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', supplier: '' });
   const [mergeModalDocs, setMergeModalDocs] = useState(null); // docs under review in the merge modal
   const [mergeNote, setMergeNote] = useState('');
+  const [bulkOpen, setBulkOpen] = useState(false);
+  // Export all vs Actions → Export selected: the same dialog over a different
+  // set of rows, so the button that opened it decides what goes in the file.
+  const [exportSelectionOnly, setExportSelectionOnly] = useState(false);
+  const [running, setRunning] = useState(''); // a long bulk action in flight
 
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
@@ -680,6 +698,7 @@ export default function Costs() {
   // even for a document coded before the profile said so (opening the document
   // rewrites the stored value).
   const gstRegistered = useGstRegistered();
+  const readerName = useReaderName();
   const noTaxName = noTaxRateName(taxRates);
   const taxRateOptions = gstRegistered ? taxRates.map((t) => t.name) : [noTaxName].filter(Boolean);
 
@@ -946,11 +965,187 @@ export default function Costs() {
     );
   };
 
+  // The selected documents, in the order the table shows them.
+  const selectedDocs = () => {
+    const byId = new Map(allRows.map((r) => [r.id, r]));
+    return [...selected].map((id) => byId.get(id)).filter(Boolean);
+  };
+
+  // Write one patch across every selected document (Bulk edit, Mark as paid).
+  // A document already published to Xero is left alone: its figures are in the
+  // ledger, and editing the copy here would only make the two disagree — say so
+  // rather than quietly changing some of the selection.
+  const patchSelected = async (patch, what) => {
+    const picked = selectedDocs();
+    const published = picked.filter((d) => d.xeroInvoiceId);
+    const targets = picked.filter((d) => !d.xeroInvoiceId);
+    if (!targets.length) {
+      setMergeNote(
+        published.length
+          ? 'Every selected document is already published to Xero — those can’t be edited here.'
+          : 'Nothing selected.'
+      );
+      return;
+    }
+    await Promise.all(
+      targets.map((d) => {
+        const p = { ...patch };
+        // A tax rate carries the tax amount it implies — worked out per
+        // document from that document's own total, exactly as the inline Tax
+        // rate cell does.
+        if ('taxRate' in p) {
+          const r = Number(taxRates.find((t) => t.name === p.taxRate)?.rate ?? 0);
+          const total = toNum(d.total);
+          const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
+          p.tax = tax ? tax.toFixed(2) : '0.00';
+        }
+        if (d.persisted) return updateBill(d.id, p).catch(() => null);
+        setDocOverride(d.id, p);
+        return null;
+      })
+    );
+    notifyBillsChanged();
+    await reload();
+    setSelected(new Set());
+    setMergeNote(
+      `${what} on ${targets.length} document${targets.length === 1 ? '' : 's'}.` +
+        (published.length
+          ? ` ${published.length} already published to Xero ${published.length === 1 ? 'was' : 'were'} left alone.`
+          : '')
+    );
+  };
+
+  const applyBulkEdit = async (patch) => {
+    setBulkOpen(false);
+    const names = Object.keys(patch).length;
+    await patchSelected(patch, `Updated ${names} field${names === 1 ? '' : 's'}`);
+  };
+
+  // Rerun processing: read the selected documents again. The first read can come
+  // back with nothing — a dark photo, a PDF that is really a scan — and the
+  // document then sits in the inbox as "Unknown supplier / 0.00" with no way
+  // forward but typing it in by hand. This is that way forward, and it's also
+  // how a supplier rule written AFTER the upload reaches the documents it was
+  // written for. One document at a time: each read is a model call billed to
+  // this client entity, and firing forty at once is how you rate-limit yourself.
+  const reReadSelected = async () => {
+    const picked = selectedDocs().filter((d) => d.persisted && d.hasFile);
+    if (!picked.length) {
+      setMergeNote('Select uploaded documents (each with a file) to rerun processing on.');
+      return;
+    }
+    setRunning('reread');
+    const ctx = {
+      accounts: await getExtractionAccounts().catch(() => []),
+      gstRegistered,
+      taxRates,
+      defaultTaxRateCosts: settings.defaultTaxRateCosts,
+    };
+    const tally = { ok: 0, blank: 0, nofile: 0, failed: 0 };
+    for (let i = 0; i < picked.length; i += 1) {
+      setMergeNote(`Rerunning ${i + 1} of ${picked.length} through ${readerName}…`);
+      tally[await reReadDocument(picked[i], ctx)] += 1;
+    }
+    notifyBillsChanged();
+    await reload();
+    setRunning('');
+    setSelected(new Set());
+    setMergeNote(
+      `Reran ${tally.ok + tally.blank} document${tally.ok + tally.blank === 1 ? '' : 's'} through ${readerName}` +
+        (tally.ok ? `, reading ${tally.ok} of them.` : '.') +
+        // A second blank read is the file's fault, not the reader's — say so
+        // rather than leaving someone to press the button a third time.
+        (tally.blank
+          ? ` ${tally.blank} came back with no supplier or total — open ${tally.blank === 1 ? 'it' : 'them'} and check the file is a legible receipt, or fill the fields in by hand.`
+          : '') +
+        (tally.failed ? ` ${tally.failed} could not be read at all.` : '') +
+        (tally.nofile ? ` ${tally.nofile} had no file to read.` : '')
+    );
+  };
+
+  // Publish the selected documents to Xero as supplier bills, using the same
+  // account + tax code the document was already categorised into. Deliberately
+  // conservative, the same way the automatic publish is: it skips rather than
+  // guesses — already published, on an expense claim, incomplete, or a category
+  // that isn't in this org's chart. Publishing finishes a document (it archives,
+  // and can no longer go on a claim), so it asks first.
+  const publishSelected = async () => {
+    const picked = selectedDocs();
+    const skipped = {
+      published: picked.filter((d) => d.xeroInvoiceId).length,
+      claimed: picked.filter((d) => !d.xeroInvoiceId && d.status === 'expenseclaim').length,
+    };
+    const targets = picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && isComplete(d));
+    const incomplete = picked.length - targets.length - skipped.published - skipped.claimed;
+    if (!targets.length) {
+      setMergeNote(
+        'Nothing to publish — a document must have a supplier, a date, a real category and a total above 0, ' +
+          'and not already be published or on an expense claim.'
+      );
+      return;
+    }
+    if (
+      !window.confirm(
+        `Publish ${targets.length} document(s) to Xero as draft bills?\n\n` +
+          'This writes to the live ledger and finishes each document — it archives, and can no longer go on an expense claim.'
+      )
+    )
+      return;
+    setRunning('publish');
+    setMergeNote(`Publishing ${targets.length} document(s) to Xero…`);
+    const orgId = await resolveCategorisationOrgId().catch(() => '');
+    if (!orgId) {
+      setRunning('');
+      setMergeNote('No Xero organisation is linked, so there is nowhere to publish to.');
+      return;
+    }
+    const [accounts, rates] = await Promise.all([
+      fetchXeroAccounts(orgId).catch(() => []),
+      fetchXeroTaxRates(orgId).catch(() => []),
+    ]);
+    let done = 0;
+    const failed = [];
+    for (const d of targets) {
+      const accountCode = accountCodeFromCategory(d.category);
+      const account = accounts.find((a) => a.code === accountCode);
+      const taxType = rates.find((t) => t.name === d.taxRate)?.taxType || account?.taxType || '';
+      if (!account || !taxType) {
+        failed.push(d.supplier || 'Unknown supplier');
+        continue;
+      }
+      try {
+        await publishBillToXero(orgId, { billId: d.id, accountCode, taxType, status: 'DRAFT' });
+        done += 1;
+      } catch {
+        failed.push(d.supplier || 'Unknown supplier');
+      }
+    }
+    notifyBillsChanged();
+    await reload();
+    setRunning('');
+    setSelected(new Set());
+    setMergeNote(
+      `Published ${done} document${done === 1 ? '' : 's'} to Xero as draft bills.` +
+        (failed.length ? ` ${failed.length} could not be published (${failed.slice(0, 3).join(', ')}).` : '') +
+        (skipped.published ? ` ${skipped.published} already published.` : '') +
+        (skipped.claimed ? ` ${skipped.claimed} on an expense claim.` : '') +
+        (incomplete > 0 ? ` ${incomplete} still missing a supplier, date, category or total.` : '')
+    );
+  };
+
   const actions = {
     move: moveSelected,
     del: deleteSelected,
     addClaim: () => hasSelection && setClaimOpen(true),
-    exportCsv: () => setExportOpen(true),
+    exportCsv: () => { setExportSelectionOnly(false); setExportOpen(true); },
+    exportSelected: () => { setExportSelectionOnly(true); setExportOpen(true); },
+    bulkEdit: () => hasSelection && setBulkOpen(true),
+    setPaid: (paid) => patchSelected({ paid }, paid ? 'Marked as paid' : 'Marked as not paid'),
+    reRead: reReadSelected,
+    publish: publishSelected,
+    canReRead: visionEnabled,
+    readerName,
+    busy: Boolean(running),
     merge: mergeSelected,
     scanMerges: openNextMergeSuggestion,
     mergeCount: mergeGroups.length,
@@ -1162,7 +1357,22 @@ export default function Costs() {
         }}
       />
 
-      <DocsExportModal open={exportOpen} kind="costs" rows={rows} onClose={() => setExportOpen(false)} />
+      <DocsExportModal
+        open={exportOpen}
+        kind="costs"
+        rows={exportSelectionOnly ? rows.filter((d) => selected.has(d.id)) : rows}
+        onClose={() => setExportOpen(false)}
+      />
+
+      <BulkEditModal
+        open={bulkOpen}
+        count={selected.size}
+        publishedCount={selectedDocs().filter((d) => d.xeroInvoiceId).length}
+        categoryOptions={categoryOptions}
+        taxRateOptions={taxRateOptions}
+        onClose={() => setBulkOpen(false)}
+        onApply={applyBulkEdit}
+      />
 
       <DuplicateReviewModal
         open={dupPairs.length > 0}

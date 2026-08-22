@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { loadCollection, saveCollection } from './jsonStore.js';
-import { workspaceId } from './workspace.js';
+import { workspaceId, WORKSPACE_ID } from './workspace.js';
 import {
   ensure as ensureUsers,
   publicUser,
@@ -8,10 +8,9 @@ import {
   orgScope,
   effectiveRoleFor,
   isBusinessAdminRole,
-  canAccessOrg,
   type User,
 } from './users.js';
-import { dataScopeForOrg } from './organisations.js';
+import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { listBills, parseAmount, type Bill } from './store.js';
 import { claimedBillIds, fileAutoClaim } from './claims.js';
 
@@ -58,6 +57,28 @@ const norm = (s: unknown) => String(s ?? '').trim().toLowerCase();
 // onto two claims.
 export function autoScope(req: Request): string {
   return dataScopeForOrg(orgScope(req));
+}
+
+// Whose claims a schedule can file: the entity's OWN employees — the same list
+// the Users page shows. Practice colleagues are deliberately out. A colleague
+// holds client access to an entity, they are not one of its people: a claim
+// filed for them under a client would be the practice claiming an expense from
+// its own customer. They upload documents here, and those documents belong to
+// the client, so the way to include one is the document's owner field, not a
+// claim in the colleague's name.
+//
+// The roster is keyed off the same scope as the settings and the sweep, so the
+// dialog's list and what actually gets filed can never disagree: the primary
+// entity shares the legacy bills scope, so map that back to its real org id.
+function rosterOrgFor(scope: string): string {
+  return scope === WORKSPACE_ID ? primaryOrgId() : scope;
+}
+
+export function eligibleUsers(ws: string, scope: string): User[] {
+  const org = rosterOrgFor(scope);
+  return ensureUsers(ws).filter(
+    (u) => u.workspaceId === ws && !u.removed && !u.deactivated && !u.practice && (u.organisationId || '') === org
+  );
 }
 
 export function getSettings(ws: string, orgId: string): AutoClaimSettings | null {
@@ -222,9 +243,9 @@ export function runAutoClaims(ws: string, orgId: string): AutoRunResult {
   const today = todayIso();
   if (s.endDate >= today) return { claims: 0, items: 0, periods: 0, endDate: s.endDate };
   const wanted = new Set(s.userIds);
-  const roster = ensureUsers(ws).filter(
-    (u) => u.workspaceId === ws && !u.removed && !u.deactivated && wanted.has(u.id)
-  );
+  // Re-checked here, not just at save time: someone enrolled before they moved
+  // entity (or joined the practice) must stop filing, not keep going quietly.
+  const roster = eligibleUsers(ws, orgId).filter((u) => wanted.has(u.id));
   if (!roster.length) return { claims: 0, items: 0, periods: 0, endDate: s.endDate };
 
   let periodEnd = s.endDate;
@@ -261,23 +282,11 @@ function requireAdmin(req: Request, res: Response): boolean {
 export const autoClaimsRouter = Router();
 
 // GET /api/auto-claims — the schedule plus the people it can be turned on for:
-// everyone who can have documents in this entity's book. That's the entity's own
-// employees (the Users page list) PLUS the practice colleagues with access to it
-// — they upload and claim here too, and leaving them out would empty the dialog
-// in the practice's own entity, where every submitter is a colleague.
+// this entity's own employees, exactly the list the Users page shows.
 autoClaimsRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
-  const org = orgScope(req);
   const s = getSettings(ws, autoScope(req));
-  const users = ensureUsers(ws)
-    .filter(
-      (u) =>
-        u.workspaceId === ws &&
-        !u.removed &&
-        !u.deactivated &&
-        (u.practice ? canAccessOrg(u, org) : (u.organisationId || '') === org)
-    )
-    .map(publicUser);
+  const users = eligibleUsers(ws, autoScope(req)).map(publicUser);
   res.json({
     settings: {
       endDate: s?.endDate || '',
@@ -305,7 +314,9 @@ autoClaimsRouter.put('/', (req, res) => {
     ? (String(b.frequency) as Frequency)
     : 'monthly';
   const endOfMonth = Boolean(b.endOfMonth);
-  const known = new Set(ensureUsers(ws).filter((u) => u.workspaceId === ws && !u.removed).map((u) => u.id));
+  // Only this entity's own people can be enrolled — anything else in the request
+  // is dropped rather than stored to be ignored (or worse, honoured) later.
+  const known = new Set(eligibleUsers(ws, autoScope(req)).map((u) => u.id));
   const userIds: string[] = (Array.isArray(b.userIds) ? b.userIds : [])
     .map((id: unknown) => String(id))
     .filter((id: string) => known.has(id));

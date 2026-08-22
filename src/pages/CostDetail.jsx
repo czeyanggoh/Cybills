@@ -43,7 +43,8 @@ import {
 } from '@/lib/supplierRules';
 import TeachRule from '@/components/TeachRule';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
-import { useExtractionSettings, taxRateOutcome, noTaxRateName } from '@/lib/extractionSettings';
+import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
+import { readDecisions } from '@/lib/reRead';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useAutoSave } from '@/lib/useAutoSave';
 import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
@@ -819,51 +820,17 @@ export default function CostDetail() {
       const accounts = await getExtractionAccounts();
       const ex = await fetchExtract(imageBase64, mediaType, accounts);
       if (!ex) { setAiError('Extraction failed — please try again.'); return; }
-      const descr =
-        ex.description ||
-        (Array.isArray(ex.lineItems) ? ex.lineItems.map((li) => li.description).filter(Boolean).join(', ') : '');
-      // Auto-populate the tax rate from the extracted total/tax when the doc
-      // doesn't already carry one (don't clobber a manual choice). Only the
-      // standard-rated codes and No Tax are auto-pickable — see inferTaxRateName.
-      const exTotal = ex.total != null ? ex.total : data.total;
-      const exTax = ex.tax != null ? ex.tax : data.tax;
-      // The account this document was coded to decides its tax code when the
-      // printed GST agrees with it — so look it up alongside the arithmetic.
-      const codedTo = String(ex.category || data.category || '');
-      const account = accounts.find((a) => `${a.code} - ${a.name}` === codedTo || a.code === codedTo);
-      const rateOutcome = taxRateOutcome({
-        total: exTotal,
-        tax: exTax,
-        rates: taxRateSource,
-        suggested: ex.taxRate,
+      // Which value wins — the supplier rule, the document's own paper, this
+      // read, or what the document already carried — is decided in one place
+      // (readDecisions), so this page and the inbox's bulk re-read agree.
+      const {
+        patch, rule, descr, inferredRate, rateReason, supplierName, categoryReason, projectReason, ruleLines,
+      } = readDecisions(data, ex, {
         gstRegistered,
-        defaultName: extractionSettings.defaultTaxRateCosts,
-        currency: ex.currency || data.currency,
-        kind: 'cost',
-        accountTaxType: account?.taxType || '',
-        accountLabel: account?.code || '',
+        taxRates: taxRateSource,
+        defaultTaxRateCosts: extractionSettings.defaultTaxRateCosts,
+        accounts,
       });
-      const inferredRate = rateOutcome.name;
-      // Not GST-registered: there's no input tax to record, so don't carry the
-      // printed GST onto the bill either.
-      const exTaxOut = gstRegistered ? exTax : 0;
-      // Standing instructions for this vendor (its supplier rules) — they
-      // outrank what the reader worked out for itself. `rule` holds only the
-      // fields the rule actually sets, so everything else is left to the read.
-      const supplierName = ex.supplier || data.supplier;
-      const vendorRule = matchSupplierRule(supplierName);
-      const rule = supplierRulePatch(vendorRule, {
-        invoiceDate: ex.date || data.date,
-        gstRegistered,
-      });
-      const projectReason =
-        supplierRuleProjectReason(vendorRule, supplierName) || String(ex.projectReason || '').trim();
-      const categoryReason =
-        supplierRuleCategoryReason(vendorRule, supplierName) || String(ex.categoryReason || '').trim();
-      const ruleLines =
-        vendorRule.extractLineItems && Array.isArray(ex.lineItems)
-          ? lineItemRows(ex.lineItems, rule.category || ex.category || data.category)
-          : [];
       setData((d) => ({
         ...d,
         supplier: ex.supplier || d.supplier,
@@ -881,7 +848,7 @@ export default function CostDetail() {
           ? `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`
           : d.taxRate
             ? d.taxRateReason
-            : ex.taxRateReason || rateOutcome.reason || d.taxRateReason,
+            : ex.taxRateReason || rateReason || d.taxRateReason,
         description: rule.description || descr || d.description,
         paymentMethod: rule.paymentMethod || d.paymentMethod,
         paid: 'paid' in rule ? rule.paid : d.paid,
@@ -901,34 +868,6 @@ export default function CostDetail() {
         lineItems: ruleLines.length && !d.lineItems?.length ? ruleLines : d.lineItems,
       }));
       if (doc?.persisted) {
-        const patch = {};
-        if (ex.supplier) patch.supplier = ex.supplier;
-        if (ex.date) patch.date = ex.date;
-        if (ex.documentType) patch.documentType = ex.documentType;
-        if (ex.invoiceNumber) patch.invoiceNumber = ex.invoiceNumber;
-        if (ex.currency) patch.currency = ex.currency;
-        if (ex.category) patch.category = ex.category;
-        if (ex.categoryReason) patch.categoryReason = ex.categoryReason;
-        if (ex.total != null) patch.total = ex.total;
-        if (ex.tax != null || !gstRegistered) patch.tax = exTaxOut;
-        if (!data.taxRate && inferredRate) patch.taxRate = inferredRate;
-        // Why it was coded that way — or, when nothing could be, why not. A
-        // blank tax rate with no explanation is what sent someone hunting.
-        if (!data.taxRate) patch.taxRateReason = ex.taxRateReason || rateOutcome.reason || '';
-        if (descr) patch.description = descr;
-        if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
-        if (ex.project) {
-          patch.project = ex.project;
-          patch.projectReason = projectReason;
-        }
-        // The rule has the last word on everything it sets…
-        Object.assign(patch, rule);
-        if (rule.category) patch.categoryReason = categoryReason;
-        if (rule.taxRate) patch.taxRateReason = `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`;
-        if (rule.project) patch.projectReason = projectReason;
-        // …except the due date, where the document's own beats the rule's terms.
-        if (ex.dueDate) patch.dueDate = ex.dueDate;
-        if (ruleLines.length && !data.lineItems?.length) patch.lineItems = ruleLines;
         const r = await updateBill(doc.id, patch).catch(() => null);
         if (r?.bill) {
           setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
