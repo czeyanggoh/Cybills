@@ -36,6 +36,13 @@ export type ReadOutcome =
 export type ReadRequest = {
   fileBase64: string;
   mediaType: string;
+  // Everything identical for every document in this organisation — the reading
+  // instructions and the account / tax-code / project guides. Sent as a system
+  // prefix so both providers can cache it: Anthropic needs an explicit
+  // breakpoint, OpenAI caches a long prefix on its own. Nothing per-document
+  // may go here or the cache is invalidated (see extract.ts).
+  systemPrompt: string;
+  // The per-document line: today's date, and whether this is a PDF or an image.
   prompt: string;
   schema: Record<string, unknown>;
   // Identifies the schema to OpenAI's structured outputs. Letters, digits,
@@ -46,6 +53,21 @@ export type ReadRequest = {
 };
 
 const PDF_MEDIA = 'application/pdf';
+
+// Anthropic caches a prefix only past a minimum length (~1024 tokens); asking
+// below that just adds a no-op breakpoint. ~3.6 chars/token is a deliberate
+// under-estimate, so a borderline prompt still gets the breakpoint. OpenAI needs
+// no equivalent — it caches long prefixes automatically.
+const cacheable = (text: string) => text.length >= 4000;
+
+// Anthropic's `effort` is rejected outright by some models rather than ignored,
+// and the extract model is an env var — so name the ones that take it.
+const EFFORT_MODELS = [
+  'claude-fable-5', 'claude-mythos-5',
+  'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5',
+  'claude-sonnet-5', 'claude-sonnet-4-6',
+];
+const supportsEffort = (model: string) => EFFORT_MODELS.includes(String(model || '').trim());
 const noUsage = (): TokenUsage => ({
   inputTokens: 0,
   outputTokens: 0,
@@ -118,8 +140,21 @@ async function readWithClaude(req: ReadRequest): Promise<ReadOutcome> {
   const message = await client.messages.create({
     model,
     max_tokens: req.maxTokens,
+    // A cache breakpoint only pays off past the API's minimum cacheable prefix
+    // (~1024 tokens); below that it silently doesn't cache, so don't ask.
+    system: [
+      cacheable(req.systemPrompt)
+        ? { type: 'text' as const, text: req.systemPrompt, cache_control: { type: 'ephemeral' as const } }
+        : { type: 'text' as const, text: req.systemPrompt },
+    ],
     messages: [{ role: 'user', content: [fileBlock, { type: 'text', text: req.prompt }] }],
-    output_config: { format: { type: 'json_schema', schema: req.schema } },
+    output_config: {
+      format: { type: 'json_schema', schema: req.schema },
+      // Reading a fixed set of fields off an invoice is not work that wants deep
+      // reasoning, and thinking tokens bill as output. Omitted on models that
+      // reject the parameter outright (Haiku 4.5, Sonnet 4.5).
+      ...(supportsEffort(model) ? { effort: 'low' as const } : {}),
+    },
   });
 
   const u = message.usage as unknown as Record<string, unknown>;
@@ -174,6 +209,11 @@ async function readWithOpenAI(req: ReadRequest): Promise<ReadOutcome> {
     ...(isReasoningModel(model) && REASONING_EFFORTS.has(effort)
       ? { reasoning: { effort: effort as 'minimal' | 'low' | 'medium' | 'high' } }
       : {}),
+    // The stable per-org block goes in `instructions`, which sits ahead of the
+    // input — so OpenAI's automatic prefix caching covers it, the same tokens
+    // the Anthropic path caches with an explicit breakpoint. Cached input bills
+    // at 0.1x and is reported back as input_tokens_details.cached_tokens.
+    instructions: req.systemPrompt,
     input: [
       {
         role: 'user',

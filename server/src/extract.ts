@@ -313,6 +313,29 @@ extractRouter.post('/extract', async (req, res) => {
       projects.map((p) => `- "${p.name}"${p.rules ? `: ${p.rules}` : ' (no rule written — match by name only)'}`).join('\n')
     : '';
 
+  // Everything identical for every document in this organisation, in one block:
+  // the fixed reading instructions, the org's own review instructions, and the
+  // account / tax-code / project guides. Sent as a CACHED system prefix so it is
+  // billed once per cache window instead of once per document — the guides run
+  // to thousands of tokens and were previously re-bought on every upload. Both
+  // readers cache it; llm.ts knows how each one is asked.
+  //
+  // Nothing per-document may appear here. Today's date and whether the file is a
+  // PDF both go in the message below: the date would invalidate the cache daily,
+  // and the PDF/image wording would split one cache entry into two.
+  const stablePrompt =
+    contextBlock +
+    'You extract purchase and expense details from receipts and invoices. ' +
+    'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
+    'Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ' +
+    'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
+    'pick "Uncategorised" only when none reasonably fit. ' +
+    'If a field is not present, use an empty string or 0. ' +
+    'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
+    accountsGuide +
+    taxRatesGuide +
+    projectsGuide;
+
   const isPdf = mediaType === PDF_MEDIA;
   // Which reader does the work. The org picks it in Business settings ->
   // Extraction and the client sends the choice along; resolveProvider falls back
@@ -327,18 +350,12 @@ extractRouter.post('/extract', async (req, res) => {
       maxTokens: 1024,
       schemaName: 'expense_document',
       schema: buildSchema(categories, taxRateNames, projectNames),
+      // Cached per organisation (see stablePrompt above) — the guides run to
+      // thousands of tokens and must not be re-bought on every upload.
+      systemPrompt: stablePrompt,
       prompt:
-        contextBlock +
         `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. ` +
-        'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
-        `Today is ${new Date().toISOString().slice(0, 10)}. Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ` +
-        'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
-        'pick "Uncategorised" only when none reasonably fit. ' +
-        'If a field is not present, use an empty string or 0. ' +
-        'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
-        accountsGuide +
-        taxRatesGuide +
-        projectsGuide,
+        `Today is ${new Date().toISOString().slice(0, 10)}.`,
     });
 
     // What this document cost to read. Recorded per call and attributed to the
@@ -426,6 +443,13 @@ vaultRouter.post('/summarize', async (req, res) => {
       mediaType,
       maxTokens: 512,
       schemaName: 'document_summary',
+      // Identical for every Vault document, so it rides in the system prefix —
+      // too short to hit either provider's cache minimum, but it costs nothing
+      // to put it in the right place.
+      systemPrompt:
+        'You summarise stored business documents. Return a concise "subject" line (like an ' +
+        'email subject, under 12 words) and a "summary" of 2–4 sentences describing what the ' +
+        'document is, who it is from, and the key figures or purpose.',
       schema: {
         type: 'object',
         additionalProperties: false,
@@ -435,10 +459,7 @@ vaultRouter.post('/summarize', async (req, res) => {
         },
         required: ['subject', 'summary'],
       },
-      prompt:
-        'Summarise this document. Return a concise "subject" line (like an email subject, ' +
-        'under 12 words) and a "summary" of 2–4 sentences describing what the document is, ' +
-        'who it is from, and the key figures or purpose.',
+      prompt: 'Summarise this document.',
     });
 
     recordUsage(req, {
