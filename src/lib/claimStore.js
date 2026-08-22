@@ -34,7 +34,9 @@ function fmtAt(at) {
 // Shape a server claim into what the views/PDF expect: display ids on rows,
 // recomputed net/tax/total, friendly history timestamps.
 function shape(c) {
-  const transactions = (c.transactions || []).map((t) => ({ ...t, displayId: displayItemId(t.itemId) }));
+  // A line records the document's number when it is added, so the claim keeps
+  // showing the right one even after the document itself is gone.
+  const transactions = (c.transactions || []).map((t) => ({ ...t, displayId: t.displayId || displayItemId(t.itemId) }));
   const sum = (k) => transactions.reduce((n, t) => n + Number(t[k] || 0), 0).toFixed(2);
   const history = (c.history || []).map((e) => ({ ...e, text: cleanHistoryText(e.text), at: fmtAt(e.at) }));
   return { ...c, transactions, history, net: sum('net'), tax: sum('tax'), total: sum('total') };
@@ -205,6 +207,12 @@ export function docToClaimTxn(doc, data, actor) {
   const tax = Number(data.tax) || 0;
   return {
     itemId: String(doc.id),
+    // The document's number, kept on the line: a claim exported months later
+    // must show what the document showed, not re-derive it.
+    displayId: doc.displayId || '',
+    // Whether the document has a receipt behind it, so an export can link
+    // straight to the paper rather than to a page that has none.
+    hasFile: Boolean(doc.hasFile),
     date: data.date || '—',
     supplier: data.supplier || 'Unknown supplier',
     category: data.category || 'Uncategorised',

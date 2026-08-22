@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { displayItemId, billFileUrl } from '@/lib/bills';
+import { itemNumber, billFileUrl } from '@/lib/bills';
 import { recordEvent } from '@/lib/salesEvents';
 import { recordExport } from '@/lib/exportsStore';
 import { makeZip } from '@/lib/zip';
@@ -39,7 +39,7 @@ const esc = (v) => {
 };
 const csvLines = (rows) => rows.map((r) => r.map(esc).join(',')).join('\n');
 
-const idOf = (d) => displayItemId(d.id ?? d.itemId);
+const idOf = (d) => itemNumber(d);
 
 // Absolute, clickable link to the receipt's original file (Dext puts a link in
 // the Image column). Persisted bills stream from the file endpoint; fall back to
@@ -315,7 +315,7 @@ const sanitizeName = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, ' ').repla
 // Dext-style receipt filename: "<Supplier> - <YYYY-MM-DD> - <id>.<ext>".
 function receiptName(d, type) {
   const party = sanitizeName(d.supplier || d.customer || d.type || '');
-  const stem = [party, ymd(d.date), displayItemId(d.id ?? d.itemId)].filter(Boolean).join(' - ');
+  const stem = [party, ymd(d.date), itemNumber(d)].filter(Boolean).join(' - ');
   return `${stem}.${extFor(type, d.fileName)}`;
 }
 

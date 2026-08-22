@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { env, xeroEnabled } from './env.js';
 import { dataScopeForOrg, getOrganisation } from './organisations.js';
 import { workspaceId } from './workspace.js';
-import { apportion, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
+import { apportion, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
 
@@ -343,25 +343,6 @@ xeroRouter.post('/organisations/:id/categories/:accountId', async (req, res) => 
 });
 
 const PUBLISH_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'AUTHORISED']);
-
-// Numeric display id (mirrors the client's displayItemId) — a bill's creation
-// date-time in SGT as YYMMDDHHMMSS, decoded from the id it embeds.
-function displayIdOf(id: string): string {
-  const s = String(id ?? '');
-  if (/^\d+$/.test(s)) return s;
-  const m = /^bill_([0-9a-z]+)_/.exec(s);
-  if (m) {
-    const ms = parseInt(m[1], 36);
-    if (Number.isFinite(ms) && ms > 0) {
-      const d = new Date(ms + 8 * 60 * 60 * 1000);
-      const p = (n: number) => String(n).padStart(2, '0');
-      return `${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
-    }
-  }
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return String(21000000000 + (h % 1000000000));
-}
 
 // Xero rejects attachments over 25 MB. Buffer up to that and no further — a
 // runaway file must not take the process with it.

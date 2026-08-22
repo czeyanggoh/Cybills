@@ -35,7 +35,7 @@ import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument } from '@/lib/reRead';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
-import { updateBill, deleteBill, notifyBillsChanged, displayItemId, costPath } from '@/lib/bills';
+import { updateBill, deleteBill, notifyBillsChanged, itemNumber, costPath } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
@@ -517,7 +517,7 @@ function CostProcessingView({ rows, onMoveOne, onMoveAll, meName = 'You' }) {
                       <ReceiptViewer itemIds={d.id} />
                     </div>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-muted-foreground">{displayItemId(d.id)}</td>
+                  <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-muted-foreground">{itemNumber(d)}</td>
                   <td className="whitespace-nowrap px-3 py-3">{d.user && d.user !== 'You' ? d.user : meName}</td>
                   <td className="px-3 py-3">{d.fileName || '—'}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">Via web</td>
@@ -667,7 +667,7 @@ export default function Costs() {
     },
     ref: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.invoiceNumber || '—' },
     description: { cellClass: 'max-w-[22rem] truncate text-muted-foreground', cell: (d) => d.description || '—' },
-    itemId: { cellClass: 'whitespace-nowrap font-mono text-xs text-muted-foreground', cell: (d) => displayItemId(d.id) },
+    itemId: { cellClass: 'whitespace-nowrap font-mono text-xs text-muted-foreground', cell: (d) => itemNumber(d) },
     type: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.type || '—' },
     dueDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.dueDate ? formatDate(d.dueDate) : '—') },
     paid: { sortable: false, cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => (d.paid ? 'Paid' : 'Not paid') },

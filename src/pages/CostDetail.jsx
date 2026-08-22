@@ -29,7 +29,7 @@ import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, displayItemId, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -310,7 +310,7 @@ export default function CostDetail() {
         if (pd) {
           // Opened by internal id (an old bookmark, or a claim line item): swap
           // the address bar for the item-id form without adding a history entry.
-          if (String(routeId) !== displayItemId(pd.id)) navigate(costPath(pd.id), { replace: true });
+          if (String(routeId) !== itemNumber(pd)) navigate(costPath(pd), { replace: true });
           setData(initialData(pd));
           if (pd.hasFile) {
             setImageUrl(billFileUrl(pd.id));
@@ -1312,7 +1312,7 @@ export default function CostDetail() {
               )}
 
               <SectionHeading>Item details</SectionHeading>
-              <Field label="Item ID"><Input value={displayItemId(doc.id)} readOnly /></Field>
+              <Field label="Item ID"><Input value={itemNumber(doc)} readOnly /></Field>
               <Field label="Document owner"><ComboSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
               <Field label="Type"><ComboSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date">

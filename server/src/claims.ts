@@ -24,6 +24,7 @@ type Txn = {
   category: string;
   description?: string; // the item's own description (for the Xero bill line)
   displayId?: string; // numeric display id (Dext-style "#…")
+  hasFile?: boolean; // the document has a stored receipt (the PDF links to it)
   project?: string;
   net: string;
   tax: string;

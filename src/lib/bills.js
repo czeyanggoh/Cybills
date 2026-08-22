@@ -243,6 +243,10 @@ export function billToDoc(b) {
     persisted: true,
     kind: b.kind || 'cost',
     itemId: b.id,
+    // The document's public number, as ASSIGNED by the server. Falls back to the
+    // derived one only for a record written before numbers were stored (the
+    // server backfills those on load, so this is a first-render safety net).
+    displayId: b.displayId || displayItemId(b.id),
     unread: !b.status || b.status === 'new',
     status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted', 'processing', 'merged'].includes(b.status)
       ? b.status
@@ -292,16 +296,19 @@ export function billToDoc(b) {
   };
 }
 
-// A clean, Dext-style numeric item id for display. Seed docs already use
-// numeric ids (returned as-is); persisted bills use an internal "bill_…" id, so
-// we derive a stable 11-digit number from it (same id → same number) rather
-// than surfacing the raw storage key in reports.
-// A clean numeric item id (no letters) that reads as a chronological SEQUENCE:
-// the document's creation date-time in Singapore time, as YYMMDDHHMMSS
-// (e.g. 260820130500 = 20 Aug 2026 13:05:00). Persisted bills embed their
-// creation ms in the id (bill_<base36 ms>_<rand>), so this is stable and matches
-// on the client and the Xero-publish side. Sample docs already numeric pass
-// through; anything unexpected falls back to a stable hash.
+// The number a document's creation second DERIVES: YYMMDDHHMMSS in Singapore
+// time (e.g. 260820130500 = 20 Aug 2026 13:05:00), decoded from the ms the
+// internal id embeds.
+//
+// This is no longer where a document's number comes from — two uploads in the
+// same second derive the same twelve digits, and the number has to be unique
+// because it addresses the document. The server assigns and stores one instead
+// (`displayId`, see nextDisplayId in store.ts); use `doc.displayId`.
+//
+// This remains for the cases that have no record to read it from: a claim line
+// item holding only an internal id, a sample/demo doc, and the moment before a
+// backfill has run. Numeric ids pass through; anything unrecognised falls back
+// to a stable hash.
 export function displayItemId(id) {
   const s = String(id ?? '');
   if (/^\d+$/.test(s)) return s;
@@ -319,20 +326,38 @@ export function displayItemId(id) {
   return String(21000000000 + (h % 1000000000));
 }
 
-// The address of a cost document: the path carries the ITEM ID the page itself
+// The number to SHOW for a document: the one it was assigned, falling back to
+// the one its second derives (a claim line item holding only an internal id, a
+// sample doc). One expression so no screen has to remember the order.
+export function itemNumber(docOrId) {
+  const doc = docOrId && typeof docOrId === 'object' ? docOrId : null;
+  if (!doc) return displayItemId(docOrId);
+  return doc.displayId || displayItemId(doc.id ?? doc.itemId);
+}
+
+// The address of a cost document: the path carries the NUMBER the page itself
 // shows (/costs/260822123051), not the internal storage key, so a URL copied out
 // of the address bar is the number you can search the list for.
-export function costPath(id) {
-  return `/costs/${displayItemId(id)}`;
+//
+// Pass the document where you have it — its assigned number is the one that is
+// unique. A bare id still works (a claim line item holds only that) and derives
+// the number, which the server also resolves.
+export function costPath(docOrId) {
+  const doc = docOrId && typeof docOrId === 'object' ? docOrId : null;
+  return `/costs/${doc ? doc.displayId || displayItemId(doc.id) : displayItemId(docOrId)}`;
 }
 
 // Does a document answer to this URL key? Links now carry the item id, but the
 // internal id still resolves it — older bookmarks hold one, and an expense
 // claim's line item stores one as its `itemId`.
-export function isItemKey(id, key) {
-  const a = String(id ?? '');
+export function isItemKey(docOrId, key) {
+  const doc = docOrId && typeof docOrId === 'object' ? docOrId : null;
+  const a = String((doc ? doc.id : docOrId) ?? '');
   const b = String(key ?? '');
   if (!b) return false;
+  // The assigned number first; the derived one still answers, so a link made
+  // before a document was renumbered opens the same page it always did.
+  if (doc?.displayId && doc.displayId === b) return true;
   return a === b || displayItemId(a) === b;
 }
 

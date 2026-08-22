@@ -12,7 +12,7 @@ import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 import { SALES, getSale } from '@/data/sales';
 import { useCategoryOptions, getExtractionAccounts, useXeroPaymentMethods, useXeroCustomers, useXeroProjectOptions } from '@/lib/organisations';
-import { fetchBills, billToDoc, billFileUrl, displayItemId, updateBill, notifyBillsChanged } from '@/lib/bills';
+import { fetchBills, billToDoc, billFileUrl, itemNumber, updateBill, notifyBillsChanged } from '@/lib/bills';
 import {
   getSalesHistory,
   recordViewed,
@@ -30,13 +30,13 @@ function billDocToSale(d) {
   return {
     id: d.id,
     persisted: true,
-    itemId: displayItemId(d.id),
+    itemId: itemNumber(d),
     createdAt: d.createdAt,
     user: d.user,
     type: d.type,
     date: d.date,
     customer: d.supplier,
-    ref: d.invoiceNumber || displayItemId(d.id),
+    ref: d.invoiceNumber || itemNumber(d),
     dueDate: '',
     category: d.category,
     project: '',

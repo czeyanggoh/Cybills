@@ -2,7 +2,7 @@ import { jsPDF } from 'jspdf';
 import { PDFDocument } from 'pdf-lib';
 import { pdfDate, claimRef, claimExportName, cleanHistoryText } from '@/lib/exportFormat';
 import { approvalHistory } from '@/lib/approvalHistory';
-import { costPath } from '@/lib/bills';
+import { costPath, billFileUrl } from '@/lib/bills';
 import { recordExport } from '@/lib/exportsStore';
 
 // A4 in points, with a comfortable margin.
@@ -19,7 +19,17 @@ const n2 = (v) => Number(v || 0).toFixed(2);
 // so an item's link has to carry the host — a bare /costs/… path resolves
 // against nothing and is why the Item ID looked like a link but did nothing.
 const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
-const itemUrl = (id) => (id ? `${ORIGIN}${costPath(id)}` : '');
+
+// Clicking an Item ID opens the RECEIPT — the thing an approver actually wants
+// to see, the way Dext's does. The file endpoint serves it inline and resolves
+// by id alone, so it opens for an approver who was sent the PDF and has no
+// session here. A line with no receipt behind it links to the document page
+// instead, which is the only thing there is to show.
+const itemUrl = (t) => {
+  const id = t?.itemId || t?.displayId;
+  if (!id) return '';
+  return `${ORIGIN}${t?.hasFile === false ? costPath(t) : billFileUrl(id)}`;
+};
 
 // Roll the line items up into per-category net/tax/total.
 function summarise(txns) {
@@ -175,7 +185,7 @@ export function buildClaimDoc(claim) {
     // used to be painted on and clicked through to nothing.
     const itemId = String(t.displayId || t.itemId || '');
     doc.setTextColor(LINK[0], LINK[1], LINK[2]);
-    const url = itemUrl(t.itemId || t.displayId);
+    const url = itemUrl(t);
     if (url) doc.textWithLink(itemId, tc.item, top, { url });
     else doc.text(itemId, tc.item, top);
     doc.setTextColor(60);

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, AlertTriangle, Loader2 } from 'lucide-react';
 import { buildMergePreview } from '@/lib/mergeDocs';
-import { displayItemId } from '@/lib/bills';
+import { itemNumber } from '@/lib/bills';
 import ComboSelect from '@/components/ComboSelect';
 
 // Dext-style "Merge items" review screen: combined document preview on the left,
@@ -105,7 +105,7 @@ export default function MergeModal({ open, docs, categoryOptions = [], onClose, 
                 <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">Merging {preview.sources.length} items:</span>
                   {preview.sources.map((d) => (
-                    <span key={d.id} className="rounded bg-muted px-1.5 py-0.5 tabular-nums">{displayItemId(d.id)}</span>
+                    <span key={d.id} className="rounded bg-muted px-1.5 py-0.5 tabular-nums">{itemNumber(d)}</span>
                   ))}
                 </div>
 

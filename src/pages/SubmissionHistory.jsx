@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Image, Download, FileClock, Search, ChevronDown } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import HistoryModal from '@/components/HistoryModal';
-import { fetchBills, billToDoc, displayItemId, costPath, billFileUrl, BILLS_CHANGED_EVENT } from '@/lib/bills';
+import { fetchBills, billToDoc, itemNumber, costPath, billFileUrl, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { cn } from '@/lib/utils';
 
 const TABS = ['Costs and sales', 'Supplier statements'];
@@ -102,7 +102,7 @@ export default function SubmissionHistory() {
   const sortByNewest = (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
   const rows = (q
     ? forTab.filter((d) =>
-        [d.supplier, d.user, d.customer, displayItemId(d.id)].some((v) => String(v || '').toLowerCase().includes(q))
+        [d.supplier, d.user, d.customer, itemNumber(d)].some((v) => String(v || '').toLowerCase().includes(q))
       )
     : forTab
   )
@@ -110,7 +110,7 @@ export default function SubmissionHistory() {
     .sort(sortByNewest)
     .map((d) => ({
     doc: d,
-    id: displayItemId(d.id),
+    id: itemNumber(d),
     status: d.status,
     submittedAt: fmtDate(d.createdAt),
     submittedBy: d.user,

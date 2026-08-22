@@ -9,7 +9,7 @@ import { useExtractionSettings } from '@/lib/extractionSettings';
 import {
   fetchBills,
   billToDoc,
-  displayItemId,
+  itemNumber,
   updateBill,
   notifyBillsChanged,
   BILLS_CHANGED_EVENT,
@@ -30,14 +30,14 @@ function billToSalesRow(d) {
   return {
     id: d.id,
     persisted: true,
-    itemId: displayItemId(d.id),
+    itemId: itemNumber(d),
     status: d.status,
     user: d.user,
     fileName: d.fileName,
     date: d.date,
     customer: d.supplier,
     category: d.category,
-    ref: d.invoiceNumber || displayItemId(d.id),
+    ref: d.invoiceNumber || itemNumber(d),
     total: d.total,
     currency: d.currency,
   };

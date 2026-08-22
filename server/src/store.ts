@@ -47,6 +47,10 @@ export type Bill = {
     tax: string;
     total: string;
   }>;
+  // The public document number — what the UI shows, exports print and the claim
+  // PDF links. Assigned once at insert and STORED, because it has to be unique
+  // and a derived number can't promise that (see nextDisplayId).
+  displayId: string;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email of whoever UPLOADED it, or '' in mock mode
   // The document's owner — the person the User column names and the Document
@@ -151,6 +155,8 @@ function load(): Bill[] {
     if (existsSync(DATA_FILE)) {
       const parsed = JSON.parse(readFileSync(DATA_FILE, 'utf8'));
       cache = Array.isArray(parsed?.bills) ? (parsed.bills as Bill[]) : [];
+      // Documents written before numbers were stored get one now, oldest first.
+      if (backfillDisplayIds(cache)) persist(cache);
     } else {
       cache = [];
     }
@@ -215,6 +221,62 @@ export function itemIdFor(id: string): string {
   return `${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
 }
 
+// The next free document number for a bill created at `ms`.
+//
+// The number reads as a chronological sequence — creation time in Singapore as
+// YYMMDDHHMMSS — and that is exactly why it cannot be derived and left at that:
+// two files uploaded in the same second produce the same twelve digits. The
+// number is the document's identity (it addresses the detail page, prints on
+// exports and the claim PDF, and rides into the Xero bill's description), so a
+// duplicate is not a cosmetic clash — it is two documents answering to one name.
+//
+// So: take the plain stamp when it is free, and otherwise append the smallest
+// suffix that is. A suffixed number is thirteen digits or more and a plain stamp
+// is always twelve (YY covers 2000-2099), so a suffixed number can never collide
+// with another second's plain stamp; against other suffixed numbers, `taken`
+// settles it. Uniqueness is therefore checked, not hoped for.
+//
+// The previous approach — stepping the creation TIME forward a second until its
+// derived number was free — bought uniqueness with a lie: a twenty-file upload
+// left the last document claiming it was created nineteen seconds in the future,
+// which is the field the list sorts by.
+export function nextDisplayId(taken: Set<string>, ms: number): string {
+  const base = itemIdFor(`bill_${ms.toString(36)}_`);
+  if (!base) return '';
+  if (!taken.has(base)) return base;
+  for (let n = 1; ; n += 1) {
+    const candidate = `${base}${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+// Give a number to every bill stored before they were assigned, oldest first, so
+// the one that has been carrying a number in URLs and exports keeps it and only
+// the documents that were SHARING it are renumbered. Runs once — after this the
+// field is set and the loop does nothing.
+function backfillDisplayIds(bills: Bill[]): boolean {
+  const missing = bills.filter((b) => !b.displayId);
+  if (!missing.length) return false;
+  const taken = new Set(bills.map((b) => b.displayId).filter(Boolean));
+  for (const b of [...missing].sort((x, y) => x.id.localeCompare(y.id))) {
+    const m = /^bill_([0-9a-z]+)_/.exec(b.id);
+    const ms = m ? parseInt(m[1], 36) : NaN;
+    b.displayId = Number.isFinite(ms) && ms > 0
+      ? nextDisplayId(taken, ms)
+      : nextDisplayId(taken, new Date(b.createdAt).getTime() || Date.now());
+    taken.add(b.displayId);
+  }
+  return true;
+}
+
+// The number to PRINT for a bill, by internal id: the one it was assigned, and
+// only failing that the one its second derives (a bill that isn't in the store —
+// a claim line for a document since deleted — still needs something to show).
+export function displayIdOf(id: string): string {
+  const stored = load().find((b) => b.id === id)?.displayId;
+  return stored || itemIdFor(id) || (/^\d+$/.test(String(id ?? '')) ? String(id) : '');
+}
+
 // A bill answers to two keys: its internal id and its item id. Detail URLs carry
 // the item id (/costs/260822123051), so every by-id lookup accepts it. The two
 // can't be confused — an internal id always starts "bill_", an item id is all
@@ -223,6 +285,11 @@ export function itemIdFor(id: string): string {
 // document (the other stays reachable by its internal id).
 function byItemId(rows: Bill[], key: string): Bill | null {
   if (!/^\d+$/.test(key)) return null;
+  const exact = rows.find((b) => b.displayId === key);
+  if (exact) return exact;
+  // A link made before a renumbering still resolves: it carries the number this
+  // document's second DERIVES, which is what was shown at the time. Where two
+  // shared it, the oldest wins — the one that kept the plain number.
   return rows.filter((b) => itemIdFor(b.id) === key).sort((a, b) => a.id.localeCompare(b.id))[0] ?? null;
 }
 
@@ -479,7 +546,7 @@ export function scanDuplicates(orgId: string, kind = 'cost'): { flagged: number;
   return { flagged, changed };
 }
 
-export type BillInput = Omit<Bill, 'id' | 'createdAt'>;
+export type BillInput = Omit<Bill, 'id' | 'createdAt' | 'displayId'>;
 
 // A cost is "Ready" when it carries the fields the rest of the workflow needs.
 // The system decides readiness by validating these (per the Support Desk ask),
@@ -507,16 +574,14 @@ function applyAutoReady(b: Bill): boolean {
 
 export function insertBill(input: BillInput): Bill {
   const bills = load();
-  // The item id — and the detail URL built from it — is the creation time to the
-  // second, so two files uploaded within the same second would answer to one
-  // URL. Step the stamp on to the first free second: a batch upload keeps its
-  // order and every document keeps an item id of its own.
-  const taken = new Set(bills.map((b) => itemIdFor(b.id)));
-  let ms = Date.now();
-  while (taken.has(itemIdFor(`bill_${ms.toString(36)}_`))) ms += 1000;
+  // The creation time is the creation time — the document number carries the
+  // uniqueness, so nothing here has to bend the clock to get it.
+  const ms = Date.now();
+  const taken = new Set(bills.map((b) => b.displayId).filter(Boolean));
   const bill: Bill = {
     ...input,
     id: `bill_${ms.toString(36)}_${randomUUID().slice(0, 8)}`,
+    displayId: nextDisplayId(taken, ms),
     createdAt: new Date(ms).toISOString(),
   };
   applyAutoReady(bill); // a fully-extracted upload lands straight in Ready
