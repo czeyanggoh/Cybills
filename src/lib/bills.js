@@ -155,6 +155,10 @@ export async function finalizeBill(id, fields, { checkDuplicates = true } = {}) 
 // trusted, or null when the read failed.
 export async function fetchExtractLines(imageBase64, mediaType, accounts) {
   const instructions = await fetchReviewInstructions(getActiveOrganisationId());
+  // The org's projects (its first Xero tracking category), so each LINE can be
+  // allocated to the outlet or site it names — an invoice billing three outlets
+  // on one page is exactly what a per-line breakdown is for.
+  const projects = await getExtractionProjects().catch(() => []);
   const res = await fetch('/api/costs/extract-lines', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
@@ -163,6 +167,7 @@ export async function fetchExtractLines(imageBase64, mediaType, accounts) {
       mediaType,
       accounts,
       instructions,
+      projects,
       provider: requestedProvider(),
     }),
   });
