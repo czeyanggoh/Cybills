@@ -846,7 +846,10 @@ export default function CostDetail() {
         categoryReason: categoryReason || d.categoryReason,
         customer: rule.customer || d.customer,
         total: ex.total != null ? String(ex.total) : d.total,
-        tax: !gstRegistered ? '0.00' : ex.tax != null ? String(ex.tax) : d.tax,
+        // Exactly what was SAVED — 0 when the document's tax isn't Singapore
+        // GST this business can claim — so the form and the stored bill can't
+        // disagree. Untouched when the read didn't decide the tax at all.
+        tax: patch.tax != null ? Number(patch.tax).toFixed(2) : d.tax,
         taxRate: rule.taxRate || d.taxRate || inferredRate,
         taxRateReason: rule.taxRate
           ? `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`

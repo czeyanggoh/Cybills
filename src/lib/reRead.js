@@ -59,11 +59,16 @@ export function readDecisions(
     kind: 'cost',
     accountTaxType: account?.taxType || '',
     accountLabel: account?.code || '',
+    // Only Singapore GST from a registered supplier is input tax to claim.
+    gstRegNo: ex.supplierGstRegNo || '',
+    taxLabel: ex.taxLabel || '',
   });
   const inferredRate = rate.name;
-  // Not GST-registered: there's no input tax to record, so don't carry the
-  // printed GST onto the bill either.
-  const exTaxOut = gstRegistered ? exTax : 0;
+  // Tax is RECORDED only when it is Singapore GST this business can claim:
+  // we aren't registered, or the supplier isn't (or charged a foreign tax), and
+  // the amount belongs in the cost rather than in the GST box. The total is
+  // untouched either way — the money paid doesn't change.
+  const exTaxOut = gstRegistered && rate.claimsTax !== false ? exTax : 0;
   const supplierName = ex.supplier || current.supplier;
   const vendorRule = matchSupplierRule(supplierName);
   const rule = supplierRulePatch(vendorRule, { invoiceDate: ex.date || current.date, gstRegistered });
@@ -85,7 +90,7 @@ export function readDecisions(
   if (ex.category) patch.category = ex.category;
   if (ex.categoryReason) patch.categoryReason = ex.categoryReason;
   if (ex.total != null) patch.total = ex.total;
-  if (ex.tax != null || !gstRegistered) patch.tax = exTaxOut;
+  if (ex.tax != null || !gstRegistered || rate.claimsTax === false) patch.tax = exTaxOut;
   if (!current.taxRate && inferredRate) patch.taxRate = inferredRate;
   // Why it was coded that way — or, when nothing could be, why not. A blank tax
   // rate with no explanation is indistinguishable from a bug.

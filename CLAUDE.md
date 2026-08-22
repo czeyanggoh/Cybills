@@ -177,6 +177,15 @@ reviewer. Detection runs continuously over the inbox in `Costs.jsx`
 a button; nothing is combined until the merge review modal is confirmed.
 `npm test` at the repo root runs the rules.
 
+**Input tax is claimed only on evidence.** GST is recorded only when the
+SUPPLIER quotes a Singapore GST registration number and the document calls the
+tax GST. The numbers can't settle it — Thailand's VAT is 7% and Malaysia's SST
+8%, exactly Singapore's 2022 and 2023 rates — so the reader extracts
+`supplierGstRegNo` + `taxLabel` and `claimableSgGst` decides: a UEN or M-number
+(OVR counts) plus a tax the document doesn't call VAT/SST/Sales Tax. Without
+that the document codes to No Tax and the tax amount is NOT recorded — it stays
+inside the cost, which is what foreign tax is. The total never changes.
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

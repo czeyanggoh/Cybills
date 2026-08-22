@@ -46,6 +46,47 @@ const STANDARD_CODES = {
   ],
 };
 
+// --- Is this Singapore GST at all? ------------------------------------------
+// Input tax is claimable only against a Singapore GST-registered supplier who
+// charged GST — IRAS requires the supplier's GST registration number on a tax
+// invoice, simplified ones included. Foreign tax is not claimable; it is part of
+// the cost. The numbers alone cannot tell them apart — Thailand's VAT is 7% and
+// Malaysia's SST 8%, exactly Singapore's 2022 and 2023 rates — so the evidence
+// has to be the registration number and what the document calls the tax.
+//
+// Singapore registration numbers are UENs, or an M-number for a GST-only /
+// overseas-vendor registration:
+//   53012345M      business (8 digits + letter)
+//   201614382R     local company (9 digits + letter, year-prefixed)
+//   T08LL1234A     other entities (T/S/R + 2 digits + 2 letters + 4 digits + letter)
+//   M90370287L     GST registration / OVR (M + 8 digits + letter)
+const SG_UEN = [
+  /^\d{8}[A-Z]$/,
+  /^(19|20)\d{7}[A-Z]$/,
+  /^[TSR]\d{2}[A-Z]{2}\d{4}[A-Z]$/,
+  /^M\d{8}[A-Z]$/,
+];
+export function isSingaporeGstRegNo(value) {
+  const v = String(value || '').toUpperCase().replace(/[\s.-]/g, '');
+  if (!v) return false;
+  return SG_UEN.some((re) => re.test(v));
+}
+
+// A tax the document itself calls GST. "VAT", "SST", "Sales Tax" and
+// "Consumption Tax" are somebody else's tax, whatever the rate.
+const NOT_GST = /\b(vat|tva|iva|btw|mwst|sst|consumption tax|sales tax|service tax|use tax)\b/i;
+export function looksLikeGst(taxLabel) {
+  const label = String(taxLabel || '').trim();
+  if (!label) return true; // nothing said either way — the reg number decides
+  if (NOT_GST.test(label)) return false;
+  return true;
+}
+
+// Whether the tax on this document is Singapore GST, and so claimable.
+export function claimableSgGst({ gstRegNo = '', taxLabel = '' } = {}) {
+  return isSingaporeGstRegNo(gstRegNo) && looksLikeGst(taxLabel);
+}
+
 const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
 // A rate matches the printed percentage when it is within half a point of it —
 // tight, so a 10% AU invoice never snaps to a 9% SG rate and 7 / 8 / 9 each land
@@ -100,6 +141,10 @@ export function taxRateOutcome({
   kind = 'cost',
   accountTaxType = '',
   accountLabel = '',
+  // The evidence that the tax charged is Singapore GST: the supplier's SG GST
+  // registration number, and what the document calls the tax.
+  gstRegNo = '',
+  taxLabel = '',
 } = {}) {
   const list = Array.isArray(rates) ? rates : [];
   const everything = Array.isArray(allRates) && allRates.length ? allRates : list;
@@ -107,12 +152,12 @@ export function taxRateOutcome({
 
   // 0. Not GST-registered: nothing to claim, nothing to analyse. The screens
   //    say so themselves, so no reason is needed here.
-  if (!gstRegistered) return { name: noTax ? noTax.name : '', reason: '' };
+  if (!gstRegistered) return { name: noTax ? noTax.name : '', reason: '', claimsTax: false };
 
   // 0b. A code the org's own "when to use" rule matched, via the reader. The
   //     reader writes its own reason, so don't overwrite it.
   const picked = String(suggested || '').trim();
-  if (picked && list.some((r) => r.name === picked)) return { name: picked, reason: '' };
+  if (picked && list.some((r) => r.name === picked)) return { name: picked, reason: '', claimsTax: true };
 
   const t = num(total);
   const x = num(tax);
@@ -125,10 +170,29 @@ export function taxRateOutcome({
   if (!(x > 0 && net > 0)) {
     // No tax charged: the configured default, else No Tax.
     const useDefault = defaultName && list.some((r) => r.name === defaultName) ? defaultName : '';
-    return { name: useDefault || (noTax ? noTax.name : ''), reason: '' };
+    return { name: useDefault || (noTax ? noTax.name : ''), reason: '', claimsTax: false };
   }
 
   const pct = (x / net) * 100;
+
+  // Tax IS charged — but only Singapore GST from a registered supplier can be
+  // claimed. Without that evidence the tax is part of the cost, not input tax:
+  // No Tax, and the amount is not recorded as GST.
+  if (kind !== 'sales' && !claimableSgGst({ gstRegNo, taxLabel })) {
+    const label = String(taxLabel || '').trim();
+    const why = !isSingaporeGstRegNo(gstRegNo)
+      ? String(gstRegNo || '').trim()
+        ? `the supplier's registration number (${String(gstRegNo).trim()}) isn't a Singapore one`
+        : 'the document shows no Singapore GST registration number for the supplier'
+      : `the document calls it ${label}, not GST`;
+    return {
+      name: noTax ? noTax.name : '',
+      reason:
+        `Tax of ${x.toFixed(2)} (${pctOf(pct)}) is on the document, but ${why} — so it isn't Singapore input tax to claim. ` +
+        'Coded No Tax, with the tax left in the cost. If the supplier IS Singapore GST-registered, set the code by hand.',
+      claimsTax: false,
+    };
+  }
 
   // 1. The account's own tax code, when the document agrees with it.
   const own = String(accountTaxType || '').trim().toUpperCase();
@@ -138,6 +202,7 @@ export function taxRateOutcome({
       return {
         name: row.name,
         reason: `${accountLabel ? `The ${accountLabel} account's` : "The account's"} own tax code in Xero, and the ${pctOf(pct)} GST on this document matches it.`,
+        claimsTax: true,
       };
     }
   }
@@ -152,7 +217,11 @@ export function taxRateOutcome({
     if (d < bestDiff) { bestDiff = d; best = r.name; }
   }
   if (best && bestDiff <= TOLERANCE) {
-    return { name: best, reason: `GST of ${x.toFixed(2)} on ${net.toFixed(2)} is ${pctOf(pct)} — matched ${best}.` };
+    return {
+      name: best,
+      reason: `GST of ${x.toFixed(2)} on ${net.toFixed(2)} is ${pctOf(pct)} — matched ${best}.`,
+      claimsTax: true,
+    };
   }
 
   // 3. Foreign-currency invoice whose rate isn't in our chart.
@@ -160,6 +229,7 @@ export function taxRateOutcome({
     return {
       name: noTax.name,
       reason: `A ${cur} document taxed at ${pctOf(pct)}, which isn't a rate in this chart — foreign GST isn't Singapore input tax, so nothing is claimed.`,
+      claimsTax: false,
     };
   }
 
@@ -180,6 +250,7 @@ export function taxRateOutcome({
         (hiddenHere
           ? "It isn't switched on in Business settings → Lists → Tax rates, so the picker won't offer it until it is."
           : 'No rule of this organisation\'s own covered the document.'),
+      claimsTax: true,
     };
   }
 
@@ -188,6 +259,7 @@ export function taxRateOutcome({
     return {
       name: '',
       reason: 'Left blank: no tax rates are visible for this organisation, so nothing could be matched. Check Business settings → Lists → Tax rates.',
+      claimsTax: false,
     };
   }
   const side = kind === 'sales' ? 'supplies' : 'purchases';
@@ -203,6 +275,7 @@ export function taxRateOutcome({
     reason:
       `Left blank: this document is taxed at ${pctOf(pct)}, and no standard-rated ${side} code at that rate is visible in ` +
       `Business settings → Lists → Tax rates.${alsoAt} At that percentage it could also be import GST or reverse charge, so it isn't guessed.`,
+    claimsTax: false,
   };
 }
 

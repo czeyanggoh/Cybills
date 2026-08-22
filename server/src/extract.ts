@@ -99,6 +99,16 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'The LAST 4 DIGITS of the payment card if shown anywhere (e.g. "Mastercard ...7849", "XXXX XXXX XXXX 7849", "card ending 7849"). Digits only, exactly 4. Empty string if no card number is shown (cash, unknown).',
       },
+      supplierGstRegNo: {
+        type: 'string',
+        description:
+          "The SUPPLIER's GST / tax registration number exactly as printed, e.g. \"GST Reg No: 201614382R\" → \"201614382R\", \"GST Registration No. M90370287L\" → \"M90370287L\", \"ABN 51 824 753 556\" → \"51 824 753 556\". Empty string when the document shows none. NEVER the BUYER's number — the bill-to party's registration, printed near its address, belongs to the customer, not the supplier. A company/UEN number not labelled as a tax or GST registration is not one either.",
+      },
+      taxLabel: {
+        type: 'string',
+        description:
+          'What the document CALLS the tax it charges, copied as printed — "GST", "GST 9%", "GST charged at 9%", "VAT", "Sales Tax", "SST", "Consumption Tax", "TVA". Empty string when it charges no tax. Copy the words; do not translate "VAT" into "GST".',
+      },
       lineItems: {
         type: 'array',
         description:
@@ -134,6 +144,8 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'description',
       'dueDate',
       'period',
+      'supplierGstRegNo',
+      'taxLabel',
       'cardLast4',
       'lineItems',
       ...(taxRateNames.length ? ['taxRate', 'taxRateReason'] : []),
@@ -157,6 +169,8 @@ const ReceiptSchema = z.object({
   dueDate: z.string().optional().default(''),
   period: z.string().optional().default(''),
   cardLast4: z.string().optional().default(''),
+  supplierGstRegNo: z.string().optional().default(''),
+  taxLabel: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
   taxRateReason: z.string().optional().default(''),
   project: z.string().optional().default(''),
@@ -331,6 +345,9 @@ extractRouter.post('/extract', async (req, res) => {
     'Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ' +
     'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
     'pick "Uncategorised" only when none reasonably fit. ' +
+    'Read `supplierGstRegNo` and `taxLabel` from the document exactly as printed. They decide whether the tax charged is Singapore GST a business may claim, ' +
+    'or a foreign tax it may not — a Thai invoice at 7% VAT and a Singapore one at 7% GST look identical in the numbers alone, and only the registration number and the wording tell them apart. ' +
+    'The registration number must be the SUPPLIER\'s, never the buyer\'s. ' +
     'If a field is not present, use an empty string or 0. ' +
     'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
     accountsGuide +
@@ -409,6 +426,8 @@ extractRouter.post('/extract', async (req, res) => {
       project,
       projectReason: project ? notFiller(parsed.data.projectReason) : '',
       dueDate,
+      supplierGstRegNo: notFiller(parsed.data.supplierGstRegNo),
+      taxLabel: notFiller(parsed.data.taxLabel),
       lineItems: parsed.data.lineItems.map((li) => ({ ...li, description: notFiller(li.description) })),
     };
     return res.json({ ok: true, data });
