@@ -1,14 +1,21 @@
 import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
-import { workspaceId, actor } from './workspace.js';
+import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
+import { orgIdFor } from './bills.js';
 import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
-import { getBillByIdAny, markBillsClaimed, unmarkBillsClaimed } from './store.js';
+import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed } from './store.js';
 
-// Server-backed expense claims, shared across the workspace (same JSON-store
-// pattern as bills). Replaces the old per-browser localStorage claim store, so
-// a claim one person creates/approves is visible to everyone.
+// Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
+// X-Org-Id scoping as bills). Replaces the old per-browser localStorage claim
+// store, so a claim one person creates/approves is visible to their colleagues
+// — but only inside the entity it belongs to.
+//
+// Claims were built when CYBills served one company, so they were scoped by the
+// constant workspace id and every entity saw the same list. `orgId` is the real
+// scope now; `workspaceId` stays on the record as the tenant it was created
+// under.
 
 type Txn = {
   itemId: string;
@@ -28,6 +35,9 @@ type Event = { text: string; by: string; at: string };
 type Claim = {
   id: string;
   workspaceId: string;
+  // The client entity whose book this claim belongs to. Matches a bill's orgId:
+  // the legacy WORKSPACE_ID scope for the primary org, 'org_…' for every other.
+  orgId: string;
   claimFor: string;
   type: string;
   name: string;
@@ -53,6 +63,11 @@ type Claim = {
   hrSentAmount: string;
   hrSentBy: string;
   hrRevision: number;
+  // Auto expense claims: set on a claim the schedule created (Manage Auto
+  // Expense claims), with the period end it was filed for. Only an OPEN auto
+  // claim for that exact period is topped up again, so re-running is idempotent.
+  auto?: boolean;
+  autoPeriodEnd?: string;
   // Xero handoff: set once the approved claim is posted as an ACCPAY bill.
   xeroInvoiceId?: string;
   xeroTenantName?: string;
@@ -61,12 +76,12 @@ type Claim = {
 
 // Exported so the Xero publish endpoint can load/persist a claim without
 // duplicating the collection name.
-export function getClaimForXero(ws: string, id: string): Claim | null {
-  return loadCollection<Claim>(COLLECTION).find((c) => c.id === id && c.workspaceId === ws && !c.deleted) ?? null;
+export function getClaimForXero(org: string, id: string): Claim | null {
+  return load().find((c) => c.id === id && c.orgId === org && !c.deleted) ?? null;
 }
-export function saveClaimXero(ws: string, id: string, patch: Partial<Pick<Claim, 'xeroInvoiceId' | 'xeroTenantName' | 'xeroPostedAt' | 'archived'>>): Claim | null {
-  const items = loadCollection<Claim>(COLLECTION);
-  const claim = items.find((c) => c.id === id && c.workspaceId === ws && !c.deleted);
+export function saveClaimXero(org: string, id: string, patch: Partial<Pick<Claim, 'xeroInvoiceId' | 'xeroTenantName' | 'xeroPostedAt' | 'archived'>>): Claim | null {
+  const items = load();
+  const claim = items.find((c) => c.id === id && c.orgId === org && !c.deleted);
   if (!claim) return null;
   Object.assign(claim, patch);
   saveCollection(COLLECTION, items);
@@ -74,19 +89,128 @@ export function saveClaimXero(ws: string, id: string, patch: Partial<Pick<Claim,
 }
 
 const COLLECTION = 'claims';
-const load = () => loadCollection<Claim>(COLLECTION);
 const save = (items: Claim[]) => saveCollection(COLLECTION, items);
+
+// Claims written before per-entity scoping carry no orgId. Read it off their own
+// items — a claim's transactions are bills, and a bill already knows its entity
+// — and fall back to the legacy scope for an empty claim or an item whose bill
+// is gone. Runs once: the backfilled ids are written straight back.
+let migrated = false;
+function load(): Claim[] {
+  const items = loadCollection<Claim>(COLLECTION);
+  if (migrated) return items;
+  migrated = true;
+  let changed = false;
+  for (const c of items) {
+    if (c.orgId) continue;
+    const fromItems = c.transactions.map((t) => billOrgId(String(t.itemId))).filter(Boolean);
+    c.orgId = fromItems[0] || WORKSPACE_ID;
+    changed = true;
+  }
+  if (changed) save(items);
+  return items;
+}
 const nowIso = () => new Date().toISOString();
 
 // The claim (if any) carrying this cost document. A document on a claim can't
 // also be published as a bill in its own right — the claim posts it — so the
 // Xero route asks here before publishing.
-export function claimForBill(ws: string, billId: string): { id: string; name: string } | null {
+export function claimForBill(org: string, billId: string): { id: string; name: string } | null {
   const key = String(billId);
   const claim = load().find(
-    (c) => c.workspaceId === ws && !c.deleted && c.transactions.some((t) => String(t.itemId) === key)
+    (c) => c.orgId === org && !c.deleted && c.transactions.some((t) => String(t.itemId) === key)
   );
   return claim ? { id: claim.id, name: claim.name } : null;
+}
+
+// Every bill id that already sits on a claim in this workspace. The auto-claim
+// runner asks once per sweep rather than per document, and it catches an item
+// whose bill status drifted out of 'expenseclaim' but which is still on a claim.
+export function claimedBillIds(org: string): Set<string> {
+  const out = new Set<string>();
+  for (const c of load()) {
+    if (c.orgId !== org || c.deleted) continue;
+    for (const t of c.transactions) out.add(String(t.itemId));
+  }
+  return out;
+}
+
+// File a set of items onto the auto claim for one person and one period,
+// creating that claim on first use. Called only by the auto-claim runner
+// (autoClaims.ts), which owns the schedule; this owns the claim shape, the
+// history line and finishing the documents, exactly as the manual add does.
+//
+// "Open" means: this person, this period end, still a draft (not submitted,
+// approved, archived or deleted). A claim that has moved on is never reopened —
+// a late item files onto a fresh claim for the same period instead.
+export function fileAutoClaim(
+  ws: string,
+  org: string,
+  f: { claimFor: string; periodEnd: string; periodLabel: string; name: string; txns: Txn[]; by: string }
+): { claimId: string; created: boolean; added: number } {
+  const items = load();
+  const key = f.claimFor.trim().toLowerCase();
+  let claim =
+    items.find(
+      (c) =>
+        c.orgId === org &&
+        !c.deleted &&
+        !c.archived &&
+        c.auto === true &&
+        c.autoPeriodEnd === f.periodEnd &&
+        c.approvalStatus === '' &&
+        c.claimFor.trim().toLowerCase() === key
+    ) ?? null;
+  const created = !claim;
+  if (!claim) {
+    claim = {
+      id: randomUUID(),
+      workspaceId: ws,
+      orgId: org,
+      claimFor: f.claimFor,
+      type: 'Regular',
+      name: f.name,
+      claimDate: f.periodEnd,
+      endDate: f.periodEnd,
+      currency: 'SGD',
+      transactions: [],
+      history: [{ text: `This expense claim was created automatically for the period ending ${f.periodLabel}`, by: f.by, at: nowIso() }],
+      approvalStatus: '',
+      approver: '',
+      approverEmail: '',
+      decidedBy: '',
+      decidedAt: '',
+      archived: false,
+      deleted: false,
+      createdBy: '',
+      createdAt: nowIso(),
+      hrSentAt: '',
+      hrSentAmount: '',
+      hrSentBy: '',
+      hrRevision: 0,
+      auto: true,
+      autoPeriodEnd: f.periodEnd,
+    };
+    items.push(claim);
+  }
+  const seen = new Set(claim.transactions.map((t) => String(t.itemId)));
+  const filed: string[] = [];
+  for (const t of f.txns) {
+    if (!t || seen.has(String(t.itemId))) continue;
+    claim.transactions.push({ ...t, addedBy: f.by });
+    seen.add(String(t.itemId));
+    filed.push(String(t.itemId));
+  }
+  // One history line for the batch: an auto claim can arrive with dozens of
+  // items, and a line each would bury the claim's real events.
+  if (filed.length) {
+    claim.history.unshift({ text: `${filed.length} item(s) added automatically`, by: f.by, at: nowIso() });
+  }
+  if (created || filed.length) save(items);
+  // Claiming finishes a document the same way the manual add does: out of the
+  // inbox, into Archive.
+  markBillsClaimed(filed);
+  return { claimId: claim.id, created, added: filed.length };
 }
 
 export const claimsRouter = Router();
@@ -100,15 +224,15 @@ function withDescriptions(c: Claim): Claim {
     ...c,
     transactions: c.transactions.map((t) => {
       if (t.description) return t;
-      const bill = getBillByIdAny(String(t.itemId));
+      const bill = getBillById(c.orgId, String(t.itemId));
       return bill?.description ? { ...t, description: bill.description } : t;
     }),
   };
 }
 
 claimsRouter.get('/', (req, res) => {
-  const ws = workspaceId(req);
-  res.json({ claims: load().filter((c) => c.workspaceId === ws && !c.deleted).map(withDescriptions) });
+  const org = orgIdFor(req);
+  res.json({ claims: load().filter((c) => c.orgId === org && !c.deleted).map(withDescriptions) });
 });
 
 // POST /api/claims — create a claim.
@@ -119,6 +243,7 @@ claimsRouter.post('/', (req, res) => {
   const claim: Claim = {
     id: randomUUID(),
     workspaceId: workspaceId(req),
+    orgId: orgIdFor(req),
     claimFor: owner,
     type: 'Regular',
     name: String(b.name || 'Expense claim'),
@@ -149,9 +274,9 @@ claimsRouter.post('/', (req, res) => {
 
 // Find + mutate one claim in the caller's workspace, then persist + return it.
 function mutate(req: Request, res: Response, fn: (claim: Claim, me: { email: string; name: string }) => Response | void) {
-  const ws = workspaceId(req);
+  const org = orgIdFor(req);
   const items = load();
-  const claim = items.find((c) => c.id === req.params.id && c.workspaceId === ws);
+  const claim = items.find((c) => c.id === req.params.id && c.orgId === org);
   if (!claim) return res.status(404).json({ error: 'not_found' });
   const early = fn(claim, actor(req));
   if (early) return early; // handler already responded (e.g. 403)
@@ -225,11 +350,28 @@ claimsRouter.post('/:id/items', (req, res) =>
   mutate(req, res, (claim, me) => {
     if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
     const incoming: Txn[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    // A document lives in one entity's book. Putting another entity's bill on
+    // this claim would carry its cost — and its supplier and description — into
+    // the wrong company's ledger. An item with no bill behind it at all (a
+    // sample/demo doc, which never reaches the store) is left alone.
+    const foreign = incoming.filter((t) => {
+      const org = billOrgId(String(t?.itemId ?? ''));
+      return org !== '' && org !== claim.orgId;
+    });
+    if (foreign.length) {
+      return res.status(409).json({
+        error: 'foreign_item',
+        message:
+          foreign.length === 1
+            ? 'That document belongs to another client entity, so it can’t go on this expense claim.'
+            : `${foreign.length} of those documents belong to another client entity, so they can’t go on this expense claim.`,
+      });
+    }
     // A document already published to Xero is in the ledger as a bill; putting
     // it on a claim would pay the same cost twice. Refuse the request rather
     // than quietly dropping the item — the person adding it needs to know.
     const published = incoming
-      .map((t) => getBillByIdAny(String(t?.itemId ?? '')))
+      .map((t) => getBillById(claim.orgId, String(t?.itemId ?? '')))
       .filter((b) => Boolean(b?.xeroInvoiceId));
     if (published.length) {
       return res.status(409).json({
@@ -397,9 +539,9 @@ claimsRouter.post('/:id/reject', (req, res) =>
 // export code as the download button), so the server just composes the message,
 // sends it, and records the send on the claim's history.
 claimsRouter.post('/:id/email', async (req, res) => {
-  const ws = workspaceId(req);
+  const org = orgIdFor(req);
   const me = actor(req);
-  const claim = load().find((c) => c.id === req.params.id && c.workspaceId === ws && !c.deleted);
+  const claim = load().find((c) => c.id === req.params.id && c.orgId === org && !c.deleted);
   if (!claim) return res.status(404).json({ error: 'not_found' });
 
   const toEmail = String(req.body?.toEmail || '').trim();
@@ -435,7 +577,7 @@ claimsRouter.post('/:id/email', async (req, res) => {
 
   // Audit trail: who mailed the claim, to whom.
   const items = load();
-  const stored = items.find((c) => c.id === claim.id && c.workspaceId === ws);
+  const stored = items.find((c) => c.id === claim.id && c.orgId === org);
   if (stored) {
     stored.history = stored.history || [];
     stored.history.unshift({ text: `This claim was emailed to ${toName} (${toEmail})`, by: me.name, at: nowIso() });

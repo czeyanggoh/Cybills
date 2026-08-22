@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ChevronDown, Search, Filter, Settings2, X, Send } from 'lucide-react';
+import { Plus, ChevronDown, Search, Filter, Settings2, X, Send, CalendarClock } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
+import AutoClaimsModal from '@/components/AutoClaimsModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate, isClaimArchived } from '@/lib/claimStore';
@@ -73,6 +74,7 @@ export default function ExpenseClaims() {
   const [newClaim, setNewClaim] = useState({ claimFor: '', endDate: '', name: '' });
   const [query, setQuery] = useState('');
   const [approveOpen, setApproveOpen] = useState(false);
+  const [autoOpen, setAutoOpen] = useState(false);
 
   // "2026-07-27" → "27 Jul 2026" to match the rest of the list.
   const submitCreate = async () => {
@@ -151,14 +153,27 @@ export default function ExpenseClaims() {
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold tracking-tight">Expense claims</h1>
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
-        >
-          <Plus className="h-4 w-4" strokeWidth={2} />
-          Create expense claim
-        </button>
+        <div className="flex items-center gap-2">
+          {/* The schedule is account-wide, so it's a Business Admin's to set. */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setAutoOpen(true)}
+              className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+            >
+              <CalendarClock className="h-4 w-4" strokeWidth={2} />
+              Auto expense claims
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowCreate(true)}
+            className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+          >
+            <Plus className="h-4 w-4" strokeWidth={2} />
+            Create expense claim
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -295,7 +310,15 @@ export default function ExpenseClaims() {
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{c.claimFor}</td>
                 <td className="px-3 py-3 text-muted-foreground">{c.type}</td>
-                <td className="px-3 py-3">{c.name}</td>
+                <td className="px-3 py-3">
+                  {c.name}
+                  {/* Say plainly which claims nobody assembled by hand. */}
+                  {c.auto && (
+                    <span className="ml-2 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Auto
+                    </span>
+                  )}
+                </td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{formatClaimDate(c.endDate)}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
                   <span className="text-xs text-muted-foreground">SGD </span>{c.total}
@@ -380,6 +403,8 @@ export default function ExpenseClaims() {
           </div>
         </div>
       )}
+
+      <AutoClaimsModal open={autoOpen} onClose={() => setAutoOpen(false)} />
 
       <ClaimApprovalModal
         open={approveOpen}

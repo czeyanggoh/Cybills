@@ -37,6 +37,7 @@ import {
   formatClaimDate,
   toIsoClaimDate,
 } from '@/lib/claimStore';
+import { costPath } from '@/lib/bills';
 import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
 import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
@@ -617,7 +618,7 @@ export default function ExpenseClaimDetail() {
                 {displayRows.map((t) => (
                   <tr
                     key={t.itemId}
-                    onClick={() => navigate(`/costs/${t.itemId}`)}
+                    onClick={() => navigate(costPath(t.itemId))}
                     className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
                   >
                     <td className={densityClass} onClick={(e) => e.stopPropagation()}>

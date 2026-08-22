@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -11,6 +11,7 @@ import {
   Info,
   Trash2,
   AlertTriangle,
+  Layers,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -23,10 +24,11 @@ import { useCategoryOptions, useVisibleTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
-import { updateBill, deleteBill, notifyBillsChanged, displayItemId, scanDuplicates } from '@/lib/bills';
+import { updateBill, deleteBill, notifyBillsChanged, displayItemId, costPath, scanDuplicates } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
+import { findMergeCandidates } from '@/lib/mergeDetect';
 import MergeModal from '@/components/MergeModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
@@ -160,6 +162,22 @@ function Dropdown({ label, disabled = false, items }) {
   );
 }
 
+// How a detected merge suggestion reads to the reviewer. The two kinds are
+// genuinely different findings, so they are not described with one wording:
+// pages are one document arriving in halves, a payment pair is one transaction
+// papered twice.
+function describeMergeGroup(g) {
+  const n = g.docs.length;
+  return g.kind === 'pages'
+    ? `${n} uploads look like parts of ONE document (${g.why}).`
+    : 'A receipt and its card slip look like the same payment (the same total, from two different documents).';
+}
+
+// The short badge shown on a row that belongs to a suggestion.
+function mergeBadgeLabel(g) {
+  return g.kind === 'pages' ? 'Part of another document' : 'Receipt + card slip';
+}
+
 // Left-hand toolbar actions differ per tab (mirrors Dext). `a` holds the wired
 // bulk-action handlers; all operate on the current selection.
 function ToolbarActions({ tab, hasSelection, canMerge, a }) {
@@ -168,9 +186,15 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       Merge
     </ToolbarButton>
   );
-  // Always enabled — scans every doc in the view for likely merges (no selection
-  // needed) and opens the review modal on what it finds.
-  const scanBtn = <ToolbarButton onClick={a.scanMerges}>Scan for merges</ToolbarButton>;
+  // Detection runs on its own over the whole inbox, so this button reports what
+  // has already been found rather than starting a search: it opens the review
+  // modal on the first suggestion. It stays enabled with none outstanding so it
+  // can say so.
+  const scanBtn = (
+    <ToolbarButton onClick={a.scanMerges}>
+      {a.mergeCount > 0 ? `Merge suggestions (${a.mergeCount})` : 'Scan for merges'}
+    </ToolbarButton>
+  );
   // Re-checks documents already in the list — the read-time check only ever saw
   // the documents that existed when each one was uploaded.
   const dupBtn = <ToolbarButton onClick={a.scanDuplicates}>Scan for duplicates</ToolbarButton>;
@@ -532,6 +556,22 @@ export default function Costs() {
               <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Possible duplicate
             </button>
           )}
+          {mergeGroupFor.has(d.id) && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const g = mergeGroupFor.get(d.id);
+                setSelected(new Set(g.docs.map((x) => x.id)));
+                setMergeNote(`${describeMergeGroup(g)} Review the combined result and confirm below.`);
+                setMergeModalDocs(g.docs);
+              }}
+              title={`${describeMergeGroup(mergeGroupFor.get(d.id))} Open the merge review for all ${mergeGroupFor.get(d.id).docs.length}.`}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20"
+            >
+              <Layers className="h-3 w-3" strokeWidth={2} /> {mergeBadgeLabel(mergeGroupFor.get(d.id))}
+            </button>
+          )}
         </div>
       ),
     },
@@ -653,6 +693,19 @@ export default function Costs() {
   const flaggedDocs = allDocs.filter(
     (d) => isInInbox(d) && d.duplicateOfId && !d.duplicateDismissed && docById.has(d.duplicateOfId)
   );
+
+  // Merge detection, run over the whole inbox whenever the documents change —
+  // the reviewer is TOLD which uploads are really one document rather than
+  // having to suspect it and go looking. Nothing is combined here: a suggestion
+  // is a badge on the row and an entry in the toolbar, and every merge still
+  // goes through the review modal.
+  const mergeGroups = useMemo(() => findMergeCandidates(rowsFor(allDocs, 'inbox')), [allDocs]);
+  // Row id -> the suggestion it belongs to, so a row can offer its own merge.
+  const mergeGroupFor = useMemo(() => {
+    const m = new Map();
+    mergeGroups.forEach((g) => g.docs.forEach((d) => m.set(d.id, g)));
+    return m;
+  }, [mergeGroups]);
   // Ids → { duplicate, original } for the review panes; a pair whose other half
   // has since been deleted or cleared simply drops out.
   const dupPairs = (dupIds || [])
@@ -833,55 +886,20 @@ export default function Costs() {
     setMergeModalDocs(docs);
   };
 
-  // Scan the view for the SAME transaction captured as separate uploads — e.g.
-  // an itemised merchant receipt + its card-payment slip. Those share the TOTAL
-  // AMOUNT and the DATE, so group on those. Merging keeps one grand total (not
-  // the sum), so a same-amount pair reconciles correctly. Opens the review modal
-  // on the first set; nothing merges until you confirm. Scan again for the next.
-  const scanForMerges = () => {
-    const norm = (s) => String(s ?? '').trim().toLowerCase();
-    const amt = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
-    const last4 = (d) => (String(d.cardLast4 ?? '').match(/\d{4}/) || [''])[0];
-    // Inbox only, whatever tab you're standing on: an archived or claimed
-    // document is settled, and merging two of them changes nothing anyone is
-    // still working on. Merging archived documents by hand still works — pick
-    // them and press Merge.
-    const docs = rowsByTab.inbox.filter((d) => d.persisted && d.hasFile);
-    // Group by TOTAL only — it's the one field reliable across an itemised
-    // receipt and its card slip. Their dates and suppliers differ (merchant vs
-    // card issuer), and extraction can misread the date on one half, so matching
-    // on date is unreliable.
-    const byTotal = new Map();
-    for (const d of docs) {
-      const total = amt(d.total);
-      if (total <= 0) continue;
-      const key = total.toFixed(2);
-      if (!byTotal.has(key)) byTotal.set(key, []);
-      byTotal.get(key).push(d);
-    }
-    const found = [...byTotal.values()].filter((g) => {
-      if (g.length < 2) return false;
-      // Receipt + card slip = same total but DIFFERENT suppliers. All-same-
-      // supplier groups are DUPLICATES of one document, not a pair — leave those
-      // alone (delete one instead of merging).
-      const suppliers = new Set(g.map((d) => norm(d.supplier)).filter(Boolean));
-      if (suppliers.size < 2) return false;
-      // If both carry a card number it must match — a shared card confirms one
-      // payment; two different cards means two different transactions.
-      const cards = new Set(g.map(last4).filter(Boolean));
-      return cards.size <= 1;
-    });
-    if (!found.length) {
-      setMergeNote('Scanned the inbox — no receipt + card-slip pairs found (same total, different documents, no conflicting card).');
+  // Open the review modal on the next outstanding suggestion. Detection itself
+  // runs continuously over the inbox (see `mergeGroups`) — this is the way in
+  // when you would rather work through them from the toolbar than click a badge.
+  const openNextMergeSuggestion = () => {
+    if (!mergeGroups.length) {
+      setMergeNote(
+        'Nothing in the inbox looks like two halves of one document, or a receipt with its card slip. To combine documents anyway, select them and press Merge.',
+      );
       return;
     }
-    setSelected(new Set(found[0].map((d) => d.id)));
-    setMergeNote(
-      found.length === 1
-        ? 'Found a receipt + card-slip pair for the same transaction (same total) — review the combined result and confirm below.'
-        : `Found ${found.length} possible receipt + card-slip pairs — review the first below, then Scan again for the next.`
-    );
-    setMergeModalDocs(found[0]);
+    const g = mergeGroups[0];
+    setSelected(new Set(g.docs.map((d) => d.id)));
+    setMergeNote(`${describeMergeGroup(g)} Review the combined result and confirm below.`);
+    setMergeModalDocs(g.docs);
   };
 
   // Confirm from the modal: create the combined cost and move the originals to
@@ -923,7 +941,8 @@ export default function Costs() {
     addClaim: () => hasSelection && setClaimOpen(true),
     exportCsv: () => setExportOpen(true),
     merge: mergeSelected,
-    scanMerges: scanForMerges,
+    scanMerges: openNextMergeSuggestion,
+    mergeCount: mergeGroups.length,
     scanDuplicates: runDuplicateScan,
     reviewDuplicates: () => setDupIds(flaggedDocs.map((d) => d.id)),
     dupCount: flaggedDocs.length,
@@ -1059,7 +1078,7 @@ export default function Costs() {
                 {rows.map((d) => (
                   <tr
                     key={d.id}
-                    onClick={() => navigate(`/costs/${d.id}`)}
+                    onClick={() => navigate(costPath(d.id))}
                     className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
                   >
                     <td className={cn('sticky left-0 z-10 bg-background', densityClass)} onClick={(e) => e.stopPropagation()}>

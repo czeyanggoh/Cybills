@@ -16,7 +16,11 @@ import { useEffect, useState } from 'react';
 
 const jobs = new Map(); // document id -> job
 export const EXTRACTION_JOB_EVENT = 'cybills:extraction-job-changed';
-const emit = () => window.dispatchEvent(new Event(EXTRACTION_JOB_EVENT));
+// Guarded so the registry is exercisable outside a browser (test/), where the
+// subscription half simply has nothing to notify.
+const emit = () => {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(EXTRACTION_JOB_EVENT));
+};
 
 // Start a read for a document, unless one is already running for it — two reads
 // of the same document would race each other's writes, and the second answer
