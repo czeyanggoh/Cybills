@@ -9,6 +9,7 @@
 // facts that live outside the row (which documents are flagged, what the org's
 // own currency is) arrive as context.
 import { docFacts, statesNothing } from './mergeDetect.js'; // relative so the rules can be tested under plain node
+import { isReady, needsReview } from './readiness.js';
 
 const text = (v) => String(v ?? '').trim();
 const has = (v) => text(v) !== '' && text(v) !== '—';
@@ -42,8 +43,9 @@ export const COST_FILTERS = {
   status: {
     label: 'Status',
     options: [
-      { value: 'ready', label: 'Ready', test: (d) => d.status === 'ready' },
-      { value: 'review', label: 'To review', test: (d) => d.status === 'review' },
+      { value: 'ready', label: 'Ready', test: isReady },
+      // Derived, exactly as the tab is: a document waiting on a person.
+      { value: 'review', label: 'To review', test: needsReview },
     ],
   },
   tax: pair('Tax', 'With tax', 'Without tax', (d) => num(d.tax) > 0),

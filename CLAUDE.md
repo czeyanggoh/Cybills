@@ -245,9 +245,17 @@ the tab shows.
 Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
 field, set on the document or across a selection in Bulk edit; readiness is
 derived, so a "Move to ready" button could only ever agree with the server or
-be overruled by it a moment later. Nothing now writes the `review` status, so
-the To review tab is only ever empty (it can be hidden in Business settings →
-Inbox tabs).
+be overruled by it a moment later.
+
+**Ready and To review are both derived, and between them they are the whole
+inbox.** `src/lib/readiness.js` (pure, tested by `npm test`) decides from the
+document, never from its stored status: a cost carrying a Supplier, Date,
+Category and a Total above 0 is Ready; every other inbox document is waiting on
+a person — most often for the account code the reader could not choose. To
+review used to be a STATUS only the toolbar could write, so a document needing
+attention landed there only if somebody had already noticed it and pressed the
+button. Rows in To review wear a **"Needs: …"** badge naming the missing fields
+(`missingFields`), except where "Nothing read" already says it better.
 
 Two rules run through all of them:
 

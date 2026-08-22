@@ -43,7 +43,7 @@ import { findMergeCandidates, docFacts, statesNothing } from '@/lib/mergeDetect'
 import MergeModal from '@/components/MergeModal';
 import BulkEditModal from '@/components/BulkEditModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
-import { useCostsDocs, rowsFor, isInInbox, isComplete } from '@/lib/costsData';
+import { useCostsDocs, rowsFor, isInInbox, isComplete, needsReview, missingFields } from '@/lib/costsData';
 import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
@@ -587,6 +587,18 @@ export default function Costs() {
             >
               <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Possible duplicate
             </button>
+          )}
+          {/* What the reader could not decide, on the row that is waiting for
+              it — a document sitting in To review with no reason shown is just
+              a document you have to open to find out about. Suppressed on a
+              blank read, where the badge below says it better. */}
+          {needsReview(d) && !statesNothing(docFacts(d)) && (
+            <span
+              title="The reader could not fill these in. Open the document and supply them — it moves to Ready by itself once they are there."
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700"
+            >
+              Needs: {missingFields(d).join(', ')}
+            </span>
           )}
           {isInInbox(d) && statesNothing(docFacts(d)) && (
             <span
@@ -1265,8 +1277,10 @@ export default function Costs() {
                 <span className="font-medium text-foreground">Supplier</span>,{' '}
                 <span className="font-medium text-foreground">Date</span>,{' '}
                 <span className="font-medium text-foreground">Category</span>, and a{' '}
-                <span className="font-medium text-foreground">Total</span> above 0. While any of those is missing it stays
-                in the <span className="font-medium text-foreground">Inbox</span> to review — no manual “Move to ready” needed.
+                <span className="font-medium text-foreground">Total</span> above 0. While any of those is missing — an
+                account code the reader could not decide, most often — it waits in{' '}
+                <span className="font-medium text-foreground">To review</span> for you to supply it. Both tabs fill
+                themselves; there is nothing to move by hand.
               </span>
             </div>
           )}
