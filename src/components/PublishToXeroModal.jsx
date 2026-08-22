@@ -7,6 +7,7 @@ import {
   fetchXeroTaxRates,
   publishBillToXero,
 } from '@/lib/organisations';
+import { lineItemsPostable } from '@/lib/bills';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import ComboSelect from '@/components/ComboSelect';
@@ -28,6 +29,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   const [error, setError] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [done, setDone] = useState(null); // { invoiceNumber, status }
+  const [postedLines, setPostedLines] = useState(0); // how many lines actually went up
   // Whether the document's own file made it onto the Xero bill. Reported rather
   // than swallowed: a bill in the ledger without its paper is worth knowing
   // about at the moment it happens, not weeks later in an audit.
@@ -140,6 +142,13 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
 
   if (!open) return null;
 
+  // What the document's own line items will do on the way up — the server posts
+  // them as the bill's lines when they are provably the same money as the
+  // document, and one summary line when they aren't. Said here, before the
+  // button, because losing a breakdown you can see on screen is a bad surprise.
+  const lines = lineItemsPostable(bill?.lineItems, bill?.total, bill?.tax);
+  const money = (v) => `${bill?.currency || ''} ${(Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0).toFixed(2)}`.trim();
+
   const loadingRefs = organisationId && (accounts === null || taxRates === null);
   const canPublish = Boolean(organisationId && accountCode && taxType && !publishing && !done);
   const organisation = organisations.find((o) => o.id === organisationId);
@@ -156,6 +165,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
         dueDate: dueDate || undefined,
       });
       setDone(result.invoice);
+      setPostedLines(Number(result.lines) || 0);
       setAttachment(result.attachment ?? null);
       onPublished?.(result);
     } catch (err) {
@@ -190,7 +200,8 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
             <p className="text-sm">
               Posted to <span className="font-medium">{organisation?.tenantName || 'Xero'}</span> as
               a {done.status === 'DRAFT' ? 'draft ' : ''}bill
-              {done.invoiceNumber ? ` (${done.invoiceNumber})` : ''}.
+              {done.invoiceNumber ? ` (${done.invoiceNumber})` : ''}
+              {postedLines > 1 ? `, as ${postedLines} line items` : ''}.
             </p>
             {attachment?.ok && (
               <p className="text-xs text-muted-foreground">The document is attached to it under Related Files.</p>
@@ -216,6 +227,31 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                 Posts <span className="font-medium text-foreground">{bill?.supplier || 'this document'}</span>
                 {bill?.total ? ` · ${bill.currency || ''} ${bill.total}` : ''} as a supplier bill.
               </p>
+
+              {lines.rows > 0 &&
+                (lines.postable ? (
+                  <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    As <span className="font-medium text-foreground">{lines.rows} line items</span>, each with its own
+                    account{lines.hasProjects ? ' and project' : ''} — they add up to the document&rsquo;s total.
+                  </p>
+                ) : (
+                  <p className="rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {lines.reason === 'tax' ? (
+                      <>
+                        The {lines.rows} line items&rsquo; tax doesn&rsquo;t add up to this document&rsquo;s tax, so
+                        they&rsquo;ll post as <span className="font-medium">one summary line</span>. Fix the Tax column
+                        to post them individually.
+                      </>
+                    ) : (
+                      <>
+                        The {lines.rows} line items add up to {money(lines.linesTotal)}, not {money(bill?.total)} — out
+                        by {money(Math.abs(lines.outBy))}. They&rsquo;ll post as{' '}
+                        <span className="font-medium">one summary line</span> until that&rsquo;s fixed, so the bill in
+                        Xero still shows the document&rsquo;s own total.
+                      </>
+                    )}
+                  </p>
+                ))}
 
               {organisations.length === 0 ? (
                 <p className="text-sm text-destructive">

@@ -171,6 +171,36 @@ export async function fetchExtractLines(imageBase64, mediaType, accounts) {
   return data ?? null;
 }
 
+// Will this document's line items reach Xero as themselves? Mirrors the rule
+// the publish path enforces server-side (`perLineItems` in server/src/xero.ts,
+// which is the authority): the rows must add up to the document's total, and
+// their tax must add up to its tax — or carry no tax at all, in which case a
+// single stated GST figure is apportioned across them. This is here so the
+// publish dialog can say which of the two will happen BEFORE anyone presses the
+// button; a bill quietly losing its breakdown is the surprise worth avoiding.
+export function lineItemsPostable(lineItems, total, tax) {
+  const rows = Array.isArray(lineItems) ? lineItems : [];
+  const c = (v) => Math.round((Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0) * 100);
+  const linesTotal = rows.reduce((t, r) => t + (c(r.total) || c(r.net) + c(r.tax)), 0);
+  const billTotal = c(total);
+  const billTax = c(tax);
+  const rowTax = rows.reduce((t, r) => t + c(r.tax), 0);
+  const out = {
+    rows: rows.length,
+    linesTotal: linesTotal / 100,
+    outBy: (billTotal - linesTotal) / 100,
+    hasProjects: rows.some((r) => String(r.project || '').trim() || String(r.project2 || '').trim()),
+    postable: false,
+    reason: '',
+  };
+  if (!rows.length) return { ...out, reason: 'no-rows' };
+  if (linesTotal !== billTotal) return { ...out, reason: 'total' };
+  // Rows carrying SOME tax that isn't the document's is a disagreement, not a
+  // gap to fill — only "the document states one GST figure" is recoverable.
+  if (rowTax !== billTax && (rowTax !== 0 || billTax === 0)) return { ...out, reason: 'tax' };
+  return { ...out, postable: true };
+}
+
 // Turn the reader's line items into the editable rows a bill stores: amounts as
 // fixed-2 strings, and a category on every row (the document's own when the
 // reader didn't code that line). Used by the manual "Extract line items" button
