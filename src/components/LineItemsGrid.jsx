@@ -98,7 +98,7 @@ export function LineItemsGrid({
                     <LineProjectSelect
                       value={li.project || ''}
                       options={lineProjects}
-                      placeholder={docProject ? `${docProject} (document)` : 'None'}
+                      placeholder={docProject ? 'Same as document' : 'None'}
                       onChange={(v) => onUpdate(i, { project: v })}
                     />
                   </td>

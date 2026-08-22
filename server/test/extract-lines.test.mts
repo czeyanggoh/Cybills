@@ -64,6 +64,11 @@ const call = async () => {
         { code: '315', name: 'Outlet Laundry', description: 'Laundry services for outlets' },
         { code: '313A', name: 'Outlet Rental', description: 'Outlet rent' },
       ],
+      projects: [
+        { name: 'Tangs', rules: 'Tangs Plaza outlet' },
+        { name: 'Vivo City', rules: '' },
+        { name: 'Four Seasons', rules: '' },
+      ],
     }),
   });
   return { status: res.status, body: await res.json() };
@@ -192,6 +197,31 @@ answers = [answer({ grandTotal: 109.01, subTotal: 100.01, taxTotal: 9, lines: [l
 r = await call();
 check('indivisible GST sums to the printed figure', Math.round(r.body.data.lines.reduce((t: number, l: any) => t + l.tax * 100, 0)) / 100, 9);
 check('indivisible GST: rows reach the grand total', r.body.data.linesTotal, 109.01);
+
+// 11) Per-line projects: the reader is given the org's tracking options and its
+//     answer is kept per row, so one invoice can bill three outlets.
+calls = [];
+answers = [answer({
+  grandTotal: 545, subTotal: 500, taxTotal: 45,
+  lines: [
+    { ...line('Alternate Service (Tangs Plaza #04-04)', 270), project: 'Tangs' },
+    { ...line('Additional bag 01/06/26', 30), project: 'Tangs' },
+    { ...line('Alternate Service (Vivo City #01-06/07)', 150), project: 'Vivo City' },
+    { ...line('Chemical wash', 25), project: 'Vivo City' },
+    { ...line('Sundry', 25), project: '' },
+  ],
+})];
+r = await call();
+check('per-line projects kept', r.body.data.lines.map((l: any) => l.project), ['Tangs', 'Tangs', 'Vivo City', 'Vivo City', '']);
+check('the options are offered to the reader', calls[0].instructions.includes('PER-LINE PROJECT'), true);
+check('a section heading governs the rows under it', calls[0].instructions.includes('until the next heading'), true);
+
+// 12) A project the org doesn't have is no project — the line follows the
+//     document rather than carrying something Xero would reject.
+calls = [];
+answers = [answer({ grandTotal: 100, lines: [{ ...line('A', 100), project: 'Somewhere else' }] })];
+r = await call();
+check('unknown project dropped', r.body.data.lines[0].project, '');
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 server.close();
