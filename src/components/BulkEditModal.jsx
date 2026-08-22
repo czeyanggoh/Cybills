@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import ComboSelect from '@/components/ComboSelect';
-import { useUsers } from '@/lib/userStore';
+import { useUsers, getDirectory } from '@/lib/userStore';
 import {
   useXeroSuppliers,
   useXeroCustomers,
@@ -31,7 +31,7 @@ const FIELDS = [
   { key: 'customer', label: 'Customer', kind: 'combo', source: 'customers' },
   { key: 'currency', label: 'Currency', kind: 'text' },
   { key: 'note', label: 'Note', kind: 'text' },
-  { key: 'createdBy', label: 'User', kind: 'select', source: 'users' },
+  { key: 'owner', label: 'User', kind: 'select', source: 'users' },
 ];
 
 export default function BulkEditModal({
@@ -52,7 +52,13 @@ export default function BulkEditModal({
   const customers = useXeroCustomers();
   const paymentMethods = useXeroPaymentMethods().map((m) => m.label);
   const projects = useXeroProjectOptions();
-  const users = useUsers();
+  const roster = useUsers();
+  // Rebuilt whenever the roster changes, which is when the directory does too.
+  const people = useMemo(() => {
+    const dir = getDirectory();
+    const seen = new Set(dir.map((p) => String(p.email).toLowerCase()));
+    return [...dir, ...roster.filter((u) => u.email && !seen.has(String(u.email).toLowerCase()))];
+  }, [roster]);
 
   // Fresh every time it opens — a bulk edit is never meant to be "still armed"
   // from the last selection.
@@ -71,14 +77,16 @@ export default function BulkEditModal({
       projects,
       categories: categoryOptions,
       taxRates: taxRateOptions,
-      users: users.map((u) => u.email).filter(Boolean),
+      // The people who can OWN a document: this entity's own plus the
+      // practice colleagues working on it, who are on no client's roster.
+      users: people.map((u) => u.email).filter(Boolean),
     }),
-    [suppliers, customers, paymentMethods, projects, categoryOptions, taxRateOptions, users]
+    [suppliers, customers, paymentMethods, projects, categoryOptions, taxRateOptions, people]
   );
   const userLabel = useMemo(() => {
-    const byEmail = new Map(users.map((u) => [u.email, u.name || u.email]));
+    const byEmail = new Map(people.map((u) => [u.email, u.name || u.email]));
     return (email) => byEmail.get(email) || email;
-  }, [users]);
+  }, [people]);
 
   if (!open) return null;
 

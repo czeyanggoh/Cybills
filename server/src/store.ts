@@ -48,7 +48,12 @@ export type Bill = {
     total: string;
   }>;
   createdAt: string; // ISO timestamp
-  createdBy: string; // signed-in email, or '' in mock mode
+  createdBy: string; // signed-in email of whoever UPLOADED it, or '' in mock mode
+  // The document's owner — the person the User column names and the Document
+  // owner field sets. Always an email, and separate from createdBy: an owner
+  // can be reassigned, but who uploaded a document is a fact that shouldn't be
+  // overwritten by doing so. Empty means "follow createdBy".
+  owner?: string;
   storageKey: string; // storage key for the original file (r2:/local: prefixed), or ''
   contentType: string; // MIME type of the stored file, or ''
   status: string; // workflow state: 'new' (inbox) | 'ready' | 'archived' | 'merged'
@@ -175,7 +180,14 @@ function load(): Bill[] {
 }
 
 // Atomic write: tmp file + rename, so a crash mid-write can't truncate the data.
+// Bumped on every write. Lets a caller skip work that only matters when the
+// book has actually changed — the automatic duplicate scan reads it, so a
+// listing that changed nothing costs nothing.
+let revision = 0;
+export const bookRevision = (): number => revision;
+
 function persist(bills: Bill[]): void {
+  revision += 1;
   mkdirSync(DATA_DIR, { recursive: true });
   const tmp = `${DATA_FILE}.tmp`;
   writeFileSync(tmp, JSON.stringify({ bills }, null, 2));
@@ -551,6 +563,7 @@ export function sweepStuckProcessing(orgId: string): void {
 
 // Fields a client is allowed to edit on an existing bill.
 const EDITABLE: (keyof Bill)[] = [
+  'owner',
   'supplier',
   'invoiceNumber',
   'documentType',

@@ -197,6 +197,35 @@ export function orgScope(req: Request): string {
 
 const inOrg = (u: User, org: string) => (u.organisationId || '') === org;
 
+// --- Who can own a document here ---------------------------------------------
+// Attribution is not the roster. The Users page is one client entity's own
+// people (`!u.practice`), which is right for managing them — but a document in
+// that entity is very often uploaded by a COLLEAGUE working on it, and a name
+// the app cannot resolve falls back to the raw email local-part ("czeyang.goh"
+// next to "Cze Yang Goh", the same person twice). So the directory below is the
+// wider set: the entity's people PLUS the practice colleagues with access to
+// it. Names and emails only, and only for an entity the caller can open.
+export function peopleForOrg(ws: string, org: string): Array<{ email: string; name: string }> {
+  return ensure(ws)
+    .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org))))
+    .filter((u) => Boolean(u.email))
+    .map((u) => ({ email: u.email, name: u.name || u.email }));
+}
+
+// Resolve whatever a caller called a person — their email, or the display name
+// an older document stored — to the ONE email that identifies them. '' when
+// nobody matches, or when a name is ambiguous: a guess here mislabels a
+// document, and the field is better left following the uploader.
+export function emailForPerson(ws: string, org: string, value: string): string {
+  const want = norm(value);
+  if (!want) return '';
+  const people = peopleForOrg(ws, org);
+  const byEmail = people.find((p) => norm(p.email) === want);
+  if (byEmail) return byEmail.email;
+  const byName = people.filter((p) => norm(p.name) === want);
+  return byName.length === 1 ? byName[0].email : '';
+}
+
 // Whose row the caller can act on from where. A client entity's people are
 // reachable from that entity; your own row is always reachable (editing your
 // profile can't depend on which client you have open); and a colleague's row
@@ -653,6 +682,13 @@ export const usersRouter = Router();
 // options) instead of showing every entity's staff in one list. Practice
 // colleagues are deliberately absent: they aren't this client's employees, they
 // work across clients, and they have their own roster at /api/practice.
+// GET /api/users/directory — every person who could own a document in the
+// entity the caller has open, as { email, name }. Deliberately separate from
+// GET / (the roster), which is client employees only.
+usersRouter.get('/directory', (req, res) => {
+  res.json({ people: peopleForOrg(workspaceId(req), orgScope(req)) });
+});
+
 usersRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
   const org = orgScope(req);

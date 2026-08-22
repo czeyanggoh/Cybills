@@ -24,10 +24,10 @@ import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
-import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useXeroProjectOptions } from '@/lib/organisations';
+import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
-import { useUsers } from '@/lib/userStore';
+import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, displayItemId, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
@@ -186,8 +186,11 @@ export default function CostDetail() {
   const { visionEnabled, user } = useAuth();
   const readerName = useReaderName();
   const teamUsers = useUsers();
+  // Who this document can belong to: the entity's own people AND the practice
+  // colleagues with access to it, which is who actually uploads most of them.
+  const ownerNames = useOwnerNames();
   const ownerOptions = Array.from(
-    new Set([user?.name || user?.email, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
+    new Set([user?.name || user?.email, ...ownerNames, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
   );
   const categoryOptions = useCategoryOptions();
   const catMode = useCategoryDisplayMode();
@@ -211,6 +214,9 @@ export default function CostDetail() {
   // settings → Lists → Tax rates: the live Xero rates (seed fallback), showing
   // only the rates left Visible there. `rateFor` gives the % for the tax math.
   const taxRateSource = useVisibleTaxRates();
+  // The unfiltered list too: a code switched off in Lists is still the standard
+  // one for its rate, and this is how the org's own name for it is found.
+  const allTaxRates = useManagedTaxRates();
   // Not GST-registered → every document codes to No Tax and no GST is split out,
   // and the picker offers nothing else.
   const gstRegistered = useGstRegistered();
@@ -404,7 +410,7 @@ export default function CostDetail() {
   const SERVER_FIELDS = {
     supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
-    taxRate: 'taxRate', taxRateReason: 'taxRateReason', description: 'description', user: 'createdBy',
+    taxRate: 'taxRate', taxRateReason: 'taxRateReason', description: 'description', user: 'owner',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
     customer: 'customer', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
     dueDate: 'dueDate',
@@ -828,6 +834,7 @@ export default function CostDetail() {
       } = readDecisions(data, ex, {
         gstRegistered,
         taxRates: taxRateSource,
+        allTaxRates,
         defaultTaxRateCosts: extractionSettings.defaultTaxRateCosts,
         accounts,
       });
@@ -842,7 +849,10 @@ export default function CostDetail() {
         categoryReason: categoryReason || d.categoryReason,
         customer: rule.customer || d.customer,
         total: ex.total != null ? String(ex.total) : d.total,
-        tax: !gstRegistered ? '0.00' : ex.tax != null ? String(ex.tax) : d.tax,
+        // Exactly what was SAVED — 0 when the document's tax isn't Singapore
+        // GST this business can claim — so the form and the stored bill can't
+        // disagree. Untouched when the read didn't decide the tax at all.
+        tax: patch.tax != null ? Number(patch.tax).toFixed(2) : d.tax,
         taxRate: rule.taxRate || d.taxRate || inferredRate,
         taxRateReason: rule.taxRate
           ? `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`

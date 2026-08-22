@@ -17,7 +17,7 @@ import {
   VISION_MEDIA,
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
-import { getExtractionAccounts, useVisibleTaxRates } from '@/lib/organisations';
+import { getExtractionAccounts, useVisibleTaxRates, useManagedTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { autoPublishAfterRead, xeroBillUrl } from '@/lib/autoPublish';
 import { getCustomerRule } from '@/lib/customerRules';
@@ -28,7 +28,7 @@ import {
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
 import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome } from '@/lib/extractionSettings';
-import { useUsers } from '@/lib/userStore';
+import { useUsers, useOwnerNames } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
@@ -294,6 +294,8 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const users = useUsers();
   const settings = useExtractionSettings();
   const visibleTaxRates = useVisibleTaxRates();
+  // Unfiltered too — a switched-off code is still the standard one for its rate.
+  const allTaxRates = useManagedTaxRates();
   const gstRegistered = useGstRegistered();
   const [tab, setTab] = useState('Costs');
   const [items, setItems] = useState([]);
@@ -312,8 +314,11 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   useEffect(() => {
     if (!ownerTouched.current && meName) setOwner(meName);
   }, [meName]);
+  // The entity's own people AND the practice colleagues with access to it —
+  // a colleague uploading for a client is the common case, not the exception.
+  const ownerNames = useOwnerNames();
   const ownerOptions = Array.from(
-    new Set([meName, ...users.map((u) => u.name || u.email)].filter(Boolean))
+    new Set([meName, ...ownerNames, ...users.map((u) => u.name || u.email)].filter(Boolean))
   );
 
   // Default the tab to the workspace the drawer was opened from (Sales page →
@@ -348,6 +353,9 @@ export default function AddDocumentsDrawer({ open, onClose }) {
     const applyExtractionDefaults = async (billId, cur, extracted = null, file = null) => {
       if (isStatement) return cur;
       const p = {};
+      // Set by the tax-rate decision below: false when the tax on the document
+      // isn't Singapore GST this business can claim.
+      let claimsTax = true;
       const defRate = kind === 'sales' ? settings.defaultTaxRateSales : settings.defaultTaxRateCosts;
       // Tax rate: a rule the extractor matched, else the arithmetic fallback
       // (standard-rated vintages / No Tax only), else the configured default.
@@ -362,6 +370,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           total: cur?.total,
           tax: cur?.tax,
           rates: visibleTaxRates,
+          allRates: allTaxRates,
           suggested: cur?.taxRate || extracted?.taxRate,
           gstRegistered,
           defaultName: defRate,
@@ -369,14 +378,20 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           kind,
           accountTaxType: account?.taxType || '',
           accountLabel: account?.code || '',
+          // Only Singapore GST from a registered supplier is claimable.
+          gstRegNo: extracted?.supplierGstRegNo || '',
+          taxLabel: extracted?.taxLabel || '',
         });
+        claimsTax = outcome.claimsTax !== false;
         if (outcome.name) p.taxRate = outcome.name;
         // Say why — including when nothing could be picked, which is otherwise
         // a blank field with no way to tell what went wrong.
         p.taxRateReason = extracted?.taxRateReason || outcome.reason || '';
       }
-      // No GST registration → nothing to claim, so never carry a tax amount.
-      if (!settings.extractTax || !gstRegistered) p.tax = 0;
+      // Nothing to claim → the tax isn't recorded as GST; it stays inside the
+      // cost. Either this business isn't registered, or the supplier's tax
+      // isn't Singapore GST (see claimableSgGst).
+      if (!settings.extractTax || !gstRegistered || !claimsTax) p.tax = 0;
       p.paid = defaultPaidFor(settings, cur?.documentType);
       // Due date, in order of what the evidence supports:
       //   1. the date printed on the document (or what its stated terms resolve

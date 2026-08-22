@@ -22,7 +22,7 @@ import ReceiptViewer from '@/components/ReceiptViewer';
 import { useFlagAssignments } from '@/lib/flagAssignments';
 import {
   useCategoryOptions,
-  useVisibleTaxRates,
+  useVisibleTaxRates, useManagedTaxRates,
   getExtractionAccounts,
   resolveCategorisationOrgId,
   fetchXeroAccounts,
@@ -35,7 +35,7 @@ import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument } from '@/lib/reRead';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
-import { updateBill, deleteBill, notifyBillsChanged, displayItemId, costPath, scanDuplicates } from '@/lib/bills';
+import { updateBill, deleteBill, notifyBillsChanged, displayItemId, costPath } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { commitMerge } from '@/lib/mergeDocs';
@@ -43,8 +43,8 @@ import { findMergeCandidates, docFacts, statesNothing } from '@/lib/mergeDetect'
 import MergeModal from '@/components/MergeModal';
 import BulkEditModal from '@/components/BulkEditModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
-import { useCostsDocs, rowsFor, isInInbox, isComplete } from '@/lib/costsData';
-import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount } from '@/lib/costFilters';
+import { useCostsDocs, rowsFor, isInInbox, isComplete, needsReview, missingFields } from '@/lib/costsData';
+import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
@@ -182,13 +182,12 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   );
   // Detection runs on its own over the whole inbox, so this button reports what
   // has already been found rather than starting a search: it opens the review
-  // modal on the first suggestion. It stays enabled with none outstanding so it
-  // can say so.
-  const scanBtn = (
-    <ToolbarButton onClick={a.scanMerges}>
-      {a.mergeCount > 0 ? `Merge suggestions (${a.mergeCount})` : 'Scan for merges'}
-    </ToolbarButton>
-  );
+  // modal on the first suggestion. Detection runs by itself over the inbox, so
+  // there is nothing to "scan for" — the button appears only when there is
+  // something to review, and says how much.
+  const scanBtn = a.mergeCount > 0 ? (
+    <ToolbarButton onClick={a.scanMerges}>Merge suggestions ({a.mergeCount})</ToolbarButton>
+  ) : null;
   // Read the selected documents again. The first read can come back with
   // nothing (a dark photo, a PDF that turned out to be a scan), which lands the
   // document in the inbox as "Unknown supplier / 0.00" — this is the way out of
@@ -207,20 +206,13 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       Delete
     </ToolbarButton>
   );
-  // Re-checks documents already in the list — the read-time check only ever saw
-  // the documents that existed when each one was uploaded.
-  const dupBtn = <ToolbarButton onClick={a.scanDuplicates}>Scan for duplicates</ToolbarButton>;
+  // The whole-book duplicate check runs on the server whenever the book changes
+  // (see autoScanDuplicates), so there is no scan to start by hand either.
   // Only worth offering once something is flagged: opens the flagged documents
   // beside what they matched, one pair at a time.
   const reviewDupBtn = a.dupCount > 0 ? (
     <ToolbarButton onClick={a.reviewDuplicates}>Review duplicates ({a.dupCount})</ToolbarButton>
   ) : null;
-  const paidBtns = (
-    <>
-      <ToolbarButton disabled={!hasSelection || a.busy} onClick={() => a.setPaid(true)}>Mark as paid</ToolbarButton>
-      <ToolbarButton disabled={!hasSelection || a.busy} onClick={() => a.setPaid(false)}>Mark as not paid</ToolbarButton>
-    </>
-  );
   const publishBtn = (
     <ToolbarButton disabled={!hasSelection || a.busy} onClick={a.publish}>
       Publish to Xero
@@ -231,18 +223,6 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   );
   const archiveBtn = (
     <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
-  );
-  // The pipeline step the tab you're standing on can't already see: no "Move to
-  // review" button on the To review tab.
-  const moveBtns = (
-    <>
-      {tab !== 'review' && (
-        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('review')}>Move to review</ToolbarButton>
-      )}
-      {tab !== 'ready' && (
-        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('ready')}>Move to ready</ToolbarButton>
-      )}
-    </>
   );
 
   if (tab === 'archive') {
@@ -266,13 +246,10 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {exportBtn}
       {bulkEditBtn}
       {reprocessBtn}
-      {paidBtns}
-      {moveBtns}
       {claimBtn}
       {publishBtn}
       {mergeBtn}
       {scanBtn}
-      {dupBtn}
       {reviewDupBtn}
       {archiveBtn}
       {deleteBtn}
@@ -335,12 +312,17 @@ function SortTh({ label, sortKey, sort, setSort, align = 'left' }) {
   );
 }
 
+// Advanced search, empty. The `user` here is the document's OWNER (the User
+// column), which is editable per document — not whoever happened to upload it.
+const emptyAdv = () => ({ min: '', max: '', from: '', to: '', supplier: '', user: '' });
+
 // Search + Filter popover + Advanced-search popover for the Costs table.
-function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv }) {
+function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv, userOptions }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [advOpen, setAdvOpen] = useState(false);
   const chip = (on) => cn('rounded-md border px-2.5 py-1 text-xs transition-colors', on ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted');
   const chosen = filterCount(filters);
+  const advOn = Object.values(adv).some((v) => String(v).trim() !== '');
   const field = 'h-8 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
   return (
@@ -348,7 +330,8 @@ function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv }) {
       <div className="relative ml-auto hidden sm:block">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="h-8 w-52 rounded-md border bg-background pl-8 pr-20 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
-        <button type="button" onClick={() => { setAdvOpen((o) => !o); setFilterOpen(false); }} className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground">
+        <button type="button" onClick={() => { setAdvOpen((o) => !o); setFilterOpen(false); }} className={cn('absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs hover:text-foreground', advOn ? 'font-medium text-foreground' : 'text-muted-foreground')}>
+          {advOn && <span className="h-1.5 w-1.5 rounded-full bg-foreground" aria-hidden="true" />}
           Advanced <ChevronDown className="h-3 w-3" />
         </button>
         {advOpen && (
@@ -377,9 +360,23 @@ function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv }) {
                   <span className="mb-1 block text-muted-foreground">Supplier</span>
                   <input value={adv.supplier} onChange={(e) => setAdv((a) => ({ ...a, supplier: e.target.value }))} placeholder="Contains…" className={field} />
                 </label>
+                <div>
+                  {/* The people who actually own documents here — picking from
+                      the list beats typing a name that has to match exactly.
+                      ANYONE is the way back to "no user chosen". */}
+                  <span className="mb-1 block text-muted-foreground">User</span>
+                  <ComboSelect
+                    aria-label="User"
+                    size="sm"
+                    className="w-full"
+                    value={adv.user || ANYONE}
+                    options={[ANYONE, ...userOptions]}
+                    onChange={(v) => setAdv((a) => ({ ...a, user: v === ANYONE ? '' : v }))}
+                  />
+                </div>
               </div>
               <div className="mt-4 flex justify-end gap-2">
-                <button type="button" onClick={() => setAdv({ min: '', max: '', from: '', to: '', supplier: '' })} className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Reset</button>
+                <button type="button" onClick={() => setAdv(emptyAdv())} className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted">Reset</button>
                 <button type="button" onClick={() => setAdvOpen(false)} className="inline-flex h-8 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">Apply</button>
               </div>
             </div>
@@ -569,7 +566,10 @@ export default function Costs() {
   const { user, visionEnabled } = useAuth();
   // Label for uploads with no recorded creator ("You" = whoever is viewing).
   const meName = user?.name || user?.email || 'You';
-  const uploaderLabel = (d) => (d.user && d.user !== 'You' ? d.user : meName);
+  // A row with nobody recorded is UNASSIGNED, not you. This used to substitute
+  // the signed-in person's own name, so the same document read as "Cze Yang
+  // Goh" to one colleague and "Astrid Yang" to the next.
+  const uploaderLabel = (d) => (d.user && d.user !== 'You' ? d.user : UNASSIGNED);
 
   // Every column the table can show, with how it renders. What's actually on
   // screen (and how tightly) comes from the gear menu — see tablePrefs.js.
@@ -587,6 +587,18 @@ export default function Costs() {
             >
               <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Possible duplicate
             </button>
+          )}
+          {/* What the reader could not decide, on the row that is waiting for
+              it — a document sitting in To review with no reason shown is just
+              a document you have to open to find out about. Suppressed on a
+              blank read, where the badge below says it better. */}
+          {needsReview(d) && !statesNothing(docFacts(d)) && (
+            <span
+              title="The reader could not fill these in. Open the document and supply them — it moves to Ready by itself once they are there."
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700"
+            >
+              Needs: {missingFields(d).join(', ')}
+            </span>
           )}
           {isInInbox(d) && statesNothing(docFacts(d)) && (
             <span
@@ -699,7 +711,7 @@ export default function Costs() {
   const [exportOpen, setExportOpen] = useState(false);
   const [sort, setSort] = useState({ key: '', dir: 'asc' });
   const [filters, setFilters] = useState(emptyFilters); // Filter popover: id -> chosen chip
-  const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', supplier: '' });
+  const [adv, setAdv] = useState(emptyAdv); // Advanced search: amount / date / supplier / user
   const [mergeModalDocs, setMergeModalDocs] = useState(null); // docs under review in the merge modal
   const [mergeNote, setMergeNote] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -713,6 +725,7 @@ export default function Costs() {
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
   const taxRates = useVisibleTaxRates(); // shared managed list (Lists → Tax rates)
+  const allTaxRates = useManagedTaxRates(); // …and the same list unfiltered
   // Not GST-registered → No Tax is the only code on offer, and the row shows it
   // even for a document coded before the profile said so (opening the document
   // rewrites the stored value).
@@ -738,6 +751,7 @@ export default function Costs() {
   // verdict is spent, so a flag left on it from before is ignored here (and
   // cleared for good by the next scan).
   const docById = new Map(allDocs.map((d) => [d.id, d]));
+  const userOptions = useMemo(() => ownersOf(allDocs), [allDocs]);
   const flaggedDocs = allDocs.filter(
     (d) => isInInbox(d) && d.duplicateOfId && !d.duplicateDismissed && docById.has(d.duplicateOfId)
   );
@@ -767,9 +781,13 @@ export default function Costs() {
   const toNum = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const toTime = (v) => { const t = new Date(v).getTime(); return Number.isNaN(t) ? 0 : t; };
 
+  // The quick search reads the document owner as well — by the name the User
+  // column shows AND by the email behind it, so "yoav" and "yoav@…" both land.
   let rows = q
     ? allRows.filter((d) =>
-        [d.supplier, d.user, d.category, d.date].some((v) => String(v || '').toLowerCase().includes(q))
+        [d.supplier, d.user, d.ownerEmail, d.createdByEmail, d.category, d.date].some((v) =>
+          String(v || '').toLowerCase().includes(q)
+        )
       )
     : allRows;
   // Filter popover (flag, tax, category, publishing, …) + Advanced search
@@ -784,6 +802,7 @@ export default function Costs() {
     const s = adv.supplier.trim().toLowerCase();
     rows = rows.filter((d) => String(d.supplier || '').toLowerCase().includes(s));
   }
+  if (adv.user.trim()) rows = rows.filter((d) => isOwnedBy(d, adv.user));
   if (sort.key) {
     const dir = sort.dir === 'asc' ? 1 : -1;
     // Columns whose key isn't the field name they sort on.
@@ -974,19 +993,6 @@ export default function Costs() {
     }
   };
 
-  // Re-check the whole book, then say what it found. Flags land on the newer of
-  // each pair, so the original stays clean.
-  const runDuplicateScan = async () => {
-    setMergeNote('Checking every document against the rest…');
-    const { flagged = 0, changed = 0 } = await scanDuplicates().catch(() => ({}));
-    await reload();
-    setMergeNote(
-      flagged === 0
-        ? 'No duplicates found — every document is unique on file, supplier + reference, or supplier + amount + date.'
-        : `${flagged} document${flagged === 1 ? '' : 's'} flagged as a possible duplicate${changed ? ` (${changed} newly)` : ''}. Use "Review duplicates" to see each one beside the document it matches.`,
-    );
-  };
-
   // The selected documents, in the order the table shows them.
   const selectedDocs = () => {
     const byId = new Map(allRows.map((r) => [r.id, r]));
@@ -1061,6 +1067,7 @@ export default function Costs() {
       accounts: await getExtractionAccounts().catch(() => []),
       gstRegistered,
       taxRates,
+      allTaxRates,
       defaultTaxRateCosts: settings.defaultTaxRateCosts,
     };
     const tally = { ok: 0, blank: 0, nofile: 0, failed: 0 };
@@ -1162,7 +1169,6 @@ export default function Costs() {
     exportCsv: () => { setExportSelectionOnly(false); setExportOpen(true); },
     exportSelected: () => { setExportSelectionOnly(true); setExportOpen(true); },
     bulkEdit: () => hasSelection && setBulkOpen(true),
-    setPaid: (paid) => patchSelected({ paid }, paid ? 'Marked as paid' : 'Marked as not paid'),
     reRead: reReadSelected,
     publish: publishSelected,
     canReRead: visionEnabled,
@@ -1171,7 +1177,6 @@ export default function Costs() {
     merge: mergeSelected,
     scanMerges: openNextMergeSuggestion,
     mergeCount: mergeGroups.length,
-    scanDuplicates: runDuplicateScan,
     reviewDuplicates: () => setDupIds(flaggedDocs.map((d) => d.id)),
     dupCount: flaggedDocs.length,
     navigate,
@@ -1253,6 +1258,7 @@ export default function Costs() {
               setFilters={setFilters}
               adv={adv}
               setAdv={setAdv}
+              userOptions={userOptions}
             />
           </div>
 
@@ -1271,8 +1277,10 @@ export default function Costs() {
                 <span className="font-medium text-foreground">Supplier</span>,{' '}
                 <span className="font-medium text-foreground">Date</span>,{' '}
                 <span className="font-medium text-foreground">Category</span>, and a{' '}
-                <span className="font-medium text-foreground">Total</span> above 0. While any of those is missing it stays
-                in the <span className="font-medium text-foreground">Inbox</span> to review — no manual “Move to ready” needed.
+                <span className="font-medium text-foreground">Total</span> above 0. While any of those is missing — an
+                account code the reader could not decide, most often — it waits in{' '}
+                <span className="font-medium text-foreground">To review</span> for you to supply it. Both tabs fill
+                themselves; there is nothing to move by hand.
               </span>
             </div>
           )}

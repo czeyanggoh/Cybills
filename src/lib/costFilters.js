@@ -9,6 +9,7 @@
 // facts that live outside the row (which documents are flagged, what the org's
 // own currency is) arrive as context.
 import { docFacts, statesNothing } from './mergeDetect.js'; // relative so the rules can be tested under plain node
+import { isReady, needsReview } from './readiness.js';
 
 const text = (v) => String(v ?? '').trim();
 const has = (v) => text(v) !== '' && text(v) !== '—';
@@ -42,8 +43,9 @@ export const COST_FILTERS = {
   status: {
     label: 'Status',
     options: [
-      { value: 'ready', label: 'Ready', test: (d) => d.status === 'ready' },
-      { value: 'review', label: 'To review', test: (d) => d.status === 'review' },
+      { value: 'ready', label: 'Ready', test: isReady },
+      // Derived, exactly as the tab is: a document waiting on a person.
+      { value: 'review', label: 'To review', test: needsReview },
     ],
   },
   tax: pair('Tax', 'With tax', 'Without tax', (d) => num(d.tax) > 0),
@@ -86,4 +88,40 @@ export function applyCostFilters(rows, picked, ctx) {
     const option = COST_FILTERS[id].options.find((o) => o.value === value);
     return option ? list.filter((d) => option.test(d, ctx || {})) : list;
   }, rows);
+}
+
+// --- Who a document belongs to ------------------------------------------------
+// Advanced search's User picker. Two sentinels, neither of them a person:
+// ANYONE is "no choice made", UNASSIGNED is the documents that record nobody —
+// stored with no signed-in user, so they have no owner and no uploader. Those
+// used to read "You" in the picker and, in the User column, the VIEWER's own
+// name — the same row looked like a different person's to each colleague.
+export const ANYONE = 'Anyone';
+export const UNASSIGNED = 'Unassigned';
+
+// Everything the row knows about who it belongs to, minus the blanks.
+const identities = (d) => [d.user, d.ownerEmail, d.createdByEmail].filter((v) => text(v) !== '');
+
+export const isUnassigned = (d) => identities(d).length === 0;
+
+// Does this document belong to the person picked? The picker offers display
+// names; the row also carries the owner's email and, where no owner was set,
+// the uploader's. Any of the three identifying them counts.
+export function isOwnedBy(d, who) {
+  const want = text(who).toLowerCase();
+  if (!want || want === ANYONE.toLowerCase()) return true;
+  if (want === UNASSIGNED.toLowerCase()) return isUnassigned(d);
+  return identities(d).some((v) => text(v).toLowerCase() === want);
+}
+
+// Every person who owns a document here, A–Z, plus UNASSIGNED when there are
+// documents recording nobody. Built from the whole set rather than the open
+// tab, so a name doesn't vanish from the picker when you switch tabs — and the
+// picker can only ever offer someone who has documents.
+export function ownersOf(docs) {
+  const list = docs || [];
+  const named = Array.from(new Set(list.map((d) => text(d.user)).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b)
+  );
+  return list.some(isUnassigned) ? [...named, UNASSIGNED] : named;
 }

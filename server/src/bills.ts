@@ -10,6 +10,7 @@ import {
   sweepStuckProcessing,
   flagDuplicate,
   scanDuplicates,
+  bookRevision,
   setBillFile,
   listBills,
   getBillById,
@@ -21,7 +22,9 @@ import {
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { dataScopeForOrg } from './organisations.js';
 import { workspaceId } from './workspace.js';
+import { emailForPerson, orgScope } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
+import { readSetting } from './settings.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -49,9 +52,51 @@ export const billsRouter = Router();
 // no longer matched their session — losing the document from every tab. The
 // "employees can't do admin things" requirement is enforced by gating the admin
 // pages (Users / Business settings), not by hiding receipts.
+// The duplicate scan used to be a button the reviewer had to remember, so a
+// document that became a duplicate AFTER it was uploaded — the second copy
+// arrives later, or an edit makes two rows agree — sat there unflagged until
+// somebody thought to check. It runs by itself now, on the listing, for every
+// surface at once.
+//
+// It is skipped unless the book changed since the last scan: comparing every
+// document with every other is cheap in memory but pointless to repeat over an
+// unchanged list. Off is honoured — a workspace that set Duplicate items to Off
+// asked for no duplicate checking, and this is duplicate checking.
+const scannedAt = new Map<string, number>();
+function autoScanDuplicates(ws: string, org: string, scope: string): void {
+  const settings = readSetting<{ duplicateMode?: string }>(ws, 'cybills.extraction-settings.v1', org);
+  if (String(settings?.duplicateMode ?? 'Automatic') === 'Off') return;
+  if (scannedAt.get(scope) === bookRevision()) return;
+  scanDuplicates(scope, 'cost');
+  scanDuplicates(scope, 'sales');
+  // Read AFTER the scan: flagging is itself a write, and the run that flags
+  // nothing new is the one that settles.
+  scannedAt.set(scope, bookRevision());
+}
+
+// One-time repair of the rows written before the owner had a field of its own.
+// Back then the drawer's "Document owner" and the detail page's owner edit both
+// wrote a DISPLAY NAME over createdBy, so the same person reached the User
+// column two ways — "Cze Yang Goh" on the documents whose owner was set,
+// "czeyang.goh" on the ones still carrying their email. Each such row gets the
+// email that name resolves to, in both fields: the true uploader was already
+// overwritten when the name was stored, so the owner is the best attribution
+// left. A name that matches nobody (or two people) is left exactly as it is —
+// a wrong name is worse than an unresolved one. Runs off the list endpoint and
+// rewrites nothing once done.
+function backfillOwners(ws: string, org: string, scope: string): void {
+  for (const b of listBills(scope)) {
+    if (b.owner || !b.createdBy || b.createdBy.includes('@')) continue;
+    const email = emailForPerson(ws, org, b.createdBy);
+    if (email) updateBill(scope, b.id, { owner: email, createdBy: email });
+  }
+}
+
 billsRouter.get('/bills', (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
+  backfillOwners(workspaceId(req), orgScope(req), orgId);
+  autoScanDuplicates(workspaceId(req), orgScope(req), orgId);
   // File any Auto Expense claim whose period has ended. Rides on the fetch every
   // list already makes rather than a background worker, so a period that ended
   // while nobody was looking is claimed the moment someone opens the app.
@@ -137,14 +182,33 @@ billsRouter.post('/bills/:id/file', async (req, res) => {
   }
 });
 
+// A "Document owner" from the client — an email, or the display name older
+// callers send — as the one email that identifies that person. An address we
+// can't place is kept as given (a real person outside this entity's directory);
+// an unresolvable NAME is dropped rather than stored, since a bare name is
+// exactly the ambiguity this field exists to remove.
+function ownerEmail(req: Request, value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return '';
+  // orgScope, not orgIdFor: people belong to an ENTITY, while a bill belongs to
+  // that entity's data scope (which collapses to 'cybm' for the primary one).
+  const resolved = emailForPerson(workspaceId(req), orgScope(req), raw);
+  if (resolved) return resolved;
+  return raw.includes('@') ? raw : '';
+}
+
 // PATCH /api/costs/bills/:id — update editable fields (e.g. category) or the
 // workflow status ('ready' moves it out of the inbox).
 billsRouter.patch('/bills/:id', (req, res) => {
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'createdBy', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
+  // Reassigning the owner never rewrites createdBy: who uploaded a document is
+  // a fact about the past, and overwriting it with a display name is what left
+  // one person listed twice in the first place.
+  if (typeof b.owner === 'string') patch.owner = ownerEmail(req, b.owner);
   if (typeof b.paid === 'boolean') patch.paid = b.paid;
   // "Not a duplicate" — the reviewer's verdict, which clears the flag and
   // survives every later re-check.
@@ -325,9 +389,11 @@ billsRouter.post('/bills', async (req, res) => {
     taxRate: String(b.taxRate ?? ''),
     taxRateReason: String(b.taxRateReason ?? ''),
     description: String(b.description ?? ''),
-    // Attribute to the chosen "Document owner" from the drawer when provided,
-    // else the signed-in uploader.
-    createdBy: (typeof b.owner === 'string' && b.owner) ? b.owner : (me?.email ?? ''),
+    // createdBy is who UPLOADED it and nothing else. The drawer's "Document
+    // owner" is a separate field, resolved to an email so one person can't end
+    // up stored two ways (a display name here, their address there).
+    createdBy: me?.email ?? '',
+    owner: ownerEmail(req, b.owner),
     storageKey,
     contentType,
     // Default to the inbox ('new'). The Add-Documents drawer opts into

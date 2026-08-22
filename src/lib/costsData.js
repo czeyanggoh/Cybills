@@ -3,50 +3,22 @@ import { useClaims, inboxClaimsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { USERS_EVENT, canManageBusiness } from '@/lib/userStore';
+import { isInInbox, isComplete, isReady, needsReview } from '@/lib/readiness';
 
-// The fields a cost document needs before it's "ready" (moves out of the inbox).
-// Surfaced in the UI so users know exactly why something is still in the inbox.
-export const READY_FIELDS = ['Supplier', 'Date', 'Category', 'Total'];
-
-// A cost is "complete" (→ Ready) when it carries those fields: a real supplier
-// (not "Unknown supplier"), a date, a real category (not "Uncategorised"), and a
-// total above 0. Mirrors the server's costComplete so both follow one rule.
-export function isComplete(d) {
-  const has = (v) => v != null && String(v).trim() !== '' && String(v).trim() !== '—';
-  const supplier = has(d.supplier) && String(d.supplier).trim().toLowerCase() !== 'unknown supplier';
-  const category = has(d.category) && String(d.category).trim().toLowerCase() !== 'uncategorised';
-  const total = Number(String(d.total ?? '').replace(/[^0-9.-]/g, '')) > 0;
-  return supplier && has(d.date) && category && total;
-}
-
-// The specific fields still missing on a document (for a per-row explanation).
-export function missingFields(d) {
-  const has = (v) => v != null && String(v).trim() !== '' && String(v).trim() !== '—';
-  const out = [];
-  if (!(has(d.supplier) && String(d.supplier).trim().toLowerCase() !== 'unknown supplier')) out.push('Supplier');
-  if (!has(d.date)) out.push('Date');
-  if (!(has(d.category) && String(d.category).trim().toLowerCase() !== 'uncategorised')) out.push('Category');
-  if (!(Number(String(d.total ?? '').replace(/[^0-9.-]/g, '')) > 0)) out.push('Total');
-  return out;
-}
-
-// The inbox statuses: documents still being worked on. Anything else — archived,
-// on an expense claim, merged away — is settled, and the automatic duplicate and
-// merge scans leave it alone (you can still merge archived documents by hand).
-export const INBOX_STATUSES = ['new', 'viewed', 'review', 'ready'];
-export const isInInbox = (d) => INBOX_STATUSES.includes(d?.status);
+// Readiness and its opposite live in one pure module, so `npm test` can hold
+// them to account and the pages can't drift from the server's own rule.
+export { READY_FIELDS, isComplete, missingFields, INBOX_STATUSES, isInInbox, isReady, needsReview } from '@/lib/readiness';
 
 export function rowsFor(docs, key) {
-  // Dext-style: the Inbox is the whole "not ready for export" pool, and
-  // "To review" is a FILTER within it (items flagged for a human) — not a
-  // separate bucket. So review items stay counted/shown in the Inbox.
   if (key === 'processing') return docs.filter((d) => d.status === 'processing');
-  // Dext-style: the Inbox is the master list of everything not archived — it's
-  // the sum of the other tabs (Ready, To review, new/viewed). A Ready item shows
-  // here too, just carrying its "Ready" status tag; the Ready tab is a filter.
+  // Dext-style: the Inbox is the master list of everything not archived, and
+  // Ready and To review are FILTERS within it rather than separate buckets — a
+  // Ready document shows here too, carrying its "Ready" tag. Between them they
+  // now cover the whole inbox: a document is either finished or waiting on a
+  // person.
   if (key === 'inbox') return docs.filter(isInInbox);
-  if (key === 'review') return docs.filter((d) => d.status === 'review');
-  if (key === 'ready') return docs.filter((d) => d.status === 'ready');
+  if (key === 'review') return docs.filter(needsReview);
+  if (key === 'ready') return docs.filter(isReady);
   if (key === 'archive') return docs.filter((d) => d.status === 'expenseclaim' || d.status === 'archived' || d.status === 'merged');
   return [];
 }

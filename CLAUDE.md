@@ -57,6 +57,21 @@ every linked entity for the client-access picker).
 Env (server/.env): `PRACTICE_NAME`, `PRACTICE_DOMAIN` (only used to recognise
 pre-existing rows as practice staff on first run), `PRACTICE_TIMEZONE`.
 
+**A person has one name, and a document has an owner.** `createdBy` on a bill is
+who UPLOADED it — always an email, never overwritten. The Document owner (the
+Costs "User" column, the drawer's picker, the detail field) is its own field,
+`owner`, also always an email, and reassigning it leaves the uploader alone.
+They were one field until both write paths started storing a display name in it,
+which is how a single colleague came to appear twice in one list — "Cze Yang
+Goh" on the documents whose owner had been set, "czeyang.goh" on the rest.
+Names are resolved through `GET /api/users/directory` (`peopleForOrg`), which is
+deliberately WIDER than the roster `GET /api/users` serves: the roster is a
+client entity's own employees, but most of its documents are uploaded by a
+practice colleague, who is on no client's roster. `emailForPerson` resolves
+either spelling to the one email and refuses to guess an ambiguous name; the
+rows written before the split are repaired on the next listing (`backfillOwners`
+in `bills.ts`). Covered by `npm test` in `server/`.
+
 ## The document reader: Claude or OpenAI
 
 Uploaded receipts, invoices and Vault documents are read by one of two
@@ -175,7 +190,26 @@ last two are forced-choice only, so three documents at one total is left to the
 reviewer. Detection runs continuously over the inbox in `Costs.jsx`
 (`mergeGroups`), so a row wears a badge instead of the reviewer having to press
 a button; nothing is combined until the merge review modal is confirmed.
+
+**Neither scan is a button any more.** Merge detection already ran on every
+change; the whole-book duplicate check now does too — `autoScanDuplicates` in
+`bills.ts`, off the listing endpoint, guarded by `bookRevision()` so an
+unchanged book costs nothing and honouring Duplicate items = Off. It matters
+because a document often becomes a duplicate AFTER it was uploaded (the second
+copy arrives later, or an edit makes two rows agree), which the read-time check
+can never see and a button only catches when somebody remembers to press it.
+The toolbar keeps only the review affordances — "Merge suggestions (N)" and
+"Review duplicates (N)", each shown only when there is something to review.
 `npm test` at the repo root runs the rules.
+
+**Input tax is claimed only on evidence.** GST is recorded only when the
+SUPPLIER quotes a Singapore GST registration number and the document calls the
+tax GST. The numbers can't settle it — Thailand's VAT is 7% and Malaysia's SST
+8%, exactly Singapore's 2022 and 2023 rates — so the reader extracts
+`supplierGstRegNo` + `taxLabel` and `claimableSgGst` decides: a UEN or M-number
+(OVR counts) plus a tax the document doesn't call VAT/SST/Sales Tax. Without
+that the document codes to No Tax and the tax amount is NOT recorded — it stays
+inside the cost, which is what foreign tax is. The total never changes.
 
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
@@ -185,9 +219,15 @@ arithmetic must not guess, e.g. an account defaulting to Disallowed Expenses at
 9%; then the standard-rated vintage at that percentage; then No Tax for a
 foreign-currency document whose rate isn't in the chart. Import GST, reverse
 charge and partial exemption all print as a percentage too, so anything else is
-left for a human — but no longer silently: `taxRateOutcome` returns a `reason`
-either way, and a decline names the rate, what IS visible at it, and points at
-Business settings → Lists → Tax rates. A blank field with no explanation is
+left for a human — but only when the rate isn't a standard one at all. A
+standard rate always answers: `INPUTY24` IS 9% standard-rated purchases in every
+Singapore Xero (7% `INPUT`, 8% `INPUTY23`; `OUTPUT*` on the sales side), so when
+an org has written no rule and its visible list can't supply the code — switched
+off in Lists, or not loaded — the standard code for the printed rate is used
+anyway, named the way that org names it when the unfiltered list can say.
+Nothing is silent either way: `taxRateOutcome` returns a `reason`, and a decline
+names the rate, what IS visible at it, and points at Business settings → Lists →
+Tax rates. A blank field with no explanation is
 indistinguishable from a bug, which is exactly how one was reported.
 
 ## The Costs inbox's bulk actions
@@ -196,11 +236,26 @@ Every bulk action is a **button**. The "Move to" and "Actions" dropdowns this
 replaced were a menu of things that are each one click on their own, so reaching
 them took a second click and a hunt through a list. The row wraps instead.
 
-Beyond move/archive/claim/merge, the toolbar carries **Bulk edit**
-(`BulkEditModal.jsx`), **Rerun processing**, Mark as paid / not paid, **Publish
-to Xero**, and **Delete** (red — it drops the stored file too, and confirms
-first). One **Export** button covers both cases: the ticked rows when anything is
-ticked, otherwise everything the tab shows.
+Beyond archive/claim/merge, the toolbar carries **Bulk edit**
+(`BulkEditModal.jsx`), **Rerun processing**, **Publish to Xero**, and **Delete**
+(red — it drops the stored file too, and confirms first). One **Export** button
+covers both cases: the ticked rows when anything is ticked, otherwise everything
+the tab shows.
+
+Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
+field, set on the document or across a selection in Bulk edit; readiness is
+derived, so a "Move to ready" button could only ever agree with the server or
+be overruled by it a moment later.
+
+**Ready and To review are both derived, and between them they are the whole
+inbox.** `src/lib/readiness.js` (pure, tested by `npm test`) decides from the
+document, never from its stored status: a cost carrying a Supplier, Date,
+Category and a Total above 0 is Ready; every other inbox document is waiting on
+a person — most often for the account code the reader could not choose. To
+review used to be a STATUS only the toolbar could write, so a document needing
+attention landed there only if somebody had already noticed it and pressed the
+button. Rows in To review wear a **"Needs: …"** badge naming the missing fields
+(`missingFields`), except where "Nothing read" already says it better.
 
 Two rules run through all of them:
 
