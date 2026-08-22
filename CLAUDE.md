@@ -128,6 +128,18 @@ doesn't add up to its tax) are refused outright, 422, in the dialog and in the
 API: a breakdown that disagrees with its own paper is a mistake to fix, not to
 post around. Covered by `npm test` in `server/`.
 
+**A read outlives the page that started it.** Reading takes ten to thirty
+seconds and a reviewer moves on to the next document rather than watching it, so
+a re-read / extract-lines runs as a JOB held at module scope
+(`src/lib/extractionJobs.js`), not in the detail page's state. The request was
+never cancelled — but everything that KNEW about it died with the page, so the
+answer landed on the server while the form still showed the old fields, and the
+next keystroke saved those back over it. The job now carries on, the page shows
+"Reading…" again whenever it returns to that document, and when the job settles
+the page takes the document back from the server rather than trusting what is on
+screen. One read per document at a time. A full browser reload still kills it —
+that aborts the request itself.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to
