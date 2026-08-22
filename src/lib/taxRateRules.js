@@ -27,6 +27,25 @@ const autoMatches = (rule, row) => {
   return code ? rule.code.test(code) : rule.name.test(String(row?.name || '').trim());
 };
 
+// Xero's own standard-rated codes for Singapore GST, by rate. These are the
+// same in every Singapore Xero — INPUTY24 IS 9% standard-rated purchases — so
+// when an organisation has written no rule of its own, this is the answer, not
+// a guess. It is the fallback when the org's VISIBLE list can't supply it:
+// switched off in Lists → Tax rates, or the list hadn't loaded. The names are
+// Xero's defaults, used only when the organisation's own row can't be found.
+const STANDARD_CODES = {
+  cost: [
+    { pct: 9, code: 'INPUTY24', name: 'Standard-Rated Purchases' },
+    { pct: 8, code: 'INPUTY23', name: '2023 Standard-Rated Purchases' },
+    { pct: 7, code: 'INPUT', name: '2022 Standard-Rated Purchases' },
+  ],
+  sales: [
+    { pct: 9, code: 'OUTPUTY24', name: 'Standard-Rated Supplies' },
+    { pct: 8, code: 'OUTPUTY23', name: '2023 Standard-Rated Supplies' },
+    { pct: 7, code: 'OUTPUT', name: '2022 Standard-Rated Supplies' },
+  ],
+};
+
 const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
 // A rate matches the printed percentage when it is within half a point of it —
 // tight, so a 10% AU invoice never snaps to a 9% SG rate and 7 / 8 / 9 each land
@@ -57,16 +76,22 @@ export function noTaxRateName(rates) {
 //   2. The standard-rated vintage whose % matches — the ordinary case.
 //   3. Foreign-currency document whose rate isn't in the chart → No Tax,
 //      because foreign GST isn't Singapore input tax.
-//   4. Nothing. Import GST, reverse charge and partial exemption all print as a
-//      percentage too, so the code is left for a human — and the reason says
-//      what was looked for and where to look.
+//   4. Xero's own standard-rated code for that percentage (9% purchases are
+//      INPUTY24 in every Singapore Xero). Reached when the visible list can't
+//      supply it — switched off in Lists, or not loaded — because "the standard
+//      code for the rate printed on the document" is the right answer for an
+//      organisation that has written no rule of its own.
+//   5. Nothing, and only then. Import GST, reverse charge and partial exemption
+//      print as percentages too, but none of them at a standard rate.
 //
-// `rates` is the org's VISIBLE list ([{name, code, rate}]); `accountTaxType` /
-// `accountLabel` describe the account the document was categorised to.
+// `rates` is the org's VISIBLE list ([{name, code, rate}]); `allRates` the
+// unfiltered one, so a switched-off code can still be named as the org names it.
+// `accountTaxType` / `accountLabel` describe the account it was categorised to.
 export function taxRateOutcome({
   total,
   tax,
   rates,
+  allRates = null,
   suggested = '',
   gstRegistered = true,
   defaultName = '',
@@ -77,6 +102,7 @@ export function taxRateOutcome({
   accountLabel = '',
 } = {}) {
   const list = Array.isArray(rates) ? rates : [];
+  const everything = Array.isArray(allRates) && allRates.length ? allRates : list;
   const noTax = list.find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));
 
   // 0. Not GST-registered: nothing to claim, nothing to analyse. The screens
@@ -137,7 +163,27 @@ export function taxRateOutcome({
     };
   }
 
-  // 4. Left for a human, with what was looked for and where to look.
+  // 4. Xero's standard code for that rate. The organisation wrote no rule and
+  //    its visible list didn't answer, but 9% purchases are INPUTY24 everywhere
+  //    — leaving that blank helps nobody.
+  const std = (STANDARD_CODES[kind === 'sales' ? 'sales' : 'cost'] ?? []).find(
+    (c) => Math.abs(c.pct - pct) <= TOLERANCE
+  );
+  if (std) {
+    // Prefer what this organisation calls it; fall back to Xero's own name.
+    const own = everything.find((r) => String(r.code || '').trim().toUpperCase() === std.code);
+    const hiddenHere = !list.some((r) => String(r.code || '').trim().toUpperCase() === std.code);
+    return {
+      name: own?.name || std.name,
+      reason:
+        `${pctOf(pct)} GST — Xero's standard code for ${kind === 'sales' ? 'supplies' : 'purchases'} at that rate (${std.code}). ` +
+        (hiddenHere
+          ? "It isn't switched on in Business settings → Lists → Tax rates, so the picker won't offer it until it is."
+          : 'No rule of this organisation\'s own covered the document.'),
+    };
+  }
+
+  // 5. Left for a human, with what was looked for and where to look.
   if (!list.length) {
     return {
       name: '',

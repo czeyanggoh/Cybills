@@ -32,7 +32,7 @@ import { taxRateOutcome } from '@/lib/extractionSettings';
 export function readDecisions(
   current,
   ex,
-  { gstRegistered = true, taxRates = [], defaultTaxRateCosts = '', accounts = [] } = {}
+  { gstRegistered = true, taxRates = [], allTaxRates = null, defaultTaxRateCosts = '', accounts = [] } = {}
 ) {
   const descr =
     ex.description ||
@@ -51,6 +51,7 @@ export function readDecisions(
     total: exTotal,
     tax: exTax,
     rates: taxRates,
+    allRates: allTaxRates,
     suggested: ex.taxRate,
     gstRegistered,
     defaultName: defaultTaxRateCosts,

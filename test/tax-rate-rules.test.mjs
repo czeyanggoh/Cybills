@@ -33,14 +33,23 @@ let r = taxRateOutcome({ total: 69.98, tax: 5.78, rates: SG, currency: 'SGD', ki
 check('9% invoice codes to standard-rated purchases', r.name, 'Standard-Rated Purchases');
 has('and says how it got there', r.reason, '9.0%');
 
-// 2) The same invoice when that code isn't in the org's visible list. It is
-//    still not guessed — but the blank now explains itself.
+// 2) The same invoice when that code isn't in the org's VISIBLE list. INPUTY24
+//    is 9% standard-rated purchases in every Singapore Xero, so that is the
+//    answer for an organisation that has written no rule of its own — a blank
+//    here helps nobody.
 const hidden = SG.filter((t) => t.code !== 'INPUTY24');
 r = taxRateOutcome({ total: 69.98, tax: 5.78, rates: hidden, currency: 'SGD', kind: 'cost' });
-check('no standard-rated code at that rate -> blank', r.name, '');
-has('reason names the rate', r.reason, '9.0%');
-has('reason points at the list', r.reason, 'Business settings');
-has('reason names what IS at that rate', r.reason, 'Disallowed Expenses');
+check("switched off -> Xero's standard code anyway", r.name, 'Standard-Rated Purchases');
+has('reason names the code', r.reason, 'INPUTY24');
+has('reason says it is not switched on', r.reason, 'Business settings');
+
+// 2b) …and it is named the way THIS organisation names it, when the unfiltered
+//     list can say (a renamed rate must still resolve on publish).
+r = taxRateOutcome({
+  total: 69.98, tax: 5.78, rates: hidden, currency: 'SGD', kind: 'cost',
+  allRates: [...hidden, { name: 'GST 9% (purchases)', code: 'INPUTY24', rate: 9 }],
+});
+check("the org's own name wins over Xero's default one", r.name, 'GST 9% (purchases)');
 
 // 3) …unless the ACCOUNT itself carries that code. 4016 T&E Subscriptions
 //    defaults to INPUTY24 in Xero, so the document follows the account — the
@@ -70,10 +79,19 @@ has('and says why nothing is claimed', r.reason, "isn't Singapore input tax");
 // 7) Sales documents code to supplies, not purchases.
 check('sales side', taxRateOutcome({ total: 109, tax: 9, rates: SG, currency: 'SGD', kind: 'sales' }).name, 'Standard-Rated Supplies');
 
-// 8) Nothing visible at all — the reason has to send someone somewhere.
+// 8) Nothing visible at all (Xero hadn't loaded, say) — still the standard code
+//    for the rate printed on the document, and the reason says where to look.
 r = taxRateOutcome({ total: 109, tax: 9, rates: [], currency: 'SGD' });
-check('empty list -> blank', r.name, '');
-has('empty list reason', r.reason, 'no tax rates are visible');
+check('no list at all -> the standard code', r.name, 'Standard-Rated Purchases');
+has('and says why the picker is empty', r.reason, 'Lists → Tax rates');
+
+// 8b) A rate that ISN'T a standard one is still left for a human: 12% is not a
+//     Singapore GST rate, and import / reverse-charge codes print as percentages
+//     too. The reason names what the org does have at that rate.
+r = taxRateOutcome({ total: 112, tax: 12, rates: [...SG, { name: 'Some 12% code', code: 'WEIRD12', rate: 12 }], currency: 'SGD' });
+check('a non-standard rate is not guessed', r.name, '');
+has('reason names the rate', r.reason, '12.0%');
+has('reason names what IS at that rate', r.reason, 'Some 12% code');
 
 // 9) Not GST-registered: No Tax, always; the screens explain that themselves.
 r = taxRateOutcome({ total: 109, tax: 9, rates: SG, gstRegistered: false });

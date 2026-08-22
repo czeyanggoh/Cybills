@@ -17,7 +17,7 @@ import {
   VISION_MEDIA,
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
-import { getExtractionAccounts, useVisibleTaxRates } from '@/lib/organisations';
+import { getExtractionAccounts, useVisibleTaxRates, useManagedTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { autoPublishAfterRead, xeroBillUrl } from '@/lib/autoPublish';
 import { getCustomerRule } from '@/lib/customerRules';
@@ -294,6 +294,8 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const users = useUsers();
   const settings = useExtractionSettings();
   const visibleTaxRates = useVisibleTaxRates();
+  // Unfiltered too — a switched-off code is still the standard one for its rate.
+  const allTaxRates = useManagedTaxRates();
   const gstRegistered = useGstRegistered();
   const [tab, setTab] = useState('Costs');
   const [items, setItems] = useState([]);
@@ -362,6 +364,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           total: cur?.total,
           tax: cur?.tax,
           rates: visibleTaxRates,
+          allRates: allTaxRates,
           suggested: cur?.taxRate || extracted?.taxRate,
           gstRegistered,
           defaultName: defRate,
