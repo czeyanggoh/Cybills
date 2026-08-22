@@ -1,11 +1,10 @@
 import { Router } from 'express';
 import { env, xeroEnabled } from './env.js';
-import { orgIdFor } from './bills.js';
-import { getOrganisation } from './organisations.js';
+import { dataScopeForOrg, getOrganisation } from './organisations.js';
+import { workspaceId } from './workspace.js';
 import { apportion, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
-import { workspaceId } from './workspace.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -88,13 +87,28 @@ function notConfigured(res: any): boolean {
 }
 
 // Resolve the :id param to a linked organisation or write the 404.
+// The organisation RECORD is workspace-level (that's the scope it is created
+// under), while the bills and claims it owns live in that entity's own book.
+// Looking the record up by the entity scope only ever worked because these
+// routes are called without an X-Org-Id header — send one and every Xero call
+// 404s.
 function requireOrganisation(req: any, res: any) {
-  const organisation = getOrganisation(orgIdFor(req), req.params.id);
+  const organisation = getOrganisation(workspaceId(req), req.params.id);
   if (!organisation) {
     res.status(404).json({ error: 'organisation_not_found' });
     return null;
   }
   return organisation;
+}
+
+// Which entity's book to read on a route that names the organisation in its
+// path. Taken from the path rather than the X-Org-Id header: you publish into
+// the Xero tenant named in the URL, so that entity's book is the one that must
+// supply the document. (The header is what the Costs/Sales APIs use, but these
+// routes are called without it — which is why publishing from any entity other
+// than the primary one used to 404.)
+function bookFor(req: any): string {
+  return dataScopeForOrg(String(req.params?.id ?? '').trim());
 }
 
 export const xeroRouter = Router();
@@ -615,7 +629,7 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     return res.status(400).json({ error: 'invalid_status', message: 'status must be DRAFT, SUBMITTED or AUTHORISED.' });
   }
 
-  const workspace = orgIdFor(req);
+  const workspace = bookFor(req);
   const bill = getBillById(workspace, billId);
   if (!bill) return res.status(404).json({ error: 'bill_not_found' });
   if (bill.xeroInvoiceId && b.force !== true) {
@@ -628,7 +642,7 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   // On an expense claim, this cost reaches Xero as a line of that claim's bill.
   // Publishing it separately would post it twice, so the two are mutually
   // exclusive: take it off the claim first, or let the claim carry it.
-  const onClaim = claimForBill(workspaceId(req), bill.id);
+  const onClaim = claimForBill(workspace, bill.id);
   if (onClaim) {
     return res.status(409).json({
       error: 'in_expense_claim',
@@ -780,7 +794,7 @@ xeroRouter.post('/organisations/:id/attach-file', async (req, res) => {
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
 
-  const bill = getBillById(orgIdFor(req), String(req.body?.billId ?? ''));
+  const bill = getBillById(bookFor(req), String(req.body?.billId ?? ''));
   if (!bill) return res.status(404).json({ error: 'bill_not_found' });
   if (!bill.xeroInvoiceId) {
     return res.status(400).json({ error: 'not_published', message: 'This document has not been published to Xero yet.' });
@@ -817,8 +831,8 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     return res.status(400).json({ error: 'invalid_status', message: 'status must be DRAFT, SUBMITTED or AUTHORISED.' });
   }
 
-  const ws = workspaceId(req);
-  const claim = getClaimForXero(ws, claimId);
+  const org = bookFor(req);
+  const claim = getClaimForXero(org, claimId);
   if (!claim) return res.status(404).json({ error: 'claim_not_found' });
   if (claim.approvalStatus !== 'approved') {
     return res.status(400).json({ error: 'not_approved', message: 'Only an approved claim can be published to Xero.' });
@@ -914,7 +928,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     });
   }
 
-  const updated = saveClaimXero(ws, claim.id, {
+  const updated = saveClaimXero(org, claim.id, {
     xeroInvoiceId: String(invoice.InvoiceID ?? ''),
     xeroTenantName: organisation.tenantName || organisation.name,
     xeroPostedAt: today,

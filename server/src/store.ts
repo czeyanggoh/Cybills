@@ -228,6 +228,12 @@ export function getBillByIdAny(id: string): Bill | null {
   return rows.find((b) => b.id === id) ?? byItemId(rows, id);
 }
 
+// Which entity's book a bill belongs to. Used to work out, from a claim's own
+// items, which client entity a claim that predates per-entity scoping is for.
+export function billOrgId(id: string): string {
+  return getBillByIdAny(id)?.orgId ?? '';
+}
+
 // Filler a language model reaches for when a field is described as "never empty"
 // and it has nothing real to say. These are worse than a blank: `description` is
 // published to the ledger as the bill's line description, where "placeholder"
