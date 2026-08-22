@@ -37,7 +37,16 @@ export type Bill = {
   dueDate?: string; // ISO YYYY-MM-DD payment due date (from Extraction settings)
   // Per-line breakdown of the document (Dext-style). Stored as strings so they
   // round-trip through the editable form unchanged.
-  lineItems?: Array<{ description: string; category: string; net: string; tax: string; total: string }>;
+  lineItems?: Array<{
+    description: string;
+    category: string;
+    // The two Xero tracking categories, per line ('' = follow the bill's own).
+    project?: string;
+    project2?: string;
+    net: string;
+    tax: string;
+    total: string;
+  }>;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
   storageKey: string; // storage key for the original file (r2:/local: prefixed), or ''

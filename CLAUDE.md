@@ -98,6 +98,18 @@ Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
 OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default.
 Either key alone switches extraction on; both means the toggle appears.
 
+**A bill's own lines can reach Xero.** Line items carry `project` + `project2`
+— the org's two Xero tracking categories, per line, editable in the grid and
+offered only where the linked org actually has that category. On publish,
+`perLineItems` (`xero.ts`) posts those rows as the Xero bill's line items
+instead of one summary line, each with its own account code and tracking. It
+does so ONLY when the rows are provably the same money as the document: they
+add up to its total, and their tax adds up to its tax (a single stated GST
+figure is apportioned across the rows by largest remainder, so the parts sum to
+the whole exactly). Anything that can't reconcile posts as the single summary
+line, exactly as before — a nicer breakdown is never worth changing a
+published total. Covered by `npm test` in `server/`.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to

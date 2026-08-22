@@ -184,6 +184,10 @@ export function lineItemRows(rows, fallbackCategory = '') {
     return {
       description: li?.description || '',
       category: li?.category || fallbackCategory || 'Uncategorised',
+      // Per-line tracking is set by hand on the detail page, not read off the
+      // document — blank means the line follows the document's own project.
+      project: li?.project || '',
+      project2: li?.project2 || '',
       net: net.toFixed(2),
       tax: tax.toFixed(2),
       total: total.toFixed(2),

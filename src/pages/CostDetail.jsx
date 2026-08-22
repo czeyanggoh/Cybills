@@ -116,6 +116,27 @@ function EditableSelect({ value, options, onChange, format = (x) => x }) {
   );
 }
 
+// A line's tracking-category picker. Blank is meaningful — it means "whatever
+// the document says" — so the empty option says so rather than reading as an
+// unfilled field.
+function LineProjectSelect({ value, options, placeholder = 'None', onChange }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn(
+        'h-8 w-full min-w-[8rem] rounded border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        !value && 'text-muted-foreground'
+      )}
+    >
+      <option value="">{placeholder}</option>
+      {Array.from(new Set([value, ...options].filter(Boolean))).map((o) => (
+        <option key={o} value={o}>{o}</option>
+      ))}
+    </select>
+  );
+}
+
 function SectionHeading({ children }) {
   return (
     <h3 className="mb-1 mt-6 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -211,6 +232,14 @@ export default function CostDetail() {
   const xeroProjects = useXeroProjectOptions();
   const seedProjects = useProjectOptions();
   const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;
+  // Per-line tracking, one column per Xero tracking category the linked org
+  // actually has (Xero allows two; the second is its "Projects 2"). Deliberately
+  // NOT the seeded project list the document-level field falls back to: a
+  // per-line project only means something on publish, and publish can only tag a
+  // real Xero category. No Xero tracking, no columns — the grid is cramped
+  // enough without two dropdowns that could never reach the ledger.
+  const project2Options = useXeroProjectOptions(1);
+  const lineProjects = xeroProjects;
   // Customers come from the active org's (CYBM) live Xero customer contacts.
   const customerOptions = useXeroCustomers();
   const paymentMethods = useXeroPaymentMethods();
@@ -903,7 +932,10 @@ export default function CostDetail() {
   const updateLineItem = (i, patch) =>
     setLineItems(lineItems.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
   const addLineItem = () =>
-    setLineItems([...lineItems, { description: '', category: data.category || 'Uncategorised', net: '', tax: '', total: '' }]);
+    setLineItems([
+      ...lineItems,
+      { description: '', category: data.category || 'Uncategorised', project: data.project || '', project2: '', net: '', tax: '', total: '' },
+    ]);
   const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
 
   // Read the attached receipt and turn its printed lines into editable rows.
@@ -1457,6 +1489,8 @@ export default function CostDetail() {
                       <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
                         <th className="px-2 py-2 font-medium">Description</th>
                         <th className="px-2 py-2 font-medium">Category</th>
+                        {lineProjects.length > 0 && <th className="px-2 py-2 font-medium">Project</th>}
+                        {project2Options.length > 0 && <th className="px-2 py-2 font-medium">Project 2</th>}
                         <th className="px-2 py-2 text-right font-medium">Net</th>
                         <th className="px-2 py-2 text-right font-medium">Tax</th>
                         <th className="px-2 py-2 text-right font-medium">Total</th>
@@ -1484,6 +1518,25 @@ export default function CostDetail() {
                               ))}
                             </select>
                           </td>
+                          {lineProjects.length > 0 && (
+                            <td className="px-2 py-1.5">
+                              <LineProjectSelect
+                                value={li.project || ''}
+                                options={lineProjects}
+                                placeholder={data.project ? `${data.project} (document)` : 'None'}
+                                onChange={(v) => updateLineItem(i, { project: v })}
+                              />
+                            </td>
+                          )}
+                          {project2Options.length > 0 && (
+                            <td className="px-2 py-1.5">
+                              <LineProjectSelect
+                                value={li.project2 || ''}
+                                options={project2Options}
+                                onChange={(v) => updateLineItem(i, { project2: v })}
+                              />
+                            </td>
+                          )}
                           {['net', 'tax', 'total'].map((f) => (
                             <td key={f} className="px-2 py-1.5">
                               <input
@@ -1504,12 +1557,12 @@ export default function CostDetail() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t bg-muted/20 text-xs">
-                        <td className="px-2 py-2 font-medium" colSpan={4}>Item total</td>
+                        <td className="px-2 py-2 font-medium" colSpan={4 + (lineProjects.length > 0 ? 1 : 0) + (project2Options.length > 0 ? 1 : 0)}>Item total</td>
                         <td className="px-2 py-2 text-right font-semibold">{lineTotal.toFixed(2)}</td>
                         <td />
                       </tr>
                       <tr className="text-xs">
-                        <td className={cn('px-2 py-2 font-medium', Math.abs(outBy) > 0.005 && 'text-destructive')} colSpan={4}>
+                        <td className={cn('px-2 py-2 font-medium', Math.abs(outBy) > 0.005 && 'text-destructive')} colSpan={4 + (lineProjects.length > 0 ? 1 : 0) + (project2Options.length > 0 ? 1 : 0)}>
                           Out by
                         </td>
                         <td className={cn('px-2 py-2 text-right font-semibold', Math.abs(outBy) > 0.005 && 'text-destructive')}>

@@ -135,6 +135,11 @@ billsRouter.patch('/bills/:id', (req, res) => {
     patch.lineItems = b.lineItems.map((li: any) => ({
       description: String(li?.description ?? ''),
       category: String(li?.category ?? ''),
+      // The two Xero tracking categories, per line. A bill whose lines carry
+      // their own project publishes as those lines rather than one summary one
+      // — see the publish path in xero.ts.
+      project: String(li?.project ?? ''),
+      project2: String(li?.project2 ?? ''),
       net: String(li?.net ?? ''),
       tax: String(li?.tax ?? ''),
       total: String(li?.total ?? ''),

@@ -443,19 +443,28 @@ function xeroLineDescription(supplier: string, id: string, description: string):
   return out.trim();
 }
 
-// The org's first ACTIVE tracking category (the "PIC" list) + its valid option
-// names, for tagging bill lines with a project/PIC on publish.
-async function firstTrackingCategory(
-  tenantId: string
-): Promise<{ name: string; options: Set<string> } | null> {
+type TrackingCat = { name: string; options: Set<string> };
+
+// The org's ACTIVE tracking categories in Xero's own order — [0] is the "PIC"
+// list the app calls Projects, [1] is Projects 2. Xero allows at most two, and
+// a line may be tagged with one option from each.
+async function trackingCategories(tenantId: string): Promise<TrackingCat[]> {
   const result = await relay('TrackingCategories', { tenantId });
-  if (!result.ok) return null;
-  const cat = (result.data?.TrackingCategories ?? []).find((c: any) => c.Status === 'ACTIVE');
-  if (!cat || !cat.Name) return null;
-  const options = new Set<string>(
-    (cat.Options ?? []).filter((o: any) => o.Status === 'ACTIVE').map((o: any) => String(o.Name))
-  );
-  return { name: String(cat.Name), options };
+  if (!result.ok) return [];
+  return (result.data?.TrackingCategories ?? [])
+    .filter((c: any) => c.Status === 'ACTIVE' && c.Name)
+    .slice(0, 2)
+    .map((c: any) => ({
+      name: String(c.Name),
+      options: new Set<string>(
+        (c.Options ?? []).filter((o: any) => o.Status === 'ACTIVE').map((o: any) => String(o.Name))
+      ),
+    }));
+}
+
+// The org's first ACTIVE tracking category, for the paths that only tag one.
+async function firstTrackingCategory(tenantId: string): Promise<TrackingCat | null> {
+  return (await trackingCategories(tenantId))[0] ?? null;
 }
 
 // A Xero line Tracking entry for a project/PIC value, or null when the value
@@ -467,6 +476,111 @@ function trackingFor(
   const p = String(project || '').trim();
   if (tc && p && tc.options.has(p)) return [{ Name: tc.name, Option: p }];
   return null;
+}
+
+// The Tracking array for one line, across both categories — each value kept
+// only when it is a live option of ITS category, so a stale project name is
+// dropped rather than failing the whole bill.
+function trackingAcross(cats: TrackingCat[], values: string[]): Array<{ Name: string; Option: string }> {
+  const out: Array<{ Name: string; Option: string }> = [];
+  cats.forEach((cat, i) => {
+    const v = String(values[i] ?? '').trim();
+    if (v && cat.options.has(v)) out.push({ Name: cat.name, Option: v });
+  });
+  return out;
+}
+
+// The org's active account codes, for checking a line's own category before it
+// is posted — a code Xero doesn't have would fail the whole bill, and one bad
+// line is not a reason to lose the other four.
+async function activeAccountCodes(tenantId: string): Promise<Set<string>> {
+  const result = await relay('Accounts', { tenantId, query: { where: 'Status=="ACTIVE"' } });
+  if (!result.ok) return new Set();
+  return new Set<string>((result.data?.Accounts ?? []).map((a: any) => String(a.Code ?? '')).filter(Boolean));
+}
+
+// "315 - Outlet Laundry" -> "315". The label the app stores is built from the
+// Xero account as `<code> - <name>`, so the code is simply its head.
+function codeFromCategory(category: unknown): string {
+  const s = String(category ?? '');
+  const i = s.indexOf(' - ');
+  if (i === -1) return '';
+  const code = s.slice(0, i).trim();
+  return /^[A-Za-z0-9][A-Za-z0-9-]{0,14}$/.test(code) ? code : '';
+}
+
+// Build the Xero lines for a bill that has its own line items, so each one
+// carries its own account and its own project(s). Returns null — and the caller
+// falls back to the single summary line — unless the rows are provably the same
+// money as the bill:
+//
+//   - they add up to the bill's total, to the cent, and
+//   - their tax adds up to the bill's tax, to the cent.
+//
+// The second one is usually satisfied by distributing: a reader fills in a
+// per-row tax only when the document breaks tax down per row, and most don't —
+// so the bill's single GST figure is spread across the rows in proportion to
+// their net, with the odd cents going to the largest. Anything that can't be
+// made to reconcile posts as one line, exactly as before. A published bill must
+// show the same total and the same GST as the document it came from; a nicer
+// breakdown is never worth changing either.
+// Exported for the reconciliation test in server/test — this arithmetic decides
+// what lands in a live ledger.
+export async function perLineItems(
+  bill: Bill,
+  opts: { accountCode: string; taxType: string; tenantId: string; fallbackDescription: string }
+): Promise<Array<Record<string, unknown>> | null> {
+  const rows = Array.isArray(bill.lineItems) ? bill.lineItems : [];
+  if (!rows.length) return null;
+
+  const c = (n: number) => Math.round(n * 100);
+  const totals = rows.map((r) => c(parseAmount(r.total) || parseAmount(r.net) + parseAmount(r.tax)));
+  if (totals.reduce((a, b) => a + b, 0) !== c(parseAmount(bill.total))) return null;
+
+  const billTax = c(parseAmount(bill.tax));
+  let taxes = rows.map((r) => c(parseAmount(r.tax)));
+  if (taxes.reduce((a, b) => a + b, 0) !== billTax) {
+    // Only the "document states one GST figure" case is recoverable. Rows that
+    // carry SOME tax but not the bill's are a disagreement, not a gap.
+    if (taxes.some((t) => t !== 0) || billTax === 0) return null;
+    const base = totals.map((t) => Math.max(0, t));
+    const baseSum = base.reduce((a, b) => a + b, 0);
+    if (baseSum <= 0) return null;
+    taxes = base.map((b) => Math.floor((billTax * b) / baseSum));
+    // Largest remainder: the spare cents go to the lines whose exact share was
+    // cut by the most, so every line's tax is the nearest cent to its true share
+    // and the parts still sum to the whole. Ties break towards the bigger line.
+    let left = billTax - taxes.reduce((a, b) => a + b, 0);
+    const remainder = (i: number) => (billTax * base[i]) % baseSum;
+    const order = base.map((_, i) => i).sort((x, y) => remainder(y) - remainder(x) || base[y] - base[x]);
+    for (let k = 0; left > 0 && k < order.length; k++, left--) taxes[order[k]] += 1;
+    if (taxes.reduce((a, b) => a + b, 0) !== billTax) return null;
+  }
+
+  const [codes, cats] = await Promise.all([activeAccountCodes(opts.tenantId), trackingCategories(opts.tenantId)]);
+  return rows.map((row, i) => {
+    const own = codeFromCategory(row.category);
+    const line: Record<string, unknown> = {
+      Description: String(row.description ?? '').trim() || opts.fallbackDescription,
+      Quantity: 1,
+      // Tax-EXCLUSIVE, like the single-line path: Xero then shows a Tax Amount
+      // column and the figures match the paper.
+      UnitAmount: (totals[i] - taxes[i]) / 100,
+      // A line whose own category isn't a live Xero account follows the account
+      // chosen for the document rather than being dropped.
+      AccountCode: own && codes.has(own) ? own : opts.accountCode,
+      TaxType: opts.taxType,
+      TaxAmount: taxes[i] / 100,
+    };
+    // The line's own projects, falling back to the document's for the first
+    // category — a row that says nothing is still part of this bill.
+    const tracking = trackingAcross(cats, [
+      String(row.project ?? '').trim() || String(bill.project ?? ''),
+      String(row.project2 ?? ''),
+    ]);
+    if (tracking.length) line.Tracking = tracking;
+    return line;
+  });
 }
 
 // POST /api/xero/organisations/:id/publish-bill — publish a stored cost
@@ -553,13 +667,24 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     if (tracking) line.Tracking = tracking;
   }
 
+  // A bill with its own line items posts as those lines — each with its own
+  // account and its own project(s) — but only when they add up to the same
+  // money as the document. Anything else posts as the single summary line.
+  const perLine = await perLineItems(bill, {
+    accountCode,
+    taxType,
+    tenantId: organisation.tenantId,
+    fallbackDescription: String(line.Description ?? ''),
+  });
+  const lineItems = perLine ?? [line];
+
   const payload: Record<string, unknown> = {
     Type: 'ACCPAY',
     Contact: { Name: bill.supplier || 'Unknown supplier' },
     Date: date,
     DueDate: dueDate,
     LineAmountTypes: 'Exclusive',
-    LineItems: [line],
+    LineItems: lineItems,
     Status: status,
   };
   if (bill.invoiceNumber) payload.InvoiceNumber = bill.invoiceNumber;
@@ -613,6 +738,9 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
       invoiceNumber: String(invoice.InvoiceNumber ?? ''),
       status: String(invoice.Status ?? status),
     },
+    // How it went up: the document's own lines, or one summary line.
+    lines: lineItems.length,
+    perLine: Boolean(perLine),
     attachment,
     bill: updated,
   });
