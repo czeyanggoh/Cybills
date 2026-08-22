@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Info, ChevronDown, Search, Trash2 } from 'lucide-react';
+import { X, Info, ChevronDown, Trash2 } from 'lucide-react';
 import {
   emptyRule,
   getCustomerRule,
@@ -10,6 +10,8 @@ import {
 } from '@/lib/customerRules';
 import { useProjectOptions } from '@/lib/listsStore';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
+import SearchSelect from '@/components/SearchSelect';
 
 function FieldLabel({ children }) {
   return <label className="mb-1.5 block text-sm text-muted-foreground">{children}</label>;
@@ -27,58 +29,6 @@ function Select({ value, onChange, children }) {
         {children}
       </select>
       <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-    </div>
-  );
-}
-
-// A searchable single-select dropdown (used for Project, which can be long).
-function SearchSelect({ value, options, placeholder = 'None', onChange }) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const filtered = options.filter((o) => o.toLowerCase().includes(q.trim().toLowerCase()));
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full items-center justify-between rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <span className={cn(!value && 'text-muted-foreground')}>{value || placeholder}</span>
-        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
-          <div className="absolute left-0 z-20 mt-1 max-h-72 w-full overflow-auto rounded-md border bg-background py-1 shadow-lg">
-            <div className="relative px-2 pb-1">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search"
-                className="h-9 w-full rounded-md border bg-background pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => { onChange(''); setOpen(false); }}
-              className="flex w-full items-center px-3 py-2 text-left text-sm italic text-muted-foreground transition-colors hover:bg-muted"
-            >
-              — None —
-            </button>
-            {filtered.map((o) => (
-              <button
-                key={o}
-                type="button"
-                onClick={() => { onChange(o); setOpen(false); }}
-                className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-              >
-                {o}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
     </div>
   );
 }
@@ -115,14 +65,7 @@ function SmartSplitModal({ open, customer, value, categoryOptions, onClose, onDo
 
   const cell = 'h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
   const CatCell = ({ v, onChange }) => (
-    <div className="relative">
-      <select value={v} onChange={(e) => onChange(e.target.value)} className={cn(cell, 'appearance-none pr-7')}>
-        <option value="">Select</option>
-        {v && !categoryOptions.includes(v) && <option value={v}>{v}</option>}
-        {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-    </div>
+    <ComboSelect aria-label="Category" value={v} options={categoryOptions} onChange={onChange} emptyLabel="Select" />
   );
 
   return (
@@ -264,11 +207,13 @@ export default function CustomerRulesModal({ open, customer, categoryOptions = [
             {/* Right column */}
             <div>
               <FieldLabel>Category</FieldLabel>
-              <Select value={rule.category} onChange={(v) => set('category', v)}>
-                <option value="">Select</option>
-                {rule.category && !categoryOptions.includes(rule.category) && <option value={rule.category}>{rule.category}</option>}
-                {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-              </Select>
+              <ComboSelect
+                aria-label="Category"
+                value={rule.category}
+                options={categoryOptions}
+                onChange={(v) => set('category', v)}
+                emptyLabel="Select"
+              />
             </div>
 
             <div>

@@ -37,23 +37,23 @@ import ExtractionProgress from '@/components/ExtractionProgress';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
-// Native (working) category dropdown styled to match the row cells. `options`
-// is the active org's live Xero chart (bundled fallback).
+// Type-to-find category dropdown styled to match the row cells. `options` is
+// the active org's live Xero chart (bundled fallback), which runs to hundreds
+// of accounts — hence the search box rather than a native select.
 function CategorySelect({ value, onChange, options }) {
   const mode = useCategoryDisplayMode();
-  const known = options.includes(value);
   return (
-    <select
+    <ComboSelect
+      size="xs"
+      className="w-44"
+      aria-label="Category"
       value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-44 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {!known && <option value={value}>{formatCategory(value, mode)}</option>}
-      {options.map((c) => (
-        <option key={c} value={c}>{formatCategory(c, mode)}</option>
-      ))}
-    </select>
+      options={options}
+      onChange={onChange}
+      format={(c) => formatCategory(c, mode)}
+    />
   );
 }
 
@@ -559,19 +559,18 @@ export default function Costs() {
       sortable: false,
       interactive: true,
       cell: (d) => (
-        <select
+        <ComboSelect
+          size="xs"
+          className="w-36"
+          aria-label="Tax rate"
           value={(gstRegistered ? d.taxRate : noTaxName) || ''}
-          onChange={(e) => changeTaxRate(d, e.target.value)}
-          className="w-36 rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <option value="">No tax rate</option>
-          {gstRegistered && !taxRateOptions.includes(d.taxRate) && d.taxRate && (
-            <option value={d.taxRate}>{d.taxRate}</option>
-          )}
-          {taxRateOptions.map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
+          // '' stays on the list so a rate can be cleared again, the way the
+          // native select's "No tax rate" option did.
+          options={['', ...taxRateOptions]}
+          onChange={(v) => changeTaxRate(d, v)}
+          format={(t) => t || 'No tax rate'}
+          emptyLabel="No tax rate"
+        />
       ),
     },
     ref: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.invoiceNumber || '—' },

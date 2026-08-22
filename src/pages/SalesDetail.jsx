@@ -22,6 +22,7 @@ import {
 } from '@/lib/salesEvents';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
 // Map a persisted sales upload (billToDoc shape) into the sale record this page
 // renders — the same fields getSale() returns for a sample row.
@@ -90,24 +91,6 @@ function Input({ value, onChange = null, readOnly = false }) {
   );
 }
 
-function EditableSelect({ value, options, onChange }) {
-  const known = options.includes(value);
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {!known && <option value={value}>{value}</option>}
-        {options.map((o) => (
-          <option key={o} value={o}>{o}</option>
-        ))}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-    </div>
-  );
-}
 
 function SectionHeading({ children }) {
   return (
@@ -502,7 +485,7 @@ export default function SalesDetail() {
               <Field label="Type"><Input value={data.type} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date"><Input value={data.date} onChange={(v) => set('date', v)} /></Field>
               <Field label="Customer">
-                <EditableSelect value={data.customer} options={customerOptions} onChange={(v) => set('customer', v)} />
+                <ComboSelect value={data.customer} options={customerOptions} onChange={(v) => set('customer', v)} />
                 <button
                   type="button"
                   onClick={() => setRulesOpen(true)}
@@ -514,7 +497,7 @@ export default function SalesDetail() {
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Due date"><Input value={data.dueDate} onChange={(v) => set('dueDate', v)} /></Field>
               <Field label="Category">
-                <EditableSelect value={data.category} options={categoryOptions} onChange={setCategory} />
+                <ComboSelect value={data.category} options={categoryOptions} onChange={setCategory} />
                 <button
                   type="button"
                   onClick={() => setCatModalOpen(true)}
@@ -525,7 +508,7 @@ export default function SalesDetail() {
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>
-              <Field label="Project"><EditableSelect value={data.project} options={projectOptions} onChange={(v) => set('project', v)} /></Field>
+              <Field label="Project"><ComboSelect value={data.project} options={projectOptions} onChange={(v) => set('project', v)} /></Field>
               <Field label="Description">
                 <textarea
                   rows={2}
@@ -551,7 +534,7 @@ export default function SalesDetail() {
                 </button>
               </Field>
               <Field label="Payment method">
-                <EditableSelect
+                <ComboSelect
                   value={data.paymentMethod}
                   options={paymentMethods.map((p) => p.label)}
                   onChange={(v) => set('paymentMethod', v)}

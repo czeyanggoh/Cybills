@@ -47,6 +47,7 @@ import { claimExportName, claimRef } from '@/lib/exportFormat';
 import { useCategoryDisplayMode, useCategorySortMode, sortCategories, formatCategory } from '@/lib/categoryDisplay';
 import { CLAIM_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
 // The GL/account code CYHR should book the payable against — the leading number
 // on the category (e.g. "412 - Consulting" → "412"). Only returned when every
@@ -104,21 +105,16 @@ function CategorySelect({ value, onChange }) {
   const sort = useCategorySortMode();
   // 'Uncategorised' pinned first; the rest follow the chosen order.
   const options = ['Uncategorised', ...sortCategories(CATEGORIES.filter((c) => c !== 'Uncategorised'), sort)];
-  const known = options.includes(value);
   return (
-    <div className="relative w-40">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 w-full appearance-none rounded-md border bg-background px-2.5 pr-7 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {!known && value && <option value={value}>{formatCategory(value, mode)}</option>}
-        {options.map((c) => (
-          <option key={c} value={c}>{formatCategory(c, mode)}</option>
-        ))}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-    </div>
+    <ComboSelect
+      size="xs"
+      className="w-40"
+      aria-label="Category"
+      value={value}
+      options={options}
+      onChange={onChange}
+      format={(c) => formatCategory(c, mode)}
+    />
   );
 }
 
@@ -850,10 +846,13 @@ export default function ExpenseClaimDetail() {
             <h2 className="mb-4 text-sm font-semibold">Bulk edit {selected.size} item{selected.size === 1 ? '' : 's'}</h2>
             <label className="mb-4 block text-sm">
               <span className="mb-1 block text-muted-foreground">Category</span>
-              <select value={bulkCat} onChange={(e) => setBulkCat(e.target.value)} className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                <option value="">Select a category…</option>
-                {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
-              </select>
+              <ComboSelect
+                aria-label="Category"
+                value={bulkCat}
+                options={CATEGORIES}
+                onChange={setBulkCat}
+                emptyLabel="Select a category…"
+              />
             </label>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setBulkCatOpen(false)} className="inline-flex h-9 items-center rounded-md border px-4 text-sm hover:bg-muted">Cancel</button>

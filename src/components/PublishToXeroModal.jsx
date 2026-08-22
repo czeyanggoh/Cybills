@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { X, ChevronDown, CheckCircle2 } from 'lucide-react';
 import {
   useOrganisations,
@@ -9,6 +9,7 @@ import {
 } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
+import ComboSelect from '@/components/ComboSelect';
 
 // "Publish to Xero" dialog — posts a stored cost document to the linked Xero
 // organisation as a supplier bill (ACCPAY), through the cyworkspace relay.
@@ -94,12 +95,37 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   }, [open, organisationId]);
 
   // Expense-y accounts first (that's what supplier bills code to), but keep
-  // the full chart available below a divider for the odd asset/other posting.
-  const groupedAccounts = useMemo(() => {
+  // the full chart available below for the odd asset/other posting.
+  const accountCodes = useMemo(() => {
     const list = accounts ?? [];
     const isExpense = (a) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(a.type);
-    return { expense: list.filter(isExpense), other: list.filter((a) => !isExpense(a)) };
+    return [...list.filter(isExpense), ...list.filter((a) => !isExpense(a))].map((a) => a.code);
   }, [accounts]);
+
+  // Non-GST orgs only ever post No Tax, so that's the whole list for them.
+  const taxTypes = useMemo(
+    () =>
+      (taxRates ?? [])
+        .filter((t) => gstRegistered || t.taxType === 'NONE' || /^no tax$/i.test(t.name))
+        .map((t) => t.taxType),
+    [taxRates, gstRegistered]
+  );
+
+  const taxRateLabel = useCallback(
+    (type) => {
+      const t = (taxRates ?? []).find((x) => x.taxType === type);
+      return t ? `${t.name} (${t.rate}%)` : String(type ?? '');
+    },
+    [taxRates]
+  );
+
+  const accountLabel = useCallback(
+    (code) => {
+      const a = (accounts ?? []).find((x) => x.code === code);
+      return a ? `${a.code} — ${a.name}` : String(code ?? '');
+    },
+    [accounts]
+  );
 
   // When an account is picked, default the tax rate to the account's own
   // default (exactly what Xero's UI does).
@@ -218,48 +244,32 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                   <label className="flex items-center gap-3 text-sm">
                     <span className="w-28 shrink-0 text-muted-foreground">Account</span>
                     <div className="relative flex-1">
-                      <select
+                      <ComboSelect
+                        aria-label="Account"
                         value={accountCode}
-                        onChange={(e) => pickAccount(e.target.value)}
-                        disabled={loadingRefs}
-                        className={selectClass}
-                      >
-                        <option value="">{loadingRefs ? 'Loading accounts…' : 'Select an account'}</option>
-                        {groupedAccounts.expense.map((a) => (
-                          <option key={a.code} value={a.code}>
-                            {a.code} — {a.name}
-                          </option>
-                        ))}
-                        {groupedAccounts.other.length > 0 && <option disabled>──────────</option>}
-                        {groupedAccounts.other.map((a) => (
-                          <option key={a.code} value={a.code}>
-                            {a.code} — {a.name}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        options={accountCodes}
+                        onChange={pickAccount}
+                        format={accountLabel}
+                        disabled={Boolean(loadingRefs)}
+                        emptyLabel={loadingRefs ? 'Loading accounts…' : 'Select an account'}
+                        placeholder="Type a code or name…"
+                      />
                     </div>
                   </label>
 
                   <label className="flex items-center gap-3 text-sm">
                     <span className="w-28 shrink-0 text-muted-foreground">Tax rate</span>
                     <div className="relative flex-1">
-                      <select
+                      <ComboSelect
+                        aria-label="Tax rate"
                         value={taxType}
-                        onChange={(e) => setTaxType(e.target.value)}
-                        disabled={loadingRefs}
-                        className={selectClass}
-                      >
-                        <option value="">{loadingRefs ? 'Loading tax rates…' : 'Select a tax rate'}</option>
-                        {(taxRates ?? [])
-                          .filter((t) => gstRegistered || t.taxType === 'NONE' || /^no tax$/i.test(t.name))
-                          .map((t) => (
-                          <option key={t.taxType} value={t.taxType}>
-                            {t.name} ({t.rate}%)
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        options={taxTypes}
+                        onChange={setTaxType}
+                        format={taxRateLabel}
+                        disabled={Boolean(loadingRefs)}
+                        emptyLabel={loadingRefs ? 'Loading tax rates…' : 'Select a tax rate'}
+                        placeholder="Type a rate name…"
+                      />
                     </div>
                   </label>
 

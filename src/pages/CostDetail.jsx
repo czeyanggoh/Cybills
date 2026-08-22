@@ -53,6 +53,7 @@ import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
 function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
   return (
@@ -95,26 +96,6 @@ function Input({ value, onChange = null, readOnly = false }) {
   );
 }
 
-// Read-only dropdown-styled display of an extracted value.
-// Editable dropdown (native select) for pick-from-a-list fields like Category.
-function EditableSelect({ value, options, onChange, format = (x) => x }) {
-  const known = options.includes(value);
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {!known && <option value={value}>{format(value)}</option>}
-        {options.map((o) => (
-          <option key={o} value={o}>{format(o)}</option>
-        ))}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-    </div>
-  );
-}
 
 // A line's tracking-category picker. Blank is meaningful — it means "whatever
 // the document says" — so the empty option says so rather than reading as an
@@ -1315,8 +1296,8 @@ export default function CostDetail() {
 
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={displayItemId(doc.id)} readOnly /></Field>
-              <Field label="Document owner"><EditableSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
-              <Field label="Type"><EditableSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
+              <Field label="Document owner"><ComboSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
+              <Field label="Type"><ComboSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date">
                 <input
                   type="date"
@@ -1342,7 +1323,7 @@ export default function CostDetail() {
               </Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
-                <EditableSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
+                <ComboSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
                 {teach?.field === 'category' && (
                   <TeachRule field="category" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
                 )}
@@ -1358,9 +1339,9 @@ export default function CostDetail() {
               </Field>
 
               <SectionHeading>Allocation</SectionHeading>
-              <Field label="Customer"><EditableSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
+              <Field label="Customer"><ComboSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
               <Field label="Project">
-                <EditableSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} />
+                <ComboSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} />
                 {teach?.field === 'project' && (
                   <TeachRule field="project" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
                 )}
@@ -1387,7 +1368,7 @@ export default function CostDetail() {
               <Field label="Currency"><Input value={data.currency} onChange={(v) => set('currency', v)} /></Field>
               <Field label="Total amount"><Input value={data.total} onChange={(v) => set('total', v)} /></Field>
               <Field label="Tax rate">
-                <EditableSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
+                <ComboSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
                 {!gstRegistered && (
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     Fixed to No Tax — this company isn’t GST-registered. Change that under Business
@@ -1467,7 +1448,7 @@ export default function CostDetail() {
                 </button>
               </Field>
               <Field label="Payment method">
-                <EditableSelect
+                <ComboSelect
                   value={data.paymentMethod || ''}
                   options={paymentMethods.map((p) => p.label)}
                   onChange={(v) => set('paymentMethod', v)}
@@ -1508,15 +1489,14 @@ export default function CostDetail() {
                             />
                           </td>
                           <td className="px-2 py-1.5">
-                            <select
+                            <ComboSelect
+                              size="sm"
+                              aria-label="Line item category"
                               value={li.category || ''}
-                              onChange={(e) => updateLineItem(i, { category: e.target.value })}
-                              className="h-8 w-full min-w-[9rem] rounded border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            >
-                              {Array.from(new Set([li.category, ...categoryOptions].filter(Boolean))).map((c) => (
-                                <option key={c} value={c}>{formatCategory(c, catMode)}</option>
-                              ))}
-                            </select>
+                              options={Array.from(new Set([li.category, ...categoryOptions].filter(Boolean)))}
+                              onChange={(v) => updateLineItem(i, { category: v })}
+                              format={(c) => formatCategory(c, catMode)}
+                            />
                           </td>
                           {lineProjects.length > 0 && (
                             <td className="px-2 py-1.5">

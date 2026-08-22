@@ -8,6 +8,7 @@ import EditUserModal from '@/components/EditUserModal';
 import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser, updateUser } from '@/lib/userStore';
 import { useOrganisations, getActiveOrganisationId, useXeroProjectOptions } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
 
 // Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
 // (de)activate, remove).
@@ -297,19 +298,19 @@ export default function Users() {
                   </select>
                 </td>
                 <td className="px-3 py-3">
-                  <select
+                  <ComboSelect
+                    size="xs"
+                    className="w-40"
+                    aria-label="Project"
                     value={u.project || ''}
-                    onChange={async (e) => {
-                      await updateUser(u.id, { project: e.target.value });
-                      showToast(e.target.value ? `Project ${e.target.value} set for ${u.name}.` : `Project cleared for ${u.name}.`);
+                    options={['', ...projectOptions]}
+                    format={(p) => p || '— None —'}
+                    emptyLabel="— None —"
+                    onChange={async (v) => {
+                      await updateUser(u.id, { project: v });
+                      showToast(v ? `Project ${v} set for ${u.name}.` : `Project cleared for ${u.name}.`);
                     }}
-                    className="h-8 w-40 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <option value="">— None —</option>
-                    {(u.project && !projectOptions.includes(u.project) ? [u.project, ...projectOptions] : projectOptions).map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
+                  />
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{u.lastLogin}</td>
                 <td className="px-3 py-3">
