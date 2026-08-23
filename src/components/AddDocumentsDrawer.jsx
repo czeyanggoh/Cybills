@@ -28,7 +28,7 @@ import {
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
 import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome } from '@/lib/extractionSettings';
-import { useUsers, useOwnerNames } from '@/lib/userStore';
+import { useUsers, useOwnerNames, useGeneralOwnerName, ownsHere } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
@@ -301,9 +301,12 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const [items, setItems] = useState([]);
   // Who the uploaded documents are attributed to. Stored as the display name
   // (not an email) so attribution shows correctly regardless of the roster's
-  // email→name mapping. Defaults to the signed-in user, and keeps following the
-  // signed-in user until they pick someone else — auth resolves a tick after
-  // first render, so a one-shot default would freeze on a stale/empty value.
+  // email→name mapping. Defaults to the signed-in user when they are one of
+  // this client's own people, and to the client's general account when they
+  // aren't — a colleague adding documents for a client is doing the client's
+  // books, not filing their own. Keeps following that default until they pick
+  // someone else, since auth and the roster both resolve a tick after first
+  // render and a one-shot default would freeze on a stale/empty value.
   const meName = user?.name || user?.email || '';
   const [owner, setOwner] = useState('');
   // 'file' = one document per uploaded file; 'split' = split each PDF into one
@@ -311,15 +314,28 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const [mode, setMode] = useState('file');
   const [splitting, setSplitting] = useState(false);
   const ownerTouched = useRef(false);
+  const generalName = useGeneralOwnerName();
+  // Recomputed on every roster change, since useGeneralOwnerName re-renders on
+  // the same event that refills the directory this reads.
+  const meIsClientUser = ownsHere(user || {});
+  const defaultOwner = meIsClientUser ? meName : generalName || meName;
   useEffect(() => {
-    if (!ownerTouched.current && meName) setOwner(meName);
-  }, [meName]);
-  // The entity's own people AND the practice colleagues with access to it —
-  // a colleague uploading for a client is the common case, not the exception.
+    if (!ownerTouched.current && defaultOwner) setOwner(defaultOwner);
+  }, [defaultOwner]);
+  // Only the client's own people and its general account: a colleague can't put
+  // their own name on a client's document, which is what the general account is
+  // there to absorb.
   const ownerNames = useOwnerNames();
   const ownerOptions = Array.from(
-    new Set([meName, ...ownerNames, ...users.map((u) => u.name || u.email)].filter(Boolean))
+    new Set([
+      ...(meIsClientUser ? [meName] : []),
+      ...ownerNames,
+      ...users.map((u) => u.name || u.email),
+    ].filter(Boolean))
   );
+  // Only before the roster has loaded (or for an account with nobody in it) —
+  // an empty picker would otherwise leave the drawer with no owner at all.
+  if (!ownerOptions.length && meName) ownerOptions.push(meName);
 
   // Default the tab to the workspace the drawer was opened from (Sales page →
   // Sales tab, etc.) each time it opens.

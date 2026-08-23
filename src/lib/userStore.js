@@ -57,9 +57,10 @@ export function nameForEmail(email) {
   return personByKey[String(email).trim().toLowerCase()] || '';
 }
 
-// Everyone who can own a document in the open entity: this entity's people plus
-// the practice colleagues with access to it. Separate from the roster on
-// purpose — see the server's GET /api/users/directory.
+// Everyone the open entity's documents can name: its own people (including its
+// general account) plus the practice colleagues with access to it, each entry
+// flagged with which it is. Separate from the roster on purpose — see the
+// server's GET /api/users/directory.
 async function fetchDirectory() {
   try {
     const { people } = await req('/directory');
@@ -74,9 +75,13 @@ export function getDirectory() {
   return directory;
 }
 
-// The people who can own a document here, as display names, A–Z. What the
-// "Document owner" pickers offer — the roster alone would leave out the
-// colleagues who upload most of a client's documents.
+// The people a document here can be given to, as display names, A–Z. This is
+// the CLIENT's own side of the directory: its employees plus its general
+// account. Practice colleagues are deliberately absent — a colleague does the
+// client's books, they don't own the client's paperwork, so what they add goes
+// to the general account instead of putting their own name on the client's
+// records. (They stay in the directory for name resolution: the documents they
+// uploaded still have to read as a person rather than an email local-part.)
 export function useOwnerNames() {
   const [names, setNames] = useState(() => ownerNames());
   useEffect(() => {
@@ -89,7 +94,42 @@ export function useOwnerNames() {
 }
 
 const ownerNames = () =>
-  Array.from(new Set(directory.map((p) => p.name || p.email).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  Array.from(new Set(directory.filter((p) => !p.external).map((p) => p.name || p.email).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b)
+  );
+
+// Can this person own a document in the entity that's open? True for its own
+// people; false for a practice colleague working on it from outside, whose
+// uploads belong to the client's general account instead. (Inside the
+// practice's OWN entity a colleague is one of its people, so this is true
+// there — which is the difference between doing a client's books and doing
+// your own.)
+export function ownsHere({ email, name } = {}) {
+  const key = (v) => String(v || '').trim().toLowerCase();
+  const row = directory.find(
+    (p) => (key(p.email) && key(p.email) === key(email)) || (key(p.name) && key(p.name) === key(name))
+  );
+  return Boolean(row && !row.external);
+}
+
+// The entity's general account — the owner an unassigned document falls to.
+// Created with the organisation, so it's there unless the directory hasn't
+// loaded yet.
+export function getGeneralOwnerName() {
+  const row = directory.find((p) => p.general);
+  return row ? row.name || row.email : '';
+}
+
+export function useGeneralOwnerName() {
+  const [name, setName] = useState(() => getGeneralOwnerName());
+  useEffect(() => {
+    const sync = () => setName(getGeneralOwnerName());
+    sync();
+    window.addEventListener(USERS_EVENT, sync);
+    return () => window.removeEventListener(USERS_EVENT, sync);
+  }, []);
+  return name;
+}
 
 async function fetchUsers() {
   try {

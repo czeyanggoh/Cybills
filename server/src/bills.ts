@@ -22,7 +22,7 @@ import {
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { dataScopeForOrg } from './organisations.js';
 import { workspaceId } from './workspace.js';
-import { emailForPerson, orgScope } from './users.js';
+import { emailForPerson, orgScope, ownerForOrg } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
 
@@ -186,15 +186,14 @@ billsRouter.post('/bills/:id/file', async (req, res) => {
 // callers send — as the one email that identifies that person. An address we
 // can't place is kept as given (a real person outside this entity's directory);
 // an unresolvable NAME is dropped rather than stored, since a bare name is
-// exactly the ambiguity this field exists to remove.
-function ownerEmail(req: Request, value: unknown): string {
+// exactly the ambiguity this field exists to remove. A practice colleague is
+// never the answer: what a colleague adds to a client belongs to that client's
+// general account, which is what `uploader` (their email, on create) decides.
+function ownerEmail(req: Request, value: unknown, uploader = ''): string {
   const raw = typeof value === 'string' ? value.trim() : '';
-  if (!raw) return '';
   // orgScope, not orgIdFor: people belong to an ENTITY, while a bill belongs to
   // that entity's data scope (which collapses to 'cybm' for the primary one).
-  const resolved = emailForPerson(workspaceId(req), orgScope(req), raw);
-  if (resolved) return resolved;
-  return raw.includes('@') ? raw : '';
+  return ownerForOrg(workspaceId(req), orgScope(req), raw, uploader);
 }
 
 // PATCH /api/costs/bills/:id — update editable fields (e.g. category) or the
@@ -393,7 +392,7 @@ billsRouter.post('/bills', async (req, res) => {
     // owner" is a separate field, resolved to an email so one person can't end
     // up stored two ways (a display name here, their address there).
     createdBy: me?.email ?? '',
-    owner: ownerEmail(req, b.owner),
+    owner: ownerEmail(req, b.owner, me?.email ?? ''),
     storageKey,
     contentType,
     // Default to the inbox ('new'). The Add-Documents drawer opts into

@@ -25,7 +25,7 @@ writeFileSync(
 
 const express = (await import('express')).default;
 const { billsRouter } = await import('../src/bills.ts');
-const { usersRouter, emailForPerson, peopleForOrg } = await import('../src/users.ts');
+const { usersRouter, emailForPerson, peopleForOrg, ownerForOrg } = await import('../src/users.ts');
 const { insertBill } = await import('../src/store.ts');
 
 // A document written the old way: the owner's DISPLAY NAME sitting in the field
@@ -98,6 +98,9 @@ check('the repair is written back to disk',
 
 // 4) A new upload: the drawer still sends a display name, and it lands in
 // `owner` as an email. createdBy is the uploader — never the owner's name.
+// This is CYBM's own entity, and the colleagues belong to it, so their own
+// company's paperwork still carries their name (section 7 covers the case that
+// doesn't: the same colleague working on a CLIENT).
 const made = await send('POST', '/api/costs/bills', {
   fileHash: 'h1', fileName: 'r.pdf', supplier: 'Grab', total: '20', tax: '0',
   date: '2026-08-01', category: '429 - General Expenses', owner: 'Astrid Yang',
@@ -127,6 +130,51 @@ const odd2 = await send('POST', '/api/costs/bills', {
   date: '2026-08-01', category: '429 - General Expenses', owner: 'Nobody At All',
 });
 check('an unknown name is dropped', odd2.body.bill.owner, '');
+
+// 7) The general account. Linking an organisation creates it, so a client
+// entity always has somewhere for unclaimed paperwork to go, and the Users list
+// is never empty.
+const redRoster = await (await fetch(`${base}/api/users`, { headers: asOrg('org-red') as any })).json();
+const general = redRoster.users.find((u: any) => u.general);
+check('a linked entity starts with its general account', general?.name, 'General');
+check('…which the roster reports as having no mailbox', general?.email, '');
+check('…and which can’t sign in', general?.login, 'No');
+const redDir = await (await fetch(`${base}/api/users/directory`, { headers: asOrg('org-red') as any })).json();
+const dir2 = await (await fetch(`${base}/api/users/directory`, { headers: asOrg('org-cybm') as any })).json();
+const dirGeneral = redDir.people.find((p: any) => p.general);
+check('the directory carries it as an owner one can pick', dirGeneral?.email, 'org-red.general@cybills.local');
+check('…flagged as the client’s own, not an outsider', dirGeneral?.external, false);
+check('a colleague working here from outside is flagged as one',
+  redDir.people.find((p: any) => p.email === 'czeyang.goh@cy-bm.sg')?.external, true);
+check('…and is not an outsider in the practice’s own entity',
+  dir2.people.find((p: any) => p.email === 'czeyang.goh@cy-bm.sg')?.external, false);
+
+// The client's OWN people still own what is theirs.
+await send('POST', '/api/users', { name: 'Martin Lim', email: 'martin@redalphacyber.com', notify: false }, 'org-red');
+const redBill = await send('POST', '/api/costs/bills', {
+  fileHash: 'h4', fileName: 'r4.pdf', supplier: 'Grab', total: '30', tax: '0',
+  date: '2026-08-02', category: '429 - General Expenses', owner: 'Martin Lim',
+}, 'org-red');
+check('one of the client’s own people keeps the document', redBill.body.bill.owner, 'martin@redalphacyber.com');
+
+// A colleague named as the owner of a CLIENT's document doesn't stick: doing
+// the books is not owning the paperwork.
+const redToColleague = await send('POST', '/api/costs/bills', {
+  fileHash: 'h5', fileName: 'r5.pdf', supplier: 'Grab', total: '31', tax: '0',
+  date: '2026-08-02', category: '429 - General Expenses', owner: 'Cze Yang Goh',
+}, 'org-red');
+check('a colleague as a client’s owner becomes the general account',
+  redToColleague.body.bill.owner, 'org-red.general@cybills.local');
+
+// And who UPLOADED it decides where an unnamed document goes: a colleague's
+// falls to the general account, a client employee's keeps following them —
+// as does a colleague's in the practice's own entity.
+check('a colleague uploading, naming nobody — the general account',
+  ownerForOrg('cybm', 'org-red', '', 'czeyang.goh@cy-bm.sg'), 'org-red.general@cybills.local');
+check('the client’s own person uploading, naming nobody — left to follow them',
+  ownerForOrg('cybm', 'org-red', '', 'martin@redalphacyber.com'), '');
+check('a colleague in their OWN entity, naming nobody — left to follow them',
+  ownerForOrg('cybm', 'org-cybm', '', 'czeyang.goh@cy-bm.sg'), '');
 
 server.close();
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');

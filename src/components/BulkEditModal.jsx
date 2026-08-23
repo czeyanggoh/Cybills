@@ -77,9 +77,10 @@ export default function BulkEditModal({
       projects,
       categories: categoryOptions,
       taxRates: taxRateOptions,
-      // The people who can OWN a document: this entity's own plus the
-      // practice colleagues working on it, who are on no client's roster.
-      users: people.map((u) => u.email).filter(Boolean),
+      // The people a document can be GIVEN to: this entity's own, plus its
+      // general account. Not the practice colleagues working on it — what they
+      // add belongs to the client, so the general account holds it.
+      users: people.filter((u) => !u.external).map((u) => u.email).filter(Boolean),
     }),
     [suppliers, customers, paymentMethods, projects, categoryOptions, taxRateOptions, people]
   );

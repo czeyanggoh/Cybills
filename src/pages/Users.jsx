@@ -190,8 +190,10 @@ export default function Users() {
       (u.email || '').toLowerCase().includes(query.toLowerCase())
   );
   const pendingCount = users.filter((u) => u.pending && !u.deactivated).length;
-  // Anyone active can be someone's direct manager (the approver claims route to).
-  const managerOptions = users.filter((m) => !m.deactivated && !m.pending);
+  // Anyone active can be someone's direct manager (the approver claims route to)
+  // — except the general account, which is a place for unassigned documents to
+  // land, not a person who can approve anything.
+  const managerOptions = users.filter((m) => !m.deactivated && !m.pending && !m.general);
   const projectOptions = useXeroProjectOptions();
   // The roster is tenant-specific — the server returns only the selected
   // organisation's people — so a row without its own stored company name is
@@ -277,7 +279,20 @@ export default function Users() {
           <tbody>
             {rows.map((u) => (
               <tr key={u.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
-                <td className="whitespace-nowrap px-3 py-3 font-medium">{u.name}</td>
+                <td className="whitespace-nowrap px-3 py-3 font-medium">
+                  {u.name}
+                  {/* The row created with the organisation itself. Saying so
+                      here is the only place it's explained — otherwise it reads
+                      as a colleague nobody remembers adding. */}
+                  {u.general && (
+                    <span
+                      className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                      title="Created with the organisation. Documents added by CY colleagues belong to this account unless another user is chosen as owner."
+                    >
+                      Default owner
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-3 text-muted-foreground">{u.email || '—'}</td>
                 <td className="px-3 py-3 text-muted-foreground">{u.companyName || workspaceCompany || '—'}</td>
                 <td className="px-3 py-3">{u.login}</td>

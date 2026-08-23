@@ -9,7 +9,7 @@ import { WORKSPACE_ID, workspaceId } from './workspace.js';
 // in users.ts next to the rows it reads. (users.ts imports this module back for
 // the org lookups — neither one calls the other while loading, so the cycle is
 // inert.)
-import { memberForSession, canAccessOrg, canManagePractice } from './users.js';
+import { memberForSession, canAccessOrg, canManagePractice, ensureGeneralUser } from './users.js';
 
 // Organisations = the client entities bills are published for. Each one is
 // linked to a Xero organisation (tenant) that cyworkspace holds a connection
@@ -156,6 +156,17 @@ organisationsRouter.post('/', (req, res) => {
   };
   organisations.push(organisation);
   persist(organisations);
+  // A linked client entity starts with one user: its general account, which
+  // owns everything nobody claimed — every document a practice colleague adds
+  // here lands on it unless they name one of the client's own people. Created
+  // with the entity so the Users list is never empty, and so there is always
+  // somewhere for unassigned work to go. Never let a roster hiccup fail the
+  // link itself: ensure() creates the row on the next read either way.
+  try {
+    ensureGeneralUser(orgId, organisation.id);
+  } catch (err) {
+    console.error('[organisations] could not create the general user', err);
+  }
   res.json({ ok: true, organisation });
 });
 

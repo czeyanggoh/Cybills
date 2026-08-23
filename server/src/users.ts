@@ -93,6 +93,12 @@ export type User = {
   // people, and a new user is created under whichever one is selected. Empty
   // only while no organisation is linked yet.
   organisationId: string;
+  // The entity's GENERAL account — created with the organisation itself, and
+  // never a person. It owns the documents nobody claimed: anything a practice
+  // colleague adds to this client lands here unless they name one of the
+  // client's own people as the owner. It has no real address, so it can't sign
+  // in, be invited, or approve anything.
+  general: boolean;
   companyId: string;
   companyName: string;
   // --- Practice membership ---------------------------------------------------
@@ -129,7 +135,12 @@ export type User = {
 // token; expose only whether a password has been set.
 export function publicUser(u: User) {
   const { passwordHash, resetTokenHash, resetTokenExpires, resetTokenKind, ...rest } = u;
-  return { ...rest, hasPassword: Boolean(passwordHash) };
+  // The general account's address is an internal identity (what a document
+  // stores as its owner), not a mailbox anyone can write to — so the roster
+  // reports it as having none, and the UI treats it accordingly: nothing to
+  // invite, nothing to reset.
+  const email = u.general ? '' : rest.email;
+  return { ...rest, email, hasPassword: Boolean(passwordHash) };
 }
 
 const COLLECTION = 'users';
@@ -173,6 +184,7 @@ export function full(u: Partial<User>, ws: string): User {
     clientAccess: Array.isArray(u.clientAccess) ? u.clientAccess.filter(Boolean) : [],
     allClients: Boolean(u.allClients),
     organisationId: u.organisationId || '',
+    general: Boolean(u.general),
     companyId: u.companyId || '',
     companyName: u.companyName || '',
     project: u.project || '',
@@ -197,6 +209,71 @@ export function orgScope(req: Request): string {
 
 const inOrg = (u: User, org: string) => (u.organisationId || '') === org;
 
+// --- The entity's general account --------------------------------------------
+// Every linked organisation gets one row that isn't a person: the account the
+// client's unclaimed paperwork belongs to. It exists so that a colleague doing
+// the client's books never has to own the client's documents — what they add
+// lands here unless they name one of the client's own people. Created with the
+// organisation (and backfilled onto organisations linked before this existed),
+// so the Users list is never empty for a freshly-linked client.
+export const GENERAL_USER_NAME = 'General';
+
+// The row needs an address because a document's owner is stored as one, but
+// nothing is ever sent to it: it's derived from the organisation id (unique by
+// construction), on a domain that doesn't resolve, and the UI shows the row as
+// having no email at all.
+const generalEmailFor = (orgId: string) => `${orgId}.general@cybills.local`;
+
+const isGeneralRow = (u: User, ws: string, org: string) =>
+  u.workspaceId === ws && !u.removed && u.general && inOrg(u, org);
+
+// A practice colleague working on an entity from OUTSIDE it — the case the
+// general account exists for. Deliberately not "is on the practice team": the
+// practice's own entity is a client like any other, and the colleagues who
+// belong to it are its own people there, so their own company's paperwork keeps
+// their name on it.
+const isOutsider = (u: User | undefined, org: string) => Boolean(u?.practice) && !inOrg(u as User, org);
+
+// The general account for one entity, or null before any organisation is linked.
+export function generalUserFor(ws: string, org: string): User | null {
+  if (!org) return null;
+  return ensure(ws).find((u) => isGeneralRow(u, ws, org)) ?? null;
+}
+
+// Give every linked organisation its general account. Runs on load, so an
+// organisation linked before this existed gets one too, and deleting the row
+// simply brings it back — it's part of the entity, not a person someone added.
+function ensureGeneralUsers(items: User[], ws: string): boolean {
+  let changed = false;
+  for (const org of listOrganisations(ws)) {
+    if (items.some((u) => isGeneralRow(u, ws, org.id))) continue;
+    items.push(
+      full(
+        {
+          name: GENERAL_USER_NAME,
+          email: generalEmailFor(org.id),
+          login: 'No',
+          role: 'Standard',
+          general: true,
+          organisationId: org.id,
+          companyId: org.id,
+          companyName: org.name,
+          practice: false,
+        },
+        ws
+      )
+    );
+    changed = true;
+  }
+  return changed;
+}
+
+// Called when an organisation is linked. ensure() creates the row for every
+// linked organisation, so all this has to do is run after the new one is stored.
+export function ensureGeneralUser(ws: string, orgId: string): User | null {
+  return generalUserFor(ws, orgId);
+}
+
 // --- Who can own a document here ---------------------------------------------
 // Attribution is not the roster. The Users page is one client entity's own
 // people (`!u.practice`), which is right for managing them — but a document in
@@ -204,12 +281,25 @@ const inOrg = (u: User, org: string) => (u.organisationId || '') === org;
 // the app cannot resolve falls back to the raw email local-part ("czeyang.goh"
 // next to "Cze Yang Goh", the same person twice). So the directory below is the
 // wider set: the entity's people PLUS the practice colleagues with access to
-// it. Names and emails only, and only for an entity the caller can open.
-export function peopleForOrg(ws: string, org: string): Array<{ email: string; name: string }> {
+// it, each entry saying which it is. Names, emails and those two flags only,
+// and only for an entity the caller can open.
+export function peopleForOrg(
+  ws: string,
+  org: string
+): Array<{ email: string; name: string; external: boolean; general: boolean }> {
   return ensure(ws)
     .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org))))
     .filter((u) => Boolean(u.email))
-    .map((u) => ({ email: u.email, name: u.name || u.email }));
+    .map((u) => ({
+      email: u.email,
+      name: u.name || u.email,
+      // What each entry IS here, because the two questions differ: a colleague
+      // from outside is never OFFERED as a document's owner (that's the general
+      // account's job), but their name must still resolve on the documents they
+      // uploaded.
+      external: isOutsider(u, org),
+      general: Boolean(u.general),
+    }));
 }
 
 // Resolve whatever a caller called a person — their email, or the display name
@@ -224,6 +314,32 @@ export function emailForPerson(ws: string, org: string, value: string): string {
   if (byEmail) return byEmail.email;
   const byName = people.filter((p) => norm(p.name) === want);
   return byName.length === 1 ? byName[0].email : '';
+}
+
+// Who a document in this entity actually belongs to, given what the client
+// asked for (`requested`) and who is putting it there (`uploader`, an email;
+// pass '' when nobody is uploading, e.g. an edit). The practice's rule:
+//
+//   * one of the client's own people was named → that person owns it;
+//   * a COLLEAGUE FROM OUTSIDE this entity was named, or one of them uploaded
+//     without naming anyone → the entity's general account owns it. A colleague
+//     does the client's books; the paperwork is still the client's;
+//   * an address the directory can't place → kept as given (a real person we
+//     simply don't know here);
+//   * nothing named, uploaded by the client's own person → left empty, which
+//     is how a document keeps following its uploader.
+export function ownerForOrg(ws: string, org: string, requested: string, uploader: string): string {
+  const items = ensure(ws);
+  const rowFor = (email: string) => {
+    const want = norm(email);
+    return want ? items.find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === want) : undefined;
+  };
+  const generalEmail = () => items.find((u) => isGeneralRow(u, ws, org))?.email || '';
+
+  const raw = String(requested ?? '').trim();
+  const resolved = raw ? emailForPerson(ws, org, raw) || (raw.includes('@') ? raw : '') : '';
+  if (resolved) return isOutsider(rowFor(resolved), org) ? generalEmail() : resolved;
+  return isOutsider(rowFor(uploader), org) ? generalEmail() : '';
 }
 
 // Whose row the caller can act on from where. A client entity's people are
@@ -343,6 +459,11 @@ function normalizeRoster(items: User[], ws: string): boolean {
   const groups = new Map<string, User[]>();
   for (const u of items) {
     if (u.workspaceId !== ws || u.removed) continue;
+    // The general account is not a person, so it is never somebody's duplicate.
+    // Without this, a client with an employee actually named "General" would
+    // lose the row to them on load and have it recreated on the next one, for
+    // ever.
+    if (u.general) continue;
     const name = norm(u.name);
     if (!name) continue;
     // Keyed by organisation as well: the same name under two client entities is
@@ -518,6 +639,7 @@ export function ensure(ws: string): User[] {
     changed = true;
   }
   if (assignOrganisations(items, ws)) changed = true;
+  if (ensureGeneralUsers(items, ws)) changed = true;
   if (normalizeRoster(items, ws)) changed = true;
   if (normalizeRoles(items, ws)) changed = true;
   if (reconcileSeedAdmins(items, ws)) changed = true;
@@ -614,7 +736,12 @@ export function emailForName(ws: string, name: string): string {
 // Apply the editable fields present in `b` onto a user, keeping name in sync
 // with first/last. Shared by the add-merge path and PATCH.
 function applyEditable(user: User, b: Partial<User>, ws: string) {
+  // The roster reports the general account as having no email, so a form that
+  // round-trips a row would otherwise save that blank over the identity every
+  // document of theirs is stored against.
+  const internalEmail = user.general ? user.email : '';
   for (const k of EDITABLE) if (k in b) (user as Record<string, unknown>)[k] = (b as Record<string, unknown>)[k];
+  if (internalEmail) user.email = internalEmail;
   if ('firstName' in b || 'lastName' in b) {
     const nm = `${user.firstName || ''} ${user.lastName || ''}`.trim();
     if (nm) user.name = nm;
@@ -822,7 +949,7 @@ usersRouter.post('/', async (req, res) => {
     // Stamped with the selected organisation — an admin adds people to the
     // entity they are currently working in.
     const newUser = full(
-      { ...u, id: undefined, organisationId: org, companyId: u.companyId || org, companyName: u.companyName || orgLabel },
+      { ...u, id: undefined, general: false, organisationId: org, companyId: u.companyId || org, companyName: u.companyName || orgLabel },
       ws
     );
     items.unshift(newUser);

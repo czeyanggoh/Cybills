@@ -186,11 +186,13 @@ export default function CostDetail() {
   const { visionEnabled, user } = useAuth();
   const readerName = useReaderName();
   const teamUsers = useUsers();
-  // Who this document can belong to: the entity's own people AND the practice
-  // colleagues with access to it, which is who actually uploads most of them.
+  // Who this document can belong to: the client's own people plus its general
+  // account, which is where anything a practice colleague added sits. A
+  // colleague is not on the list — reassigning a client's document to the
+  // bookkeeper doing their books is never the answer.
   const ownerNames = useOwnerNames();
   const ownerOptions = Array.from(
-    new Set([user?.name || user?.email, ...ownerNames, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
+    new Set([...ownerNames, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
   );
   const categoryOptions = useCategoryOptions();
   const catMode = useCategoryDisplayMode();
@@ -1314,7 +1316,16 @@ export default function CostDetail() {
 
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={itemNumber(doc)} readOnly /></Field>
-              <Field label="Document owner"><ComboSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
+              {/* Whoever it says today stays offered, so a document written
+                  before the general account existed still shows its own owner
+                  rather than silently reading as someone else. */}
+              <Field label="Document owner">
+                <ComboSelect
+                  value={data.user}
+                  options={data.user && !ownerOptions.includes(data.user) ? [data.user, ...ownerOptions] : ownerOptions}
+                  onChange={(v) => set('user', v)}
+                />
+              </Field>
               <Field label="Type"><ComboSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date">
                 <input
