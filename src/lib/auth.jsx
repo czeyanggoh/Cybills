@@ -14,7 +14,7 @@ export function AuthProvider({ children }) {
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [readerProviders, setReaderProviders] = useState([]);
-  const [defaultReaderProvider, setDefaultReaderProvider] = useState('claude');
+  const [defaultReaderProvider, setDefaultReaderProvider] = useState('openai');
   const [mailEnabled, setMailEnabled] = useState(false);
   const [user, setUser] = useState(null);
   const [membership, setMembership] = useState({ status: 'anonymous', user: null });
@@ -31,7 +31,7 @@ export function AuthProvider({ children }) {
         setGoogleEnabled(Boolean(s.googleEnabled));
         setVisionEnabled(Boolean(s.visionEnabled));
         setReaderProviders(Array.isArray(s.readerProviders) ? s.readerProviders : []);
-        setDefaultReaderProvider(s.defaultReaderProvider || 'claude');
+        setDefaultReaderProvider(s.defaultReaderProvider || 'openai');
         setMailEnabled(Boolean(s.mailEnabled));
       }
       setUser(meRes.ok ? (await meRes.json()).user : null);

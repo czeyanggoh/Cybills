@@ -79,13 +79,14 @@ app.use('/api/auth', authRouter);
 // Org directory — assignable users for the Support Desk "Assignee" dropdown.
 app.use('/api/org', orgRouter);
 
-// Claude Vision receipt extraction. 503s until ANTHROPIC_API_KEY is set.
+// Receipt extraction. 503s until a reader key (OPENAI_API_KEY or
+// ANTHROPIC_API_KEY) is set.
 app.use('/api/costs', extractRouter);
 
 // Persisted bills + duplicate detection (works without a Vision key).
 app.use('/api/costs', billsRouter);
 
-// Vault document summariser (Claude auto-fill for stored documents).
+// Vault document summariser (reader auto-fill for stored documents).
 app.use('/api/vault', vaultRouter);
 
 // Organisations linked to Xero tenants (via the cyworkspace relay).

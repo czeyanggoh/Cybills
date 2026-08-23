@@ -88,6 +88,12 @@ comes back in one shape. Notable differences it papers over:
 - OpenAI counts cached tokens inside `input_tokens`; they're subtracted back out
   so the 0.1x cache rate isn't charged on top of the full input rate.
 
+**OpenAI reads by default.** `LLM_PROVIDER` defaults to `openai`, so a request
+that names no engine — which is every request from an org that never opened the
+setting, since the saved default is blank — is read by GPT. A deploy with only an
+Anthropic key still reads with Claude: the named default is honoured only when
+that provider has a key, and otherwise the first configured reader is used.
+
 Which engine runs is decided per client entity in Business settings ->
 Extraction -> **Document reader**, saved in the extraction-settings blob
 (`readerProvider`: `'claude'` / `'openai'` / `''` = server default) and sent on
@@ -120,8 +126,9 @@ instead, and a document that breaks tax down per row is left as printed.
 Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
 `claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5`),
 `OPENAI_REASONING_EFFORT` (default `low`), optional `OPENAI_BASE_URL` for an
-OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default.
-Either key alone switches extraction on; both means the toggle appears.
+OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default
+(default `openai`). Either key alone switches extraction on; both means the
+toggle appears.
 
 **A bill's own lines can reach Xero.** Line items carry `project` + `project2`
 — the org's two Xero tracking categories, per line, editable in the grid and

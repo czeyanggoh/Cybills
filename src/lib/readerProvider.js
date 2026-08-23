@@ -9,27 +9,28 @@ import { getExtractionSettings, useExtractionSettings } from '@/lib/extractionSe
 //     auth status probe). A provider with no key is never offered.
 //   * the ORG says which of those it wants (Business settings -> Extraction ->
 //     Document reader, saved per client entity). Blank means "whatever the
-//     server defaults to", which is how every existing workspace behaves until
-//     someone touches the setting.
+//     server defaults to" — OpenAI, unless this deploy says otherwise — which is
+//     how every existing workspace behaves until someone touches the setting.
 //
 // The server re-checks the choice on every call (see resolveProvider in
 // server/src/llm.ts), so a saved preference for a provider whose key was later
 // removed degrades to the working one instead of failing the read.
 
+// In offer order: OpenAI first, because it is the reader a deploy defaults to.
 export const READER_PROVIDERS = [
-  { id: 'claude', label: 'Claude', hint: 'Anthropic' },
   { id: 'openai', label: 'OpenAI', hint: 'GPT' },
+  { id: 'claude', label: 'Claude', hint: 'Anthropic' },
 ];
 
 export const SERVER_DEFAULT = ''; // the "let the server decide" option value
 
 export function readerLabel(id) {
-  return READER_PROVIDERS.find((p) => p.id === id)?.label || 'Claude';
+  return READER_PROVIDERS.find((p) => p.id === id)?.label || 'OpenAI';
 }
 
 // The provider actually used, given the org's preference and what the server
 // can offer. Falls back to the server default when the saved choice has no key.
-export function effectiveProvider(preferred, available, serverDefault = 'claude') {
+export function effectiveProvider(preferred, available, serverDefault = 'openai') {
   const list = Array.isArray(available) ? available : [];
   const want = String(preferred || '').trim();
   if (want && list.includes(want)) return want;
