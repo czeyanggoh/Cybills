@@ -47,6 +47,7 @@ import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
 import { claimExportName, claimRef } from '@/lib/exportFormat';
 import { useCategoryDisplayMode, useCategorySortMode, sortCategories, formatCategory } from '@/lib/categoryDisplay';
 import { CLAIM_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
+import DocCardList from '@/components/DocCardList';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -532,31 +533,33 @@ export default function ExpenseClaimDetail() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
         {/* Left: claim + line items */}
-        <div className="min-w-0 rounded-lg border p-5">
-          <div className="mb-4 flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight">{claim.claimFor}&rsquo;s Expense Claim</h1>
-              <div className="mt-3 space-y-1 text-sm">
-                <p>
-                  <span className="text-muted-foreground">Claim name&nbsp;&nbsp;</span>
-                  <span className="font-medium">{claim.name}</span>
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Claim date&nbsp;&nbsp;</span>
-                  <span className="font-medium">{formatClaimDate(claim.claimDate)}</span>
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Expense total&nbsp;&nbsp;</span>
-                  <span className="font-medium">
-                    {claim.currency} {claim.total} ( Incl. Tax: {claim.tax} )
-                  </span>
-                </p>
-              </div>
+        <div className="min-w-0 rounded-lg border p-4 sm:p-5">
+          {/* The title and the PDF button shared a row, which on a phone squeezed
+              "Sefi Krishberg's Expense Claim" into three lines beside a button.
+              They stack until there is room for both. */}
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{claim.claimFor}&rsquo;s Expense Claim</h1>
+              {/* Label above value on a phone: run inline, "Expense total SGD
+                  412.40 ( Incl. Tax: 31.60 )" wrapped across three lines with
+                  the label stranded on the first. */}
+              <dl className="mt-3 space-y-2 text-sm sm:space-y-1">
+                {[
+                  ['Claim name', claim.name],
+                  ['Claim date', formatClaimDate(claim.claimDate)],
+                  ['Expense total', `${claim.currency} ${claim.total} ( Incl. Tax: ${claim.tax} )`],
+                ].map(([label, value]) => (
+                  <div key={label} className="sm:flex sm:items-baseline sm:gap-2">
+                    <dt className="text-xs text-muted-foreground sm:text-sm">{label}</dt>
+                    <dd className="break-words font-medium">{value}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
             <button
               type="button"
               onClick={() => { void generateClaimPdf({ ...claim, transactions: rows }, { detailLevel: 'summary' }); }}
-              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 self-start rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
             >
               <FileText className="h-4 w-4" strokeWidth={1.75} />
               PDF preview
@@ -630,7 +633,45 @@ export default function ExpenseClaimDetail() {
           </div>
 
           {/* Line items */}
-          <div className="overflow-x-auto rounded-lg border">
+          {/* Phone: cards, same as the Costs inbox. A claim's line items are cost
+              documents, so they read the same way — supplier and amount first,
+              date and account under them. */}
+          <div className="md:hidden">
+            <DocCardList
+              rows={displayRows.map((t) => ({
+                // The card keys off `id`; a claim line calls it `itemId`.
+                id: t.itemId,
+                supplier: t.supplier,
+                date: t.date,
+                category: t.category,
+                total: t.total,
+                tax: t.tax,
+                currency: claim.currency,
+              }))}
+              selected={selected}
+              onToggle={locked ? () => {} : toggleItem}
+              onOpen={(d) => navigate(costPath(d.id))}
+              action={
+                locked
+                  ? null
+                  : {
+                      icon: X,
+                      label: 'Remove from claim',
+                      title: 'Remove from this claim — the document goes back to your Costs inbox',
+                      onClick: (d) => removeItem(displayRows.find((t) => t.itemId === d.id)),
+                    }
+              }
+              emptyLabel={q ? 'No items match your search.' : 'No items in this claim yet.'}
+            />
+            {displayRows.length > 0 && (
+              <div className="mt-2 flex items-center justify-end gap-4 rounded-lg border bg-muted/20 px-3 py-3 text-sm">
+                <span className="font-medium">Expense total</span>
+                <span className="font-semibold tabular-nums">{claim.currency} {claim.total}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="hidden overflow-x-auto rounded-lg border md:block">
             <table className="w-full min-w-[560px] text-sm">
               <thead className="border-b bg-muted/40 text-left">
                 <tr className="text-muted-foreground">

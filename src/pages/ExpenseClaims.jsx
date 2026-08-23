@@ -39,7 +39,7 @@ function ClaimsActions({ disabled, tab, onArchive, onDelete }) {
         disabled={disabled}
         onClick={() => !disabled && setOpen((o) => !o)}
         className={cn(
-          'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors',
+          'inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
           disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted'
         )}
       >
@@ -150,16 +150,18 @@ export default function ExpenseClaims() {
 
   return (
     <AppShell subnav={<CostsSubnav />}>
-      {/* Header */}
-      <div className="mb-4 flex items-center justify-between">
+      {/* Header. The two buttons carry three-word labels that wrapped into
+          three lines each on a phone and squeezed the title with them, so the
+          row stacks and the labels stay on one line. */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold tracking-tight">Expense claims</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:overflow-x-visible sm:pb-0">
           {/* The schedule is account-wide, so it's a Business Admin's to set. */}
           {isAdmin && (
             <button
               type="button"
               onClick={() => setAutoOpen(true)}
-              className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
             >
               <CalendarClock className="h-4 w-4" strokeWidth={2} />
               Auto expense claims
@@ -168,7 +170,7 @@ export default function ExpenseClaims() {
           <button
             type="button"
             onClick={() => setShowCreate(true)}
-            className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+            className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
           >
             <Plus className="h-4 w-4" strokeWidth={2} />
             Create expense claim
@@ -212,14 +214,15 @@ export default function ExpenseClaims() {
       </div>
 
       {/* Toolbar */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      {/* One scrolling row on a phone rather than several wrapped ones. */}
+      <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-x-visible md:pb-0">
         {tab === 'inbox' && (
           <button
             type="button"
             disabled={!hasSelection}
             onClick={() => setApproveOpen(true)}
             className={cn(
-              'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-opacity',
+              'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-opacity',
               hasSelection ? 'bg-primary text-primary-foreground hover:opacity-90' : 'cursor-not-allowed bg-muted text-muted-foreground/60'
             )}
           >
@@ -231,7 +234,7 @@ export default function ExpenseClaims() {
           disabled={!hasSelection}
           onClick={() => doArchive(tab !== 'archive')}
           className={cn(
-            'inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors',
+            'inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
             hasSelection ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/50'
           )}
         >
@@ -264,8 +267,68 @@ export default function ExpenseClaims() {
         </button>
       </div>
 
-      {/* Table */}
-      <div className="overflow-x-auto rounded-lg border">
+      {/* Phone: cards. A claim's identity is whose it is, what it comes to and
+          where it has got to in approval — the 880px table put Total and Tax
+          off the edge, which is most of the point of looking. */}
+      <ul className="space-y-2 md:hidden">
+        {rows.map((c) => (
+          <li
+            key={c.id}
+            className={cn(
+              'rounded-lg border transition-colors',
+              selected.has(c.id) ? 'border-foreground bg-muted/40' : 'bg-background'
+            )}
+          >
+            <div className="flex items-start gap-3 p-3">
+              <label className="-m-1.5 flex min-h-11 min-w-11 shrink-0 items-center justify-center p-1.5">
+                <span className="sr-only">Select {c.name}</span>
+                <input
+                  type="checkbox"
+                  checked={selected.has(c.id)}
+                  onChange={() => toggle(c.id)}
+                  className="h-5 w-5 accent-black"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => navigate(`/expense-claims/${c.id}`)}
+                className="min-w-0 flex-1 text-left"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0 break-words text-sm font-medium">{c.claimFor}</span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums">SGD {c.total}</span>
+                </div>
+                <div className="mt-0.5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                  <span className="tabular-nums">{formatClaimDate(c.endDate)}</span>
+                  <span className="tabular-nums">Tax SGD {c.tax}</span>
+                </div>
+                <div className="mt-1.5 break-words text-xs text-muted-foreground">
+                  {c.name}
+                  {c.auto && (
+                    <span className="ml-2 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Auto</span>
+                  )}
+                </div>
+              </button>
+            </div>
+            <div className="flex items-center gap-1 border-t px-2 py-1.5">
+              <FlagMenu id={c.id} />
+              <ReceiptViewer itemIds={(c.transactions || []).map((t) => t.itemId)} />
+              <span className="ml-1 min-w-0 truncate">
+                <ClaimStatusBadge status={c.approvalStatus} label={statusOf(c)} />
+              </span>
+            </div>
+          </li>
+        ))}
+        {rows.length === 0 && (
+          <li className="rounded-lg border px-4 py-12 text-center text-sm text-muted-foreground">
+            <Plus className="mx-auto mb-2 h-5 w-5" strokeWidth={1.5} />
+            Nothing in {TABS.find((t) => t.key === tab)?.label}.
+          </li>
+        )}
+      </ul>
+
+      {/* Table (md and up) */}
+      <div className="hidden overflow-x-auto rounded-lg border md:block">
         <table className="w-full min-w-[880px] text-sm">
           <thead className="border-b bg-muted/40 text-left">
             <tr className="text-muted-foreground">

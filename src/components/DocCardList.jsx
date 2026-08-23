@@ -1,4 +1,3 @@
-import { Trash2 } from 'lucide-react';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
@@ -22,7 +21,10 @@ export default function DocCardList({
   selected,
   onToggle,
   onOpen,
-  onDelete,
+  // The one action a card carries besides opening: delete on the Costs inbox,
+  // remove-from-claim on a claim. Passed in as { icon, label, title, onClick }
+  // rather than assumed, because they are not the same act.
+  action,
   // How the caller labels a row's state (status tag, "Needs: …"). Passed in
   // rather than rebuilt here, so the card can't drift from the table.
   badge,
@@ -86,15 +88,15 @@ export default function DocCardList({
               <ReceiptViewer itemIds={d.id} />
               {badge && <span className="ml-1 min-w-0 truncate">{badge(d)}</span>}
               <span className="ml-auto" />
-              {onDelete && (
+              {action && (
                 <button
                   type="button"
-                  onClick={() => onDelete(d)}
-                  aria-label={`Delete ${d.supplier}`}
-                  title="Delete document"
+                  onClick={() => action.onClick(d)}
+                  aria-label={`${action.label} ${d.supplier}`}
+                  title={action.title || action.label}
                   className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive"
                 >
-                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                  <action.icon className="h-4 w-4" strokeWidth={1.75} />
                 </button>
               )}
             </div>

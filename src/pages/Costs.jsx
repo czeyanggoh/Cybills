@@ -1301,7 +1301,7 @@ export default function Costs() {
               selected={selected}
               onToggle={toggle}
               onOpen={(d) => navigate(costPath(d))}
-              onDelete={deleteOne}
+              action={{ icon: Trash2, label: 'Delete', title: 'Delete document', onClick: deleteOne }}
               badge={(d) => CELLS.status.cell(d)}
               emptyLabel={query || hasSelection ? 'No documents match.' : 'No documents in this tab.'}
             />
