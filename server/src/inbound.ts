@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { createHash, randomBytes } from 'node:crypto';
+import { simpleParser } from 'mailparser';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { userByEmailHandle, setPendingForward, memberForSession, isAdminRole } from './users.js';
 import { dataScopeForOrg } from './organisations.js';
@@ -67,9 +68,34 @@ inboundRouter.post('/email', async (req, res) => {
 
   const b = req.body ?? {};
   const to = String(b.to || '');
-  const from = String(b.from || '');
-  const subject = String(b.subject || '');
-  const body = `${String(b.text || '')}\n${String(b.html || '')}`;
+  let from = String(b.from || '');
+  let subject = String(b.subject || '');
+  let text = String(b.text || '');
+  let html = String(b.html || '');
+  // Attachments the caller may pass pre-parsed: { filename, contentType, contentBase64 }.
+  let atts: Array<{ filename: string; contentType: string; contentBase64: string }> =
+    Array.isArray(b.attachments) ? b.attachments : [];
+
+  // Preferred path: the Worker forwards the RAW MIME (base64). Parse it here with
+  // a real library — robust against Gmail's nested multipart and encodings, and
+  // testable, unlike an inline Worker parser.
+  if (typeof b.raw === 'string' && b.raw) {
+    try {
+      const parsed = await simpleParser(Buffer.from(b.raw, 'base64'));
+      subject = parsed.subject || subject;
+      from = parsed.from?.value?.[0]?.address || from;
+      text = parsed.text || text;
+      html = typeof parsed.html === 'string' ? parsed.html : html;
+      atts = (parsed.attachments || []).map((a) => ({
+        filename: a.filename || 'document',
+        contentType: a.contentType || '',
+        contentBase64: a.content ? Buffer.from(a.content).toString('base64') : '',
+      }));
+    } catch (e) {
+      console.error('[inbound] MIME parse failed', e);
+    }
+  }
+  const body = `${text}\n${html}`;
 
   // Local-part of the recipient = the user handle (minus any +suffix).
   const local = (to.split('@')[0] || to).trim();
@@ -85,7 +111,6 @@ inboundRouter.post('/email', async (req, res) => {
   }
 
   // Otherwise file each PDF/image attachment as a cost document owned by the user.
-  const atts = Array.isArray(b.attachments) ? b.attachments : [];
   // Map to the same data scope uploads use: the primary org (CYBM) folds to the
   // legacy WORKSPACE_ID scope, so an emailed doc lands in the inbox the user sees.
   const orgId = dataScopeForOrg(user.organisationId || '');
