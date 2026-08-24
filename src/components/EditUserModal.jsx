@@ -195,7 +195,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                   Without login access this {practice ? 'colleague' : 'user'} can’t sign in — no email is required.
                 </p>
               )}
-              {!practice && <ExtractByEmail user={user} />}
+              <ExtractByEmail user={user} />
             </div>
           ) : (
             <div className="space-y-5">
