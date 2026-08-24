@@ -79,8 +79,9 @@ export default function BulkEditModal({
       taxRates: taxRateOptions,
       // The people a document can be GIVEN to: this entity's own, plus its
       // general account. Not the practice colleagues working on it — what they
-      // add belongs to the client, so the general account holds it.
-      users: people.filter((u) => !u.external).map((u) => u.email).filter(Boolean),
+      // add belongs to the client, so the general account holds it — and not
+      // anyone deactivated, who can no longer sign in to see it.
+      users: people.filter((u) => !u.external && !u.deactivated).map((u) => u.email).filter(Boolean),
     }),
     [suppliers, customers, paymentMethods, projects, categoryOptions, taxRateOptions, people]
   );

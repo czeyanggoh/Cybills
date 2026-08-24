@@ -102,10 +102,21 @@ export function useOwnerNames() {
   return names;
 }
 
+// Deactivated people are left out for the same reason colleagues are: the
+// directory answers two questions at once, and they have different answers.
+// Their name must still RESOLVE — the documents they own have to read as a
+// person — but nothing new should be handed to an account that can no longer
+// sign in. (Reassigning is still possible: a document whose owner has left
+// keeps showing them until somebody picks somebody else.)
 const ownerNames = () =>
-  Array.from(new Set(directory.filter((p) => !p.external).map((p) => p.name || p.email).filter(Boolean))).sort((a, b) =>
-    a.localeCompare(b)
-  );
+  Array.from(
+    new Set(
+      directory
+        .filter((p) => !p.external && !p.deactivated)
+        .map((p) => p.name || p.email)
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
 
 // Can this person own a document in the entity that's open? True for its own
 // people; false for a practice colleague working on it from outside, whose

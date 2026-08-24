@@ -191,8 +191,12 @@ export default function CostDetail() {
   // colleague is not on the list — reassigning a client's document to the
   // bookkeeper doing their books is never the answer.
   const ownerNames = useOwnerNames();
+  // Somebody who has been deactivated isn't offered — they can't sign in, so
+  // handing them a document only hides it behind a name nobody is using. The
+  // document's CURRENT owner is added back below, so one who has since left
+  // still shows rather than silently emptying the field.
   const ownerOptions = Array.from(
-    new Set([...ownerNames, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
+    new Set([...ownerNames, ...teamUsers.filter((u) => !u.deactivated).map((u) => u.name || u.email)].filter(Boolean))
   );
   const categoryOptions = useCategoryOptions();
   const catMode = useCategoryDisplayMode();

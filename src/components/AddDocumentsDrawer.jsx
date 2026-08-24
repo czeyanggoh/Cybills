@@ -330,7 +330,9 @@ export default function AddDocumentsDrawer({ open, onClose }) {
     new Set([
       ...(meIsClientUser ? [meName] : []),
       ...ownerNames,
-      ...users.map((u) => u.name || u.email),
+      // Not someone who has been deactivated: a document being uploaded now
+      // should not start out owned by an account that can no longer sign in.
+      ...users.filter((u) => !u.deactivated).map((u) => u.name || u.email),
     ].filter(Boolean))
   );
   // Only before the roster has loaded (or for an account with nobody in it) —

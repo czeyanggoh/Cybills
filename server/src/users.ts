@@ -366,12 +366,12 @@ export function ensureGeneralUser(ws: string, orgId: string): User | null {
 // the app cannot resolve falls back to the raw email local-part ("czeyang.goh"
 // next to "Cze Yang Goh", the same person twice). So the directory below is the
 // wider set: the entity's people PLUS the practice colleagues with access to
-// it, each entry saying which it is. Names, emails and those two flags only,
-// and only for an entity the caller can open.
+// it, each entry saying which it is. Names, emails and those flags only, and
+// only for an entity the caller can open.
 export function peopleForOrg(
   ws: string,
   org: string
-): Array<{ email: string; name: string; external: boolean; general: boolean }> {
+): Array<{ email: string; name: string; external: boolean; general: boolean; deactivated: boolean }> {
   return ensure(ws)
     .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org))))
     .filter((u) => Boolean(u.email))
@@ -384,6 +384,10 @@ export function peopleForOrg(
       // uploaded.
       external: isOutsider(u, org),
       general: Boolean(u.general),
+      // Same split again, for someone who has left: their old documents must go
+      // on reading as a person, but nothing new should be handed to an account
+      // that can no longer sign in.
+      deactivated: Boolean(u.deactivated),
     }));
 }
 
