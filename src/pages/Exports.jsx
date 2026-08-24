@@ -3,8 +3,9 @@ import { Trash2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SalesSubnav from '@/components/SalesSubnav';
-import { useExports, getExportBlob, deleteExport, repairExportedBy } from '@/lib/exportsStore';
+import { useExports, getExportBlob, deleteExport, repairExportedBy, adoptLegacyExports } from '@/lib/exportsStore';
 import { downloadExportBlob } from '@/lib/docsExport';
+import { useOrganisations } from '@/lib/organisations';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
@@ -77,6 +78,11 @@ export default function Exports({ workspace = 'costs' }) {
   const { user, membership } = useAuth();
   const me = membership?.user?.name || user?.name || user?.email || '';
   useEffect(() => { repairExportedBy(me); }, [me]);
+  // Records made before exports were per-entity carry no entity, so they go to
+  // the primary one — they pre-date any client entity existing.
+  const { data: organisations = [] } = useOrganisations();
+  const primaryId = organisations.find((o) => o.isPrimary)?.id || '';
+  useEffect(() => { adoptLegacyExports(primaryId); }, [primaryId]);
   // Standalone top-level Exports page (workspace="all") shows no Costs/Sales
   // subnav — it's its own destination, like Dext's Exports.
   const subnav = workspace === 'all' ? undefined : workspace === 'sales' ? <SalesSubnav /> : <CostsSubnav />;
