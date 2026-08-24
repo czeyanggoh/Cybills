@@ -7,8 +7,10 @@ import { userByEmailHandle, setPendingForward, memberForSession, isAdminRole } f
 import { dataScopeForOrg } from './organisations.js';
 import { insertBill, updateBill, reconcileReadiness } from './store.js';
 import { putBillFile } from './storage.js';
-import { readDocument, resolveProvider } from './llm.js';
+import { readDocument, resolveProvider, type Provider } from './llm.js';
 import { recordUsage } from './usage.js';
+import { readSetting } from './settings.js';
+import { workspaceId } from './workspace.js';
 import { visionEnabled } from './env.js';
 
 // The core fields to fill an emailed document's inbox row. Kept simple (no
@@ -37,9 +39,8 @@ const toNum = (v: unknown) => {
 // Read an emailed document and fill its fields, then re-derive ready vs inbox.
 // Best-effort and fire-and-forget: a missing reader key or a failed read simply
 // leaves the document unread in the inbox (the reviewer can Re-read by hand).
-async function autoRead(req: Request, orgId: string, billId: string, fileBase64: string, mediaType: string) {
+async function autoRead(req: Request, orgId: string, provider: Provider, billId: string, fileBase64: string, mediaType: string) {
   if (!visionEnabled) return;
-  const provider = resolveProvider('');
   const isPdf = /pdf/i.test(mediaType);
   try {
     const outcome = await readDocument({
@@ -53,7 +54,13 @@ async function autoRead(req: Request, orgId: string, billId: string, fileBase64:
       prompt: `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. Today is ${new Date().toISOString().slice(0, 10)}.`,
     });
     recordUsage(req, { feature: 'inbound-extract', provider: outcome.provider, model: outcome.model, usage: outcome.usage });
-    if (!outcome.ok || !outcome.json || typeof outcome.json !== 'object') return;
+    if (!outcome.ok || !outcome.json || typeof outcome.json !== 'object') {
+      // Leave a breadcrumb the reviewer (and we) can see, since a background
+      // read has nowhere else to report to.
+      const reason = outcome.ok ? 'empty response' : outcome.reason;
+      updateBill(orgId, billId, { categoryReason: `Auto-read didn't complete (${provider}: ${reason}). Use Re-read.` });
+      return;
+    }
     const j = outcome.json as Record<string, unknown>;
     updateBill(orgId, billId, {
       supplier: String(j.supplier || ''),
@@ -68,6 +75,8 @@ async function autoRead(req: Request, orgId: string, billId: string, fileBase64:
     reconcileReadiness(orgId, billId);
   } catch (e) {
     console.error('[inbound] auto-read failed', e);
+    const msg = e instanceof Error ? e.message : String(e);
+    updateBill(orgId, billId, { categoryReason: `Auto-read errored (${provider}): ${msg.slice(0, 200)}. Use Re-read.` });
   }
 }
 
@@ -218,8 +227,13 @@ inboundRouter.post('/email', async (req, res) => {
     madeBills.push({ id: bill.id, base64, mediaType: storedType || contentType });
   }
 
+  // Read with the org's chosen reader (Claude / OpenAI), the same one the manual
+  // re-read uses — not the deploy default, which may not be the org's working key.
+  const settings = readSetting<{ readerProvider?: string }>(workspaceId(req), 'cybills.extraction-settings.v1', orgId);
+  const provider = resolveProvider(settings?.readerProvider);
+
   // Answer the Worker straight away, then read each document in the background —
   // a model call takes 10-30s and the Worker shouldn't wait on it.
   res.json({ ok: true, kind: 'documents', created: madeBills.length, user: user.id });
-  for (const b of madeBills) void autoRead(req, orgId, b.id, b.base64, b.mediaType);
+  for (const b of madeBills) void autoRead(req, orgId, provider, b.id, b.base64, b.mediaType);
 });
