@@ -2,10 +2,74 @@ import { Router } from 'express';
 import { createHash, randomBytes } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { loadCollection, saveCollection } from './jsonStore.js';
+import type { Request } from 'express';
 import { userByEmailHandle, setPendingForward, memberForSession, isAdminRole } from './users.js';
 import { dataScopeForOrg } from './organisations.js';
-import { insertBill } from './store.js';
+import { insertBill, updateBill, reconcileReadiness } from './store.js';
 import { putBillFile } from './storage.js';
+import { readDocument, resolveProvider } from './llm.js';
+import { recordUsage } from './usage.js';
+import { visionEnabled } from './env.js';
+
+// The core fields to fill an emailed document's inbox row. Kept simple (no
+// per-org account/tax-code guides) so this runs without the client's Xero
+// context; the reviewer or a supplier rule sets the account code, exactly as
+// happens for an upload the reader couldn't fully classify.
+const BASIC_SCHEMA = {
+  type: 'object',
+  properties: {
+    supplier: { type: 'string', description: 'The merchant / supplier name' },
+    date: { type: 'string', description: 'Document date as ISO YYYY-MM-DD when determinable, else empty' },
+    total: { type: 'string', description: 'Grand total amount as digits, else empty' },
+    tax: { type: 'string', description: 'GST/tax amount as digits, 0 if none' },
+    currency: { type: 'string', description: 'ISO currency code, e.g. SGD' },
+    invoiceNumber: { type: 'string', description: 'Invoice / receipt / reference number' },
+    documentType: { type: 'string', description: 'Invoice or Receipt' },
+    description: { type: 'string', description: 'One-line summary of what was purchased' },
+  },
+} as const;
+
+const toNum = (v: unknown) => {
+  const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+};
+
+// Read an emailed document and fill its fields, then re-derive ready vs inbox.
+// Best-effort and fire-and-forget: a missing reader key or a failed read simply
+// leaves the document unread in the inbox (the reviewer can Re-read by hand).
+async function autoRead(req: Request, orgId: string, billId: string, fileBase64: string, mediaType: string) {
+  if (!visionEnabled) return;
+  const provider = resolveProvider('');
+  const isPdf = /pdf/i.test(mediaType);
+  try {
+    const outcome = await readDocument({
+      provider,
+      fileBase64,
+      mediaType,
+      maxTokens: 1024,
+      schemaName: 'inbound_document',
+      schema: BASIC_SCHEMA as unknown as Record<string, unknown>,
+      systemPrompt: 'You read receipts and invoices and return the requested fields. Use empty strings and 0 when a field is not present.',
+      prompt: `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. Today is ${new Date().toISOString().slice(0, 10)}.`,
+    });
+    recordUsage(req, { feature: 'inbound-extract', provider: outcome.provider, model: outcome.model, usage: outcome.usage });
+    if (!outcome.ok || !outcome.json || typeof outcome.json !== 'object') return;
+    const j = outcome.json as Record<string, unknown>;
+    updateBill(orgId, billId, {
+      supplier: String(j.supplier || ''),
+      date: String(j.date || ''),
+      total: toNum(j.total),
+      tax: toNum(j.tax),
+      currency: String(j.currency || ''),
+      invoiceNumber: String(j.invoiceNumber || ''),
+      documentType: String(j.documentType || ''),
+      description: String(j.description || ''),
+    });
+    reconcileReadiness(orgId, billId);
+  } catch (e) {
+    console.error('[inbound] auto-read failed', e);
+  }
+}
 
 // The shared secret the Cloudflare Worker signs its POSTs with. Prefer an env
 // override (INBOUND_SECRET); otherwise CYBills generates one on first use and
@@ -114,7 +178,7 @@ inboundRouter.post('/email', async (req, res) => {
   // Map to the same data scope uploads use: the primary org (CYBM) folds to the
   // legacy WORKSPACE_ID scope, so an emailed doc lands in the inbox the user sees.
   const orgId = dataScopeForOrg(user.organisationId || '');
-  let created = 0;
+  const madeBills: Array<{ id: string; base64: string; mediaType: string }> = [];
   for (const a of atts) {
     const filename = String(a?.filename || 'document');
     const contentType = String(a?.contentType || '');
@@ -132,7 +196,7 @@ inboundRouter.post('/email', async (req, res) => {
     } catch {
       // Keep the metadata record even if the file store fails.
     }
-    insertBill({
+    const bill = insertBill({
       orgId,
       fileHash,
       fileName: filename,
@@ -151,7 +215,11 @@ inboundRouter.post('/email', async (req, res) => {
       status: 'new',
       kind: 'cost',
     });
-    created += 1;
+    madeBills.push({ id: bill.id, base64, mediaType: storedType || contentType });
   }
-  return res.json({ ok: true, kind: 'documents', created, user: user.id });
+
+  // Answer the Worker straight away, then read each document in the background —
+  // a model call takes 10-30s and the Worker shouldn't wait on it.
+  res.json({ ok: true, kind: 'documents', created: madeBills.length, user: user.id });
+  for (const b of madeBills) void autoRead(req, orgId, b.id, b.base64, b.mediaType);
 });
