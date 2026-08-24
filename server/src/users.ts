@@ -714,6 +714,7 @@ export function ensure(ws: string): User[] {
   if (normalizeRoles(items, ws)) changed = true;
   if (reconcileSeedAdmins(items, ws)) changed = true;
   if (assignPractice(items, ws)) changed = true;
+  if (ensureEmailHandles(items, ws)) changed = true;
   if (changed) save(items);
   return items;
 }
@@ -897,10 +898,8 @@ usersRouter.get('/directory', (req, res) => {
 usersRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
   const org = orgScope(req);
-  const items = ensure(ws);
-  if (ensureEmailHandles(items, ws)) save(items);
   res.json({
-    users: items
+    users: ensure(ws)
       .filter((u) => u.workspaceId === ws && !u.removed && !u.practice && inOrg(u, org))
       .map(publicUser),
   });
