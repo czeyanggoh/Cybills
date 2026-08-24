@@ -18,7 +18,7 @@ import { blobStore } from '@/lib/blobStore';
 const KEY = 'cybills.supplier-list.v1';
 export const SUPPLIER_LIST_EVENT = 'cybills:supplier-list-changed';
 const emit = () => window.dispatchEvent(new Event(SUPPLIER_LIST_EVENT));
-const store = blobStore(KEY, { removed: [] }, emit, { perOrg: true });
+const store = blobStore(KEY, { removed: [], notDuplicates: [] }, emit, { perOrg: true });
 
 const norm = (name) => String(name || '').trim().toLowerCase();
 
@@ -28,7 +28,10 @@ const norm = (name) => String(name || '').trim().toLowerCase();
 function read() {
   const saved = store.get();
   const v = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
-  return { removed: Array.isArray(v.removed) ? v.removed.map(String) : [] };
+  return {
+    removed: Array.isArray(v.removed) ? v.removed.map(String) : [],
+    notDuplicates: Array.isArray(v.notDuplicates) ? v.notDuplicates.map(String) : [],
+  };
 }
 
 export function removedSuppliers() {
@@ -44,26 +47,57 @@ export function removedSupplierSet() {
 export function removeSuppliers(names) {
   const add = (Array.isArray(names) ? names : [names]).map(String).filter((n) => n.trim());
   if (!add.length) return;
-  const seen = new Set(read().removed.map(norm));
-  const next = [...read().removed];
+  const state = read();
+  const seen = new Set(state.removed.map(norm));
+  const next = [...state.removed];
   for (const n of add) {
     if (seen.has(norm(n))) continue;
     seen.add(norm(n));
     next.push(n.trim());
   }
-  store.set({ removed: next });
+  store.set({ ...state, removed: next });
+  emit();
+}
+
+// --- "Not a duplicate" -------------------------------------------------------
+// A reviewer's verdict that two names are genuinely different suppliers, kept
+// against the PAIR rather than the suggested group: a group is only ever built
+// out of pairs, so rejecting the pairs stops a third name quietly re-forming it.
+
+export function dismissedDuplicatePairs() {
+  return new Set(read().notDuplicates);
+}
+
+export function dismissDuplicatePairs(keys) {
+  const add = (Array.isArray(keys) ? keys : [keys]).map(String).filter(Boolean);
+  if (!add.length) return;
+  const state = read();
+  const next = [...new Set([...state.notDuplicates, ...add])];
+  store.set({ ...state, notDuplicates: next });
+  emit();
+}
+
+export function dismissedDuplicateCount() {
+  return read().notDuplicates.length;
+}
+
+// Put every rejected pairing back up for review.
+export function restoreDuplicateSuggestions() {
+  const state = read();
+  store.set({ ...state, notDuplicates: [] });
   emit();
 }
 
 // Put names back on the list. No argument restores every removed supplier.
 export function restoreSuppliers(names) {
+  const state = read();
   if (names === undefined) {
-    store.set({ removed: [] });
+    store.set({ ...state, removed: [] });
     emit();
     return;
   }
   const drop = new Set((Array.isArray(names) ? names : [names]).map(norm));
-  store.set({ removed: read().removed.filter((n) => !drop.has(norm(n))) });
+  store.set({ ...state, removed: state.removed.filter((n) => !drop.has(norm(n))) });
   emit();
 }
 

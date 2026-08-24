@@ -37,22 +37,53 @@ function editDistance(a, b, max) {
   return prev[b.length];
 }
 
+// The numbers in a name, in order: "OCBC Loan 2" → "2", "A1 Consultancy" → "1".
+//
+// A digit that differs is NOT a typo, it is an enumeration. "OCBC Loan 2" and
+// "OCBC Loan 3" are two different loan accounts, and "A1 Consultancy" and "A2
+// Consultancy" are two different firms — yet each pair is one edit apart, so
+// distance alone called them the same supplier. Letters are where people slip
+// ("Accouting" for "Accounting"); a number is chosen deliberately, and the whole
+// reason it is in the name is to tell one from another.
+const digitsOf = (s) => (String(s || '').match(/\d+/g) || []).join(' ');
+
+// A stable identifier for one PAIR of names, order-independent — what a
+// "not a duplicate" verdict is recorded against.
+export function pairKey(a, b) {
+  return [normaliseSupplier(a), normaliseSupplier(b)].sort().join(' | ');
+}
+
+// Every pair inside a suggested group, so rejecting the group rejects each
+// pairing it was built from — and a later name can't quietly re-form it.
+export function pairsInGroup(group = []) {
+  const out = [];
+  for (let i = 0; i < group.length; i += 1) {
+    for (let j = i + 1; j < group.length; j += 1) out.push(pairKey(group[i], group[j]));
+  }
+  return out;
+}
+
 // Two names are "the same supplier" when their normalised forms are equal, or
 // within a small edit distance (scaled to length) to catch typos like the
-// missing "n" in "Accouting".
+// missing "n" in "Accouting" — but never when their numbers disagree.
 function similar(a, b) {
   if (!a || !b) return false;
   if (a === b) return true;
+  if (digitsOf(a) !== digitsOf(b)) return false;
   const max = a.length <= 8 ? 1 : a.length <= 16 ? 2 : 3;
   return editDistance(a, b, max) <= max;
 }
 
 // Group the names into clusters of suspected duplicates. Returns only the
 // clusters with 2+ members, largest first. Pure — safe to call on every render.
-export function findDuplicateGroups(names) {
+//
+// `dismissed` is the set of pair keys a reviewer has already said are NOT the
+// same supplier; those pairings are never suggested again.
+export function findDuplicateGroups(names, { dismissed = null } = {}) {
   const items = (names || [])
     .map((name) => ({ name, key: normaliseSupplier(name) }))
     .filter((x) => x.key);
+  const rejected = dismissed instanceof Set ? dismissed : new Set(dismissed || []);
   const used = new Array(items.length).fill(false);
   const groups = [];
   for (let i = 0; i < items.length; i += 1) {
@@ -61,6 +92,7 @@ export function findDuplicateGroups(names) {
     used[i] = true;
     for (let j = i + 1; j < items.length; j += 1) {
       if (used[j]) continue;
+      if (rejected.has(pairKey(items[i].name, items[j].name))) continue;
       if (similar(items[i].key, items[j].key)) {
         group.push(items[j].name);
         used[j] = true;

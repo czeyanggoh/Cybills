@@ -418,6 +418,10 @@ export default function Suppliers() {
         names={supplierNames}
         onClose={() => setDupOpen(false)}
         onPick={(name) => { setDupOpen(false); setRulesFor(name); }}
+        // Merging a suggested group is the same merge the toolbar runs — it
+        // selects the group and opens the one dialog, so there is only ever one
+        // place that decides which name is kept.
+        onMerge={(group) => { setSelected(new Set(group)); setDupOpen(false); setMergeOpen(true); }}
       />
       <SupplierImportModal open={importOpen} onClose={() => setImportOpen(false)} />
       <SupplierBulkEditModal
