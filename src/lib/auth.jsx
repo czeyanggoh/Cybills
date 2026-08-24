@@ -56,7 +56,18 @@ export function AuthProvider({ children }) {
     // Access is answered per client entity, so switching one re-asks the server
     // rather than carrying the previous entity's verdict across.
     window.addEventListener(ORGANISATION_EVENT, refresh);
-    return () => window.removeEventListener(ORGANISATION_EVENT, refresh);
+    // Re-ask when a tab regains focus, so an identity that changed elsewhere
+    // (e.g. a duplicate roster row was cleaned up) can't leave one tab stuck on
+    // a stale membership — which would wrongly hide Users / Colleagues / Clients.
+    const onFocus = () => refresh();
+    const onVisible = () => { if (!document.hidden) refresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener(ORGANISATION_EVENT, refresh);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refresh]);
 
   const signOut = useCallback(async () => {
