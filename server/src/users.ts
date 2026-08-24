@@ -723,12 +723,20 @@ export function ensure(ws: string): User[] {
 // Deliberately NOT tenant-scoped: identity and access are account-wide, so an
 // admin whose row lives under one organisation keeps their role while working in
 // another. Only the roster itself (listing and managing people) is per-tenant.
+// Resolve an email to its roster row for this workspace, PREFERRING a practice
+// colleague over an entity-employee row when the same email is on both. A
+// person's practice identity is their primary one, so a duplicate entity row
+// (e.g. one created by mistake) never shadows their colleague login.
+export function memberByEmail(ws: string, emailNorm: string): User | null {
+  const matches = ensure(ws).filter((u) => u.workspaceId === ws && !u.removed && norm(u.email) === emailNorm);
+  if (!matches.length) return null;
+  return matches.find((u) => u.practice) ?? matches[0];
+}
+
 export function memberForSession(req: Request): User | null {
   const s = readSession(req);
   if (!s?.email) return null;
-  const ws = workspaceId(req);
-  const email = norm(s.email);
-  return ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email) ?? null;
+  return memberByEmail(workspaceId(req), norm(s.email));
 }
 
 // Any admin tier — the coarse "not a Standard user" check. Prefer the two
@@ -913,7 +921,9 @@ usersRouter.get('/me', (req, res) => {
   if (!session?.email) return res.json({ status: 'anonymous', user: null });
   const ws = workspaceId(req);
   const email = norm(session.email);
-  const user = ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email);
+  // Prefer the practice row on a duplicate email, so a colleague's login lands
+  // on their colleague identity (Colleagues/Clients) rather than a stray entity row.
+  const user = memberByEmail(ws, email);
   if (!user) return res.json({ status: 'none', user: null });
   const status = user.deactivated ? 'deactivated' : user.pending ? 'pending' : 'active';
   const live = status === 'active';

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Search, ChevronDown, Settings2, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
@@ -7,6 +7,8 @@ import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
 import EditUserModal from '@/components/EditUserModal';
 import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser, updateUser } from '@/lib/userStore';
 import { useOrganisations, getActiveOrganisationId, useXeroProjectOptions } from '@/lib/organisations';
+import { useAuth } from '@/lib/auth';
+import { isPracticeTeam } from '@/lib/practiceStore';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -201,11 +203,23 @@ export default function Users() {
   const { data: organisations = [] } = useOrganisations();
   const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
   const workspaceCompany = activeOrg?.name || '';
+  // The practice's own entity (the primary org, CYBM) has no separate "Users" —
+  // its people are the practice team. A colleague viewing it is sent to
+  // Colleagues instead of an empty roster.
+  const navigate = useNavigate();
+  const { membership, googleEnabled } = useAuth();
+  const redirectToColleagues = activeOrg?.isPrimary && isPracticeTeam(membership, googleEnabled);
+  useEffect(() => {
+    if (redirectToColleagues) navigate('/colleagues', { replace: true });
+  }, [redirectToColleagues, navigate]);
   const rows = filtered.filter((u) => {
     if (tab === 'pending') return u.pending && !u.deactivated;
     if (tab === 'deactivated') return u.deactivated;
     return !u.deactivated && !u.pending; // active
   });
+
+  // While redirecting a colleague off the practice's own entity, render nothing.
+  if (redirectToColleagues) return <AppShell><div /></AppShell>;
 
   return (
     <AppShell>
