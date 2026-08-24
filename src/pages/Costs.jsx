@@ -658,11 +658,15 @@ export default function Costs() {
           aria-label="Tax rate"
           value={(gstRegistered ? d.taxRate : noTaxName) || ''}
           // '' stays on the list so a rate can be cleared again, the way the
-          // native select's "No tax rate" option did.
+          // native select's empty option did.
           options={['', ...taxRateOptions]}
           onChange={(v) => changeTaxRate(d, v)}
-          format={(t) => t || 'No tax rate'}
-          emptyLabel="No tax rate"
+          // "Not set" — NOT "No tax rate", which read as a near-twin of the real
+          // Xero code "No Tax" and made an undecided document indistinguishable
+          // from one deliberately coded zero-rated. They mean opposite things:
+          // one is waiting on a person, the other is an answer.
+          format={(t) => t || 'Not set'}
+          emptyLabel="Not set"
         />
       ),
     },

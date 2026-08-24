@@ -145,6 +145,25 @@ export async function accountsForOrg(ws: string, orgId: string): Promise<XeroAcc
   }
 }
 
+// The linked org's ACTIVE purchase tax rates, shaped the way the client's
+// managed list shapes them ({name, code, rate}) so the shared tax-code decision
+// (src/lib/taxRateRules.js) reads them identically wherever it is called from.
+export async function taxRatesForOrg(ws: string, orgId: string): Promise<Array<{ name: string; code: string; rate: number }>> {
+  if (!xeroEnabled || !orgId) return [];
+  const organisation = getOrganisation(ws, orgId);
+  if (!organisation) return [];
+  try {
+    const result = await relay('TaxRates', { tenantId: organisation.tenantId });
+    if (!result.ok) return [];
+    return (result.data?.TaxRates ?? [])
+      .filter((t: any) => t.Status === 'ACTIVE' && t.CanApplyToExpenses !== false)
+      .map((t: any) => ({ name: String(t.Name ?? ''), code: String(t.TaxType ?? ''), rate: Number(t.EffectiveRate) || 0 }))
+      .filter((t: any) => t.name);
+  } catch {
+    return [];
+  }
+}
+
 // The names of the linked org's first ACTIVE tracking category (the "PIC" list
 // the app calls Projects), so an emailed document can be allocated to the site
 // it names. Empty when Xero isn't configured, the org isn't linked, or none.

@@ -54,7 +54,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
     properties: {
       ...taxRateFields,
       ...projectFields,
-      supplier: { type: 'string', description: 'Merchant / supplier name, e.g. "Grab"' },
+      supplier: {
+        type: 'string',
+        description:
+          'The merchant / supplier name AS PRINTED on the document — the party that was PAID, never the bill-to / customer. Copy it from the text: the logo wordmark, letterhead, footer, "powered by" line, the payment descriptor, or the support address\'s domain. NEVER infer a brand from what the document LOOKS like: ride-hailing, food-delivery and e-wallet receipts share a layout, and a trip, a card line and a total are not evidence of WHICH company issued it. If no name is printed anywhere, return an empty string — a blank supplier is corrected in seconds, where a confidently wrong one is published to the ledger as the wrong contact.',
+      },
       date: {
         type: 'string',
         description:
@@ -353,6 +357,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     contextBlock +
     'You extract purchase and expense details from receipts and invoices. ' +
     'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
+    'Never identify a company that is not named on the document. A screenshot of an app receipt is often cropped above its brand, and the layout alone does not say which company it is — returning the wrong merchant is worse than returning none, so leave `supplier` empty rather than pick the best-known brand of that kind. ' +
     'Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ' +
     'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
     'pick "Uncategorised" only when none reasonably fit. ' +
