@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { createHash, randomBytes } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { userByEmailHandle, setPendingForward, memberForSession, isAdminRole } from './users.js';
+import { dataScopeForOrg } from './organisations.js';
 import { insertBill } from './store.js';
 import { putBillFile } from './storage.js';
 
@@ -85,7 +86,9 @@ inboundRouter.post('/email', async (req, res) => {
 
   // Otherwise file each PDF/image attachment as a cost document owned by the user.
   const atts = Array.isArray(b.attachments) ? b.attachments : [];
-  const orgId = user.organisationId || '';
+  // Map to the same data scope uploads use: the primary org (CYBM) folds to the
+  // legacy WORKSPACE_ID scope, so an emailed doc lands in the inbox the user sees.
+  const orgId = dataScopeForOrg(user.organisationId || '');
   let created = 0;
   for (const a of atts) {
     const filename = String(a?.filename || 'document');
