@@ -26,6 +26,7 @@ import { workspaceId } from './workspace.js';
 import { emailForPerson, orgScope, ownerForOrg } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
+import { decideTaxRate, taxContextFor } from './taxRules.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -93,11 +94,57 @@ function backfillOwners(ws: string, org: string, scope: string): void {
   }
 }
 
+// A tax code is arithmetic, not a reading — total, GST and the supplier's
+// registration decide it. The browser has always done that sum on upload, so a
+// document created any OTHER way (an emailed one, before the inbound path ran
+// the same decision) reached the inbox with the cell simply blank, and nothing
+// would ever fill it: re-reading is the only path that computes one, and paying
+// for a model call to work out "no GST printed, therefore No Tax" is absurd.
+//
+// So it is computed here for the documents that never had the chance. Two
+// guards make that safe:
+//   - Only a document with NO taxRate FIELD AT ALL. Clearing the cell writes an
+//     empty string, which is a decision; never having been asked is the absence
+//     of one. Refilling a deliberate blank would be fighting the reviewer.
+//   - Never a published document, whose figures are already in the ledger.
+// Skipped entirely unless the book changed, and it costs nothing (not even the
+// relay call for the rates) when there is nothing to fill.
+//
+// It fills the missing decision and nothing else. Where the decision would also
+// have to REVISE money — a document with GST recorded that turns out not to be
+// claimable Singapore input tax, where a read moves the amount into the cost —
+// the document is left untouched instead. Supplying an answer nobody ever asked
+// for is a repair; rewriting a figure somebody may already have checked, days
+// later and without being asked, is not. Those go through Rerun processing,
+// where the whole document is being decided again and the change is visible.
+const taxFilledAt = new Map<string, number>();
+async function backfillTaxRates(ws: string, org: string, scope: string): Promise<void> {
+  if (taxFilledAt.get(scope) === bookRevision()) return;
+  taxFilledAt.set(scope, bookRevision());
+  const undecided = listBills(scope).filter(
+    (b) => b.kind === 'cost' && !('taxRate' in b) && !b.xeroInvoiceId
+  );
+  if (!undecided.length) return;
+  const ctx = await taxContextFor(ws, org);
+  if (!ctx.visibleRates.length) return; // no rates to choose from — say nothing
+  for (const b of undecided) {
+    const outcome = await decideTaxRate(ctx, b);
+    if (!outcome?.name) continue;
+    if (!outcome.claimsTax && parseAmount(b.tax) > 0) continue; // would revise money — leave it
+    updateBill(scope, b.id, { taxRate: outcome.name, taxRateReason: outcome.reason });
+  }
+}
+
 billsRouter.get('/bills', (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
   backfillOwners(workspaceId(req), orgScope(req), orgId);
   autoScanDuplicates(workspaceId(req), orgScope(req), orgId);
+  // Fills in the background — it needs the org's rates over the relay, and the
+  // list must not wait on a network call. The next fetch shows the result.
+  void backfillTaxRates(workspaceId(req), orgScope(req), orgId).catch((err) =>
+    console.error('[bills] tax-rate backfill failed', err)
+  );
   // File any Auto Expense claim whose period has ended. Rides on the fetch every
   // list already makes rather than a background worker, so a period that ended
   // while nobody was looking is claimed the moment someone opens the app.

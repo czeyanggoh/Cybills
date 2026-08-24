@@ -5,7 +5,8 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import type { Request } from 'express';
 import { userByEmailHandle, setPendingForward, memberForSession, isAdminRole } from './users.js';
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
-import { accountsForOrg, projectOptionsForOrg, taxRatesForOrg } from './xero.js';
+import { accountsForOrg, projectOptionsForOrg } from './xero.js';
+import { decideTaxRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { insertBill, updateBill, reconcileReadiness } from './store.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
@@ -51,29 +52,10 @@ async function extractionInputsFor(ws: string, realOrgId: string) {
   const expense = shown.filter((a) => EXPENSE_TYPES.has(String(a.type).toUpperCase()));
   const usable = expense.length ? expense : shown;
   const accounts = usable.map((a) => ({ code: a.code, name: a.name, description: a.description || '' }));
-  // Each account's own default tax code in Xero, keyed by the "<code> - <name>"
-  // label the app stores as the category. The tax-code decision follows the
-  // account the way Xero's own UI does, so it needs this after the read.
-  const accountTaxTypes = new Map(usable.map((a) => [`${a.code} - ${a.name}`, a.taxType || '']));
 
-  // The org's tax rates, merged the way the client's managed list merges them:
-  // live Xero rates plus any manually-added row, minus anything switched off in
-  // Lists. `all` keeps the unfiltered set so a hidden code can still be NAMED
-  // the way this organisation names it.
-  const liveRates = await taxRatesForOrg(ws, realOrgId);
-  const addedRates = (Array.isArray(lists?.added?.taxRates) ? (lists.added!.taxRates as unknown[]) : [])
-    .map((r) => r as { name?: unknown; code?: unknown; rate?: unknown })
-    .map((r) => ({ name: String(r?.name ?? ''), code: String(r?.code ?? ''), rate: Number(r?.rate) || 0 }))
-    .filter((r) => r.name);
-  const hiddenRates = new Set(asStrArray(lists?.hidden?.taxRates));
-  const seenRate = new Set<string>();
-  const allRates = [...liveRates, ...addedRates].filter((r) => !seenRate.has(r.name) && seenRate.add(r.name));
-  const visibleRates = allRates.filter((r) => !hiddenRates.has(r.name));
-
-  // Not GST-registered → nothing to claim; the decision codes everything No Tax.
-  // Anything other than an explicit 'No' counts as registered (isGstRegistered).
-  const profile = readSetting<{ gstRegistered?: string }>(ws, 'cybills.business-profile.v1', realOrgId);
-  const gstRegistered = String(profile?.gstRegistered || 'Yes').toLowerCase() !== 'no';
+  // The rates, chart and registration the tax decision needs — assembled in one
+  // shared place so the emailed document is coded exactly as an uploaded one is.
+  const taxCtx = await taxContextFor(ws, realOrgId);
 
   // Tax codes the org wrote a "when to use" rule for (Lists → Tax rates); a rate
   // with no rule is the arithmetic fallback's job, not the reader's.
@@ -92,34 +74,7 @@ async function extractionInputsFor(ws: string, realOrgId: string) {
   // `cybills.review-instructions.<orgId>`; readSetting's exact-key fallback finds it.
   const instructions = readSetting<string>(ws, `cybills.review-instructions.${realOrgId || 'default'}`) || '';
 
-  return { accounts, accountTaxTypes, taxRates, visibleRates, allRates, gstRegistered, projects, instructions };
-}
-
-// The tax-code decision lives in ONE place: src/lib/taxRateRules.js, the pure,
-// dependency-free module every client entry point (upload, re-read, merge)
-// already calls, tested by `npm test` at the repo root. It is loaded here at
-// runtime by path rather than re-implemented in TypeScript, because a second
-// copy of the arithmetic that decides what GST a client claims is exactly the
-// drift that must not happen. Guarded and cached: if it can't be loaded, the tax
-// code is simply left for the reviewer — which is what emailed documents did
-// before this, so the failure mode is the old behaviour, not a wrong code.
-type TaxOutcome = { name: string; reason: string; claimsTax: boolean };
-type TaxRules = { taxRateOutcome: (args: Record<string, unknown>) => TaxOutcome };
-let taxRulesCache: TaxRules | null = null;
-let taxRulesLoaded = false;
-async function loadTaxRules(): Promise<TaxRules | null> {
-  if (taxRulesLoaded) return taxRulesCache;
-  taxRulesLoaded = true;
-  try {
-    // From server/dist (or server/src under tsx) up to the repo root.
-    const url = new URL('../../src/lib/taxRateRules.js', import.meta.url).href;
-    const mod = (await import(url)) as Partial<TaxRules>;
-    taxRulesCache = typeof mod?.taxRateOutcome === 'function' ? (mod as TaxRules) : null;
-  } catch (e) {
-    console.error('[inbound] tax-rate rules unavailable', e);
-    taxRulesCache = null;
-  }
-  return taxRulesCache;
+  return { accounts, taxCtx, taxRates, projects, instructions };
 }
 
 // Providers to attempt, org's choice first then the other enabled one, so a
@@ -147,16 +102,7 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
     inputs = await extractionInputsFor(ws, realOrgId);
   } catch (e) {
     console.error('[inbound] could not assemble extraction inputs', e);
-    inputs = {
-      accounts: [],
-      accountTaxTypes: new Map(),
-      taxRates: [],
-      visibleRates: [],
-      allRates: [],
-      gstRegistered: true,
-      projects: [],
-      instructions: '',
-    };
+    inputs = { accounts: [], taxCtx: EMPTY_TAX_CONTEXT, taxRates: [], projects: [], instructions: '' };
   }
 
   let lastNote = 'no reader available';
@@ -207,34 +153,16 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
     // other case (including the ordinary "no GST printed" receipt, which is most
     // emailed ones) is settled here. Without this an emailed document reached
     // the inbox with its Tax rate cell simply blank.
-    const taxRules = await loadTaxRules();
-    if (taxRules) {
-      try {
-        const outcome = taxRules.taxRateOutcome({
-          total: d.total,
-          tax: d.tax,
-          rates: inputs.visibleRates,
-          allRates: inputs.allRates,
-          suggested: d.taxRate,
-          gstRegistered: inputs.gstRegistered,
-          currency: d.currency,
-          kind: 'cost',
-          accountTaxType: inputs.accountTaxTypes.get(d.category) || '',
-          accountLabel: d.category,
-          gstRegNo: d.supplierGstRegNo,
-          taxLabel: d.taxLabel,
-        });
-        patch.taxRate = outcome.name;
-        // The reader writes its own reason when ITS rule matched; otherwise the
-        // decision explains itself, including when the answer is "none" — a
-        // blank field with no explanation is indistinguishable from a bug.
-        if (outcome.reason) patch.taxRateReason = outcome.reason;
-        // Tax that isn't claimable Singapore GST stays inside the cost: the
-        // amount is not recorded as GST, and the total never changes.
-        if (!outcome.claimsTax) patch.tax = 0;
-      } catch (e) {
-        console.error('[inbound] tax-rate decision failed', e);
-      }
+    const outcome = await decideTaxRate(inputs.taxCtx, d);
+    if (outcome) {
+      patch.taxRate = outcome.name;
+      // The reader writes its own reason when ITS rule matched; otherwise the
+      // decision explains itself, including when the answer is "none" — a blank
+      // field with no explanation is indistinguishable from a bug.
+      if (outcome.reason) patch.taxRateReason = outcome.reason;
+      // Tax that isn't claimable Singapore GST stays inside the cost: the amount
+      // is not recorded as GST, and the total never changes.
+      if (!outcome.claimsTax) patch.tax = 0;
     }
 
     // The supplier's standing rule overlays the read — a rule is an explicit
