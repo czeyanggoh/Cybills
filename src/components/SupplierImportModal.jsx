@@ -1,15 +1,21 @@
 import { useRef, useState } from 'react';
-import { X, Upload, CheckCircle2 } from 'lucide-react';
+import { X, CheckCircle2 } from 'lucide-react';
 import { setSupplierRule } from '@/lib/supplierRules';
 
-// Import supplier defaults in bulk from a CSV. Suppliers themselves come from
-// Xero, so this doesn't create contacts — it sets each named supplier's standing
-// RULE (the same values the Suppliers table edits): category, customer, project,
-// tax rate, and the two extract toggles. A blank cell leaves that field alone.
-const TEMPLATE_COLS = ['Name', 'Category', 'Customer', 'Project', 'Tax rate', 'Extract line items', 'Extract supplier statements'];
+// Import a suppliers list from CSV, mirroring Dext's "CSV Upload" dialog. The
+// columns are Dext's: Code, Name, Currency code, Category code, Category name,
+// Tax code, Tax name. Suppliers themselves come from Xero, so this sets each
+// named supplier's standing defaults (its rule): currency, category (built as
+// "code - name", CYBills' convention), and tax rate. A blank cell is left alone.
+const EXAMPLE = [
+  { code: '401HGL', name: 'Kevin', currency: 'GBP', catCode: '626000', catName: 'TELEPHONE', taxCode: 'VAT10', taxName: 'VAT (10%)' },
+  { code: '401AMA', name: 'Bob', currency: 'USD', catCode: '626001', catName: 'MISC', taxCode: 'VAT15', taxName: 'VAT (15%)' },
+  { code: '401TRL', name: 'John', currency: 'EUR', catCode: '626002', catName: 'SUNDRY', taxCode: 'VAT20', taxName: 'VAT (20%)' },
+];
+const HEADERS = ['Code', 'Name', 'Currency code', 'Category code', 'Category name', 'Tax code', 'Tax name'];
+const MAX_BYTES = 2 * 1024 * 1024;
 
 function parseCsvLine(line) {
-  // Minimal CSV: handles quoted fields with commas.
   const out = [];
   let cur = '';
   let inQ = false;
@@ -27,35 +33,33 @@ function parseCsvLine(line) {
   return out.map((s) => s.trim());
 }
 
-const truthy = (v) => /^(yes|true|1|y)$/i.test(String(v || '').trim());
-const falsy = (v) => /^(no|false|0|n)$/i.test(String(v || '').trim());
-
-function rowToPatch(cols, headerIdx) {
+// A row's supplier-rule patch, from the Dext columns we can map onto CYBills.
+function rowToPatch(cols, idx) {
   const get = (name) => {
-    const i = headerIdx[name.toLowerCase()];
+    const i = idx[name.toLowerCase()];
     return i == null ? '' : (cols[i] || '').trim();
   };
   const patch = {};
-  if (get('Category')) patch.category = get('Category');
-  if (get('Customer')) patch.customer = get('Customer');
-  if (get('Project')) patch.project = get('Project');
-  if (get('Tax rate')) patch.taxRate = get('Tax rate');
-  const eli = get('Extract line items');
-  if (truthy(eli)) patch.extractLineItems = true;
-  else if (falsy(eli)) patch.extractLineItems = false;
-  const ess = get('Extract supplier statements');
-  if (truthy(ess)) patch.extractStatements = true;
-  else if (falsy(ess)) patch.extractStatements = false;
+  const currency = get('Currency code');
+  if (currency) patch.currency = currency;
+  const catCode = get('Category code');
+  const catName = get('Category name');
+  const category = catCode && catName ? `${catCode} - ${catName}` : catName || catCode;
+  if (category) patch.category = category;
+  // Prefer the human tax name (what the CYBills pickers show); fall back to code.
+  const tax = get('Tax name') || get('Tax code');
+  if (tax) patch.taxRate = tax;
   return patch;
 }
 
 function downloadTemplate() {
-  const csv = `${TEMPLATE_COLS.join(',')}\n"A1 Consultancy",412 - Consulting & Accounting,,GCY,No Tax,No,Yes\n`;
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const header = HEADERS.join(',');
+  const rows = EXAMPLE.map((r) => [r.code, r.name, r.currency, r.catCode, r.catName, r.taxCode, r.taxName].join(','));
+  const blob = new Blob([`${header}\n${rows.join('\n')}\n`], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'cybills-supplier-rules-template.csv';
+  a.download = 'cybills-suppliers-template.csv';
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -76,21 +80,23 @@ export default function SupplierImportModal({ open, onClose, onImported }) {
     e.target.value = '';
     if (!file) return;
     setError('');
+    if (file.size > MAX_BYTES) { setError('That file is over 2MB. Please upload a smaller CSV.'); return; }
+    if (!/\.csv$/i.test(file.name) && file.type && !/csv|text/.test(file.type)) { setError('CSV only, please.'); return; }
     try {
       const text = await file.text();
       const lines = text.split(/\r?\n/).filter((l) => l.trim());
       if (!lines.length) { setError('That file looks empty.'); return; }
       const header = parseCsvLine(lines[0]);
-      const headerIdx = {};
-      header.forEach((h, i) => { headerIdx[h.trim().toLowerCase()] = i; });
-      if (headerIdx.name == null) { setError('The CSV needs a "Name" column. Download the template for the exact headers.'); return; }
+      const idx = {};
+      header.forEach((h, i) => { idx[h.trim().toLowerCase()] = i; });
+      if (idx.name == null) { setError('The first row must be a header with a "Name" column. See the example above.'); return; }
       let applied = 0;
       let skipped = 0;
       for (const line of lines.slice(1)) {
         const cols = parseCsvLine(line);
-        const name = (cols[headerIdx.name] || '').trim();
+        const name = (cols[idx.name] || '').trim();
         if (!name) { skipped += 1; continue; }
-        const patch = rowToPatch(cols, headerIdx);
+        const patch = rowToPatch(cols, idx);
         if (Object.keys(patch).length === 0) { skipped += 1; continue; }
         setSupplierRule(name, patch);
         applied += 1;
@@ -105,54 +111,72 @@ export default function SupplierImportModal({ open, onClose, onImported }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-foreground/20" onClick={close} aria-hidden="true" />
-      <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-background shadow-xl">
+      <div className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
-          <h2 className="text-base font-semibold tracking-tight">Import supplier rules from CSV</h2>
+          <h2 className="text-base font-semibold tracking-tight">CSV Upload</h2>
           <button type="button" onClick={close} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="space-y-4 p-6">
+        <div className="flex-1 overflow-auto p-6">
           {result ? (
-            <div className="flex flex-col items-center gap-3 py-6 text-center">
+            <div className="flex flex-col items-center gap-3 py-10 text-center">
               <CheckCircle2 className="h-10 w-10" strokeWidth={1.5} />
-              <p className="text-sm font-medium">Applied rules to {result.applied} supplier{result.applied === 1 ? '' : 's'}.</p>
+              <p className="text-sm font-medium">Set defaults for {result.applied} supplier{result.applied === 1 ? '' : 's'}.</p>
               {result.skipped > 0 && (
                 <p className="text-xs text-muted-foreground">{result.skipped} row{result.skipped === 1 ? '' : 's'} skipped (no name or nothing to set).</p>
               )}
             </div>
           ) : (
             <>
-              <p className="text-sm text-muted-foreground">
-                Sets each named supplier&rsquo;s standing rule (Category, Customer, Project, Tax rate, and the extract
-                toggles) in bulk. A blank cell leaves that field alone. Suppliers still come from Xero — this only sets
-                their defaults.
-              </p>
-              <p className="text-sm">
-                Follow the{' '}
+              <p className="mb-4 text-sm text-muted-foreground">
+                Upload the CSV file representing your Suppliers list. The first row of your CSV should be the header
+                containing the column name. See the example below.{' '}
                 <button type="button" onClick={downloadTemplate} className="font-medium text-foreground underline underline-offset-2">
-                  CSV template
+                  Download template
                 </button>
-                .
               </p>
-              {error && <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>}
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full min-w-[720px] text-sm">
+                  <thead className="border-b bg-muted/40 text-left">
+                    <tr className="text-muted-foreground">
+                      {HEADERS.map((h) => (
+                        <th key={h} className="whitespace-nowrap px-3 py-2.5 font-medium">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {EXAMPLE.map((r) => (
+                      <tr key={r.code} className="border-b last:border-0">
+                        <td className="px-3 py-2.5">{r.code}</td>
+                        <td className="px-3 py-2.5">{r.name}</td>
+                        <td className="px-3 py-2.5">{r.currency}</td>
+                        <td className="px-3 py-2.5">{r.catCode}</td>
+                        <td className="px-3 py-2.5">{r.catName}</td>
+                        <td className="px-3 py-2.5">{r.taxCode}</td>
+                        <td className="px-3 py-2.5">{r.taxName}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-6 flex flex-col items-center gap-1.5">
+                <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
+                <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex h-9 items-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+                  Select file
+                </button>
+                <p className="text-xs text-muted-foreground">CSV only, 2MB max</p>
+              </div>
+              {error && <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>}
             </>
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t px-6 py-4">
-          <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
-          {result ? (
-            <button type="button" onClick={close} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">Done</button>
-          ) : (
-            <>
-              <button type="button" onClick={close} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">Cancel</button>
-              <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
-                <Upload className="h-4 w-4" /> Select file
-              </button>
-            </>
-          )}
+        <div className="flex items-center justify-end border-t px-6 py-4">
+          <button type="button" onClick={close} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">
+            {result ? 'Done' : 'Cancel'}
+          </button>
         </div>
       </div>
     </div>
