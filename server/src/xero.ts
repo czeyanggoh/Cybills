@@ -111,6 +111,55 @@ function bookFor(req: any): string {
   return dataScopeForOrg(String(req.params?.id ?? '').trim());
 }
 
+// --- Server-side extraction inputs ------------------------------------------
+// The inbound-email reader has no browser to assemble the org's chart of
+// accounts and project list the way an upload does (see src/lib/bills.js →
+// fetchExtract), so it gathers them here instead — the same relay calls the
+// per-org routes above make, minus the req/res. Both never throw: a missing key
+// or an unreachable relay yields an empty list, so an emailed document still
+// reads (just without account/project classification), never 500s.
+
+export type XeroAccountRef = { code: string; name: string; description: string; type: string; taxType: string };
+
+// The linked org's ACTIVE Xero accounts, for classifying an emailed document
+// into the account it should post to. Empty when Xero isn't configured, the org
+// isn't linked, or the relay fails.
+export async function accountsForOrg(ws: string, orgId: string): Promise<XeroAccountRef[]> {
+  if (!xeroEnabled || !orgId) return [];
+  const organisation = getOrganisation(ws, orgId);
+  if (!organisation) return [];
+  try {
+    const result = await relay('Accounts', { tenantId: organisation.tenantId, query: { where: 'Status=="ACTIVE"' } });
+    if (!result.ok) return [];
+    return (result.data?.Accounts ?? [])
+      .filter((a: any) => a.Code)
+      .map((a: any) => ({
+        code: String(a.Code),
+        name: String(a.Name ?? ''),
+        description: String(a.Description ?? ''),
+        type: String(a.Type ?? ''),
+        taxType: String(a.TaxType ?? ''),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+// The names of the linked org's first ACTIVE tracking category (the "PIC" list
+// the app calls Projects), so an emailed document can be allocated to the site
+// it names. Empty when Xero isn't configured, the org isn't linked, or none.
+export async function projectOptionsForOrg(ws: string, orgId: string): Promise<string[]> {
+  if (!xeroEnabled || !orgId) return [];
+  const organisation = getOrganisation(ws, orgId);
+  if (!organisation) return [];
+  try {
+    const tc = await firstTrackingCategory(organisation.tenantId);
+    return tc ? [...tc.options] : [];
+  } catch {
+    return [];
+  }
+}
+
 export const xeroRouter = Router();
 
 // GET /api/xero/status — capability probe for the frontend.

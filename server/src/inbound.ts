@@ -4,32 +4,16 @@ import { simpleParser } from 'mailparser';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import type { Request } from 'express';
 import { userByEmailHandle, setPendingForward, memberForSession, isAdminRole } from './users.js';
-import { dataScopeForOrg } from './organisations.js';
+import { dataScopeForOrg, primaryOrgId } from './organisations.js';
+import { accountsForOrg, projectOptionsForOrg } from './xero.js';
 import { insertBill, updateBill, reconcileReadiness } from './store.js';
 import { putBillFile } from './storage.js';
-import { readDocument, resolveProvider, type Provider } from './llm.js';
+import { resolveProvider, type Provider } from './llm.js';
+import { runExtraction } from './extract.js';
 import { recordUsage } from './usage.js';
 import { readSetting } from './settings.js';
 import { workspaceId } from './workspace.js';
 import { visionEnabled, claudeEnabled, openaiEnabled } from './env.js';
-
-// The core fields to fill an emailed document's inbox row. Kept simple (no
-// per-org account/tax-code guides) so this runs without the client's Xero
-// context; the reviewer or a supplier rule sets the account code, exactly as
-// happens for an upload the reader couldn't fully classify.
-const BASIC_SCHEMA = {
-  type: 'object',
-  properties: {
-    supplier: { type: 'string', description: 'The merchant / supplier / seller name (who was PAID), not the bill-to / customer' },
-    date: { type: 'string', description: 'Document date as ISO YYYY-MM-DD when determinable, else empty' },
-    total: { type: 'string', description: 'The grand total / amount payable / total paid, as digits only e.g. 41.60. Read it off the document; use the largest final amount if several are shown.' },
-    tax: { type: 'string', description: 'GST/tax amount as digits, 0 if none printed' },
-    currency: { type: 'string', description: 'ISO currency code, e.g. SGD' },
-    invoiceNumber: { type: 'string', description: 'Invoice / receipt / reference number' },
-    documentType: { type: 'string', description: 'Invoice or Receipt' },
-    description: { type: 'string', description: 'One-line summary of what was purchased' },
-  },
-} as const;
 
 const norm = (s: string) => String(s ?? '').trim().toLowerCase();
 
@@ -42,14 +26,47 @@ function supplierRuleFor(ws: string, orgId: string, supplier: string): Record<st
   return key ? map[key] : null;
 }
 
-const toNum = (v: unknown) => {
-  const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
-  return Number.isFinite(n) ? n : 0;
-};
+// The Xero chart of accounts, tax-code rules, project list and review
+// instructions for one org — the SAME inputs the browser assembles and sends
+// on an upload (src/lib/bills.js → fetchExtract), gathered here server-side so
+// an emailed document is read exactly the way an uploaded one is. Never throws:
+// a missing Xero key or an unreachable relay yields empty lists, so the read
+// still runs (just without account classification) rather than failing.
+type ListsBlob = { hidden?: Record<string, unknown>; meta?: Record<string, Record<string, { rules?: string }>> };
+const asStrArray = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x)) : []);
+const EXPENSE_TYPES = new Set(['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS']);
 
-// Read an emailed document and fill its fields, then re-derive ready vs inbox.
-// Best-effort and fire-and-forget: a missing reader key or a failed read simply
-// leaves the document unread in the inbox (the reviewer can Re-read by hand).
+async function extractionInputsFor(ws: string, realOrgId: string) {
+  const lists = (readSetting<ListsBlob>(ws, 'cybills.lists.v1', realOrgId) || {}) as ListsBlob;
+
+  // Chart of accounts: expense accounts first, honouring any category hidden in
+  // Lists — exactly what getExtractionAccounts does for an upload.
+  const hiddenCats = new Set(asStrArray(lists?.hidden?.categories));
+  const accountsRaw = await accountsForOrg(ws, realOrgId);
+  const shown = accountsRaw.filter((a) => !hiddenCats.has(a.code || a.name));
+  const expense = shown.filter((a) => EXPENSE_TYPES.has(String(a.type).toUpperCase()));
+  const accounts = (expense.length ? expense : shown).map((a) => ({ code: a.code, name: a.name, description: a.description || '' }));
+
+  // Tax codes the org wrote a "when to use" rule for (Lists → Tax rates); a rate
+  // with no rule is the arithmetic fallback's job, not the reader's.
+  const taxMeta = (lists?.meta?.taxRates || {}) as Record<string, { rules?: string }>;
+  const taxRates = Object.entries(taxMeta)
+    .filter(([, v]) => String(v?.rules || '').trim())
+    .map(([name, v]) => ({ name, code: '', rate: 0, rules: String(v.rules).trim() }));
+
+  // The org's project (first Xero tracking category) options, each with whatever
+  // rule the org wrote — the list getExtractionProjects builds for an upload.
+  const projMeta = (lists?.meta?.projects || {}) as Record<string, { rules?: string }>;
+  const projectNames = await projectOptionsForOrg(ws, realOrgId);
+  const projects = projectNames.map((name) => ({ name, rules: String(projMeta[name]?.rules || '').trim() }));
+
+  // Review instructions (business overview + GST/coding rules). Keyed
+  // `cybills.review-instructions.<orgId>`; readSetting's exact-key fallback finds it.
+  const instructions = readSetting<string>(ws, `cybills.review-instructions.${realOrgId || 'default'}`) || '';
+
+  return { accounts, taxRates, projects, instructions };
+}
+
 // Providers to attempt, org's choice first then the other enabled one, so a
 // read that a mis-set default or one flaky provider would fail still succeeds.
 function readerOrder(preferred: Provider): Provider[] {
@@ -61,61 +78,84 @@ function readerOrder(preferred: Provider): Provider[] {
   return order;
 }
 
-async function autoRead(req: Request, orgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string) {
+// Read an emailed document through the FULL extraction pipeline (the same
+// runExtraction an upload uses — chart of accounts, tax-code rules, projects,
+// review instructions), then re-derive ready vs inbox. Best-effort and
+// fire-and-forget: a failed read leaves a breadcrumb the reviewer can act on.
+//   scope     — the bills-store scope the document was filed under.
+//   realOrgId — the organisation record id, for its settings + Xero context.
+async function autoRead(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string) {
   if (!visionEnabled) return;
-  const isPdf = /pdf/i.test(mediaType);
-  const prompt = `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. Today is ${new Date().toISOString().slice(0, 10)}.`;
+  const ws = workspaceId(req);
+  let inputs: Awaited<ReturnType<typeof extractionInputsFor>>;
+  try {
+    inputs = await extractionInputsFor(ws, realOrgId);
+  } catch (e) {
+    console.error('[inbound] could not assemble extraction inputs', e);
+    inputs = { accounts: [], taxRates: [], projects: [], instructions: '' };
+  }
+
   let lastNote = 'no reader available';
   for (const provider of readerOrder(preferred)) {
-    try {
-      const outcome = await readDocument({
-        provider,
-        fileBase64,
-        mediaType,
-        maxTokens: 1024,
-        schemaName: 'inbound_document',
-        schema: BASIC_SCHEMA as unknown as Record<string, unknown>,
-        systemPrompt: 'You read receipts and invoices and return the requested fields. Use empty strings and 0 when a field is not present.',
-        prompt,
-      });
-      recordUsage(req, { feature: 'inbound-extract', provider: outcome.provider, model: outcome.model, usage: outcome.usage });
-      if (!outcome.ok || !outcome.json || typeof outcome.json !== 'object') {
-        lastNote = `${provider}: ${outcome.ok ? 'empty response' : outcome.reason}`;
-        continue; // try the next provider
-      }
-      const j = outcome.json as Record<string, unknown>;
-      const supplier = String(j.supplier || '');
-      const patch: Record<string, unknown> = {
-        supplier,
-        date: String(j.date || ''),
-        total: toNum(j.total),
-        tax: toNum(j.tax),
-        currency: String(j.currency || ''),
-        invoiceNumber: String(j.invoiceNumber || ''),
-        documentType: String(j.documentType || ''),
-        description: String(j.description || ''),
-      };
-      // Apply the supplier's standing rule, exactly as an upload does — a rule is
-      // an instruction, so it fills the account code the basic read can't choose.
-      const rule = supplierRuleFor(workspaceId(req), orgId, supplier);
-      if (rule) {
-        if (rule.category) { patch.category = rule.category; patch.categoryReason = `Standing rule: documents from ${supplier} are coded ${rule.category}.`; }
-        if (rule.customer) patch.customer = rule.customer;
-        if (rule.project) patch.project = rule.project;
-        if (rule.taxRate) patch.taxRate = rule.taxRate;
-        if (rule.currency && !patch.currency) patch.currency = rule.currency;
-      }
-      updateBill(orgId, billId, patch);
-      reconcileReadiness(orgId, billId);
-      return; // success
-    } catch (e) {
-      console.error('[inbound] auto-read failed', provider, e);
-      lastNote = `${provider}: ${(e instanceof Error ? e.message : String(e)).slice(0, 160)}`;
+    const result = await runExtraction({
+      provider,
+      imageBase64: fileBase64,
+      mediaType,
+      accounts: inputs.accounts,
+      categories: [],
+      taxRates: inputs.taxRates,
+      projects: inputs.projects,
+      instructions: inputs.instructions,
+    });
+    if (result.outcome) {
+      recordUsage(req, { feature: 'inbound-extract', provider: result.outcome.provider, model: result.outcome.model, usage: result.outcome.usage });
     }
+    if (!result.ok) {
+      lastNote = `${provider}: ${result.error}`;
+      if (result.error === 'refused') break; // the reader saw it and declined — another won't differ
+      continue; // try the next provider
+    }
+    const d = result.data;
+    const patch: Record<string, unknown> = {
+      supplier: d.supplier,
+      date: d.date,
+      documentType: d.documentType,
+      invoiceNumber: d.invoiceNumber,
+      currency: d.currency,
+      total: d.total,
+      tax: d.tax,
+      category: d.category,
+      categoryReason: d.categoryReason,
+      description: d.description,
+      dueDate: d.dueDate,
+      period: d.period,
+      cardLast4: d.cardLast4,
+      supplierGstRegNo: d.supplierGstRegNo,
+      taxLabel: d.taxLabel,
+      taxRate: d.taxRate,
+      taxRateReason: d.taxRateReason,
+      project: d.project,
+      projectReason: d.projectReason,
+      lineItems: d.lineItems,
+    };
+    // The supplier's standing rule overlays the read — a rule is an explicit
+    // instruction, so it wins over the reader's guess (same precedence the
+    // re-read path applies, src/lib/reRead.js).
+    const rule = supplierRuleFor(ws, realOrgId, d.supplier);
+    if (rule) {
+      if (rule.category) { patch.category = rule.category; patch.categoryReason = `Standing rule: documents from ${d.supplier} are coded ${rule.category}.`; }
+      if (rule.customer) patch.customer = rule.customer;
+      if (rule.project) patch.project = rule.project;
+      if (rule.taxRate) patch.taxRate = rule.taxRate;
+      if (rule.currency && !patch.currency) patch.currency = rule.currency;
+    }
+    updateBill(scope, billId, patch);
+    reconcileReadiness(scope, billId);
+    return; // success
   }
   // Every provider failed — leave a breadcrumb the reviewer (and we) can see,
   // since a background read has nowhere else to report to.
-  updateBill(orgId, billId, { categoryReason: `Auto-read didn't complete (${lastNote}). Use Re-read.` });
+  updateBill(scope, billId, { categoryReason: `Auto-read didn't complete (${lastNote}). Use Re-read.` });
 }
 
 // The shared secret the Cloudflare Worker signs its POSTs with. Prefer an env
@@ -222,9 +262,18 @@ inboundRouter.post('/email', async (req, res) => {
   }
 
   // Otherwise file each PDF/image attachment as a cost document owned by the user.
-  // Map to the same data scope uploads use: the primary org (CYBM) folds to the
-  // legacy WORKSPACE_ID scope, so an emailed doc lands in the inbox the user sees.
-  const orgId = dataScopeForOrg(user.organisationId || '');
+  // Two org ids in play, and they differ for the primary entity:
+  //   realOrgId — the organisation RECORD id, which its per-org settings and Xero
+  //               tenant are keyed on (a colleague on no single entity files into
+  //               the practice's own primary org).
+  //   scope     — the bills-store scope. The primary org (CYBM) folds to the
+  //               legacy WORKSPACE_ID scope, so an emailed doc lands in the inbox
+  //               the user actually sees.
+  const realOrgId = user.organisationId || primaryOrgId();
+  const scope = dataScopeForOrg(realOrgId);
+  // Attribute this document's API spend to its client entity on the Clients page
+  // (recordUsage reads the X-Org-Id header; the Worker sends none).
+  (req.headers as Record<string, string>)['x-org-id'] = realOrgId;
   const madeBills: Array<{ id: string; base64: string; mediaType: string }> = [];
   for (const a of atts) {
     const filename = String(a?.filename || 'document');
@@ -237,14 +286,14 @@ inboundRouter.post('/email', async (req, res) => {
     let storageKey = '';
     let storedType = '';
     try {
-      const stored = await putBillFile(orgId, fileHash, contentType, bytes);
+      const stored = await putBillFile(scope, fileHash, contentType, bytes);
       storageKey = stored.storageKey;
       storedType = stored.contentType;
     } catch {
       // Keep the metadata record even if the file store fails.
     }
     const bill = insertBill({
-      orgId,
+      orgId: scope,
       fileHash,
       fileName: filename,
       supplier: '',
@@ -267,11 +316,11 @@ inboundRouter.post('/email', async (req, res) => {
 
   // Read with the org's chosen reader (Claude / OpenAI), the same one the manual
   // re-read uses — not the deploy default, which may not be the org's working key.
-  const settings = readSetting<{ readerProvider?: string }>(workspaceId(req), 'cybills.extraction-settings.v1', orgId);
+  const settings = readSetting<{ readerProvider?: string }>(workspaceId(req), 'cybills.extraction-settings.v1', realOrgId);
   const provider = resolveProvider(settings?.readerProvider);
 
   // Answer the Worker straight away, then read each document in the background —
   // a model call takes 10-30s and the Worker shouldn't wait on it.
   res.json({ ok: true, kind: 'documents', created: madeBills.length, user: user.id });
-  for (const b of madeBills) void autoRead(req, orgId, provider, b.id, b.base64, b.mediaType);
+  for (const b of madeBills) void autoRead(req, scope, realOrgId, provider, b.id, b.base64, b.mediaType);
 });
