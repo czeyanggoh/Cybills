@@ -20,16 +20,27 @@ import { visionEnabled, claudeEnabled, openaiEnabled } from './env.js';
 const BASIC_SCHEMA = {
   type: 'object',
   properties: {
-    supplier: { type: 'string', description: 'The merchant / supplier name' },
+    supplier: { type: 'string', description: 'The merchant / supplier / seller name (who was PAID), not the bill-to / customer' },
     date: { type: 'string', description: 'Document date as ISO YYYY-MM-DD when determinable, else empty' },
-    total: { type: 'string', description: 'Grand total amount as digits, else empty' },
-    tax: { type: 'string', description: 'GST/tax amount as digits, 0 if none' },
+    total: { type: 'string', description: 'The grand total / amount payable / total paid, as digits only e.g. 41.60. Read it off the document; use the largest final amount if several are shown.' },
+    tax: { type: 'string', description: 'GST/tax amount as digits, 0 if none printed' },
     currency: { type: 'string', description: 'ISO currency code, e.g. SGD' },
     invoiceNumber: { type: 'string', description: 'Invoice / receipt / reference number' },
     documentType: { type: 'string', description: 'Invoice or Receipt' },
     description: { type: 'string', description: 'One-line summary of what was purchased' },
   },
 } as const;
+
+const norm = (s: string) => String(s ?? '').trim().toLowerCase();
+
+// The standing rule for a supplier NAME from the per-org rules blob, matched
+// case-insensitively (same as the client's matchSupplierRule).
+function supplierRuleFor(ws: string, orgId: string, supplier: string): Record<string, string> | null {
+  if (!supplier) return null;
+  const map = readSetting<Record<string, Record<string, string>>>(ws, 'cybills.supplier.rules.v1', orgId) || {};
+  const key = Object.keys(map).find((k) => norm(k) === norm(supplier));
+  return key ? map[key] : null;
+}
 
 const toNum = (v: unknown) => {
   const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
@@ -73,8 +84,9 @@ async function autoRead(req: Request, orgId: string, preferred: Provider, billId
         continue; // try the next provider
       }
       const j = outcome.json as Record<string, unknown>;
-      updateBill(orgId, billId, {
-        supplier: String(j.supplier || ''),
+      const supplier = String(j.supplier || '');
+      const patch: Record<string, unknown> = {
+        supplier,
         date: String(j.date || ''),
         total: toNum(j.total),
         tax: toNum(j.tax),
@@ -82,7 +94,18 @@ async function autoRead(req: Request, orgId: string, preferred: Provider, billId
         invoiceNumber: String(j.invoiceNumber || ''),
         documentType: String(j.documentType || ''),
         description: String(j.description || ''),
-      });
+      };
+      // Apply the supplier's standing rule, exactly as an upload does — a rule is
+      // an instruction, so it fills the account code the basic read can't choose.
+      const rule = supplierRuleFor(workspaceId(req), orgId, supplier);
+      if (rule) {
+        if (rule.category) { patch.category = rule.category; patch.categoryReason = `Standing rule: documents from ${supplier} are coded ${rule.category}.`; }
+        if (rule.customer) patch.customer = rule.customer;
+        if (rule.project) patch.project = rule.project;
+        if (rule.taxRate) patch.taxRate = rule.taxRate;
+        if (rule.currency && !patch.currency) patch.currency = rule.currency;
+      }
+      updateBill(orgId, billId, patch);
       reconcileReadiness(orgId, billId);
       return; // success
     } catch (e) {
