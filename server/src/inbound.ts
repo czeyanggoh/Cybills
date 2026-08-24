@@ -11,7 +11,7 @@ import { readDocument, resolveProvider, type Provider } from './llm.js';
 import { recordUsage } from './usage.js';
 import { readSetting } from './settings.js';
 import { workspaceId } from './workspace.js';
-import { visionEnabled } from './env.js';
+import { visionEnabled, claudeEnabled, openaiEnabled } from './env.js';
 
 // The core fields to fill an emailed document's inbox row. Kept simple (no
 // per-org account/tax-code guides) so this runs without the client's Xero
@@ -39,45 +39,60 @@ const toNum = (v: unknown) => {
 // Read an emailed document and fill its fields, then re-derive ready vs inbox.
 // Best-effort and fire-and-forget: a missing reader key or a failed read simply
 // leaves the document unread in the inbox (the reviewer can Re-read by hand).
-async function autoRead(req: Request, orgId: string, provider: Provider, billId: string, fileBase64: string, mediaType: string) {
+// Providers to attempt, org's choice first then the other enabled one, so a
+// read that a mis-set default or one flaky provider would fail still succeeds.
+function readerOrder(preferred: Provider): Provider[] {
+  const order: Provider[] = [];
+  if (preferred === 'openai' && openaiEnabled) order.push('openai');
+  if (preferred === 'claude' && claudeEnabled) order.push('claude');
+  if (openaiEnabled && !order.includes('openai')) order.push('openai');
+  if (claudeEnabled && !order.includes('claude')) order.push('claude');
+  return order;
+}
+
+async function autoRead(req: Request, orgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string) {
   if (!visionEnabled) return;
   const isPdf = /pdf/i.test(mediaType);
-  try {
-    const outcome = await readDocument({
-      provider,
-      fileBase64,
-      mediaType,
-      maxTokens: 1024,
-      schemaName: 'inbound_document',
-      schema: BASIC_SCHEMA as unknown as Record<string, unknown>,
-      systemPrompt: 'You read receipts and invoices and return the requested fields. Use empty strings and 0 when a field is not present.',
-      prompt: `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. Today is ${new Date().toISOString().slice(0, 10)}.`,
-    });
-    recordUsage(req, { feature: 'inbound-extract', provider: outcome.provider, model: outcome.model, usage: outcome.usage });
-    if (!outcome.ok || !outcome.json || typeof outcome.json !== 'object') {
-      // Leave a breadcrumb the reviewer (and we) can see, since a background
-      // read has nowhere else to report to.
-      const reason = outcome.ok ? 'empty response' : outcome.reason;
-      updateBill(orgId, billId, { categoryReason: `Auto-read didn't complete (${provider}: ${reason}). Use Re-read.` });
-      return;
+  const prompt = `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. Today is ${new Date().toISOString().slice(0, 10)}.`;
+  let lastNote = 'no reader available';
+  for (const provider of readerOrder(preferred)) {
+    try {
+      const outcome = await readDocument({
+        provider,
+        fileBase64,
+        mediaType,
+        maxTokens: 1024,
+        schemaName: 'inbound_document',
+        schema: BASIC_SCHEMA as unknown as Record<string, unknown>,
+        systemPrompt: 'You read receipts and invoices and return the requested fields. Use empty strings and 0 when a field is not present.',
+        prompt,
+      });
+      recordUsage(req, { feature: 'inbound-extract', provider: outcome.provider, model: outcome.model, usage: outcome.usage });
+      if (!outcome.ok || !outcome.json || typeof outcome.json !== 'object') {
+        lastNote = `${provider}: ${outcome.ok ? 'empty response' : outcome.reason}`;
+        continue; // try the next provider
+      }
+      const j = outcome.json as Record<string, unknown>;
+      updateBill(orgId, billId, {
+        supplier: String(j.supplier || ''),
+        date: String(j.date || ''),
+        total: toNum(j.total),
+        tax: toNum(j.tax),
+        currency: String(j.currency || ''),
+        invoiceNumber: String(j.invoiceNumber || ''),
+        documentType: String(j.documentType || ''),
+        description: String(j.description || ''),
+      });
+      reconcileReadiness(orgId, billId);
+      return; // success
+    } catch (e) {
+      console.error('[inbound] auto-read failed', provider, e);
+      lastNote = `${provider}: ${(e instanceof Error ? e.message : String(e)).slice(0, 160)}`;
     }
-    const j = outcome.json as Record<string, unknown>;
-    updateBill(orgId, billId, {
-      supplier: String(j.supplier || ''),
-      date: String(j.date || ''),
-      total: toNum(j.total),
-      tax: toNum(j.tax),
-      currency: String(j.currency || ''),
-      invoiceNumber: String(j.invoiceNumber || ''),
-      documentType: String(j.documentType || ''),
-      description: String(j.description || ''),
-    });
-    reconcileReadiness(orgId, billId);
-  } catch (e) {
-    console.error('[inbound] auto-read failed', e);
-    const msg = e instanceof Error ? e.message : String(e);
-    updateBill(orgId, billId, { categoryReason: `Auto-read errored (${provider}): ${msg.slice(0, 200)}. Use Re-read.` });
   }
+  // Every provider failed — leave a breadcrumb the reviewer (and we) can see,
+  // since a background read has nowhere else to report to.
+  updateBill(orgId, billId, { categoryReason: `Auto-read didn't complete (${lastNote}). Use Re-read.` });
 }
 
 // The shared secret the Cloudflare Worker signs its POSTs with. Prefer an env

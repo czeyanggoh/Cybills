@@ -16,6 +16,7 @@ import {
   getBillById,
   getBillByIdAny,
   deleteBillHard,
+  storageKeyInUse,
   parseAmount,
   type Candidate,
 } from './store.js';
@@ -256,8 +257,11 @@ billsRouter.delete('/bills/:id', async (req, res) => {
   const orgId = orgIdFor(req);
   const removed = deleteBillHard(orgId, req.params.id);
   if (!removed) return res.status(404).json({ error: 'not_found' });
-  if (removed.storageKey) await deleteBillFile(removed.storageKey);
-  res.json({ ok: true, id: removed.id, fileRemoved: Boolean(removed.storageKey) });
+  // Only reclaim the stored file if no other bill still shares it (identical
+  // uploads are stored once and share a key).
+  const fileRemoved = Boolean(removed.storageKey) && !storageKeyInUse(removed.storageKey);
+  if (fileRemoved) await deleteBillFile(removed.storageKey);
+  res.json({ ok: true, id: removed.id, fileRemoved });
 });
 
 // POST /api/costs/bills/:id/unpublish — forget that this document was published

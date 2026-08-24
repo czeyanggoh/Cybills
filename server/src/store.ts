@@ -780,3 +780,12 @@ export function deleteBillHard(orgId: string, id: string): Bill | null {
   persist(bills);
   return removed;
 }
+
+// Whether any remaining bill still references this stored file. Content-addressed
+// storage keys by file hash, so identical uploads (e.g. the same receipt emailed
+// twice) share ONE object — deleting one bill must not reclaim a file another
+// still points at. Call after the bill has been removed.
+export function storageKeyInUse(storageKey: string): boolean {
+  if (!storageKey) return false;
+  return load().some((b) => b.storageKey === storageKey);
+}
