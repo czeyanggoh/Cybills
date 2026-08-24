@@ -235,6 +235,21 @@ function ensureEmailHandles(items: User[], ws: string): boolean {
   return changed;
 }
 
+// Clean a hand-typed handle into something that can actually be the local-part
+// of an address: lowercase, letters/digits with dots or hyphens between them,
+// nothing leading or trailing, and short enough to be a real mailbox name.
+// Returns '' when nothing usable is left, which the caller refuses rather than
+// storing — an address of "@cybills.sg" would swallow mail for everyone.
+export function normaliseHandle(raw: string): string {
+  return String(raw || '')
+    .toLowerCase()
+    .split('@')[0] // tolerate someone pasting the whole address back in
+    .replace(/[^a-z0-9.-]+/g, '')
+    .replace(/[.-]{2,}/g, '.')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, 64);
+}
+
 // Resolve an inbound address' local-part (handle) to its user, ignoring any
 // `+suffix` and case. Workspace-wide (the inbound mailbox is one for all).
 export function userByEmailHandle(handle: string): User | null {
@@ -1271,6 +1286,18 @@ usersRouter.patch('/:id', (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const filtered: Partial<User> = {};
   for (const k of allowed) if (k in body) (filtered as Record<string, unknown>)[k] = body[k];
+  // The inbound address is chosen by hand now, so it has to be checked. Two
+  // people on one handle is not a cosmetic clash: every bill forwarded to it
+  // would file under whichever row was found first, silently and for good.
+  if ('emailHandle' in filtered) {
+    const handle = normaliseHandle(String(filtered.emailHandle ?? ''));
+    if (!handle) return res.status(400).json({ error: 'invalid_handle' });
+    const owner = userByEmailHandle(handle);
+    if (owner && owner.id !== req.params.id) {
+      return res.status(409).json({ error: 'handle_taken', handle, takenBy: owner.name || owner.email });
+    }
+    filtered.emailHandle = handle;
+  }
   return mutate(req, res, (user, items) => {
     const from = user.organisationId;
     applyEditable(user, filtered, workspaceId(req));

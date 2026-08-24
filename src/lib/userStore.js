@@ -26,7 +26,16 @@ async function req(path, method = 'GET', body) {
     headers: { ...orgHeaders(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`users ${method} ${path} failed (${res.status})`);
+  if (!res.ok) {
+    // Carry the server's own reason, so a caller can say "that address is
+    // already taken" instead of a status code nobody can act on.
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(`users ${method} ${path} failed (${res.status})`);
+    err.status = res.status;
+    err.code = body?.error || '';
+    err.info = body || {};
+    throw err;
+  }
   return res.json();
 }
 
