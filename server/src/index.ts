@@ -7,6 +7,7 @@ import { authRouter, readSession } from './auth.js';
 import { orgRouter } from './org.js';
 import { extractRouter, vaultRouter } from './extract.js';
 import { billsRouter } from './bills.js';
+import { inboundRouter } from './inbound.js';
 import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { cyhrRouter } from './cyhr.js';
@@ -47,6 +48,9 @@ app.use((req, res, next) => {
   if (p.startsWith('/api/users/reset/')) return next();
   if (p === '/api/health') return next();
   if (/^\/api\/costs\/bills\/[^/]+\/file$/.test(p)) return next();
+  // Inbound email is machine-to-machine (the Cloudflare Email Worker), guarded
+  // by its own shared secret rather than a user session.
+  if (p === '/api/inbound/email') return next();
   if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
   return next();
 });
@@ -107,6 +111,7 @@ app.use('/api/auto-claims', autoClaimsRouter);
 
 // Users — server-backed + shared (people list + approver roster).
 app.use('/api/users', usersRouter);
+app.use('/api/inbound', inboundRouter);
 
 // The practice (CYBM) itself: its colleagues, their client access, and the
 // connected-client list with what each has cost in Claude API usage.

@@ -122,6 +122,14 @@ export type User = {
   // The Xero project / PIC tracking option assigned to this user. New documents
   // they upload are auto-allocated to it.
   project?: string;
+  // Inbound email ("Extract by email"). Each user gets a short handle, so their
+  // address is `<emailHandle>@cybills.sg`; a supplier (or the user) forwards
+  // bills there and CYBills files them under this person. Unique per workspace.
+  emailHandle?: string;
+  // A Gmail forwarding-confirmation link CYBills caught at this user's address
+  // and is holding for them to click (so nobody needs to read a mailbox). Set by
+  // the inbound endpoint; cleared once the user confirms.
+  pendingForward?: { url: string; code: string; from: string; at: string } | null;
   passwordHash?: string; // set by an admin; never returned to the client
   // Single-use invitation / password-reset link. Only the SHA-256 of the token
   // is stored, so a leaked data file can't be replayed into an account.
@@ -188,7 +196,69 @@ export function full(u: Partial<User>, ws: string): User {
     companyId: u.companyId || '',
     companyName: u.companyName || '',
     project: u.project || '',
+    emailHandle: u.emailHandle || '',
+    pendingForward: u.pendingForward ?? null,
   };
+}
+
+// --- Inbound email handles ---------------------------------------------------
+// The domain user addresses live on (Cloudflare-managed). Every user's inbound
+// address is `<emailHandle>@INBOUND_MAIL_DOMAIN`.
+export const INBOUND_MAIL_DOMAIN = process.env.INBOUND_MAIL_DOMAIN || 'cybills.sg';
+
+// A friendly, unique-per-workspace handle base from the person's name (falling
+// back to their email local-part). "Yakson Ong" -> "yakson"; collisions get a
+// numeric suffix.
+function handleBase(u: Partial<User>): string {
+  const raw = String(u.firstName || u.name || (u.email ? u.email.split('@')[0] : '') || 'user');
+  const slug = raw.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return slug || 'user';
+}
+
+// Assign a handle to every real (non-general, non-removed) user in `ws` that
+// lacks one, unique across the workspace. Returns true if anything changed.
+function ensureEmailHandles(items: User[], ws: string): boolean {
+  const taken = new Set(
+    items.filter((u) => u.workspaceId === ws && u.emailHandle).map((u) => String(u.emailHandle).toLowerCase())
+  );
+  let changed = false;
+  for (const u of items) {
+    if (u.workspaceId !== ws || u.removed || u.general || u.emailHandle) continue;
+    const base = handleBase(u);
+    let handle = base;
+    let n = 1;
+    while (taken.has(handle)) { n += 1; handle = `${base}${n}`; }
+    u.emailHandle = handle;
+    taken.add(handle);
+    changed = true;
+  }
+  return changed;
+}
+
+// Resolve an inbound address' local-part (handle) to its user, ignoring any
+// `+suffix` and case. Workspace-wide (the inbound mailbox is one for all).
+export function userByEmailHandle(handle: string): User | null {
+  const h = String(handle || '').split('+')[0].trim().toLowerCase();
+  if (!h) return null;
+  return load().find((u) => !u.removed && !u.general && String(u.emailHandle || '').toLowerCase() === h) || null;
+}
+
+// Store / clear the Gmail forwarding confirmation CYBills is holding for a user.
+export function setPendingForward(userId: string, data: { url: string; code: string; from: string }): User | null {
+  const items = load();
+  const u = items.find((x) => x.id === userId && !x.removed);
+  if (!u) return null;
+  u.pendingForward = { url: data.url, code: data.code, from: data.from, at: new Date().toISOString() };
+  save(items);
+  return u;
+}
+export function clearPendingForward(userId: string): User | null {
+  const items = load();
+  const u = items.find((x) => x.id === userId && !x.removed);
+  if (!u) return null;
+  u.pendingForward = null;
+  save(items);
+  return u;
 }
 
 // --- Tenancy -----------------------------------------------------------------
@@ -703,7 +773,7 @@ function normalizeRoles(items: User[], ws: string): boolean {
   return changed;
 }
 
-const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'project'];
+const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'project', 'emailHandle'];
 
 // Who is on the practice team, what they may run, and which clients they may
 // open. Only whoever manages the practice may touch these — a client entity's
@@ -819,8 +889,10 @@ usersRouter.get('/directory', (req, res) => {
 usersRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
   const org = orgScope(req);
+  const items = ensure(ws);
+  if (ensureEmailHandles(items, ws)) save(items);
   res.json({
-    users: ensure(ws)
+    users: items
       .filter((u) => u.workspaceId === ws && !u.removed && !u.practice && inOrg(u, org))
       .map(publicUser),
   });
@@ -1005,6 +1077,16 @@ function requireAdmin(req: Request, res: Response): boolean {
 // and activate their account. Also used by "Resend Invitation": re-issuing
 // simply replaces any previous link. Responds with { sent, link } — the link is
 // echoed back so an admin can pass it on when mail is off or delivery failed.
+// POST /api/users/:id/dismiss-forward — clear the pending Gmail forwarding
+// confirmation once the user has clicked it (or it's no longer wanted).
+usersRouter.post('/:id/dismiss-forward', (req, res) => {
+  const ws = workspaceId(req);
+  const user = ensure(ws).find((u) => u.id === req.params.id && u.workspaceId === ws && !u.removed);
+  if (!user) return res.status(404).json({ error: 'not_found' });
+  const updated = clearPendingForward(user.id);
+  return res.json({ user: updated ? publicUser(updated) : publicUser(user) });
+});
+
 usersRouter.post('/:id/invite', async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const ws = workspaceId(req);

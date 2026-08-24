@@ -1,9 +1,76 @@
 import { useState } from 'react';
-import { X, ChevronDown, HelpCircle } from 'lucide-react';
-import { ROLES, ROLE_INFO, updateUser } from '@/lib/userStore';
+import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink } from 'lucide-react';
+import { ROLES, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
 import { useOrganisations } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
+
+// The mail domain user inbound addresses live on (mirrors the server's
+// INBOUND_MAIL_DOMAIN default).
+const INBOUND_DOMAIN = 'cybills.sg';
+
+// "Extract by email" — the user's inbound address plus any Gmail forwarding
+// confirmation CYBills is holding for them to click.
+function ExtractByEmail({ user }) {
+  const [copied, setCopied] = useState(false);
+  const address = user.emailHandle ? `${user.emailHandle}@${INBOUND_DOMAIN}` : '';
+  const pending = user.pendingForward;
+  if (!address) return null;
+  const copy = () => {
+    navigator.clipboard?.writeText(address).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="space-y-3 rounded-lg border p-4">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Mail className="h-4 w-4" strokeWidth={1.75} /> Extract by email
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Forward bills to this address and CYBills files them under {user.name || 'this user'}.
+      </p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 truncate rounded-md border bg-muted/40 px-3 py-2 text-sm">{address}</code>
+        <button type="button" onClick={copy} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
+          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+
+      {/* Gmail forwarding confirmation caught for this user */}
+      {pending ? (
+        <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-50 px-3 py-3 dark:bg-amber-500/10">
+          <p className="text-sm font-medium text-amber-900 dark:text-amber-200">Forwarding confirmation received</p>
+          <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
+            Google sent a confirmation for a forward to this address. Open the link{pending.code ? `, or enter code ${pending.code},` : ''} to finish setting it up.
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {pending.url && (
+              <a href={pending.url} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90">
+                <ExternalLink className="h-3.5 w-3.5" /> Confirm forwarding
+              </a>
+            )}
+            {pending.code && (
+              <code className="rounded border bg-background px-2 py-1 text-xs">{pending.code}</code>
+            )}
+            <button
+              type="button"
+              onClick={() => dismissForward(user.id)}
+              className="ml-auto text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          When {user.name || 'this user'} sets up Gmail forwarding to this address, Google&rsquo;s confirmation link will
+          appear here to click — no mailbox needed.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function Toggle({ on, onToggle }) {
   return (
@@ -128,6 +195,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                   Without login access this {practice ? 'colleague' : 'user'} can’t sign in — no email is required.
                 </p>
               )}
+              {!practice && <ExtractByEmail user={user} />}
             </div>
           ) : (
             <div className="space-y-5">

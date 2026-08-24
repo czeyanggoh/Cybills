@@ -252,6 +252,18 @@ export async function setUserPassword(id, password) {
 // Invite (or re-invite) a user by email: the server mints a single-use link and
 // mails it. Returns { sent, link, error } — `link` is always present so the
 // admin can pass it on by hand when mail is off or delivery failed.
+// Clear the Gmail forwarding confirmation CYBills is holding for a user (once
+// they've clicked it, or to dismiss it).
+export async function dismissForward(id) {
+  try {
+    const res = await fetch(`/api/users/${id}/dismiss-forward`, { method: 'POST', headers: orgHeaders() });
+    if (res.ok) await refreshPeople();
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function inviteUser(id) {
   try {
     const res = await fetch(`/api/users/${id}/invite`, { method: 'POST', headers: orgHeaders() });
