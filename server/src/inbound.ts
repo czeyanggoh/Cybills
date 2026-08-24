@@ -1,8 +1,25 @@
 import { Router } from 'express';
-import { createHash } from 'node:crypto';
-import { userByEmailHandle, setPendingForward } from './users.js';
+import { createHash, randomBytes } from 'node:crypto';
+import { loadCollection, saveCollection } from './jsonStore.js';
+import { userByEmailHandle, setPendingForward, memberForSession, isAdminRole } from './users.js';
 import { insertBill } from './store.js';
 import { putBillFile } from './storage.js';
+
+// The shared secret the Cloudflare Worker signs its POSTs with. Prefer an env
+// override (INBOUND_SECRET); otherwise CYBills generates one on first use and
+// persists it to the data dir, so an admin can read it from the app and paste it
+// into the Worker WITHOUT any server/VPS access.
+type InboundConfig = { id: string; secret: string };
+function getInboundSecret(): string {
+  const fromEnv = (process.env.INBOUND_SECRET || '').trim();
+  if (fromEnv) return fromEnv;
+  const items = loadCollection<InboundConfig>('inbound-config');
+  const existing = items.find((x) => x.id === 'default');
+  if (existing?.secret) return existing.secret;
+  const secret = randomBytes(24).toString('hex');
+  saveCollection('inbound-config', [{ id: 'default', secret }]);
+  return secret;
+}
 
 // Inbound email ("Extract by email"). A Cloudflare Email Worker (catch-all on
 // the mail domain) POSTs each received message here — one general pipe for every
@@ -28,8 +45,22 @@ function parseForwardConfirmation(from: string, subject: string, body: string) {
   return { url: urlMatch ? urlMatch[0] : '', code: codeMatch ? codeMatch[1] : '' };
 }
 
+// GET /api/inbound/config — the webhook URL + shared secret + mail domain, for an
+// admin to copy into the Cloudflare Worker. Business/User Admins only; goes
+// through the normal session auth (only /email is allowlisted for the Worker).
+inboundRouter.get('/config', (req, res) => {
+  const member = memberForSession(req);
+  if (!member || !isAdminRole(member.role)) return res.status(403).json({ error: 'forbidden' });
+  const origin = (process.env.APP_ORIGIN || '').replace(/\/$/, '');
+  res.json({
+    url: `${origin}/api/inbound/email`,
+    secret: getInboundSecret(),
+    domain: process.env.INBOUND_MAIL_DOMAIN || 'cybills.sg',
+  });
+});
+
 inboundRouter.post('/email', async (req, res) => {
-  const secret = process.env.INBOUND_SECRET || '';
+  const secret = getInboundSecret();
   if (!secret) return res.status(503).json({ error: 'inbound_not_configured' });
   if ((req.header('X-Inbound-Secret') || '') !== secret) return res.status(401).json({ error: 'unauthorized' });
 

@@ -31,6 +31,7 @@ import {
   useVisibleTaxRates,
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
+import { useInboundConfig } from '@/lib/inboundSettings';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
 import { READER_PROVIDERS, readerLabel, effectiveProvider } from '@/lib/readerProvider';
@@ -420,6 +421,41 @@ const optionHint = (id) => {
   return hint ? ` (${hint})` : '';
 };
 
+// Real "Extract by Email" config: the values to wire into the Cloudflare Email
+// Worker so `<handle>@<domain>` addresses ingest into CYBills. Per-user addresses
+// live on each user's page (Users → Manage → Edit user details).
+function ExtractByEmailCard() {
+  const config = useInboundConfig();
+  return (
+    <Card title="Extract by Email">
+      <p className="text-sm text-muted-foreground">
+        Users email or forward bills to their own <code>&lt;handle&gt;@{config?.domain || 'cybills.sg'}</code> address and
+        CYBills files them under that person. Each user&rsquo;s address is on their page (Users → Manage → Edit user
+        details).
+      </p>
+      <div className="rounded-md border p-4">
+        <p className="mb-1 text-sm font-medium">Cloudflare Email Worker</p>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Paste these into the <code>cybills-inbound</code> Worker (Settings → Variables), then set the catch-all route to
+          that Worker. No server access needed.
+        </p>
+        {config ? (
+          <div className="space-y-2">
+            <CopyRow label="CYBILLS_INBOUND_URL" value={config.url || '—'} />
+            <CopyRow label="INBOUND_SECRET" value={config.secret || '—'} />
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Keep <code>INBOUND_SECRET</code> private — it authorises the Worker to submit documents. Full setup:{' '}
+        <code>deploy/EMAIL-INBOUND.md</code>.
+      </p>
+    </Card>
+  );
+}
+
 function Extraction() {
   const stored = useExtractionSettings();
   const [form, setForm] = useState(stored);
@@ -436,34 +472,7 @@ function Extraction() {
     <div className="space-y-6">
       <DocumentReaderCard value={form.readerProvider} onChange={(v) => set('readerProvider', v)} />
 
-      <Card title="Extract by Email">
-        <p className="text-sm text-muted-foreground">
-          Add documents to your account by emailing them to the addresses below.
-        </p>
-        <Row label="Your email address begins with"><TextInput defaultValue="cybm.costs" /></Row>
-        <div className="rounded-md border p-4">
-          <p className="mb-2 text-sm font-medium">Costs</p>
-          <p className="mb-3 text-xs text-muted-foreground">
-            Give these to suppliers so they can email invoices straight in.
-          </p>
-          <div className="space-y-2">
-            <CopyRow label="Single documents" value="cybm.costs@dext.cc" />
-            <CopyRow label="Multiple documents" value="cybm.costs@multiple.dext.cc" />
-          </div>
-        </div>
-        <div className="rounded-md border p-4">
-          <p className="mb-3 text-sm font-medium">Sales</p>
-          <div className="space-y-2">
-            <CopyRow label="Single documents" value="cybm.costs+sales@dext.cc" />
-            <CopyRow label="Multiple documents" value="cybm.costs+sales@multiple.dext.cc" />
-          </div>
-        </div>
-        <Row label="Blocked email addresses" hint="Emails that will be rejected by the system.">
-          <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
-            Manage
-          </button>
-        </Row>
-      </Card>
+      <ExtractByEmailCard />
 
       <Card title="Inbox tabs">
         <Row label="Show To review and Ready tabs" hint="Show these tabs in the costs and sales inboxes.">
