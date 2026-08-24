@@ -6,11 +6,16 @@ import SearchSelect from '@/components/SearchSelect';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import SupplierDuplicatesModal from '@/components/SupplierDuplicatesModal';
 import SupplierImportModal from '@/components/SupplierImportModal';
+import SupplierBulkEditModal from '@/components/SupplierBulkEditModal';
+import SupplierMergeModal from '@/components/SupplierMergeModal';
 import { useCategoryOptions, useXeroSuppliers, useXeroCustomers, useXeroProjectOptions, useXeroPaymentMethods, useVisibleTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { noTaxRateName } from '@/lib/extractionSettings';
 import { useCostsDocs } from '@/lib/costsData';
-import { getSupplierRule, setSupplierRule, supplierRuleCount, useSupplierRules } from '@/lib/supplierRules';
+import { updateBill } from '@/lib/bills';
+import { CURRENCIES, clearSupplierRule, getSupplierRule, setSupplierRule, supplierRulePatch, supplierRuleCount, useSupplierRules } from '@/lib/supplierRules';
+import { removedSupplierSet, removedSuppliers, removeSuppliers, restoreSuppliers, useSupplierList } from '@/lib/supplierList';
+import { namesMergedAway, planSupplierMerge } from '@/lib/supplierMerge';
 import { cn } from '@/lib/utils';
 
 // Optional columns, mirroring Dext's "table settings" panel. Everything but Tax
@@ -64,6 +69,9 @@ export default function Suppliers() {
   const [colsDraft, setColsDraft] = useState(DEFAULT_COLS);
   const [dupOpen, setDupOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [note, setNote] = useState('');
   const categoryOptions = useCategoryOptions();
   // Suppliers + customers come from the active org's (CYBM) live Xero contacts.
   const supplierNames = useXeroSuppliers();
@@ -75,9 +83,10 @@ export default function Suppliers() {
   const taxRateOptions = gstRegistered
     ? taxRateSource.map((t) => t.name)
     : [noTaxRateName(taxRateSource)].filter(Boolean);
-  const { allDocs } = useCostsDocs();
+  const { allDocs, reload } = useCostsDocs();
   const [rulesFor, setRulesFor] = useState('');
   useSupplierRules(); // re-render when a supplier's rules change
+  useSupplierList(); // …and when a supplier is removed from / restored to the list
 
   // How many cost documents each supplier has, by name.
   const counts = {};
@@ -86,11 +95,83 @@ export default function Suppliers() {
     if (k) counts[k] = (counts[k] || 0) + 1;
   }
   const q = query.trim().toLowerCase();
+  const removed = removedSupplierSet();
   const rows = supplierNames
+    .filter((name) => !removed.has(name.trim().toLowerCase()))
     .filter((name) => !q || name.toLowerCase().includes(q))
     .map((name) => ({ id: name, name, items: counts[name.trim().toLowerCase()] || 0 }))
     .filter((r) => (itemsFilter === 'has' ? r.items > 0 : itemsFilter === 'none' ? r.items === 0 : true));
   const hasSelection = selected.size > 0;
+  const removedCount = removedSuppliers().length;
+  // The selection, as rows — the modals need each name's document count.
+  const selectedRows = [...selected].map((name) => ({ name, items: counts[name.trim().toLowerCase()] || 0 }));
+
+  // A tax rate carries the tax amount it implies, worked out from each
+  // document's OWN total — the same sum the inline Tax rate cell does.
+  const taxFor = (rateName, total) => {
+    const r = Number(taxRateSource.find((t) => t.name === rateName)?.rate ?? 0);
+    const t = Number(total) || 0;
+    const tax = r > 0 && t > 0 ? (t * r) / (100 + r) : 0;
+    return tax ? tax.toFixed(2) : '0.00';
+  };
+
+  // Bulk edit: one standing rule written across every selected supplier. Rules
+  // are instructions for the documents that arrive NEXT, so nothing in the inbox
+  // moves — which is what the dialog says out loud.
+  const applyBulkEdit = async (patch) => {
+    const names = [...selected];
+    names.forEach((n) => setSupplierRule(n, patch));
+    setBulkOpen(false);
+    const fields = Object.keys(patch).length;
+    setNote(`Updated ${fields} setting${fields === 1 ? '' : 's'} on ${names.length} supplier${names.length === 1 ? '' : 's'}.`);
+  };
+
+  // Merge: one supplier under several spellings becomes one. The documents are
+  // re-pointed at the kept name and take its rules; the merged-away spellings
+  // lose their own rules and leave the list. A document already published to
+  // Xero is left alone — its figures are in the ledger, and renaming the copy
+  // here would only make the two disagree.
+  const applyMerge = async (keep, mergedAway) => {
+    const gone = namesMergedAway(keep, mergedAway);
+    const { moves, skipped } = planSupplierMerge({
+      docs: allDocs || [],
+      keep,
+      mergedAway: gone,
+      rulePatch: supplierRulePatch(getSupplierRule(keep), { gstRegistered }),
+      taxFor,
+    });
+    await Promise.all(moves.map((m) => updateBill(m.id, m.patch).catch(() => null)));
+    gone.forEach(clearSupplierRule);
+    removeSuppliers(gone);
+    setSelected(new Set());
+    setMergeOpen(false);
+    await reload();
+    setNote(
+      `Merged ${gone.length + 1} suppliers into “${keep}”. ` +
+        `${moves.length} document${moves.length === 1 ? '' : 's'} moved` +
+        (skipped.length ? `; ${skipped.length} already published to Xero left unchanged.` : '.')
+    );
+  };
+
+  // Delete: remove the selected suppliers from this list and drop their rules.
+  // It cannot delete the Xero contact — CYBills reads contacts and never writes
+  // them — so the confirm says exactly what it does, and Restore puts them back.
+  const deleteSelected = () => {
+    const names = [...selected];
+    const withItems = names.filter((n) => (counts[n.trim().toLowerCase()] || 0) > 0);
+    const warn = withItems.length
+      ? `\n\n${withItems.length} of them still have documents. Those documents keep the supplier name they already carry — merge instead if these are the same supplier under two spellings.`
+      : '';
+    const ok = window.confirm(
+      `Remove ${names.length} supplier${names.length === 1 ? '' : 's'} from this list and clear their standing rules?` +
+        `\n\nThe contact in Xero is not touched, and you can restore them from the toolbar.${warn}`
+    );
+    if (!ok) return;
+    names.forEach(clearSupplierRule);
+    removeSuppliers(names);
+    setSelected(new Set());
+    setNote(`Removed ${names.length} supplier${names.length === 1 ? '' : 's'} from the list.`);
+  };
 
   const toggle = (id) =>
     setSelected((prev) => {
@@ -113,11 +194,22 @@ export default function Suppliers() {
       <h1 className="mb-4 text-xl font-semibold tracking-tight">Suppliers</h1>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <ToolbarButton disabled={!hasSelection}>Bulk edit</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>Merge suppliers</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection} onClick={() => setBulkOpen(true)}>
+          Bulk edit{hasSelection ? ` (${selected.size})` : ''}
+        </ToolbarButton>
+        {/* Merging needs two names to merge — one selected supplier has nothing
+            to become. */}
+        <ToolbarButton disabled={selected.size < 2} onClick={() => setMergeOpen(true)}>
+          Merge {selected.size >= 2 ? `${selected.size} ` : ''}suppliers
+        </ToolbarButton>
         <ToolbarButton onClick={() => setImportOpen(true)}>Import from CSV</ToolbarButton>
         <ToolbarButton onClick={() => setDupOpen(true)}>Supplier duplicates</ToolbarButton>
-        <ToolbarButton disabled={!hasSelection}>Delete</ToolbarButton>
+        <ToolbarButton disabled={!hasSelection} onClick={deleteSelected}>Delete</ToolbarButton>
+        {removedCount > 0 && (
+          <ToolbarButton onClick={() => { restoreSuppliers(); setNote(`Restored ${removedCount} supplier${removedCount === 1 ? '' : 's'}.`); }}>
+            Restore removed ({removedCount})
+          </ToolbarButton>
+        )}
         <div className="relative ml-auto hidden sm:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter by name" className="h-8 w-52 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
@@ -207,6 +299,15 @@ export default function Suppliers() {
           )}
         </div>
       </div>
+
+      {note && (
+        <div className="mb-3 flex items-start justify-between gap-3 rounded-md border bg-muted/30 px-3.5 py-2.5 text-sm">
+          <span>{note}</span>
+          <button type="button" onClick={() => setNote('')} className="shrink-0 text-xs text-muted-foreground hover:text-foreground">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full min-w-[900px] text-sm">
@@ -319,6 +420,24 @@ export default function Suppliers() {
         onPick={(name) => { setDupOpen(false); setRulesFor(name); }}
       />
       <SupplierImportModal open={importOpen} onClose={() => setImportOpen(false)} />
+      <SupplierBulkEditModal
+        open={bulkOpen}
+        count={selected.size}
+        categoryOptions={categoryOptions}
+        customerOptions={customerOptions}
+        projectOptions={projectOptions}
+        taxRateOptions={taxRateOptions}
+        paymentMethodOptions={paymentMethods.map((p) => p.label)}
+        currencyOptions={CURRENCIES.map((c) => c.code)}
+        onClose={() => setBulkOpen(false)}
+        onApply={applyBulkEdit}
+      />
+      <SupplierMergeModal
+        open={mergeOpen}
+        suppliers={selectedRows}
+        onClose={() => setMergeOpen(false)}
+        onMerge={applyMerge}
+      />
     </AppShell>
   );
 }
