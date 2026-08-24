@@ -362,7 +362,7 @@ export function downloadExportBlob(rec) {
 
 // Main entry: generate the chosen format, download it, log an export event on
 // sales items, and record it in the Exports tab. `kind` is 'costs' | 'sales'.
-export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = 'You' } = {}) {
+export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = '' } = {}) {
   const wKind = kind === 'sales' ? 'sales' : 'costs';
   const base = `cybills-${wKind}-${isoDate()}`;
   // Honour Business settings → Exports: "Custom CSV" uses the chosen columns +
@@ -398,9 +398,17 @@ export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvForm
   triggerDownload(blob, filename);
 
   // Log an "exported" event on sales items so it shows in their History tab.
+  // History is read by other people, so it names whoever exported or nobody at
+  // all — never "You", which would read as the reader themselves.
   if (wKind === 'sales') {
     for (const d of rows) {
-      if (d.persisted) recordEvent(d.id, { type: 'export', text: `Item was exported to ${format}`, actor: exportedBy });
+      if (d.persisted) {
+        recordEvent(d.id, {
+          type: 'export',
+          text: `Item was exported to ${format}`,
+          ...(exportedBy ? { actor: exportedBy } : {}),
+        });
+      }
     }
   }
 

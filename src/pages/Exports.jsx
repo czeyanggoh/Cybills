@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SalesSubnav from '@/components/SalesSubnav';
-import { useExports, getExportBlob, deleteExport } from '@/lib/exportsStore';
+import { useExports, getExportBlob, deleteExport, repairExportedBy } from '@/lib/exportsStore';
 import { downloadExportBlob } from '@/lib/docsExport';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
 const TABS = [
@@ -48,7 +49,7 @@ function ExportsTable({ kind }) {
               <td className="px-3 py-3">{e.format}</td>
               <td className="px-3 py-3 text-muted-foreground">{e.csvFormat}</td>
               <td className="px-3 py-3 tabular-nums">{e.count}</td>
-              <td className="whitespace-nowrap px-3 py-3">{e.exportedBy}</td>
+              <td className="whitespace-nowrap px-3 py-3">{e.exportedBy || '—'}</td>
               <td className="px-3 py-3 text-right">
                 <span className="inline-flex items-center gap-1.5">
                   <button type="button" onClick={() => download(e.id)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
@@ -69,6 +70,13 @@ function ExportsTable({ kind }) {
 
 export default function Exports({ workspace = 'costs' }) {
   const [tab, setTab] = useState(workspace === 'sales' ? 'sales' : 'costs');
+  // Rows generated before the exporter's name was recorded say "You". This list
+  // is per-browser, so that can only mean the person reading it — give them
+  // their name back rather than leaving a word that means nothing to whoever
+  // the file gets sent to.
+  const { user, membership } = useAuth();
+  const me = membership?.user?.name || user?.name || user?.email || '';
+  useEffect(() => { repairExportedBy(me); }, [me]);
   // Standalone top-level Exports page (workspace="all") shows no Costs/Sales
   // subnav — it's its own destination, like Dext's Exports.
   const subnav = workspace === 'all' ? undefined : workspace === 'sales' ? <SalesSubnav /> : <CostsSubnav />;

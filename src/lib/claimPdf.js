@@ -390,7 +390,8 @@ export async function generateClaimPdf(claim, { exportedBy = '', detailLevel = '
     format: 'PDF',
     csvFormat: '-',
     count: Array.isArray(claim.transactions) ? claim.transactions.length : 1,
-    exportedBy: exportedBy || claim.claimFor || 'You',
+    // See claimCsv: the claimant is a fair second guess, "You" names nobody.
+    exportedBy: exportedBy || claim.claimFor || '',
     blob,
   });
   return claim.id;

@@ -86,6 +86,31 @@ export function deleteExport(id) {
   write(read().filter((e) => e.id !== id));
 }
 
+// Repair the rows written before the exporter had a name to record, which
+// stored the literal string "You".
+//
+// "You" means a different person to every reader, and these rows are read by
+// whoever opens the Exports tab. Rewriting them is safe here and nowhere else:
+// this list lives in localStorage, so every row in it was generated in THIS
+// browser — "You" can only ever have been the person now looking at it.
+//
+// Only ever runs with a real name in hand, so a slow-loading identity can't
+// blank a row, and it no-ops once there is nothing left to fix.
+export function repairExportedBy(name) {
+  const who = String(name || '').trim();
+  if (!who || who === 'You') return 0;
+  const list = read();
+  let fixed = 0;
+  const next = list.map((e) => {
+    const by = String(e.exportedBy || '').trim();
+    if (by && by !== 'You') return e;
+    fixed += 1;
+    return { ...e, exportedBy: who };
+  });
+  if (fixed) write(next);
+  return fixed;
+}
+
 export function getExports(kind) {
   return read().filter((e) => !kind || e.kind === kind);
 }
