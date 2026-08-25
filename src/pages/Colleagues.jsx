@@ -193,6 +193,13 @@ export default function Colleagues() {
             {practiceName}&apos;s own team. Each colleague works on the clients they&apos;re given
             access to, as a Business Admin inside each one.
           </p>
+          {/* The entity switcher sits above this page and does nothing to it —
+              a colleague belongs to no single client, so this list is the same
+              whichever one is open. Saying so beats leaving the header to imply
+              otherwise. */}
+          <p className="mt-1 text-xs text-muted-foreground">
+            The practice&apos;s own list — it doesn&apos;t change with the client entity you have open.
+          </p>
         </div>
         <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
           Add a colleague

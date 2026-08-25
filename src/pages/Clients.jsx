@@ -58,6 +58,10 @@ export default function Clients() {
           Every Xero organisation {practiceName} is connected to, who works on it, and what
           it has cost in AI API usage.
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          The practice&apos;s own list — it doesn&apos;t change with the client entity you have open.
+          Use <span className="font-medium text-foreground">Open</span> on a row to work inside one.
+        </p>
       </div>
 
       <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
