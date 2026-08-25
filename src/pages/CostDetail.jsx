@@ -250,6 +250,18 @@ export default function CostDetail() {
 
   const [fieldSave, setFieldSave] = useState('idle'); // auto-save status for the document's fields
   const [aiError, setAiError] = useState('');
+  // What the line-item read had to say, kept apart from aiError so it can be
+  // shown BESIDE the button that starts it. It used to land in the panel's
+  // header, ~190 lines of form above that button, so a document with no
+  // itemised table answered "No itemised charges found" completely off-screen —
+  // and pressing Extract line items looked like it had done nothing at all.
+  const [linesNote, setLinesNote] = useState('');
+  // One block, so the panel and the full-screen editor can't drift apart.
+  const linesNoteBlock = linesNote ? (
+    <p className="mt-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-xs text-foreground">
+      {linesNote}
+    </p>
+  ) : null;
   const [splitOpen, setSplitOpen] = useState(false);
   const [splitNote, setSplitNote] = useState('');
   const [claimOpen, setClaimOpen] = useState(false);
@@ -938,9 +950,9 @@ export default function CostDetail() {
   // against the document's own grand total, so anything that doesn't add up is
   // said out loud here rather than left for the "Out by" row to be noticed.
   const extractLineItems = async () => {
-    setAiError('');
+    setLinesNote('');
     const rec = await receiptToUpload();
-    if (!rec) { setAiError('Attach a receipt first, then extract line items.'); return; }
+    if (!rec) { setLinesNote('Attach a receipt first, then extract line items.'); return; }
     // A job, like the whole-document read: long enough that nobody watches it,
     // so it has to survive the reviewer moving on to the next document.
     startExtraction(doc.id, 'lines', async () => {
@@ -948,7 +960,7 @@ export default function CostDetail() {
       const accounts = await getExtractionAccounts();
       const ex = await fetchExtractLines(rec.base64, rec.mediaType, accounts);
       const rows = Array.isArray(ex?.lines) ? ex.lines : [];
-      if (!rows.length) { setAiError('No itemised charges found on this document.'); return null; }
+      if (!rows.length) { setLinesNote('No itemised charges found on this document.'); return null; }
       // Saved here rather than through `set`, whose write is fire-and-forget:
       // the job must not resolve before the rows are actually stored, or the
       // page could re-sync itself from the server a moment too early.
@@ -963,21 +975,21 @@ export default function CostDetail() {
       }
       const money = (n) => Number(n || 0).toFixed(2);
       if (!ex.reconciled) {
-        setAiError(
+        setLinesNote(
           `Read ${rows.length} line${rows.length === 1 ? '' : 's'} totalling ${money(ex.linesTotal)}, but the ` +
             `document's total reads as ${money(ex.grandTotal)}. ` +
             (ex.note || 'Check for a row that was missed, or one that is really a subtotal.')
         );
       } else if (Math.abs(num(data.total) - Number(ex.grandTotal || 0)) > 0.005) {
         // The lines agree with the document; it's this bill's total that doesn't.
-        setAiError(
+        setLinesNote(
           `The lines add up to ${money(ex.linesTotal)}, which is the document's own total — but this bill ` +
             `says ${money(data.total)}. Check the Total amount field.`
         );
       }
       return built;
     } catch {
-      setAiError('Could not extract line items.');
+      setLinesNote('Could not extract line items.');
       throw new Error('Could not extract line items.');
     }
     });
@@ -1511,6 +1523,7 @@ export default function CostDetail() {
                 visionEnabled={visionEnabled}
                 canExpand={lineItems.length > 0}
               />
+              {linesNoteBlock}
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 {doc.status === 'ready' ? (
@@ -1674,13 +1687,16 @@ export default function CostDetail() {
         title={data.supplier}
         preview={<ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} />}
         actions={
-          <LineItemsActions
-            onExtract={extractLineItems}
-            onAdd={addLineItem}
-            extracting={extractingLines}
-            busy={Boolean(job)}
-            visionEnabled={visionEnabled}
-          />
+<>
+            <LineItemsActions
+              onExtract={extractLineItems}
+              onAdd={addLineItem}
+              extracting={extractingLines}
+              busy={Boolean(job)}
+              visionEnabled={visionEnabled}
+            />
+            {linesNoteBlock}
+          </>
         }
         {...lineGrid}
       />
