@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
 import { useClaims } from '@/lib/claimStore';
-import { useUsers } from '@/lib/userStore';
+import { useClaimantNames } from '@/lib/userStore';
+import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 import SearchSelect from '@/components/SearchSelect';
 import { cn } from '@/lib/utils';
 
@@ -12,7 +13,11 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
   const [claim, setClaim] = useState('');
   const [newClaim, setNewClaim] = useState({ claimFor: '', name: '', endDate: '' });
   const claims = useClaims();
-  const userNames = useUsers().map((u) => u.name);
+  // A colleague can be claimed for in the practice's OWN entity — that is where
+  // their own expenses belong — and nowhere else.
+  const { data: organisations = [] } = useOrganisations();
+  const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
+  const userNames = useClaimantNames({ ownEntity: Boolean(activeOrg?.isPrimary) });
 
   if (!open) return null;
 

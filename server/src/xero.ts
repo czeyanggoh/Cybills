@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { env, xeroEnabled } from './env.js';
 import { dataScopeForOrg, getOrganisation } from './organisations.js';
 import { workspaceId } from './workspace.js';
-import { apportion, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
+import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
 
@@ -677,6 +677,24 @@ export async function perLineItems(
 // Body: { billId, accountCode, taxType, status?, dueDate?, description?,
 //         force? }. The bill's total is posted tax-inclusive as one line.
 // Re-publishing an already-posted bill is refused (409) unless force:true.
+// What a document is still missing before it may be posted, in the words the
+// inbox already uses. Built on costComplete so the two can never disagree: a
+// document that reads Ready is postable, and one that reads "Missing: Date" is
+// refused rather than posted with today's date invented for it — which lands a
+// July receipt in August's quarter and its GST return, saying nothing.
+function missingForPublish(bill: Bill): string[] {
+  if (costComplete(bill)) return [];
+  const out: string[] = [];
+  const filled = (v: unknown) => String(v ?? '').trim().length > 0;
+  const s = String(bill.supplier ?? '').trim().toLowerCase();
+  const c = String(bill.category ?? '').trim().toLowerCase();
+  if (!filled(bill.supplier) || s === 'unknown supplier') out.push('a supplier');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(bill.date ?? ''))) out.push('a date');
+  if (!filled(bill.category) || c === 'uncategorised') out.push('a category');
+  if (!(parseAmount(bill.total) > 0)) out.push('a total above 0');
+  return out;
+}
+
 xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
@@ -716,24 +734,23 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     });
   }
 
-  const total = parseAmount(bill.total);
-  if (!(total > 0)) {
-    return res.status(400).json({ error: 'invalid_total', message: 'The bill needs a positive total before it can be posted.' });
-  }
-  // A bill with no date used to post as TODAY. That is not a missing field being
-  // tolerated, it is a WRONG one being invented: a July receipt filed in August
-  // lands in the wrong month, the wrong quarter and the wrong GST return, and
-  // nothing on the Xero bill says the date was guessed. The document already
-  // knows it has no date — the inbox labels it "Missing: Date" — so this refuses
-  // rather than choosing a period on the client's behalf.
-  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-  const date = String(bill.date ?? '');
-  if (!ISO_DATE.test(date)) {
+  // The same completeness bulk publish requires. Publishing one document and
+  // publishing forty are the same act on the same ledger, so they cannot hold
+  // different standards: bulk SKIPS an incomplete document, and this used to
+  // post it. `costComplete` is the one definition (supplier, date, category,
+  // total > 0) — the same one that decides Ready vs To review, so a document the
+  // inbox is already flagging is never quietly acceptable here.
+  const missing = missingForPublish(bill);
+  if (missing.length) {
     return res.status(400).json({
-      error: 'missing_date',
-      message: 'This document has no date, and a bill must be posted into a period. Set the date on the document, then publish.',
+      error: 'incomplete',
+      missing,
+      message: `This document still needs ${missing.join(', ')}. A bill is posted into a live ledger, so it has to be complete first.`,
     });
   }
+  const total = parseAmount(bill.total);
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+  const date = String(bill.date ?? '');
   // Due date follows the date actually POSTED, not the one on the paper. When a
   // period is locked, `date` above has already moved to something postable — and
   // a due date left on the original date would then sit BEFORE the bill itself.

@@ -118,6 +118,41 @@ const ownerNames = () =>
     )
   ).sort((a, b) => a.localeCompare(b));
 
+// The people an expense claim can be made out to, as display names, A-Z.
+//
+// NOT the roster: GET /api/users answers with a client entity's own employees
+// and deliberately leaves practice colleagues out, so a colleague could never be
+// picked — including in the practice's OWN entity, where they are exactly the
+// person claiming. Cze has a claim in CYBM; Astrid could not have made one.
+//
+// A claim is money paid back to a PERSON, so the general account is not a
+// candidate however it is flagged, and neither is anyone deactivated.
+//
+// `ownEntity` is whether the open entity is the practice's own. A colleague
+// claims there and nowhere else: doing a client's books does not make their
+// coffee the client's to reimburse.
+export function claimantNames({ ownEntity = false } = {}) {
+  return Array.from(
+    new Set(
+      directory
+        .filter((p) => !p.general && !p.deactivated && (ownEntity || !p.external))
+        .map((p) => p.name || p.email)
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+export function useClaimantNames({ ownEntity = false } = {}) {
+  const [names, setNames] = useState(() => claimantNames({ ownEntity }));
+  useEffect(() => {
+    const sync = () => setNames(claimantNames({ ownEntity }));
+    sync();
+    window.addEventListener(USERS_EVENT, sync);
+    return () => window.removeEventListener(USERS_EVENT, sync);
+  }, [ownEntity]);
+  return names;
+}
+
 // Can this person own a document in the entity that's open? True for its own
 // people; false for a practice colleague working on it from outside, whose
 // uploads belong to the client's general account instead. (Inside the
