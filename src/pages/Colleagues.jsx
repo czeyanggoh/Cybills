@@ -10,7 +10,7 @@ import {
   addColleagues,
   clientAccessLabel,
 } from '@/lib/practiceStore';
-import { setUserActive, removeUser, setUserPassword, inviteUser } from '@/lib/userStore';
+import { setUserActive, removeUser, setUserPassword, inviteUser, updateUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 
 // Whether this colleague runs the practice's own business (the roster, client
@@ -178,6 +178,10 @@ export default function Colleagues() {
       (c.email || '').toLowerCase().includes(query.toLowerCase())
   );
   const rows = filtered.filter((c) => (tab === 'deactivated' ? c.deactivated : !c.deactivated));
+  // Anyone still active on the practice team can approve for anyone else. A
+  // deactivated colleague cannot sign in, so a claim routed to them would wait
+  // for somebody who can never open it.
+  const managerOptions = colleagues.filter((m) => !m.deactivated && !m.pending);
   const deactivatedCount = colleagues.filter((c) => c.deactivated).length;
 
   return (
@@ -234,6 +238,7 @@ export default function Colleagues() {
               <th className="px-3 py-2.5 font-medium">Email</th>
               <th className="px-3 py-2.5 font-medium">Role</th>
               <th className="px-3 py-2.5 font-medium">Manage practice&apos;s business</th>
+              <th className="px-3 py-2.5 font-medium">Direct manager</th>
               <th className="px-3 py-2.5 font-medium">Client access</th>
               <th className="px-3 py-2.5 font-medium">Last login</th>
               <th className="px-3 py-2.5 font-medium">Manage</th>
@@ -246,6 +251,27 @@ export default function Colleagues() {
                 <td className="px-3 py-3 text-muted-foreground">{c.email || '—'}</td>
                 <td className="whitespace-nowrap px-3 py-3">{c.practiceRole}</td>
                 <td className="px-3 py-3">{managesPractice(c) ? 'Yes' : 'No'}</td>
+                {/* Who approves this colleague's expense claims. It lives here
+                    rather than on Users because a colleague is on no client's
+                    roster — which is exactly why they could never submit a claim
+                    at all: there was nowhere to name their approver. */}
+                <td className="px-3 py-3">
+                  <select
+                    value={c.managerId || ''}
+                    aria-label={`Direct manager for ${c.name}`}
+                    onChange={async (e) => {
+                      await updateUser(c.id, { managerId: e.target.value });
+                      const who = managerOptions.find((m) => m.id === e.target.value);
+                      showToast(who ? `${who.name} approves ${c.name}'s claims.` : `Direct manager cleared for ${c.name}.`);
+                    }}
+                    className="h-8 w-44 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <option value="">— None —</option>
+                    {managerOptions.filter((m) => m.id !== c.id).map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </td>
                 <td className="px-3 py-3">
                   <button
                     type="button"
