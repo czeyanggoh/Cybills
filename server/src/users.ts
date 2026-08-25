@@ -466,6 +466,53 @@ function currentPracticeRole(role: string | undefined): string {
   return 'Standard';
 }
 
+// --- Locking yourself out -----------------------------------------------------
+// Two ways the roster can be left with nobody able to fix it, both of which have
+// happened here: deactivating your OWN account (Astrid's practice row went off
+// during a duplicate cleanup and her whole nav vanished until Cze put it back),
+// and removing the LAST practice Owner (nobody left who can restore one, because
+// restoring one is a thing only an Owner can do).
+//
+// Checked in one place because three routes can cause it — DELETE, the active
+// toggle, and a PATCH carrying `deactivated` or a demotion out of Owner.
+// Returns the sentence to refuse with, or '' when the change is safe.
+type AccessChange = { removed?: boolean; deactivated?: boolean; practiceRole?: string };
+
+export function lockoutRisk(ws: string, target: User, change: AccessChange, actorId: string): string {
+  const goingAway = change.removed === true || change.deactivated === true;
+
+  // Your own account. Someone else with the rights can always do it for you —
+  // what must not happen is doing it to yourself and losing the way back.
+  if (goingAway && actorId && actorId === target.id) {
+    return change.removed
+      ? 'You can’t delete your own account. Ask another admin to do it.'
+      : 'You can’t deactivate your own account — you would lose access with no way to undo it. Ask another admin.';
+  }
+
+  // The last Owner of the practice. Demotion counts: an Owner moved to Practice
+  // Admin is no longer an Owner, and if they were the only one there is now no
+  // way to appoint another.
+  const demoted = typeof change.practiceRole === 'string' && currentPracticeRole(change.practiceRole) !== 'Owner';
+  if (!goingAway && !demoted) return '';
+  if (!target.practice || currentPracticeRole(target.practiceRole) !== 'Owner') return '';
+  const otherOwners = ensure(ws).filter(
+    (u) =>
+      u.workspaceId === ws &&
+      !u.removed &&
+      !u.deactivated &&
+      u.practice &&
+      u.id !== target.id &&
+      currentPracticeRole(u.practiceRole) === 'Owner'
+  );
+  if (otherOwners.length) return '';
+  const what = change.removed
+    ? 'delete them'
+    : demoted
+      ? 'move them out of Owner'
+      : 'deactivate them';
+  return `${target.name || 'This colleague'} is the only Owner of the practice, so you can’t ${what} — there would be nobody left who can appoint another. Make someone else an Owner first.`;
+}
+
 // Run the practice itself — the Colleagues roster and the client list. Owners
 // and Practice Admins only; a Standard colleague does client work.
 export function canManagePractice(u: User | null | undefined): boolean {
@@ -1303,6 +1350,13 @@ usersRouter.patch('/:id', (req, res) => {
     filtered.emailHandle = handle;
   }
   return mutate(req, res, (user, items) => {
+    const risk = lockoutRisk(
+      workspaceId(req),
+      user,
+      { deactivated: filtered.deactivated === true, practiceRole: filtered.practiceRole },
+      me?.id || ''
+    );
+    if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
     const from = user.organisationId;
     applyEditable(user, filtered, workspaceId(req));
     if (user.organisationId !== from) detachManagerLinks(items, user);
@@ -1311,14 +1365,23 @@ usersRouter.patch('/:id', (req, res) => {
 
 usersRouter.post('/:id/active', (req, res) => {
   if (!requireAdmin(req, res)) return;
+  const me = memberForSession(req);
   return mutate(req, res, (user) => {
+    const risk =
+      req.body?.active === false
+        ? lockoutRisk(workspaceId(req), user, { deactivated: true }, me?.id || '')
+        : '';
+    if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
     user.deactivated = req.body?.active === false;
   });
 });
 
 usersRouter.delete('/:id', (req, res) => {
   if (!requireAdmin(req, res)) return;
+  const me = memberForSession(req);
   return mutate(req, res, (user) => {
+    const risk = lockoutRisk(workspaceId(req), user, { removed: true }, me?.id || '');
+    if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
     user.removed = true;
   });
 });
