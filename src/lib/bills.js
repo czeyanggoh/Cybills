@@ -286,6 +286,9 @@ export function billToDoc(b) {
     project: b.project || '',
     cardLast4: b.cardLast4 || '',
     note: b.note || '',
+    // The message this document arrived in, when it came by email. Null for an
+    // upload, which is what the Email tab reads to know it has nothing to show.
+    email: b.email || null,
     dueDate: b.dueDate || '',
     lineItems: Array.isArray(b.lineItems) ? b.lineItems : [],
     hasFile: Boolean(b.hasFile),

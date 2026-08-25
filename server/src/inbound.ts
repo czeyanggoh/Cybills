@@ -258,6 +258,7 @@ inboundRouter.post('/email', async (req, res) => {
   let subject = String(b.subject || '');
   let text = String(b.text || '');
   let html = String(b.html || '');
+  let sentAt = String(b.date || '');
   // Attachments the caller may pass pre-parsed: { filename, contentType, contentBase64 }.
   let atts: Array<{ filename: string; contentType: string; contentBase64: string }> =
     Array.isArray(b.attachments) ? b.attachments : [];
@@ -270,6 +271,7 @@ inboundRouter.post('/email', async (req, res) => {
       const parsed = await simpleParser(Buffer.from(b.raw, 'base64'));
       subject = parsed.subject || subject;
       from = parsed.from?.value?.[0]?.address || from;
+      sentAt = parsed.date ? parsed.date.toISOString() : sentAt;
       text = parsed.text || text;
       html = typeof parsed.html === 'string' ? parsed.html : html;
       atts = (parsed.attachments || []).map((a) => ({
@@ -309,6 +311,16 @@ inboundRouter.post('/email', async (req, res) => {
   // Attribute this document's API spend to its client entity on the Clients page
   // (recordUsage reads the X-Org-Id header; the Worker sends none).
   (req.headers as Record<string, string>)['x-org-id'] = realOrgId;
+  // The covering message, stored on every document it delivered. The body is
+  // capped: a forwarded thread can run to hundreds of lines, and what matters is
+  // what the sender wrote at the top of it.
+  const envelope = {
+    from,
+    to,
+    subject,
+    date: sentAt,
+    text: String(text || '').trim().slice(0, 4000),
+  };
   const madeBills: Array<{ id: string; base64: string; mediaType: string }> = [];
   for (const a of atts) {
     const filename = String(a?.filename || 'document');
@@ -341,6 +353,7 @@ inboundRouter.post('/email', async (req, res) => {
       category: '',
       createdBy: user.email,
       owner: user.email,
+      email: envelope,
       storageKey,
       contentType: storedType,
       status: 'new',

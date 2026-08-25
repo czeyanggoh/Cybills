@@ -25,6 +25,12 @@ export type Bill = {
   category: string;
   categoryReason?: string; // why the AI chose this category (account/rule cited)
   projectReason?: string; // why this project/PIC — the rule or the evidence cited
+  // The message a document arrived in, when it came by email rather than an
+  // upload. Kept so the reviewer can see WHAT was sent and by whom — a receipt
+  // forwarded with "this is the deposit, not the balance" is a different
+  // document from the same PDF uploaded silently, and the covering note is
+  // often the only place that says so.
+  email?: { from: string; to: string; subject: string; date: string; text: string };
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   taxRateReason?: string; // why that tax code — the "when to use" rule it matched
   // A PERSON chose to leave the tax rate blank. An empty `taxRate` on its own

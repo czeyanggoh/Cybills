@@ -937,6 +937,11 @@ export default function CostDetail() {
   const supplierNamed = String(data.supplier || '').trim();
   const supplierRuleN = supplierRuleCount(matchSupplierRule(data.supplier));
 
+  // The message this document arrived in, if it did. It is the DOCUMENT's, not
+  // the form's: the envelope is a record of what was received and is never
+  // edited here, so it must not round-trip through the editable form state.
+  const mail = doc?.email || null;
+  const mailDate = mail?.date ? fmtStamp(mail.date) : '';
   const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
   const lineItemsEdited =
     Array.isArray(lineSnapshot) && JSON.stringify(lineSnapshot) !== JSON.stringify(lineItems);
@@ -1299,7 +1304,7 @@ export default function CostDetail() {
         <div>
           <div className="mb-4 flex items-center justify-between border-b">
             <div className="flex gap-6">
-              {['details', 'note', 'history'].map((t) => (
+              {['details', 'email', 'whatsapp', 'note', 'history'].map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -1311,7 +1316,7 @@ export default function CostDetail() {
                       : 'border-transparent text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  {t}
+                  {t === 'whatsapp' ? 'WhatsApp' : t}
                 </button>
               ))}
             </div>
@@ -1588,6 +1593,56 @@ export default function CostDetail() {
                 <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
                 <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
               </div>
+            </div>
+          )}
+
+          {tab === 'email' && (
+            <div className="text-sm">
+              {mail ? (
+                <>
+                  {/* The envelope, laid out as a message header: labels aligned
+                      in their own column so the addresses line up and can be
+                      read down. */}
+                  <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
+                    <dt className="text-muted-foreground">From</dt>
+                    <dd className="m-0 break-words">{mail.from || '—'}</dd>
+                    <dt className="text-muted-foreground">Date</dt>
+                    <dd className="m-0">{mailDate || '—'}</dd>
+                    <dt className="text-muted-foreground">Subject</dt>
+                    <dd className="m-0 break-words">{mail.subject || '(no subject)'}</dd>
+                    <dt className="text-muted-foreground">To</dt>
+                    <dd className="m-0 break-words">{mail.to || '—'}</dd>
+                  </dl>
+                  {/* What the sender actually wrote. Kept as typed — a forwarded
+                      note is evidence about the document, so it is not reflowed
+                      or tidied. */}
+                  {mail.text ? (
+                    <p className="mt-4 whitespace-pre-wrap border-t pt-4 text-muted-foreground">{mail.text}</p>
+                  ) : (
+                    <p className="mt-4 border-t pt-4 text-muted-foreground">The message had no text — just the attachment.</p>
+                  )}
+                </>
+              ) : (
+                <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
+                  This document didn&rsquo;t arrive by email — it was uploaded.
+                  <br />
+                  <span className="text-xs">
+                    Forwarding one in? Each person has their own address under Users &rarr; Edit &rarr; Extract by email.
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
+
+          {tab === 'whatsapp' && (
+            <div className="text-sm">
+              <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
+                WhatsApp isn&rsquo;t connected yet.
+                <br />
+                <span className="text-xs">
+                  Documents sent in by WhatsApp will show their message here, the way emailed ones do.
+                </span>
+              </p>
             </div>
           )}
 
