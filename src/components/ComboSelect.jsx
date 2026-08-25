@@ -34,6 +34,12 @@ export default function ComboSelect({
   format = (x) => x,
   placeholder = 'Type to search…',
   emptyLabel = '',
+  // Let a value that isn't on the list be entered anyway. A supplier read off a
+  // receipt is very often not a Xero contact yet, so a picker that only offers
+  // the list would make the commonest case unenterable — but free text alone
+  // loses the list, and that is how one supplier ends up under three spellings.
+  // Typing offers the list AND, when nothing matches, the words as typed.
+  allowCustom = false,
   disabled = false,
   size = 'md',
   className = '',
@@ -54,12 +60,20 @@ export default function ComboSelect({
     return value ? [value, ...rest] : rest;
   }, [options, value]);
 
-  const shown = useMemo(
+  const listed = useMemo(
     () => all.filter((o) => matches(query, o, format(o))),
     // `format` is usually an inline arrow, so it can't be a dependency without
     // refiltering on every render.
     [all, query]
   );
+  // The typed words, offered as their own row when they are not already on the
+  // list. Last, so it never shadows a real option.
+  const typed = query.trim();
+  const custom =
+    allowCustom && typed && !all.some((o) => String(o).trim().toLowerCase() === typed.toLowerCase())
+      ? typed
+      : '';
+  const shown = useMemo(() => (custom ? [...listed, custom] : listed), [listed, custom]);
 
   const place = useCallback(() => {
     const r = inputRef.current?.getBoundingClientRect();
@@ -210,7 +224,16 @@ export default function ComboSelect({
             >
               <Check className={cn('h-3.5 w-3.5 shrink-0', o === value ? 'opacity-100' : 'opacity-0')} />
               <span className="truncate">
-                {format(o) || <span className="italic text-muted-foreground">{emptyLabel || '(blank)'}</span>}
+                {/* The typed row says it is new, so picking it is a decision to
+                    add a name rather than a mis-click on a near-match. */}
+                {custom && o === custom ? (
+                  <>
+                    Use &ldquo;<span className="font-medium">{o}</span>&rdquo;
+                    <span className="ml-1 text-muted-foreground">— not in the list</span>
+                  </>
+                ) : (
+                  format(o) || <span className="italic text-muted-foreground">{emptyLabel || '(blank)'}</span>
+                )}
               </span>
             </li>
           ))}

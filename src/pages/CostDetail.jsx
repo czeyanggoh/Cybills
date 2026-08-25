@@ -24,7 +24,7 @@ import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
-import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions } from '@/lib/organisations';
+import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
@@ -203,6 +203,7 @@ export default function CostDetail() {
   const catMode = useCategoryDisplayMode();
   // Projects come from the active org's live Xero tracking category (managed in
   // Lists → Projects); fall back to the bundled seed only when Xero isn't linked.
+  const supplierOptions = useXeroSuppliers();
   const xeroProjects = useXeroProjectOptions();
   const seedProjects = useProjectOptions();
   const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;
@@ -1417,7 +1418,22 @@ export default function CostDetail() {
                 />
               </Field>
               <Field label="Supplier">
-                <Input value={data.supplier} onChange={(v) => set('supplier', v)} />
+                {/* The org's Xero supplier contacts, but not ONLY them: a name
+                    read off a receipt is very often not a contact yet, and a
+                    picker that refused it would make the commonest case
+                    unenterable. Typing filters the list and offers the words as
+                    typed when nothing matches — so the list is used where it
+                    can be, which is what stops one supplier arriving under
+                    three spellings. */}
+                <ComboSelect
+                  aria-label="Supplier"
+                  value={data.supplier || ''}
+                  options={['', ...supplierOptions.filter((o) => o !== data.supplier)]}
+                  onChange={(v) => set('supplier', v)}
+                  allowCustom
+                  emptyLabel="— None —"
+                  placeholder="Search or type a supplier…"
+                />
                 <button
                   type="button"
                   onClick={() => setRulesOpen(true)}
