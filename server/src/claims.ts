@@ -52,6 +52,7 @@ type Claim = {
   approverEmail: string;
   decidedBy: string;
   decidedAt: string;
+  description?: string; // the claimant's own note about what this claim is for
   decisionReason?: string; // the manager's reason when a claim is rejected
   archived: boolean;
   deleted: boolean;
@@ -442,6 +443,24 @@ claimsRouter.post('/:id/update', (req, res) =>
     if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
     const b = req.body ?? {};
     if (typeof b.name === 'string' && b.name.trim()) claim.name = b.name.trim();
+    // Who is being reimbursed. It was accepted by the form and dropped here, so
+    // the field looked editable and reverted on the next load. It is also not
+    // decoration: the name is matched to a person to find the approver this
+    // claim routes to, so it changes where the claim goes — which is why the
+    // change is recorded, and why it is refused once the claim is already out
+    // for approval rather than rerouted under the person deciding it.
+    if (typeof b.claimFor === 'string' && b.claimFor.trim() && b.claimFor.trim() !== claim.claimFor) {
+      if (claim.approvalStatus === 'awaiting_approval') {
+        return res.status(409).json({
+          error: 'claim_submitted',
+          message: 'This claim is out for approval. Recall it before changing who it is for.',
+        });
+      }
+      const from = claim.claimFor;
+      claim.claimFor = b.claimFor.trim();
+      claim.history.unshift({ text: `Claim for changed from ${from || '—'} to ${claim.claimFor}`, by: me.name, at: nowIso() });
+    }
+    if (typeof b.description === 'string') claim.description = b.description;
     if (typeof b.endDate === 'string') {
       const d = b.endDate.trim();
       claim.endDate = d;

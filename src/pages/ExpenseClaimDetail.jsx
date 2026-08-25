@@ -48,6 +48,8 @@ import { claimExportName, claimRef } from '@/lib/exportFormat';
 import { useCategoryDisplayMode, useCategorySortMode, sortCategories, formatCategory } from '@/lib/categoryDisplay';
 import { CLAIM_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import DocCardList from '@/components/DocCardList';
+import SearchSelect from '@/components/SearchSelect';
+import { useClaimantNames } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -91,17 +93,38 @@ function DetailField({ label, children }) {
   );
 }
 
-function Input({ value, readOnly = false }) {
-  // Read-only fields stay controlled; editable ones are uncontrolled
-  // (defaultValue) so the user can type without wiring per-field state.
+// A field that either saves what is typed or says it can't be typed in.
+//
+// It used to render an UNCONTROLLED input with no onChange for anything not
+// marked read-only — so Claim for, Claim name and the description accepted
+// typing, kept it on screen, and threw it away on the next refresh. A field
+// that looks editable and isn't is worse than a disabled one: it invites the
+// edit and then loses it silently.
+//
+// `onCommit` fires on blur and on Enter rather than per keystroke: each save is
+// a request, and this is a text field, not a toggle.
+function Input({ value, readOnly = false, disabled = false, title = '', onCommit }) {
   const common = cn(
     'h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
-    readOnly ? 'bg-muted text-muted-foreground' : 'bg-background'
+    readOnly || disabled ? 'bg-muted text-muted-foreground' : 'bg-background',
+    disabled && 'cursor-not-allowed'
   );
-  return readOnly ? (
-    <input value={value} readOnly className={common} />
-  ) : (
-    <input defaultValue={value} className={common} />
+  if (readOnly || disabled || !onCommit) {
+    return <input value={value ?? ''} readOnly disabled={disabled} title={title} className={common} />;
+  }
+  const commit = (e) => {
+    const next = e.target.value;
+    if (next !== (value ?? '')) onCommit(next);
+  };
+  return (
+    <input
+      key={value}
+      defaultValue={value ?? ''}
+      title={title}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+      className={common}
+    />
   );
 }
 
@@ -148,6 +171,10 @@ export default function ExpenseClaimDetail() {
   const cyhrEnabled = useCyhrEnabled();
   const users = useUsers();
   const { data: organisations = [] } = useOrganisations();
+  // The same people the New-claim dialog offers: an entity's own staff, plus the
+  // practice's own team when this IS the practice's entity.
+  const activeOrgForClaim = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
+  const claimantOptions = useClaimantNames({ ownEntity: Boolean(activeOrgForClaim?.isPrimary) });
   const [payNote, setPayNote] = useState('');
   const [publishing, setPublishing] = useState(false);
   // Which columns this table shows and how tightly it packs them — the gear
@@ -782,8 +809,38 @@ export default function ExpenseClaimDetail() {
           {tab === 'details' ? (
             <div>
               <DetailField label="Claim ID"><Input value={claimRef(claim)} readOnly /></DetailField>
-              <DetailField label="Claim for"><Input value={claim.claimFor} /></DetailField>
-              <DetailField label="Claim name"><Input value={claim.name} /></DetailField>
+              {/* A PICKER, not free text. The claimant's name is not a label —
+                  it is matched to a person to find the approver this claim
+                  routes to, and to notify them of the decision. "cze yang"
+                  typed by hand matches nobody, so the claim would simply stop
+                  being submittable with nothing saying why.
+                  Locked once it is out for approval: changing who is being paid
+                  after somebody has been asked to approve it reroutes the claim
+                  underneath them. */}
+              <DetailField label="Claim for">
+                {locked || submitted ? (
+                  <Input
+                    value={claim.claimFor}
+                    disabled
+                    title={locked ? 'Approved — the claimant can no longer be changed.' : 'Out for approval — recall or reject it first to change the claimant.'}
+                  />
+                ) : (
+                  <SearchSelect
+                    value={claim.claimFor || ''}
+                    options={claimantOptions}
+                    placeholder="Select a person"
+                    onChange={(v) => updateClaim(claim.id, { claimFor: v }).catch(() => {})}
+                  />
+                )}
+              </DetailField>
+              <DetailField label="Claim name">
+                <Input
+                  value={claim.name}
+                  disabled={locked}
+                  title={locked ? 'Approved — the claim can no longer be renamed.' : ''}
+                  onCommit={(v) => updateClaim(claim.id, { name: v }).catch(() => {})}
+                />
+              </DetailField>
               <DetailField label="End date">
                 <input
                   type="date"
@@ -793,9 +850,20 @@ export default function ExpenseClaimDetail() {
                   className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </DetailField>
-              <DetailField label="Currency"><Input value={`${claim.currency} — Singapore, Dollars`} /></DetailField>
+              <DetailField label="Currency"><Input value={`${claim.currency} — Singapore, Dollars`} readOnly /></DetailField>
               <DetailField label="Claim description">
-                <textarea rows={2} className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                <textarea
+                  rows={2}
+                  key={claim.description || ''}
+                  defaultValue={claim.description || ''}
+                  disabled={locked}
+                  onBlur={(e) => {
+                    if (e.target.value !== (claim.description || '')) {
+                      updateClaim(claim.id, { description: e.target.value }).catch(() => {});
+                    }
+                  }}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+                />
               </DetailField>
               <DetailField label="Paid">
                 <div className="flex items-center gap-2 pt-1">
