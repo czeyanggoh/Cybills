@@ -974,13 +974,33 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       if (tracking) line.Tracking = tracking;
       return line;
     })
-    .filter((l) => l.AccountCode && Number(l.__total) > 0)
-    .map(({ __total, ...line }) => line);
+    .map((line) => line as Record<string, unknown>);
 
-  if (!lineItems.length) {
+  // An item with no coded category, or nothing to pay, cannot become a Xero
+  // line. It used to be dropped SILENTLY — so a five-item claim could post as a
+  // three-line bill, and the claim in CYBills would say more money than the bill
+  // in Xero, with nothing anywhere saying why. Money that disappears between the
+  // claim and the ledger is the one outcome worth refusing over, and it is the
+  // same rule a bill's own line items already follow: a breakdown that disagrees
+  // with its paper is a mistake to fix, not to post around.
+  const unpostable = lineItems.filter((l) => !l.AccountCode || !(Number(l.__total) > 0));
+  const postable = lineItems.filter((l) => l.AccountCode && Number(l.__total) > 0).map(({ __total, ...line }) => line);
+
+  if (!postable.length) {
     return res.status(400).json({
       error: 'no_lines',
       message: 'No claim lines have a Xero account code. Categorise each item with a coded category (e.g. "412 - Consulting & Accounting") first.',
+    });
+  }
+  if (unpostable.length) {
+    return res.status(422).json({
+      error: 'unpostable_lines',
+      count: unpostable.length,
+      lines: unpostable.map((l) => String(l.Description ?? '')).slice(0, 10),
+      message:
+        `${unpostable.length} of the ${lineItems.length} items on this claim can't become a Xero line — each needs a ` +
+        'coded category (e.g. "412 - Consulting & Accounting") and an amount above 0. Publishing now would post a bill ' +
+        'for less than the claim is worth, so fix those items first.',
     });
   }
 
@@ -994,7 +1014,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     Date: date,
     DueDate: date,
     LineAmountTypes: 'Exclusive',
-    LineItems: lineItems,
+    LineItems: postable,
     Status: status,
     Reference: claim.name || 'Expense claim',
   };
