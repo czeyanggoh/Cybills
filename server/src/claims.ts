@@ -233,26 +233,27 @@ export const claimsRouter = Router();
 // being assembled and should track its documents; after it, it is a decision
 // somebody made about a specific sum, and that sum must not move underneath
 // them. Non-destructive either way — nothing here is written back.
+function liveTxns(c: Claim): Txn[] {
+  return c.transactions.map((t) => {
+    const bill = getBillById(c.orgId, String(t.itemId));
+    if (!bill) return t; // a sample/demo row with no document behind it
+    return {
+      ...t,
+      supplier: bill.supplier ?? t.supplier,
+      date: bill.date ?? t.date,
+      category: bill.category ?? t.category,
+      description: bill.description || t.description,
+      project: bill.project ?? t.project,
+      net: String(bill.total != null ? Number(bill.total) - Number(bill.tax || 0) : t.net),
+      tax: String(bill.tax ?? t.tax),
+      total: String(bill.total ?? t.total),
+    };
+  });
+}
+
 function withLiveItems(c: Claim): Claim {
   if (c.approvalStatus === 'approved') return c;
-  return {
-    ...c,
-    transactions: c.transactions.map((t) => {
-      const bill = getBillById(c.orgId, String(t.itemId));
-      if (!bill) return t; // a sample/demo row with no document behind it
-      return {
-        ...t,
-        supplier: bill.supplier ?? t.supplier,
-        date: bill.date ?? t.date,
-        category: bill.category ?? t.category,
-        description: bill.description || t.description,
-        project: bill.project ?? t.project,
-        net: String(bill.total != null ? Number(bill.total) - Number(bill.tax || 0) : t.net),
-        tax: String(bill.tax ?? t.tax),
-        total: String(bill.total ?? t.total),
-      };
-    }),
-  };
+  return { ...c, transactions: liveTxns(c) };
 }
 
 claimsRouter.get('/', (req, res) => {
@@ -598,6 +599,12 @@ claimsRouter.post('/:id/approve', (req, res) =>
   mutate(req, res, (claim, me) => {
     const blocked = ensureApprover(req, claim, me, res);
     if (blocked) return blocked;
+    // Record the figures being approved, rather than leaving the snapshot taken
+    // when the items were ADDED to resurface. Freezing without this froze the
+    // wrong thing: a receipt whose date was fixed after it was claimed showed
+    // the date right up until approval, then reverted to "—" and "Needs: Date"
+    // — the approver signed off one set of numbers and the claim kept another.
+    claim.transactions = liveTxns(claim);
     claim.approvalStatus = 'approved';
     claim.decidedBy = me.name;
     claim.decidedAt = nowIso();
