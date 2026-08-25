@@ -144,8 +144,8 @@ export default function AutoClaimsModal({ open, onClose }) {
               {loading && <p className="px-3 py-6 text-center text-sm text-muted-foreground">Loading…</p>}
               {!loading && users.length === 0 && (
                 <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  No one on this entity’s roster yet — add them under Users. Practice colleagues aren’t listed: an
-                  expense claim belongs to the entity’s own people.
+                  No one on this entity’s roster yet — add them under Users. A practice colleague isn’t listed on a
+                  CLIENT: their expenses belong on the practice’s own books, not the client’s.
                 </p>
               )}
               {users.map((u) => (
