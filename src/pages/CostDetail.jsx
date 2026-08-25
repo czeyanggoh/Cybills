@@ -52,6 +52,7 @@ import { xeroBillUrl } from '@/lib/autoPublish';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
+import { balanceLine } from '@/lib/lineItems';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -923,8 +924,13 @@ export default function CostDetail() {
 
   const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
   const setLineItems = (rows) => set('lineItems', rows);
+  // Net, Tax and Total are three views of ONE row, so editing any of them keeps
+  // the other two true instead of leaving the row contradicting itself. Typing a
+  // net and then having to type the total as well is not a second decision — it
+  // is the same decision, entered twice, with a chance to get it wrong.
+  // The arithmetic itself lives in lib/lineItems.js, where it is tested.
   const updateLineItem = (i, patch) =>
-    setLineItems(lineItems.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
+    setLineItems(lineItems.map((li, idx) => (idx === i ? balanceLine(li, patch) : li)));
   const addLineItem = () =>
     setLineItems([
       ...lineItems,
