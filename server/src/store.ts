@@ -38,6 +38,11 @@ export type Bill = {
   // what separates "nobody has decided yet" from "somebody decided: none", and
   // it is the only thing that stops the backfill filling a deliberate blank.
   taxRateCleared?: boolean;
+  // Which fields the SUPPLIER RULE last wrote. Provenance, not a guess: it is
+  // what lets an edited rule update the documents it already filled while
+  // leaving alone anything a person typed. A field a person edits drops out of
+  // here, because they have taken it over.
+  ruleFields?: string[];
   description?: string; // plain-language summary of what was purchased
   paymentMethod?: string; // Xero payment account label the cost was paid from
   paid?: boolean; // whether the cost has been paid
@@ -653,6 +658,7 @@ const EDITABLE: (keyof Bill)[] = [
   'taxRate',
   'taxRateReason',
   'taxRateCleared',
+  'ruleFields',
   'description',
   'status',
   'createdBy',

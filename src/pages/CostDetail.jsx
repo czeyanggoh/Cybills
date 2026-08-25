@@ -598,14 +598,6 @@ export default function CostDetail() {
     setRuleApplied(fields);
   };
 
-  // Run this supplier's rule over the document that is already open.
-  //
-  // Re-picking the supplier can't do it: the picker doesn't fire when the value
-  // is unchanged, and the document usually already carries the name — which is
-  // precisely the case where somebody wrote the rule AFTER the document arrived
-  // and wants it applied to this one too. Without this the only way was a
-  // re-read, a model call to apply an instruction already written down.
-  const applyRuleNow = () => applySupplierRuleToForm(matchSupplierRule(data.supplier));
 
   const go = (delta) => {
     const next = DOCS[index + delta];
@@ -1531,16 +1523,6 @@ export default function CostDetail() {
                 >
                   {supplierRuleN > 0 ? `Edit supplier rules (${supplierRuleN})` : 'Set supplier rules'}
                 </button>
-                {supplierRuleN > 0 && (
-                  <button
-                    type="button"
-                    onClick={applyRuleNow}
-                    title={`Apply ${data.supplier}'s rules to this document`}
-                    className="ml-3 mt-1 text-xs font-medium text-emerald-600 hover:underline"
-                  >
-                    Apply to this document
-                  </button>
-                )}
                 {ruleApplied?.length > 0 && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     Standing rule applied — it set{' '}

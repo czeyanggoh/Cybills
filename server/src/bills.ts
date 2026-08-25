@@ -149,19 +149,26 @@ async function backfillTaxRates(ws: string, org: string, scope: string): Promise
 // this app removes everywhere else: both duplicate scans run themselves, and
 // Ready fills itself.
 //
-// It fills BLANKS only. At read time a rule outranks the reader, because what it
-// is overruling is a guess. Here the competing value may have been typed by a
-// person, and the two are indistinguishable afterwards — so a rule completes a
-// document, it does not overwrite one. (The document page's "Apply to this
-// document" still writes the rule over the top, for when that is what you want.)
+// It writes a field when the field is BLANK, or when the rule is the thing that
+// last wrote it. That second half is what makes editing a rule work: change the
+// category on a rule, refresh, and the documents the rule had filled follow it —
+// while a value a PERSON typed stays, because editing a field takes it over from
+// the rule (see the PATCH route). Provenance is recorded rather than guessed;
+// inferring it from the value is what made the tax-rate backfill skip every
+// document it existed to repair.
 //
 // Never a published document, and skipped unless the book changed.
-const rulesAppliedAt = new Map<string, number>();
+// Keyed on the book AND the rules themselves. Editing a rule doesn't touch a
+// single bill, so a book-only guard would skip the very sweep the edit was
+// supposed to trigger — which is the whole point of being able to change a rule
+// and refresh.
+const rulesAppliedAt = new Map<string, string>();
 function applySupplierRules(ws: string, org: string, scope: string): void {
-  if (rulesAppliedAt.get(scope) === bookRevision()) return;
-  rulesAppliedAt.set(scope, bookRevision());
   const rules = readSetting<Record<string, Record<string, string>>>(ws, 'cybills.supplier.rules.v1', org);
   if (!rules || !Object.keys(rules).length) return;
+  const key = `${bookRevision()}|${JSON.stringify(rules)}`;
+  if (rulesAppliedAt.get(scope) === key) return;
+  rulesAppliedAt.set(scope, key);
   const byName = new Map(Object.entries(rules).map(([k, v]) => [k.trim().toLowerCase(), v]));
   const blank = (v: unknown) => !String(v ?? '').trim();
 
@@ -169,22 +176,31 @@ function applySupplierRules(ws: string, org: string, scope: string): void {
     if (b.kind !== 'cost' || b.xeroInvoiceId) continue;
     const rule = byName.get(String(b.supplier ?? '').trim().toLowerCase());
     if (!rule) continue;
+    const owned = new Set(Array.isArray(b.ruleFields) ? b.ruleFields : []);
     const patch: Record<string, unknown> = {};
-    // 'Uncategorised' is a placeholder, not somebody's answer.
+    // Free to write when nothing is there, or when the rule put what is there.
+    // 'Uncategorised' counts as nothing — a placeholder, not somebody's answer.
+    const mine = (field: string, current: unknown) => blank(current) || owned.has(field);
     const cat = String(b.category ?? '').trim();
-    if (rule.category && (!cat || cat.toLowerCase() === 'uncategorised')) patch.category = rule.category;
-    if (rule.customer && blank(b.customer)) patch.customer = rule.customer;
-    if (rule.project && blank(b.project)) patch.project = rule.project;
-    if (rule.currency && blank(b.currency)) patch.currency = rule.currency;
-    if (rule.paymentMethod && blank(b.paymentMethod)) patch.paymentMethod = rule.paymentMethod;
-    if (rule.description && blank(b.description)) patch.description = rule.description;
-    // A tax code only where nobody has decided one — the same signal the tax
-    // backfill reads, so the two can't fight over the same field.
-    if (rule.taxRate && blank(b.taxRate) && !b.taxRateCleared) patch.taxRate = rule.taxRate;
-    if (!Object.keys(patch).length) continue;
+    if (rule.category && (!cat || cat.toLowerCase() === 'uncategorised' || owned.has('category'))) {
+      patch.category = rule.category;
+    }
+    if (rule.customer && mine('customer', b.customer)) patch.customer = rule.customer;
+    if (rule.project && mine('project', b.project)) patch.project = rule.project;
+    if (rule.currency && mine('currency', b.currency)) patch.currency = rule.currency;
+    if (rule.paymentMethod && mine('paymentMethod', b.paymentMethod)) patch.paymentMethod = rule.paymentMethod;
+    if (rule.description && mine('description', b.description)) patch.description = rule.description;
+    // A tax code only where nobody has DECIDED one — `taxRateCleared` is a
+    // person choosing blank, and it outranks the rule the same way here.
+    if (rule.taxRate && !b.taxRateCleared && mine('taxRate', b.taxRate)) patch.taxRate = rule.taxRate;
+
+    // Nothing to do when every field already reads what the rule says.
+    const changed = Object.entries(patch).filter(([k, v]) => String((b as Record<string, unknown>)[k] ?? '') !== String(v));
+    if (!changed.length) continue;
     if (patch.category) {
       patch.categoryReason = `Standing rule: documents from ${b.supplier} are coded ${patch.category}.`;
     }
+    patch.ruleFields = [...new Set([...owned, ...Object.keys(patch)])].filter((f) => f !== 'categoryReason');
     updateBill(scope, b.id, patch);
     reconcileReadiness(scope, b.id);
   }
@@ -312,6 +328,17 @@ billsRouter.patch('/bills/:id', (req, res) => {
   // a fact about the past, and overwriting it with a display name is what left
   // one person listed twice in the first place.
   if (typeof b.owner === 'string') patch.owner = ownerEmail(req, b.owner);
+  // A person editing a field takes it over from the supplier rule, so the rule
+  // stops rewriting it. Without this, changing a rule later would overwrite the
+  // correction somebody made on this document — and never changing it would
+  // leave an edited rule unable to reach the documents it had itself filled.
+  const edited = Object.keys(patch).filter((k) => k !== 'status');
+  if (edited.length) {
+    const current = getBillById(orgIdFor(req), req.params.id);
+    const owned = Array.isArray(current?.ruleFields) ? current!.ruleFields : [];
+    const kept = owned.filter((f) => !edited.includes(f));
+    if (kept.length !== owned.length) patch.ruleFields = kept;
+  }
   if (typeof b.paid === 'boolean') patch.paid = b.paid;
   // "Not a duplicate" — the reviewer's verdict, which clears the flag and
   // survives every later re-check.
