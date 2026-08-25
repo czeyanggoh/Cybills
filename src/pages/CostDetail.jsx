@@ -305,6 +305,15 @@ export default function CostDetail() {
   const claims = useClaims();
   const { allDocs: inboxAllDocs } = useCostsDocs();
   const claimForItem = claims.find((c) => (c.transactions || []).some((t) => isItemKey(t.itemId, id)));
+  // Why this document can't go on a claim, or '' when it can. A document already
+  // ON a claim was the gap: the page knew (it draws the banner from the very
+  // same lookup) but the button stayed live, so the obvious thing to try was
+  // adding it a second time.
+  const claimBlocked = doc?.xeroInvoiceId
+    ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.`
+    : claimForItem
+      ? `Already on expense claim ${claimRef(claimForItem)}. Take it off that claim first to move it.`
+      : '';
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
 
   // Reset the form when navigating between documents. Sample docs resolve from
@@ -1092,7 +1101,21 @@ export default function CostDetail() {
             >
               {claimRef(claimForItem)}
             </button>{' '}
-            called <span className="font-medium text-foreground">{claimForItem.claimFor}</span>
+            {claimForItem.name ? (
+              <>
+                {' '}called <span className="font-medium text-foreground">{claimForItem.name}</span>
+              </>
+            ) : null}
+            {/* WHO the claim reimburses is a different question from whose
+                document this is, and the banner used to print the claimant
+                after the word "called" — so a claim named "Expense claim" for
+                Astrid read as a claim called "astrid yang". */}
+            {claimForItem.claimFor ? (
+              <>
+                , to be reimbursed to{' '}
+                <span className="font-medium text-foreground">{claimForItem.claimFor}</span>
+              </>
+            ) : null}
             {claimForItem.endDate ? ` (${claimForItem.endDate})` : ''}.
           </span>
         </div>
@@ -1227,8 +1250,8 @@ export default function CostDetail() {
         )}
         <TopButton
           onClick={() => setClaimOpen(true)}
-          disabled={Boolean(doc.xeroInvoiceId)}
-          title={doc.xeroInvoiceId ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.` : ''}
+          disabled={Boolean(claimBlocked)}
+          title={claimBlocked}
         >
           Add to expense claim
         </TopButton>
@@ -1585,8 +1608,8 @@ export default function CostDetail() {
                 {doc.persisted && <SaveStatus status={fieldSave} className="px-1" />}
                 <TopButton
                   onClick={() => setClaimOpen(true)}
-                  disabled={Boolean(doc.xeroInvoiceId)}
-                  title={doc.xeroInvoiceId ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.` : ''}
+                  disabled={Boolean(claimBlocked)}
+                  title={claimBlocked}
                 >
                   Add to expense claim
                 </TopButton>
