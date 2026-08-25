@@ -150,6 +150,20 @@ const DOC_TYPES = [
   'Other',
 ];
 
+// A rule's field, in the words the form uses for it.
+const FIELD_LABELS = {
+  category: 'Category',
+  customer: 'Customer',
+  project: 'Project',
+  currency: 'Currency',
+  paymentMethod: 'Payment method',
+  description: 'Description',
+  taxRate: 'Tax rate',
+  paid: 'Paid',
+  dueDate: 'Due date',
+};
+const FIELD_LABEL = (k) => FIELD_LABELS[k] || k;
+
 function initialData(doc) {
   return {
     user: doc.user,
@@ -265,6 +279,9 @@ export default function CostDetail() {
   // tax against a rounded total) it cannot even be retyped, because the cells
   // now keep each other true. Something has to remember it.
   const [lineSnapshot, setLineSnapshot] = useState(null);
+  // Which fields a supplier's standing rule just filled in, so applying it is
+  // visible rather than fields quietly changing under the cursor.
+  const [ruleApplied, setRuleApplied] = useState(null);
   // One block, so the panel and the full-screen editor can't drift apart.
   const linesNoteBlock = linesNote ? (
     <p className="mt-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-xs text-foreground">
@@ -460,6 +477,56 @@ export default function CostDetail() {
     customer: 'customer', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
     dueDate: 'dueDate',
   };
+  // Naming the supplier by hand applies that supplier's standing rule.
+  //
+  // A rule fires when a document is READ, keyed on the supplier the reader
+  // found. So a receipt the reader couldn't identify — then named here — got
+  // none of it: the rules dialog promises "applied to this document and to
+  // everything new that arrives from Grab", and this is the case where the
+  // document arrives first and the name second.
+  //
+  // The rule wins over what is already on the document, the same precedence a
+  // re-read applies (src/lib/reRead.js): a rule is an instruction. Nothing is
+  // silent about it — what it filled in is listed underneath.
+  const setSupplier = (value) => {
+    const named = String(value || '').trim();
+    if (!named || named === data.supplier) return set('supplier', value);
+    const rule = matchSupplierRule(named);
+    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered });
+    if (!Object.keys(patch).length) return set('supplier', value);
+    // A tax code carries the tax it implies, worked out from THIS document's
+    // total — the same sum the Tax rate field does.
+    if (patch.taxRate) {
+      const r = rateFor(patch.taxRate);
+      const t = num(data.total);
+      const tax = r > 0 && t > 0 ? (t * r) / (100 + r) : 0;
+      patch.tax = tax ? tax.toFixed(2) : '0.00';
+    }
+    const next = { supplier: named, ...patch };
+    setData((d) => ({ ...d, ...next }));
+    if (readyError.length) setReadyError([]);
+    // The rule's own fields — not `tax`, which is arithmetic that follows from
+    // the tax rate rather than something the rule was asked to set.
+    setRuleApplied(Object.keys(patch).filter((k) => k !== 'tax'));
+    if (doc?.persisted) {
+      const body = {};
+      for (const [k, v] of Object.entries(next)) {
+        const sf = SERVER_FIELDS[k];
+        if (sf) body[sf] = v;
+      }
+      setFieldSave('saving');
+      updateBill(doc.id, body)
+        .then((r) => {
+          setFieldSave('saved');
+          if (r?.bill) {
+            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+            notifyBillsChanged();
+          }
+        })
+        .catch(() => setFieldSave('error'));
+    }
+  };
+
   const set = (key, value) => {
     // Overruling the reader on an allocation is the one moment both halves of a
     // rule are known — what it got wrong and what's right. Offer to keep it.
@@ -1429,7 +1496,7 @@ export default function CostDetail() {
                   aria-label="Supplier"
                   value={data.supplier || ''}
                   options={['', ...supplierOptions.filter((o) => o !== data.supplier)]}
-                  onChange={(v) => set('supplier', v)}
+                  onChange={setSupplier}
                   allowCustom
                   emptyLabel="— None —"
                   placeholder="Search or type a supplier…"
@@ -1446,6 +1513,12 @@ export default function CostDetail() {
                 >
                   {supplierRuleN > 0 ? `Edit supplier rules (${supplierRuleN})` : 'Set supplier rules'}
                 </button>
+                {ruleApplied?.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Standing rule applied — it set{' '}
+                    <span className="font-medium text-foreground">{ruleApplied.map(FIELD_LABEL).join(', ')}</span>.
+                  </p>
+                )}
               </Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
