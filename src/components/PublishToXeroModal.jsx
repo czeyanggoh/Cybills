@@ -153,8 +153,13 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   // Line items that contradict the document block the publish outright — the
   // server refuses it too (see perLineItems in server/src/xero.ts); this is so
   // the button says why instead of the request failing after the click.
+  // A bill is posted INTO a period, so it needs the document's own date. Without
+  // one the server refuses (missing_date) rather than posting it as today —
+  // check it here too, so the button says so before the click instead of the
+  // request failing after it.
+  const hasDate = /^\d{4}-\d{2}-\d{2}$/.test(String(bill?.date ?? ''));
   const canPublish = Boolean(
-    organisationId && accountCode && taxType && !publishing && !done && (lines.rows === 0 || lines.postable)
+    organisationId && accountCode && taxType && hasDate && !publishing && !done && (lines.rows === 0 || lines.postable)
   );
   const organisation = organisations.find((o) => o.id === organisationId);
 
@@ -337,6 +342,16 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                     </div>
                   </label>
                 </>
+              )}
+
+              {/* Same voice as the line-items block above: say what is wrong and
+                  where to fix it, rather than greying the button out silently. */}
+              {!hasDate && (
+                <p className="rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <span className="font-medium">Can&rsquo;t publish yet.</span> This document has no date, and a bill is
+                  posted into an accounting period. Set the <span className="font-medium">Date</span> field on the
+                  document first — otherwise it would land in whatever period today falls in.
+                </p>
               )}
 
               {error && <p className="text-sm text-destructive">{error}</p>}

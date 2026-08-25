@@ -35,24 +35,40 @@ async function relay(
   for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
 
   const hasRaw = opts.rawBody !== undefined;
-  const res = await fetch(url, {
-    method: opts.method ?? 'GET',
-    headers: {
-      'X-API-Key': env.CYWORKSPACE_API_KEY,
-      Accept: 'application/json',
-      ...(hasRaw
-        ? { 'Content-Type': opts.contentType ?? 'application/octet-stream' }
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: opts.method ?? 'GET',
+      headers: {
+        'X-API-Key': env.CYWORKSPACE_API_KEY,
+        Accept: 'application/json',
+        ...(hasRaw
+          ? { 'Content-Type': opts.contentType ?? 'application/octet-stream' }
+          : opts.body !== undefined
+            ? { 'Content-Type': 'application/json' }
+            : {}),
+      },
+      body: hasRaw
+        ? (opts.rawBody as unknown as BodyInit)
         : opts.body !== undefined
-          ? { 'Content-Type': 'application/json' }
-          : {}),
-    },
-    body: hasRaw
-      ? (opts.rawBody as unknown as BodyInit)
-      : opts.body !== undefined
-        ? JSON.stringify(opts.body)
-        : undefined,
-    signal: AbortSignal.timeout(60_000),
-  });
+          ? JSON.stringify(opts.body)
+          : undefined,
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (err) {
+    // The relay being unreachable — down, DNS gone, or the 60s timeout firing —
+    // used to reject with nothing catching it, which takes the whole CYBills
+    // process down: Xero having a bad afternoon logged everyone out of the app.
+    // Every caller already handles `ok:false`, so it becomes one of those.
+    console.error('[xero] relay unreachable', xeroPath, err);
+    return {
+      ok: false,
+      status: 502,
+      error: 'relay_unreachable',
+      message: `Could not reach the Xero relay: ${err instanceof Error ? err.message : String(err)}`,
+      data: null,
+    };
+  }
 
   const data = await res.json().catch(() => null);
   if (res.ok) return { ok: true, status: res.status, data };
@@ -704,15 +720,26 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   if (!(total > 0)) {
     return res.status(400).json({ error: 'invalid_total', message: 'The bill needs a positive total before it can be posted.' });
   }
-
-  const today = new Date().toISOString().slice(0, 10);
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(bill.date) ? bill.date : today;
+  // A bill with no date used to post as TODAY. That is not a missing field being
+  // tolerated, it is a WRONG one being invented: a July receipt filed in August
+  // lands in the wrong month, the wrong quarter and the wrong GST return, and
+  // nothing on the Xero bill says the date was guessed. The document already
+  // knows it has no date — the inbox labels it "Missing: Date" — so this refuses
+  // rather than choosing a period on the client's behalf.
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+  const date = String(bill.date ?? '');
+  if (!ISO_DATE.test(date)) {
+    return res.status(400).json({
+      error: 'missing_date',
+      message: 'This document has no date, and a bill must be posted into a period. Set the date on the document, then publish.',
+    });
+  }
   // Due date follows the date actually POSTED, not the one on the paper. When a
   // period is locked, `date` above has already moved to something postable — and
   // a due date left on the original date would then sit BEFORE the bill itself.
   // Tying them together means the pair stays coherent however the date shifts.
   // A date typed into the publish dialog still wins; nothing else does.
-  const iso = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : '');
+  const iso = (v: unknown) => (ISO_DATE.test(String(v ?? '')) ? String(v) : '');
   const dueDate = iso(b.dueDate) || date;
   const tax = parseAmount(bill.tax);
 
