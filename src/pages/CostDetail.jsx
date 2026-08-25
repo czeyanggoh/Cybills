@@ -257,6 +257,13 @@ export default function CostDetail() {
   // itemised table answered "No itemised charges found" completely off-screen —
   // and pressing Extract line items looked like it had done nothing at all.
   const [linesNote, setLinesNote] = useState('');
+  // The line items as they last stood before anybody edited them: how the
+  // document arrived, or what the last read produced. The grid writes through on
+  // every keystroke, so once a figure is typed over, the old one is gone from
+  // both the page and the server — and on a row that never added up (a stated
+  // tax against a rounded total) it cannot even be retyped, because the cells
+  // now keep each other true. Something has to remember it.
+  const [lineSnapshot, setLineSnapshot] = useState(null);
   // One block, so the panel and the full-screen editor can't drift apart.
   const linesNoteBlock = linesNote ? (
     <p className="mt-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-xs text-foreground">
@@ -305,9 +312,13 @@ export default function CostDetail() {
   useEffect(() => {
     setImageUrl('');
     setAiError('');
+    setLinesNote('');
+    setLineSnapshot(null); // a new document, a new set of rows to fall back to
     const raw = getDoc(routeId);
     if (raw) {
-      setData(initialData({ ...raw, ...(getDocOverrides()[routeId] || {}) }));
+      const seeded = initialData({ ...raw, ...(getDocOverrides()[routeId] || {}) });
+      setData(seeded);
+      setLineSnapshot(Array.isArray(seeded.lineItems) ? seeded.lineItems : []);
       setPersisted(null);
       setLoading(false);
       return;
@@ -330,7 +341,11 @@ export default function CostDetail() {
           // Opened by internal id (an old bookmark, or a claim line item): swap
           // the address bar for the item-id form without adding a history entry.
           if (String(routeId) !== itemNumber(pd)) navigate(costPath(pd), { replace: true });
-          setData(initialData(pd));
+          const seeded = initialData(pd);
+          setData(seeded);
+          // The rows as the document arrived with them — what Revert edits
+          // restores, captured before the grid can write over them.
+          setLineSnapshot(Array.isArray(seeded.lineItems) ? seeded.lineItems : []);
           if (pd.hasFile) {
             setImageUrl(billFileUrl(pd.id));
             setPreviewType(pd.contentType.includes('pdf') ? 'pdf' : 'image');
@@ -923,6 +938,8 @@ export default function CostDetail() {
   const supplierRuleN = supplierRuleCount(matchSupplierRule(data.supplier));
 
   const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
+  const lineItemsEdited =
+    Array.isArray(lineSnapshot) && JSON.stringify(lineSnapshot) !== JSON.stringify(lineItems);
   const setLineItems = (rows) => set('lineItems', rows);
   // Net, Tax and Total are three views of ONE row, so editing any of them keeps
   // the other two true instead of leaving the row contradicting itself. Typing a
@@ -937,6 +954,14 @@ export default function CostDetail() {
       { description: '', category: data.category || 'Uncategorised', project: data.project || '', project2: '', net: '', tax: '', total: '' },
     ]);
   const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
+  // Put the rows back as they arrived. Deliberately NOT a per-keystroke undo:
+  // the grid fires on every character, so stepping back one edit at a time would
+  // mean six presses to take back "125.39". One press, one known-good state.
+  const revertLineItems = () => {
+    if (!Array.isArray(lineSnapshot)) return;
+    setLineItems(lineSnapshot);
+    setLinesNote('Line items put back as they were read.');
+  };
   // One set of props for the grid, so the panel and the full-screen editor are
   // rendering the same thing over the same state.
   const lineGrid = {
@@ -972,6 +997,7 @@ export default function CostDetail() {
       // page could re-sync itself from the server a moment too early.
       const built = lineItemRows(rows, data.category);
       setData((d) => ({ ...d, lineItems: built }));
+      setLineSnapshot(built); // a fresh read is the new set to fall back to
       if (doc?.persisted) {
         const r = await updateBill(doc.id, { lineItems: built }).catch(() => null);
         if (r?.bill) {
@@ -1524,6 +1550,8 @@ export default function CostDetail() {
                 onExtract={extractLineItems}
                 onAdd={addLineItem}
                 onExpand={() => setLinesOpen(true)}
+                onRevert={revertLineItems}
+                canRevert={lineItemsEdited}
                 extracting={extractingLines}
                 busy={Boolean(job)}
                 visionEnabled={visionEnabled}
@@ -1697,6 +1725,8 @@ export default function CostDetail() {
             <LineItemsActions
               onExtract={extractLineItems}
               onAdd={addLineItem}
+              onRevert={revertLineItems}
+              canRevert={lineItemsEdited}
               extracting={extractingLines}
               busy={Boolean(job)}
               visionEnabled={visionEnabled}
