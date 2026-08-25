@@ -138,10 +138,63 @@ async function backfillTaxRates(ws: string, org: string, scope: string): Promise
   }
 }
 
+// A supplier's standing rule, applied to the documents that already carry that
+// supplier's name.
+//
+// A rule fires when a document is READ. But rules get written AFTER documents
+// arrive — you correct a receipt, then write the rule so the next one is right —
+// and those already-here documents got nothing. The only ways to connect them
+// were a re-read (a model call to apply an instruction already written down) or
+// pressing a button per document, which is the "somebody has to remember" shape
+// this app removes everywhere else: both duplicate scans run themselves, and
+// Ready fills itself.
+//
+// It fills BLANKS only. At read time a rule outranks the reader, because what it
+// is overruling is a guess. Here the competing value may have been typed by a
+// person, and the two are indistinguishable afterwards — so a rule completes a
+// document, it does not overwrite one. (The document page's "Apply to this
+// document" still writes the rule over the top, for when that is what you want.)
+//
+// Never a published document, and skipped unless the book changed.
+const rulesAppliedAt = new Map<string, number>();
+function applySupplierRules(ws: string, org: string, scope: string): void {
+  if (rulesAppliedAt.get(scope) === bookRevision()) return;
+  rulesAppliedAt.set(scope, bookRevision());
+  const rules = readSetting<Record<string, Record<string, string>>>(ws, 'cybills.supplier.rules.v1', org);
+  if (!rules || !Object.keys(rules).length) return;
+  const byName = new Map(Object.entries(rules).map(([k, v]) => [k.trim().toLowerCase(), v]));
+  const blank = (v: unknown) => !String(v ?? '').trim();
+
+  for (const b of listBills(scope)) {
+    if (b.kind !== 'cost' || b.xeroInvoiceId) continue;
+    const rule = byName.get(String(b.supplier ?? '').trim().toLowerCase());
+    if (!rule) continue;
+    const patch: Record<string, unknown> = {};
+    // 'Uncategorised' is a placeholder, not somebody's answer.
+    const cat = String(b.category ?? '').trim();
+    if (rule.category && (!cat || cat.toLowerCase() === 'uncategorised')) patch.category = rule.category;
+    if (rule.customer && blank(b.customer)) patch.customer = rule.customer;
+    if (rule.project && blank(b.project)) patch.project = rule.project;
+    if (rule.currency && blank(b.currency)) patch.currency = rule.currency;
+    if (rule.paymentMethod && blank(b.paymentMethod)) patch.paymentMethod = rule.paymentMethod;
+    if (rule.description && blank(b.description)) patch.description = rule.description;
+    // A tax code only where nobody has decided one — the same signal the tax
+    // backfill reads, so the two can't fight over the same field.
+    if (rule.taxRate && blank(b.taxRate) && !b.taxRateCleared) patch.taxRate = rule.taxRate;
+    if (!Object.keys(patch).length) continue;
+    if (patch.category) {
+      patch.categoryReason = `Standing rule: documents from ${b.supplier} are coded ${patch.category}.`;
+    }
+    updateBill(scope, b.id, patch);
+    reconcileReadiness(scope, b.id);
+  }
+}
+
 billsRouter.get('/bills', (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
   backfillOwners(workspaceId(req), orgScope(req), orgId);
+  applySupplierRules(workspaceId(req), orgScope(req), orgId);
   autoScanDuplicates(workspaceId(req), orgScope(req), orgId);
   // Fills in the background — it needs the org's rates over the relay, and the
   // list must not wait on a network call. The next fetch shows the result.
