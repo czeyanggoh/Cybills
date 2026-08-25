@@ -5,7 +5,7 @@ import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
 import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
-import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed } from './store.js';
+import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed, parseAmount } from './store.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
 // X-Org-Id scoping as bills). Replaces the old per-browser localStorage claim
@@ -473,8 +473,60 @@ claimsRouter.post('/:id/update', (req, res) =>
 // POST /api/claims/:id/submit — submit for approval. The approver is derived
 // automatically from the claimant's direct manager (set in Users), so there's no
 // approver to pick. Fails with 'no_manager' when the claimant has none assigned.
+// What an item on a claim is still missing, in the words the inbox uses — the
+// same four fields as costComplete / readiness.js, so a document that reads
+// "Needs: Date" in one place reads the same here.
+//
+// Read off the LIVE document, not the claim's snapshot. A claim stores the
+// item's fields as they were when it was added and refreshes only the
+// description, so judging completeness by the snapshot would trap the claim:
+// the fix happens on the DOCUMENT — which is what the refusal tells you to do —
+// and the snapshot would never catch up. The snapshot answers only for an item
+// with no bill behind it (a sample/demo row).
+function missingOnItem(orgId: string, t: Txn): string[] {
+  const bill = getBillById(orgId, String(t.itemId));
+  const supplier = bill ? bill.supplier : t.supplier;
+  const date = bill ? bill.date : t.date;
+  const category = bill ? bill.category : t.category;
+  const total = bill ? bill.total : t.total;
+  const named = (v: unknown, placeholder: string) => {
+    const x = String(v ?? '').trim().toLowerCase();
+    return Boolean(x) && x !== placeholder;
+  };
+  const out: string[] = [];
+  if (!named(supplier, 'unknown supplier')) out.push('Supplier');
+  if (!String(date ?? '').trim()) out.push('Date');
+  if (!named(category, 'uncategorised')) out.push('Category');
+  if (!(parseAmount(total) > 0)) out.push('Total');
+  return out;
+}
+
 claimsRouter.post('/:id/submit', (req, res) =>
   mutate(req, res, (claim, me) => {
+    // Submitting asks a person to approve a specific sum, and they approve what
+    // the claim SAYS. An item with no date gave them nothing to check it
+    // against — was it this period, was it already claimed — while the row wore
+    // a "Ready" badge. Every other route to the ledger already refuses an
+    // incomplete document; this is the same standard at the point a human is
+    // asked to sign off.
+    const incomplete = (claim.transactions ?? [])
+      .map((t) => ({ t, missing: missingOnItem(claim.orgId, t) }))
+      .filter((x) => x.missing.length);
+    if (incomplete.length) {
+      return res.status(422).json({
+        error: 'incomplete_items',
+        count: incomplete.length,
+        items: incomplete.slice(0, 10).map((x) => ({
+          itemId: x.t.displayId || x.t.itemId,
+          supplier: x.t.supplier || 'Unknown supplier',
+          missing: x.missing,
+        })),
+        message:
+          `${incomplete.length} item${incomplete.length === 1 ? '' : 's'} on this claim ${incomplete.length === 1 ? 'is' : 'are'} incomplete — ` +
+          `${incomplete[0].t.supplier || 'one'} needs ${incomplete[0].missing.join(', ')}. ` +
+          'Fill those in before asking somebody to approve the claim.',
+      });
+    }
     const manager = directManagerFor(workspaceId(req), claim.claimFor);
     if (!manager) {
       return res.status(400).json({ error: 'no_manager', claimant: claim.claimFor });

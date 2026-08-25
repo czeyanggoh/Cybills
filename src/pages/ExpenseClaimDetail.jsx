@@ -50,6 +50,7 @@ import { CLAIM_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import DocCardList from '@/components/DocCardList';
 import SearchSelect from '@/components/SearchSelect';
 import { useClaimantNames } from '@/lib/userStore';
+import { missingFields } from '@/lib/readiness';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -725,7 +726,21 @@ export default function ExpenseClaimDetail() {
                         <input type="checkbox" checked={selected.has(t.itemId)} onChange={() => toggleItem(t.itemId)} disabled={locked} className="h-4 w-4 accent-black disabled:opacity-40" />
                         <FlagMenu id={t.itemId} />
                         <ReceiptViewer itemIds={t.itemId} />
-                        <span className="rounded bg-foreground px-2 py-0.5 text-xs text-background">Ready</span>
+                        {/* Derived, not decorative. This badge was the literal
+                            word "Ready" on every row whatever the document
+                            said — so an item with no date sat under a green
+                            light while the approver decided. Same rule the
+                            inbox uses, so the two can't disagree. */}
+                        {missingFields(t).length ? (
+                          <span
+                            title={`Needs: ${missingFields(t).join(', ')}`}
+                            className="rounded border border-amber-600/40 bg-amber-50 px-2 py-0.5 text-xs text-amber-800"
+                          >
+                            Needs: {missingFields(t).join(', ')}
+                          </span>
+                        ) : (
+                          <span className="rounded bg-foreground px-2 py-0.5 text-xs text-background">Ready</span>
+                        )}
                       </div>
                     </td>
                     {shownColumns.map((c) => {
