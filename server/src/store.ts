@@ -27,6 +27,11 @@ export type Bill = {
   projectReason?: string; // why this project/PIC — the rule or the evidence cited
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   taxRateReason?: string; // why that tax code — the "when to use" rule it matched
+  // A PERSON chose to leave the tax rate blank. An empty `taxRate` on its own
+  // says nothing — a reader writes one when it has no code to offer — so this is
+  // what separates "nobody has decided yet" from "somebody decided: none", and
+  // it is the only thing that stops the backfill filling a deliberate blank.
+  taxRateCleared?: boolean;
   description?: string; // plain-language summary of what was purchased
   paymentMethod?: string; // Xero payment account label the cost was paid from
   paid?: boolean; // whether the cost has been paid
@@ -641,6 +646,7 @@ const EDITABLE: (keyof Bill)[] = [
   'projectReason',
   'taxRate',
   'taxRateReason',
+  'taxRateCleared',
   'description',
   'status',
   'createdBy',

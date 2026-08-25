@@ -416,7 +416,8 @@ export default function CostDetail() {
   const SERVER_FIELDS = {
     supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
-    taxRate: 'taxRate', taxRateReason: 'taxRateReason', description: 'description', user: 'owner',
+    taxRate: 'taxRate', taxRateReason: 'taxRateReason', taxRateCleared: 'taxRateCleared',
+    description: 'description', user: 'owner',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
     customer: 'customer', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
     dueDate: 'dueDate',
@@ -773,6 +774,10 @@ export default function CostDetail() {
   // A rate with a % also fills the tax amount from the GST-inclusive total.
   const setTaxRate = (name) => {
     set('taxRate', name);
+    // Leaving it blank on purpose is recorded as a decision — see changeTaxRate
+    // in Costs.jsx. Without it the listing's backfill can't tell this apart from
+    // a reader that simply had no code to offer.
+    set('taxRateCleared', !name);
     const r = rateFor(name);
     const total = num(data.total);
     const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;

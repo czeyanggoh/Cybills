@@ -142,8 +142,11 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
       cardLast4: d.cardLast4,
       supplierGstRegNo: d.supplierGstRegNo,
       taxLabel: d.taxLabel,
-      taxRate: d.taxRate,
-      taxRateReason: d.taxRateReason,
+      // Only when the reader actually picked one, from a rule the org wrote.
+      // Writing an empty string here would look exactly like a person choosing
+      // "no code", and the tax decision below (or the listing's backfill) would
+      // then leave the document blank for good.
+      ...(d.taxRate ? { taxRate: d.taxRate, taxRateReason: d.taxRateReason } : {}),
       project: d.project,
       projectReason: d.projectReason,
       lineItems: d.lineItems,
@@ -155,7 +158,12 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
     // the inbox with its Tax rate cell simply blank.
     const outcome = await decideTaxRate(inputs.taxCtx, d);
     if (outcome) {
-      patch.taxRate = outcome.name;
+      // Only ever a REAL code. An empty string is indistinguishable from a
+      // person choosing "no code", and would freeze the document blank for
+      // good — the whole reason the emailed documents stayed unset. Everything
+      // below still applies: not being able to NAME the code doesn't change
+      // whether the tax on the document may be claimed.
+      if (outcome.name) patch.taxRate = outcome.name;
       // The reader writes its own reason when ITS rule matched; otherwise the
       // decision explains itself, including when the answer is "none" — a blank
       // field with no explanation is indistinguishable from a bug.

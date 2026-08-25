@@ -103,9 +103,12 @@ function backfillOwners(ws: string, org: string, scope: string): void {
 //
 // So it is computed here for the documents that never had the chance. Two
 // guards make that safe:
-//   - Only a document with NO taxRate FIELD AT ALL. Clearing the cell writes an
-//     empty string, which is a decision; never having been asked is the absence
-//     of one. Refilling a deliberate blank would be fighting the reviewer.
+//   - Only a document nobody has decided. An EMPTY tax rate does not mean
+//     somebody chose "none": a reader writes one whenever it has no code to
+//     offer, which is exactly how the emailed documents got here. The person's
+//     decision is recorded explicitly (`taxRateCleared`), and only that is
+//     respected — inferring it from the empty string skipped every document
+//     this was written to repair.
 //   - Never a published document, whose figures are already in the ledger.
 // Skipped entirely unless the book changed, and it costs nothing (not even the
 // relay call for the rates) when there is nothing to fill.
@@ -122,7 +125,7 @@ async function backfillTaxRates(ws: string, org: string, scope: string): Promise
   if (taxFilledAt.get(scope) === bookRevision()) return;
   taxFilledAt.set(scope, bookRevision());
   const undecided = listBills(scope).filter(
-    (b) => b.kind === 'cost' && !('taxRate' in b) && !b.xeroInvoiceId
+    (b) => b.kind === 'cost' && !b.taxRate && !b.taxRateCleared && !b.xeroInvoiceId
   );
   if (!undecided.length) return;
   const ctx = await taxContextFor(ws, org);

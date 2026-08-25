@@ -851,7 +851,11 @@ export default function Costs() {
     const r = Number(taxRates.find((t) => t.name === name)?.rate ?? 0);
     const total = toNum(d.total);
     const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
-    const patch = { taxRate: name, tax: tax ? tax.toFixed(2) : '0.00' };
+    // Choosing the blank option is a decision, and it is recorded as one:
+    // an empty tax rate on its own is also what a reader leaves behind when it
+    // has no code to offer, and the two must not look alike — otherwise the
+    // listing's backfill either overrules this person or never repairs those.
+    const patch = { taxRate: name, tax: tax ? tax.toFixed(2) : '0.00', taxRateCleared: !name };
     if (d.persisted) updateBill(d.id, patch).then(reload).catch(() => {});
     else setDocOverride(d.id, patch);
   };
