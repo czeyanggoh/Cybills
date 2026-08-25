@@ -218,23 +218,46 @@ export function fileAutoClaim(
 export const claimsRouter = Router();
 
 // GET /api/claims — every non-deleted claim in the workspace.
-// Enrich a claim's transactions with the source bill's current description (and
-// supplier) when the stored snapshot lacks one — so items claimed before the
-// description was captured still show it in the UI / PDF / Xero. Non-destructive.
-function withDescriptions(c: Claim): Claim {
+//
+// A claim's items are a SNAPSHOT of the documents taken when they were added,
+// and only the description was ever refreshed — so correcting a receipt left the
+// claim showing the old values for good. Give a document its missing date and
+// the claim row still read "—", and still said "Needs: Date", while the document
+// itself read Ready. Two screens, one document, two answers.
+//
+// So the live document answers for the fields it owns. The money is included:
+// the claim's total is what gets published, and a claim that adds up to
+// something the receipts don't is the one thing worth never showing.
+//
+// Frozen once the claim is APPROVED. Up to that point the claim is a request
+// being assembled and should track its documents; after it, it is a decision
+// somebody made about a specific sum, and that sum must not move underneath
+// them. Non-destructive either way — nothing here is written back.
+function withLiveItems(c: Claim): Claim {
+  if (c.approvalStatus === 'approved') return c;
   return {
     ...c,
     transactions: c.transactions.map((t) => {
-      if (t.description) return t;
       const bill = getBillById(c.orgId, String(t.itemId));
-      return bill?.description ? { ...t, description: bill.description } : t;
+      if (!bill) return t; // a sample/demo row with no document behind it
+      return {
+        ...t,
+        supplier: bill.supplier ?? t.supplier,
+        date: bill.date ?? t.date,
+        category: bill.category ?? t.category,
+        description: bill.description || t.description,
+        project: bill.project ?? t.project,
+        net: String(bill.total != null ? Number(bill.total) - Number(bill.tax || 0) : t.net),
+        tax: String(bill.tax ?? t.tax),
+        total: String(bill.total ?? t.total),
+      };
     }),
   };
 }
 
 claimsRouter.get('/', (req, res) => {
   const org = orgIdFor(req);
-  res.json({ claims: load().filter((c) => c.orgId === org && !c.deleted).map(withDescriptions) });
+  res.json({ claims: load().filter((c) => c.orgId === org && !c.deleted).map(withLiveItems) });
 });
 
 // POST /api/claims — create a claim.
