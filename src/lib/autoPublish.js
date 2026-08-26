@@ -8,12 +8,19 @@ import {
   publishBillToXero,
 } from '@/lib/organisations';
 
-// A published bill's page in Xero. The classic Accounts Payable view resolves
+// A published bill's page in Xero. The classic Accounts Payable route resolves
 // for any bill id and redirects into the new UI, so one shape covers every
 // tenant without having to know its short code.
+//
+// Edit.aspx rather than View.aspx: somebody following this link has the paper
+// in front of them and is going to Xero to DO something about it — approve it,
+// fix a code, add the payment — and View drops them on a read-only page with
+// the edit a click further away. Xero falls back to the read-only view by
+// itself where the bill can no longer be edited (paid, voided), so the worse
+// case of asking for Edit is the page View would have given anyway.
 export function xeroBillUrl(invoiceId) {
   const id = String(invoiceId || '').trim();
-  return id ? `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${encodeURIComponent(id)}` : '';
+  return id ? `https://go.xero.com/AccountsPayable/Edit.aspx?InvoiceID=${encodeURIComponent(id)}` : '';
 }
 
 // Post a freshly-read bill to Xero as Awaiting Approval (Xero's SUBMITTED), so
