@@ -423,6 +423,37 @@ Env (server/.env): `CYWORKSPACE_RELAY_URL` (on the VPS use
 (same value as cyworkspace's `WEBHOOK_API_KEY`). Xero endpoints 503 until the
 key is set, so deploys are safe before the env is configured.
 
+**Xero talks back: a paid bill says so itself.** A published bill's Paid field
+was only ever ticked by hand, so a bill settled in Xero stayed unpaid here until
+somebody noticed. Xero's invoice webhook is the notice — but it says only that
+an invoice CHANGED, never what changed or what it changed to: there is no "paid"
+event and no PAYMENT category at all, and the payload carries just the invoice's
+id. So every event ends in a read-back (`server/src/xeroWebhook.ts`): match
+`resourceId` against a document's `xeroInvoiceId`, ask Xero what that invoice is
+now (`fetchXeroInvoice`), and record `PAID` as paid, `DRAFT`/`SUBMITTED`/
+`AUTHORISED` as not — `Status`, not `AmountDue`, because a PARTLY paid bill is
+not a paid one. `VOIDED`/`DELETED` are left alone; unpicking a voided publish is
+its own decision.
+
+Matching locally comes FIRST. The webhook is configured per Xero **app**, so it
+fires for every invoice in every client cyworkspace has connected — the whole
+client list, sales invoices included — and an event naming an invoice CYBills
+never published must not cost a relay call.
+
+Three of Xero's own rules shape the route, which is why it looks unlike every
+other one here: the signature covers the **raw** body, so it is mounted with
+`express.raw` ahead of `express.json` AND ahead of the session guard (it carries
+its own proof — the `x-xero-signature` HMAC — instead of a session); the reply
+must land inside 5 seconds as 200 or 401, so it goes out BEFORE the read-back,
+which is queued; and the first delivery is an "intent to receive" handshake
+carrying a deliberately wrong signature, which the same 401 answers. Enough
+failed deliveries and Xero disables the webhook at its end.
+
+Delivery URL to paste into My Apps → Webhooks: `https://cybills.cy-bm.sg/api/webhooks/xero`,
+notifying about **Invoices**. Env (server/.env): `XERO_WEBHOOK_KEY`, the key that
+page shows. Unset, nothing can be verified and every delivery is refused — which
+is what an unconfigured deploy should do. Covered by `npm test` in `server/`.
+
 ## Account email via Microsoft Graph (delegated)
 
 Invitations, password resets, and password-changed notices are sent from a
