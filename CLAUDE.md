@@ -371,7 +371,10 @@ explicitly — left to the account's default rate, Xero would put GST on a figur
 that has none. The bill's **Reference** is the claim's own name, date and Claim
 ID ("ST Eng Exp Claim 20-Aug-2026 21324972410"), built from the same pure module
 that prints that number on the claim page, the PDF and the CSV
-(`src/lib/claimReference.js`, loaded server-side by `claimRef.ts`).
+(`src/lib/claimReference.js`, loaded server-side by `claimRef.ts`). It rides in
+**`InvoiceNumber`**, not `Reference`: the box a BILL labels "Reference" in Xero
+is the API's InvoiceNumber, and `Reference` is a sales-invoice field that an
+ACCPAY accepts and silently drops.
 
 Still to do: a user who works in two entities (`extraAccess` on the roster row)
 — today access is per-entity equality, so a bridge user is a separate roster

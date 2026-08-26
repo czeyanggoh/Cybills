@@ -147,8 +147,11 @@ check('…every line is No Tax', r.posted.LineItems.map((l: any) => l.TaxType), 
 check('…with no tax amount on any of them', r.posted.LineItems.map((l: any) => l.TaxAmount), [0, 0, 0]);
 check('…the unit price being the whole figure', r.posted.LineItems.map((l: any) => l.UnitAmount), [24, 12, 6]);
 
-// The Reference identifies WHICH claim. The name alone repeats every month.
-check('…referenced by name, date and Claim ID', /^August claim 20-Aug-2026 \d+$/.test(String(r.posted.Reference)), true);
+// The reference identifies WHICH claim. The name alone repeats every month.
+// It rides in InvoiceNumber: that is the field a BILL shows as "Reference" in
+// Xero, and the `Reference` field is silently ignored on one.
+check('…referenced by name, date and Claim ID', /^August claim 20-Aug-2026 \d+$/.test(String(r.posted.InvoiceNumber)), true);
+check('…in the field a bill actually shows', r.posted.Reference ?? null, null);
 check('the claim records the parent as where it went', r.body.claim.xeroTenantName, 'Red Alpha (SG)');
 
 // 3) Publishing the same claim again is still refused.

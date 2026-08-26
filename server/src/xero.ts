@@ -1141,10 +1141,16 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     LineAmountTypes: 'Exclusive',
     LineItems: postable,
     Status: status,
-    // How the practice has always identified these bills: the claim's own name,
-    // its date and its Claim ID — "ST Eng Exp Claim 20-Aug-2026 21324972410".
-    // The name alone repeats every month and identifies nothing.
-    Reference: await referenceFor(claim),
+    // The box a bill shows as "Reference" in Xero is the API's InvoiceNumber.
+    // `Reference` is a SALES-invoice field: on an ACCPAY Xero accepts it, drops
+    // it, and the bill arrives with an empty reference — which is exactly what
+    // happened. Publishing a document has always used InvoiceNumber (see
+    // publish-bill above); a claim now does the same.
+    //
+    // What goes in it: the claim's own name, its date and its Claim ID —
+    // "ST Eng Exp Claim 20-Aug-2026 21324972410", the way the practice has
+    // always identified these. The name alone repeats every month.
+    InvoiceNumber: await referenceFor(claim),
   };
   if (claim.currency) payload.CurrencyCode = claim.currency;
 
