@@ -69,7 +69,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         type: 'string',
         description: 'Invoice / receipt number as printed; empty string if none shown',
       },
-      currency: { type: 'string', description: '3-letter ISO currency code, e.g. SGD' },
+      currency: {
+        type: 'string',
+        description:
+          'The 3-letter ISO code the amounts are in, as the document gives it: AUD, USD, MYR, GBP. Do NOT default to SGD — a Singapore business is billed in every currency, and a foreign amount recorded as local money is wrong in the ledger by the whole exchange rate. Where only a SYMBOL is printed, the supplier decides it: "$" beside an ABN or 10% GST is AUD, beside a UEN or 9%/8%/7% GST is SGD, "RM" is MYR, "£" GBP, "€" EUR, and a US address with "$" is USD. Answer SGD only when nothing on the document — code, symbol, tax rate, registration number or address — says otherwise.',
+      },
       total: { type: 'number', description: 'Grand total amount' },
       tax: { type: 'number', description: 'Tax / GST amount; 0 if none shown' },
       category: {
@@ -577,7 +581,11 @@ function buildLinesSchema(categories: string[], projectNames: string[]) {
         description:
           'The single GST/tax figure printed for the whole document (e.g. "GST 9%  94.05"), when it states tax once at the foot rather than per row. 0 when the document shows no tax, or breaks tax down on every row instead.',
       },
-      currency: { type: 'string', description: '3-letter ISO currency code, e.g. SGD' },
+      currency: {
+        type: 'string',
+        description:
+          'The 3-letter ISO code these amounts are in, as the document gives it (AUD, USD, MYR…). Never default to SGD; where only a symbol is printed, read it from the supplier — an ABN or 10% GST means AUD, a UEN or 9% GST means SGD.',
+      },
       lines: {
         type: 'array',
         description:
