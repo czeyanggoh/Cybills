@@ -138,6 +138,10 @@ check('…as three lines', r.posted.LineItems.length, 3);
 check('…each on the account its category maps to', r.posted.LineItems.map((l: any) => l.AccountCode), ['493', '420', '449']);
 check('…for the money the claim is worth', r.posted.LineItems.reduce((t: number, l: any) => t + l.UnitAmount + l.TaxAmount, 0), 42);
 check('…payable to the claimant', r.posted.Contact.Name, 'Wei Ming Tan');
+// Xero shows this as a "Go to CYBills" button on the bill: whoever is reviewing
+// the ledger opens the claim it came from — its items, its approvals and the
+// receipts behind them — instead of hunting for it.
+check('…linking back to the claim it came from', /\/expense-claims\/claim-1$/.test(String(r.posted.Url)), true);
 
 // What the practice has always booked by hand, and what the bill has to match:
 // No Tax, at the full amount. A bridge entity has no GST registration, so there

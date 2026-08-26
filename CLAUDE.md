@@ -310,6 +310,14 @@ already sitting in somebody's spreadsheet. Without a signed link the CSV's Image
 column is blank and a claim PDF's Item ID points at the document page instead.
 Covered by `npm test` in `server/`.
 
+**A published bill links back.** Xero renders an invoice's `Url` as a
+**"Go to CYBills"** button — the way a Dext-published bill carries "Go to Dext".
+A document's bill points at `/costs/<ItemID>`, a claim's at
+`/expense-claims/<id>`, so somebody reviewing the ledger opens the paperwork it
+came from instead of hunting for it. Set in `publish-bill` and `publish-claim`
+(`server/src/xero.ts`), from `appOrigin(req)` so it names the host the user is
+actually on.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to

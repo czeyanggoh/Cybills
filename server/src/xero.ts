@@ -7,7 +7,7 @@ import { referenceFor, dateFor } from './claimRef.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
-import { memberForSession } from './users.js';
+import { appOrigin, memberForSession } from './users.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -878,6 +878,9 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     Status: status,
   };
   if (bill.invoiceNumber) payload.InvoiceNumber = bill.invoiceNumber;
+  // "Go to CYBills" on the bill in Xero — straight back to the document this
+  // was published from, and the original paper attached to it.
+  payload.Url = `${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}`;
   if (bill.currency) payload.CurrencyCode = bill.currency;
 
   // PUT = create-only (POST would upsert); summarizeErrors=false makes Xero
@@ -1165,6 +1168,11 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     // "ST Eng Exp Claim 20-Aug-2026 21324972410", the way the practice has
     // always identified these. The name alone repeats every month.
     InvoiceNumber: await referenceFor(claim),
+    // Xero renders this as a "Go to CYBills" button on the bill — the way Dext's
+    // bills carry "Go to Dext". Somebody reviewing the ledger can open the claim
+    // this came from, with its items, its approvals and the receipts behind
+    // them, instead of hunting for it.
+    Url: `${appOrigin(req)}/expense-claims/${encodeURIComponent(claim.id)}`,
   };
   if (claim.currency) payload.CurrencyCode = claim.currency;
 
