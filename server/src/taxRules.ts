@@ -15,7 +15,12 @@ import { accountsForOrg, taxRatesForOrg } from './xero.js';
 // to hand and a background read does not.
 
 export type TaxOutcome = { name: string; reason: string; claimsTax: boolean };
-type TaxRules = { taxRateOutcome: (args: Record<string, unknown>) => TaxOutcome };
+type TaxRules = {
+  taxRateOutcome: (args: Record<string, unknown>) => TaxOutcome;
+  // A code that carries no tax, so a document coded to it records 0 tax. Same
+  // module, same reason: the rule about what a tax code IS must have one copy.
+  zeroTaxRate?: (name: unknown, rates?: unknown) => boolean;
+};
 
 let cache: TaxRules | null = null;
 let tried = false;
@@ -133,4 +138,13 @@ export async function decideTaxRate(
     console.error('[taxRules] decision failed', e);
     return null;
   }
+}
+
+// Whether a tax code carries no tax at all ("No Tax", Zero Rated, Exempt …), in
+// which case the document's tax amount must be 0 whoever chose the code. Reads
+// the same pure module the browser does. False when the module can't be loaded:
+// the failure mode stays "no answer", never a wrong one.
+export async function isZeroTaxRate(name: unknown, rates?: unknown): Promise<boolean> {
+  const mod = await loadTaxRules();
+  return typeof mod?.zeroTaxRate === 'function' ? Boolean(mod.zeroTaxRate(name, rates)) : false;
 }

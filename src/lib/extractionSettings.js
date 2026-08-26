@@ -119,4 +119,5 @@ export {
   resolveTaxRate,
   taxRateOutcome,
   noTaxRateName,
+  zeroTaxRate,
 } from '@/lib/taxRateRules';

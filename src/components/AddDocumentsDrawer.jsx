@@ -27,7 +27,7 @@ import {
   supplierRulePatch,
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
-import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome } from '@/lib/extractionSettings';
+import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome, zeroTaxRate } from '@/lib/extractionSettings';
 import { useUsers, useOwnerNames, useGeneralOwnerName, ownsHere } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
@@ -410,6 +410,12 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // cost. Either this business isn't registered, or the supplier's tax
       // isn't Singapore GST (see claimableSgGst).
       if (!settings.extractTax || !gstRegistered || !claimsTax) p.tax = 0;
+      // And whoever chose the code, a code that carries no tax means no tax
+      // recorded. The decision above only runs when the document arrived
+      // WITHOUT a rate — so a reader that named "No Tax" itself skipped every
+      // one of those conditions and kept the amount it had read, which is how a
+      // document came to show No Tax and 65.25 of GST at the same time.
+      if (zeroTaxRate(p.taxRate ?? cur?.taxRate, visibleTaxRates)) p.tax = 0;
       p.paid = defaultPaidFor(settings, cur?.documentType);
       // Due date, in order of what the evidence supports:
       //   1. the date printed on the document (or what its stated terms resolve

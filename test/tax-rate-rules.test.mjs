@@ -9,6 +9,7 @@ import {
   noTaxRateName,
   isSingaporeGstRegNo,
   claimableSgGst,
+  zeroTaxRate,
 } from '../src/lib/taxRateRules.js';
 
 let failures = 0;
@@ -151,6 +152,38 @@ check('8% lands on 2023 (name-only helper)', inferTaxRateName(108, 8, SG, { curr
 
 // 16) The No Tax lookup every screen shares.
 check('noTaxRateName', [noTaxRateName(SG), noTaxRateName([]), noTaxRateName(hidden.filter((t) => t.code !== 'NONE'))], ['No Tax', '', '']);
+
+
+// --- No Tax means no tax -----------------------------------------------------
+// The invariant, not a preference: "No Tax" with 65.25 of GST beside it is not
+// a document anybody can act on. The total never moves — only the split does.
+{
+  const RATES = [
+    { name: 'No Tax', code: 'NONE', rate: 0 },
+    { name: 'Standard-Rated Purchases', code: 'INPUTY24', rate: 9 },
+    { name: 'Zero Rated Purchases', code: 'ZERORATEDINPUT', rate: 0 },
+  ];
+  check('the org\'s own zero rate carries no tax', zeroTaxRate('No Tax', RATES), true);
+  check('a zero-rated code carries none either', zeroTaxRate('Zero Rated Purchases', RATES), true);
+  check('a standard rate does carry tax', zeroTaxRate('Standard-Rated Purchases', RATES), false);
+
+  // Undecided is not a decision. A blank tax rate is what a reader leaves when
+  // it has no code to offer, and zeroing the amount there would destroy a
+  // figure nobody has ruled on.
+  check('a blank rate decides nothing', zeroTaxRate('', RATES), false);
+  check('...nor does a missing one', zeroTaxRate(null, RATES), false);
+
+  // Server-side there is no Xero list to consult, so the names Xero ships for
+  // zero-tax codes have to answer on their own.
+  check('No Tax is recognised without a list', zeroTaxRate('No Tax'), true);
+  check('Tax Exempt is recognised without a list', zeroTaxRate('Tax Exempt'), true);
+  check('GST Free is recognised without a list', zeroTaxRate('gst free'), true);
+  check('a standard rate is not, without a list', zeroTaxRate('Standard-Rated Purchases'), false);
+
+  // The list wins over the name where both are to hand: an org that has renamed
+  // its 9% code "No Tax" would otherwise have its GST silently zeroed.
+  check('the org\'s own list beats the name', zeroTaxRate('No Tax', [{ name: 'No Tax', code: 'INPUTY24', rate: 9 }]), false);
+}
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

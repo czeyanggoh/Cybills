@@ -26,7 +26,7 @@ import { workspaceId, WORKSPACE_ID } from './workspace.js';
 import { canAccessOrg, emailForPerson, memberForSession, orgScope, ownerForOrg } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
-import { decideTaxRate, taxContextFor } from './taxRules.js';
+import { decideTaxRate, isZeroTaxRate, taxContextFor } from './taxRules.js';
 import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
@@ -207,6 +207,33 @@ function applySupplierRules(ws: string, org: string, scope: string): void {
   }
 }
 
+// "No Tax" with a tax amount beside it is not a document anybody can act on, so
+// the pairing is repaired wherever it already exists. A code carrying no tax and
+// an amount of GST contradict each other: either the tax is claimable input tax,
+// in which case the code says which, or it is not, in which case it belongs
+// inside the cost. The TOTAL is untouched — only the split moves — which is what
+// makes this a repair rather than a revision of somebody's figures.
+//
+// It happened because the capture-time decision only ran for a document that
+// arrived WITHOUT a rate: a reader that answered "No Tax" itself kept whatever
+// tax it had read. That hole is closed at the source too (AddDocumentsDrawer,
+// and the write path below); this is for the documents already carrying it.
+//
+// A PUBLISHED document is left alone: its figures are in the ledger, and the
+// two disagreeing is worse than one of them being odd.
+const zeroTaxFixedAt = new Map<string, number>();
+async function repairZeroTaxAmounts(scope: string): Promise<void> {
+  if (zeroTaxFixedAt.get(scope) === bookRevision()) return;
+  zeroTaxFixedAt.set(scope, bookRevision());
+  const wrong = listBills(scope).filter(
+    (b) => b.kind !== 'sales' && !b.xeroInvoiceId && b.taxRate && parseAmount(b.tax) > 0
+  );
+  for (const b of wrong) {
+    if (!(await isZeroTaxRate(b.taxRate))) continue;
+    updateBill(scope, b.id, { tax: 0 });
+  }
+}
+
 billsRouter.get('/bills', (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
@@ -217,6 +244,9 @@ billsRouter.get('/bills', (req, res) => {
   // list must not wait on a network call. The next fetch shows the result.
   void backfillTaxRates(workspaceId(req), orgScope(req), orgId).catch((err) =>
     console.error('[bills] tax-rate backfill failed', err)
+  );
+  void repairZeroTaxAmounts(orgId).catch((err) =>
+    console.error('[bills] zero-tax repair failed', err)
   );
   // File any Auto Expense claim whose period has ended. Rides on the fetch every
   // list already makes rather than a background worker, so a period that ended
@@ -380,7 +410,7 @@ function ownerEmail(req: Request, value: unknown, uploader = ''): string {
 
 // PATCH /api/costs/bills/:id — update editable fields (e.g. category) or the
 // workflow status ('ready' moves it out of the inbox).
-billsRouter.patch('/bills/:id', (req, res) => {
+billsRouter.patch('/bills/:id', async (req, res) => {
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
   for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate']) {
@@ -428,6 +458,12 @@ billsRouter.patch('/bills/:id', (req, res) => {
 
   const explicitStatus = typeof b.status === 'string';
   const orgId = orgIdFor(req);
+  // A code that carries no tax means no tax recorded — the same invariant the
+  // form applies when somebody picks the code, applied again here so no other
+  // caller can store the pair. Reads the rate being SET, else the one the
+  // document already has, since either can be the half that makes it wrong.
+  const effectiveRate = 'taxRate' in patch ? String(patch.taxRate ?? '') : String(getBillById(orgId, req.params.id)?.taxRate ?? '');
+  if (effectiveRate && (await isZeroTaxRate(effectiveRate))) patch.tax = 0;
   let updated = updateBill(orgId, req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'not_found' });
   // A field edit (no explicit status) lets the system re-derive ready vs inbox

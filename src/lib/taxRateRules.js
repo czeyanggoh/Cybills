@@ -94,6 +94,31 @@ const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
 const TOLERANCE = 0.6;
 const pctOf = (n) => `${Number(n).toFixed(1)}%`;
 
+// A tax code that carries NO tax — so a document coded to it must record a tax
+// amount of 0, whoever chose the code.
+//
+// This is an invariant, not a preference: "No Tax" with 65.25 of tax beside it
+// is not a document anybody can act on. Either the tax is claimable input tax,
+// in which case the code says which, or it isn't, in which case it stays inside
+// the cost and the tax field is 0. The TOTAL never changes either way — the
+// money is the same, only the split moves.
+//
+// Decided from the org's own rates when they're to hand, since that is the
+// authority on what a rate is worth. Where they aren't — a server-side write
+// that has no Xero list — the names Xero itself ships for zero-tax codes are
+// recognised, so the check still holds at the point the document is stored.
+const ZERO_TAX_NAMES = /^(no tax|tax exempt(ed)?|exempt( \(?(input|output)s?\)?)?|zero[- ]?rated|no gst|gst free|out of scope)$/i;
+
+export function zeroTaxRate(name, rates) {
+  const wanted = String(name || '').trim();
+  if (!wanted) return false; // undecided is not a decision — leave the amount alone
+  const row = (Array.isArray(rates) ? rates : []).find(
+    (r) => String(r?.name || '').trim().toLowerCase() === wanted.toLowerCase()
+  );
+  if (row) return Number(row.rate) === 0;
+  return ZERO_TAX_NAMES.test(wanted);
+}
+
 // The org's zero-rated "No Tax" code, by name — '' when the list doesn't have
 // one (it's hidden, or Xero isn't connected yet). The single answer for a
 // company that isn't GST-registered, so every screen agrees on it.
