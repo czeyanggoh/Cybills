@@ -3,7 +3,7 @@ import { env, xeroEnabled } from './env.js';
 import { dataScopeForOrg, getOrganisation, isStandalone, publishTargetFor } from './organisations.js';
 import { workspaceId } from './workspace.js';
 import { readSetting } from './settings.js';
-import { referenceFor } from './claimRef.js';
+import { referenceFor, dateFor } from './claimRef.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
@@ -1130,8 +1130,12 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const iso = (s: string) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? String(s) : '');
-  const date = iso(claim.claimDate) || iso(claim.endDate) || today;
+  // The claim's own date, else the period it covers, else the latest date among
+  // its items — every expense on it happened on or before that. Only a claim
+  // with nothing dated at all falls back to today, which is what EVERY claim
+  // used to do: August's expenses posted into whatever month somebody happened
+  // to press the button in.
+  const date = (await dateFor(claim)) || today;
 
   const payload: Record<string, unknown> = {
     Type: 'ACCPAY',

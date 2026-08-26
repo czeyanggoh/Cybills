@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { PDFDocument } from 'pdf-lib';
 import { pdfDate, claimRef, claimExportName, cleanHistoryText } from '@/lib/exportFormat';
+import { claimDateFor } from '@/lib/claimReference';
 import { approvalHistory } from '@/lib/approvalHistory';
 import { costPath, fetchShareLinks } from '@/lib/bills';
 import { getExportSettings } from '@/lib/exportSettings';
@@ -105,7 +106,7 @@ export function buildClaimDoc(claim, links = {}) {
   doc.text(`Claim ID: #${claimRef(claim)}`, M, y);
   doc.text(`(incl. tax: ${n2(claim.tax)})`, RIGHT, y, { align: 'right' });
   y += 14;
-  doc.text(`Claim date: ${pdfDate(claim.claimDate)}`, M, y);
+  doc.text(`Claim date: ${pdfDate(claimDateFor(claim))}`, M, y);
   doc.setTextColor(20);
   y += 30;
 

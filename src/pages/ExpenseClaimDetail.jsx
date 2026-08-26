@@ -44,6 +44,7 @@ import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId, publishClaimToXero } from '@/lib/organisations';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
+import { claimDateFor } from '@/lib/claimReference';
 import { claimExportName, claimRef } from '@/lib/exportFormat';
 import { useCategoryDisplayMode, useCategorySortMode, sortCategories, formatCategory } from '@/lib/categoryDisplay';
 import { CLAIM_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
@@ -574,7 +575,10 @@ export default function ExpenseClaimDetail() {
               <dl className="mt-3 space-y-2 text-sm sm:space-y-1">
                 {[
                   ['Claim name', claim.name],
-                  ['Claim date', formatClaimDate(claim.claimDate)],
+                  // Derived, not stored: a claim with no date of its own reads
+                  // as the latest date among its items, which is the date the
+                  // bill will carry when it publishes.
+                  ['Claim date', formatClaimDate(claimDateFor(claim))],
                   ['Expense total', `${claim.currency} ${claim.total} ( Incl. Tax: ${claim.tax} )`],
                 ].map(([label, value]) => (
                   <div key={label} className="sm:flex sm:items-baseline sm:gap-2">

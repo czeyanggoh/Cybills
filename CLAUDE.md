@@ -374,7 +374,11 @@ that prints that number on the claim page, the PDF and the CSV
 (`src/lib/claimReference.js`, loaded server-side by `claimRef.ts`). It rides in
 **`InvoiceNumber`**, not `Reference`: the box a BILL labels "Reference" in Xero
 is the API's InvoiceNumber, and `Reference` is a sales-invoice field that an
-ACCPAY accepts and silently drops.
+ACCPAY accepts and silently drops. Its **Date** is the claim's own, else the
+period it covers, else the latest date among its items — every expense on it
+happened on or before that. Only a claim with nothing dated at all falls back to
+today, which is what every claim used to do: August's expenses landing in
+whichever month somebody pressed the button.
 
 Still to do: a user who works in two entities (`extraAccess` on the roster row)
 — today access is per-entity equality, so a bridge user is a separate roster

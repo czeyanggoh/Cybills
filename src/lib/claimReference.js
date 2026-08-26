@@ -46,11 +46,37 @@ export function claimRef(claim) {
   return String(21000000000 + (h % 1000000000));
 }
 
+const pad = (n) => String(n).padStart(2, '0');
+const isoish = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : '');
+
+// The latest date among a claim's own items, as YYYY-MM-DD.
+export function latestItemDate(claim) {
+  let best = '';
+  for (const t of claim?.transactions || []) {
+    const p = dateParts(t?.date);
+    if (!p) continue;
+    const iso = `${p.y}-${pad(p.mo)}-${pad(p.d)}`;
+    if (!best || iso > best) best = iso;
+  }
+  return best;
+}
+
+// The date a claim IS, whatever has been filled in.
+//
+// Its own date when it has one, then the period it covers, then the latest date
+// among its items — every expense on it happened on or before that, so a bill
+// dated there can never land before the money was spent. '' only when the claim
+// has nothing dated at all; the caller falls back to today, which is what used
+// to happen for every claim and quietly put August's expenses in September.
+export function claimDateFor(claim) {
+  return isoish(claim?.claimDate) || isoish(claim?.endDate) || latestItemDate(claim);
+}
+
 // The Reference a published bill carries. Name first because that is the part a
 // person recognises and the part they choose ("ST Eng Exp Claim"); then the
 // date and the id, so two months of claims are never the same reference.
 export function claimReference(claim) {
   const name = String(claim?.name || '').trim() || 'Expense claim';
-  const date = csvDate(claim?.claimDate || claim?.endDate || '');
+  const date = csvDate(claimDateFor(claim));
   return [name, date, claimRef(claim)].filter(Boolean).join(' ');
 }

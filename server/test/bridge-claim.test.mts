@@ -158,7 +158,26 @@ check('the claim records the parent as where it went', r.body.claim.xeroTenantNa
 r = await publish('org-ste', 'claim-1');
 check('re-publishing is refused', [r.status, r.body.error], [409, 'already_posted']);
 
-// 4) A bridge with nowhere to post says so, rather than half-posting.
+// 4) A claim with no date of its own is dated by its own items, not by the day
+//    somebody happened to press the button — that put August's expenses in
+//    whatever month the claim was published in.
+const dateless = {
+  ...claim('claim-3'),
+  claimDate: '',
+  endDate: '',
+};
+{
+  const items = loadCollection<any>('claims');
+  items.push(dateless);
+  saveCollection('claims', items);
+}
+r = await publish('org-ste', 'claim-3');
+check('a dateless claim publishes', r.status, 200);
+check('…dated by its latest item', r.posted.Date, '2026-08-03');
+check('…and due the same day', r.posted.DueDate, '2026-08-03');
+check('…its reference carrying that date', /03-Aug-2026/.test(String(r.posted.InvoiceNumber)), true);
+
+// 5) A bridge with nowhere to post says so, rather than half-posting.
 r = await publish('org-orphan', 'claim-2');
 check('a bridge with no parent is refused', [r.status, r.body.error], [409, 'no_publish_target']);
 check('…nothing reached Xero', r.posted, null);
