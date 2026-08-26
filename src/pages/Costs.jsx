@@ -700,6 +700,10 @@ export default function Costs() {
         );
       },
     },
+    paidDate: {
+      cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground',
+      cell: (d) => (d.xeroPaidDate ? formatDate(d.xeroPaidDate) : '—'),
+    },
     paymentRef: { sortable: false, cellClass: 'max-w-[14rem] truncate text-muted-foreground', cell: (d) => d.xeroPaymentRef || '—' },
     paymentMethod: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.paymentMethod || '—' },
     customer: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.customer || '—' },
@@ -836,8 +840,8 @@ export default function Costs() {
   if (sort.key) {
     const dir = sort.dir === 'asc' ? 1 : -1;
     // Columns whose key isn't the field name they sort on.
-    const FIELD = { ref: 'invoiceNumber', itemId: 'id', uploadDate: 'createdAt', publishDate: 'xeroPostedAt' };
-    const DATES = new Set(['date', 'dueDate', 'uploadDate', 'publishDate']);
+    const FIELD = { ref: 'invoiceNumber', itemId: 'id', uploadDate: 'createdAt', publishDate: 'xeroPostedAt', paidDate: 'xeroPaidDate', paymentRef: 'xeroPaymentRef', xeroPaid: 'xeroStatus' };
+    const DATES = new Set(['date', 'dueDate', 'uploadDate', 'publishDate', 'paidDate']);
     const field = FIELD[sort.key] || sort.key;
     rows = [...rows].sort((a, b) => {
       if (sort.key === 'total' || sort.key === 'tax') return (toNum(a[field]) - toNum(b[field])) * dir;

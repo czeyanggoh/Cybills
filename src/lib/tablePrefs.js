@@ -40,6 +40,9 @@ export const COST_COLUMNS = [
   // knew to switch a column on. `paid` below stays opt-in — it is the capture
   // flag, not the ledger (src/lib/xeroPaidStatus.js).
   { key: 'xeroPaid', label: 'Paid status', primary: true },
+  // The date beside the status, on by default with it: "Paid" answers whether,
+  // and the next question is always when — a tooltip made that a hover away.
+  { key: 'paidDate', label: 'Paid date', primary: true },
   { key: 'paymentRef', label: 'Payment reference' },
   { key: 'paid', label: 'Paid' },
   { key: 'paymentMethod', label: 'Payment method' },

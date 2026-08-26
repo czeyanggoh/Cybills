@@ -509,6 +509,18 @@ which is queued; and the first delivery is an "intent to receive" handshake
 carrying a deliberately wrong signature, which the same 401 answers. Enough
 failed deliveries and Xero disables the webhook at its end.
 
+**A claim is paperwork over the same kind of bill**, so the three fields sit on
+a claim too (`claims.ts`: `claimsByXeroInvoiceId` / `markClaimXeroPayment`), and
+one webhook event asks about both — a Xero invoice can have a cost document
+behind it or an expense claim, and the person waiting on the answer differs. An
+approval is the company saying it owes the money; this is the bank saying it
+left, which is the claimant's actual question. It shows as the **Reimbursement**
+column on Expense claims and as the claim page's own chip, which reads
+"Reimbursed 25 Aug 2026" once Xero says so rather than staying on "Published to
+Xero" forever. A claim carries no tenant of its own — a bridge entity's claims
+post into the PARENT's Xero — so the sweep asks `publishTargetFor`, never the
+claim.
+
 **The webhook can only hear the future**, so there is a backfill for the past:
 Business settings → Connections → **Payment status** → "Check now"
 (`POST /api/xero/organisations/:id/sync-payments`). It reads every published

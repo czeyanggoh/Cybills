@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { useNavigate } from 'react-router-dom';
 import { Plus, ChevronDown, Search, Filter, Settings2, X, Send, CalendarClock } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -341,6 +342,10 @@ export default function ExpenseClaims() {
                 />
               </th>
               <th className="px-3 py-2.5 font-medium">Approval status</th>
+              {/* Approval is the company saying it owes the money; this is the
+                  bank saying it left. A claimant's question is the second one,
+                  and until now nothing here answered it. */}
+              <th className="px-3 py-2.5 font-medium">Reimbursement</th>
               <th className="px-3 py-2.5 font-medium">Claim for</th>
               <th className="px-3 py-2.5 font-medium">Type</th>
               <th className="px-3 py-2.5 font-medium">Name</th>
@@ -370,6 +375,28 @@ export default function ExpenseClaims() {
                 </td>
                 <td className="px-3 py-3">
                   <ClaimStatusBadge status={c.approvalStatus} label={statusOf(c)} />
+                </td>
+                <td className="whitespace-nowrap px-3 py-3">
+                  {(() => {
+                    const paid = xeroPaidStatus(c);
+                    // Nothing heard is a dash, never "unpaid": a claim nobody
+                    // has published has no answer in Xero to report yet.
+                    if (!paid) return <span className="text-muted-foreground">—</span>;
+                    return (
+                      <span
+                        className={
+                          paid.tone === 'paid'
+                            ? 'font-medium text-green-700'
+                            : paid.tone === 'void'
+                              ? 'text-muted-foreground line-through'
+                              : 'text-muted-foreground'
+                        }
+                      >
+                        {paid.label}
+                        {c.xeroPaidDate ? ` · ${formatClaimDate(c.xeroPaidDate)}` : ''}
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{c.claimFor}</td>
                 <td className="px-3 py-3 text-muted-foreground">{c.type}</td>

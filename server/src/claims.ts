@@ -75,6 +75,13 @@ type Claim = {
   xeroInvoiceId?: string;
   xeroTenantName?: string;
   xeroPostedAt?: string;
+  // What Xero says has happened to that bill since — the same three fields a
+  // cost document keeps, read back on the invoice webhook (xeroWebhook.ts) and
+  // never edited here. On a claim they answer the question its claimant
+  // actually has: not "was this approved" but "have I been paid".
+  xeroStatus?: string; // PAID | AUTHORISED | VOIDED | …
+  xeroPaidDate?: string; // ISO YYYY-MM-DD, only ever set on PAID
+  xeroPaymentRef?: string; // the payment's own reference in Xero
 };
 
 // Exported so the Xero publish endpoint can load/persist a claim without
@@ -89,6 +96,43 @@ export function saveClaimXero(org: string, id: string, patch: Partial<Pick<Claim
   Object.assign(claim, patch);
   saveCollection(COLLECTION, items);
   return claim;
+}
+
+// Every claim published as this Xero invoice, across every entity. The mirror
+// of billsByXeroInvoiceId: a webhook event names an invoice, and the thing it
+// names may be a cost document OR a claim — one bill in Xero, two kinds of
+// paperwork behind it here.
+export function claimsByXeroInvoiceId(invoiceId: string): Claim[] {
+  const want = String(invoiceId ?? '').trim().toLowerCase();
+  if (!want) return [];
+  return load().filter((c) => !c.deleted && String(c.xeroInvoiceId ?? '').toLowerCase() === want);
+}
+
+// Record what Xero last said about the bill a claim was posted as. Writes only
+// when something differs, for the same reason the bills version does: a burst
+// of events about one invoice must not rewrite the store each time.
+export function markClaimXeroPayment(
+  id: string,
+  info: { xeroStatus: string; xeroPaidDate: string; xeroPaymentRef: string }
+): boolean {
+  const items = load();
+  const claim = items.find((c) => c.id === id && !c.deleted);
+  if (!claim) return false;
+  const same =
+    (claim.xeroStatus ?? '') === info.xeroStatus &&
+    (claim.xeroPaidDate ?? '') === info.xeroPaidDate &&
+    (claim.xeroPaymentRef ?? '') === info.xeroPaymentRef;
+  if (same) return false;
+  claim.xeroStatus = info.xeroStatus;
+  claim.xeroPaidDate = info.xeroPaidDate;
+  claim.xeroPaymentRef = info.xeroPaymentRef;
+  save(items);
+  return true;
+}
+
+// Every published claim in one entity's book, for the payment backfill.
+export function publishedClaims(org: string): Claim[] {
+  return load().filter((c) => !c.deleted && c.orgId === org && c.xeroInvoiceId);
 }
 
 const COLLECTION = 'claims';

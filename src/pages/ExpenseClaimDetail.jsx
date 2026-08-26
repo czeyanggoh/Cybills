@@ -54,6 +54,7 @@ import SearchSelect from '@/components/SearchSelect';
 import { useClaimantNames } from '@/lib/userStore';
 import { missingFields } from '@/lib/readiness';
 import { cn } from '@/lib/utils';
+import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import ComboSelect from '@/components/ComboSelect';
 
 // The GL/account code CYHR should book the payable against — the leading number
@@ -332,12 +333,31 @@ export default function ExpenseClaimDetail() {
   // company owes it, so the server refuses one outright. Rather than hide the
   // button until then (which reads as the feature being missing), it is shown
   // disabled and says what it is waiting for.
+  // Once it is in Xero, "Published" stops being the interesting fact. What the
+  // claimant wants to know is whether the money has left — so the chip carries
+  // Xero's own answer as soon as there is one, and falls back to "Published to
+  // Xero" while the ledger has said nothing yet.
+  const claimPaid = xeroPaidStatus(claim);
   const publishBtn = claim.xeroInvoiceId ? (
     <span
-      className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm font-medium text-foreground"
-      title={`Xero bill ${claim.xeroInvoiceId}`}
+      className={cn(
+        'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm font-medium',
+        claimPaid?.tone === 'paid'
+          ? 'border-green-600/40 bg-green-600/10 text-green-700'
+          : 'border-foreground/40 text-foreground'
+      )}
+      title={
+        claimPaid?.tone === 'paid'
+          ? `Paid in Xero${claim.xeroPaidDate ? ` on ${formatClaimDate(claim.xeroPaidDate)}` : ''}${claim.xeroPaymentRef ? ` · ${claim.xeroPaymentRef}` : ''}`
+          : `Xero bill ${claim.xeroInvoiceId}`
+      }
     >
-      <CheckCircle2 className="h-4 w-4" /> Published to Xero
+      <CheckCircle2 className="h-4 w-4" />
+      {claimPaid?.tone === 'paid'
+        ? `Reimbursed${claim.xeroPaidDate ? ` ${formatClaimDate(claim.xeroPaidDate)}` : ''}`
+        : claimPaid && claimPaid.tone !== 'awaiting'
+          ? claimPaid.label
+          : 'Published to Xero'}
     </span>
   ) : (
     <TopButton

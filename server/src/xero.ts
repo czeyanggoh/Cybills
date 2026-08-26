@@ -6,7 +6,7 @@ import { readSetting } from './settings.js';
 import { referenceFor, dateFor } from './claimRef.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, listBills, markBillPosted, markBillXeroPayment, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
-import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
+import { claimForBill, getClaimForXero, markClaimXeroPayment, publishedClaims, saveClaimXero } from './claims.js';
 import { appOrigin, memberForSession } from './users.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
@@ -1090,7 +1090,12 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
   const organisation = getOrganisation(workspaceId(req), req.params.id);
   if (!organisation) return res.status(404).json({ error: 'organisation_not_found' });
 
-  const published = listBills(dataScopeForOrg(organisation.id)).filter((b) => b.xeroInvoiceId);
+  const scope = dataScopeForOrg(organisation.id);
+  const published = listBills(scope).filter((b) => b.xeroInvoiceId);
+  // A published CLAIM is a bill in Xero too — one bill carrying many people's
+  // receipts — and its claimant is waiting on the same answer. Same read, same
+  // three fields; only the paperwork behind the invoice differs.
+  const claims = publishedClaims(scope);
   // A bound on one run, not a limit on the book: whatever is left is reported
   // and picked up by running it again. A silent cap would read as "all done".
   const MAX_PER_RUN = 1000;
@@ -1106,6 +1111,10 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
     rows.push(bill);
     byTenant.set(tenantId, rows);
   }
+  // Claims don't record which tenant they went into, and they can't: a bridge
+  // entity's claims post into its PARENT's Xero, which is what publishTargetFor
+  // resolves. That target is this entity's, whichever it is.
+  const claimTenant = publishTargetFor(workspaceId(req), organisation)?.tenantId || organisation.tenantId;
 
   let updated = 0;
   let paid = 0;
@@ -1142,8 +1151,25 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
     }
   }
 
+  // The claims, in one more batch against the tenant they post into.
+  if (claims.length && claimTenant) {
+    const invoices = await fetchXeroInvoices(claimTenant, claims.map((c) => String(c.xeroInvoiceId)));
+    for (const claim of claims) {
+      const invoice = invoices.get(String(claim.xeroInvoiceId).toLowerCase());
+      if (!invoice) {
+        missing += 1;
+        continue;
+      }
+      const payment = paymentFromInvoice(invoice);
+      if (!payment.xeroStatus) continue;
+      if (payment.xeroStatus === 'PAID') paid += 1;
+      if (markClaimXeroPayment(claim.id, payment)) updated += 1;
+    }
+  }
+
   res.json({
-    checked: batch.length,
+    checked: batch.length + claims.length,
+    claims: claims.length,
     updated,
     paid,
     missing,

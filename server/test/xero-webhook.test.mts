@@ -25,9 +25,28 @@ writeFileSync(
   })
 );
 
+// A published expense claim is a bill in Xero too — one bill carrying many
+// people's receipts — and the person waiting on THAT answer is the claimant.
+writeFileSync(
+  join(DATA_DIR, 'claims.json'),
+  JSON.stringify({
+    items: [
+      {
+        id: 'claim-1', workspaceId: 'cybm', orgId: 'cybm', claimFor: 'Cze Yang Goh', type: 'Expense claim',
+        name: 'August travel', claimDate: '2026-08-20', endDate: '2026-08-20', currency: 'SGD',
+        transactions: [], history: [], approvalStatus: 'approved', approver: '', approverEmail: '',
+        decidedBy: '', decidedAt: '', archived: true, deleted: false, createdBy: '', createdAt: new Date(0).toISOString(),
+        hrSentAt: '', hrSentAmount: '', hrSentBy: '', hrRevision: 0,
+        xeroInvoiceId: 'inv-claim', xeroTenantName: 'CYBM', xeroPostedAt: new Date(0).toISOString(),
+      },
+    ],
+  })
+);
+
 const express = (await import('express')).default;
 const { xeroWebhookRouter, flushXeroWebhooks, verifyXeroSignature } = await import('../src/xeroWebhook.ts');
 const { insertBill, markBillPosted, getBillById } = await import('../src/store.ts');
+const { claimsByXeroInvoiceId } = await import('../src/claims.ts');
 
 // --- a stubbed Xero -------------------------------------------------------
 // The relay is the only thing between us and Xero, so stubbing fetch stubs
@@ -179,6 +198,21 @@ check('an update after it is accepted', (await post(body, sign(body))).status, 2
 await flushXeroWebhooks();
 check('...and is read back', asked, [...readsSoFar, 'inv-published']);
 check('...and records it as paid', getBillById('cybm', published.id)?.xeroStatus, 'PAID');
+
+// --- a claim's own reimbursement ------------------------------------------
+// The same event, the same read-back, a different kind of paperwork behind the
+// invoice. A claimant's question is not "was this approved" but "have I been
+// paid", and until the claim carried these fields nothing here answered it.
+statuses.set('inv-claim', 'PAID');
+paidOn.set('inv-claim', '2026-08-25T00:00:00');
+payments.set('inv-claim', [{ Reference: 'Salary run 25 Aug' }]);
+const claimBody = payloadFor([invoiceEvent('inv-claim')]);
+check('an event for a claim\'s bill is accepted', (await post(claimBody, sign(claimBody))).status, 200);
+await flushXeroWebhooks();
+const claim = () => claimsByXeroInvoiceId('inv-claim')[0];
+check('the claim records the status', claim()?.xeroStatus, 'PAID');
+check('...the date it was reimbursed', claim()?.xeroPaidDate, '2026-08-25');
+check('...and the payment reference', claim()?.xeroPaymentRef, 'Salary run 25 Aug');
 
 globalThis.fetch = realFetch;
 server.close();

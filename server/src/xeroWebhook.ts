@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from './env.js';
 import { fetchXeroInvoice, paymentFromInvoice } from './xero.js';
 import { billsByXeroInvoiceId, markBillXeroPayment } from './store.js';
+import { claimsByXeroInvoiceId, markClaimXeroPayment } from './claims.js';
 
 // Xero webhooks, inbound. The other direction from xero.ts: this is Xero
 // telling CYBills that something it published has changed.
@@ -99,9 +100,16 @@ export async function applyInvoiceEvents(
     // whole client list, sales invoices included — and CYBills published a
     // vanishing fraction of them. An event naming an invoice we don't hold is
     // not an error and must not cost a Xero call.
+    //
+    // Two kinds of paperwork can be behind one bill in Xero: a cost document
+    // published on its own, or an expense claim posted as one bill carrying
+    // many receipts. Both are asked about, because the person waiting on the
+    // answer differs — a reviewer for the first, the CLAIMANT for the second,
+    // who wants to know they have been reimbursed.
     const bills = billsByXeroInvoiceId(invoiceId);
-    if (!bills.length) continue;
-    matched += bills.length;
+    const claims = claimsByXeroInvoiceId(invoiceId);
+    if (!bills.length && !claims.length) continue;
+    matched += bills.length + claims.length;
 
     // The tenant the document was posted into is what the document itself
     // records — which is the one that survives a bridge entity, whose bills
@@ -116,6 +124,9 @@ export async function applyInvoiceEvents(
 
     for (const bill of bills) {
       if (markBillXeroPayment(bill.orgId, bill.id, payment)) changed += 1;
+    }
+    for (const claim of claims) {
+      if (markClaimXeroPayment(claim.id, payment)) changed += 1;
     }
   }
   return { matched, changed };
