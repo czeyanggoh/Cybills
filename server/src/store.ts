@@ -323,6 +323,18 @@ export function getBillByIdAny(id: string): Bill | null {
   return rows.find((b) => b.id === id) ?? byItemId(rows, id);
 }
 
+// Every document published as this Xero invoice, across every entity's book.
+// A Xero InvoiceID is unique, so this is normally none or one — a list because
+// the caller (the webhook receiver) has no business assuming that and nothing
+// here enforces it. Deliberately scope-free: a webhook event names a TENANT,
+// and a bridge entity's documents live in their own book while posting into
+// the parent's tenant, so "which book" can't be worked out from the event.
+export function billsByXeroInvoiceId(invoiceId: string): Bill[] {
+  const want = String(invoiceId ?? '').trim().toLowerCase();
+  if (!want) return [];
+  return load().filter((b) => String(b.xeroInvoiceId ?? '').toLowerCase() === want);
+}
+
 // Which entity's book a bill belongs to. Used to work out, from a claim's own
 // items, which client entity a claim that predates per-entity scoping is for.
 export function billOrgId(id: string): string {

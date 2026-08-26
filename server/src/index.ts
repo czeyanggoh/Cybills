@@ -18,12 +18,22 @@ import { practiceRouter } from './practice.js';
 import { mailRouter } from './mail.js';
 import { settingsRouter, adoptLegacySettings } from './settings.js';
 import { boardRouter } from './board.js';
+import { xeroWebhookRouter } from './xeroWebhook.js';
 import { scrubFillerText } from './store.js';
 import { verifyShareToken } from './shareLinks.js';
 
 const app = express();
 
 app.use(cors());
+
+// Xero webhooks, before everything else. Two reasons this one route jumps the
+// queue: its signature covers the RAW request bytes, so it must not meet
+// express.json() first (a re-serialised body is a different body), and it is
+// called by Xero rather than by a signed-in person, so the session guard below
+// would answer it 401 forever. It carries its own proof instead — the
+// x-xero-signature HMAC, which is what makes it safe out here.
+app.use('/api/webhooks', express.raw({ type: '*/*', limit: '1mb' }), xeroWebhookRouter);
+
 // Bills are uploaded as base64 in the JSON body; allow room for larger scans
 // and PDFs (the client also downscales images before sending).
 app.use(express.json({ limit: '25mb' }));

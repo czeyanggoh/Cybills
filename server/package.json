@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "test": "tsx test/extract-lines.test.mts && tsx test/publish-lines.test.mts && tsx test/publish-bill.test.mts && tsx test/claim-scope.test.mts && tsx test/xero-scope.test.mts && tsx test/display-id.test.mts && tsx test/display-id-backfill.test.mts && tsx test/document-owner.test.mts && tsx test/auto-duplicates.test.mts && tsx test/share-links.test.mts && tsx test/bridge-claim.test.mts && tsx test/roster-no-email.test.mts && tsx test/multi-entity-user.test.mts"
+    "test": "tsx test/extract-lines.test.mts && tsx test/publish-lines.test.mts && tsx test/publish-bill.test.mts && tsx test/claim-scope.test.mts && tsx test/xero-scope.test.mts && tsx test/display-id.test.mts && tsx test/display-id-backfill.test.mts && tsx test/document-owner.test.mts && tsx test/auto-duplicates.test.mts && tsx test/share-links.test.mts && tsx test/bridge-claim.test.mts && tsx test/roster-no-email.test.mts && tsx test/multi-entity-user.test.mts && tsx test/xero-webhook.test.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

@@ -122,6 +122,13 @@ export const env = {
   CYWORKSPACE_RELAY_URL: process.env.CYWORKSPACE_RELAY_URL ?? 'https://cyworkspace.cy-bm.sg',
   CYWORKSPACE_API_KEY: process.env.CYWORKSPACE_API_KEY ?? '',
 
+  // The webhook key from the Xero app's Webhooks page (My Apps -> Webhooks).
+  // Xero signs every delivery with it (x-xero-signature, HMAC-SHA256 over the
+  // RAW body), and that signature is the only thing that says a POST really
+  // came from Xero — so with this unset the receiver can verify nothing and
+  // refuses everything, which is also what an unconfigured deploy should do.
+  XERO_WEBHOOK_KEY: process.env.XERO_WEBHOOK_KEY ?? '',
+
   // --- Cloudflare R2 (original bill files) ----------------------------------
   // Object storage for the uploaded file bytes (the JSON store only keeps
   // metadata + a hash). All four must be set for file storage to switch on (see
@@ -229,6 +236,11 @@ export const defaultReaderProvider: 'claude' | 'openai' =
 // Xero (via the cyworkspace relay) switches on once the shared webhook API key
 // is configured. Until then the Xero endpoints return 503 xero_not_configured.
 export const xeroEnabled = Boolean(env.CYWORKSPACE_API_KEY);
+
+// Whether inbound Xero webhooks are accepted. Separate from `xeroEnabled`:
+// calling OUT to Xero needs the relay key, being called IN by Xero needs the
+// webhook key, and an install can legitimately have one without the other.
+export const xeroWebhookEnabled = Boolean(env.XERO_WEBHOOK_KEY);
 
 // R2 file storage switches on once the account, bucket, and credentials are all
 // configured. Until then uploads persist metadata + dedup only (no stored file).

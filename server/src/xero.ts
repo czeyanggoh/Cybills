@@ -96,6 +96,26 @@ async function listTenants(): Promise<Array<{ tenant_id: string; tenant_name: st
   throw new Error(`${res.error}: ${res.message}`);
 }
 
+// One invoice's current state in Xero, for a caller that already knows which
+// invoice it wants. This exists for the webhook receiver (xeroWebhook.ts): an
+// INVOICE event says only that the invoice changed — never what changed, and
+// never what it changed to — so the answer has to be read back from Xero.
+// Returns null on any failure; the caller treats "couldn't ask" as "nothing to
+// record", which is right for a notification we can always get again.
+export async function fetchXeroInvoice(
+  tenantId: string,
+  invoiceId: string
+): Promise<Record<string, any> | null> {
+  if (!tenantId || !invoiceId) return null;
+  const res = await relay(`Invoices/${encodeURIComponent(invoiceId)}`, { tenantId });
+  if (!res.ok) {
+    console.error('[xero] could not read invoice', invoiceId, res.status, res.message);
+    return null;
+  }
+  const invoices = Array.isArray(res.data?.Invoices) ? res.data.Invoices : [];
+  return invoices[0] ?? null;
+}
+
 function notConfigured(res: any): boolean {
   if (xeroEnabled) return false;
   res.status(503).json({
