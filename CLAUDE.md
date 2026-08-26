@@ -474,6 +474,20 @@ which is queued; and the first delivery is an "intent to receive" handshake
 carrying a deliberately wrong signature, which the same 401 answers. Enough
 failed deliveries and Xero disables the webhook at its end.
 
+**The webhook can only hear the future**, so there is a backfill for the past:
+Business settings → Connections → **Payment status** → "Check now"
+(`POST /api/xero/organisations/:id/sync-payments`). It reads every published
+bill in that entity's book through Xero's `?IDs=` filter — 50 invoices a call,
+so a book of 500 costs ten calls rather than 500 — and records the same three
+fields through the same `paymentFromInvoice` (`xero.ts`), so a bill paid before
+webhooks existed ends up saying exactly what one paid after them says. Read-only
+and re-runnable, which also makes it the repair for a delivery Xero dropped. A
+`?IDs=` response can omit `Payments`, so a PAID bill that comes back without a
+reference is fetched by name (bounded, since that is a minority of any book);
+`FullyPaidOnDate` arrives as ISO or as `/Date(ms+0000)/` and both are read. A
+bill Xero no longer has is COUNTED and reported, never silently skipped — it
+means the two disagree.
+
 Delivery URL to paste into My Apps → Webhooks: `https://cybills.cy-bm.sg/api/webhooks/xero`,
 notifying about **Invoices**. Env (server/.env): `XERO_WEBHOOK_KEY`, the key that
 page shows. Unset, nothing can be verified and every delivery is refused — which

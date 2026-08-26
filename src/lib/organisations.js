@@ -643,6 +643,21 @@ export async function attachBillFileToXero(organisationId, billId) {
   return body;
 }
 
+// Ask Xero about every bill this entity has published, and record what it says
+// (status, paid date, payment reference). The webhook only hears about what
+// changes after it was configured, so this is what catches up the bills paid
+// before it existed — and the repair for any delivery Xero dropped.
+export async function syncXeroPayments(organisationId) {
+  const res = await fetch(`/api/xero/organisations/${organisationId}/sync-payments`, { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = /** @type {any} */ (new Error(body.message || 'Could not check payment status in Xero.'));
+    err.code = body.error;
+    throw err;
+  }
+  return body;
+}
+
 export async function publishBillToXero(organisationId, payload) {
   const res = await fetch(`/api/xero/organisations/${organisationId}/publish-bill`, {
     method: 'POST',

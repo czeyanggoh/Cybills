@@ -31,6 +31,7 @@ import {
   fetchXeroProfile,
   getActiveOrganisationId,
   useVisibleTaxRates,
+  syncXeroPayments,
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 import { useInboundConfig } from '@/lib/inboundSettings';
@@ -679,6 +680,62 @@ const TITLES = Object.fromEntries(NAV.flatMap((s) => s.items).map((i) => [i.key,
 // speaks to (through the cyworkspace relay), and the page says so about THIS
 // entity — a bridge entity reaches Xero through the entity it publishes into,
 // which is a different answer from "connected" and from "not connected".
+// Business settings → Connections → Payment status. Xero's invoice webhook only
+// ever tells us about what changes AFTER it was configured, so a bill paid last
+// month fired its notice into a void and would show no status forever. This
+// button is the catch-up for those, and the repair for any delivery Xero
+// dropped — re-running it is safe, it only ever reads.
+function PaymentStatusCard({ organisation }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  const run = async () => {
+    setBusy(true);
+    setError('');
+    setResult(null);
+    try {
+      setResult(await syncXeroPayments(organisation.id));
+    } catch (err) {
+      setError(err?.message || 'Could not check payment status in Xero.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Payment status">
+      <div className="rounded-lg border p-5">
+        <p className="font-medium">Check published bills against Xero</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Xero tells CYBills when a published bill is paid, so the Paid status column keeps itself up to
+          date. It can only report what happens from now on, though — run this once to catch up the bills
+          that were already settled before it was switched on.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={run}
+            disabled={busy}
+            className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-muted disabled:opacity-60"
+          >
+            {busy ? 'Checking…' : 'Check now'}
+          </button>
+          {result && (
+            <p className="text-sm text-muted-foreground">
+              Checked {result.checked} published {result.checked === 1 ? 'bill' : 'bills'} — {result.updated} updated,{' '}
+              {result.paid} paid in Xero
+              {result.missing ? `, ${result.missing} no longer in Xero` : ''}
+              {result.remaining ? `. ${result.remaining} still to check — run it again.` : '.'}
+            </p>
+          )}
+          {error && <p className="text-sm text-red-600">{error}</p>}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function Connections() {
   const organisation = useActiveOrganisation();
   const bridge = isStandaloneOrg(organisation);
@@ -732,6 +789,10 @@ function Connections() {
           )}
         </div>
       </Card>
+      {/* Only where there is a Xero to ask. A bridge entity's own claims post
+          into its parent's ledger, so its published bills have a status to
+          check too. */}
+      {organisation?.id && (tenantName || bridge) && <PaymentStatusCard organisation={organisation} />}
     </div>
   );
 }

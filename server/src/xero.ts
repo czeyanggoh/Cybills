@@ -4,7 +4,7 @@ import { dataScopeForOrg, getOrganisation, isStandalone, publishTargetFor } from
 import { workspaceId } from './workspace.js';
 import { readSetting } from './settings.js';
 import { referenceFor, dateFor } from './claimRef.js';
-import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
+import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, listBills, markBillPosted, markBillXeroPayment, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
 import { appOrigin, memberForSession } from './users.js';
@@ -114,6 +114,85 @@ export async function fetchXeroInvoice(
   }
   const invoices = Array.isArray(res.data?.Invoices) ? res.data.Invoices : [];
   return invoices[0] ?? null;
+}
+
+// What Xero says about one invoice, in the three fields a document keeps.
+// Exported because two callers need the SAME reading of a Xero payload: the
+// webhook read-back (xeroWebhook.ts) and the backfill sweep below. A document
+// paid before webhooks existed must end up saying exactly what one paid after
+// them says.
+//
+// Recorded as Xero words it — PAID, AUTHORISED, VOIDED — rather than reduced to
+// a boolean here: "not paid" covers a bill awaiting payment and a bill that was
+// voided, and a reviewer looking at the paperwork needs those told apart. The
+// UI does the wording (src/lib/xeroPaidStatus.js).
+//
+// `Status`, not `AmountDue`: Xero only calls a bill PAID when nothing is left
+// on it, so a PARTLY paid bill correctly stays AUTHORISED here.
+export function paymentFromInvoice(invoice: Record<string, any>): {
+  xeroStatus: string;
+  xeroPaidDate: string;
+  xeroPaymentRef: string;
+} {
+  // Payments carry the reference somebody typed when the money was recorded — a
+  // cheque number, a transfer id, "PayNow 26 Aug". Several can settle one bill
+  // (a part payment, then the rest), so they're joined; blank ones and repeats
+  // are dropped rather than printed as empty commas.
+  const payments = Array.isArray(invoice?.Payments) ? invoice.Payments : [];
+  const refs: string[] = [];
+  for (const p of payments) {
+    const ref = String(p?.Reference ?? '').trim();
+    if (ref && !refs.includes(ref)) refs.push(ref);
+  }
+  return {
+    xeroStatus: String(invoice?.Status ?? '').trim().toUpperCase(),
+    xeroPaidDate: xeroDay(invoice?.FullyPaidOnDate),
+    xeroPaymentRef: refs.join(', '),
+  };
+}
+
+// The DAY out of a Xero date, whichever of its two shapes it arrives in: the
+// JSON endpoints answer "2026-08-26T00:00:00", but the same field comes back as
+// "/Date(1756166400000+0000)/" elsewhere in the same API. Reading only the first
+// shape is how a backfilled bill would show a paid status with no paid date
+// beside it. Anything else reads as no date rather than as a wrong one.
+function xeroDay(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(raw);
+  if (iso) return iso[1];
+  const ms = /^\/Date\((-?\d+)/.exec(raw);
+  if (ms) {
+    const d = new Date(Number(ms[1]));
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+  }
+  return '';
+}
+
+// Several invoices in one call. Xero takes ?IDs=<comma-separated guids> and
+// documents it as the cheap way to ask for a known set — one request instead of
+// one per bill, which is what makes a whole book's backfill affordable against
+// 60 calls a minute. Batched because a URL of 500 guids is not a URL.
+async function fetchXeroInvoices(
+  tenantId: string,
+  invoiceIds: string[]
+): Promise<Map<string, Record<string, any>>> {
+  const found = new Map<string, Record<string, any>>();
+  if (!tenantId) return found;
+  const ids = invoiceIds.filter(Boolean);
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const res = await relay('Invoices', { tenantId, query: { IDs: batch.join(',') } });
+    if (!res.ok) {
+      console.error('[xero] invoice batch failed', res.status, res.message);
+      continue; // a bad batch costs those bills this run, not the whole sweep
+    }
+    for (const inv of Array.isArray(res.data?.Invoices) ? res.data.Invoices : []) {
+      const id = String(inv?.InvoiceID ?? '');
+      if (id) found.set(id.toLowerCase(), inv);
+    }
+  }
+  return found;
 }
 
 function notConfigured(res: any): boolean {
@@ -956,6 +1035,87 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     perLine: built.kind === 'lines',
     attachment,
     bill: updated,
+  });
+});
+
+// POST /api/xero/organisations/:id/sync-payments — ask Xero about every bill
+// this entity has published, and record what it says.
+//
+// The webhook only ever hears about what changes AFTER it was configured, so a
+// bill paid last month fired its event into a void and would sit here showing
+// no status forever. This is the one-off that catches those up — and it is
+// re-runnable, because it is also the repair for any delivery Xero dropped.
+//
+// Reads in batches of 50 (?IDs=…), so a book of 500 published bills costs ten
+// calls against the tenant's 60 a minute rather than 500. Nothing here writes
+// to Xero.
+xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
+  if (notConfigured(res)) return;
+  // Deliberately not requireOrganisation: that one refuses a standalone entity
+  // for having no Xero of its own, and this route doesn't need it to have one.
+  // Its bills carry the tenant they were published INTO — the parent's, for a
+  // bridge — which is the tenant to ask either way.
+  const organisation = getOrganisation(workspaceId(req), req.params.id);
+  if (!organisation) return res.status(404).json({ error: 'organisation_not_found' });
+
+  const published = listBills(dataScopeForOrg(organisation.id)).filter((b) => b.xeroInvoiceId);
+  // A bound on one run, not a limit on the book: whatever is left is reported
+  // and picked up by running it again. A silent cap would read as "all done".
+  const MAX_PER_RUN = 1000;
+  const batch = published.slice(0, MAX_PER_RUN);
+
+  // By tenant, because a bridge entity's book can hold bills posted into more
+  // than one Xero over its life, and ?IDs= is answered by one tenant at a time.
+  const byTenant = new Map<string, typeof batch>();
+  for (const bill of batch) {
+    const tenantId = bill.xeroTenantId || organisation.tenantId;
+    if (!tenantId) continue;
+    const rows = byTenant.get(tenantId) ?? [];
+    rows.push(bill);
+    byTenant.set(tenantId, rows);
+  }
+
+  let updated = 0;
+  let paid = 0;
+  let missing = 0;
+  let extraReads = 0;
+  for (const [tenantId, rows] of byTenant) {
+    const invoices = await fetchXeroInvoices(tenantId, rows.map((b) => String(b.xeroInvoiceId)));
+    for (const bill of rows) {
+      let invoice = invoices.get(String(bill.xeroInvoiceId).toLowerCase());
+      // A bill CYBills published that Xero no longer has: deleted there, or
+      // moved to a tenant this entity is no longer connected to. Counted and
+      // reported rather than quietly skipped — it means the two disagree.
+      if (!invoice) {
+        missing += 1;
+        continue;
+      }
+      let payment = paymentFromInvoice(invoice);
+      // A list response can leave Payments out where a single-invoice read
+      // includes them, and the reference is the whole point of the column. So a
+      // PAID bill that came back without one is asked for by name — a small
+      // minority of a book, and bounded so a first run on a large one can't
+      // turn into hundreds of extra calls.
+      if (payment.xeroStatus === 'PAID' && !payment.xeroPaymentRef && !Array.isArray(invoice.Payments) && extraReads < 200) {
+        extraReads += 1;
+        const full = await fetchXeroInvoice(tenantId, String(bill.xeroInvoiceId));
+        if (full) {
+          invoice = full;
+          payment = paymentFromInvoice(full);
+        }
+      }
+      if (!payment.xeroStatus) continue;
+      if (payment.xeroStatus === 'PAID') paid += 1;
+      if (markBillXeroPayment(bill.orgId, bill.id, payment)) updated += 1;
+    }
+  }
+
+  res.json({
+    checked: batch.length,
+    updated,
+    paid,
+    missing,
+    remaining: Math.max(0, published.length - batch.length),
   });
 });
 

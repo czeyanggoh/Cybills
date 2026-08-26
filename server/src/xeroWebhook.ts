@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from './env.js';
-import { fetchXeroInvoice } from './xero.js';
+import { fetchXeroInvoice, paymentFromInvoice } from './xero.js';
 import { billsByXeroInvoiceId, markBillXeroPayment } from './store.js';
 
 // Xero webhooks, inbound. The other direction from xero.ts: this is Xero
@@ -66,40 +66,6 @@ export function verifyXeroSignature(raw: Buffer, signature: string): boolean {
   // timingSafeEqual throws on a length mismatch, which is itself a mismatch.
   if (expected.length !== given.length) return false;
   return timingSafeEqual(expected, given);
-}
-
-// What Xero says about this invoice, in the three fields the document keeps.
-// Recorded as Xero words it — PAID, AUTHORISED, VOIDED — rather than reduced to
-// a boolean here: "not paid" covers a bill awaiting payment and a bill that was
-// voided, and a reviewer looking at the paperwork needs those told apart. The
-// UI does the wording (src/lib/xeroPaidStatus.js).
-//
-// `Status`, not `AmountDue`: Xero only calls a bill PAID when nothing is left
-// on it, so a PARTLY paid bill correctly stays AUTHORISED here.
-function paymentFromInvoice(invoice: Record<string, any>): {
-  xeroStatus: string;
-  xeroPaidDate: string;
-  xeroPaymentRef: string;
-} {
-  // Payments carry the reference somebody typed when the money was recorded —
-  // a cheque number, a transfer id, "PayNow 26 Aug". Several can settle one
-  // bill (a part payment, then the rest), so they're joined; blank ones and
-  // repeats are dropped rather than printed as empty commas.
-  const payments = Array.isArray(invoice?.Payments) ? invoice.Payments : [];
-  const refs: string[] = [];
-  for (const p of payments) {
-    const ref = String(p?.Reference ?? '').trim();
-    if (ref && !refs.includes(ref)) refs.push(ref);
-  }
-  // Xero's dates come as YYYY-MM-DDT00:00:00 (or /Date(…)/ on some endpoints);
-  // the day is all that's meaningful for a payment date.
-  const fullyPaid = String(invoice?.FullyPaidOnDate ?? '').trim();
-  const day = /^(\d{4}-\d{2}-\d{2})/.exec(fullyPaid);
-  return {
-    xeroStatus: String(invoice?.Status ?? '').trim().toUpperCase(),
-    xeroPaidDate: day ? day[1] : '',
-    xeroPaymentRef: refs.join(', '),
-  };
 }
 
 // Apply a batch of webhook events to the documents they name. Exported (and
