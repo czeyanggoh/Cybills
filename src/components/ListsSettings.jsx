@@ -239,9 +239,33 @@ function CategoriesFromList({ organisation }) {
   const parentName = organisation.parentName || '';
   const { data, isLoading, isError } = useTargetAccounts(organisation.id);
   const accounts = data?.accounts ?? [];
-  const options = accounts
-    .filter((a) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(String(a.type || '').toUpperCase()))
-    .map((a) => ({ code: a.code, label: `${a.code} - ${a.name}` }));
+  // NOT expense accounts only. A reimbursement arrangement is very often booked
+  // to a clearing account — "Reimbursements - ST Engineering" is a LIABILITY,
+  // money owed to the people claiming — and filtering to expense types hid the
+  // one account this entity is supposed to use, from a list of sixty it isn't.
+  // A Xero bill line can post to any account except a bank one.
+  const postable = accounts.filter((a) => String(a.type || '').toUpperCase() !== 'BANK');
+  const isExpense = (a) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(String(a.type || '').toUpperCase());
+  const asOption = (a) => ({ code: a.code, label: `${a.code} - ${a.name}` });
+  // Expenses first, because that is what most categories want; everything else
+  // is still there, under its own heading, for the ones that don't.
+  const expenseOptions = postable.filter(isExpense).map(asOption);
+  const otherOptions = postable.filter((a) => !isExpense(a)).map(asOption);
+  const options = [...expenseOptions, ...otherOptions];
+  const optionGroups = (
+    <>
+      {expenseOptions.length > 0 && (
+        <optgroup label="Expenses">
+          {expenseOptions.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+        </optgroup>
+      )}
+      {otherOptions.length > 0 && (
+        <optgroup label="Other accounts">
+          {otherOptions.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+        </optgroup>
+      )}
+    </>
+  );
 
   const q = query.trim().toLowerCase();
   const filtered = rows.filter((r) => !q || r.name.toLowerCase().includes(q));
@@ -286,7 +310,7 @@ function CategoriesFromList({ organisation }) {
               className="h-8 w-56 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="">Set them all to…</option>
-              {options.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+              {optionGroups}
             </select>
           </label>
         )}
@@ -322,7 +346,7 @@ function CategoriesFromList({ organisation }) {
                       className="h-9 w-64 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <option value="">Not mapped</option>
-                      {options.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+                      {optionGroups}
                     </select>
                   ) : (
                     // The parent's chart is what fills this dropdown, so when it
