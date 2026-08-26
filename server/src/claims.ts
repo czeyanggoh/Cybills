@@ -414,7 +414,12 @@ claimsRouter.post('/:id/items', (req, res) =>
     for (const t of incoming) {
       if (!t || seen.has(t.itemId)) continue;
       claim.transactions.push({ ...t, addedBy: t.addedBy || me.name });
-      claim.history.unshift({ text: `Item ${t.itemId} was added to the expense claim`, by: t.addedBy || me.name, at: nowIso() });
+      // Name the document the way every other surface does — its Item ID, the
+      // number on the row, the export and the claim PDF. `itemId` is whatever
+      // the caller addressed it by, which for most callers is the internal
+      // `bill_…` id nobody has ever seen.
+      const shown = String(t.displayId || t.itemId || '');
+      claim.history.unshift({ text: `Item ${shown} was added to the expense claim`, by: t.addedBy || me.name, at: nowIso() });
       seen.add(t.itemId);
       claimed.push(String(t.itemId));
       added += 1;
