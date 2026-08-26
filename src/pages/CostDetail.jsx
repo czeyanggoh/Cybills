@@ -24,12 +24,13 @@ import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
-import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions } from '@/lib/organisations';
+import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
+import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -52,6 +53,7 @@ import { xeroBillUrl } from '@/lib/autoPublish';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
+import { balanceLine } from '@/lib/lineItems';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -149,6 +151,20 @@ const DOC_TYPES = [
   'Other',
 ];
 
+// A rule's field, in the words the form uses for it.
+const FIELD_LABELS = {
+  category: 'Category',
+  customer: 'Customer',
+  project: 'Project',
+  currency: 'Currency',
+  paymentMethod: 'Payment method',
+  description: 'Description',
+  taxRate: 'Tax rate',
+  paid: 'Paid',
+  dueDate: 'Due date',
+};
+const FIELD_LABEL = (k) => FIELD_LABELS[k] || k;
+
 function initialData(doc) {
   return {
     user: doc.user,
@@ -186,16 +202,29 @@ export default function CostDetail() {
   const { visionEnabled, user } = useAuth();
   const readerName = useReaderName();
   const teamUsers = useUsers();
-  // Who this document can belong to: the entity's own people AND the practice
-  // colleagues with access to it, which is who actually uploads most of them.
+  // Who this document can belong to: the client's own people plus its general
+  // account, which is where anything a practice colleague added sits. A
+  // colleague is not on the list — reassigning a client's document to the
+  // bookkeeper doing their books is never the answer.
   const ownerNames = useOwnerNames();
+  // Somebody who has been deactivated isn't offered — they can't sign in, so
+  // handing them a document only hides it behind a name nobody is using. The
+  // document's CURRENT owner is added back below, so one who has since left
+  // still shows rather than silently emptying the field.
   const ownerOptions = Array.from(
-    new Set([user?.name || user?.email, ...ownerNames, ...teamUsers.map((u) => u.name || u.email)].filter(Boolean))
+    new Set([...ownerNames, ...teamUsers.filter((u) => !u.deactivated).map((u) => u.name || u.email)].filter(Boolean))
   );
   const categoryOptions = useCategoryOptions();
   const catMode = useCategoryDisplayMode();
   // Projects come from the active org's live Xero tracking category (managed in
   // Lists → Projects); fall back to the bundled seed only when Xero isn't linked.
+  // Xero contacts AND the merchants this entity's own documents already name.
+  // A bridge entity has no Xero to ask, so without the second half its Supplier
+  // field offered nothing at all and every name had to be typed.
+  const supplierOptions = mergeSupplierNames(useXeroSuppliers(), [
+    ...useDocumentSuppliers(),
+    ...addedSuppliers(),
+  ]);
   const xeroProjects = useXeroProjectOptions();
   const seedProjects = useProjectOptions();
   const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;
@@ -244,6 +273,28 @@ export default function CostDetail() {
 
   const [fieldSave, setFieldSave] = useState('idle'); // auto-save status for the document's fields
   const [aiError, setAiError] = useState('');
+  // What the line-item read had to say, kept apart from aiError so it can be
+  // shown BESIDE the button that starts it. It used to land in the panel's
+  // header, ~190 lines of form above that button, so a document with no
+  // itemised table answered "No itemised charges found" completely off-screen —
+  // and pressing Extract line items looked like it had done nothing at all.
+  const [linesNote, setLinesNote] = useState('');
+  // The line items as they last stood before anybody edited them: how the
+  // document arrived, or what the last read produced. The grid writes through on
+  // every keystroke, so once a figure is typed over, the old one is gone from
+  // both the page and the server — and on a row that never added up (a stated
+  // tax against a rounded total) it cannot even be retyped, because the cells
+  // now keep each other true. Something has to remember it.
+  const [lineSnapshot, setLineSnapshot] = useState(null);
+  // Which fields a supplier's standing rule just filled in, so applying it is
+  // visible rather than fields quietly changing under the cursor.
+  const [ruleApplied, setRuleApplied] = useState(null);
+  // One block, so the panel and the full-screen editor can't drift apart.
+  const linesNoteBlock = linesNote ? (
+    <p className="mt-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-xs text-foreground">
+      {linesNote}
+    </p>
+  ) : null;
   const [splitOpen, setSplitOpen] = useState(false);
   const [splitNote, setSplitNote] = useState('');
   const [claimOpen, setClaimOpen] = useState(false);
@@ -279,6 +330,15 @@ export default function CostDetail() {
   const claims = useClaims();
   const { allDocs: inboxAllDocs } = useCostsDocs();
   const claimForItem = claims.find((c) => (c.transactions || []).some((t) => isItemKey(t.itemId, id)));
+  // Why this document can't go on a claim, or '' when it can. A document already
+  // ON a claim was the gap: the page knew (it draws the banner from the very
+  // same lookup) but the button stayed live, so the obvious thing to try was
+  // adding it a second time.
+  const claimBlocked = doc?.xeroInvoiceId
+    ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.`
+    : claimForItem
+      ? `Already on expense claim ${claimRef(claimForItem)}. Take it off that claim first to move it.`
+      : '';
   const index = DOCS.findIndex((d) => String(d.id) === String(id));
 
   // Reset the form when navigating between documents. Sample docs resolve from
@@ -286,9 +346,13 @@ export default function CostDetail() {
   useEffect(() => {
     setImageUrl('');
     setAiError('');
+    setLinesNote('');
+    setLineSnapshot(null); // a new document, a new set of rows to fall back to
     const raw = getDoc(routeId);
     if (raw) {
-      setData(initialData({ ...raw, ...(getDocOverrides()[routeId] || {}) }));
+      const seeded = initialData({ ...raw, ...(getDocOverrides()[routeId] || {}) });
+      setData(seeded);
+      setLineSnapshot(Array.isArray(seeded.lineItems) ? seeded.lineItems : []);
       setPersisted(null);
       setLoading(false);
       return;
@@ -311,7 +375,11 @@ export default function CostDetail() {
           // Opened by internal id (an old bookmark, or a claim line item): swap
           // the address bar for the item-id form without adding a history entry.
           if (String(routeId) !== itemNumber(pd)) navigate(costPath(pd), { replace: true });
-          setData(initialData(pd));
+          const seeded = initialData(pd);
+          setData(seeded);
+          // The rows as the document arrived with them — what Revert edits
+          // restores, captured before the grid can write over them.
+          setLineSnapshot(Array.isArray(seeded.lineItems) ? seeded.lineItems : []);
           if (pd.hasFile) {
             setImageUrl(billFileUrl(pd.id));
             setPreviewType(pd.contentType.includes('pdf') ? 'pdf' : 'image');
@@ -410,11 +478,62 @@ export default function CostDetail() {
   const SERVER_FIELDS = {
     supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
-    taxRate: 'taxRate', taxRateReason: 'taxRateReason', description: 'description', user: 'owner',
+    taxRate: 'taxRate', taxRateReason: 'taxRateReason', taxRateCleared: 'taxRateCleared',
+    description: 'description', user: 'owner',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
     customer: 'customer', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
     dueDate: 'dueDate',
   };
+  // Naming the supplier by hand applies that supplier's standing rule.
+  //
+  // A rule fires when a document is READ, keyed on the supplier the reader
+  // found. So a receipt the reader couldn't identify — then named here — got
+  // none of it: the rules dialog promises "applied to this document and to
+  // everything new that arrives from Grab", and this is the case where the
+  // document arrives first and the name second.
+  //
+  // The rule wins over what is already on the document, the same precedence a
+  // re-read applies (src/lib/reRead.js): a rule is an instruction. Nothing is
+  // silent about it — what it filled in is listed underneath.
+  const setSupplier = (value) => {
+    const named = String(value || '').trim();
+    if (!named || named === data.supplier) return set('supplier', value);
+    const rule = matchSupplierRule(named);
+    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered });
+    if (!Object.keys(patch).length) return set('supplier', value);
+    // A tax code carries the tax it implies, worked out from THIS document's
+    // total — the same sum the Tax rate field does.
+    if (patch.taxRate) {
+      const r = rateFor(patch.taxRate);
+      const t = num(data.total);
+      const tax = r > 0 && t > 0 ? (t * r) / (100 + r) : 0;
+      patch.tax = tax ? tax.toFixed(2) : '0.00';
+    }
+    const next = { supplier: named, ...patch };
+    setData((d) => ({ ...d, ...next }));
+    if (readyError.length) setReadyError([]);
+    // The rule's own fields — not `tax`, which is arithmetic that follows from
+    // the tax rate rather than something the rule was asked to set.
+    setRuleApplied(Object.keys(patch).filter((k) => k !== 'tax'));
+    if (doc?.persisted) {
+      const body = {};
+      for (const [k, v] of Object.entries(next)) {
+        const sf = SERVER_FIELDS[k];
+        if (sf) body[sf] = v;
+      }
+      setFieldSave('saving');
+      updateBill(doc.id, body)
+        .then((r) => {
+          setFieldSave('saved');
+          if (r?.bill) {
+            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+            notifyBillsChanged();
+          }
+        })
+        .catch(() => setFieldSave('error'));
+    }
+  };
+
   const set = (key, value) => {
     // Overruling the reader on an allocation is the one moment both halves of a
     // rule are known — what it got wrong and what's right. Offer to keep it.
@@ -470,12 +589,22 @@ export default function CostDetail() {
   // that's the point of writing it here rather than on the Suppliers list.
   const applySupplierRuleToForm = (rule) => {
     const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered });
+    // A tax code brings the tax it implies, from this document's own total.
+    if (patch.taxRate) {
+      const r = rateFor(patch.taxRate);
+      const t = num(data.total);
+      const tax = r > 0 && t > 0 ? (t * r) / (100 + r) : 0;
+      patch.tax = tax ? tax.toFixed(2) : '0.00';
+    }
+    const fields = Object.keys(patch).filter((k) => k !== 'tax');
     const categoryReason = supplierRuleCategoryReason(rule, data.supplier);
     const projectReason = supplierRuleProjectReason(rule, data.supplier);
     if (categoryReason) patch.categoryReason = categoryReason;
     if (projectReason) patch.projectReason = projectReason;
     setMany(patch);
+    setRuleApplied(fields);
   };
+
 
   const go = (delta) => {
     const next = DOCS[index + delta];
@@ -767,6 +896,10 @@ export default function CostDetail() {
   // A rate with a % also fills the tax amount from the GST-inclusive total.
   const setTaxRate = (name) => {
     set('taxRate', name);
+    // Leaving it blank on purpose is recorded as a decision — see changeTaxRate
+    // in Costs.jsx. Without it the listing's backfill can't tell this apart from
+    // a reader that simply had no code to offer.
+    set('taxRateCleared', !name);
     const r = rateFor(name);
     const total = num(data.total);
     const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
@@ -898,16 +1031,36 @@ export default function CostDetail() {
   const supplierNamed = String(data.supplier || '').trim();
   const supplierRuleN = supplierRuleCount(matchSupplierRule(data.supplier));
 
+  // The message this document arrived in, if it did. It is the DOCUMENT's, not
+  // the form's: the envelope is a record of what was received and is never
+  // edited here, so it must not round-trip through the editable form state.
+  const mail = doc?.email || null;
+  const mailDate = mail?.date ? fmtStamp(mail.date) : '';
   const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
+  const lineItemsEdited =
+    Array.isArray(lineSnapshot) && JSON.stringify(lineSnapshot) !== JSON.stringify(lineItems);
   const setLineItems = (rows) => set('lineItems', rows);
+  // Net, Tax and Total are three views of ONE row, so editing any of them keeps
+  // the other two true instead of leaving the row contradicting itself. Typing a
+  // net and then having to type the total as well is not a second decision — it
+  // is the same decision, entered twice, with a chance to get it wrong.
+  // The arithmetic itself lives in lib/lineItems.js, where it is tested.
   const updateLineItem = (i, patch) =>
-    setLineItems(lineItems.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
+    setLineItems(lineItems.map((li, idx) => (idx === i ? balanceLine(li, patch) : li)));
   const addLineItem = () =>
     setLineItems([
       ...lineItems,
       { description: '', category: data.category || 'Uncategorised', project: data.project || '', project2: '', net: '', tax: '', total: '' },
     ]);
   const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
+  // Put the rows back as they arrived. Deliberately NOT a per-keystroke undo:
+  // the grid fires on every character, so stepping back one edit at a time would
+  // mean six presses to take back "125.39". One press, one known-good state.
+  const revertLineItems = () => {
+    if (!Array.isArray(lineSnapshot)) return;
+    setLineItems(lineSnapshot);
+    setLinesNote('Line items put back as they were read.');
+  };
   // One set of props for the grid, so the panel and the full-screen editor are
   // rendering the same thing over the same state.
   const lineGrid = {
@@ -927,9 +1080,9 @@ export default function CostDetail() {
   // against the document's own grand total, so anything that doesn't add up is
   // said out loud here rather than left for the "Out by" row to be noticed.
   const extractLineItems = async () => {
-    setAiError('');
+    setLinesNote('');
     const rec = await receiptToUpload();
-    if (!rec) { setAiError('Attach a receipt first, then extract line items.'); return; }
+    if (!rec) { setLinesNote('Attach a receipt first, then extract line items.'); return; }
     // A job, like the whole-document read: long enough that nobody watches it,
     // so it has to survive the reviewer moving on to the next document.
     startExtraction(doc.id, 'lines', async () => {
@@ -937,12 +1090,13 @@ export default function CostDetail() {
       const accounts = await getExtractionAccounts();
       const ex = await fetchExtractLines(rec.base64, rec.mediaType, accounts);
       const rows = Array.isArray(ex?.lines) ? ex.lines : [];
-      if (!rows.length) { setAiError('No itemised charges found on this document.'); return null; }
+      if (!rows.length) { setLinesNote('No itemised charges found on this document.'); return null; }
       // Saved here rather than through `set`, whose write is fire-and-forget:
       // the job must not resolve before the rows are actually stored, or the
       // page could re-sync itself from the server a moment too early.
       const built = lineItemRows(rows, data.category);
       setData((d) => ({ ...d, lineItems: built }));
+      setLineSnapshot(built); // a fresh read is the new set to fall back to
       if (doc?.persisted) {
         const r = await updateBill(doc.id, { lineItems: built }).catch(() => null);
         if (r?.bill) {
@@ -952,21 +1106,21 @@ export default function CostDetail() {
       }
       const money = (n) => Number(n || 0).toFixed(2);
       if (!ex.reconciled) {
-        setAiError(
+        setLinesNote(
           `Read ${rows.length} line${rows.length === 1 ? '' : 's'} totalling ${money(ex.linesTotal)}, but the ` +
             `document's total reads as ${money(ex.grandTotal)}. ` +
             (ex.note || 'Check for a row that was missed, or one that is really a subtotal.')
         );
       } else if (Math.abs(num(data.total) - Number(ex.grandTotal || 0)) > 0.005) {
         // The lines agree with the document; it's this bill's total that doesn't.
-        setAiError(
+        setLinesNote(
           `The lines add up to ${money(ex.linesTotal)}, which is the document's own total — but this bill ` +
             `says ${money(data.total)}. Check the Total amount field.`
         );
       }
       return built;
     } catch {
-      setAiError('Could not extract line items.');
+      setLinesNote('Could not extract line items.');
       throw new Error('Could not extract line items.');
     }
     });
@@ -1032,7 +1186,21 @@ export default function CostDetail() {
             >
               {claimRef(claimForItem)}
             </button>{' '}
-            called <span className="font-medium text-foreground">{claimForItem.claimFor}</span>
+            {claimForItem.name ? (
+              <>
+                {' '}called <span className="font-medium text-foreground">{claimForItem.name}</span>
+              </>
+            ) : null}
+            {/* WHO the claim reimburses is a different question from whose
+                document this is, and the banner used to print the claimant
+                after the word "called" — so a claim named "Expense claim" for
+                Astrid read as a claim called "astrid yang". */}
+            {claimForItem.claimFor ? (
+              <>
+                , to be reimbursed to{' '}
+                <span className="font-medium text-foreground">{claimForItem.claimFor}</span>
+              </>
+            ) : null}
             {claimForItem.endDate ? ` (${claimForItem.endDate})` : ''}.
           </span>
         </div>
@@ -1167,8 +1335,8 @@ export default function CostDetail() {
         )}
         <TopButton
           onClick={() => setClaimOpen(true)}
-          disabled={Boolean(doc.xeroInvoiceId)}
-          title={doc.xeroInvoiceId ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.` : ''}
+          disabled={Boolean(claimBlocked)}
+          title={claimBlocked}
         >
           Add to expense claim
         </TopButton>
@@ -1244,7 +1412,7 @@ export default function CostDetail() {
         <div>
           <div className="mb-4 flex items-center justify-between border-b">
             <div className="flex gap-6">
-              {['details', 'note', 'history'].map((t) => (
+              {['details', 'email', 'whatsapp', 'note', 'history'].map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -1256,7 +1424,7 @@ export default function CostDetail() {
                       : 'border-transparent text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  {t}
+                  {t === 'whatsapp' ? 'WhatsApp' : t}
                 </button>
               ))}
             </div>
@@ -1314,7 +1482,16 @@ export default function CostDetail() {
 
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={itemNumber(doc)} readOnly /></Field>
-              <Field label="Document owner"><ComboSelect value={data.user} options={ownerOptions} onChange={(v) => set('user', v)} /></Field>
+              {/* Whoever it says today stays offered, so a document written
+                  before the general account existed still shows its own owner
+                  rather than silently reading as someone else. */}
+              <Field label="Document owner">
+                <ComboSelect
+                  value={data.user}
+                  options={data.user && !ownerOptions.includes(data.user) ? [data.user, ...ownerOptions] : ownerOptions}
+                  onChange={(v) => set('user', v)}
+                />
+              </Field>
               <Field label="Type"><ComboSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date">
                 <input
@@ -1325,7 +1502,22 @@ export default function CostDetail() {
                 />
               </Field>
               <Field label="Supplier">
-                <Input value={data.supplier} onChange={(v) => set('supplier', v)} />
+                {/* The org's Xero supplier contacts, but not ONLY them: a name
+                    read off a receipt is very often not a contact yet, and a
+                    picker that refused it would make the commonest case
+                    unenterable. Typing filters the list and offers the words as
+                    typed when nothing matches — so the list is used where it
+                    can be, which is what stops one supplier arriving under
+                    three spellings. */}
+                <ComboSelect
+                  aria-label="Supplier"
+                  value={data.supplier || ''}
+                  options={['', ...supplierOptions.filter((o) => o !== data.supplier)]}
+                  onChange={setSupplier}
+                  allowCustom
+                  emptyLabel="— None —"
+                  placeholder="Search or type a supplier…"
+                />
                 <button
                   type="button"
                   onClick={() => setRulesOpen(true)}
@@ -1338,6 +1530,12 @@ export default function CostDetail() {
                 >
                   {supplierRuleN > 0 ? `Edit supplier rules (${supplierRuleN})` : 'Set supplier rules'}
                 </button>
+                {ruleApplied?.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Standing rule applied — it set{' '}
+                    <span className="font-medium text-foreground">{ruleApplied.map(FIELD_LABEL).join(', ')}</span>.
+                  </p>
+                )}
               </Field>
               <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
               <Field label="Category">
@@ -1486,11 +1684,14 @@ export default function CostDetail() {
                 onExtract={extractLineItems}
                 onAdd={addLineItem}
                 onExpand={() => setLinesOpen(true)}
+                onRevert={revertLineItems}
+                canRevert={lineItemsEdited}
                 extracting={extractingLines}
                 busy={Boolean(job)}
                 visionEnabled={visionEnabled}
                 canExpand={lineItems.length > 0}
               />
+              {linesNoteBlock}
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
                 {doc.status === 'ready' ? (
@@ -1513,14 +1714,64 @@ export default function CostDetail() {
                 {doc.persisted && <SaveStatus status={fieldSave} className="px-1" />}
                 <TopButton
                   onClick={() => setClaimOpen(true)}
-                  disabled={Boolean(doc.xeroInvoiceId)}
-                  title={doc.xeroInvoiceId ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.` : ''}
+                  disabled={Boolean(claimBlocked)}
+                  title={claimBlocked}
                 >
                   Add to expense claim
                 </TopButton>
                 <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
                 <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
               </div>
+            </div>
+          )}
+
+          {tab === 'email' && (
+            <div className="text-sm">
+              {mail ? (
+                <>
+                  {/* The envelope, laid out as a message header: labels aligned
+                      in their own column so the addresses line up and can be
+                      read down. */}
+                  <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
+                    <dt className="text-muted-foreground">From</dt>
+                    <dd className="m-0 break-words">{mail.from || '—'}</dd>
+                    <dt className="text-muted-foreground">Date</dt>
+                    <dd className="m-0">{mailDate || '—'}</dd>
+                    <dt className="text-muted-foreground">Subject</dt>
+                    <dd className="m-0 break-words">{mail.subject || '(no subject)'}</dd>
+                    <dt className="text-muted-foreground">To</dt>
+                    <dd className="m-0 break-words">{mail.to || '—'}</dd>
+                  </dl>
+                  {/* What the sender actually wrote. Kept as typed — a forwarded
+                      note is evidence about the document, so it is not reflowed
+                      or tidied. */}
+                  {mail.text ? (
+                    <p className="mt-4 whitespace-pre-wrap border-t pt-4 text-muted-foreground">{mail.text}</p>
+                  ) : (
+                    <p className="mt-4 border-t pt-4 text-muted-foreground">The message had no text — just the attachment.</p>
+                  )}
+                </>
+              ) : (
+                <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
+                  This document didn&rsquo;t arrive by email — it was uploaded.
+                  <br />
+                  <span className="text-xs">
+                    Forwarding one in? Each person has their own address under Users &rarr; Edit &rarr; Extract by email.
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
+
+          {tab === 'whatsapp' && (
+            <div className="text-sm">
+              <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
+                WhatsApp isn&rsquo;t connected yet.
+                <br />
+                <span className="text-xs">
+                  Documents sent in by WhatsApp will show their message here, the way emailed ones do.
+                </span>
+              </p>
             </div>
           )}
 
@@ -1654,13 +1905,18 @@ export default function CostDetail() {
         title={data.supplier}
         preview={<ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} />}
         actions={
-          <LineItemsActions
-            onExtract={extractLineItems}
-            onAdd={addLineItem}
-            extracting={extractingLines}
-            busy={Boolean(job)}
-            visionEnabled={visionEnabled}
-          />
+<>
+            <LineItemsActions
+              onExtract={extractLineItems}
+              onAdd={addLineItem}
+              onRevert={revertLineItems}
+              canRevert={lineItemsEdited}
+              extracting={extractingLines}
+              busy={Boolean(job)}
+              visionEnabled={visionEnabled}
+            />
+            {linesNoteBlock}
+          </>
         }
         {...lineGrid}
       />

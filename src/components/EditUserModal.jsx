@@ -1,9 +1,124 @@
 import { useState } from 'react';
-import { X, ChevronDown, HelpCircle } from 'lucide-react';
-import { ROLES, ROLE_INFO, updateUser } from '@/lib/userStore';
+import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink } from 'lucide-react';
+import { ROLES, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
 import { useOrganisations } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
+
+// The mail domain user inbound addresses live on (mirrors the server's
+// INBOUND_MAIL_DOMAIN default).
+const INBOUND_DOMAIN = 'cybills.sg';
+
+// Mirrors normaliseHandle in server/src/users.ts, so the address previewed here
+// is the address that gets saved. The server normalises again and has the last
+// word — this is to show the answer, not to be trusted for it.
+function cleanHandle(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .split('@')[0]
+    .replace(/[^a-z0-9.-]+/g, '')
+    .replace(/[.-]{2,}/g, '.')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, 64);
+}
+
+// "Extract by email" — the user's inbound address plus any Gmail forwarding
+// confirmation CYBills is holding for them to click.
+function ExtractByEmail({ user, handle, setHandle, error }) {
+  const [copied, setCopied] = useState(false);
+  const clean = cleanHandle(handle);
+  const address = clean ? `${clean}@${INBOUND_DOMAIN}` : '';
+  const pending = user.pendingForward;
+  const copy = () => {
+    if (!address) return;
+    navigator.clipboard?.writeText(address).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="space-y-3 rounded-lg border p-4">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Mail className="h-4 w-4" strokeWidth={1.75} /> Extract by email
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Forward bills to this address and CYBills files them under {user.name || 'this user'}.
+      </p>
+      {/* The local-part is editable: the generated one is a starting point, not
+          the address the person has to live with. The domain is fixed, so it is
+          shown rather than typed — half an address is not a thing to get wrong. */}
+      <div className="flex items-center gap-2">
+        <div className={cn('flex h-9 flex-1 items-center overflow-hidden rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring', error && 'border-destructive')}>
+          <input
+            type="text"
+            value={handle}
+            onChange={(e) => setHandle(e.target.value)}
+            spellCheck={false}
+            autoCapitalize="none"
+            autoCorrect="off"
+            aria-label="Inbound email address"
+            placeholder="name"
+            className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none"
+          />
+          <span className="shrink-0 select-none border-l bg-muted/40 px-2.5 py-2 text-sm text-muted-foreground">
+            @{INBOUND_DOMAIN}
+          </span>
+        </div>
+        <button type="button" onClick={copy} disabled={!address} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
+          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      {error ? (
+        <p className="text-xs text-destructive">{error}</p>
+      ) : (
+        clean !== handle.trim().toLowerCase() && handle.trim() && (
+          <p className="text-xs text-muted-foreground">Will be saved as {address}</p>
+        )
+      )}
+      {/* Changing it takes the old address out of service, and any forwarding
+          rule already pointing at it stops arriving — worth saying before Save,
+          not after. */}
+      {clean && user.emailHandle && clean !== user.emailHandle && (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          Mail sent to {user.emailHandle}@{INBOUND_DOMAIN} will stop arriving. Any forwarding rule already set up needs
+          repointing at the new address.
+        </p>
+      )}
+
+      {/* Gmail forwarding confirmation caught for this user */}
+      {pending ? (
+        <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-50 px-3 py-3 dark:bg-amber-500/10">
+          <p className="text-sm font-medium text-amber-900 dark:text-amber-200">Forwarding confirmation received</p>
+          <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
+            Google sent a confirmation for a forward to this address. Open the link{pending.code ? `, or enter code ${pending.code},` : ''} to finish setting it up.
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {pending.url && (
+              <a href={pending.url} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90">
+                <ExternalLink className="h-3.5 w-3.5" /> Confirm forwarding
+              </a>
+            )}
+            {pending.code && (
+              <code className="rounded border bg-background px-2 py-1 text-xs">{pending.code}</code>
+            )}
+            <button
+              type="button"
+              onClick={() => dismissForward(user.id)}
+              className="ml-auto text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          When {user.name || 'this user'} sets up Gmail forwarding to this address, Google&rsquo;s confirmation link will
+          appear here to click — no mailbox needed.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function Toggle({ on, onToggle }) {
   return (
@@ -43,6 +158,9 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
   // — the row then only appears (and is only manageable) under that one.
   const { data: organisations = [] } = useOrganisations();
   const [organisationId, setOrganisationId] = useState(user?.organisationId || '');
+  const [handle, setHandle] = useState(user?.emailHandle || '');
+  const [handleError, setHandleError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   if (!open || !user) return null;
 
@@ -53,19 +171,39 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
   const emailValid = !login || /.+@.+\..+/.test(email.trim());
   const canSave = isDetails ? firstName.trim() && lastName.trim() && emailValid : true;
 
-  const save = () => {
-    if (isDetails) {
-      updateUser(user.id, {
-        firstName,
-        lastName,
-        login: login ? 'Yes' : 'No',
-        email: login ? email : '',
-        ...(movingOut ? { organisationId } : {}),
-      });
-    } else {
-      updateUser(user.id, practice ? { practiceRole: role, privileges: priv } : { role, privileges: priv });
+  const save = async () => {
+    setSaving(true);
+    setHandleError('');
+    try {
+      if (isDetails) {
+        const wanted = cleanHandle(handle);
+        await updateUser(user.id, {
+          firstName,
+          lastName,
+          login: login ? 'Yes' : 'No',
+          email: login ? email : '',
+          // Only when it actually changed — sending it unchanged would make an
+          // edit to somebody's NAME fail on their own existing address.
+          ...(wanted && wanted !== user.emailHandle ? { emailHandle: wanted } : {}),
+          ...(movingOut ? { organisationId } : {}),
+        });
+      } else {
+        await updateUser(user.id, practice ? { practiceRole: role, privileges: priv } : { role, privileges: priv });
+      }
+      onClose();
+    } catch (err) {
+      // The dialog stays open on a rejected address, with the reason on the
+      // field — closing it would throw away every other edit in the form.
+      if (err?.code === 'handle_taken') {
+        setHandleError(`${err.info?.handle || cleanHandle(handle)}@${INBOUND_DOMAIN} is already used by ${err.info?.takenBy || 'someone else'}.`);
+      } else if (err?.code === 'invalid_handle') {
+        setHandleError('Use letters and numbers, optionally separated by dots or hyphens.');
+      } else {
+        setHandleError('Could not save. Please try again.');
+      }
+    } finally {
+      setSaving(false);
     }
-    onClose();
   };
   const setP = (k, v) => setPriv((p) => ({ ...p, [k]: v }));
 
@@ -128,6 +266,12 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                   Without login access this {practice ? 'colleague' : 'user'} can’t sign in — no email is required.
                 </p>
               )}
+              <ExtractByEmail
+                user={user}
+                handle={handle}
+                setHandle={(v) => { setHandle(v); setHandleError(''); }}
+                error={handleError}
+              />
             </div>
           ) : (
             <div className="space-y-5">
@@ -176,7 +320,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
 
         <div className="flex items-center justify-end gap-2 border-t px-6 py-4">
           <button type="button" onClick={onClose} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">Cancel</button>
-          <button type="button" onClick={save} disabled={!canSave} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">Save</button>
+          <button type="button" onClick={save} disabled={!canSave || saving} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
     </div>

@@ -20,7 +20,10 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
   const doExport = async () => {
     // Record the export under the signed-in user's name (not the generic "You"),
     // matching the claim export dialogs.
-    const exportedBy = membership?.user?.name || user?.name || user?.email || 'You';
+    // Never "You": this is read by whoever opens the file or the Exports tab,
+    // and it means a different person to each of them. An email is a worse name
+    // than a name but still identifies somebody; blank is honest when nothing does.
+    const exportedBy = membership?.user?.name || user?.name || user?.email || '';
     setBusy(true);
     try {
       await exportDocs(rows, { kind, format: tab, csvFormat, exportedBy });

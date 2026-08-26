@@ -37,6 +37,12 @@ export const DEFAULT_EXPORT_SETTINGS = {
   pdfOrder: 'Date (old to new)',
   hideProject: false,
   hideProject2: false,
+  // Image sharing
+  // Whether an export's Image column (and a claim PDF's Item ID) links to the
+  // source document. The link is signed and expires, so it opens for somebody
+  // with no CYBills sign-in — the accountant reading the CSV, the approver sent
+  // the claim. Off means the export names the document without linking to it.
+  imageSharing: true,
 };
 
 const emit = () => window.dispatchEvent(new Event(EXPORT_SETTINGS_EVENT));

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import {
   fetchXeroTenants,
   createOrganisation,
   useInvalidateOrganisations,
+  useOrganisations,
   setActiveOrganisationId,
 } from '@/lib/organisations';
 
@@ -11,6 +13,13 @@ import {
 // Xero organisations connected in cyworkspace. The tenant list comes from the
 // relay (GET /api/xero/tenants); picking one auto-fills the display name.
 export default function AddOrganisationModal({ open, onClose, onAdded }) {
+  // 'xero' links a real Xero organisation. 'standalone' creates an entity that
+  // is NOT a company: a bridge for people who submit costs somewhere that keeps
+  // no books of its own, whose claims post into another entity's ledger.
+  const [kind, setKind] = useState('xero');
+  const [parentOrgId, setParentOrgId] = useState('');
+  const { data: organisations = [] } = useOrganisations();
+  const parents = organisations.filter((o) => o.tenantId);
   const [tenants, setTenants] = useState(null); // null = loading
   const [loadError, setLoadError] = useState('');
   const [tenantId, setTenantId] = useState('');
@@ -28,6 +37,8 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
     setName('');
     setNameTouched(false);
     setSaveError('');
+    setKind('xero');
+    setParentOrgId('');
     fetchXeroTenants()
       .then(setTenants)
       .catch((err) => {
@@ -43,6 +54,10 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
   if (!open) return null;
 
   const selected = (tenants ?? []).find((t) => t.tenant_id === tenantId) ?? null;
+  const standalone = kind === 'standalone';
+  // A standalone entity has no tenant to take a name from, so both fields are
+  // its own — and it needs somewhere for its claims to land.
+  const canAdd = standalone ? Boolean(name.trim() && parentOrgId) : Boolean(selected);
 
   const pickTenant = (id) => {
     setTenantId(id);
@@ -51,15 +66,19 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
   };
 
   const submit = async () => {
-    if (!selected) return;
+    if (!canAdd) return;
     setSaving(true);
     setSaveError('');
     try {
-      const organisation = await createOrganisation({
-        name: name.trim() || selected.tenant_name,
-        tenantId: selected.tenant_id,
-        tenantName: selected.tenant_name,
-      });
+      const organisation = await createOrganisation(
+        standalone
+          ? { name: name.trim(), kind: 'standalone', parentOrgId }
+          : {
+              name: name.trim() || selected.tenant_name,
+              tenantId: selected.tenant_id,
+              tenantName: selected.tenant_name,
+            }
+      );
       invalidate();
       setActiveOrganisationId(organisation.id);
       onAdded?.(organisation);
@@ -88,11 +107,49 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
         </div>
 
         <div className="space-y-4 p-6">
+          <div className="flex gap-2">
+            {[
+              { key: 'xero', label: 'Linked to Xero' },
+              { key: 'standalone', label: 'No accounting connection' },
+            ].map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setKind(t.key)}
+                className={cn(
+                  'inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors',
+                  kind === t.key ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted'
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
           <p className="text-sm text-muted-foreground">
-            Pick the Xero organisation this workspace posts to. The connection itself lives in
-            cyworkspace — CYBills only stores the link.
+            {standalone
+              ? 'An entity that keeps no books of its own — people submit costs here, and its claims post into another entity’s Xero.'
+              : 'Pick the Xero organisation this workspace posts to. The connection itself lives in cyworkspace — CYBills only stores the link.'}
           </p>
 
+          {standalone ? (
+            <label className="flex items-center gap-3 text-sm">
+              <span className="w-32 shrink-0 text-muted-foreground">Publishes into</span>
+              <div className="relative flex-1">
+                <select
+                  value={parentOrgId}
+                  onChange={(e) => setParentOrgId(e.target.value)}
+                  className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <option value="">Select an entity</option>
+                  {parents.map((o) => (
+                    <option key={o.id} value={o.id}>{o.name}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              </div>
+            </label>
+          ) : (
           <label className="flex items-center gap-3 text-sm">
             <span className="w-32 shrink-0 text-muted-foreground">Xero organisation</span>
             <div className="relative flex-1">
@@ -114,6 +171,7 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
               <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             </div>
           </label>
+          )}
 
           <label className="flex items-center gap-3 text-sm">
             <span className="w-32 shrink-0 text-muted-foreground">Display name</span>
@@ -123,12 +181,12 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
                 setName(e.target.value);
                 setNameTouched(true);
               }}
-              placeholder="Defaults to the Xero name"
+              placeholder={standalone ? "e.g. Red Alpha - ST Engineering" : "Defaults to the Xero name"}
               className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
 
-          {loadError && <p className="text-sm text-destructive">{loadError}</p>}
+          {!standalone && loadError && <p className="text-sm text-destructive">{loadError}</p>}
           {saveError && <p className="text-sm text-destructive">{saveError}</p>}
         </div>
 
@@ -142,11 +200,11 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
           </button>
           <button
             type="button"
-            disabled={!selected || saving}
+            disabled={!canAdd || saving}
             onClick={submit}
             className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {saving ? 'Adding…' : 'Add organisation'}
+            {saving ? 'Adding…' : standalone ? 'Add entity' : 'Add organisation'}
           </button>
         </div>
       </div>

@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, canAccessOrg } from './users.js';
+import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, canAccessOrg } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
-import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed } from './store.js';
+import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed, parseAmount } from './store.js';
 import { listOrganisations } from './organisations.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
@@ -53,6 +53,7 @@ type Claim = {
   approverEmail: string;
   decidedBy: string;
   decidedAt: string;
+  description?: string; // the claimant's own note about what this claim is for
   decisionReason?: string; // the manager's reason when a claim is rejected
   archived: boolean;
   deleted: boolean;
@@ -218,23 +219,47 @@ export function fileAutoClaim(
 export const claimsRouter = Router();
 
 // GET /api/claims — every non-deleted claim in the workspace.
-// Enrich a claim's transactions with the source bill's current description (and
-// supplier) when the stored snapshot lacks one — so items claimed before the
-// description was captured still show it in the UI / PDF / Xero. Non-destructive.
-function withDescriptions(c: Claim): Claim {
-  return {
-    ...c,
-    transactions: c.transactions.map((t) => {
-      if (t.description) return t;
-      const bill = getBillById(c.orgId, String(t.itemId));
-      return bill?.description ? { ...t, description: bill.description } : t;
-    }),
-  };
+//
+// A claim's items are a SNAPSHOT of the documents taken when they were added,
+// and only the description was ever refreshed — so correcting a receipt left the
+// claim showing the old values for good. Give a document its missing date and
+// the claim row still read "—", and still said "Needs: Date", while the document
+// itself read Ready. Two screens, one document, two answers.
+//
+// So the live document answers for the fields it owns. The money is included:
+// the claim's total is what gets published, and a claim that adds up to
+// something the receipts don't is the one thing worth never showing.
+//
+// Frozen once the claim is APPROVED. Up to that point the claim is a request
+// being assembled and should track its documents; after it, it is a decision
+// somebody made about a specific sum, and that sum must not move underneath
+// them. Non-destructive either way — nothing here is written back.
+function liveTxns(c: Claim): Txn[] {
+  return c.transactions.map((t) => {
+    const bill = getBillById(c.orgId, String(t.itemId));
+    if (!bill) return t; // a sample/demo row with no document behind it
+    return {
+      ...t,
+      supplier: bill.supplier ?? t.supplier,
+      date: bill.date ?? t.date,
+      category: bill.category ?? t.category,
+      description: bill.description || t.description,
+      project: bill.project ?? t.project,
+      net: String(bill.total != null ? Number(bill.total) - Number(bill.tax || 0) : t.net),
+      tax: String(bill.tax ?? t.tax),
+      total: String(bill.total ?? t.total),
+    };
+  });
+}
+
+function withLiveItems(c: Claim): Claim {
+  if (c.approvalStatus === 'approved') return c;
+  return { ...c, transactions: liveTxns(c) };
 }
 
 claimsRouter.get('/', (req, res) => {
   const org = orgIdFor(req);
-  res.json({ claims: load().filter((c) => c.orgId === org && !c.deleted).map(withDescriptions) });
+  res.json({ claims: load().filter((c) => c.orgId === org && !c.deleted).map(withLiveItems) });
 });
 
 // GET /api/claims/:id/where — which entity a claim belongs to.
@@ -418,7 +443,12 @@ claimsRouter.post('/:id/items', (req, res) =>
     for (const t of incoming) {
       if (!t || seen.has(t.itemId)) continue;
       claim.transactions.push({ ...t, addedBy: t.addedBy || me.name });
-      claim.history.unshift({ text: `Item ${t.itemId} was added to the expense claim`, by: t.addedBy || me.name, at: nowIso() });
+      // Name the document the way every other surface does — its Item ID, the
+      // number on the row, the export and the claim PDF. `itemId` is whatever
+      // the caller addressed it by, which for most callers is the internal
+      // `bill_…` id nobody has ever seen.
+      const shown = String(t.displayId || t.itemId || '');
+      claim.history.unshift({ text: `Item ${shown} was added to the expense claim`, by: t.addedBy || me.name, at: nowIso() });
       seen.add(t.itemId);
       claimed.push(String(t.itemId));
       added += 1;
@@ -471,6 +501,24 @@ claimsRouter.post('/:id/update', (req, res) =>
     if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
     const b = req.body ?? {};
     if (typeof b.name === 'string' && b.name.trim()) claim.name = b.name.trim();
+    // Who is being reimbursed. It was accepted by the form and dropped here, so
+    // the field looked editable and reverted on the next load. It is also not
+    // decoration: the name is matched to a person to find the approver this
+    // claim routes to, so it changes where the claim goes — which is why the
+    // change is recorded, and why it is refused once the claim is already out
+    // for approval rather than rerouted under the person deciding it.
+    if (typeof b.claimFor === 'string' && b.claimFor.trim() && b.claimFor.trim() !== claim.claimFor) {
+      if (claim.approvalStatus === 'awaiting_approval') {
+        return res.status(409).json({
+          error: 'claim_submitted',
+          message: 'This claim is out for approval. Recall it before changing who it is for.',
+        });
+      }
+      const from = claim.claimFor;
+      claim.claimFor = b.claimFor.trim();
+      claim.history.unshift({ text: `Claim for changed from ${from || '—'} to ${claim.claimFor}`, by: me.name, at: nowIso() });
+    }
+    if (typeof b.description === 'string') claim.description = b.description;
     if (typeof b.endDate === 'string') {
       const d = b.endDate.trim();
       claim.endDate = d;
@@ -483,8 +531,73 @@ claimsRouter.post('/:id/update', (req, res) =>
 // POST /api/claims/:id/submit — submit for approval. The approver is derived
 // automatically from the claimant's direct manager (set in Users), so there's no
 // approver to pick. Fails with 'no_manager' when the claimant has none assigned.
+// What an item on a claim is still missing, in the words the inbox uses — the
+// same four fields as costComplete / readiness.js, so a document that reads
+// "Needs: Date" in one place reads the same here.
+//
+// Read off the LIVE document, not the claim's snapshot. A claim stores the
+// item's fields as they were when it was added and refreshes only the
+// description, so judging completeness by the snapshot would trap the claim:
+// the fix happens on the DOCUMENT — which is what the refusal tells you to do —
+// and the snapshot would never catch up. The snapshot answers only for an item
+// with no bill behind it (a sample/demo row).
+function missingOnItem(orgId: string, t: Txn): string[] {
+  const bill = getBillById(orgId, String(t.itemId));
+  const supplier = bill ? bill.supplier : t.supplier;
+  const date = bill ? bill.date : t.date;
+  const category = bill ? bill.category : t.category;
+  const total = bill ? bill.total : t.total;
+  const named = (v: unknown, placeholder: string) => {
+    const x = String(v ?? '').trim().toLowerCase();
+    return Boolean(x) && x !== placeholder;
+  };
+  const out: string[] = [];
+  if (!named(supplier, 'unknown supplier')) out.push('Supplier');
+  if (!String(date ?? '').trim()) out.push('Date');
+  if (!named(category, 'uncategorised')) out.push('Category');
+  if (!(parseAmount(total) > 0)) out.push('Total');
+  return out;
+}
+
 claimsRouter.post('/:id/submit', (req, res) =>
   mutate(req, res, (claim, me) => {
+    // Submitting asks a person to approve a specific sum, and they approve what
+    // the claim SAYS. An item with no date gave them nothing to check it
+    // against — was it this period, was it already claimed — while the row wore
+    // a "Ready" badge. Every other route to the ledger already refuses an
+    // incomplete document; this is the same standard at the point a human is
+    // asked to sign off.
+    const incomplete = (claim.transactions ?? [])
+      .map((t) => ({ t, missing: missingOnItem(claim.orgId, t) }))
+      .filter((x) => x.missing.length);
+    if (incomplete.length) {
+      return res.status(422).json({
+        error: 'incomplete_items',
+        count: incomplete.length,
+        items: incomplete.slice(0, 10).map((x) => ({
+          itemId: x.t.displayId || x.t.itemId,
+          supplier: x.t.supplier || 'Unknown supplier',
+          missing: x.missing,
+        })),
+        message:
+          `${incomplete.length} item${incomplete.length === 1 ? '' : 's'} on this claim ${incomplete.length === 1 ? 'is' : 'are'} incomplete — ` +
+          `${incomplete[0].t.supplier || 'one'} needs ${incomplete[0].missing.join(', ')}. ` +
+          'Fill those in before asking somebody to approve the claim.',
+      });
+    }
+    // A claim is money paid back to a PERSON. The general account is what owns
+    // the documents nobody claimed — the company's own paperwork — so a claim
+    // made out to it has nobody to reimburse and nobody whose manager could
+    // approve it. Most often it means the documents were uploaded by a
+    // colleague from outside the entity and never attributed to anyone.
+    if (isGeneralPerson(workspaceId(req), claim.orgId, claim.claimFor)) {
+      return res.status(422).json({
+        error: 'claim_for_general',
+        message:
+          'This claim is made out to the general account, which is not a person — there is nobody to pay it back to. ' +
+          'Set "Claim for" to whoever paid, adding them under Users first if they are not on the roster yet.',
+      });
+    }
     const manager = directManagerFor(workspaceId(req), claim.claimFor);
     if (!manager) {
       return res.status(400).json({ error: 'no_manager', claimant: claim.claimFor });
@@ -533,6 +646,12 @@ claimsRouter.post('/:id/approve', (req, res) =>
   mutate(req, res, (claim, me) => {
     const blocked = ensureApprover(req, claim, me, res);
     if (blocked) return blocked;
+    // Record the figures being approved, rather than leaving the snapshot taken
+    // when the items were ADDED to resurface. Freezing without this froze the
+    // wrong thing: a receipt whose date was fixed after it was claimed showed
+    // the date right up until approval, then reverted to "—" and "Needs: Date"
+    // — the approver signed off one set of numbers and the claim kept another.
+    claim.transactions = liveTxns(claim);
     claim.approvalStatus = 'approved';
     claim.decidedBy = me.name;
     claim.decidedAt = nowIso();

@@ -2,10 +2,11 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID, randomBytes, createHash, scryptSync, timingSafeEqual } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId } from './workspace.js';
-import { getOrganisation, primaryOrgId, listOrganisations } from './organisations.js';
+import { getOrganisation, primaryOrgId, listOrganisations, dataScopeForOrg } from './organisations.js';
 import { setSession, readSession } from './auth.js';
-import { env } from './env.js';
+import { env, googleEnabled } from './env.js';
 import { sendMail, inviteEmail, passwordResetEmail, passwordChangedEmail } from './mailer.js';
+import { reassignPerson } from './store.js';
 
 // Password login (non-Google), so staff on Google Workspace accounts that Google
 // blocks can still sign in. Passwords are salted + scrypt-hashed (Node built-in,
@@ -93,6 +94,12 @@ export type User = {
   // people, and a new user is created under whichever one is selected. Empty
   // only while no organisation is linked yet.
   organisationId: string;
+  // The entity's GENERAL account — created with the organisation itself, and
+  // never a person. It owns the documents nobody claimed: anything a practice
+  // colleague adds to this client lands here unless they name one of the
+  // client's own people as the owner. It has no real address, so it can't sign
+  // in, be invited, or approve anything.
+  general: boolean;
   companyId: string;
   companyName: string;
   // --- Practice membership ---------------------------------------------------
@@ -110,12 +117,32 @@ export type User = {
   clientAccess: string[];
   // Access to every linked client, including ones added later.
   allClients: boolean;
+  // OTHER client entities this person also works in, each with the role they
+  // hold there.
+  //
+  // One person, one row: sign-in is by email, so a second row for the same
+  // address would be a second identity — and the documents they own, the claims
+  // made out to them and their manager would split between the two. So a person
+  // who works in more than one entity keeps their row and gains access here.
+  //
+  // A distinct field from `clientAccess` on purpose: that one belongs to the
+  // practice team and is WIPED from every non-practice row on load
+  // (assignPractice), so it could never carry this.
+  extraAccess?: Array<{ orgId: string; role: string }>;
   // The user's direct manager (another user's id) — the approver a claim is
   // auto-routed to when this person submits it for approval.
   managerId?: string;
   // The Xero project / PIC tracking option assigned to this user. New documents
   // they upload are auto-allocated to it.
   project?: string;
+  // Inbound email ("Extract by email"). Each user gets a short handle, so their
+  // address is `<emailHandle>@cybills.sg`; a supplier (or the user) forwards
+  // bills there and CYBills files them under this person. Unique per workspace.
+  emailHandle?: string;
+  // A Gmail forwarding-confirmation link CYBills caught at this user's address
+  // and is holding for them to click (so nobody needs to read a mailbox). Set by
+  // the inbound endpoint; cleared once the user confirms.
+  pendingForward?: { url: string; code: string; from: string; at: string } | null;
   passwordHash?: string; // set by an admin; never returned to the client
   // Single-use invitation / password-reset link. Only the SHA-256 of the token
   // is stored, so a leaked data file can't be replayed into an account.
@@ -129,7 +156,12 @@ export type User = {
 // token; expose only whether a password has been set.
 export function publicUser(u: User) {
   const { passwordHash, resetTokenHash, resetTokenExpires, resetTokenKind, ...rest } = u;
-  return { ...rest, hasPassword: Boolean(passwordHash) };
+  // The general account's address is an internal identity (what a document
+  // stores as its owner), not a mailbox anyone can write to — so the roster
+  // reports it as having none, and the UI treats it accordingly: nothing to
+  // invite, nothing to reset.
+  const email = u.general || isInternalAddress(rest.email) ? '' : rest.email;
+  return { ...rest, email, hasPassword: Boolean(passwordHash) };
 }
 
 const COLLECTION = 'users';
@@ -171,12 +203,91 @@ export function full(u: Partial<User>, ws: string): User {
     practice: Boolean(u.practice),
     practiceRole: currentPracticeRole(u.practiceRole),
     clientAccess: Array.isArray(u.clientAccess) ? u.clientAccess.filter(Boolean) : [],
+    extraAccess: normaliseExtraAccess(u.extraAccess),
     allClients: Boolean(u.allClients),
     organisationId: u.organisationId || '',
+    general: Boolean(u.general),
     companyId: u.companyId || '',
     companyName: u.companyName || '',
     project: u.project || '',
+    emailHandle: u.emailHandle || '',
+    pendingForward: u.pendingForward ?? null,
   };
+}
+
+// --- Inbound email handles ---------------------------------------------------
+// The domain user addresses live on (Cloudflare-managed). Every user's inbound
+// address is `<emailHandle>@INBOUND_MAIL_DOMAIN`.
+export const INBOUND_MAIL_DOMAIN = process.env.INBOUND_MAIL_DOMAIN || 'cybills.sg';
+
+// A friendly, unique-per-workspace handle base from the person's name (falling
+// back to their email local-part). "Yakson Ong" -> "yakson"; collisions get a
+// numeric suffix.
+function handleBase(u: Partial<User>): string {
+  const raw = String(u.firstName || u.name || (u.email ? u.email.split('@')[0] : '') || 'user');
+  const slug = raw.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return slug || 'user';
+}
+
+// Assign a handle to every real (non-general, non-removed) user in `ws` that
+// lacks one, unique across the workspace. Returns true if anything changed.
+function ensureEmailHandles(items: User[], ws: string): boolean {
+  const taken = new Set(
+    items.filter((u) => u.workspaceId === ws && u.emailHandle).map((u) => String(u.emailHandle).toLowerCase())
+  );
+  let changed = false;
+  for (const u of items) {
+    if (u.workspaceId !== ws || u.removed || u.general || u.emailHandle) continue;
+    const base = handleBase(u);
+    let handle = base;
+    let n = 1;
+    while (taken.has(handle)) { n += 1; handle = `${base}${n}`; }
+    u.emailHandle = handle;
+    taken.add(handle);
+    changed = true;
+  }
+  return changed;
+}
+
+// Clean a hand-typed handle into something that can actually be the local-part
+// of an address: lowercase, letters/digits with dots or hyphens between them,
+// nothing leading or trailing, and short enough to be a real mailbox name.
+// Returns '' when nothing usable is left, which the caller refuses rather than
+// storing — an address of "@cybills.sg" would swallow mail for everyone.
+export function normaliseHandle(raw: string): string {
+  return String(raw || '')
+    .toLowerCase()
+    .split('@')[0] // tolerate someone pasting the whole address back in
+    .replace(/[^a-z0-9.-]+/g, '')
+    .replace(/[.-]{2,}/g, '.')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, 64);
+}
+
+// Resolve an inbound address' local-part (handle) to its user, ignoring any
+// `+suffix` and case. Workspace-wide (the inbound mailbox is one for all).
+export function userByEmailHandle(handle: string): User | null {
+  const h = String(handle || '').split('+')[0].trim().toLowerCase();
+  if (!h) return null;
+  return load().find((u) => !u.removed && !u.general && String(u.emailHandle || '').toLowerCase() === h) || null;
+}
+
+// Store / clear the Gmail forwarding confirmation CYBills is holding for a user.
+export function setPendingForward(userId: string, data: { url: string; code: string; from: string }): User | null {
+  const items = load();
+  const u = items.find((x) => x.id === userId && !x.removed);
+  if (!u) return null;
+  u.pendingForward = { url: data.url, code: data.code, from: data.from, at: new Date().toISOString() };
+  save(items);
+  return u;
+}
+export function clearPendingForward(userId: string): User | null {
+  const items = load();
+  const u = items.find((x) => x.id === userId && !x.removed);
+  if (!u) return null;
+  u.pendingForward = null;
+  save(items);
+  return u;
 }
 
 // --- Tenancy -----------------------------------------------------------------
@@ -195,7 +306,120 @@ export function orgScope(req: Request): string {
   return defaultOrgFor(ws, me);
 }
 
-const inOrg = (u: User, org: string) => (u.organisationId || '') === org;
+// Whatever was stored, as a clean list. Junk reads as "no extra access" rather
+// than throwing: this is consulted on every request that names an entity.
+function normaliseExtraAccess(v: unknown): Array<{ orgId: string; role: string }> {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  const out: Array<{ orgId: string; role: string }> = [];
+  for (const raw of v) {
+    const orgId = String((raw as { orgId?: unknown })?.orgId ?? '').trim();
+    if (!orgId || seen.has(orgId)) continue;
+    seen.add(orgId);
+    out.push({ orgId, role: currentRole(String((raw as { role?: unknown })?.role ?? '')) });
+  }
+  return out;
+}
+
+const extraAccessFor = (u: User | null | undefined, org: string) =>
+  (Array.isArray(u?.extraAccess) ? u!.extraAccess : []).find((e) => e.orgId === org) ?? null;
+
+// The entity this person's row belongs to, OR any other they were given access
+// to. Everything that answers "who is in this entity" reads this: the roster,
+// the directory a document's owner is picked from, and the claimants.
+const inOrg = (u: User, org: string) => (u.organisationId || '') === org || Boolean(extraAccessFor(u, org));
+
+// --- The entity's general account --------------------------------------------
+// Every linked organisation gets one row that isn't a person: the account the
+// client's unclaimed paperwork belongs to. It exists so that a colleague doing
+// the client's books never has to own the client's documents — what they add
+// lands here unless they name one of the client's own people. Created with the
+// organisation (and backfilled onto organisations linked before this existed),
+// so the Users list is never empty for a freshly-linked client.
+export const GENERAL_USER_NAME = 'General';
+
+// The row needs an address because a document's owner is stored as one, but
+// nothing is ever sent to it: it's derived from the organisation id (unique by
+// construction), on a domain that doesn't resolve, and the UI shows the row as
+// having no email at all.
+const generalEmailFor = (orgId: string) => `${orgId}.general@cybills.local`;
+
+// The same trick, for a person who has no mailbox.
+//
+// Plenty of people on a client's roster are never going to sign in — the ST
+// Engineering staff claiming through a bridge entity are the case that forced
+// this. A document's owner is always an EMAIL, and the directory that resolves
+// owners skips anyone without one, so a person added with a blank address
+// existed on the roster and could own nothing: they never appeared in the
+// Document owner picker, and no claim could be made out to them.
+//
+// So they get an identity instead of a mailbox: derived from their name, on a
+// domain that doesn't resolve, hidden by publicUser and never written to.
+const INTERNAL_DOMAIN = '@cybills.local';
+export const isInternalAddress = (email: string) => norm(email).endsWith(INTERNAL_DOMAIN);
+
+function internalEmailFor(orgId: string, name: string, taken: Set<string>): string {
+  const slug = norm(name).replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'person';
+  const base = `${slug}.${orgId || 'workspace'}`;
+  let candidate = `${base}${INTERNAL_DOMAIN}`;
+  let n = 1;
+  while (taken.has(candidate)) {
+    n += 1;
+    candidate = `${base}.${n}${INTERNAL_DOMAIN}`;
+  }
+  taken.add(candidate);
+  return candidate;
+}
+
+const isGeneralRow = (u: User, ws: string, org: string) =>
+  u.workspaceId === ws && !u.removed && u.general && inOrg(u, org);
+
+// A practice colleague working on an entity from OUTSIDE it — the case the
+// general account exists for. Deliberately not "is on the practice team": the
+// practice's own entity is a client like any other, and the colleagues who
+// belong to it are its own people there, so their own company's paperwork keeps
+// their name on it.
+const isOutsider = (u: User | undefined, org: string) => Boolean(u?.practice) && !inOrg(u as User, org);
+
+// The general account for one entity, or null before any organisation is linked.
+export function generalUserFor(ws: string, org: string): User | null {
+  if (!org) return null;
+  return ensure(ws).find((u) => isGeneralRow(u, ws, org)) ?? null;
+}
+
+// Give every linked organisation its general account. Runs on load, so an
+// organisation linked before this existed gets one too, and deleting the row
+// simply brings it back — it's part of the entity, not a person someone added.
+function ensureGeneralUsers(items: User[], ws: string): boolean {
+  let changed = false;
+  for (const org of listOrganisations(ws)) {
+    if (items.some((u) => isGeneralRow(u, ws, org.id))) continue;
+    items.push(
+      full(
+        {
+          name: GENERAL_USER_NAME,
+          email: generalEmailFor(org.id),
+          login: 'No',
+          role: 'Standard',
+          general: true,
+          organisationId: org.id,
+          companyId: org.id,
+          companyName: org.name,
+          practice: false,
+        },
+        ws
+      )
+    );
+    changed = true;
+  }
+  return changed;
+}
+
+// Called when an organisation is linked. ensure() creates the row for every
+// linked organisation, so all this has to do is run after the new one is stored.
+export function ensureGeneralUser(ws: string, orgId: string): User | null {
+  return generalUserFor(ws, orgId);
+}
 
 // --- Who can own a document here ---------------------------------------------
 // Attribution is not the roster. The Users page is one client entity's own
@@ -204,12 +428,29 @@ const inOrg = (u: User, org: string) => (u.organisationId || '') === org;
 // the app cannot resolve falls back to the raw email local-part ("czeyang.goh"
 // next to "Cze Yang Goh", the same person twice). So the directory below is the
 // wider set: the entity's people PLUS the practice colleagues with access to
-// it. Names and emails only, and only for an entity the caller can open.
-export function peopleForOrg(ws: string, org: string): Array<{ email: string; name: string }> {
+// it, each entry saying which it is. Names, emails and those flags only, and
+// only for an entity the caller can open.
+export function peopleForOrg(
+  ws: string,
+  org: string
+): Array<{ email: string; name: string; external: boolean; general: boolean; deactivated: boolean }> {
   return ensure(ws)
     .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org))))
     .filter((u) => Boolean(u.email))
-    .map((u) => ({ email: u.email, name: u.name || u.email }));
+    .map((u) => ({
+      email: u.email,
+      name: u.name || u.email,
+      // What each entry IS here, because the two questions differ: a colleague
+      // from outside is never OFFERED as a document's owner (that's the general
+      // account's job), but their name must still resolve on the documents they
+      // uploaded.
+      external: isOutsider(u, org),
+      general: Boolean(u.general),
+      // Same split again, for someone who has left: their old documents must go
+      // on reading as a person, but nothing new should be handed to an account
+      // that can no longer sign in.
+      deactivated: Boolean(u.deactivated),
+    }));
 }
 
 // Resolve whatever a caller called a person — their email, or the display name
@@ -224,6 +465,32 @@ export function emailForPerson(ws: string, org: string, value: string): string {
   if (byEmail) return byEmail.email;
   const byName = people.filter((p) => norm(p.name) === want);
   return byName.length === 1 ? byName[0].email : '';
+}
+
+// Who a document in this entity actually belongs to, given what the client
+// asked for (`requested`) and who is putting it there (`uploader`, an email;
+// pass '' when nobody is uploading, e.g. an edit). The practice's rule:
+//
+//   * one of the client's own people was named → that person owns it;
+//   * a COLLEAGUE FROM OUTSIDE this entity was named, or one of them uploaded
+//     without naming anyone → the entity's general account owns it. A colleague
+//     does the client's books; the paperwork is still the client's;
+//   * an address the directory can't place → kept as given (a real person we
+//     simply don't know here);
+//   * nothing named, uploaded by the client's own person → left empty, which
+//     is how a document keeps following its uploader.
+export function ownerForOrg(ws: string, org: string, requested: string, uploader: string): string {
+  const items = ensure(ws);
+  const rowFor = (email: string) => {
+    const want = norm(email);
+    return want ? items.find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === want) : undefined;
+  };
+  const generalEmail = () => items.find((u) => isGeneralRow(u, ws, org))?.email || '';
+
+  const raw = String(requested ?? '').trim();
+  const resolved = raw ? emailForPerson(ws, org, raw) || (raw.includes('@') ? raw : '') : '';
+  if (resolved) return isOutsider(rowFor(resolved), org) ? generalEmail() : resolved;
+  return isOutsider(rowFor(uploader), org) ? generalEmail() : '';
 }
 
 // Whose row the caller can act on from where. A client entity's people are
@@ -261,6 +528,53 @@ function currentPracticeRole(role: string | undefined): string {
   return 'Standard';
 }
 
+// --- Locking yourself out -----------------------------------------------------
+// Two ways the roster can be left with nobody able to fix it, both of which have
+// happened here: deactivating your OWN account (Astrid's practice row went off
+// during a duplicate cleanup and her whole nav vanished until Cze put it back),
+// and removing the LAST practice Owner (nobody left who can restore one, because
+// restoring one is a thing only an Owner can do).
+//
+// Checked in one place because three routes can cause it — DELETE, the active
+// toggle, and a PATCH carrying `deactivated` or a demotion out of Owner.
+// Returns the sentence to refuse with, or '' when the change is safe.
+type AccessChange = { removed?: boolean; deactivated?: boolean; practiceRole?: string };
+
+export function lockoutRisk(ws: string, target: User, change: AccessChange, actorId: string): string {
+  const goingAway = change.removed === true || change.deactivated === true;
+
+  // Your own account. Someone else with the rights can always do it for you —
+  // what must not happen is doing it to yourself and losing the way back.
+  if (goingAway && actorId && actorId === target.id) {
+    return change.removed
+      ? 'You can’t delete your own account. Ask another admin to do it.'
+      : 'You can’t deactivate your own account — you would lose access with no way to undo it. Ask another admin.';
+  }
+
+  // The last Owner of the practice. Demotion counts: an Owner moved to Practice
+  // Admin is no longer an Owner, and if they were the only one there is now no
+  // way to appoint another.
+  const demoted = typeof change.practiceRole === 'string' && currentPracticeRole(change.practiceRole) !== 'Owner';
+  if (!goingAway && !demoted) return '';
+  if (!target.practice || currentPracticeRole(target.practiceRole) !== 'Owner') return '';
+  const otherOwners = ensure(ws).filter(
+    (u) =>
+      u.workspaceId === ws &&
+      !u.removed &&
+      !u.deactivated &&
+      u.practice &&
+      u.id !== target.id &&
+      currentPracticeRole(u.practiceRole) === 'Owner'
+  );
+  if (otherOwners.length) return '';
+  const what = change.removed
+    ? 'delete them'
+    : demoted
+      ? 'move them out of Owner'
+      : 'deactivate them';
+  return `${target.name || 'This colleague'} is the only Owner of the practice, so you can’t ${what} — there would be nobody left who can appoint another. Make someone else an Owner first.`;
+}
+
 // Run the practice itself — the Colleagues roster and the client list. Owners
 // and Practice Admins only; a Standard colleague does client work.
 export function canManagePractice(u: User | null | undefined): boolean {
@@ -275,7 +589,7 @@ export function canAccessOrg(u: User | null | undefined, orgId: string): boolean
   if (!u) return true;
   if (!orgId) return true; // nothing linked yet — one implicit scope everyone shares
   if (u.practice) return Boolean(u.allClients) || (u.clientAccess || []).includes(orgId);
-  return (u.organisationId || '') === orgId;
+  return (u.organisationId || '') === orgId || Boolean(extraAccessFor(u, orgId));
 }
 
 // The entities this person may open, in the order the client should offer them.
@@ -301,7 +615,10 @@ function defaultOrgFor(ws: string, u: User | null | undefined): string {
 export function effectiveRoleFor(u: User | null | undefined, orgId: string): string {
   if (!u) return 'Business Admin';
   if (u.practice) return canAccessOrg(u, orgId) ? 'Business Admin' : 'Standard';
-  return currentRole(u.role);
+  // In a second entity they hold the role they were given THERE — an admin of
+  // their own company is not automatically an admin of somebody else's.
+  const extra = extraAccessFor(u, orgId);
+  return currentRole(extra ? extra.role : u.role);
 }
 
 // The caller's role in the entity they currently have selected.
@@ -343,6 +660,11 @@ function normalizeRoster(items: User[], ws: string): boolean {
   const groups = new Map<string, User[]>();
   for (const u of items) {
     if (u.workspaceId !== ws || u.removed) continue;
+    // The general account is not a person, so it is never somebody's duplicate.
+    // Without this, a client with an employee actually named "General" would
+    // lose the row to them on load and have it recreated on the next one, for
+    // ever.
+    if (u.general) continue;
     const name = norm(u.name);
     if (!name) continue;
     // Keyed by organisation as well: the same name under two client entities is
@@ -518,10 +840,12 @@ export function ensure(ws: string): User[] {
     changed = true;
   }
   if (assignOrganisations(items, ws)) changed = true;
+  if (ensureGeneralUsers(items, ws)) changed = true;
   if (normalizeRoster(items, ws)) changed = true;
   if (normalizeRoles(items, ws)) changed = true;
   if (reconcileSeedAdmins(items, ws)) changed = true;
   if (assignPractice(items, ws)) changed = true;
+  if (ensureEmailHandles(items, ws)) changed = true;
   if (changed) save(items);
   return items;
 }
@@ -531,12 +855,54 @@ export function ensure(ws: string): User[] {
 // Deliberately NOT tenant-scoped: identity and access are account-wide, so an
 // admin whose row lives under one organisation keeps their role while working in
 // another. Only the roster itself (listing and managing people) is per-tenant.
+// Resolve an email to its roster row for this workspace, PREFERRING a practice
+// colleague over an entity-employee row when the same email is on both. A
+// person's practice identity is their primary one, so a duplicate entity row
+// (e.g. one created by mistake) never shadows their colleague login.
+export function memberByEmail(ws: string, emailNorm: string): User | null {
+  const matches = ensure(ws).filter((u) => u.workspaceId === ws && !u.removed && norm(u.email) === emailNorm);
+  if (!matches.length) return null;
+  return matches.find((u) => u.practice) ?? matches[0];
+}
+
+// Let one person open one client entity.
+//
+// Client access is an explicit list, so an entity that did not exist when the
+// list was written is invisible to everyone but an allClients colleague — the
+// person who just CREATED it included. They add "Red Alpha - ST Engineering",
+// the dialog closes, and nothing appears in the switcher, with no error to
+// explain it. Whoever makes an entity can open it.
+//
+// Narrow on purpose: it grants exactly the one entity, only to a practice
+// colleague (a client employee belongs to their own entity and has no such
+// list), and no-ops for anyone who can already open it.
+export function grantClientAccess(ws: string, emailNorm: string, orgId: string): boolean {
+  if (!emailNorm || !orgId) return false;
+  const items = load();
+  const user = items.find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === emailNorm && u.practice);
+  if (!user || user.allClients) return false;
+  const list = Array.isArray(user.clientAccess) ? user.clientAccess : [];
+  if (list.includes(orgId)) return false;
+  user.clientAccess = [...list, orgId];
+  save(items);
+  return true;
+}
+
+// Is this the entity's general account rather than a person? The general
+// account exists to OWN what nobody claimed — a company's own paperwork. Money
+// cannot be paid back to it, so a claim made out to it is a claim payable to
+// nobody.
+export function isGeneralPerson(ws: string, org: string, value: string): boolean {
+  const want = norm(value);
+  if (!want) return false;
+  if (want === norm(GENERAL_USER_NAME)) return true;
+  return ensure(ws).some((u) => isGeneralRow(u, ws, org) && (norm(u.name) === want || norm(u.email) === want));
+}
+
 export function memberForSession(req: Request): User | null {
   const s = readSession(req);
   if (!s?.email) return null;
-  const ws = workspaceId(req);
-  const email = norm(s.email);
-  return ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email) ?? null;
+  return memberByEmail(workspaceId(req), norm(s.email));
 }
 
 // Any admin tier — the coarse "not a Standard user" check. Prefer the two
@@ -581,7 +947,7 @@ function normalizeRoles(items: User[], ws: string): boolean {
   return changed;
 }
 
-const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'project'];
+const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'project', 'emailHandle', 'extraAccess'];
 
 // Who is on the practice team, what they may run, and which clients they may
 // open. Only whoever manages the practice may touch these — a client entity's
@@ -614,7 +980,12 @@ export function emailForName(ws: string, name: string): string {
 // Apply the editable fields present in `b` onto a user, keeping name in sync
 // with first/last. Shared by the add-merge path and PATCH.
 function applyEditable(user: User, b: Partial<User>, ws: string) {
+  // The roster reports the general account as having no email, so a form that
+  // round-trips a row would otherwise save that blank over the identity every
+  // document of theirs is stored against.
+  const internalEmail = user.general ? user.email : '';
   for (const k of EDITABLE) if (k in b) (user as Record<string, unknown>)[k] = (b as Record<string, unknown>)[k];
+  if (internalEmail) user.email = internalEmail;
   if ('firstName' in b || 'lastName' in b) {
     const nm = `${user.firstName || ''} ${user.lastName || ''}`.trim();
     if (nm) user.name = nm;
@@ -647,7 +1018,9 @@ export async function sendInvites(
   const invites: InviteResult[] = [];
   const inviter = memberForSession(req)?.name || readSession(req)?.name;
   for (const nu of created) {
-    if (!nu.email) continue;
+    // No mailbox to invite: the general account, and anybody added without an
+    // address (their identity is internal — see internalEmailFor).
+    if (!nu.email || isInternalAddress(nu.email)) continue;
     const raw = issueToken(nu, 'invite');
     nu.invitedAt = new Date().toISOString();
     const link = resetUrl(req, raw);
@@ -695,7 +1068,18 @@ usersRouter.get('/', (req, res) => {
   res.json({
     users: ensure(ws)
       .filter((u) => u.workspaceId === ws && !u.removed && !u.practice && inOrg(u, org))
-      .map(publicUser),
+      // Somebody who works here as well as somewhere else holds the role they
+      // were given HERE, and their row says which entity they belong to — an
+      // admin of their own company is not an admin of this one, and the roster
+      // must not read as though they were.
+      .map((u) => ({
+        ...publicUser(u),
+        role: effectiveRoleFor(u, org),
+        homeOrgName:
+          (u.organisationId || '') === org
+            ? ''
+            : getOrganisation(ws, u.organisationId)?.name || u.companyName || '',
+      })),
   });
 });
 
@@ -714,7 +1098,9 @@ usersRouter.get('/me', (req, res) => {
   if (!session?.email) return res.json({ status: 'anonymous', user: null });
   const ws = workspaceId(req);
   const email = norm(session.email);
-  const user = ensure(ws).find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email);
+  // Prefer the practice row on a duplicate email, so a colleague's login lands
+  // on their colleague identity (Colleagues/Clients) rather than a stray entity row.
+  const user = memberByEmail(ws, email);
   if (!user) return res.json({ status: 'none', user: null });
   const status = user.deactivated ? 'deactivated' : user.pending ? 'pending' : 'active';
   const live = status === 'active';
@@ -731,6 +1117,56 @@ usersRouter.get('/me', (req, res) => {
     // The practice surfaces (Colleagues, Clients) — practice team only.
     practice: live && Boolean(user.practice),
     managePractice: live && canManagePractice(user),
+  });
+});
+
+// GET /api/users/join/people?orgId= — the people an admin has already added to
+// this company who have never signed in.
+//
+// The admin types somebody's name and role when they add them; asking that
+// person to type it all again on the join form invites a second, differently
+// spelled row for the same human — and the documents they already own stay on
+// the first one. So the join form offers the admin's list instead: pick
+// yourself, and your request attaches to the row that already exists.
+//
+// Names and roles only. It is readable by anyone signed in (a person joining is
+// by definition not yet a member), so it must not leak addresses or say
+// anything about people who can already sign in.
+usersRouter.get('/join/people', (req, res) => {
+  // Mock/dev has no sessions at all, and stays open like every other route.
+  if (googleEnabled && !readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
+  const ws = workspaceId(req);
+  const org = String(req.query.orgId ?? '').trim();
+  if (!org || !getOrganisation(ws, org)) return res.json({ people: [] });
+  const people = ensure(ws)
+    .filter(
+      (u) =>
+        u.workspaceId === ws &&
+        !u.removed &&
+        !u.deactivated &&
+        !u.general &&
+        !u.practice &&
+        (u.organisationId || '') === org &&
+        // Never anybody with a real address: that is somebody else's identity,
+        // and claiming it is how you would sign in as them.
+        isInternalAddress(u.email)
+    )
+    .map((u) => ({ id: u.id, name: u.name, role: u.role }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ people });
+});
+
+// GET /api/users/join/companies — the companies somebody joining can pick from.
+//
+// Names only, and it exists because the entity list itself is no longer served
+// to a caller who is on nobody's roster (see GET /api/organisations): a person
+// mid-signup has to choose their company, and that is a different question from
+// "which clients may you open".
+usersRouter.get('/join/companies', (req, res) => {
+  if (googleEnabled && !readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
+  const ws = workspaceId(req);
+  res.json({
+    companies: listOrganisations(ws).map((o) => ({ id: o.id, name: o.name })),
   });
 });
 
@@ -761,6 +1197,40 @@ usersRouter.post('/join', (req, res) => {
     companyName: String(b.companyName || '').trim(),
     role: String(b.role || 'Standard'),
   };
+  // Claiming the row an admin already made for them (see GET /join/people).
+  // Their name and role are the ADMIN's — that is what the documents this
+  // person already owns are filed under, and re-typing it is how the same human
+  // ends up on the roster twice.
+  const claimId = String(b.claimId || '').trim();
+  const claimed = claimId
+    ? items.find(
+        (u) =>
+          u.workspaceId === ws &&
+          u.id === claimId &&
+          !u.removed &&
+          !u.general &&
+          !u.practice &&
+          isInternalAddress(u.email)
+      )
+    : null;
+  if (claimed) {
+    const previousIdentity = claimed.email;
+    // A stray row from an earlier attempt is the same person; one email must
+    // resolve to exactly one row, so it steps aside rather than becoming a twin.
+    for (const u of items) {
+      if (u.workspaceId === ws && u.id !== claimed.id && !u.removed && norm(u.email) === email) u.removed = true;
+    }
+    claimed.email = session.email;
+    claimed.pending = true;
+    claimed.login = 'No';
+    claimed.deactivated = false;
+    if (fields.mobile) claimed.mobile = fields.mobile;
+    save(items);
+    // The documents they already own move with them.
+    const moved = reassignPerson(dataScopeForOrg(claimed.organisationId || ''), previousIdentity, claimed.email);
+    return res.json({ status: 'pending', user: publicUser(claimed), documentsMoved: moved });
+  }
+
   let user = items.find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email);
   if (user) {
     if (!user.pending && user.login === 'Yes' && !user.deactivated) {
@@ -802,27 +1272,61 @@ usersRouter.post('/', async (req, res) => {
   const orgName = String(req.body?.orgName || '').trim();
   const message = String(req.body?.message || '').trim();
   const created: User[] = [];
-  const duplicates: Array<{ email: string; name: string; organisationName: string }> = [];
+  const duplicates: Array<{ email: string; name: string; organisationName: string; practice?: boolean }> = [];
+  // People who already existed and now also work here.
+  const linked: Array<{ email: string; name: string; role: string }> = [];
   for (const u of incoming) {
     const email = norm(String(u.email || ''));
     if (email) {
       // Checked across the whole account, not just this organisation: sign-in is
-      // by email, so one address must resolve to exactly one person. Report
-      // which organisation already has them so the admin knows where to look.
+      // by email, so one address must resolve to exactly one person.
       const dup = items.find((x) => x.workspaceId === ws && !x.removed && norm(x.email) === email);
       if (dup) {
+        // Somebody who already exists ELSEWHERE is not a duplicate — they are
+        // the same person, working in a second entity. Adding them here gives
+        // their existing row access to this one, with the role they were given
+        // here. A second row would be a second identity: their documents, their
+        // claims and their manager would split between the two.
+        const elsewhere = !dup.practice && !inOrg(dup, org) && org;
+        if (elsewhere) {
+          dup.extraAccess = [
+            ...(Array.isArray(dup.extraAccess) ? dup.extraAccess : []).filter((e) => e.orgId !== org),
+            { orgId: org, role: currentRole(String(u.role ?? '')) },
+          ];
+          linked.push({ email: dup.email, name: dup.name, role: effectiveRoleFor(dup, org) });
+          continue;
+        }
+        // A practice colleague reaches a client through client access, not
+        // through the client's own roster; and somebody already in THIS entity
+        // is simply already here.
         duplicates.push({
           email: dup.email,
           name: dup.name,
           organisationName: getOrganisation(ws, dup.organisationId)?.name || dup.companyName || '',
+          practice: Boolean(dup.practice),
         });
         continue;
       }
     }
+    // Somebody added without an email still has to be a person the app can
+    // name: they own documents and claims are made out to them. They get an
+    // internal identity rather than a blank, and no login — there is no address
+    // to sign in with.
+    const displayName = (String(u.name || '') || `${u.firstName || ''} ${u.lastName || ''}`).trim();
+    const identity = email || internalEmailFor(org, displayName, new Set(items.map((x) => norm(x.email))));
     // Stamped with the selected organisation — an admin adds people to the
     // entity they are currently working in.
     const newUser = full(
-      { ...u, id: undefined, organisationId: org, companyId: u.companyId || org, companyName: u.companyName || orgLabel },
+      {
+        ...u,
+        id: undefined,
+        email: identity,
+        login: email ? u.login : 'No',
+        general: false,
+        organisationId: org,
+        companyId: u.companyId || org,
+        companyName: u.companyName || orgLabel,
+      },
       ws
     );
     items.unshift(newUser);
@@ -830,7 +1334,7 @@ usersRouter.post('/', async (req, res) => {
   }
   const invites = notify ? await sendInvites(req, created, { orgName, message }) : [];
   save(items);
-  res.json({ users: created.map(publicUser), duplicates, invites });
+  res.json({ users: created.map(publicUser), duplicates, linked, invites });
 });
 
 // POST /api/users/login — non-Google sign-in with email + password. Issues the
@@ -878,6 +1382,16 @@ function requireAdmin(req: Request, res: Response): boolean {
 // and activate their account. Also used by "Resend Invitation": re-issuing
 // simply replaces any previous link. Responds with { sent, link } — the link is
 // echoed back so an admin can pass it on when mail is off or delivery failed.
+// POST /api/users/:id/dismiss-forward — clear the pending Gmail forwarding
+// confirmation once the user has clicked it (or it's no longer wanted).
+usersRouter.post('/:id/dismiss-forward', (req, res) => {
+  const ws = workspaceId(req);
+  const user = ensure(ws).find((u) => u.id === req.params.id && u.workspaceId === ws && !u.removed);
+  if (!user) return res.status(404).json({ error: 'not_found' });
+  const updated = clearPendingForward(user.id);
+  return res.json({ user: updated ? publicUser(updated) : publicUser(user) });
+});
+
 usersRouter.post('/:id/invite', async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const ws = workspaceId(req);
@@ -1053,7 +1567,38 @@ usersRouter.patch('/:id', (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const filtered: Partial<User> = {};
   for (const k of allowed) if (k in body) (filtered as Record<string, unknown>)[k] = body[k];
+  // The inbound address is chosen by hand now, so it has to be checked. Two
+  // people on one handle is not a cosmetic clash: every bill forwarded to it
+  // would file under whichever row was found first, silently and for good.
+  if ('emailHandle' in filtered) {
+    const handle = normaliseHandle(String(filtered.emailHandle ?? ''));
+    if (!handle) return res.status(400).json({ error: 'invalid_handle' });
+    const owner = userByEmailHandle(handle);
+    if (owner && owner.id !== req.params.id) {
+      return res.status(409).json({ error: 'handle_taken', handle, takenBy: owner.name || owner.email });
+    }
+    filtered.emailHandle = handle;
+  }
   return mutate(req, res, (user, items) => {
+    const risk = lockoutRisk(
+      workspaceId(req),
+      user,
+      { deactivated: filtered.deactivated === true, practiceRole: filtered.practiceRole },
+      me?.id || ''
+    );
+    if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
+    // A role set on somebody whose row lives in ANOTHER entity applies here and
+    // only here. Writing it to `role` would promote them in their own company
+    // from a page that is not their company's.
+    const org = orgScope(req);
+    const visiting = Boolean(org) && (user.organisationId || '') !== org && Boolean(extraAccessFor(user, org));
+    if (visiting && typeof filtered.role === 'string') {
+      const role = currentRole(filtered.role);
+      user.extraAccess = (Array.isArray(user.extraAccess) ? user.extraAccess : []).map((e) =>
+        e.orgId === org ? { ...e, role } : e
+      );
+      delete filtered.role;
+    }
     const from = user.organisationId;
     applyEditable(user, filtered, workspaceId(req));
     if (user.organisationId !== from) detachManagerLinks(items, user);
@@ -1062,14 +1607,23 @@ usersRouter.patch('/:id', (req, res) => {
 
 usersRouter.post('/:id/active', (req, res) => {
   if (!requireAdmin(req, res)) return;
+  const me = memberForSession(req);
   return mutate(req, res, (user) => {
+    const risk =
+      req.body?.active === false
+        ? lockoutRisk(workspaceId(req), user, { deactivated: true }, me?.id || '')
+        : '';
+    if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
     user.deactivated = req.body?.active === false;
   });
 });
 
 usersRouter.delete('/:id', (req, res) => {
   if (!requireAdmin(req, res)) return;
+  const me = memberForSession(req);
   return mutate(req, res, (user) => {
+    const risk = lockoutRisk(workspaceId(req), user, { removed: true }, me?.id || '');
+    if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
     user.removed = true;
   });
 });

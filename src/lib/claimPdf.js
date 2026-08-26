@@ -1,8 +1,10 @@
 import { jsPDF } from 'jspdf';
 import { PDFDocument } from 'pdf-lib';
 import { pdfDate, claimRef, claimExportName, cleanHistoryText } from '@/lib/exportFormat';
+import { claimDateFor } from '@/lib/claimReference';
 import { approvalHistory } from '@/lib/approvalHistory';
-import { costPath, billFileUrl } from '@/lib/bills';
+import { costPath, fetchShareLinks } from '@/lib/bills';
+import { getExportSettings } from '@/lib/exportSettings';
 import { recordExport } from '@/lib/exportsStore';
 
 // A4 in points, with a comfortable margin.
@@ -21,14 +23,18 @@ const n2 = (v) => Number(v || 0).toFixed(2);
 const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
 
 // Clicking an Item ID opens the RECEIPT — the thing an approver actually wants
-// to see, the way Dext's does. The file endpoint serves it inline and resolves
-// by id alone, so it opens for an approver who was sent the PDF and has no
-// session here. A line with no receipt behind it links to the document page
-// instead, which is the only thing there is to show.
-const itemUrl = (t) => {
+// to see, the way Dext's does. The approver was emailed this PDF and has no
+// session here, so the link has to be one the server SIGNED for that document
+// (`links`, minted by fetchShareLinks); the bare file URL only ever worked
+// because the file route skipped the login check, which it no longer does.
+// Without a signed link — no stored receipt, or the entity has Image sharing
+// off — the Item ID points at the document page instead, which is the only
+// other thing there is to show.
+const itemUrl = (t, links = {}) => {
   const id = t?.itemId || t?.displayId;
   if (!id) return '';
-  return `${ORIGIN}${t?.hasFile === false ? costPath(t) : billFileUrl(id)}`;
+  const shared = links[String(t?.itemId ?? '')] || links[String(id)];
+  return `${ORIGIN}${shared || costPath(t)}`;
 };
 
 // Roll the line items up into per-category net/tax/total.
@@ -47,7 +53,7 @@ function summarise(txns) {
 // Build the expense-claim PDF document (mirrors Dext's export, plus a final
 // "Approval history" page built from the claim's activity log). Returns the
 // jsPDF doc so callers can open, download, or (in tests) serialise it.
-export function buildClaimDoc(claim) {
+export function buildClaimDoc(claim, links = {}) {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const title = `${claim.claimFor}'s Expense Claim`.toUpperCase();
   const totalExp = '{tp}';
@@ -100,7 +106,7 @@ export function buildClaimDoc(claim) {
   doc.text(`Claim ID: #${claimRef(claim)}`, M, y);
   doc.text(`(incl. tax: ${n2(claim.tax)})`, RIGHT, y, { align: 'right' });
   y += 14;
-  doc.text(`Claim date: ${pdfDate(claim.claimDate)}`, M, y);
+  doc.text(`Claim date: ${pdfDate(claimDateFor(claim))}`, M, y);
   doc.setTextColor(20);
   y += 30;
 
@@ -185,7 +191,7 @@ export function buildClaimDoc(claim) {
     // used to be painted on and clicked through to nothing.
     const itemId = String(t.displayId || t.itemId || '');
     doc.setTextColor(LINK[0], LINK[1], LINK[2]);
-    const url = itemUrl(t);
+    const url = itemUrl(t, links);
     if (url) doc.textWithLink(itemId, tc.item, top, { url });
     else doc.text(itemId, tc.item, top);
     doc.setTextColor(60);
@@ -290,11 +296,19 @@ export function buildClaimDoc(claim) {
   return doc;
 }
 
-// The claim PDF as a base64 string (no data: prefix) — used to attach it to the
-// Xero bill when publishing. Returns '' if rendering fails.
-export function buildClaimPdfBase64(claim) {
+// Signed links for the claim's own documents, so the Item IDs in the report
+// open for whoever was sent it. Nothing is minted when the entity has Image
+// sharing off (Business settings -> Exports).
+async function claimShareLinks(claim) {
+  if (!getExportSettings().imageSharing) return {};
+  return fetchShareLinks((claim?.transactions || []).map((t) => t.itemId));
+}
+
+// The claim PDF as a base64 string (no data: prefix) — attached to the Xero
+// bill when publishing, and to the claim email. Returns '' if rendering fails.
+export async function buildClaimPdfBase64(claim) {
   try {
-    const doc = buildClaimDoc(claim);
+    const doc = buildClaimDoc(claim, await claimShareLinks(claim));
     const uri = doc.output('datauristring'); // "data:application/pdf;base64,…"
     return String(uri).split(',')[1] || '';
   } catch {
@@ -337,8 +351,8 @@ async function appendReceipt(out, itemId) {
 }
 
 // Copy the CYBills report (jsPDF) pages into a pdf-lib doc.
-async function addReportPages(out, claim) {
-  const bytes = buildClaimDoc(claim).output('arraybuffer');
+async function addReportPages(out, claim, links) {
+  const bytes = buildClaimDoc(claim, links).output('arraybuffer');
   const report = await PDFDocument.load(bytes);
   const pages = await out.copyPages(report, report.getPageIndices());
   pages.forEach((p) => out.addPage(p));
@@ -352,14 +366,15 @@ async function addReportPages(out, claim) {
 // file is never empty.
 export async function assembleClaimPdf(claim, { detailLevel = 'with_receipts' } = {}) {
   const out = await PDFDocument.create();
-  if (detailLevel !== 'receipts') await addReportPages(out, claim);
+  const links = await claimShareLinks(claim);
+  if (detailLevel !== 'receipts') await addReportPages(out, claim, links);
   if (detailLevel !== 'summary') {
     for (const t of claim.transactions || []) {
       // eslint-disable-next-line no-await-in-loop
       await appendReceipt(out, t.itemId);
     }
   }
-  if (out.getPageCount() === 0) await addReportPages(out, claim);
+  if (out.getPageCount() === 0) await addReportPages(out, claim, links);
   const bytes = await out.save();
   return new Blob([bytes], { type: 'application/pdf' });
 }
@@ -390,7 +405,8 @@ export async function generateClaimPdf(claim, { exportedBy = '', detailLevel = '
     format: 'PDF',
     csvFormat: '-',
     count: Array.isArray(claim.transactions) ? claim.transactions.length : 1,
-    exportedBy: exportedBy || claim.claimFor || 'You',
+    // See claimCsv: the claimant is a fair second guess, "You" names nobody.
+    exportedBy: exportedBy || claim.claimFor || '',
     blob,
   });
   return claim.id;

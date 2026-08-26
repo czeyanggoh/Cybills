@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Search, ChevronDown, Settings2, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
@@ -7,6 +7,8 @@ import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
 import EditUserModal from '@/components/EditUserModal';
 import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser, updateUser } from '@/lib/userStore';
 import { useOrganisations, getActiveOrganisationId, useXeroProjectOptions } from '@/lib/organisations';
+import { useAuth } from '@/lib/auth';
+import { isPracticeTeam } from '@/lib/practiceStore';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -141,14 +143,29 @@ export default function Users() {
   // whether the invitation was emailed (or that mail isn't configured).
   const reportAdd = (r) => {
     const dups = r?.duplicates || [];
+    const linked = r?.linked || [];
     const invites = r?.invites || [];
+    // Somebody who already existed elsewhere now works here too: one person,
+    // one login, two entities. Say so plainly — "already a user, not added
+    // again" was the old answer and it was a refusal, not a result.
+    if (linked.length) {
+      const who = linked.map((l) => `${l.name || l.email}${l.role ? ` (${l.role})` : ''}`).join(', ');
+      showToast(`${who} now also works in this entity — they keep their existing login.`);
+      return;
+    }
     if (dups.length) {
       // One email = one person across the whole business (sign-in is by email),
       // so name the organisation that already has them rather than just refusing.
       const who = dups
         .map((d) => (d.organisationName ? `${d.email} (already in ${d.organisationName})` : d.email))
         .join(', ');
-      showToast(`Already a user: ${who} — not added again.`);
+      // A practice colleague is reached through client access, not through a
+      // client's own roster — pointing at the wrong page is worse than silence.
+      showToast(
+        dups.some((d) => d.practice)
+          ? `${who} is on the practice team — give them access to this client from Colleagues.`
+          : `Already a user: ${who} — not added again.`,
+      );
       return;
     }
     const sent = invites.filter((i) => i.sent);
@@ -190,8 +207,10 @@ export default function Users() {
       (u.email || '').toLowerCase().includes(query.toLowerCase())
   );
   const pendingCount = users.filter((u) => u.pending && !u.deactivated).length;
-  // Anyone active can be someone's direct manager (the approver claims route to).
-  const managerOptions = users.filter((m) => !m.deactivated && !m.pending);
+  // Anyone active can be someone's direct manager (the approver claims route to)
+  // — except the general account, which is a place for unassigned documents to
+  // land, not a person who can approve anything.
+  const managerOptions = users.filter((m) => !m.deactivated && !m.pending && !m.general);
   const projectOptions = useXeroProjectOptions();
   // The roster is tenant-specific — the server returns only the selected
   // organisation's people — so a row without its own stored company name is
@@ -199,11 +218,23 @@ export default function Users() {
   const { data: organisations = [] } = useOrganisations();
   const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
   const workspaceCompany = activeOrg?.name || '';
+  // The practice's own entity (the primary org, CYBM) has no separate "Users" —
+  // its people are the practice team. A colleague viewing it is sent to
+  // Colleagues instead of an empty roster.
+  const navigate = useNavigate();
+  const { membership, googleEnabled } = useAuth();
+  const redirectToColleagues = activeOrg?.isPrimary && isPracticeTeam(membership, googleEnabled);
+  useEffect(() => {
+    if (redirectToColleagues) navigate('/colleagues', { replace: true });
+  }, [redirectToColleagues, navigate]);
   const rows = filtered.filter((u) => {
     if (tab === 'pending') return u.pending && !u.deactivated;
     if (tab === 'deactivated') return u.deactivated;
     return !u.deactivated && !u.pending; // active
   });
+
+  // While redirecting a colleague off the practice's own entity, render nothing.
+  if (redirectToColleagues) return <AppShell><div /></AppShell>;
 
   return (
     <AppShell>
@@ -277,7 +308,48 @@ export default function Users() {
           <tbody>
             {rows.map((u) => (
               <tr key={u.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
-                <td className="whitespace-nowrap px-3 py-3 font-medium">{u.name}</td>
+                <td className="whitespace-nowrap px-3 py-3 font-medium">
+                  {u.name}
+                  {/* The row created with the organisation itself. Saying so
+                      here is the only place it's explained — otherwise it reads
+                      as a colleague nobody remembers adding. */}
+                  {u.general && (
+                    <span
+                      className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                      title="Created with the organisation. Documents added by CY colleagues belong to this account unless another user is chosen as owner."
+                    >
+                      Default owner
+                    </span>
+                  )}
+                  {/* Adding somebody CREATES their row — that is what lets them
+                      own documents and be claimed for before they ever sign in.
+                      Without saying so, a person who has never been through the
+                      invitation reads as an active user, and the admin is left
+                      wondering how they got here. */}
+                  {/* Their row lives in another entity — they work here too.
+                      One person, one login; the role shown is the one they hold
+                      HERE, which is often not the one they hold at home. */}
+                  {u.homeOrgName && (
+                    <span
+                      className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                      title={`Belongs to ${u.homeOrgName} and also works here. Their role here is set on this page; their role there is not.`}
+                    >
+                      Also in {u.homeOrgName}
+                    </span>
+                  )}
+                  {!u.general && u.login === 'Yes' && u.lastLogin === '—' && (
+                    <span
+                      className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                      title={
+                        u.invitedAt
+                          ? 'Invited, but has never signed in. Invitation links are one-time and expire — use Resend invitation if theirs no longer works. They can also sign in with Google using this address.'
+                          : 'Has login access but has never signed in. Send them an invitation, or they can sign in with Google using this address.'
+                      }
+                    >
+                      {u.invitedAt ? 'Invited' : 'Never signed in'}
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-3 text-muted-foreground">{u.email || '—'}</td>
                 <td className="px-3 py-3 text-muted-foreground">{u.companyName || workspaceCompany || '—'}</td>
                 <td className="px-3 py-3">{u.login}</td>

@@ -39,7 +39,8 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
 
   const doExport = async () => {
     if (busy) return;
-    const exportedBy = membership?.user?.name || user?.name || user?.email || 'You';
+    // Never "You" — see DocsExportModal. Blank beats a word that names nobody.
+    const exportedBy = membership?.user?.name || user?.name || user?.email || '';
     if (tab === 'csv') {
       // enrichment fetches the live docs, so this is async too.
       setBusy(true);

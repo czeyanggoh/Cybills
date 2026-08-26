@@ -1,10 +1,13 @@
 import { Router } from 'express';
-import { env, xeroEnabled } from './env.js';
-import { dataScopeForOrg, getOrganisation } from './organisations.js';
+import { env, googleEnabled, xeroEnabled } from './env.js';
+import { dataScopeForOrg, getOrganisation, isStandalone, publishTargetFor } from './organisations.js';
 import { workspaceId } from './workspace.js';
-import { apportion, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
+import { readSetting } from './settings.js';
+import { referenceFor, dateFor } from './claimRef.js';
+import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
+import { appOrigin, memberForSession } from './users.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -35,24 +38,40 @@ async function relay(
   for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
 
   const hasRaw = opts.rawBody !== undefined;
-  const res = await fetch(url, {
-    method: opts.method ?? 'GET',
-    headers: {
-      'X-API-Key': env.CYWORKSPACE_API_KEY,
-      Accept: 'application/json',
-      ...(hasRaw
-        ? { 'Content-Type': opts.contentType ?? 'application/octet-stream' }
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: opts.method ?? 'GET',
+      headers: {
+        'X-API-Key': env.CYWORKSPACE_API_KEY,
+        Accept: 'application/json',
+        ...(hasRaw
+          ? { 'Content-Type': opts.contentType ?? 'application/octet-stream' }
+          : opts.body !== undefined
+            ? { 'Content-Type': 'application/json' }
+            : {}),
+      },
+      body: hasRaw
+        ? (opts.rawBody as unknown as BodyInit)
         : opts.body !== undefined
-          ? { 'Content-Type': 'application/json' }
-          : {}),
-    },
-    body: hasRaw
-      ? (opts.rawBody as unknown as BodyInit)
-      : opts.body !== undefined
-        ? JSON.stringify(opts.body)
-        : undefined,
-    signal: AbortSignal.timeout(60_000),
-  });
+          ? JSON.stringify(opts.body)
+          : undefined,
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (err) {
+    // The relay being unreachable — down, DNS gone, or the 60s timeout firing —
+    // used to reject with nothing catching it, which takes the whole CYBills
+    // process down: Xero having a bad afternoon logged everyone out of the app.
+    // Every caller already handles `ok:false`, so it becomes one of those.
+    console.error('[xero] relay unreachable', xeroPath, err);
+    return {
+      ok: false,
+      status: 502,
+      error: 'relay_unreachable',
+      message: `Could not reach the Xero relay: ${err instanceof Error ? err.message : String(err)}`,
+      data: null,
+    };
+  }
 
   const data = await res.json().catch(() => null);
   if (res.ok) return { ok: true, status: res.status, data };
@@ -98,7 +117,40 @@ function requireOrganisation(req: any, res: any) {
     res.status(404).json({ error: 'organisation_not_found' });
     return null;
   }
+  // A standalone entity has no Xero of its own, so every route that reads a
+  // chart, a tax rate or a contact has nothing to serve. Say so once, here,
+  // rather than sending a request with no tenant_id and relaying back whatever
+  // shape the failure happens to take.
+  if (!organisation.tenantId) {
+    res.status(409).json({
+      error: 'no_xero_connection',
+      message: `"${organisation.name}" isn't connected to Xero, so it has no chart of accounts of its own.`,
+    });
+    return null;
+  }
   return organisation;
+}
+
+// Publishing is the one thing a standalone entity CAN do with Xero, because it
+// posts into its parent's. So it resolves its own target rather than going
+// through the gate above — the entity the document lives in, and the entity the
+// money lands in, are deliberately two different things here.
+function requirePublishTarget(req: any, res: any) {
+  const ws = workspaceId(req);
+  const organisation = getOrganisation(ws, req.params.id);
+  if (!organisation) {
+    res.status(404).json({ error: 'organisation_not_found' });
+    return null;
+  }
+  const target = publishTargetFor(ws, organisation);
+  if (!target) {
+    res.status(409).json({
+      error: 'no_publish_target',
+      message: `"${organisation.name}" has no Xero to post into. Set the entity it publishes into, and make sure that one is connected to Xero.`,
+    });
+    return null;
+  }
+  return { organisation, target };
 }
 
 // Which entity's book to read on a route that names the organisation in its
@@ -111,6 +163,83 @@ function bookFor(req: any): string {
   return dataScopeForOrg(String(req.params?.id ?? '').trim());
 }
 
+// --- Server-side extraction inputs ------------------------------------------
+// The inbound-email reader has no browser to assemble the org's chart of
+// accounts and project list the way an upload does (see src/lib/bills.js →
+// fetchExtract), so it gathers them here instead — the same relay calls the
+// per-org routes above make, minus the req/res. Both never throw: a missing key
+// or an unreachable relay yields an empty list, so an emailed document still
+// reads (just without account/project classification), never 500s.
+
+export type XeroAccountRef = { code: string; name: string; description: string; type: string; taxType: string };
+
+// The linked org's ACTIVE Xero accounts, for classifying an emailed document
+// into the account it should post to. Empty when Xero isn't configured, the org
+// isn't linked, or the relay fails.
+export async function accountsForOrg(ws: string, orgId: string): Promise<XeroAccountRef[]> {
+  if (!xeroEnabled || !orgId) return [];
+  const organisation = getOrganisation(ws, orgId);
+  // No organisation, or a standalone one with no Xero of its own. Explicit,
+  // because the relay would otherwise be called with no tenant_id and the
+  // failure swallowed — degrading by accident rather than on purpose.
+  if (!organisation?.tenantId) return [];
+  try {
+    const result = await relay('Accounts', { tenantId: organisation.tenantId, query: { where: 'Status=="ACTIVE"' } });
+    if (!result.ok) return [];
+    return (result.data?.Accounts ?? [])
+      .filter((a: any) => a.Code)
+      .map((a: any) => ({
+        code: String(a.Code),
+        name: String(a.Name ?? ''),
+        description: String(a.Description ?? ''),
+        type: String(a.Type ?? ''),
+        taxType: String(a.TaxType ?? ''),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+// The linked org's ACTIVE purchase tax rates, shaped the way the client's
+// managed list shapes them ({name, code, rate}) so the shared tax-code decision
+// (src/lib/taxRateRules.js) reads them identically wherever it is called from.
+export async function taxRatesForOrg(ws: string, orgId: string): Promise<Array<{ name: string; code: string; rate: number }>> {
+  if (!xeroEnabled || !orgId) return [];
+  const organisation = getOrganisation(ws, orgId);
+  // No organisation, or a standalone one with no Xero of its own. Explicit,
+  // because the relay would otherwise be called with no tenant_id and the
+  // failure swallowed — degrading by accident rather than on purpose.
+  if (!organisation?.tenantId) return [];
+  try {
+    const result = await relay('TaxRates', { tenantId: organisation.tenantId });
+    if (!result.ok) return [];
+    return (result.data?.TaxRates ?? [])
+      .filter((t: any) => t.Status === 'ACTIVE' && t.CanApplyToExpenses !== false)
+      .map((t: any) => ({ name: String(t.Name ?? ''), code: String(t.TaxType ?? ''), rate: Number(t.EffectiveRate) || 0 }))
+      .filter((t: any) => t.name);
+  } catch {
+    return [];
+  }
+}
+
+// The names of the linked org's first ACTIVE tracking category (the "PIC" list
+// the app calls Projects), so an emailed document can be allocated to the site
+// it names. Empty when Xero isn't configured, the org isn't linked, or none.
+export async function projectOptionsForOrg(ws: string, orgId: string): Promise<string[]> {
+  if (!xeroEnabled || !orgId) return [];
+  const organisation = getOrganisation(ws, orgId);
+  // No organisation, or a standalone one with no Xero of its own. Explicit,
+  // because the relay would otherwise be called with no tenant_id and the
+  // failure swallowed — degrading by accident rather than on purpose.
+  if (!organisation?.tenantId) return [];
+  try {
+    const tc = await firstTrackingCategory(organisation.tenantId);
+    return tc ? [...tc.options] : [];
+  } catch {
+    return [];
+  }
+}
+
 export const xeroRouter = Router();
 
 // GET /api/xero/status — capability probe for the frontend.
@@ -120,7 +249,16 @@ xeroRouter.get('/status', (_req, res) => {
 
 // GET /api/xero/tenants — Xero organisations connected in cyworkspace, for the
 // add-organisation picker.
-xeroRouter.get('/tenants', async (_req, res) => {
+xeroRouter.get('/tenants', async (req, res) => {
+  // Every Xero organisation the practice has connected — which is the firm's
+  // client list. A client's own admin has no business reading it, and had no
+  // reason to: linking an entity is the practice's job. Asked BEFORE whether
+  // the relay is configured, so the answer is "not yours" rather than a hint
+  // about the deployment.
+  const me = memberForSession(req);
+  if (googleEnabled && !(me?.practice && !me.deactivated)) {
+    return res.status(403).json({ error: 'not_practice_team' });
+  }
   if (notConfigured(res)) return;
   try {
     const tenants = await listTenants();
@@ -496,12 +634,16 @@ async function activeAccountCodes(tenantId: string): Promise<Set<string>> {
 
 // "315 - Outlet Laundry" -> "315". The label the app stores is built from the
 // Xero account as `<code> - <name>`, so the code is simply its head.
+// The same rule as accountCodeFromCategory in src/data/xeroAccounts.js, which is
+// what the browser applies to the same labels.
 function codeFromCategory(category: unknown): string {
   const s = String(category ?? '');
   const i = s.indexOf(' - ');
   if (i === -1) return '';
   const code = s.slice(0, i).trim();
-  return /^[A-Za-z0-9][A-Za-z0-9-]{0,14}$/.test(code) ? code : '';
+  // A code always contains a digit. Without that test a bridge entity's plain
+  // category "Transport - Taxi" reads as the account code "Transport".
+  return /^(?=.*\d)[A-Za-z0-9][A-Za-z0-9-]{0,14}$/.test(code) ? code : '';
 }
 
 // Build the Xero lines for a bill that has its own line items, so each one
@@ -593,6 +735,24 @@ export async function perLineItems(
 // Body: { billId, accountCode, taxType, status?, dueDate?, description?,
 //         force? }. The bill's total is posted tax-inclusive as one line.
 // Re-publishing an already-posted bill is refused (409) unless force:true.
+// What a document is still missing before it may be posted, in the words the
+// inbox already uses. Built on costComplete so the two can never disagree: a
+// document that reads Ready is postable, and one that reads "Missing: Date" is
+// refused rather than posted with today's date invented for it — which lands a
+// July receipt in August's quarter and its GST return, saying nothing.
+function missingForPublish(bill: Bill): string[] {
+  if (costComplete(bill)) return [];
+  const out: string[] = [];
+  const filled = (v: unknown) => String(v ?? '').trim().length > 0;
+  const s = String(bill.supplier ?? '').trim().toLowerCase();
+  const c = String(bill.category ?? '').trim().toLowerCase();
+  if (!filled(bill.supplier) || s === 'unknown supplier') out.push('a supplier');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(bill.date ?? ''))) out.push('a date');
+  if (!filled(bill.category) || c === 'uncategorised') out.push('a category');
+  if (!(parseAmount(bill.total) > 0)) out.push('a total above 0');
+  return out;
+}
+
 xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
@@ -632,19 +792,29 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     });
   }
 
-  const total = parseAmount(bill.total);
-  if (!(total > 0)) {
-    return res.status(400).json({ error: 'invalid_total', message: 'The bill needs a positive total before it can be posted.' });
+  // The same completeness bulk publish requires. Publishing one document and
+  // publishing forty are the same act on the same ledger, so they cannot hold
+  // different standards: bulk SKIPS an incomplete document, and this used to
+  // post it. `costComplete` is the one definition (supplier, date, category,
+  // total > 0) — the same one that decides Ready vs To review, so a document the
+  // inbox is already flagging is never quietly acceptable here.
+  const missing = missingForPublish(bill);
+  if (missing.length) {
+    return res.status(400).json({
+      error: 'incomplete',
+      missing,
+      message: `This document still needs ${missing.join(', ')}. A bill is posted into a live ledger, so it has to be complete first.`,
+    });
   }
-
-  const today = new Date().toISOString().slice(0, 10);
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(bill.date) ? bill.date : today;
+  const total = parseAmount(bill.total);
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+  const date = String(bill.date ?? '');
   // Due date follows the date actually POSTED, not the one on the paper. When a
   // period is locked, `date` above has already moved to something postable — and
   // a due date left on the original date would then sit BEFORE the bill itself.
   // Tying them together means the pair stays coherent however the date shifts.
   // A date typed into the publish dialog still wins; nothing else does.
-  const iso = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : '');
+  const iso = (v: unknown) => (ISO_DATE.test(String(v ?? '')) ? String(v) : '');
   const dueDate = iso(b.dueDate) || date;
   const tax = parseAmount(bill.tax);
 
@@ -708,6 +878,9 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     Status: status,
   };
   if (bill.invoiceNumber) payload.InvoiceNumber = bill.invoiceNumber;
+  // "Go to CYBills" on the bill in Xero — straight back to the document this
+  // was published from, and the original paper attached to it.
+  payload.Url = `${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}`;
   if (bill.currency) payload.CurrencyCode = bill.currency;
 
   // PUT = create-only (POST would upsert); summarizeErrors=false makes Xero
@@ -794,15 +967,37 @@ xeroRouter.post('/organisations/:id/attach-file', async (req, res) => {
   res.json({ ok: true, attachment });
 });
 
+// GET /api/xero/organisations/:id/target-accounts — the expense accounts this
+// entity's claims can post INTO. For a linked entity that is its own chart; for
+// a bridge entity it is the parent's, which is the whole point: mapping a plain
+// category to an account means choosing from the ledger that receives the money.
+//
+// Deliberately not the plain /accounts route: that one refuses a tenant-less
+// entity (it has no chart of its own), and it would answer about the wrong
+// company anyway.
+xeroRouter.get('/organisations/:id/target-accounts', async (req, res) => {
+  if (notConfigured(res)) return;
+  const resolved = requirePublishTarget(req, res);
+  if (!resolved) return;
+  const accounts = await accountsForOrg(workspaceId(req), resolved.target.id);
+  res.json({ accounts, target: { id: resolved.target.id, name: resolved.target.name } });
+});
+
 // POST /api/xero/organisations/:id/publish-claim — post an APPROVED expense
-// claim to the linked Xero org as an ACCPAY bill payable to the employee. Each
-// claim line becomes an invoice line (account code parsed from its category);
-// Xero applies each account's default tax rate. Defaults to DRAFT so it's
-// reviewable in Xero, not finalised. Re-publishing is refused (409) unless force.
+// claim as an ACCPAY bill payable to the employee. Each claim line becomes an
+// invoice line (account code from its category); Xero applies each account's
+// default tax rate. Defaults to DRAFT so it's reviewable in Xero, not finalised.
+// Re-publishing is refused (409) unless force.
+//
+// The claim's entity and the entity whose ledger receives it are deliberately
+// two different things: a bridge entity has no Xero of its own, so its claims
+// post into its parent's (`requirePublishTarget`). Everywhere else the target
+// IS the organisation, so nothing changes for a linked entity.
 xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
   if (notConfigured(res)) return;
-  const organisation = requireOrganisation(req, res);
-  if (!organisation) return;
+  const resolved = requirePublishTarget(req, res);
+  if (!resolved) return;
+  const { organisation, target } = resolved;
 
   const b = req.body ?? {};
   const claimId = String(b.claimId ?? '');
@@ -826,8 +1021,24 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     });
   }
 
-  // Account code = the leading digits of the category label ("412 - …" → "412").
-  const codeOf = (cat: string) => (String(cat ?? '').match(/\b(\d{3,})\b/) || [])[1] || '';
+  // Account code for a claim line.
+  //
+  // A linked entity's categories ARE its chart, so the code is the label's own
+  // head ("412 - …" → "412"). A bridge entity's are plain names off a claim
+  // policy — "Transport - Taxi" is not account "Transport" — so the entity's
+  // own mapping (Business settings → Lists → Categories → Posts to) is what
+  // turns them into codes in the parent's chart. The mapping is consulted first
+  // either way: an entity that has written one means it.
+  const accountMap = readSetting<Record<string, unknown>>(workspaceId(req), 'cybills.category-accounts.v1', organisation.id) || {};
+  const mapped = new Map(
+    Object.entries(accountMap).map(([name, code]) => [name.trim().toLowerCase(), String(code ?? '').trim()])
+  );
+  const codeOf = (cat: string) => {
+    const name = String(cat ?? '').trim();
+    const own = mapped.get(name.toLowerCase());
+    if (own) return own;
+    return (name.match(/\b(\d{3,})\b/) || [])[1] || '';
+  };
   // Dext-style line description: "<Supplier> #<ItemID> - <Description>". Falls
   // back to the live bill's description for items claimed before descriptions
   // were stored on the transaction, then to supplier + category.
@@ -841,11 +1052,23 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       'Expense'
     );
   };
-  const tc = await firstTrackingCategory(organisation.tenantId);
+  const tc = await firstTrackingCategory(target.tenantId);
+  // A bridge entity's claims carry NO TAX.
+  //
+  // It is not a company: it has no GST registration and no tax position, so
+  // there is no input tax for it to claim — and the entity whose ledger receives
+  // the bill is being handed a reimbursement, not a tax invoice of its own. So
+  // the line posts at the full amount with No Tax, which is what the practice
+  // has always booked by hand.
+  //
+  // The tax the claim recorded is not dropped, it is FOLDED IN: the unit amount
+  // becomes the whole figure rather than the net. The bill in Xero is worth
+  // exactly what the claim is worth, which is the only rule that can't bend.
+  const noTax = isStandalone(organisation);
   const lineItems = (claim.transactions ?? [])
     .map((t) => {
       const total = parseAmount(t.total);
-      const tax = parseAmount(t.tax);
+      const tax = noTax ? 0 : parseAmount(t.tax);
       const bill = getBillByIdAny(String(t.itemId));
       const line = {
         Description: describe(t),
@@ -855,26 +1078,77 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
         UnitAmount: Math.max(0, total - tax),
         AccountCode: codeOf(t.category),
         TaxAmount: tax,
+        // Named explicitly rather than left to the account's default rate in
+        // Xero, which would put GST on a figure that has none and make the bill
+        // disagree with the claim.
+        ...(noTax ? { TaxType: 'NONE' } : {}),
         __total: total,
+        __category: String(t.category ?? '').trim(),
       } as Record<string, unknown>;
       // Tag the PIC (tracking category) from the underlying cost doc's project.
       const tracking = trackingFor(tc, String(bill?.project || t.project || ''));
       if (tracking) line.Tracking = tracking;
       return line;
     })
-    .filter((l) => l.AccountCode && Number(l.__total) > 0)
-    .map(({ __total, ...line }) => line);
+    .map((line) => line as Record<string, unknown>);
 
-  if (!lineItems.length) {
+  // An item with no coded category, or nothing to pay, cannot become a Xero
+  // line. It used to be dropped SILENTLY — so a five-item claim could post as a
+  // three-line bill, and the claim in CYBills would say more money than the bill
+  // in Xero, with nothing anywhere saying why. Money that disappears between the
+  // claim and the ledger is the one outcome worth refusing over, and it is the
+  // same rule a bill's own line items already follow: a breakdown that disagrees
+  // with its paper is a mistake to fix, not to post around.
+  const unpostable = lineItems.filter((l) => !l.AccountCode || !(Number(l.__total) > 0));
+  const postable = lineItems
+    .filter((l) => l.AccountCode && Number(l.__total) > 0)
+    .map(({ __total, __category, ...line }) => line);
+
+  // What a reviewer has to DO about a refusal differs by entity, so the message
+  // does too. A linked entity's item needs a coded category; a bridge entity's
+  // category is fine as it is and needs mapping to an account in the parent's
+  // chart — telling those people to "use a coded category" would send them
+  // looking for a chart they don't have.
+  const unmappedCategories = [
+    ...new Set(
+      unpostable
+        .filter((l) => !l.AccountCode && Number(l.__total) > 0)
+        .map((l) => String(l.__category ?? ''))
+        .filter(Boolean)
+    ),
+  ];
+  const fixIt = isStandalone(organisation)
+    ? `map each category to a ${target.name} account in Business settings → Lists → Categories` +
+      (unmappedCategories.length ? ` (${unmappedCategories.slice(0, 6).map((c) => `"${c}"`).join(', ')})` : '')
+    : 'give each item a coded category (e.g. "412 - Consulting & Accounting")';
+
+  if (!postable.length) {
     return res.status(400).json({
       error: 'no_lines',
-      message: 'No claim lines have a Xero account code. Categorise each item with a coded category (e.g. "412 - Consulting & Accounting") first.',
+      categories: unmappedCategories.slice(0, 20),
+      message: `No claim line has an account code to post to — ${fixIt}.`,
+    });
+  }
+  if (unpostable.length) {
+    return res.status(422).json({
+      error: 'unpostable_lines',
+      count: unpostable.length,
+      lines: unpostable.map((l) => String(l.Description ?? '')).slice(0, 10),
+      categories: unmappedCategories.slice(0, 20),
+      message:
+        `${unpostable.length} of the ${lineItems.length} items on this claim can't become a Xero line — ` +
+        `${fixIt}, and each item needs an amount above 0. Publishing now would post a bill for less than the ` +
+        'claim is worth, so fix those items first.',
     });
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const iso = (s: string) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? String(s) : '');
-  const date = iso(claim.claimDate) || iso(claim.endDate) || today;
+  // The claim's own date, else the period it covers, else the latest date among
+  // its items — every expense on it happened on or before that. Only a claim
+  // with nothing dated at all falls back to today, which is what EVERY claim
+  // used to do: August's expenses posted into whatever month somebody happened
+  // to press the button in.
+  const date = (await dateFor(claim)) || today;
 
   const payload: Record<string, unknown> = {
     Type: 'ACCPAY',
@@ -882,15 +1156,29 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     Date: date,
     DueDate: date,
     LineAmountTypes: 'Exclusive',
-    LineItems: lineItems,
+    LineItems: postable,
     Status: status,
-    Reference: claim.name || 'Expense claim',
+    // The box a bill shows as "Reference" in Xero is the API's InvoiceNumber.
+    // `Reference` is a SALES-invoice field: on an ACCPAY Xero accepts it, drops
+    // it, and the bill arrives with an empty reference — which is exactly what
+    // happened. Publishing a document has always used InvoiceNumber (see
+    // publish-bill above); a claim now does the same.
+    //
+    // What goes in it: the claim's own name, its date and its Claim ID —
+    // "ST Eng Exp Claim 20-Aug-2026 21324972410", the way the practice has
+    // always identified these. The name alone repeats every month.
+    InvoiceNumber: await referenceFor(claim),
+    // Xero renders this as a "Go to CYBills" button on the bill — the way Dext's
+    // bills carry "Go to Dext". Somebody reviewing the ledger can open the claim
+    // this came from, with its items, its approvals and the receipts behind
+    // them, instead of hunting for it.
+    Url: `${appOrigin(req)}/expense-claims/${encodeURIComponent(claim.id)}`,
   };
   if (claim.currency) payload.CurrencyCode = claim.currency;
 
   const result = await relay('Invoices', {
     method: 'PUT',
-    tenantId: organisation.tenantId,
+    tenantId: target.tenantId,
     query: { summarizeErrors: 'false' },
     body: { Invoices: [payload] },
   });
@@ -911,7 +1199,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
 
   const updated = saveClaimXero(org, claim.id, {
     xeroInvoiceId: String(invoice.InvoiceID ?? ''),
-    xeroTenantName: organisation.tenantName || organisation.name,
+    xeroTenantName: target.tenantName || target.name,
     xeroPostedAt: today,
     archived: true, // a published claim leaves the inbox for the Archive tab
   });
@@ -929,7 +1217,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       const fileName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/(\.pdf)?$/i, '.pdf');
       const att = await relay(`Invoices/${invoiceId}/Attachments/${encodeURIComponent(fileName)}`, {
         method: 'POST',
-        tenantId: organisation.tenantId,
+        tenantId: target.tenantId,
         rawBody: bytes,
         contentType: 'application/pdf',
       });

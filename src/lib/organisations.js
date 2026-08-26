@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
-import { getHiddenSet, getAddedRows, getMeta, useHiddenSet, LISTS_EVENT, SEED_TAX_RATES } from '@/lib/listsStore';
+import { getHiddenSet, getAddedRows, getMeta, useHiddenSet, useCategoryListOptions, getVisibleCategoryNames, LISTS_EVENT, SEED_TAX_RATES } from '@/lib/listsStore';
 import { useCustomCategories } from '@/lib/customCategories';
 import { useCategorySortMode, sortCategories } from '@/lib/categoryDisplay';
 import { useBankAccounts } from '@/lib/bankAccounts';
@@ -18,6 +18,49 @@ export const ORGANISATION_EVENT = 'cybills:organisation-changed';
 
 // Supplier bills post to expense-type accounts, so those drive categorisation.
 const isExpenseType = (t) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(String(t || '').toUpperCase());
+
+// Which entity a Xero-backed lookup should use.
+//
+// The explicit selection always wins. What changes is the FALLBACK: the list is
+// sorted A→Z, so "Red Alpha - ST Engineering" comes before "Red Alpha
+// Cybersecurity" — and a bridge entity has no chart, no tax rates and no
+// contacts. Without `xeroOnly` it would silently become the default source for
+// anyone who has never picked an entity, and their category dropdown would come
+// back empty for no visible reason.
+export function pickOrgId(organisations, active, { xeroOnly = false } = {}) {
+  const list = Array.isArray(organisations) ? organisations : [];
+  const chosen = list.find((o) => o.id === active);
+  if (chosen) return chosen.id;
+  const usable = xeroOnly ? list.filter((o) => o.tenantId) : list;
+  return usable[0]?.id || '';
+}
+
+// A bridge entity: not a real company, no Xero of its own, its claims posting
+// into the entity named as its parent. Mirrors isStandalone in
+// server/src/organisations.ts, which is the authority.
+export function isStandaloneOrg(o) {
+  return o?.kind === 'standalone';
+}
+
+// The active entity's own record, for the paths where hooks aren't available
+// (the upload path assembles the reader's inputs outside React). Null when
+// nothing is selected, the list can't be fetched, or the selection is stale.
+async function activeOrganisationRow() {
+  try {
+    const orgs = (await getJson('/api/organisations')).organisations ?? [];
+    const active = getActiveOrganisationId();
+    return orgs.find((o) => o.id === active) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Reactive form: the active entity's record, or null.
+export function useActiveOrganisation() {
+  const { data: organisations = [] } = useOrganisations();
+  const active = getActiveOrganisationId();
+  return organisations.find((o) => o.id === active) ?? null;
+}
 
 export function getActiveOrganisationId() {
   try {
@@ -86,18 +129,24 @@ export function fetchXeroTenants() {
   return getJson('/api/xero/tenants').then((b) => b.tenants ?? []);
 }
 
-export async function createOrganisation({ name, tenantId, tenantName }) {
+// `kind: 'standalone'` creates an entity with no Xero of its own — a bridge
+// whose claims post into `parentOrgId`'s ledger instead.
+export async function createOrganisation({ name, tenantId, tenantName, kind, parentOrgId }) {
   const res = await fetch('/api/organisations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, tenantId, tenantName }),
+    body: JSON.stringify({ name, tenantId, tenantName, kind, parentOrgId }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const said = {
+      already_linked: `"${body.organisation?.name}" is already linked to that Xero organisation.`,
+      name_required: 'Give the entity a name.',
+      parent_required: 'Choose the entity whose Xero its claims should post into.',
+      parent_not_found: 'That entity no longer exists — pick another.',
+    }[body.error];
     const err = /** @type {any} */ (new Error(
-      body.error === 'already_linked'
-        ? `"${body.organisation?.name}" is already linked to that Xero organisation.`
-        : body.message || 'Could not add the organisation.'
+      said || body.message || 'Could not add the organisation.'
     ));
     err.code = body.error;
     throw err;
@@ -113,6 +162,19 @@ export async function deleteOrganisation(id) {
 // Reference data for the publish dialog, scoped to one linked organisation.
 export function fetchXeroAccounts(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/accounts`).then((b) => b.accounts ?? []);
+}
+
+// The expense accounts this entity's claims post INTO — its own chart when it is
+// linked to Xero, its PARENT's when it is a bridge entity. Used by the category
+// mapping, which is a choice from the ledger that receives the money.
+export function useTargetAccounts(organisationId) {
+  return useQuery({
+    queryKey: ['xero-target-accounts', organisationId],
+    queryFn: () => getJson(`/api/xero/organisations/${organisationId}/target-accounts`),
+    enabled: Boolean(organisationId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
 }
 
 // The linked organisation's Xero chart of accounts (account codes), fetched
@@ -160,8 +222,7 @@ export function useXeroSuppliers() {
 // document dropdowns. Falls back to the first linked org.
 function useActiveOrgId() {
   const { data: organisations = [] } = useOrganisations();
-  const active = getActiveOrganisationId();
-  return organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  return pickOrgId(organisations, getActiveOrganisationId(), { xeroOnly: true });
 }
 
 // Customer-allocation options: the active org's Xero customer contacts, live via
@@ -244,7 +305,7 @@ export function useVisibleTaxRates() {
 export function useXeroPaymentMethods() {
   const { data: organisations = [] } = useOrganisations();
   const active = getActiveOrganisationId();
-  const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  const orgId = pickOrgId(organisations, active, { xeroOnly: true });
   const { data } = useQuery({
     queryKey: ['xero-payment-methods', orgId],
     queryFn: () => fetchXeroPaymentMethods(orgId),
@@ -330,8 +391,7 @@ export async function resolveCategorisationOrgId() {
   try {
     const orgs = (await getJson('/api/organisations')).organisations ?? [];
     if (!orgs.length) return '';
-    const active = getActiveOrganisationId();
-    return (orgs.find((o) => o.id === active) || orgs[0]).id;
+    return pickOrgId(orgs, getActiveOrganisationId(), { xeroOnly: true });
   } catch {
     return '';
   }
@@ -342,6 +402,11 @@ export async function resolveCategorisationOrgId() {
 // back to the bundled standard chart when Xero isn't connected. Used at upload
 // time, so it must never throw — any failure yields the fallback.
 export async function getExtractionAccounts() {
+  // A bridge entity has no chart at all — not even the bundled fallback, which
+  // would have the reader coding an ST Eng taxi fare to "429 - General
+  // Expenses", a code that means nothing to the people reviewing it. Its
+  // categories go up instead (getExtractionCategories).
+  if (isStandaloneOrg(await activeOrganisationRow())) return [];
   const orgId = await resolveCategorisationOrgId();
   if (!orgId) return XERO_ACCOUNTS;
   try {
@@ -363,6 +428,20 @@ export async function getExtractionAccounts() {
     return list.length ? list : XERO_ACCOUNTS;
   } catch {
     return XERO_ACCOUNTS;
+  }
+}
+
+// The plain category names to classify into, for an entity with no chart of
+// accounts. Empty for a linked entity — its accounts are the list, and offering
+// both would let a document be coded to something that can't reach the ledger.
+// Must never throw: any failure yields an empty list and the reader falls back
+// to its own defaults.
+export async function getExtractionCategories() {
+  try {
+    if (!isStandaloneOrg(await activeOrganisationRow())) return [];
+    return getVisibleCategoryNames();
+  } catch {
+    return [];
   }
 }
 
@@ -414,10 +493,15 @@ export async function getExtractionProjects() {
 
 // Category-dropdown options for the active org's live chart (expense accounts),
 // with the bundled standard chart as fallback. 'Uncategorised' is always first.
+//
+// A bridge entity is the exception: it has no chart, so its dropdown is the
+// plain list its people maintain in Business settings → Lists → Categories.
 export function useCategoryOptions() {
   const { data: organisations = [] } = useOrganisations();
   const active = getActiveOrganisationId();
-  const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  const standalone = isStandaloneOrg(organisations.find((o) => o.id === active));
+  const orgId = standalone ? '' : pickOrgId(organisations, active, { xeroOnly: true });
+  const listNames = useCategoryListOptions();
   const { data } = useQuery({
     queryKey: ['xero-accounts', orgId],
     queryFn: () => fetchXeroAccounts(orgId),
@@ -430,7 +514,11 @@ export function useCategoryOptions() {
   const hidden = useHiddenSet('categories');
   const shown = (data ?? []).filter((a) => !hidden.has(a.code || a.name));
   const expense = shown.filter((a) => isExpenseType(a.type));
-  const labels = expense.length ? expense.map(accountLabel) : XERO_ACCOUNTS.map(accountLabel);
+  const labels = standalone
+    ? listNames
+    : expense.length
+      ? expense.map(accountLabel)
+      : XERO_ACCOUNTS.map(accountLabel);
   // The category dropdown always follows the Xero chart of accounts. Only
   // categories the user explicitly adds via "Add category" are appended; the
   // Business-settings Lists categories no longer feed this dropdown.
@@ -450,7 +538,7 @@ export function useCategoryOptions() {
 export function useXeroBankAccounts() {
   const { data: organisations = [] } = useOrganisations();
   const active = getActiveOrganisationId();
-  const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  const orgId = pickOrgId(organisations, active, { xeroOnly: true });
   const { data } = useQuery({
     queryKey: ['xero-accounts', orgId],
     queryFn: () => fetchXeroAccounts(orgId),

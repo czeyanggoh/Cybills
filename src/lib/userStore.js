@@ -26,7 +26,16 @@ async function req(path, method = 'GET', body) {
     headers: { ...orgHeaders(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`users ${method} ${path} failed (${res.status})`);
+  if (!res.ok) {
+    // Carry the server's own reason, so a caller can say "that address is
+    // already taken" instead of a status code nobody can act on.
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(`users ${method} ${path} failed (${res.status})`);
+    err.status = res.status;
+    err.code = body?.error || '';
+    err.info = body || {};
+    throw err;
+  }
   return res.json();
 }
 
@@ -57,9 +66,10 @@ export function nameForEmail(email) {
   return personByKey[String(email).trim().toLowerCase()] || '';
 }
 
-// Everyone who can own a document in the open entity: this entity's people plus
-// the practice colleagues with access to it. Separate from the roster on
-// purpose — see the server's GET /api/users/directory.
+// Everyone the open entity's documents can name: its own people (including its
+// general account) plus the practice colleagues with access to it, each entry
+// flagged with which it is. Separate from the roster on purpose — see the
+// server's GET /api/users/directory.
 async function fetchDirectory() {
   try {
     const { people } = await req('/directory');
@@ -74,9 +84,13 @@ export function getDirectory() {
   return directory;
 }
 
-// The people who can own a document here, as display names, A–Z. What the
-// "Document owner" pickers offer — the roster alone would leave out the
-// colleagues who upload most of a client's documents.
+// The people a document here can be given to, as display names, A–Z. This is
+// the CLIENT's own side of the directory: its employees plus its general
+// account. Practice colleagues are deliberately absent — a colleague does the
+// client's books, they don't own the client's paperwork, so what they add goes
+// to the general account instead of putting their own name on the client's
+// records. (They stay in the directory for name resolution: the documents they
+// uploaded still have to read as a person rather than an email local-part.)
 export function useOwnerNames() {
   const [names, setNames] = useState(() => ownerNames());
   useEffect(() => {
@@ -88,8 +102,89 @@ export function useOwnerNames() {
   return names;
 }
 
+// Deactivated people are left out for the same reason colleagues are: the
+// directory answers two questions at once, and they have different answers.
+// Their name must still RESOLVE — the documents they own have to read as a
+// person — but nothing new should be handed to an account that can no longer
+// sign in. (Reassigning is still possible: a document whose owner has left
+// keeps showing them until somebody picks somebody else.)
 const ownerNames = () =>
-  Array.from(new Set(directory.map((p) => p.name || p.email).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  Array.from(
+    new Set(
+      directory
+        .filter((p) => !p.external && !p.deactivated)
+        .map((p) => p.name || p.email)
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+// The people an expense claim can be made out to, as display names, A-Z.
+//
+// NOT the roster: GET /api/users answers with a client entity's own employees
+// and deliberately leaves practice colleagues out, so a colleague could never be
+// picked — including in the practice's OWN entity, where they are exactly the
+// person claiming. Cze has a claim in CYBM; Astrid could not have made one.
+//
+// A claim is money paid back to a PERSON, so the general account is not a
+// candidate however it is flagged, and neither is anyone deactivated.
+//
+// `ownEntity` is whether the open entity is the practice's own. A colleague
+// claims there and nowhere else: doing a client's books does not make their
+// coffee the client's to reimburse.
+export function claimantNames({ ownEntity = false } = {}) {
+  return Array.from(
+    new Set(
+      directory
+        .filter((p) => !p.general && !p.deactivated && (ownEntity || !p.external))
+        .map((p) => p.name || p.email)
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+export function useClaimantNames({ ownEntity = false } = {}) {
+  const [names, setNames] = useState(() => claimantNames({ ownEntity }));
+  useEffect(() => {
+    const sync = () => setNames(claimantNames({ ownEntity }));
+    sync();
+    window.addEventListener(USERS_EVENT, sync);
+    return () => window.removeEventListener(USERS_EVENT, sync);
+  }, [ownEntity]);
+  return names;
+}
+
+// Can this person own a document in the entity that's open? True for its own
+// people; false for a practice colleague working on it from outside, whose
+// uploads belong to the client's general account instead. (Inside the
+// practice's OWN entity a colleague is one of its people, so this is true
+// there — which is the difference between doing a client's books and doing
+// your own.)
+export function ownsHere({ email, name } = {}) {
+  const key = (v) => String(v || '').trim().toLowerCase();
+  const row = directory.find(
+    (p) => (key(p.email) && key(p.email) === key(email)) || (key(p.name) && key(p.name) === key(name))
+  );
+  return Boolean(row && !row.external);
+}
+
+// The entity's general account — the owner an unassigned document falls to.
+// Created with the organisation, so it's there unless the directory hasn't
+// loaded yet.
+export function getGeneralOwnerName() {
+  const row = directory.find((p) => p.general);
+  return row ? row.name || row.email : '';
+}
+
+export function useGeneralOwnerName() {
+  const [name, setName] = useState(() => getGeneralOwnerName());
+  useEffect(() => {
+    const sync = () => setName(getGeneralOwnerName());
+    sync();
+    window.addEventListener(USERS_EVENT, sync);
+    return () => window.removeEventListener(USERS_EVENT, sync);
+  }, []);
+  return name;
+}
 
 async function fetchUsers() {
   try {
@@ -160,13 +255,50 @@ export async function approveUser(id) {
 
 // Self-signup: the signed-in user submits their details + chosen company. They
 // become a pending member until an admin approves. Returns { status, user }.
+// The people an admin has already added to this company who have never signed
+// in — so somebody joining can say "that's me" instead of typing their name a
+// second time and becoming a second row. Names and roles only.
+// The companies somebody joining can pick from. Not the entity list: that is
+// served only to people who are on a roster, and somebody joining is by
+// definition not yet.
+export async function fetchJoinCompanies() {
+  try {
+    const res = await fetch('/api/users/join/companies');
+    if (!res.ok) return [];
+    const body = await res.json();
+    return Array.isArray(body.companies) ? body.companies : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchJoinPeople(orgId) {
+  if (!orgId) return [];
+  try {
+    const res = await fetch(`/api/users/join/people?orgId=${encodeURIComponent(orgId)}`);
+    if (!res.ok) return [];
+    const body = await res.json();
+    return Array.isArray(body.people) ? body.people : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function joinCompany(payload) {
+  // No X-Org-Id: the company being joined is in the body, and the header would
+  // be whichever entity this browser last had open — which the caller, by
+  // definition, is not yet a member of.
   const res = await fetch('/api/users/join', {
     method: 'POST',
-    headers: { ...orgHeaders(), 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload ?? {}),
   });
-  if (!res.ok) throw new Error(`join failed (${res.status})`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.message || body.error || `join failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
   await refreshPeople();
   return res.json();
 }
@@ -212,6 +344,18 @@ export async function setUserPassword(id, password) {
 // Invite (or re-invite) a user by email: the server mints a single-use link and
 // mails it. Returns { sent, link, error } — `link` is always present so the
 // admin can pass it on by hand when mail is off or delivery failed.
+// Clear the Gmail forwarding confirmation CYBills is holding for a user (once
+// they've clicked it, or to dismiss it).
+export async function dismissForward(id) {
+  try {
+    const res = await fetch(`/api/users/${id}/dismiss-forward`, { method: 'POST', headers: orgHeaders() });
+    if (res.ok) await refreshPeople();
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function inviteUser(id) {
   try {
     const res = await fetch(`/api/users/${id}/invite`, { method: 'POST', headers: orgHeaders() });

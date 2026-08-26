@@ -138,6 +138,10 @@ check('tax mismatch: nothing sent to Xero', r.posted, null);
 r = await publish(bill({ total: '50', tax: '0', project: 'ASTP 01' }).id);
 check('no rows: one line', r.posted.LineItems.length, 1);
 check('no rows: the document account', r.posted.LineItems[0].AccountCode, '429');
+
+// Xero shows this as a "Go to CYBills" button on the bill — back to the
+// document it was published from, with the original paper attached.
+check('the bill links back to its document', /\/costs\/\d+$/.test(String(r.posted.Url)), true);
 check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 'Projects', Option: 'ASTP 01' }]);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

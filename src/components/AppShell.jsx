@@ -142,7 +142,14 @@ function SidebarLink({ to, label, icon: Icon, showLabel = true }) {
 // it's the default destination when publishing to Xero), and hosts the
 // "Add organisation" entry point.
 function OrganisationSwitcher() {
-  const { data: organisations = [] } = useOrganisations();
+  const { data: organisations = [], isFetching } = useOrganisations();
+  const { membership, googleEnabled } = useAuth();
+  // Adding and removing client entities is the PRACTICE's job. A client's own
+  // admin switches between the entities they've been given and nothing more —
+  // and the Xero picker behind "Add organisation" is a list of every client the
+  // firm has connected, which is not theirs to read. The server refuses either
+  // way; this stops the door being shown at all.
+  const canManageEntities = isPracticeTeam(membership, googleEnabled);
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -159,13 +166,18 @@ function OrganisationSwitcher() {
   // makes every consumer agree on the same org from the start.
   useEffect(() => {
     if (!organisations.length) return;
+    // A list being refetched cannot say what is on offer. Adding an entity
+    // selects it and refetches at the same moment, so judging the new selection
+    // against the OLD list found it missing and bounced straight back to the
+    // first entity A→Z — the new one looked as though it had never been created.
+    if (isFetching) return;
     // Also covers a selection that is no longer offered — an entity that was
     // unlinked, or one this user's client access no longer includes. Left
     // pinned, every request would carry an org header the server rejects.
     if (activeId && organisations.some((o) => o.id === activeId)) return;
     setActiveOrganisationId(organisations[0].id);
     setActiveId(organisations[0].id);
-  }, [activeId, organisations]);
+  }, [activeId, organisations, isFetching]);
 
   const select = (id) => {
     if (id === activeId) {
@@ -243,7 +255,10 @@ function OrganisationSwitcher() {
                     setOpen(false);
                     setRemoveTarget(o);
                   }}
-                  className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-colors hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                  className={cn(
+                    'shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-colors hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100',
+                    !canManageEntities && 'hidden',
+                  )}
                   aria-label={`Remove ${o.name}`}
                   title="Remove organisation"
                 >
@@ -251,19 +266,21 @@ function OrganisationSwitcher() {
                 </button>
               </div>
             ))}
-            <div className="mt-1 border-t pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setAddOpen(true);
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-              >
-                <Plus className="h-4 w-4 text-muted-foreground" strokeWidth={2} />
-                Add organisation
-              </button>
-            </div>
+            {canManageEntities && (
+              <div className="mt-1 border-t pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    setAddOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                >
+                  <Plus className="h-4 w-4 text-muted-foreground" strokeWidth={2} />
+                  Add organisation
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -480,7 +497,15 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                 {userMenu && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setUserMenu(false)} aria-hidden="true" />
-                    <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                    <div className="absolute right-0 z-20 mt-2 w-64 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                      {/* Which account this actually is. The name alone can't
+                          answer it — a Google profile and a CYBills roster row
+                          can read the same, and signing in as somebody else
+                          then looks exactly like not having switched at all. */}
+                      <div className="border-b px-3 pb-2 pt-1.5">
+                        <p className="truncate text-sm font-medium">{displayUser?.name || 'Account'}</p>
+                        <p className="truncate text-xs text-muted-foreground">{user?.email || displayUser?.email || 'Not signed in'}</p>
+                      </div>
                       <button
                         type="button"
                         onClick={() => { setUserMenu(false); navigate('/profile'); }}

@@ -7,6 +7,7 @@ import { authRouter, readSession } from './auth.js';
 import { orgRouter } from './org.js';
 import { extractRouter, vaultRouter } from './extract.js';
 import { billsRouter } from './bills.js';
+import { inboundRouter } from './inbound.js';
 import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { cyhrRouter } from './cyhr.js';
@@ -18,6 +19,7 @@ import { mailRouter } from './mail.js';
 import { settingsRouter, adoptLegacySettings } from './settings.js';
 import { boardRouter } from './board.js';
 import { scrubFillerText } from './store.js';
+import { verifyShareToken } from './shareLinks.js';
 
 const app = express();
 
@@ -31,9 +33,9 @@ app.use(morgan('tiny'));
 // Auth guard: once real Google sign-in is on, the data APIs require a valid
 // session — otherwise anyone with the URL could read/write company data. Public:
 // the auth flow, the password login (how you GET a session), the health check,
-// and the capability-URL bill file (opened from exported CSV links without a
-// session). In mock/dev (no Google configured) everything stays open so local
-// development isn't blocked.
+// and a bill file opened with a signed share link (exported CSVs and claim PDFs
+// are read outside the app). In mock/dev (no Google configured) everything stays
+// open so local development isn't blocked.
 app.use((req, res, next) => {
   if (!googleEnabled) return next();
   const p = req.path;
@@ -46,7 +48,16 @@ app.use((req, res, next) => {
   if (p === '/api/users/reset') return next();
   if (p.startsWith('/api/users/reset/')) return next();
   if (p === '/api/health') return next();
-  if (/^\/api\/costs\/bills\/[^/]+\/file$/.test(p)) return next();
+  // Inbound email is machine-to-machine (the Cloudflare Email Worker), guarded
+  // by its own shared secret rather than a user session.
+  if (p === '/api/inbound/email') return next();
+  // An image link in an exported CSV, or an Item ID in an emailed claim PDF, is
+  // opened by somebody with no session here — an accountant, an approver. It
+  // carries a signed, expiring token naming the one document it opens instead
+  // (shareLinks.ts); the route itself then checks that the document's entity
+  // still allows sharing.
+  const shared = /^\/api\/costs\/bills\/([^/]+)\/file$/.exec(p);
+  if (shared && verifyShareToken(decodeURIComponent(shared[1]), String(req.query.s ?? ''))) return next();
   if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
   return next();
 });
@@ -60,6 +71,12 @@ app.use((req, res, next) => {
 // behaves exactly as before.
 app.use((req, res, next) => {
   if (!googleEnabled || !req.path.startsWith('/api/')) return next();
+  // Two endpoints answer "who am I / let me in", and neither is about the
+  // entity in the header. Self-signup names the company it is joining in its
+  // BODY, and the browser is still carrying whichever entity it last had open —
+  // so the one request that exists to MAKE somebody a member was refused for
+  // not already being one, and the join form could only say "please try again".
+  if (req.path.startsWith('/api/users/join') || req.path === '/api/users/me') return next();
   const requested = (req.header('X-Org-Id') || '').trim();
   if (!requested) return next();
   const me = memberForSession(req);
@@ -107,6 +124,7 @@ app.use('/api/auto-claims', autoClaimsRouter);
 
 // Users — server-backed + shared (people list + approver roster).
 app.use('/api/users', usersRouter);
+app.use('/api/inbound', inboundRouter);
 
 // The practice (CYBM) itself: its colleagues, their client access, and the
 // connected-client list with what each has cost in Claude API usage.

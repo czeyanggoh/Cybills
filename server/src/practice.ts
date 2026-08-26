@@ -171,6 +171,10 @@ practiceRouter.get('/clients', (req, res) => {
         name: o.name,
         tenantId: o.tenantId,
         tenantName: o.tenantName,
+        // A bridge entity has no Xero of its own; the list says where its claims
+        // land instead, so a blank tenant doesn't read as a broken connection.
+        kind: o.kind ?? 'xero',
+        parentOrgId: o.parentOrgId ?? '',
         isPrimary: o.id === primary,
         createdAt: o.createdAt,
         // Who on the practice team works on this client — the account managers,

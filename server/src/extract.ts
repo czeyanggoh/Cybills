@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { visionEnabled } from './env.js';
 import { apportion, notFiller, derivedDescription, withPeriod } from './store.js';
 import { recordUsage } from './usage.js';
-import { readDocument, resolveProvider } from './llm.js';
+import { readDocument, resolveProvider, type Provider } from './llm.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
 // the model classifies into a value that actually exists in the UI. These are
@@ -54,7 +54,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
     properties: {
       ...taxRateFields,
       ...projectFields,
-      supplier: { type: 'string', description: 'Merchant / supplier name, e.g. "Grab"' },
+      supplier: {
+        type: 'string',
+        description:
+          'The merchant / supplier name AS PRINTED on the document — the party that was PAID, never the bill-to / customer. Copy it from the text: the logo wordmark, letterhead, footer, "powered by" line, the payment descriptor, or the support address\'s domain. NEVER infer a brand from what the document LOOKS like: ride-hailing, food-delivery and e-wallet receipts share a layout, and a trip, a card line and a total are not evidence of WHICH company issued it. When a document names BOTH a legal entity and an outlet or trading name — "Marina Bay Sands Pte Ltd" above "MARQUEE", a mall tenant under its group\'s name — use the entity the GST or company registration number belongs to: that is who issued the tax invoice, who the ledger owes, and who the GST is claimed from. If no name is printed anywhere, return an empty string — a blank supplier is corrected in seconds, where a confidently wrong one is published to the ledger as the wrong contact.',
+      },
       date: {
         type: 'string',
         description:
@@ -256,31 +260,43 @@ function parseNamedRules(raw: unknown): NamedRule[] {
   return out;
 }
 
-// POST /api/costs/extract — body: { imageBase64, mediaType, accounts?, categories?,
-// taxRates?, projects?, provider? }.
-// Runs the receipt image OR PDF invoice through the org's chosen reader (Claude
-// or OpenAI — see llm.ts) and returns the extracted fields, classified into the
-// Xero chart of accounts (when `accounts` is given, using each account's
-// description) or a plain category list. 503 until at least one of
-// ANTHROPIC_API_KEY / OPENAI_API_KEY is configured.
-extractRouter.post('/extract', async (req, res) => {
-  if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+// The extracted-and-cleaned fields for one document — what the POST handler
+// returns as `data`, and what the inbound-email reader writes onto the bill.
+export type ExtractedFields = z.infer<typeof ReceiptSchema>;
 
-  const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
-  const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
-  if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType)) {
-    return res.status(400).json({ error: 'invalid_image' });
-  }
+// Everything the read needs, already gathered — the browser sends these on the
+// request; the inbound path assembles the same set server-side (see
+// server/src/inbound.ts). Provider is already resolved to a real engine.
+export type ExtractionInputs = {
+  provider: Provider;
+  imageBase64: string;
+  mediaType: string;
+  accounts: AccountRef[];
+  categories: string[]; // plain fallback categories, used only when accounts is empty
+  taxRates: TaxRateRef[];
+  projects: NamedRule[];
+  instructions: string;
+};
+
+type ReadOutcome = Awaited<ReturnType<typeof readDocument>>;
+export type ExtractionResult =
+  | { ok: true; data: ExtractedFields; outcome: ReadOutcome }
+  | { ok: false; error: 'refused' | 'no_data' | 'extraction_failed'; status: number; outcome?: ReadOutcome };
+
+// The one document read, free of Express — a receipt image or PDF invoice
+// through the org's chosen reader, classified into the Xero chart of accounts
+// (when `accounts` is given) or a plain category list, with the same tax-code /
+// project / review-instruction guidance an upload gets. The POST route below is
+// a thin wrapper; the inbound-email path calls this directly so an emailed
+// document is read EXACTLY the way an uploaded one is. Never throws — a failure
+// comes back as { ok:false }. The caller records usage from `outcome`.
+export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionResult> {
+  const { accounts, provider, imageBase64, mediaType } = inp;
 
   // Prefer a Xero chart of accounts (with descriptions); otherwise fall back to
   // a plain category list. Either way, always include an "Uncategorised" escape.
-  const accounts = parseAccounts(req.body?.accounts);
-  const rawCats: unknown = req.body?.categories;
-  const bodyCats = Array.isArray(rawCats)
-    ? rawCats.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-    : [];
   const accountLabels = accounts.map((a) => `${a.code} - ${a.name}`);
-  const source = accountLabels.length ? accountLabels : bodyCats;
+  const source = accountLabels.length ? accountLabels : inp.categories;
   const categories = source.length
     ? Array.from(new Set([...source, 'Uncategorised']))
     : DEFAULT_CATEGORIES;
@@ -289,8 +305,7 @@ extractRouter.post('/extract', async (req, res) => {
   // Organisation-level Review instructions (business overview + GST/coding
   // overrides). Prepended as context; may override the printed GST/tax and guide
   // the account choice + supplier identification.
-  const rawInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
-  const instructions = rawInstructions.slice(0, 6000); // guard the prompt size
+  const instructions = (inp.instructions || '').slice(0, 6000); // guard the prompt size
   const contextBlock = instructions
     ? `Business context and coding rules for this organisation — apply these when extracting and classifying. They can override the printed GST/tax amount (e.g. substitute 0), guide which account code to choose, and say how to identify the supplier:\n${instructions}\n\n`
     : '';
@@ -304,8 +319,20 @@ extractRouter.post('/extract', async (req, res) => {
         .join('\n')
     : '';
 
+  // A bridge entity has no chart of accounts — its people pick the plain names
+  // off their own claim policy. The enum alone would leave the model matching on
+  // wording; what it needs is what the names MEAN, which is different guidance
+  // from an account's description.
+  const categoriesGuide = !accounts.length && inp.categories.length
+    ? '\n\nClassify `category` into exactly one of the categories below. These are this organisation\'s own expense categories — plain names from its claim policy, not accounting codes — so choose by WHAT WAS BOUGHT:\n' +
+      '- Transport is the MODE the document names: a taxi or private-hire receipt is the taxi category, a rail fare the train one, an airline the flights one. Never a general one when the specific one exists.\n' +
+      '- Where the categories distinguish WHEN (a weekday late-night meal against a weekend one, an overnight allowance against a per-trip one), the document\'s own date and time decide it.\n' +
+      '- When none of them plainly fits, use "Others". Never the closest-sounding one — a wrong category here is a wrong line on somebody\'s claim.\n' +
+      inp.categories.map((c) => `- "${c}"`).join('\n')
+    : '';
+
   // Tax rates the org has written rules for, and the guide that teaches them.
-  const taxRates = parseTaxRates(req.body?.taxRates);
+  const taxRates = inp.taxRates;
   const taxRateNames = taxRates.map((t) => t.name);
   const taxRateSet = new Set(taxRateNames);
   const taxRatesGuide = taxRates.length
@@ -316,7 +343,7 @@ extractRouter.post('/extract', async (req, res) => {
     : '';
 
   // Projects the org has written rules for, and the guide that teaches them.
-  const projects = parseNamedRules(req.body?.projects);
+  const projects = inp.projects;
   const projectNames = projects.map((p) => p.name);
   const projectSet = new Set(projectNames);
   const projectsGuide = projects.length
@@ -342,6 +369,7 @@ extractRouter.post('/extract', async (req, res) => {
     contextBlock +
     'You extract purchase and expense details from receipts and invoices. ' +
     'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
+    'Never identify a company that is not named on the document. A screenshot of an app receipt is often cropped above its brand, and the layout alone does not say which company it is — returning the wrong merchant is worse than returning none, so leave `supplier` empty rather than pick the best-known brand of that kind. ' +
     'Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ' +
     'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
     'pick "Uncategorised" only when none reasonably fit. ' +
@@ -351,14 +379,11 @@ extractRouter.post('/extract', async (req, res) => {
     'If a field is not present, use an empty string or 0. ' +
     'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
     accountsGuide +
+    categoriesGuide +
     taxRatesGuide +
     projectsGuide;
 
   const isPdf = mediaType === PDF_MEDIA;
-  // Which reader does the work. The org picks it in Business settings ->
-  // Extraction and the client sends the choice along; resolveProvider falls back
-  // to the deploy's default when the named one has no API key configured.
-  const provider = resolveProvider(req.body?.provider);
 
   try {
     const outcome = await readDocument({
@@ -376,26 +401,13 @@ extractRouter.post('/extract', async (req, res) => {
         `Today is ${new Date().toISOString().slice(0, 10)}.`,
     });
 
-    // What this document cost to read. Recorded per call and attributed to the
-    // client entity it was uploaded for — the practice's Clients page has no
-    // other source for API spend. A refused or unparseable read still burned
-    // tokens, so it is recorded before the outcome is acted on.
-    recordUsage(req, {
-      feature: 'extract',
-      provider: outcome.provider,
-      model: outcome.model,
-      usage: outcome.usage,
-    });
-
     if (!outcome.ok) {
-      return outcome.reason === 'refused'
-        ? res.status(422).json({ error: 'refused' })
-        : res.status(502).json({ error: 'no_data' });
+      return { ok: false, error: outcome.reason === 'refused' ? 'refused' : 'no_data', status: outcome.reason === 'refused' ? 422 : 502, outcome };
     }
 
     const parsed = ReceiptSchema.safeParse(outcome.json);
     if (!parsed.success) {
-      return res.status(502).json({ error: 'no_data' });
+      return { ok: false, error: 'no_data', status: 502, outcome };
     }
     // Belt-and-suspenders: snap to a known category if the model somehow strays.
     const taxRate = taxRateSet.has(parsed.data.taxRate) ? parsed.data.taxRate : '';
@@ -409,7 +421,7 @@ extractRouter.post('/extract', async (req, res) => {
         ? parsed.data.dueDate
         : '';
     const category = categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised';
-    const data = {
+    const data: ExtractedFields = {
       ...parsed.data,
       category,
       // Nothing usable from the reader (it declined, or wrote filler) — compose
@@ -430,11 +442,62 @@ extractRouter.post('/extract', async (req, res) => {
       taxLabel: notFiller(parsed.data.taxLabel),
       lineItems: parsed.data.lineItems.map((li) => ({ ...li, description: notFiller(li.description) })),
     };
-    return res.json({ ok: true, data });
+    return { ok: true, data, outcome };
   } catch (err) {
     console.error('[extract] failed', err);
-    return res.status(500).json({ error: 'extraction_failed' });
+    return { ok: false, error: 'extraction_failed', status: 500 };
   }
+}
+
+// POST /api/costs/extract — body: { imageBase64, mediaType, accounts?, categories?,
+// taxRates?, projects?, instructions?, provider? }. Thin wrapper over
+// runExtraction: validates the request, resolves the reader, records usage, and
+// maps the result to the HTTP response. 503 until at least one of
+// ANTHROPIC_API_KEY / OPENAI_API_KEY is configured.
+extractRouter.post('/extract', async (req, res) => {
+  if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+
+  const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
+  const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
+  if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType)) {
+    return res.status(400).json({ error: 'invalid_image' });
+  }
+
+  const rawCats: unknown = req.body?.categories;
+  const bodyCats = Array.isArray(rawCats)
+    ? rawCats.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+    : [];
+  const rawInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
+
+  const result = await runExtraction({
+    // The org picks the reader in Business settings → Extraction and the client
+    // sends the choice along; resolveProvider falls back to the deploy's default
+    // when the named one has no API key configured.
+    provider: resolveProvider(req.body?.provider),
+    imageBase64,
+    mediaType,
+    accounts: parseAccounts(req.body?.accounts),
+    categories: bodyCats,
+    taxRates: parseTaxRates(req.body?.taxRates),
+    projects: parseNamedRules(req.body?.projects),
+    instructions: rawInstructions,
+  });
+
+  // What this document cost to read. Recorded per call and attributed to the
+  // client entity it was uploaded for — the practice's Clients page has no other
+  // source for API spend. A refused or unparseable read still burned tokens, so
+  // it is recorded whenever the read actually ran.
+  if (result.outcome) {
+    recordUsage(req, {
+      feature: 'extract',
+      provider: result.outcome.provider,
+      model: result.outcome.model,
+      usage: result.outcome.usage,
+    });
+  }
+
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  return res.json({ ok: true, data: result.data });
 });
 
 // --- Line items -------------------------------------------------------------
@@ -621,6 +684,18 @@ extractRouter.post('/extract-lines', async (req, res) => {
       accounts.map((a) => `- "${a.code} - ${a.name}"${a.description ? `: ${a.description}` : ''}`).join('\n')
     : '';
 
+  // A bridge entity has no chart of accounts — its people pick the plain names
+  // off their own claim policy. The enum alone would leave the model matching on
+  // wording; what it needs is what the names MEAN, which is different guidance
+  // from an account's description.
+  const categoriesGuide = !accounts.length && bodyCats.length
+    ? '\n\nClassify `category` into exactly one of the categories below. These are this organisation\'s own expense categories — plain names from its claim policy, not accounting codes — so choose by WHAT WAS BOUGHT:\n' +
+      '- Transport is the MODE the document names: a taxi or private-hire receipt is the taxi category, a rail fare the train one, an airline the flights one. Never a general one when the specific one exists.\n' +
+      '- Where the categories distinguish WHEN (a weekday late-night meal against a weekend one, an overnight allowance against a per-trip one), the document\'s own date and time decide it.\n' +
+      '- When none of them plainly fits, use "Others". Never the closest-sounding one — a wrong category here is a wrong line on somebody\'s claim.\n' +
+      bodyCats.map((c) => `- "${c}"`).join('\n')
+    : '';
+
   // Cached per organisation, exactly like /extract: nothing per-document here,
   // including the reconciliation feedback on a retry (that rides in `prompt`).
   const stablePrompt =
@@ -638,6 +713,7 @@ extractRouter.post('/extract-lines', async (req, res) => {
     'Only when neither is true (the document itself settles an earlier balance, say) may they differ, and then `note` must say why.\n' +
     'A document with no itemised table has no lines: return an empty array rather than one line for the total.' +
     accountsGuide +
+    categoriesGuide +
     projectsGuide;
 
   const isPdf = mediaType === PDF_MEDIA;

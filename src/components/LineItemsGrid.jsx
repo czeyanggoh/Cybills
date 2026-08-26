@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Maximize2, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { Loader2, Maximize2, Plus, Search, Sparkles, Trash2, Undo2, X } from 'lucide-react';
 import ComboSelect from '@/components/ComboSelect';
 import { formatCategory } from '@/lib/categoryDisplay';
 import { cn } from '@/lib/utils';
@@ -160,7 +160,7 @@ export function LineItemsGrid({
 }
 
 // The Extract / Create / Expand row that sits under the grid.
-export function LineItemsActions({ onExtract, onAdd, onExpand, extracting, busy = false, visionEnabled, canExpand }) {
+export function LineItemsActions({ onExtract, onAdd, onExpand, onRevert, canRevert = false, extracting, busy = false, visionEnabled, canExpand }) {
   return (
     <>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -179,6 +179,18 @@ export function LineItemsActions({ onExtract, onAdd, onExpand, extracting, busy 
         >
           <Plus className="h-3.5 w-3.5" /> Create line item
         </button>
+        {/* Only once there is something to undo, so it can't be pressed in hope
+            and do nothing. */}
+        {canRevert && (
+          <button
+            type="button"
+            onClick={onRevert}
+            title="Put the rows back as they were read, discarding your edits"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+          >
+            <Undo2 className="h-3.5 w-3.5" /> Revert edits
+          </button>
+        )}
         {canExpand && (
           <button
             type="button"

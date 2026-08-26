@@ -1,15 +1,15 @@
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { Router } from 'express';
-import { env } from './env.js';
+import { Router, type Request, type Response } from 'express';
+import { env, googleEnabled } from './env.js';
 import { readSession } from './auth.js';
 import { WORKSPACE_ID, workspaceId } from './workspace.js';
 // Who may open which client entity is a fact about the roster, so it is decided
 // in users.ts next to the rows it reads. (users.ts imports this module back for
 // the org lookups — neither one calls the other while loading, so the cycle is
 // inert.)
-import { memberForSession, canAccessOrg, canManagePractice } from './users.js';
+import { memberForSession, canAccessOrg, canManagePractice, ensureGeneralUser, grantClientAccess } from './users.js';
 
 // Organisations = the client entities bills are published for. Each one is
 // linked to a Xero organisation (tenant) that cyworkspace holds a connection
@@ -21,11 +21,36 @@ export type Organisation = {
   id: string;
   orgId: string; // workspace scope (signed-in email domain — see bills.ts orgIdFor)
   name: string; // display name in CYBills (defaults to the Xero org name)
-  tenantId: string; // Xero tenant UUID, resolved by the cyworkspace relay
+  // Xero tenant UUID, resolved by the cyworkspace relay. EMPTY for a standalone
+  // entity — kept a required string rather than made optional so the dozens of
+  // `.tenantId` reads across xero.ts don't each need a null check; every one of
+  // them already guards on falsiness.
+  tenantId: string;
   tenantName: string; // Xero organisation name at link time (display only)
+  // An entity that is not a real company and has no books of its own: a bridge
+  // between the people who submit costs and the company whose ledger receives
+  // them. Absent (or '') reads as 'xero', so nothing needs migrating.
+  kind?: 'xero' | 'standalone';
+  // For a standalone entity, the linked entity whose Xero its claims post into.
+  parentOrgId?: string;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
 };
+
+export const isStandalone = (o: Organisation | null | undefined): boolean =>
+  o?.kind === 'standalone';
+
+// The entity whose Xero tenant actually receives this one's postings: itself
+// when it has a tenant, otherwise its parent. Null when there is nowhere to
+// post — no parent, a parent that has since been unlinked, or a parent that is
+// itself standalone (bridges never chain, or "where does this post?" stops
+// having one answer).
+export function publishTargetFor(ws: string, o: Organisation | null): Organisation | null {
+  if (!o) return null;
+  if (o.tenantId) return o;
+  const parent = o.parentOrgId ? getOrganisation(ws, o.parentOrgId) : null;
+  return parent && parent.tenantId ? parent : null;
+}
 
 // Same location strategy as the bills store: server/.data survives the
 // deploy's `git reset --hard`; BILLS_DATA_DIR overrides for both stores.
@@ -98,6 +123,21 @@ export function dataScopeForOrg(requestedOrgId: string): string {
 
 export const organisationsRouter = Router();
 
+// Linking a client entity is the PRACTICE's job. A client's own admin runs
+// their staff and their books; they do not add companies to the firm's list —
+// and the picker that does it is a list of every Xero organisation CYBM has
+// connected, which is the firm's client list. Mock/dev (no auth) stays open.
+function requirePracticeTeam(req: Request, res: Response): boolean {
+  if (!googleEnabled) return true;
+  const me = memberForSession(req);
+  if (me?.practice && !me.deactivated) return true;
+  res.status(403).json({
+    error: 'not_practice_team',
+    message: 'Only the practice team can add or remove client entities.',
+  });
+  return false;
+}
+
 // GET /api/organisations — the linked organisations the CALLER may open, A→Z.
 // A client entity's own staff see only their entity; a practice colleague sees
 // the clients they've been given access to. Flags the primary org so the client
@@ -108,11 +148,42 @@ export const organisationsRouter = Router();
 // which is not the same as being able to work in all of them.
 organisationsRouter.get('/', (req, res) => {
   const primary = primaryOrgId();
-  const me = memberForSession(req);
+  const ws = workspaceId(req);
+  let me = memberForSession(req);
+  // Somebody signed in who is on nobody's roster is a member of NOTHING — a
+  // person mid-signup, or one whose Google address isn't the one an admin
+  // entered. The access predicate answers "true" for a caller it can't place
+  // (so that sessionless mock/dev behaves as it always has), and that read as
+  // "every client" here: the whole client list, names and all, to anyone who
+  // could sign in. They get an empty list and the app sends them to /join,
+  // which is where they actually belong.
+  if (googleEnabled && readSession(req) && !me) return res.json({ organisations: [] });
+  // Repair the entities created before creating one granted its creator access
+  // (see grantClientAccess): they exist, they belong to this person, and they
+  // are invisible to them. Re-read the row when anything changed, so THIS
+  // response already includes them rather than the next one.
+  if (me?.email && !me.allClients) {
+    const mine = String(me.email).trim().toLowerCase();
+    const repaired = listOrganisations(ws)
+      .filter((o) => String(o.createdBy || '').trim().toLowerCase() === mine)
+      .map((o) => grantClientAccess(ws, mine, o.id))
+      .some(Boolean);
+    if (repaired) me = memberForSession(req) ?? me;
+  }
   const wantsAll = req.query.all === '1' && (!me || canManagePractice(me));
-  const organisations = listOrganisations(workspaceId(req))
+  const all = listOrganisations(ws);
+  const organisations = all
     .filter((o) => wantsAll || canAccessOrg(me, o.id))
-    .map((o) => ({ ...o, isPrimary: o.id === primary }));
+    // A bridge entity's parent is very often one the caller CANNOT open — an ST
+    // Engineering admin works in the bridge and nowhere else. Resolving the
+    // name here rather than leaving the client to find it in a list it was
+    // never given is the difference between "posts into Red Alpha" and the
+    // Categories tab announcing that no parent is set.
+    .map((o) => ({
+      ...o,
+      isPrimary: o.id === primary,
+      parentName: o.parentOrgId ? all.find((p) => p.id === o.parentOrgId)?.name || '' : '',
+    }));
   res.json({ organisations });
 });
 
@@ -120,14 +191,37 @@ organisationsRouter.get('/', (req, res) => {
 // Body: { name?, tenantId, tenantName }. The tenant comes from the picker
 // backed by GET /api/xero/tenants, so tenantId is a relay-resolvable UUID.
 organisationsRouter.post('/', (req, res) => {
+  if (!requirePracticeTeam(req, res)) return;
   const b = req.body ?? {};
   const tenantId = String(b.tenantId ?? '').trim();
   const tenantName = String(b.tenantName ?? '').trim();
-  if (!tenantId) return res.status(400).json({ error: 'tenant_required' });
-
+  const standalone = String(b.kind ?? '') === 'standalone';
+  const parentOrgId = String(b.parentOrgId ?? '').trim();
   const orgId = workspaceId(req);
   const organisations = load();
-  const dup = organisations.find((o) => o.orgId === orgId && o.tenantId === tenantId);
+
+  // A standalone entity has no Xero of its own, so it needs a name of its own
+  // (there is no tenant name to fall back on) and somewhere for its claims to
+  // go. A parent that is itself standalone is refused: bridges must not chain,
+  // or "where does this post?" stops having one answer.
+  if (standalone) {
+    if (!String(b.name ?? '').trim()) return res.status(400).json({ error: 'name_required' });
+    if (!parentOrgId) return res.status(400).json({ error: 'parent_required' });
+    const parent = organisations.find((o) => o.orgId === orgId && o.id === parentOrgId);
+    if (!parent) return res.status(400).json({ error: 'parent_not_found' });
+    if (!parent.tenantId) {
+      return res.status(400).json({
+        error: 'parent_not_connected',
+        message: `"${parent.name}" isn't connected to Xero, so it can't receive another entity's claims.`,
+      });
+    }
+  } else if (!tenantId) {
+    return res.status(400).json({ error: 'tenant_required' });
+  }
+
+  // Only meaningful for a Xero-linked entity: every standalone one stores '',
+  // so an unguarded check would 409 the SECOND one against the first.
+  const dup = tenantId ? organisations.find((o) => o.orgId === orgId && o.tenantId === tenantId) : null;
   if (dup) return res.status(409).json({ error: 'already_linked', organisation: dup });
 
   // Also block a second organisation with the same display name — the earlier
@@ -149,19 +243,37 @@ organisationsRouter.post('/', (req, res) => {
     id: `org_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`,
     orgId,
     name: desiredName,
-    tenantId,
-    tenantName,
+    tenantId: standalone ? '' : tenantId,
+    tenantName: standalone ? '' : tenantName,
+    ...(standalone ? { kind: 'standalone' as const, parentOrgId } : {}),
     createdAt: new Date().toISOString(),
     createdBy: me?.email ?? '',
   };
   organisations.push(organisation);
   persist(organisations);
+  // Client access is an explicit list, so a brand-new entity is in nobody's —
+  // including the list of the person who just created it. Without this the
+  // dialog closes on a successful create and the switcher shows nothing new,
+  // which is indistinguishable from the create having failed.
+  if (me?.email) grantClientAccess(orgId, String(me.email).trim().toLowerCase(), organisation.id);
+  // A linked client entity starts with one user: its general account, which
+  // owns everything nobody claimed — every document a practice colleague adds
+  // here lands on it unless they name one of the client's own people. Created
+  // with the entity so the Users list is never empty, and so there is always
+  // somewhere for unassigned work to go. Never let a roster hiccup fail the
+  // link itself: ensure() creates the row on the next read either way.
+  try {
+    ensureGeneralUser(orgId, organisation.id);
+  } catch (err) {
+    console.error('[organisations] could not create the general user', err);
+  }
   res.json({ ok: true, organisation });
 });
 
 // DELETE /api/organisations/:id — unlink. Does not touch cyworkspace or Xero;
 // it only removes CYBills' pointer to the tenant.
 organisationsRouter.delete('/:id', (req, res) => {
+  if (!requirePracticeTeam(req, res)) return;
   const orgId = workspaceId(req);
   const organisations = load();
   const idx = organisations.findIndex((o) => o.orgId === orgId && o.id === req.params.id);

@@ -8,6 +8,7 @@ import {
   orgScope,
   effectiveRoleFor,
   isBusinessAdminRole,
+  canAccessOrg,
   type User,
 } from './users.js';
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
@@ -60,12 +61,22 @@ export function autoScope(req: Request): string {
 }
 
 // Whose claims a schedule can file: the entity's OWN employees — the same list
-// the Users page shows. Practice colleagues are deliberately out. A colleague
-// holds client access to an entity, they are not one of its people: a claim
-// filed for them under a client would be the practice claiming an expense from
-// its own customer. They upload documents here, and those documents belong to
-// the client, so the way to include one is the document's owner field, not a
-// claim in the colleague's name.
+// the Users page shows. Practice colleagues are out of a CLIENT entity, and
+// deliberately so: a colleague holds client access, they are not one of its
+// people, and a claim filed for them under a client would be the practice
+// claiming an expense from its own customer. They upload documents there, and
+// those documents belong to the client, so the way to include one is the
+// document's owner field, not a claim in the colleague's name.
+//
+// The practice's OWN entity is the other side of that same line. There a
+// colleague IS one of its people — it is the practice's books, and their own
+// expenses are exactly what belongs on them. Excluding them everywhere left the
+// practice's team as the only people in CYBills who could never be put on a
+// schedule, in the one entity where their claims belong.
+//
+// The general account is never eligible in either: a claim is money paid back to
+// a person, and it is a place for unassigned paperwork to land, not somebody who
+// can be reimbursed.
 //
 // The roster is keyed off the same scope as the settings and the sweep, so the
 // dialog's list and what actually gets filed can never disagree: the primary
@@ -76,9 +87,11 @@ function rosterOrgFor(scope: string): string {
 
 export function eligibleUsers(ws: string, scope: string): User[] {
   const org = rosterOrgFor(scope);
-  return ensureUsers(ws).filter(
-    (u) => u.workspaceId === ws && !u.removed && !u.deactivated && !u.practice && (u.organisationId || '') === org
-  );
+  const ownEntity = Boolean(org) && org === primaryOrgId();
+  return ensureUsers(ws).filter((u) => {
+    if (u.workspaceId !== ws || u.removed || u.deactivated || u.general) return false;
+    return u.practice ? ownEntity && canAccessOrg(u, org) : (u.organisationId || '') === org;
+  });
 }
 
 export function getSettings(ws: string, orgId: string): AutoClaimSettings | null {

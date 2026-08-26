@@ -70,7 +70,7 @@ export default function ClaimEmailModal({ open, onClose, defaultName = '', claim
     try {
       const enriched = await enrichClaimForExport(claim);
       const csv = buildClaimCsv(enriched, { detailLevel: detail, format, settings });
-      const pdfBase64 = buildClaimPdfBase64(enriched);
+      const pdfBase64 = await buildClaimPdfBase64(enriched);
       const attachments = [
         { filename: csv.name, content: toBase64(csv.text), contentType: 'text/csv' },
         ...(pdfBase64 ? [{ filename: claimExportName(claim, 'pdf'), content: pdfBase64, contentType: 'application/pdf' }] : []),

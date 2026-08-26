@@ -1,6 +1,8 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
 import { nameForEmail } from '@/lib/userStore';
-import { getActiveOrganisationId, getExtractionTaxRates, getExtractionProjects } from '@/lib/organisations';
+import { useState, useEffect } from 'react';
+import { getActiveOrganisationId, ORGANISATION_EVENT, getExtractionTaxRates, getExtractionProjects, getExtractionCategories } from '@/lib/organisations';
+import { supplierNamesFromDocs } from '@/lib/supplierList';
 import { isGstRegistered } from '@/lib/businessProfile';
 import { fetchReviewInstructions } from '@/lib/reviewInstructions';
 import { requestedProvider } from '@/lib/readerProvider';
@@ -65,6 +67,10 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
   // document can be allocated by what it says rather than only by who uploaded
   // it. None written → the field isn't offered to the model at all.
   const projects = await getExtractionProjects().catch(() => []);
+  // A bridge entity has no chart of accounts, so it classifies into the plain
+  // names its people claim against instead. Empty for a linked entity, whose
+  // `accounts` are the list — the server prefers accounts whenever it has them.
+  const categories = await getExtractionCategories().catch(() => []);
   const res = await fetch('/api/costs/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
@@ -72,6 +78,7 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
       imageBase64,
       mediaType,
       accounts,
+      categories,
       instructions,
       taxRates,
       projects,
@@ -159,6 +166,7 @@ export async function fetchExtractLines(imageBase64, mediaType, accounts) {
   // allocated to the outlet or site it names — an invoice billing three outlets
   // on one page is exactly what a per-line breakdown is for.
   const projects = await getExtractionProjects().catch(() => []);
+  const categories = await getExtractionCategories().catch(() => []);
   const res = await fetch('/api/costs/extract-lines', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
@@ -166,6 +174,7 @@ export async function fetchExtractLines(imageBase64, mediaType, accounts) {
       imageBase64,
       mediaType,
       accounts,
+      categories,
       instructions,
       projects,
       provider: requestedProvider(),
@@ -220,9 +229,14 @@ export function lineItemRows(rows, fallbackCategory = '') {
     return {
       description: li?.description || '',
       category: li?.category || fallbackCategory || 'Uncategorised',
-      // Per-line tracking is set by hand on the detail page, not read off the
-      // document — blank means the line follows the document's own project.
+      // `project` IS read per line — from what the row names, or the section
+      // heading above it — because one invoice often bills several sites in
+      // blocks, and putting every row on the document's single project throws
+      // that away. Blank means the row named nothing, and the line then follows
+      // the document's own project.
       project: li?.project || '',
+      // `project2` is the org's SECOND tracking category, and is only ever set
+      // by hand: the publish path tags a bill with it, but nothing reads it.
       project2: li?.project2 || '',
       net: net.toFixed(2),
       tax: tax.toFixed(2),
@@ -281,6 +295,9 @@ export function billToDoc(b) {
     project: b.project || '',
     cardLast4: b.cardLast4 || '',
     note: b.note || '',
+    // The message this document arrived in, when it came by email. Null for an
+    // upload, which is what the Email tab reads to know it has nothing to show.
+    email: b.email || null,
     dueDate: b.dueDate || '',
     lineItems: Array.isArray(b.lineItems) ? b.lineItems : [],
     hasFile: Boolean(b.hasFile),
@@ -364,6 +381,57 @@ export function isItemKey(docOrId, key) {
 // URL that streams a persisted bill's original file from the server.
 export function billFileUrl(id) {
   return `/api/costs/bills/${id}/file`;
+}
+
+// Share links for an EXPORT's document links — an exported CSV or a claim PDF
+// is read outside CYBills, by an accountant or an approver with no sign-in
+// here, so a plain file URL would just bounce them to the login page. The
+// server signs one short-lived link per document, and only for documents this
+// caller can already open in an entity that allows sharing (Business settings
+// -> Exports -> Image sharing). Returns { id: url }; ids it won't share are
+// simply absent, so the export writes no link for them.
+export async function fetchShareLinks(ids) {
+  const wanted = [...new Set((ids || []).map((v) => String(v ?? '')).filter(Boolean))];
+  if (!wanted.length) return {};
+  try {
+    const res = await fetch('/api/costs/share-links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+      body: JSON.stringify({ ids: wanted }),
+    });
+    if (!res.ok) return {};
+    const data = await res.json();
+    return data?.links && typeof data.links === 'object' ? data.links : {};
+  } catch {
+    return {};
+  }
+}
+
+// The suppliers this entity's own documents name, for the pickers. Kept here
+// rather than in each page because two of them ask (the document's Supplier
+// field and the Suppliers list) and a bridge entity has no Xero contacts to
+// fall back on. Never throws: an unreachable server yields no options, and the
+// field stays free text.
+export function useDocumentSuppliers() {
+  const [names, setNames] = useState([]);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetchBills()
+        .then((bills) => {
+          if (live) setNames(supplierNamesFromDocs(bills.filter((b) => b.kind !== 'sales')));
+        })
+        .catch(() => {});
+    load();
+    window.addEventListener(BILLS_CHANGED_EVENT, load);
+    window.addEventListener(ORGANISATION_EVENT, load);
+    return () => {
+      live = false;
+      window.removeEventListener(BILLS_CHANGED_EVENT, load);
+      window.removeEventListener(ORGANISATION_EVENT, load);
+    };
+  }, []);
+  return names;
 }
 
 // Whether a bill has a stored file (+ its type), resolved globally by id — works

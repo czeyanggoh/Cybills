@@ -25,8 +25,24 @@ export type Bill = {
   category: string;
   categoryReason?: string; // why the AI chose this category (account/rule cited)
   projectReason?: string; // why this project/PIC — the rule or the evidence cited
+  // The message a document arrived in, when it came by email rather than an
+  // upload. Kept so the reviewer can see WHAT was sent and by whom — a receipt
+  // forwarded with "this is the deposit, not the balance" is a different
+  // document from the same PDF uploaded silently, and the covering note is
+  // often the only place that says so.
+  email?: { from: string; to: string; subject: string; date: string; text: string };
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   taxRateReason?: string; // why that tax code — the "when to use" rule it matched
+  // A PERSON chose to leave the tax rate blank. An empty `taxRate` on its own
+  // says nothing — a reader writes one when it has no code to offer — so this is
+  // what separates "nobody has decided yet" from "somebody decided: none", and
+  // it is the only thing that stops the backfill filling a deliberate blank.
+  taxRateCleared?: boolean;
+  // Which fields the SUPPLIER RULE last wrote. Provenance, not a guess: it is
+  // what lets an edited rule update the documents it already filled while
+  // leaving alone anything a person typed. A field a person edits drops out of
+  // here, because they have taken it over.
+  ruleFields?: string[];
   description?: string; // plain-language summary of what was purchased
   paymentMethod?: string; // Xero payment account label the cost was paid from
   paid?: boolean; // whether the cost has been paid
@@ -590,6 +606,32 @@ export function insertBill(input: BillInput): Bill {
   return bill;
 }
 
+// Move every document from one identity to another, inside one book.
+//
+// Somebody added to a roster without an email owns documents under an internal
+// identity (users.ts, internalEmailFor). The day they sign in for the first
+// time and claim that row, the identity becomes their real address — and the
+// documents already theirs have to come with it, or their name silently drops
+// off work they did. Returns how many moved.
+export function reassignPerson(orgId: string, from: string, to: string): number {
+  const a = String(from ?? '').trim().toLowerCase();
+  const b = String(to ?? '').trim();
+  if (!a || !b || a === b.toLowerCase()) return 0;
+  const bills = load();
+  let moved = 0;
+  for (const bill of bills) {
+    if (bill.orgId !== orgId) continue;
+    let touched = false;
+    if (String(bill.owner ?? '').trim().toLowerCase() === a) { bill.owner = b; touched = true; }
+    // The uploader is history and normally never rewritten — but this is the
+    // same person under a new address, not a different one.
+    if (String(bill.createdBy ?? '').trim().toLowerCase() === a) { bill.createdBy = b; touched = true; }
+    if (touched) moved += 1;
+  }
+  if (moved) persist(bills);
+  return moved;
+}
+
 // Re-evaluate a bill's ready/inbox status from its current fields, after a
 // field edit. Persists if it changed. Returns the bill (or null if not found).
 export function reconcileReadiness(orgId: string, id: string): Bill | null {
@@ -641,6 +683,8 @@ const EDITABLE: (keyof Bill)[] = [
   'projectReason',
   'taxRate',
   'taxRateReason',
+  'taxRateCleared',
+  'ruleFields',
   'description',
   'status',
   'createdBy',
@@ -779,4 +823,13 @@ export function deleteBillHard(orgId: string, id: string): Bill | null {
   const [removed] = bills.splice(idx, 1);
   persist(bills);
   return removed;
+}
+
+// Whether any remaining bill still references this stored file. Content-addressed
+// storage keys by file hash, so identical uploads (e.g. the same receipt emailed
+// twice) share ONE object — deleting one bill must not reclaim a file another
+// still points at. Call after the bill has been removed.
+export function storageKeyInUse(storageKey: string): boolean {
+  if (!storageKey) return false;
+  return load().some((b) => b.storageKey === storageKey);
 }

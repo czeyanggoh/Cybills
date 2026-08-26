@@ -236,7 +236,10 @@ export async function generateClaimCsv(claim, { detailLevel = 'summary', format 
     format: 'CSV',
     csvFormat: format === 'custom' ? 'Custom CSV' : 'CYBills default',
     count: Array.isArray(claim.transactions) ? claim.transactions.length : 1,
-    exportedBy: exportedBy || claim.claimFor || 'You',
+    // The claimant is a reasonable second guess at who exported it; "You" is
+    // not a guess at all, so nothing is written rather than a word that names
+    // whoever happens to be reading.
+    exportedBy: exportedBy || claim.claimFor || '',
     blob: new Blob([text], { type: 'text/csv;charset=utf-8;' }),
   });
 }

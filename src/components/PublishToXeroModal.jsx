@@ -153,8 +153,21 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
   // Line items that contradict the document block the publish outright — the
   // server refuses it too (see perLineItems in server/src/xero.ts); this is so
   // the button says why instead of the request failing after the click.
+  // The same completeness the server requires, and the same bulk publish skips
+  // on — stated here so the button says what is missing before the click, rather
+  // than the request failing after it.
+  const missing = (() => {
+    const out = [];
+    const txt = (v) => String(v ?? '').trim();
+    if (!txt(bill?.supplier) || txt(bill?.supplier).toLowerCase() === 'unknown supplier') out.push('a supplier');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(txt(bill?.date))) out.push('a date');
+    if (!txt(bill?.category) || txt(bill?.category).toLowerCase() === 'uncategorised') out.push('a category');
+    if (!(Number(String(bill?.total ?? '').replace(/[^0-9.-]/g, '')) > 0)) out.push('a total above 0');
+    return out;
+  })();
+  const hasDate = missing.length === 0;
   const canPublish = Boolean(
-    organisationId && accountCode && taxType && !publishing && !done && (lines.rows === 0 || lines.postable)
+    organisationId && accountCode && taxType && hasDate && !publishing && !done && (lines.rows === 0 || lines.postable)
   );
   const organisation = organisations.find((o) => o.id === organisationId);
 
@@ -337,6 +350,16 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                     </div>
                   </label>
                 </>
+              )}
+
+              {/* Same voice as the line-items block above: say what is wrong and
+                  where to fix it, rather than greying the button out silently. */}
+              {missing.length > 0 && (
+                <p className="rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <span className="font-medium">Can&rsquo;t publish yet.</span> This document still needs{' '}
+                  {missing.join(', ')}. Fill it in on the document first — a bill goes into a live ledger, and a
+                  missing date would land it in whatever period today falls in.
+                </p>
               )}
 
               {error && <p className="text-sm text-destructive">{error}</p>}

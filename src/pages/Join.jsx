@@ -1,9 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { CheckCircle2, Clock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { useOrganisations } from '@/lib/organisations';
-import { joinCompany } from '@/lib/userStore';
+import { joinCompany, fetchJoinPeople, fetchJoinCompanies } from '@/lib/userStore';
 
 // Self-signup asks for a simple role — an employee who submits, or an
 // admin/approver who reviews. The (CY) admin can fine-tune the exact role
@@ -31,7 +30,14 @@ const inputCls =
 // but collects only what a billing app needs — no NRIC / bank / payroll data.
 export default function Join() {
   const { user, membership, signOut, refresh } = useAuth();
-  const { data: organisations = [] } = useOrganisations();
+  // Names only, from the join endpoint: the entity list proper is served to
+  // people who are on a roster, and somebody joining is not yet.
+  const [organisations, setOrganisations] = useState([]);
+  useEffect(() => {
+    let live = true;
+    fetchJoinCompanies().then((list) => { if (live) setOrganisations(list); });
+    return () => { live = false; };
+  }, []);
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -41,6 +47,26 @@ export default function Join() {
   const [role, setRole] = useState('Standard');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Whoever the admin has already added to the chosen company and who has never
+  // signed in. Picking yourself here attaches this request to THAT row, so your
+  // name, your role and the documents already filed under you stay yours —
+  // rather than a second row for the same person, spelled slightly differently.
+  const [people, setPeople] = useState([]);
+  const [claimId, setClaimId] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    setClaimId('');
+    if (!companyId) {
+      setPeople([]);
+      return undefined;
+    }
+    fetchJoinPeople(companyId).then((list) => { if (live) setPeople(list); });
+    return () => { live = false; };
+  }, [companyId]);
+
+  const claimed = people.find((p) => p.id === claimId) || null;
+  const roleLabel = (v) => JOIN_ROLES.find((r) => r.value === v)?.label || 'Employee';
 
   // Already an approved member — nothing to do here.
   if (membership.status === 'active') return <Navigate to="/costs" replace />;
@@ -50,8 +76,12 @@ export default function Join() {
   const submit = async (e) => {
     e.preventDefault();
     setError('');
-    if (!firstName.trim() || !lastName.trim()) return setError('Please enter your first and last name.');
     if (!companyId && !companyName.trim()) return setError('Please select or enter your company.');
+    // A claimed row already carries both — they're the admin's to set, not
+    // this form's to ask for again.
+    if (!claimed && (!firstName.trim() || !lastName.trim())) {
+      return setError('Please enter your first and last name.');
+    }
     setBusy(true);
     try {
       const picked = organisations.find((o) => o.id === companyId);
@@ -62,10 +92,14 @@ export default function Join() {
         companyId,
         companyName: picked?.name || companyName.trim(),
         role,
+        claimId,
       });
       await refresh(); // membership flips to 'pending' → renders the waiting state
-    } catch {
-      setError('Could not submit your request. Please try again.');
+    } catch (err) {
+      // Say what actually went wrong. "Please try again" was all this could ever
+      // report, so a request the server was refusing outright looked like a blip
+      // worth retrying — which it never was.
+      setError(err?.message ? `Could not submit your request — ${err.message}` : 'Could not submit your request. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -104,22 +138,7 @@ export default function Join() {
 
             <form onSubmit={submit} className="mt-6 rounded-2xl border bg-background p-6 shadow-sm sm:p-8">
               <div className="grid gap-5 sm:grid-cols-2">
-                <Field label="First Name">
-                  <input className={inputCls} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-                </Field>
-                <Field label="Last Name">
-                  <input className={inputCls} value={lastName} onChange={(e) => setLastName(e.target.value)} />
-                </Field>
-                <Field label="Contact Number">
-                  <input className={inputCls} value={mobile} onChange={(e) => setMobile(e.target.value)} />
-                </Field>
-                <Field label="Requested Role">
-                  <select className={inputCls} value={role} onChange={(e) => setRole(e.target.value)}>
-                    {JOIN_ROLES.map((r) => (
-                      <option key={r.value} value={r.value}>{r.label}</option>
-                    ))}
-                  </select>
-                </Field>
+                {/* Company first: it decides whose list of people to offer. */}
                 <div className="sm:col-span-2">
                   <Field label="Company">
                     {organisations.length > 0 ? (
@@ -139,6 +158,63 @@ export default function Join() {
                     )}
                   </Field>
                 </div>
+
+                {people.length > 0 && (
+                  <div className="sm:col-span-2">
+                    <Field label="Are you one of these people?">
+                      <select className={inputCls} value={claimId} onChange={(e) => setClaimId(e.target.value)}>
+                        <option value="">I&apos;m not on this list</option>
+                        {people.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      Your admin may have added you already. Picking yourself keeps the name, role and
+                      documents that are already yours.
+                    </p>
+                  </div>
+                )}
+
+                {claimed ? (
+                  <>
+                    {/* Set by the admin when they added this person — shown, not
+                        asked for. Typing them again is what creates a second row
+                        for the same human. */}
+                    <Field label="Name">
+                      <p className="flex h-11 items-center text-sm font-medium">{claimed.name}</p>
+                    </Field>
+                    <Field label="Role">
+                      <p className="flex h-11 items-center text-sm">
+                        {roleLabel(claimed.role)}
+                        <span className="ml-2 text-xs text-muted-foreground">set by your admin</span>
+                      </p>
+                    </Field>
+                  </>
+                ) : (
+                  <>
+                    <Field label="First Name">
+                      <input className={inputCls} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+                    </Field>
+                    <Field label="Last Name">
+                      <input className={inputCls} value={lastName} onChange={(e) => setLastName(e.target.value)} />
+                    </Field>
+                  </>
+                )}
+
+                <Field label="Contact Number">
+                  <input className={inputCls} value={mobile} onChange={(e) => setMobile(e.target.value)} />
+                </Field>
+
+                {!claimed && (
+                  <Field label="Requested Role">
+                    <select className={inputCls} value={role} onChange={(e) => setRole(e.target.value)}>
+                      {JOIN_ROLES.map((r) => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
               </div>
 
               {error && <p className="mt-4 text-sm text-destructive">{error}</p>}

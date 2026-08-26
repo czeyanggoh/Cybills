@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { itemNumber, billFileUrl } from '@/lib/bills';
+import { itemNumber, billFileUrl, fetchShareLinks } from '@/lib/bills';
 import { recordEvent } from '@/lib/salesEvents';
 import { recordExport } from '@/lib/exportsStore';
 import { makeZip } from '@/lib/zip';
@@ -42,24 +42,28 @@ const csvLines = (rows) => rows.map((r) => r.map(esc).join(',')).join('\n');
 const idOf = (d) => itemNumber(d);
 
 // Absolute, clickable link to the receipt's original file (Dext puts a link in
-// the Image column). Persisted bills stream from the file endpoint; fall back to
-// any imageUrl the row carries. Absolute so it stays clickable in Excel/Numbers.
+// the Image column). A CSV is opened in Excel, by somebody who may have no
+// CYBills session, so the link is one the server SIGNED for that document
+// (`links`, from fetchShareLinks) rather than the bare file URL — which would
+// land on a login page. No signed link means the entity has Image sharing off,
+// or the row has no stored file: the column is then simply blank.
 const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
-function imageUrlFor(d) {
-  if (d.hasFile && (d.id ?? d.itemId)) return `${ORIGIN}${billFileUrl(d.id ?? d.itemId)}`;
+function imageUrlFor(d, links = {}) {
+  const shared = links[String(d.id ?? d.itemId ?? '')];
+  if (shared) return `${ORIGIN}${shared}`;
   if (d.imageUrl) return /^https?:\/\//.test(d.imageUrl) ? d.imageUrl : `${ORIGIN}${d.imageUrl}`;
   return '';
 }
 
 // --- CSV --------------------------------------------------------------------
 const SALES_COLS = ['Item ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Customer', 'Category', 'Project', 'Tax', 'Total', 'Currency', 'Tax (SGD)', 'Total (SGD)', 'Note', 'Description', 'Image'];
-function buildSalesCsv(rows, showNet = false) {
+function buildSalesCsv(rows, showNet = false, links = {}) {
   const cols = showNet ? [...SALES_COLS, 'Net (SGD)'] : SALES_COLS;
   const body = rows.map((d) => {
     const r = [
       idOf(d), d.type || 'Sales invoice', fmtDate(d.date), fmtDate(d.dueDate), d.ref || d.invoiceNumber || '',
       d.customer || '', d.category || '', d.project || '', n2(d.tax), n2(d.total), d.currency || 'SGD',
-      n2(d.tax), n2(d.total), d.note || '', d.description || '', imageUrlFor(d),
+      n2(d.tax), n2(d.total), d.note || '', d.description || '', imageUrlFor(d, links),
     ];
     if (showNet) r.push(n2(num(d.total) - num(d.tax)));
     return r;
@@ -70,14 +74,14 @@ function buildSalesCsv(rows, showNet = false) {
 const netOf = (d) => num(d.total) - num(d.tax);
 
 const COST_COLS = ['Receipt ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Supplier', 'Category', 'Customer', 'Project', 'Payment Method', 'Bank Account', 'Tax', 'Total', 'Currency', 'Tax (SGD)', 'Total (SGD)', 'Status', 'Owner', 'Note', 'Description', 'Image'];
-function buildCostCsv(rows, showNet = false) {
+function buildCostCsv(rows, showNet = false, links = {}) {
   const cols = showNet ? [...COST_COLS, 'Net (SGD)'] : COST_COLS;
   const body = rows.map((d) => {
     const r = [
       idOf(d), d.type || 'Receipt', fmtDate(d.date), fmtDate(d.dueDate), d.invoiceNumber || '',
       d.supplier || '', d.category || '', d.customer || '', d.project || '', d.paymentMethod || '', d.bankAccount || '',
       n2(d.tax), n2(d.total), d.currency || 'SGD', n2(d.tax), n2(d.total),
-      d.status === 'ready' ? 'processed' : d.status || 'processed', d.user || d.owner || '', d.note || '', d.description || '', imageUrlFor(d),
+      d.status === 'ready' ? 'processed' : d.status || 'processed', d.user || d.owner || '', d.note || '', d.description || '', imageUrlFor(d, links),
     ];
     if (showNet) r.push(n2(netOf(d)));
     return r;
@@ -141,11 +145,11 @@ const DOC_COLUMN_VALUE = {
   'Base net amount': (d, f) => numDec(netOf(d), f.decimalSeparator),
   'Base total amount': (d, f) => numDec(d.total, f.decimalSeparator),
   Note: (d) => d.note || '',
-  Image: (d) => imageUrlFor(d),
+  Image: (d, f, links) => imageUrlFor(d, links),
   'Project 2': () => '',
 };
 
-function buildCustomCsv(rows, settings) {
+function buildCustomCsv(rows, settings, links = {}) {
   const selected = EXPORT_COLUMNS.filter((c) => (settings.columns || []).includes(c));
   const cols = selected.length ? selected : ['Receipt ID', 'Description', 'Net amount', 'Tax amount', 'Total amount'];
   // Comma-decimal switches the field delimiter to ';' so numbers stay unambiguous.
@@ -157,7 +161,7 @@ function buildCustomCsv(rows, settings) {
   };
   const line = (arr) => arr.map(escD).join(delimiter);
   const header = line(cols);
-  const body = rows.map((d) => line(cols.map((c) => (DOC_COLUMN_VALUE[c] ? DOC_COLUMN_VALUE[c](d, settings) : ''))));
+  const body = rows.map((d) => line(cols.map((c) => (DOC_COLUMN_VALUE[c] ? DOC_COLUMN_VALUE[c](d, settings, links) : ''))));
   return [header, ...body].join('\n');
 }
 
@@ -362,19 +366,23 @@ export function downloadExportBlob(rec) {
 
 // Main entry: generate the chosen format, download it, log an export event on
 // sales items, and record it in the Exports tab. `kind` is 'costs' | 'sales'.
-export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = 'You' } = {}) {
+export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = '' } = {}) {
   const wKind = kind === 'sales' ? 'sales' : 'costs';
   const base = `cybills-${wKind}-${isoDate()}`;
   // Honour Business settings → Exports: "Custom CSV" uses the chosen columns +
   // date/decimal formats; otherwise the fixed template, plus a Net column when
   // "Show net amount" is on.
   const settings = getExportSettings();
+  // The Image column links to each document's file. Those links leave the app,
+  // so they're minted per export and signed (Business settings -> Exports ->
+  // Image sharing). Off: none are asked for and the column comes out blank.
+  const links = settings.imageSharing ? await fetchShareLinks(rows.map((d) => d.id ?? d.itemId)) : {};
   const isCustom = /custom/i.test(csvFormat || '');
   const csvText = isCustom
-    ? buildCustomCsv(rows, settings)
+    ? buildCustomCsv(rows, settings, links)
     : wKind === 'sales'
-      ? buildSalesCsv(rows, settings.showNet)
-      : buildCostCsv(rows, settings.showNet);
+      ? buildSalesCsv(rows, settings.showNet, links)
+      : buildCostCsv(rows, settings.showNet, links);
 
   let blob;
   let filename;
@@ -398,9 +406,17 @@ export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvForm
   triggerDownload(blob, filename);
 
   // Log an "exported" event on sales items so it shows in their History tab.
+  // History is read by other people, so it names whoever exported or nobody at
+  // all — never "You", which would read as the reader themselves.
   if (wKind === 'sales') {
     for (const d of rows) {
-      if (d.persisted) recordEvent(d.id, { type: 'export', text: `Item was exported to ${format}`, actor: exportedBy });
+      if (d.persisted) {
+        recordEvent(d.id, {
+          type: 'export',
+          text: `Item was exported to ${format}`,
+          ...(exportedBy ? { actor: exportedBy } : {}),
+        });
+      }
     }
   }
 

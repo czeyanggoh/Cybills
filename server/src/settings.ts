@@ -1,5 +1,7 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { loadCollection, saveCollection } from './jsonStore.js';
+import { googleEnabled } from './env.js';
+import { effectiveRoleFor, isAdminRole, memberForSession, orgScope } from './users.js';
 import { workspaceId, WORKSPACE_ID } from './workspace.js';
 import { primaryOrgId } from './organisations.js';
 
@@ -31,7 +33,41 @@ settingsRouter.get('/:key', (req, res) => {
   res.json({ value: rec ? rec.value : null });
 });
 
+// Settings that are a PREFERENCE — how one workspace likes its tables and
+// exports laid out. Harmless for anyone to change, and gating them would stop a
+// Standard user rearranging their own columns.
+//
+// Everything else on this router is configuration that decides what CYBills
+// DOES: the chart of categories, the tax rules, a supplier's standing
+// instructions, the business's own GST registration. A Standard user could
+// rewrite any of it — quietly recoding every future document from that supplier,
+// or changing the company's GST number — because this router had no permission
+// check of any kind. That is what this closes.
+const PREFERENCE_KEYS = new Set([
+  'cybills.table-prefs.v1',
+  'cybills.category-display.v1',
+  'cybills.export-settings.v1',
+]);
+
+// Reads stay open: the app cannot render for anybody without its lists,
+// extraction settings and flags, and everyone here is already inside the
+// workspace. It is the WRITES that had to be somebody's decision.
+function mayWrite(req: Request, key: string): boolean {
+  if (!googleEnabled) return true; // mock/dev stays open, as everywhere else
+  const base = String(key).split('::')[0];
+  if (PREFERENCE_KEYS.has(base)) return true;
+  const me = memberForSession(req);
+  if (!me) return true; // no roster row — behaves as before rather than locking out
+  return isAdminRole(effectiveRoleFor(me, orgScope(req)));
+}
+
 settingsRouter.put('/:key', (req, res) => {
+  if (!mayWrite(req, req.params.key)) {
+    return res.status(403).json({
+      error: 'forbidden',
+      message: 'Only an admin can change this setting.',
+    });
+  }
   const ws = workspaceId(req);
   const items = loadCollection<Setting>(COLLECTION);
   const value = req.body?.value ?? null;

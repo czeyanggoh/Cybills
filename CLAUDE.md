@@ -290,6 +290,34 @@ than guesses (already published, on an expense claim, incomplete, or a category
 that isn't in the org's chart), asks first because it writes to a live ledger,
 and the server enforces the same gates again.
 
+## Links that leave the app
+
+An exported CSV's Image column, and the Item IDs in a claim PDF, are opened
+OUTSIDE CYBills — by an accountant with the file in Excel, by an approver who
+was emailed the claim. They used to be the bare file URL, which only worked
+because `/api/costs/bills/:id/file` skipped the session guard on the reasoning
+that a bill id is an unguessable capability token. An Item ID is a TIMESTAMP
+(`260826113257`), so it isn't: a day of one client's receipts could be
+enumerated by counting.
+
+So the capability is explicit now. `server/src/shareLinks.ts` signs a token that
+names one document and expires (30 days); `POST /api/costs/share-links` mints
+them a batch at a time, and only for documents the caller can already read.
+Whether they're minted at all is the entity's own decision — Business settings
+-> Exports -> **Image sharing**, Dext's toggle, on by default — and that
+decision is read again on every request, so switching it off revokes the links
+already sitting in somebody's spreadsheet. Without a signed link the CSV's Image
+column is blank and a claim PDF's Item ID points at the document page instead.
+Covered by `npm test` in `server/`.
+
+**A published bill links back.** Xero renders an invoice's `Url` as a
+**"Go to CYBills"** button — the way a Dext-published bill carries "Go to Dext".
+A document's bill points at `/costs/<ItemID>`, a claim's at
+`/expense-claims/<id>`, so somebody reviewing the ledger opens the paperwork it
+came from instead of hunting for it. Set in `publish-bill` and `publish-claim`
+(`server/src/xero.ts`), from `appOrigin(req)` so it names the host the user is
+actually on.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to
@@ -299,6 +327,82 @@ and month-to-date cost per client. There is no billing API behind this — it is
 estimate from real token counts. Override a rate with
 `LLM_PRICES='{"gpt-5":{"input":1.25,"output":10}}'` (`ANTHROPIC_PRICES` still
 works; the two are merged).
+
+## A bridge entity (Red Alpha - ST Engineering)
+
+Some people who submit costs don't work for any client entity CYBills holds. ST
+Engineering staff claim against **Red Alpha's** ledger without being Red Alpha
+employees, and they have never seen a chart of accounts. So an entity can be
+**standalone**: `kind: 'standalone'` + `parentOrgId` on the organisation record,
+no Xero tenant of its own, its own isolated Costs book (`dataScopeForOrg` gives
+it one for free), and its claims posting into the parent's Xero
+(`publishTargetFor`). `requireOrganisation` refuses the chart/tax/contact routes
+for it with `no_xero_connection`; `requirePublishTarget` is the one that resolves
+the parent, and publishing is the only Xero thing it can do.
+
+**Its categories are plain names.** "Transport - Taxi", "Meal Weekday (after
+9pm)" — the rows off the client's own claim form. The list and the add/hide
+rules live in one pure module (`src/lib/categoryList.js`) because BOTH sides
+read it: the dropdown (`useCategoryOptions`) and the document reader, including
+the emailed-document path, which loads it by file path
+(`server/src/categories.ts`, same arrangement as `taxRules.ts`). The reader is
+given the names instead of accounts (`categories` on `/extract` +
+`/extract-lines`, which no client had ever sent) plus a guide for what a plain
+name MEANS — the mode a transport receipt names, the date and time deciding a
+weekday-late meal from a weekend one, "Others" rather than the closest-sounding
+guess.
+
+**" - " does not mean "code - name".** Half the claim-policy names contain that
+separator, and the old split read "Transport - Taxi" as the account code
+"Transport": a code no chart has, on a line that would post to the wrong place,
+and a Name-only dropdown showing a column of unrelated categories all called
+"Taxi", "Train", "Bus". A code always has a digit in it — `categoryCode` /
+`categoryName` / `categoryCodeEnd` in `categoryList.js` decide it once, for the
+display path and the publish path both (`codeFromCategory` in `xero.ts` applies
+the same rule server-side). Covered by `npm test` at the repo root.
+
+**The map is what lets it publish.** One setting per bridge entity,
+`cybills.category-accounts.v1`, `{ "Transport - Taxi": "493" }`, edited on Lists
+-> Categories -> **Posts to** against the PARENT's accounts. `publish-claim`
+consults it first and falls back to the label's own digits, so a linked entity
+is unaffected. An unmapped category is refused (422, `unpostable_lines`) and
+NAMED — never posted around, the same rule a bill's own line items follow — and
+the message says to map it rather than to "use a coded category", which would
+send those people looking for a chart they don't have. `npm test` in `server/`
+posts a bridge claim end to end against a stubbed relay.
+
+**A bridge claim posts with NO TAX**, at the full amount. The entity has no GST
+registration and no tax position of its own, so there is no input tax to claim;
+the tax the claim recorded is folded into the cost rather than dropped, so the
+bill is worth exactly what the claim is worth. `TaxType: 'NONE'` is named
+explicitly — left to the account's default rate, Xero would put GST on a figure
+that has none. The bill's **Reference** is the claim's own name, date and Claim
+ID ("ST Eng Exp Claim 20-Aug-2026 21324972410"), built from the same pure module
+that prints that number on the claim page, the PDF and the CSV
+(`src/lib/claimReference.js`, loaded server-side by `claimRef.ts`). It rides in
+**`InvoiceNumber`**, not `Reference`: the box a BILL labels "Reference" in Xero
+is the API's InvoiceNumber, and `Reference` is a sales-invoice field that an
+ACCPAY accepts and silently drops. Its **Date** is the claim's own, else the
+period it covers, else the latest date among its items — every expense on it
+happened on or before that. Only a claim with nothing dated at all falls back to
+today, which is what every claim used to do: August's expenses landing in
+whichever month somebody pressed the button.
+
+**One person can work in two entities.** Sign-in is by email, so a second roster
+row for the same address would be a second identity — their documents, their
+claims and their manager would split between the two, and only one could ever
+sign in. So adding somebody who already exists elsewhere GRANTS their existing
+row access here (`extraAccess: [{orgId, role}]` in `users.ts`, read by
+`canAccessOrg` / `effectiveRoleFor` / `inOrg`) rather than creating a row. The
+role is per entity — an admin of their own company is not an admin of somebody
+else's — and a role edited on this entity's roster writes to `extraAccess`, never
+to their own company's `role`. Deliberately NOT `clientAccess`, which belongs to
+the practice team and is wiped from every non-practice row on load. Covered by
+`npm test` in `server/`.
+
+Still to do: privilege enforcement inside the entity is `docs/roles-enforcement.md`,
+which is deliberately untouched here: until it lands, everyone in a bridge
+entity sees every document in it. Fine for testing, not for real ST Eng staff.
 
 ## Xero via the cyworkspace relay
 

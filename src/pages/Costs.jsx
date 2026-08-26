@@ -658,11 +658,15 @@ export default function Costs() {
           aria-label="Tax rate"
           value={(gstRegistered ? d.taxRate : noTaxName) || ''}
           // '' stays on the list so a rate can be cleared again, the way the
-          // native select's "No tax rate" option did.
+          // native select's empty option did.
           options={['', ...taxRateOptions]}
           onChange={(v) => changeTaxRate(d, v)}
-          format={(t) => t || 'No tax rate'}
-          emptyLabel="No tax rate"
+          // "Not set" — NOT "No tax rate", which read as a near-twin of the real
+          // Xero code "No Tax" and made an undecided document indistinguishable
+          // from one deliberately coded zero-rated. They mean opposite things:
+          // one is waiting on a person, the other is an answer.
+          format={(t) => t || 'Not set'}
+          emptyLabel="Not set"
         />
       ),
     },
@@ -847,7 +851,11 @@ export default function Costs() {
     const r = Number(taxRates.find((t) => t.name === name)?.rate ?? 0);
     const total = toNum(d.total);
     const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
-    const patch = { taxRate: name, tax: tax ? tax.toFixed(2) : '0.00' };
+    // Choosing the blank option is a decision, and it is recorded as one:
+    // an empty tax rate on its own is also what a reader leaves behind when it
+    // has no code to offer, and the two must not look alike — otherwise the
+    // listing's backfill either overrules this person or never repairs those.
+    const patch = { taxRate: name, tax: tax ? tax.toFixed(2) : '0.00', taxRateCleared: !name };
     if (d.persisted) updateBill(d.id, patch).then(reload).catch(() => {});
     else setDocOverride(d.id, patch);
   };
