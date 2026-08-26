@@ -316,7 +316,12 @@ A document's bill points at `/costs/<ItemID>`, a claim's at
 `/expense-claims/<id>`, so somebody reviewing the ledger opens the paperwork it
 came from instead of hunting for it. Set in `publish-bill` and `publish-claim`
 (`server/src/xero.ts`), from `appOrigin(req)` so it names the host the user is
-actually on.
+actually on. The link carries **`?org=<id>`**: the app opens whichever entity
+that browser last had, so a claim living in a bridge entity was looked for in
+CYBM and reported missing. `adoptOrgFromUrl` (`src/lib/organisations.js`)
+switches to it and reloads once with the parameter stripped — a reload rather
+than a re-render, because every store and request in flight is scoped to the old
+entity.
 
 ## AI API spend
 
