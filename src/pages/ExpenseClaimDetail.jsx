@@ -239,7 +239,7 @@ export default function ExpenseClaimDetail() {
     setPublishing(true);
     try {
       // Render the claim PDF and send it along so it's attached to the Xero bill.
-      const pdfBase64 = buildClaimPdfBase64(claim);
+      const pdfBase64 = await buildClaimPdfBase64(claim);
       const r = await publishClaimToXero(orgId, {
         claimId: claim.id,
         status: 'DRAFT',

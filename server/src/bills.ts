@@ -27,6 +27,7 @@ import { canAccessOrg, emailForPerson, memberForSession, orgScope, ownerForOrg }
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
 import { decideTaxRate, taxContextFor } from './taxRules.js';
+import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -256,6 +257,35 @@ function canReadBill(req: Request, bill: { orgId?: string }): boolean {
   return canAccessOrg(me, orgId);
 }
 
+// Does this document's entity allow its images to be shared with exports?
+// Business settings -> Exports -> Image sharing, Dext's own toggle. Read on
+// every request rather than baked into the link, so switching it to No revokes
+// the links already sitting in somebody's spreadsheet. Absent = on, which is
+// how the setting ships and how exports behaved before it existed.
+function imageSharingOn(req: Request, bill: { orgId?: string }): boolean {
+  const scope = String(bill.orgId ?? '');
+  const org = !scope || scope === WORKSPACE_ID ? primaryOrgId() : scope;
+  const s = readSetting<{ imageSharing?: boolean }>(workspaceId(req), 'cybills.export-settings.v1', org);
+  return s?.imageSharing !== false;
+}
+
+// POST /api/costs/share-links — mint a share link per document id, for the
+// links an export writes into its Image column. Minting is the guarded step:
+// the caller must be able to read the document and its entity must allow
+// sharing, so an export can never hand out a link its owner couldn't open.
+billsRouter.post('/share-links', (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 2000).map(String) : [];
+  const links: Record<string, string> = {};
+  for (const id of ids) {
+    if (!id || links[id]) continue;
+    const bill = getBillById(orgIdFor(req), id) || getBillByIdAny(id);
+    if (!bill || !bill.storageKey) continue;
+    if (!canReadBill(req, bill) || !imageSharingOn(req, bill)) continue;
+    links[id] = `/api/costs/bills/${encodeURIComponent(id)}/file?s=${shareToken(id)}`;
+  }
+  res.json({ links, expiresInDays: SHARE_TTL_DAYS });
+});
+
 // GET /api/costs/bills/:id/file — stream the original file (R2 or local disk).
 // 404 when the bill has no stored file.
 billsRouter.get('/bills/:id/file', async (req, res) => {
@@ -270,9 +300,16 @@ billsRouter.get('/bills/:id/file', async (req, res) => {
   // It needs a session now. And a session alone is not enough: an <img> sends no
   // X-Org-Id, so the entity has to be taken from the BILL and checked against
   // the caller, or one client's staff could read another's receipts by id.
+  //
+  // A link in an exported CSV or an emailed claim PDF has no session behind it,
+  // so it carries a signed, expiring token for that one document instead
+  // (shareLinks.ts) — and is refused the moment its entity turns Image sharing
+  // off, however long the link has left to run.
   const bill = getBillById(orgIdFor(req), req.params.id) || getBillByIdAny(req.params.id);
   if (!bill || !bill.storageKey) return res.status(404).json({ error: 'no_file' });
-  if (!canReadBill(req, bill)) return res.status(404).json({ error: 'no_file' });
+  const shared = verifyShareToken(req.params.id, String(req.query.s ?? ''));
+  const mayRead = shared ? imageSharingOn(req, bill) : canReadBill(req, bill);
+  if (!mayRead) return res.status(404).json({ error: 'no_file' });
 
   const obj = await getBillFile(bill.storageKey, bill.contentType);
   if (!obj) return res.status(502).json({ error: 'file_unavailable' });

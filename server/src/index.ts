@@ -19,6 +19,7 @@ import { mailRouter } from './mail.js';
 import { settingsRouter, adoptLegacySettings } from './settings.js';
 import { boardRouter } from './board.js';
 import { scrubFillerText } from './store.js';
+import { verifyShareToken } from './shareLinks.js';
 
 const app = express();
 
@@ -32,9 +33,9 @@ app.use(morgan('tiny'));
 // Auth guard: once real Google sign-in is on, the data APIs require a valid
 // session — otherwise anyone with the URL could read/write company data. Public:
 // the auth flow, the password login (how you GET a session), the health check,
-// and the capability-URL bill file (opened from exported CSV links without a
-// session). In mock/dev (no Google configured) everything stays open so local
-// development isn't blocked.
+// and a bill file opened with a signed share link (exported CSVs and claim PDFs
+// are read outside the app). In mock/dev (no Google configured) everything stays
+// open so local development isn't blocked.
 app.use((req, res, next) => {
   if (!googleEnabled) return next();
   const p = req.path;
@@ -50,6 +51,13 @@ app.use((req, res, next) => {
   // Inbound email is machine-to-machine (the Cloudflare Email Worker), guarded
   // by its own shared secret rather than a user session.
   if (p === '/api/inbound/email') return next();
+  // An image link in an exported CSV, or an Item ID in an emailed claim PDF, is
+  // opened by somebody with no session here — an accountant, an approver. It
+  // carries a signed, expiring token naming the one document it opens instead
+  // (shareLinks.ts); the route itself then checks that the document's entity
+  // still allows sharing.
+  const shared = /^\/api\/costs\/bills\/([^/]+)\/file$/.exec(p);
+  if (shared && verifyShareToken(decodeURIComponent(shared[1]), String(req.query.s ?? ''))) return next();
   if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
   return next();
 });

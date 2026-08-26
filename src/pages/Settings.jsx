@@ -645,6 +645,15 @@ function Exports() {
         <Row label="Hide Project 2 in expense claim PDFs"><Toggle on={form.hideProject2} onChange={(v) => set('hideProject2', v)} /></Row>
       </Card>
 
+      <Card title="Image sharing">
+        <Row
+          label="Allow sharing of source document images with exports"
+          hint="Include links to the images of source documents when you export items as a CSV file or a PDF file. The links are signed and expire after 30 days, so they open without a CYBills sign-in. Turning this off stops new links being written — and stops the ones already exported from opening."
+        >
+          <Toggle on={form.imageSharing} onChange={(v) => set('imageSharing', v)} />
+        </Row>
+      </Card>
+
       <div className="flex items-center justify-end gap-3">
         <SaveStatus status={status} />
       </div>

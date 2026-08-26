@@ -374,6 +374,30 @@ export function billFileUrl(id) {
   return `/api/costs/bills/${id}/file`;
 }
 
+// Share links for an EXPORT's document links — an exported CSV or a claim PDF
+// is read outside CYBills, by an accountant or an approver with no sign-in
+// here, so a plain file URL would just bounce them to the login page. The
+// server signs one short-lived link per document, and only for documents this
+// caller can already open in an entity that allows sharing (Business settings
+// -> Exports -> Image sharing). Returns { id: url }; ids it won't share are
+// simply absent, so the export writes no link for them.
+export async function fetchShareLinks(ids) {
+  const wanted = [...new Set((ids || []).map((v) => String(v ?? '')).filter(Boolean))];
+  if (!wanted.length) return {};
+  try {
+    const res = await fetch('/api/costs/share-links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+      body: JSON.stringify({ ids: wanted }),
+    });
+    if (!res.ok) return {};
+    const data = await res.json();
+    return data?.links && typeof data.links === 'object' ? data.links : {};
+  } catch {
+    return {};
+  }
+}
+
 // Whether a bill has a stored file (+ its type), resolved globally by id — works
 // even when the bill sits outside the active org's book (e.g. a claim item).
 export async function fetchBillFileMeta(id) {

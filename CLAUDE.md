@@ -290,6 +290,26 @@ than guesses (already published, on an expense claim, incomplete, or a category
 that isn't in the org's chart), asks first because it writes to a live ledger,
 and the server enforces the same gates again.
 
+## Links that leave the app
+
+An exported CSV's Image column, and the Item IDs in a claim PDF, are opened
+OUTSIDE CYBills — by an accountant with the file in Excel, by an approver who
+was emailed the claim. They used to be the bare file URL, which only worked
+because `/api/costs/bills/:id/file` skipped the session guard on the reasoning
+that a bill id is an unguessable capability token. An Item ID is a TIMESTAMP
+(`260826113257`), so it isn't: a day of one client's receipts could be
+enumerated by counting.
+
+So the capability is explicit now. `server/src/shareLinks.ts` signs a token that
+names one document and expires (30 days); `POST /api/costs/share-links` mints
+them a batch at a time, and only for documents the caller can already read.
+Whether they're minted at all is the entity's own decision — Business settings
+-> Exports -> **Image sharing**, Dext's toggle, on by default — and that
+decision is read again on every request, so switching it off revokes the links
+already sitting in somebody's spreadsheet. Without a signed link the CSV's Image
+column is blank and a claim PDF's Item ID points at the document page instead.
+Covered by `npm test` in `server/`.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to
