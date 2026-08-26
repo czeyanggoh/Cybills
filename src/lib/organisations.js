@@ -89,6 +89,21 @@ export function adoptOrgFromUrl(organisations) {
   window.location.replace(clean);
 }
 
+// Switch entity and land on `path` in it, from inside the app.
+//
+// A reload rather than a re-render, for the same reason adoptOrgFromUrl does
+// one: every store, query and header in flight is scoped to the OLD entity.
+// Half-switching is how a page ends up showing one entity's data under
+// another's name — which is exactly what happened when the expense-claim
+// prompt set the entity and re-rendered: the claim opened, and the header
+// carried on naming the entity it had just left.
+export function switchOrganisationTo(id, path) {
+  if (!id) return;
+  setActiveOrganisationId(id);
+  if (typeof window === 'undefined') return;
+  window.location.assign(path || `${window.location.pathname}${window.location.search}${window.location.hash}`);
+}
+
 // Reactive form: the active entity's record, or null.
 export function useActiveOrganisation() {
   const { data: organisations = [] } = useOrganisations();

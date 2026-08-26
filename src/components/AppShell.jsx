@@ -28,6 +28,7 @@ import {
   getActiveOrganisationId,
   setActiveOrganisationId,
   adoptOrgFromUrl,
+  ORGANISATION_EVENT,
 } from '@/lib/organisations';
 import { canManageBusiness, canManageUsers } from '@/lib/userStore';
 import { isPracticeTeam, canManagePractice } from '@/lib/practiceStore';
@@ -156,6 +157,18 @@ function OrganisationSwitcher() {
   const [addOpen, setAddOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState(null);
   const [activeId, setActiveId] = useState(getActiveOrganisationId);
+
+  // Follow the selection wherever it is made. This state was only ever written
+  // by the dropdown below, so an entity switched from anywhere ELSE — the
+  // expense-claim page offering to open a claim in the entity it belongs to —
+  // left the header still naming the entity that had just been left. The name
+  // in the header is how anyone checks whose books they are looking at, so it
+  // being wrong is worse than the navigation it was reporting on.
+  useEffect(() => {
+    const sync = () => setActiveId(getActiveOrganisationId());
+    window.addEventListener(ORGANISATION_EVENT, sync);
+    return () => window.removeEventListener(ORGANISATION_EVENT, sync);
+  }, []);
 
   // A link that names its entity (the "Go to CYBills" button on a Xero bill)
   // switches to it before the page reads anything.

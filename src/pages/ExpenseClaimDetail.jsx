@@ -42,7 +42,7 @@ import { costPath } from '@/lib/bills';
 import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
 import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
-import { useOrganisations, getActiveOrganisationId, setActiveOrganisationId, publishClaimToXero } from '@/lib/organisations';
+import { useOrganisations, getActiveOrganisationId, switchOrganisationTo, publishClaimToXero } from '@/lib/organisations';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
 import { claimDateFor } from '@/lib/claimReference';
@@ -295,7 +295,10 @@ export default function ExpenseClaimDetail() {
             <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => { setActiveOrganisationId(elsewhere.orgId); setElsewhere(null); }}
+                // Reload into the new entity rather than re-render: the header,
+                // the subnav counts and every request in flight are scoped to
+                // the entity being left behind.
+                onClick={() => switchOrganisationTo(elsewhere.orgId, `/expense-claims/${id}`)}
                 className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
               >
                 Switch to {elsewhere.orgName || 'that entity'}
