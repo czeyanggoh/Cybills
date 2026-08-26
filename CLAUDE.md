@@ -310,6 +310,27 @@ already sitting in somebody's spreadsheet. Without a signed link the CSV's Image
 column is blank and a claim PDF's Item ID points at the document page instead.
 Covered by `npm test` in `server/`.
 
+**A published bill can be corrected.** A mistake found after publishing used to
+have nowhere to go: the document could be fixed here and the ledger kept the
+first answer, leaving the two to disagree quietly — the exact thing publishing
+from here exists to prevent. **Update in Xero** (document page, beside Open in
+Xero) sends the document's CURRENT figures to the bill it already created:
+`POST /api/xero/organisations/:id/update-bill`, which is Xero's update (POST
+with `InvoiceID`) rather than the create-only PUT, so it restates that bill
+instead of adding a second one for somebody to find and void later.
+
+Both routes assemble the invoice through ONE builder (`buildBillInvoice`), so a
+correction is built exactly as the original was — two copies would drift, and
+the drift would silently restate a figure in a live ledger. It holds the same
+completeness bar as publish (a document that has since LOST its category can't
+blank it in Xero), refuses a document with no bill to update, and sends a
+`Status` only when the reviewer picks one — correcting an approved bill's coding
+must not knock it back to Draft and out of somebody's approval queue. What may
+still change is Xero's call: a PAID or VOIDED bill refuses, and its refusal is
+passed through in its own words. The reply names the bill's state, so the
+document's Xero fields are refreshed from it rather than waiting for a webhook.
+Covered by `npm test` in `server/`.
+
 **A published bill links back.** Xero renders an invoice's `Url` as a
 **"Go to CYBills"** button — the way a Dext-published bill carries "Go to Dext".
 A document's bill points at `/costs/<ItemID>`, a claim's at

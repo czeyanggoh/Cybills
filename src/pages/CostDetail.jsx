@@ -302,6 +302,7 @@ export default function CostDetail() {
   const [claimOpen, setClaimOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [publishMode, setPublishMode] = useState('publish');
   const [readyError, setReadyError] = useState([]); // required fields missing when trying to move to Ready
   const [gstOpen, setGstOpen] = useState(false); // GST-split panel open
   const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
@@ -790,6 +791,17 @@ export default function CostDetail() {
   // so flush any on-screen edits first, keeping the current workflow status).
   const openPublish = async () => {
     await persistStatus(persisted?.status ?? 'new');
+    setPublishMode('publish');
+    setPublishOpen(true);
+  };
+  // Send a correction to the bill this document already created in Xero. Same
+  // dialog, same questions; the difference is that Xero is asked to restate an
+  // existing bill rather than create one. Edits are flushed first for the same
+  // reason publishing flushes them — the server sends the SAVED document, so
+  // anything still only on screen would not be in the update.
+  const openXeroUpdate = async () => {
+    await persistStatus(persisted?.status ?? 'archived');
+    setPublishMode('update');
     setPublishOpen(true);
   };
   // Put the stored file on the Xero bill. For documents published before
@@ -1329,6 +1341,15 @@ export default function CostDetail() {
               Publish to Xero
             </TopButton>
           ))}
+        {/* A correction found after publishing used to have nowhere to go: the
+            document could be fixed here and the ledger kept the first answer.
+            Only offered where there is a bill to update, and never for a cost
+            sitting on an expense claim, which reaches Xero as the claim's line. */}
+        {doc.persisted && doc.xeroInvoiceId && (
+          <TopButton onClick={openXeroUpdate} disabled={xeroBusy} title="Send this document's current figures to the bill it created in Xero">
+            Update in Xero
+          </TopButton>
+        )}
         {doc.persisted && doc.xeroInvoiceId && doc.hasFile && (
           <TopButton onClick={sendFileToXero} disabled={xeroBusy} title="Upload this document's file to the Xero bill as an attachment">
             {xeroBusy === 'attach' ? 'Sending…' : 'Send file to Xero'}
@@ -1920,6 +1941,7 @@ export default function CostDetail() {
         onClose={() => setPublishOpen(false)}
         bill={{ id: doc.id, supplier: data.supplier, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems }}
         onPublished={onPublished}
+        mode={publishMode}
       />
 
       {claimAdded && (

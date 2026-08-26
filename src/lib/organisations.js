@@ -643,6 +643,26 @@ export async function attachBillFileToXero(organisationId, billId) {
   return body;
 }
 
+// Send a published document's CURRENT figures to the bill it already created in
+// Xero. Same shape as publishing, plus the fact that a bill already exists: the
+// server adds the InvoiceID that makes Xero update rather than create.
+export async function updateBillInXero(organisationId, payload) {
+  const res = await fetch(`/api/xero/organisations/${organisationId}/update-bill`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = /** @type {any} */ (new Error(
+      Array.isArray(body.messages) ? body.messages.join(' ') : body.message || 'Update failed.'
+    ));
+    err.code = body.error;
+    throw err;
+  }
+  return body;
+}
+
 // Ask Xero about every bill this entity has published, and record what it says
 // (status, paid date, payment reference). The webhook only hears about what
 // changes after it was configured, so this is what catches up the bills paid

@@ -6,6 +6,7 @@ import {
   fetchXeroAccounts,
   fetchXeroTaxRates,
   publishBillToXero,
+  updateBillInXero,
 } from '@/lib/organisations';
 import { lineItemsPostable } from '@/lib/bills';
 import { useGstRegistered } from '@/lib/businessProfile';
@@ -17,7 +18,13 @@ import ComboSelect from '@/components/ComboSelect';
 // The caller passes the persisted bill's id plus the on-screen field values
 // (supplier/total/date may have unsaved edits — the server posts the SAVED
 // bill, so the parent saves before opening this dialog).
-export default function PublishToXeroModal({ open, onClose, bill, onPublished }) {
+// One dialog, two errands. `mode` is 'publish' for a document that has never
+// reached Xero, and 'update' for one whose bill is already there and whose
+// figures have since been corrected here. They ask the same questions — account
+// code, tax code, date — and the difference is only whether the answer creates a
+// bill or restates one, so a second dialog would be the same form twice, drifting.
+export default function PublishToXeroModal({ open, onClose, bill, onPublished, mode = 'publish' }) {
+  const updating = mode === 'update';
   const { data: organisations = [] } = useOrganisations();
   const [organisationId, setOrganisationId] = useState('');
   const [accounts, setAccounts] = useState(null); // null = loading
@@ -45,7 +52,10 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
     setOrganisationId(
       organisations.some((o) => o.id === active) ? active : organisations[0]?.id ?? ''
     );
-    setStatus('DRAFT');
+    // Updating starts at "leave it alone": the bill already has a status, and
+    // somebody fixing an account code has not asked to move it through the
+    // approval workflow as a side effect.
+    setStatus(mode === 'update' ? '' : 'DRAFT');
     // Shows the invoice date, because that is what will post: the due date
     // follows the date actually sent to Xero, so a date shifted for a locked
     // period can't leave the due date sitting before the bill. Change it here to
@@ -175,11 +185,14 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
     setPublishing(true);
     setError('');
     try {
-      const result = await publishBillToXero(organisationId, {
+      const send = updating ? updateBillInXero : publishBillToXero;
+      const result = await send(organisationId, {
         billId: bill.id,
         accountCode,
         taxType,
-        status,
+        // Updating: only send a status when the reviewer picked one, so
+        // correcting an approved bill's coding can't knock it back to draft.
+        status: updating && !status ? undefined : status,
         dueDate: dueDate || undefined,
       });
       setDone(result.invoice);
@@ -201,7 +214,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
       <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
       <div className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-lg bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
-          <h2 className="text-base font-semibold tracking-tight">Publish to Xero</h2>
+          <h2 className="text-base font-semibold tracking-tight">{updating ? 'Update the bill in Xero' : 'Publish to Xero'}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -216,8 +229,9 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
           <div className="flex flex-col items-center gap-3 p-8 text-center">
             <CheckCircle2 className="h-10 w-10 text-green-600" />
             <p className="text-sm">
-              Posted to <span className="font-medium">{organisation?.tenantName || 'Xero'}</span> as
-              a {done.status === 'DRAFT' ? 'draft ' : ''}bill
+              {updating ? 'Updated in ' : 'Posted to '}
+              <span className="font-medium">{organisation?.tenantName || 'Xero'}</span>
+              {updating ? '' : ` as a ${done.status === 'DRAFT' ? 'draft ' : ''}bill`}
               {done.invoiceNumber ? ` (${done.invoiceNumber})` : ''}
               {postedLines > 1 ? `, as ${postedLines} line items` : ''}.
             </p>
@@ -242,9 +256,17 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
           <>
             <div className="space-y-3 p-6">
               <p className="text-sm text-muted-foreground">
-                Posts <span className="font-medium text-foreground">{bill?.supplier || 'this document'}</span>
-                {bill?.total ? ` · ${bill.currency || ''} ${bill.total}` : ''} as a supplier bill.
+                {updating ? 'Sends ' : 'Posts '}
+                <span className="font-medium text-foreground">{bill?.supplier || 'this document'}</span>
+                {bill?.total ? ` · ${bill.currency || ''} ${bill.total}` : ''}
+                {updating ? ' to the bill it already created in Xero, replacing what is there.' : ' as a supplier bill.'}
               </p>
+              {updating && (
+                <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  Xero decides what may still change: a bill that has been paid or voided refuses an
+                  update, and says so.
+                </p>
+              )}
 
               {lines.rows > 0 &&
                 (lines.postable ? (
@@ -339,9 +361,10 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                   </label>
 
                   <label className="flex items-center gap-3 text-sm">
-                    <span className="w-28 shrink-0 text-muted-foreground">Post as</span>
+                    <span className="w-28 shrink-0 text-muted-foreground">{updating ? 'Status' : 'Post as'}</span>
                     <div className="relative flex-1">
                       <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectClass}>
+                        {updating && <option value="">Leave as it is</option>}
                         <option value="DRAFT">Draft</option>
                         <option value="SUBMITTED">Awaiting approval</option>
                         <option value="AUTHORISED">Approved (awaiting payment)</option>
@@ -379,7 +402,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished })
                 onClick={publish}
                 className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                {publishing ? 'Publishing…' : 'Publish'}
+                {publishing ? (updating ? 'Sending…' : 'Publishing…') : updating ? 'Send update' : 'Publish'}
               </button>
             </div>
           </>

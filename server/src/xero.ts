@@ -829,6 +829,105 @@ export async function perLineItems(
   return { kind: 'lines', lines };
 }
 
+// The Xero bill a stored document becomes. Shared, because a document is turned
+// into an ACCPAY invoice twice now — once when it is first published, and again
+// whenever a correction is sent to the bill that publish created. Two copies of
+// this would drift, and the drift would be silent: an update that built its
+// lines differently from the publish would quietly restate a figure in a live
+// ledger.
+//
+// Returns the payload WITHOUT Status or InvoiceID — the two fields that differ
+// between creating a bill and correcting one — or the 422 the caller should
+// answer with when the document's own line items contradict it.
+async function buildBillInvoice(
+  req: any,
+  organisation: { id: string; tenantId: string },
+  bill: Bill,
+  opts: { accountCode: string; taxType: string; dueDate?: unknown; description?: unknown }
+): Promise<
+  | { ok: true; payload: Record<string, unknown>; lines: number; perLine: boolean }
+  | { ok: false; status: number; body: any }
+> {
+  const total = parseAmount(bill.total);
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+  const date = String(bill.date ?? '');
+  // Due date follows the date actually POSTED, not the one on the paper. When a
+  // period is locked, `date` above has already moved to something postable — and
+  // a due date left on the original date would then sit BEFORE the bill itself.
+  // Tying them together means the pair stays coherent however the date shifts.
+  // A date typed into the publish dialog still wins; nothing else does.
+  const iso = (v: unknown) => (ISO_DATE.test(String(v ?? '')) ? String(v) : '');
+  const dueDate = iso(opts.dueDate) || date;
+  const tax = parseAmount(bill.tax);
+
+  const net = Math.max(0, total - tax);
+  const line: Record<string, unknown> = {
+    // A bill published on its own reads as its own document: the description
+    // from the paper, nothing prepended. The "<Supplier> #<ItemID> - …" form is
+    // for EXPENSE CLAIM lines, where one Xero bill carries many people's
+    // receipts and each line has to say which document it came from.
+    Description:
+      String(opts.description ?? '').trim() ||
+      String(bill.description ?? '').trim() ||
+      [bill.category || bill.documentType || 'Supplier bill', bill.invoiceNumber].filter(Boolean).join(' — '),
+    Quantity: 1,
+    // Post tax-EXCLUSIVE (net unit amount + explicit tax) so Xero shows a Tax
+    // Amount column and the figures match the paper exactly — matching Dext.
+    UnitAmount: net,
+    AccountCode: opts.accountCode,
+    TaxType: opts.taxType,
+    TaxAmount: tax,
+  };
+  // Tag the line with the doc's project (PIC tracking category) when set.
+  if (bill.project) {
+    const tracking = trackingFor(await firstTrackingCategory(organisation.tenantId), bill.project);
+    if (tracking) line.Tracking = tracking;
+  }
+
+  // A bill with its own line items posts as those lines — each with its own
+  // account and its own project(s). Line items that contradict the document are
+  // refused rather than posted around: a breakdown that doesn't add up to its
+  // own total is a mistake somewhere on the document, and one summary line
+  // silently standing in for it hides that from whoever reconciles the ledger.
+  const built = await perLineItems(bill, {
+    accountCode: opts.accountCode,
+    taxType: opts.taxType,
+    tenantId: organisation.tenantId,
+    fallbackDescription: String(line.Description ?? ''),
+  });
+  if (built.kind === 'mismatch') {
+    const money = (n: number) => n.toFixed(2);
+    return { ok: false as const, status: 422, body: {
+      error: 'line_items_unreconciled',
+      reason: built.reason,
+      linesTotal: built.linesTotal,
+      linesTax: built.linesTax,
+      message:
+        built.reason === 'total'
+          ? `This document's ${(bill.lineItems ?? []).length} line items add up to ${money(built.linesTotal)}, not the document's total of ${money(parseAmount(bill.total))}. Fix the lines (or the total) before publishing — a bill whose lines don't add up to it can't be posted.`
+          : `This document's line items carry ${money(built.linesTax)} of tax, but the document's tax is ${money(parseAmount(bill.tax))}. Fix the Tax column before publishing.`,
+    } };
+  }
+  const lineItems = built.kind === 'lines' ? built.lines : [line];
+
+  const payload: Record<string, unknown> = {
+    Type: 'ACCPAY',
+    Contact: { Name: bill.supplier || 'Unknown supplier' },
+    Date: date,
+    DueDate: dueDate,
+    LineAmountTypes: 'Exclusive',
+    LineItems: lineItems,
+  };
+  if (bill.invoiceNumber) payload.InvoiceNumber = bill.invoiceNumber;
+  // "Go to CYBills" on the bill in Xero — straight back to the document this
+  // was published from, and the original paper attached to it.
+  payload.Url = `${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`;
+  if (bill.currency) payload.CurrencyCode = bill.currency;
+  // `lines`/`perLine` are how it went up — the document's own breakdown, or one
+  // summary line — which the caller reports back to the dialog.
+  return { ok: true as const, payload, lines: lineItems.length, perLine: built.kind === 'lines' };
+}
+
 // POST /api/xero/organisations/:id/publish-bill — publish a stored cost
 // document to the linked Xero org as a supplier bill (ACCPAY invoice).
 // Body: { billId, accountCode, taxType, status?, dueDate?, description?,
@@ -905,82 +1004,15 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
       message: `This document still needs ${missing.join(', ')}. A bill is posted into a live ledger, so it has to be complete first.`,
     });
   }
-  const total = parseAmount(bill.total);
-  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-  const date = String(bill.date ?? '');
-  // Due date follows the date actually POSTED, not the one on the paper. When a
-  // period is locked, `date` above has already moved to something postable — and
-  // a due date left on the original date would then sit BEFORE the bill itself.
-  // Tying them together means the pair stays coherent however the date shifts.
-  // A date typed into the publish dialog still wins; nothing else does.
-  const iso = (v: unknown) => (ISO_DATE.test(String(v ?? '')) ? String(v) : '');
-  const dueDate = iso(b.dueDate) || date;
-  const tax = parseAmount(bill.tax);
-
-  const net = Math.max(0, total - tax);
-  const line: Record<string, unknown> = {
-    // A bill published on its own reads as its own document: the description
-    // from the paper, nothing prepended. The "<Supplier> #<ItemID> - …" form is
-    // for EXPENSE CLAIM lines, where one Xero bill carries many people's
-    // receipts and each line has to say which document it came from.
-    Description:
-      String(b.description ?? '').trim() ||
-      String(bill.description ?? '').trim() ||
-      [bill.category || bill.documentType || 'Supplier bill', bill.invoiceNumber].filter(Boolean).join(' — '),
-    Quantity: 1,
-    // Post tax-EXCLUSIVE (net unit amount + explicit tax) so Xero shows a Tax
-    // Amount column and the figures match the paper exactly — matching Dext.
-    UnitAmount: net,
-    AccountCode: accountCode,
-    TaxType: taxType,
-    TaxAmount: tax,
-  };
-  // Tag the line with the doc's project (PIC tracking category) when set.
-  if (bill.project) {
-    const tracking = trackingFor(await firstTrackingCategory(organisation.tenantId), bill.project);
-    if (tracking) line.Tracking = tracking;
-  }
-
-  // A bill with its own line items posts as those lines — each with its own
-  // account and its own project(s). Line items that contradict the document are
-  // refused rather than posted around: a breakdown that doesn't add up to its
-  // own total is a mistake somewhere on the document, and one summary line
-  // silently standing in for it hides that from whoever reconciles the ledger.
-  const built = await perLineItems(bill, {
+  const prepared = await buildBillInvoice(req, organisation, bill, {
     accountCode,
     taxType,
-    tenantId: organisation.tenantId,
-    fallbackDescription: String(line.Description ?? ''),
+    dueDate: b.dueDate,
+    description: b.description,
   });
-  if (built.kind === 'mismatch') {
-    const money = (n: number) => n.toFixed(2);
-    return res.status(422).json({
-      error: 'line_items_unreconciled',
-      reason: built.reason,
-      linesTotal: built.linesTotal,
-      linesTax: built.linesTax,
-      message:
-        built.reason === 'total'
-          ? `This document's ${(bill.lineItems ?? []).length} line items add up to ${money(built.linesTotal)}, not the document's total of ${money(parseAmount(bill.total))}. Fix the lines (or the total) before publishing — a bill whose lines don't add up to it can't be posted.`
-          : `This document's line items carry ${money(built.linesTax)} of tax, but the document's tax is ${money(parseAmount(bill.tax))}. Fix the Tax column before publishing.`,
-    });
-  }
-  const lineItems = built.kind === 'lines' ? built.lines : [line];
+  if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
+  const payload = { ...prepared.payload, Status: status };
 
-  const payload: Record<string, unknown> = {
-    Type: 'ACCPAY',
-    Contact: { Name: bill.supplier || 'Unknown supplier' },
-    Date: date,
-    DueDate: dueDate,
-    LineAmountTypes: 'Exclusive',
-    LineItems: lineItems,
-    Status: status,
-  };
-  if (bill.invoiceNumber) payload.InvoiceNumber = bill.invoiceNumber;
-  // "Go to CYBills" on the bill in Xero — straight back to the document this
-  // was published from, and the original paper attached to it.
-  payload.Url = `${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`;
-  if (bill.currency) payload.CurrencyCode = bill.currency;
 
   // PUT = create-only (POST would upsert); summarizeErrors=false makes Xero
   // return per-record ValidationErrors with a 200 instead of a bare 400.
@@ -1031,8 +1063,8 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
       status: String(invoice.Status ?? status),
     },
     // How it went up: the document's own lines, or one summary line.
-    lines: lineItems.length,
-    perLine: built.kind === 'lines',
+    lines: prepared.lines,
+    perLine: prepared.perLine,
     attachment,
     bill: updated,
   });
@@ -1116,6 +1148,122 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
     paid,
     missing,
     remaining: Math.max(0, published.length - batch.length),
+  });
+});
+
+// POST /api/xero/organisations/:id/update-bill — send a published document's
+// CURRENT figures to the bill it already created in Xero.
+// Body: { billId, accountCode, taxType, status?, dueDate?, description? }.
+//
+// Until now a correction found after publishing had nowhere to go: the document
+// here could be fixed, and the ledger kept the first answer. The only routes out
+// were editing the bill by hand in Xero — the two copies diverging quietly is
+// exactly what publishing from here is meant to prevent — or clearing the Xero
+// link and posting a second bill, which leaves the first one to be found and
+// voided by somebody who may not know it exists.
+//
+// The same builder as publish, so a corrected bill is assembled exactly as the
+// original was, plus the InvoiceID that makes Xero update rather than create.
+// Xero decides what may still change: a PAID or VOIDED bill refuses, and its
+// refusal is passed through in its own words rather than translated into a
+// guess about why.
+xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+
+  const b = req.body ?? {};
+  const billId = String(b.billId ?? '');
+  const accountCode = String(b.accountCode ?? '').trim();
+  const taxType = String(b.taxType ?? '').trim();
+  if (!billId || !accountCode || !taxType) {
+    return res.status(400).json({ error: 'missing_field', message: 'billId, accountCode and taxType are required.' });
+  }
+  const status = String(b.status ?? '').toUpperCase();
+  if (status && !PUBLISH_STATUSES.has(status)) {
+    return res.status(400).json({ error: 'invalid_status', message: 'status must be DRAFT, SUBMITTED or AUTHORISED.' });
+  }
+
+  const workspace = bookFor(req);
+  const bill = getBillById(workspace, billId);
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  // The whole premise of this route. Without a bill in Xero there is nothing to
+  // update — that is what publish is for, and saying so is more use than
+  // silently creating one from a button labelled "update".
+  if (!bill.xeroInvoiceId) {
+    return res.status(400).json({
+      error: 'not_published',
+      message: 'This document has not been published to Xero yet, so there is no bill to update. Publish it instead.',
+    });
+  }
+
+  // Completeness is judged the same as on publish. A document that has LOST a
+  // field since it was published — somebody clearing its category — must not be
+  // able to blank that field in the ledger.
+  const missing = missingForPublish(bill);
+  if (missing.length) {
+    return res.status(400).json({
+      error: 'incomplete',
+      missing,
+      message: `This document still needs ${missing.join(', ')}. It is already in the ledger, so an update has to be complete too.`,
+    });
+  }
+
+  const prepared = await buildBillInvoice(req, organisation, bill, {
+    accountCode,
+    taxType,
+    dueDate: b.dueDate,
+    description: b.description,
+  });
+  if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
+
+  // InvoiceID is what makes this an update. Status is sent only when the caller
+  // asked for one: omitted, Xero leaves the bill where it is, so correcting an
+  // APPROVED bill's coding can't quietly knock it back to DRAFT and out of
+  // somebody's approval queue.
+  const payload: Record<string, unknown> = { ...prepared.payload, InvoiceID: bill.xeroInvoiceId };
+  if (status) payload.Status = status;
+
+  // POST (not PUT) is Xero's update; summarizeErrors=false again, so a rejection
+  // comes back per-record with its reasons instead of as a bare 400.
+  const result = await relay('Invoices', {
+    method: 'POST',
+    tenantId: bill.xeroTenantId || organisation.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { Invoices: [payload] },
+  });
+
+  if (!result.ok) {
+    console.error('[xero] update failed', result.status, result.message);
+    return res.status(result.status >= 500 ? 502 : result.status).json({ error: result.error, message: result.message });
+  }
+
+  const invoice = result.data?.Invoices?.[0];
+  const validationErrors: string[] = (invoice?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+  if (!invoice || invoice.HasErrors || validationErrors.length > 0) {
+    return res.status(422).json({
+      error: 'xero_validation_failed',
+      // Xero's own words. A paid bill refuses an amount change, and the reason
+      // it gives is more use to a reviewer than anything invented here.
+      messages: validationErrors.length ? validationErrors : ['Xero rejected the update.'],
+    });
+  }
+
+  // The answer names the bill's state as it now stands, so the document's own
+  // Xero fields are refreshed from it rather than left to the next webhook.
+  const payment = paymentFromInvoice(invoice);
+  if (payment.xeroStatus) markBillXeroPayment(bill.orgId, bill.id, payment);
+
+  res.json({
+    ok: true,
+    invoice: {
+      invoiceId: String(invoice.InvoiceID ?? bill.xeroInvoiceId),
+      invoiceNumber: String(invoice.InvoiceNumber ?? ''),
+      status: String(invoice.Status ?? ''),
+    },
+    lines: prepared.lines,
+    perLine: prepared.perLine,
+    bill: getBillById(workspace, bill.id),
   });
 });
 
