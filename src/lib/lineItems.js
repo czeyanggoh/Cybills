@@ -38,3 +38,29 @@ export function balanceLine(row, patch) {
   }
   return next;
 }
+
+// Fold every row's tax back into its own cost, leaving the row worth exactly
+// what it was worth before.
+//
+// This is the per-line half of the No Tax rule: a document coded to a tax code
+// that carries no tax records no tax anywhere on it. Zeroing only the
+// document's own tax field left its LINE still carrying the GST, and a bill
+// whose lines contradict it can't be published at all — the reconciliation
+// guard refuses it, which is how a corrected document ended up unable to reach
+// the ledger.
+//
+// The row's TOTAL never moves; the tax moves into the net. That is what "the
+// tax stays inside the cost" means arithmetically, and it keeps both sums the
+// publish path checks — the rows against the document's total, their tax
+// against its tax — true at once.
+export function foldTaxIntoCost(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => {
+    const total = cellNumber(row?.total);
+    const tax = cellNumber(row?.tax);
+    // A row with nothing in it, or nothing to fold, is left exactly as it is —
+    // this repairs an inconsistency, it doesn't fill in blanks.
+    if (total === null || !tax) return row;
+    return { ...row, tax: '0.00', net: total.toFixed(2) };
+  });
+}

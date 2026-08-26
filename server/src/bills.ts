@@ -26,7 +26,7 @@ import { workspaceId, WORKSPACE_ID } from './workspace.js';
 import { canAccessOrg, emailForPerson, memberForSession, orgScope, ownerForOrg } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
-import { decideTaxRate, isZeroTaxRate, taxContextFor } from './taxRules.js';
+import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from './taxRules.js';
 import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
@@ -225,12 +225,22 @@ const zeroTaxFixedAt = new Map<string, number>();
 async function repairZeroTaxAmounts(scope: string): Promise<void> {
   if (zeroTaxFixedAt.get(scope) === bookRevision()) return;
   zeroTaxFixedAt.set(scope, bookRevision());
+  // A document is wrong here if its own tax field carries GST, or if its LINES
+  // do while it says there is none — the second is what a half-applied repair
+  // leaves behind, and it locks the document out of Xero just as firmly.
+  const lineTax = (b: { lineItems?: Array<{ tax?: unknown }> }) =>
+    (b.lineItems ?? []).reduce((t, li) => t + parseAmount(li?.tax), 0);
   const wrong = listBills(scope).filter(
-    (b) => b.kind !== 'sales' && !b.xeroInvoiceId && b.taxRate && parseAmount(b.tax) > 0
+    (b) => b.kind !== 'sales' && !b.xeroInvoiceId && b.taxRate && (parseAmount(b.tax) > 0 || lineTax(b) > 0)
   );
   for (const b of wrong) {
     if (!(await isZeroTaxRate(b.taxRate))) continue;
-    updateBill(scope, b.id, { tax: 0 });
+    const patch: Record<string, unknown> = { tax: 0 };
+    if (lineTax(b) > 0) {
+      const folded = await foldLineTaxIntoCost(b.lineItems);
+      if (folded) patch.lineItems = folded;
+    }
+    updateBill(scope, b.id, patch);
   }
 }
 
@@ -463,7 +473,18 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   // caller can store the pair. Reads the rate being SET, else the one the
   // document already has, since either can be the half that makes it wrong.
   const effectiveRate = 'taxRate' in patch ? String(patch.taxRate ?? '') : String(getBillById(orgId, req.params.id)?.taxRate ?? '');
-  if (effectiveRate && (await isZeroTaxRate(effectiveRate))) patch.tax = 0;
+  if (effectiveRate && (await isZeroTaxRate(effectiveRate))) {
+    patch.tax = 0;
+    // The lines are part of the same document. Left carrying tax the document
+    // says it doesn't have, they contradict it — and a breakdown that
+    // contradicts its own paper is refused by the publish path, so the
+    // correction would quietly lock the bill out of Xero.
+    const rows = 'lineItems' in patch ? patch.lineItems : getBillById(orgId, req.params.id)?.lineItems;
+    if (Array.isArray(rows) && rows.length) {
+      const folded = await foldLineTaxIntoCost(rows);
+      if (folded) patch.lineItems = folded;
+    }
+  }
   let updated = updateBill(orgId, req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'not_found' });
   // A field edit (no explicit status) lets the system re-derive ready vs inbox

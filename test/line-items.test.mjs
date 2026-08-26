@@ -1,6 +1,6 @@
 // A line of an itemised table has to agree with itself: net + tax = total,
 // whichever of the three somebody just typed.
-import { balanceLine, cellNumber } from '../src/lib/lineItems.js';
+import { balanceLine, cellNumber, foldTaxIntoCost } from '../src/lib/lineItems.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -44,6 +44,38 @@ check('undefined is null', cellNumber(undefined), null);
 check('zero is zero', cellNumber('0'), 0);
 check('currency noise is stripped', cellNumber('SGD 1,234.50'), 1234.50);
 check('a negative survives', cellNumber('-5.25'), -5.25);
+
+
+// --- No Tax on the document means no tax on its lines -------------------------
+// The per-line half of the invariant. A document coded to a zero-tax code has
+// its tax folded into the cost; leaving the LINES carrying tax makes them
+// contradict the document, and the publish path refuses a breakdown that
+// disagrees with its own paper — so the correction locked the bill out of Xero.
+{
+  const rows = [
+    { description: 'Lite Monthly Charges', net: '652.50', tax: '65.25', total: '717.75' },
+    { description: 'Support', net: '100.00', tax: '10.00', total: '110.00' },
+  ];
+  const folded = foldTaxIntoCost(rows);
+  check('the row is still worth what it was worth', folded[0].total, '717.75');
+  check('...its tax is gone', folded[0].tax, '0.00');
+  check('...and the tax is now inside the cost', folded[0].net, '717.75');
+  check('every row, not just the first', folded[1], { description: 'Support', net: '110.00', tax: '0.00', total: '110.00' });
+
+  // The two sums the publish path checks both come out right, which is the
+  // whole point: rows against the document's total, their tax against its tax.
+  const sum = (rows, f) => rows.reduce((t, r) => t + Number(r[f]), 0).toFixed(2);
+  check('the rows still add up to the document total', sum(folded, 'total'), '827.75');
+  check('...and their tax to the document tax of zero', sum(folded, 'tax'), '0.00');
+
+  // It repairs an inconsistency; it does not fill in blanks or churn rows that
+  // are already right.
+  const clean = [{ description: 'Already net', net: '50.00', tax: '0.00', total: '50.00' }];
+  check('a row with no tax is left alone', foldTaxIntoCost(clean)[0], clean[0]);
+  const blank = [{ description: 'Nothing typed yet', net: '', tax: '', total: '' }];
+  check('an empty row is left alone', foldTaxIntoCost(blank)[0], blank[0]);
+  check('a non-list is not a crash', foldTaxIntoCost(null), []);
+}
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

@@ -55,7 +55,7 @@ import { formatDate } from '@/lib/date';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
-import { balanceLine } from '@/lib/lineItems';
+import { balanceLine, foldTaxIntoCost } from '@/lib/lineItems';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -918,6 +918,13 @@ export default function CostDetail() {
     const total = num(data.total);
     const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
     set('tax', tax ? tax.toFixed(2) : '0.00');
+    // A code carrying no tax means no tax anywhere on the document: the rows
+    // give theirs up into their own cost, each still worth what it was worth.
+    // Otherwise the lines say 65.25 while the document says 0.00, and the
+    // publish path refuses a breakdown that contradicts its own paper.
+    if (name && !r && Array.isArray(data.lineItems) && data.lineItems.length) {
+      set('lineItems', foldTaxIntoCost(data.lineItems));
+    }
   };
 
   // Split an invoice that mixes GST and non-GST costs into two lines: the

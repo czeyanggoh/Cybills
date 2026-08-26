@@ -202,6 +202,20 @@ The toolbar keeps only the review affordances — "Merge suggestions (N)" and
 "Review duplicates (N)", each shown only when there is something to review.
 `npm test` at the repo root runs the rules.
 
+**No Tax means no tax anywhere on the document.** A code that carries no tax and
+a line still carrying GST contradict each other, and the publish path refuses a
+breakdown that disagrees with its own paper — so a half-applied correction locks
+the bill out of Xero rather than merely looking odd. `zeroTaxRate`
+(`taxRateRules.js`) says whether a code carries tax — from the org's own rates
+where they are to hand, from the names Xero ships for zero-tax codes where they
+are not, which is the server's case; `foldTaxIntoCost` (`lineItems.js`) moves
+each row's tax into its own net, leaving the row worth exactly what it was
+worth. Both are applied wherever a rate is chosen: the capture path, the write
+path, the document page's picker, and a repair sweep off the listing for what is
+already stored. The TOTAL never moves — only the split — which is what makes it
+a repair rather than a revision of somebody's figures, and a published document
+is left alone regardless.
+
 **Input tax is claimed only on evidence.** GST is recorded only when the
 SUPPLIER quotes a Singapore GST registration number and the document calls the
 tax GST. The numbers can't settle it — Thailand's VAT is 7% and Malaysia's SST

@@ -28,6 +28,7 @@ import {
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
 import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome, zeroTaxRate } from '@/lib/extractionSettings';
+import { foldTaxIntoCost } from '@/lib/lineItems';
 import { useUsers, useOwnerNames, useGeneralOwnerName, ownsHere } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
@@ -415,7 +416,14 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // WITHOUT a rate — so a reader that named "No Tax" itself skipped every
       // one of those conditions and kept the amount it had read, which is how a
       // document came to show No Tax and 65.25 of GST at the same time.
-      if (zeroTaxRate(p.taxRate ?? cur?.taxRate, visibleTaxRates)) p.tax = 0;
+      if (zeroTaxRate(p.taxRate ?? cur?.taxRate, visibleTaxRates)) {
+        p.tax = 0;
+        // The lines carry the same tax the document just gave up. Left as they
+        // were they would contradict it, and a breakdown that contradicts its
+        // own paper cannot be published at all.
+        const rows = p.lineItems ?? cur?.lineItems;
+        if (Array.isArray(rows) && rows.length) p.lineItems = foldTaxIntoCost(rows);
+      }
       p.paid = defaultPaidFor(settings, cur?.documentType);
       // Due date, in order of what the evidence supports:
       //   1. the date printed on the document (or what its stated terms resolve

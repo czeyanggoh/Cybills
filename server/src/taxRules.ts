@@ -148,3 +148,24 @@ export async function isZeroTaxRate(name: unknown, rates?: unknown): Promise<boo
   const mod = await loadTaxRules();
   return typeof mod?.zeroTaxRate === 'function' ? Boolean(mod.zeroTaxRate(name, rates)) : false;
 }
+
+// The per-line half of the No Tax rule, from the same pure module the grid uses
+// (src/lib/lineItems.js). A document coded to a zero-tax code has the tax folded
+// into its cost — and its LINES have to be folded too, or they contradict the
+// document and the publish path refuses the breakdown outright.
+let lineMod: { foldTaxIntoCost?: (rows: unknown) => any[] } | null = null;
+let lineTried = false;
+
+export async function foldLineTaxIntoCost(rows: unknown): Promise<any[] | null> {
+  if (!lineTried) {
+    lineTried = true;
+    try {
+      const url = new URL('../../src/lib/lineItems.js', import.meta.url).href;
+      lineMod = (await import(url)) as { foldTaxIntoCost?: (rows: unknown) => any[] };
+    } catch (e) {
+      console.error('[taxRules] line-item rules unavailable', e);
+      lineMod = null;
+    }
+  }
+  return typeof lineMod?.foldTaxIntoCost === 'function' ? lineMod.foldTaxIntoCost(rows) : null;
+}
