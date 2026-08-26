@@ -47,7 +47,6 @@ app.use((req, res, next) => {
   if (p === '/api/users/reset') return next();
   if (p.startsWith('/api/users/reset/')) return next();
   if (p === '/api/health') return next();
-  if (/^\/api\/costs\/bills\/[^/]+\/file$/.test(p)) return next();
   // Inbound email is machine-to-machine (the Cloudflare Email Worker), guarded
   // by its own shared secret rather than a user session.
   if (p === '/api/inbound/email') return next();

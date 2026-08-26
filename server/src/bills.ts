@@ -21,9 +21,9 @@ import {
   type Candidate,
 } from './store.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
-import { dataScopeForOrg } from './organisations.js';
-import { workspaceId } from './workspace.js';
-import { emailForPerson, orgScope, ownerForOrg } from './users.js';
+import { dataScopeForOrg, primaryOrgId } from './organisations.js';
+import { workspaceId, WORKSPACE_ID } from './workspace.js';
+import { canAccessOrg, emailForPerson, memberForSession, orgScope, ownerForOrg } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
 import { decideTaxRate, taxContextFor } from './taxRules.js';
@@ -240,14 +240,39 @@ function contentDisposition(name: string): string {
   return `inline; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
+// May this caller read this document? The global by-id lookup deliberately
+// crosses entity books (a claim's item can live in another one), so the entity
+// is taken from the BILL and checked against the caller's access — the same
+// question the X-Org-Id guard asks, for a route that carries no such header.
+//
+// A refusal answers 404, not 403: whether a document exists is itself something
+// the caller isn't entitled to learn.
+function canReadBill(req: Request, bill: { orgId?: string }): boolean {
+  const me = memberForSession(req);
+  if (!me) return true; // sessionless mock/dev, as everywhere else
+  const scope = String(bill.orgId ?? '');
+  // A bill's orgId is a data SCOPE: the primary entity folds to WORKSPACE_ID.
+  const orgId = !scope || scope === WORKSPACE_ID ? primaryOrgId() : scope;
+  return canAccessOrg(me, orgId);
+}
+
 // GET /api/costs/bills/:id/file — stream the original file (R2 or local disk).
 // 404 when the bill has no stored file.
 billsRouter.get('/bills/:id/file', async (req, res) => {
-  // Prefer the caller's org, but fall back to a global by-id lookup so exported
-  // CSV image links open even from a browser that isn't signed in (the bill id
-  // is an unguessable capability token). Same model as Dext's receipt links.
+  // This route used to skip the session guard entirely, on the reasoning that a
+  // bill id is an unguessable capability token — Dext's receipt-link model. That
+  // held for `bill_<base36>_<8 hex>`. It did NOT hold for the other key this
+  // resolves by: a purely numeric Item ID, which is a TIMESTAMP
+  // (260825131730 = 25 Aug 2026, 13:17:30). A day of them can be enumerated by
+  // counting, so anyone at all could pull any client's receipts — card digits,
+  // addresses, amounts — without signing in.
+  //
+  // It needs a session now. And a session alone is not enough: an <img> sends no
+  // X-Org-Id, so the entity has to be taken from the BILL and checked against
+  // the caller, or one client's staff could read another's receipts by id.
   const bill = getBillById(orgIdFor(req), req.params.id) || getBillByIdAny(req.params.id);
   if (!bill || !bill.storageKey) return res.status(404).json({ error: 'no_file' });
+  if (!canReadBill(req, bill)) return res.status(404).json({ error: 'no_file' });
 
   const obj = await getBillFile(bill.storageKey, bill.contentType);
   if (!obj) return res.status(502).json({ error: 'file_unavailable' });
@@ -264,7 +289,7 @@ billsRouter.get('/bills/:id/file', async (req, res) => {
 // a claim item whose document lives in another org scope still resolves.
 billsRouter.get('/bills/:id/file-meta', (req, res) => {
   const bill = getBillById(orgIdFor(req), req.params.id) || getBillByIdAny(req.params.id);
-  if (!bill) return res.json({ hasFile: false });
+  if (!bill || !canReadBill(req, bill)) return res.json({ hasFile: false });
   res.json({ hasFile: Boolean(bill.storageKey), contentType: bill.contentType || '', fileName: bill.fileName || '' });
 });
 
