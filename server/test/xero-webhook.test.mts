@@ -35,6 +35,8 @@ const { insertBill, markBillPosted, getBillById } = await import('../src/store.t
 // invoice we never published costs nothing" is checked.
 const asked: string[] = [];
 const statuses = new Map<string, string>();
+const payments = new Map<string, Array<{ Reference?: string }>>();
+const paidOn = new Map<string, string>();
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: any, init?: any) => {
   const url = String(input);
@@ -45,7 +47,10 @@ globalThis.fetch = (async (input: any, init?: any) => {
   const invoiceId = decodeURIComponent(m[1]);
   asked.push(invoiceId);
   const Status = statuses.get(invoiceId) ?? 'AUTHORISED';
-  return new Response(JSON.stringify({ Invoices: [{ InvoiceID: invoiceId, Status }] }), {
+  const invoice: Record<string, unknown> = { InvoiceID: invoiceId, Status };
+  if (paidOn.has(invoiceId)) invoice.FullyPaidOnDate = paidOn.get(invoiceId);
+  if (payments.has(invoiceId)) invoice.Payments = payments.get(invoiceId);
+  return new Response(JSON.stringify({ Invoices: [invoice] }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -110,10 +115,18 @@ check('nothing was read from Xero for any of those', asked, []);
 check('verifyXeroSignature agrees with the route', verifyXeroSignature(Buffer.from(body), sign(body)), true);
 
 // --- a signed delivery ----------------------------------------------------
+// Xero's own words are recorded, with the payment behind them. The document's
+// `paid` toggle is a DIFFERENT question - the reviewer's capture-time flag, in
+// Dext's sense - and the webhook must never write it.
 statuses.set('inv-published', 'PAID');
+paidOn.set('inv-published', '2026-08-26T00:00:00');
+payments.set('inv-published', [{ Reference: 'PayNow 26 Aug' }]);
 check('signed POST is accepted', (await post(body, sign(body))).status, 200);
 await flushXeroWebhooks();
-check('the paid invoice marked its document paid', getBillById('cybm', published.id)?.paid, true);
+check("Xero's status is recorded", getBillById('cybm', published.id)?.xeroStatus, 'PAID');
+check('...with the date it was fully paid', getBillById('cybm', published.id)?.xeroPaidDate, '2026-08-26');
+check('...and the payment reference', getBillById('cybm', published.id)?.xeroPaymentRef, 'PayNow 26 Aug');
+check("the reviewer's Paid toggle is left alone", getBillById('cybm', published.id)?.paid, undefined);
 check('one read-back, for the one invoice named', asked, ['inv-published']);
 
 // An invoice still owed says so, and an event naming an invoice CYBills never
@@ -121,36 +134,51 @@ check('one read-back, for the one invoice named', asked, ['inv-published']);
 const owed = payloadFor([invoiceEvent('inv-owed'), invoiceEvent('inv-someone-elses')]);
 check('second delivery accepted', (await post(owed, sign(owed))).status, 200);
 await flushXeroWebhooks();
-check('an authorised invoice leaves the document unpaid', Boolean(getBillById('cybm', stillOwed.id)?.paid), false);
+check('an approved-but-unpaid invoice says so', getBillById('cybm', stillOwed.id)?.xeroStatus, 'AUTHORISED');
+check('...with no paid date', getBillById('cybm', stillOwed.id)?.xeroPaidDate, '');
 check('an unknown invoice costs no Xero call', asked, ['inv-published', 'inv-owed']);
 
-// A payment reversed in Xero puts the document back, and a repeated event for
-// an unchanged invoice changes nothing.
+// A payment reversed in Xero puts the document back.
 statuses.set('inv-published', 'AUTHORISED');
+paidOn.delete('inv-published');
+payments.delete('inv-published');
 check('third delivery accepted', (await post(body, sign(body))).status, 200);
 await flushXeroWebhooks();
-check('un-paying in Xero un-pays the document', getBillById('cybm', published.id)?.paid, false);
+check('un-paying in Xero un-pays the status', getBillById('cybm', published.id)?.xeroStatus, 'AUTHORISED');
+check('...and clears the paid date', getBillById('cybm', published.id)?.xeroPaidDate, '');
+check('...and the reference', getBillById('cybm', published.id)?.xeroPaymentRef, '');
+
+// A voided bill is not "unpaid" - it is voided, and the document says so
+// rather than sitting there looking like it is still awaiting payment.
+statuses.set('inv-published', 'VOIDED');
+check('fourth delivery accepted', (await post(body, sign(body))).status, 200);
+await flushXeroWebhooks();
+check('a voided bill is recorded as voided', getBillById('cybm', published.id)?.xeroStatus, 'VOIDED');
+statuses.set('inv-published', 'AUTHORISED');
+await post(body, sign(body));
+await flushXeroWebhooks();
 
 // Only INVOICE events are ours; a CONTACT event in the same batch is ignored.
 const mixed = payloadFor([{ ...invoiceEvent('inv-published'), eventCategory: 'CONTACT' }]);
 check('a non-invoice event is accepted', (await post(mixed, sign(mixed))).status, 200);
 await flushXeroWebhooks();
-check('...and read nothing', asked, ['inv-published', 'inv-owed', 'inv-published']);
+check('...and read nothing', asked, ['inv-published', 'inv-owed', 'inv-published', 'inv-published', 'inv-published']);
 
 // A CREATE is the echo of our own publish — the only thing it could tell us is
 // what we just wrote — so it is dropped before the read-back too.
+const readsSoFar = [...asked];
 statuses.set('inv-published', 'PAID');
 const created = payloadFor([{ ...invoiceEvent('inv-published'), eventType: 'Create' }]);
 check('a create event is accepted', (await post(created, sign(created))).status, 200);
 await flushXeroWebhooks();
-check('...and reads nothing', asked, ['inv-published', 'inv-owed', 'inv-published']);
-check('...and leaves the document alone', getBillById('cybm', published.id)?.paid, false);
+check('...and reads nothing', asked, readsSoFar);
+check('...and leaves the document alone', getBillById('cybm', published.id)?.xeroStatus, 'AUTHORISED');
 
 // The same invoice, this time as an update, still gets through.
 check('an update after it is accepted', (await post(body, sign(body))).status, 200);
 await flushXeroWebhooks();
-check('...and is read back', asked, ['inv-published', 'inv-owed', 'inv-published', 'inv-published']);
-check('...and marks it paid', getBillById('cybm', published.id)?.paid, true);
+check('...and is read back', asked, [...readsSoFar, 'inv-published']);
+check('...and records it as paid', getBillById('cybm', published.id)?.xeroStatus, 'PAID');
 
 globalThis.fetch = realFetch;
 server.close();

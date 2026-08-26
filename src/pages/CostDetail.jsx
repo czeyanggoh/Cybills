@@ -50,6 +50,8 @@ import { useGstRegistered } from '@/lib/businessProfile';
 import { useAutoSave } from '@/lib/useAutoSave';
 import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
 import { xeroBillUrl } from '@/lib/autoPublish';
+import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
+import { formatDate } from '@/lib/date';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -1309,7 +1311,11 @@ export default function CostDetail() {
               title={`Open this bill in ${doc.xeroTenantName || 'Xero'}`}
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700 transition-colors hover:bg-green-600/20"
             >
-              View in {doc.xeroTenantName || 'Xero'}
+              {/* Not "View in <entity>": a name like "CY Business Management
+                  Pte. Ltd." made one button as wide as three and pushed the
+                  rest of the toolbar onto another row. The entity is already
+                  named in the header and in this button's own tooltip. */}
+              Open in Xero
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
           ) : (
@@ -1655,6 +1661,12 @@ export default function CostDetail() {
               )}
 
               <SectionHeading>Payment</SectionHeading>
+              {/* The reviewer's own flag, in Dext's sense: "this was already
+                  settled when it was captured, so publish it as paid". It is
+                  NOT what Xero reports about the bill afterwards — that is the
+                  read-only "In Xero" block below, and conflating the two would
+                  let a webhook overwrite somebody's setting with a different
+                  question's answer. */}
               <Field label="Paid">
                 <button type="button" onClick={() => set('paid', !data.paid)} className="flex items-center gap-2 pt-1">
                   <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', data.paid ? 'justify-end bg-foreground' : 'justify-start border')}>
@@ -1677,6 +1689,47 @@ export default function CostDetail() {
                   Add payment method
                 </button>
               </Field>
+
+              {/* What the ledger says has happened since this document was
+                  published. Read-only, and absent until Xero has told us
+                  something: it arrives on the bill's invoice webhook, so an
+                  unpublished document has no such block at all. */}
+              {doc.xeroInvoiceId && (
+                <>
+                  <SectionHeading>In Xero</SectionHeading>
+                  <Field label="Paid status">
+                    {(() => {
+                      const status = xeroPaidStatus(doc);
+                      if (!status) {
+                        return (
+                          <p className="pt-1 text-sm text-muted-foreground">
+                            Nothing heard yet — Xero reports this when the bill is approved, paid or changed.
+                          </p>
+                        );
+                      }
+                      return (
+                        <p className="pt-1 text-sm">
+                          <span
+                            className={cn(
+                              status.tone === 'paid' && 'font-medium text-green-700',
+                              status.tone === 'void' && 'text-muted-foreground line-through',
+                              status.tone === 'awaiting' && 'text-muted-foreground'
+                            )}
+                          >
+                            {status.label}
+                          </span>
+                          {doc.xeroPaidDate && (
+                            <span className="text-muted-foreground"> on {formatDate(doc.xeroPaidDate)}</span>
+                          )}
+                        </p>
+                      );
+                    })()}
+                  </Field>
+                  <Field label="Payment reference">
+                    <p className="pt-1 text-sm text-muted-foreground">{doc.xeroPaymentRef || '—'}</p>
+                  </Field>
+                </>
+              )}
 
               <SectionHeading>Line items</SectionHeading>
               <LineItemsGrid {...lineGrid} />

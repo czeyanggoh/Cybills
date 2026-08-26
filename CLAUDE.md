@@ -430,10 +430,31 @@ an invoice CHANGED, never what changed or what it changed to: there is no "paid"
 event and no PAYMENT category at all, and the payload carries just the invoice's
 id. So every event ends in a read-back (`server/src/xeroWebhook.ts`): match
 `resourceId` against a document's `xeroInvoiceId`, ask Xero what that invoice is
-now (`fetchXeroInvoice`), and record `PAID` as paid, `DRAFT`/`SUBMITTED`/
-`AUTHORISED` as not — `Status`, not `AmountDue`, because a PARTLY paid bill is
-not a paid one. `VOIDED`/`DELETED` are left alone; unpicking a voided publish is
-its own decision.
+now (`fetchXeroInvoice`), and record what it says.
+
+**Xero's answer is not the Paid toggle.** They are two questions and only one of
+them is Xero's. `paid` is the reviewer's own flag in DEXT's sense — "this was
+already settled when it was captured, so publish it as paid" — defaulted per
+document type in Extraction settings and written by supplier rules. What the
+webhook records is the ledger's answer about the bill AFTER it was published:
+`xeroStatus` / `xeroPaidDate` / `xeroPaymentRef`, written only by
+`markBillXeroPayment` (never through `updateBill`, whose `EDITABLE` list is the
+surface a PERSON may change) and never edited in the app. Folding the second
+into the first would overwrite somebody's setting with a different question's
+answer, so a document can legitimately show an unticked Paid toggle and a Paid
+status, or the reverse.
+
+Stored as Xero words it — PAID, AUTHORISED, VOIDED — rather than reduced to a
+boolean, because "not paid" covers a bill awaiting payment and a bill that was
+voided, and a reviewer needs those told apart. `Status`, not `AmountDue`: Xero
+calls a bill PAID only when nothing is left on it, so a PARTLY paid one stays
+AUTHORISED. The wording lives in one pure module (`src/lib/xeroPaidStatus.js`,
+tested by `npm test` at the root) because the Costs list and the document page
+both read it; a status nobody has heard yet is shown as a dash, never guessed.
+It surfaces as the **Paid status** column — ON by default, since a published
+bill being settled is what the reviewer is waiting to see — a **Payment
+reference** column beside it, and a read-only **In Xero** block on the document
+page. The `paid` toggle keeps its own opt-in column.
 
 Matching locally comes FIRST, and only an **UPDATE** is read at all. The webhook
 is configured per Xero **app**, so it fires for every invoice in every client

@@ -94,6 +94,16 @@ export type Bill = {
   xeroTenantId?: string;
   xeroTenantName?: string;
   xeroPostedAt?: string; // ISO timestamp
+  // What XERO says has happened to the published bill since, read back when its
+  // invoice webhook fires (xeroWebhook.ts). Deliberately NOT `paid`: that one is
+  // the reviewer's own flag, meaning "this was already settled when it was
+  // captured, so publish it as paid" — Dext's sense, defaulted per document type
+  // in Extraction settings and written by supplier rules. These three are the
+  // ledger's answer, they are never edited here, and they are absent until the
+  // bill has been published and something has touched it in Xero.
+  xeroStatus?: string; // Xero's own Status: PAID | AUTHORISED | VOIDED | …
+  xeroPaidDate?: string; // FullyPaidOnDate, ISO YYYY-MM-DD; only ever set on PAID
+  xeroPaymentRef?: string; // the payment's own Reference in Xero, joined if several
 };
 
 // What the caller knows about an incoming upload before it is stored.
@@ -751,6 +761,35 @@ export function markBillPosted(
   if (bill.status !== 'deleted') bill.status = 'archived';
   persist(bills);
   return bill;
+}
+
+// Record what Xero last said about a published bill: its status, the date it
+// was fully paid, and the reference on the payment(s) behind that. Its own
+// writer rather than a patch through updateBill, for the same reason
+// markBillPosted is: EDITABLE is the surface a PERSON may change, and none of
+// these are that — they are Xero's answer, mirrored.
+//
+// Writes only when something actually differs. A bill can draw several webhook
+// events in a burst (approve, attach, pay), and persisting rewrites the whole
+// store, so an event that tells us nothing new must not cost a write.
+export function markBillXeroPayment(
+  orgId: string,
+  id: string,
+  info: { xeroStatus: string; xeroPaidDate: string; xeroPaymentRef: string }
+): boolean {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return false;
+  const same =
+    (bill.xeroStatus ?? '') === info.xeroStatus &&
+    (bill.xeroPaidDate ?? '') === info.xeroPaidDate &&
+    (bill.xeroPaymentRef ?? '') === info.xeroPaymentRef;
+  if (same) return false;
+  bill.xeroStatus = info.xeroStatus;
+  bill.xeroPaidDate = info.xeroPaidDate;
+  bill.xeroPaymentRef = info.xeroPaymentRef;
+  persist(bills);
+  return true;
 }
 
 // Mark cost documents as sitting on an expense claim. Same finishing move as a

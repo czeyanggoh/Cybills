@@ -310,6 +310,12 @@ export function billToDoc(b) {
     xeroInvoiceId: b.xeroInvoiceId || '',
     xeroTenantName: b.xeroTenantName || '',
     xeroPostedAt: b.xeroPostedAt || '',
+    // What Xero says about the published bill, read back on its invoice
+    // webhook. Read-only here, and nothing to do with `paid` above — see
+    // src/lib/xeroPaidStatus.js for why those are two different questions.
+    xeroStatus: b.xeroStatus || '',
+    xeroPaidDate: b.xeroPaidDate || '',
+    xeroPaymentRef: b.xeroPaymentRef || '',
   };
 }
 

@@ -51,6 +51,7 @@ import { formatDate } from '@/lib/date';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
 import ExtractionProgress from '@/components/ExtractionProgress';
 import { xeroBillUrl } from '@/lib/autoPublish';
+import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
@@ -675,7 +676,31 @@ export default function Costs() {
     itemId: { cellClass: 'whitespace-nowrap font-mono text-xs text-muted-foreground', cell: (d) => itemNumber(d) },
     type: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.type || '—' },
     dueDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.dueDate ? formatDate(d.dueDate) : '—') },
+    // Two different questions, two columns. `paid` is the capture flag the
+    // reviewer sets (Dext's sense); `xeroPaid` is what the ledger reports back.
     paid: { sortable: false, cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => (d.paid ? 'Paid' : 'Not paid') },
+    xeroPaid: {
+      sortable: false,
+      cellClass: 'whitespace-nowrap',
+      cell: (d) => {
+        const status = xeroPaidStatus(d);
+        // A dash, not "Not paid": nobody has asked Xero about this document —
+        // it was never published, or nothing has happened to it since.
+        if (!status) return <span className="text-muted-foreground">—</span>;
+        const tone =
+          status.tone === 'paid'
+            ? 'text-green-700'
+            : status.tone === 'void'
+              ? 'text-muted-foreground line-through'
+              : 'text-muted-foreground';
+        return (
+          <span className={tone} title={d.xeroPaidDate ? `Paid in Xero on ${formatDate(d.xeroPaidDate)}` : undefined}>
+            {status.label}
+          </span>
+        );
+      },
+    },
+    paymentRef: { sortable: false, cellClass: 'max-w-[14rem] truncate text-muted-foreground', cell: (d) => d.xeroPaymentRef || '—' },
     paymentMethod: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.paymentMethod || '—' },
     customer: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.customer || '—' },
     project: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.project || '—' },

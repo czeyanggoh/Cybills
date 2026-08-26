@@ -35,6 +35,12 @@ export const COST_COLUMNS = [
   { key: 'itemId', label: 'Item ID' },
   { key: 'type', label: 'Type' },
   { key: 'dueDate', label: 'Due date' },
+  // Xero's answer, on by default: a published bill being settled is the thing
+  // the reviewer is waiting to see, and it used to be invisible unless somebody
+  // knew to switch a column on. `paid` below stays opt-in — it is the capture
+  // flag, not the ledger (src/lib/xeroPaidStatus.js).
+  { key: 'xeroPaid', label: 'Paid status', primary: true },
+  { key: 'paymentRef', label: 'Payment reference' },
   { key: 'paid', label: 'Paid' },
   { key: 'paymentMethod', label: 'Payment method' },
   { key: 'customer', label: 'Customer' },

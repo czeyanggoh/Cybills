@@ -2,10 +2,19 @@ import { Router } from 'express';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from './env.js';
 import { fetchXeroInvoice } from './xero.js';
-import { billsByXeroInvoiceId, updateBill, type Bill } from './store.js';
+import { billsByXeroInvoiceId, markBillXeroPayment } from './store.js';
 
 // Xero webhooks, inbound. The other direction from xero.ts: this is Xero
 // telling CYBills that something it published has changed.
+//
+// What it writes is the document's XERO PAYMENT fields — `xeroStatus`,
+// `xeroPaidDate`, `xeroPaymentRef` — and deliberately not `paid`. They answer
+// two different questions and only one of them is Xero's: `paid` is the
+// reviewer's capture-time flag in Dext's sense ("this was already settled, so
+// publish it as paid"), defaulted per document type in Extraction settings and
+// written by supplier rules; the ledger's own answer is a fact about the bill
+// AFTER it was published. Folding the second into the first would overwrite a
+// person's setting with a different question's answer.
 //
 // What Xero sends is deliberately thin — an INVOICE event carries the invoice's
 // id and nothing else, not what changed and not what it changed TO. There is no
@@ -59,20 +68,38 @@ export function verifyXeroSignature(raw: Buffer, signature: string): boolean {
   return timingSafeEqual(expected, given);
 }
 
-// What an invoice's Xero status means for the document's Paid field.
-//   PAID       — settled in full. (Xero uses one status for it whether the money
-//                arrived as a payment, a credit note, or a prepayment applied.)
-//   DRAFT / SUBMITTED / AUTHORISED — still owed, in full or in part. A partly
-//                paid bill is not a paid one, which is why AmountDue isn't
-//                consulted: Xero only calls it PAID when nothing is left.
-//   VOIDED / DELETED — the bill isn't money any more. Neither true nor false
-//                says anything useful, so whatever a person set here is left
-//                alone; unpicking a voided publish is its own decision.
-function paidFromStatus(status: string): boolean | null {
-  const s = String(status ?? '').trim().toUpperCase();
-  if (s === 'PAID') return true;
-  if (s === 'DRAFT' || s === 'SUBMITTED' || s === 'AUTHORISED') return false;
-  return null;
+// What Xero says about this invoice, in the three fields the document keeps.
+// Recorded as Xero words it — PAID, AUTHORISED, VOIDED — rather than reduced to
+// a boolean here: "not paid" covers a bill awaiting payment and a bill that was
+// voided, and a reviewer looking at the paperwork needs those told apart. The
+// UI does the wording (src/lib/xeroPaidStatus.js).
+//
+// `Status`, not `AmountDue`: Xero only calls a bill PAID when nothing is left
+// on it, so a PARTLY paid bill correctly stays AUTHORISED here.
+function paymentFromInvoice(invoice: Record<string, any>): {
+  xeroStatus: string;
+  xeroPaidDate: string;
+  xeroPaymentRef: string;
+} {
+  // Payments carry the reference somebody typed when the money was recorded —
+  // a cheque number, a transfer id, "PayNow 26 Aug". Several can settle one
+  // bill (a part payment, then the rest), so they're joined; blank ones and
+  // repeats are dropped rather than printed as empty commas.
+  const payments = Array.isArray(invoice?.Payments) ? invoice.Payments : [];
+  const refs: string[] = [];
+  for (const p of payments) {
+    const ref = String(p?.Reference ?? '').trim();
+    if (ref && !refs.includes(ref)) refs.push(ref);
+  }
+  // Xero's dates come as YYYY-MM-DDT00:00:00 (or /Date(…)/ on some endpoints);
+  // the day is all that's meaningful for a payment date.
+  const fullyPaid = String(invoice?.FullyPaidOnDate ?? '').trim();
+  const day = /^(\d{4}-\d{2}-\d{2})/.exec(fullyPaid);
+  return {
+    xeroStatus: String(invoice?.Status ?? '').trim().toUpperCase(),
+    xeroPaidDate: day ? day[1] : '',
+    xeroPaymentRef: refs.join(', '),
+  };
 }
 
 // Apply a batch of webhook events to the documents they name. Exported (and
@@ -118,12 +145,11 @@ export async function applyInvoiceEvents(
     const invoice = await fetchXeroInvoice(tenantId, invoiceId);
     if (!invoice) continue;
 
-    const paid = paidFromStatus(String(invoice.Status ?? ''));
-    if (paid === null) continue;
+    const payment = paymentFromInvoice(invoice);
+    if (!payment.xeroStatus) continue;
 
     for (const bill of bills) {
-      if (Boolean(bill.paid) === paid) continue;
-      if (updateBill(bill.orgId, bill.id, { paid } as Partial<Bill>)) changed += 1;
+      if (markBillXeroPayment(bill.orgId, bill.id, payment)) changed += 1;
     }
   }
   return { matched, changed };
