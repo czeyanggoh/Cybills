@@ -137,6 +137,21 @@ check('a non-invoice event is accepted', (await post(mixed, sign(mixed))).status
 await flushXeroWebhooks();
 check('...and read nothing', asked, ['inv-published', 'inv-owed', 'inv-published']);
 
+// A CREATE is the echo of our own publish — the only thing it could tell us is
+// what we just wrote — so it is dropped before the read-back too.
+statuses.set('inv-published', 'PAID');
+const created = payloadFor([{ ...invoiceEvent('inv-published'), eventType: 'Create' }]);
+check('a create event is accepted', (await post(created, sign(created))).status, 200);
+await flushXeroWebhooks();
+check('...and reads nothing', asked, ['inv-published', 'inv-owed', 'inv-published']);
+check('...and leaves the document alone', getBillById('cybm', published.id)?.paid, false);
+
+// The same invoice, this time as an update, still gets through.
+check('an update after it is accepted', (await post(body, sign(body))).status, 200);
+await flushXeroWebhooks();
+check('...and is read back', asked, ['inv-published', 'inv-owed', 'inv-published', 'inv-published']);
+check('...and marks it paid', getBillById('cybm', published.id)?.paid, true);
+
 globalThis.fetch = realFetch;
 server.close();
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');

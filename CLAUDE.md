@@ -435,10 +435,14 @@ now (`fetchXeroInvoice`), and record `PAID` as paid, `DRAFT`/`SUBMITTED`/
 not a paid one. `VOIDED`/`DELETED` are left alone; unpicking a voided publish is
 its own decision.
 
-Matching locally comes FIRST. The webhook is configured per Xero **app**, so it
-fires for every invoice in every client cyworkspace has connected — the whole
-client list, sales invoices included — and an event naming an invoice CYBills
-never published must not cost a relay call.
+Matching locally comes FIRST, and only an **UPDATE** is read at all. The webhook
+is configured per Xero **app**, so it fires for every invoice in every client
+cyworkspace has connected — the whole client list, sales invoices included — and
+an event naming an invoice CYBills never published must not cost a relay call.
+A CREATE naming one it DID publish is the echo of that publish a second earlier,
+so reading it back can only confirm what was just written. The read-back is the
+only thing here that spends Xero's rate limit (60/min, 5,000/day per tenant per
+app); the deliveries themselves are free.
 
 Three of Xero's own rules shape the route, which is why it looks unlike every
 other one here: the signature covers the **raw** body, so it is mounted with

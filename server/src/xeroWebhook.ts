@@ -79,6 +79,13 @@ export async function applyInvoiceEvents(
   const wanted = new Map<string, string>(); // invoiceId -> tenantId from the event
   for (const ev of events ?? []) {
     if (String(ev?.eventCategory ?? '').toUpperCase() !== 'INVOICE') continue;
+    // UPDATE only. A CREATE naming an invoice we hold can only be the echo of
+    // our own publish a second earlier — nothing is ever paid in the same
+    // breath as it is posted — so reading it back can only confirm what we
+    // just wrote. A CREATE naming anything else is another app's or a person's
+    // invoice, which we drop at the match anyway. Either way the read is
+    // wasted, and a read is the only thing here that spends Xero's rate limit.
+    if (String(ev?.eventType ?? '').toUpperCase() !== 'UPDATE') continue;
     const id = String(ev?.resourceId ?? '').trim();
     if (!id) continue;
     wanted.set(id, String(ev?.tenantId ?? '').trim());
