@@ -258,6 +258,20 @@ export async function approveUser(id) {
 // The people an admin has already added to this company who have never signed
 // in — so somebody joining can say "that's me" instead of typing their name a
 // second time and becoming a second row. Names and roles only.
+// The companies somebody joining can pick from. Not the entity list: that is
+// served only to people who are on a roster, and somebody joining is by
+// definition not yet.
+export async function fetchJoinCompanies() {
+  try {
+    const res = await fetch('/api/users/join/companies');
+    if (!res.ok) return [];
+    const body = await res.json();
+    return Array.isArray(body.companies) ? body.companies : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchJoinPeople(orgId) {
   if (!orgId) return [];
   try {

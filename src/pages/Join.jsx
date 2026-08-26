@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { CheckCircle2, Clock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { useOrganisations } from '@/lib/organisations';
-import { joinCompany, fetchJoinPeople } from '@/lib/userStore';
+import { joinCompany, fetchJoinPeople, fetchJoinCompanies } from '@/lib/userStore';
 
 // Self-signup asks for a simple role — an employee who submits, or an
 // admin/approver who reviews. The (CY) admin can fine-tune the exact role
@@ -31,7 +30,14 @@ const inputCls =
 // but collects only what a billing app needs — no NRIC / bank / payroll data.
 export default function Join() {
   const { user, membership, signOut, refresh } = useAuth();
-  const { data: organisations = [] } = useOrganisations();
+  // Names only, from the join endpoint: the entity list proper is served to
+  // people who are on a roster, and somebody joining is not yet.
+  const [organisations, setOrganisations] = useState([]);
+  useEffect(() => {
+    let live = true;
+    fetchJoinCompanies().then((list) => { if (live) setOrganisations(list); });
+    return () => { live = false; };
+  }, []);
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');

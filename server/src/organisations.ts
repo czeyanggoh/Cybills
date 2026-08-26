@@ -1,8 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { Router } from 'express';
-import { env } from './env.js';
+import { Router, type Request, type Response } from 'express';
+import { env, googleEnabled } from './env.js';
 import { readSession } from './auth.js';
 import { WORKSPACE_ID, workspaceId } from './workspace.js';
 // Who may open which client entity is a fact about the roster, so it is decided
@@ -123,6 +123,21 @@ export function dataScopeForOrg(requestedOrgId: string): string {
 
 export const organisationsRouter = Router();
 
+// Linking a client entity is the PRACTICE's job. A client's own admin runs
+// their staff and their books; they do not add companies to the firm's list —
+// and the picker that does it is a list of every Xero organisation CYBM has
+// connected, which is the firm's client list. Mock/dev (no auth) stays open.
+function requirePracticeTeam(req: Request, res: Response): boolean {
+  if (!googleEnabled) return true;
+  const me = memberForSession(req);
+  if (me?.practice && !me.deactivated) return true;
+  res.status(403).json({
+    error: 'not_practice_team',
+    message: 'Only the practice team can add or remove client entities.',
+  });
+  return false;
+}
+
 // GET /api/organisations — the linked organisations the CALLER may open, A→Z.
 // A client entity's own staff see only their entity; a practice colleague sees
 // the clients they've been given access to. Flags the primary org so the client
@@ -135,6 +150,14 @@ organisationsRouter.get('/', (req, res) => {
   const primary = primaryOrgId();
   const ws = workspaceId(req);
   let me = memberForSession(req);
+  // Somebody signed in who is on nobody's roster is a member of NOTHING — a
+  // person mid-signup, or one whose Google address isn't the one an admin
+  // entered. The access predicate answers "true" for a caller it can't place
+  // (so that sessionless mock/dev behaves as it always has), and that read as
+  // "every client" here: the whole client list, names and all, to anyone who
+  // could sign in. They get an empty list and the app sends them to /join,
+  // which is where they actually belong.
+  if (googleEnabled && readSession(req) && !me) return res.json({ organisations: [] });
   // Repair the entities created before creating one granted its creator access
   // (see grantClientAccess): they exist, they belong to this person, and they
   // are invisible to them. Re-read the row when anything changed, so THIS
@@ -168,6 +191,7 @@ organisationsRouter.get('/', (req, res) => {
 // Body: { name?, tenantId, tenantName }. The tenant comes from the picker
 // backed by GET /api/xero/tenants, so tenantId is a relay-resolvable UUID.
 organisationsRouter.post('/', (req, res) => {
+  if (!requirePracticeTeam(req, res)) return;
   const b = req.body ?? {};
   const tenantId = String(b.tenantId ?? '').trim();
   const tenantName = String(b.tenantName ?? '').trim();
@@ -249,6 +273,7 @@ organisationsRouter.post('/', (req, res) => {
 // DELETE /api/organisations/:id — unlink. Does not touch cyworkspace or Xero;
 // it only removes CYBills' pointer to the tenant.
 organisationsRouter.delete('/:id', (req, res) => {
+  if (!requirePracticeTeam(req, res)) return;
   const orgId = workspaceId(req);
   const organisations = load();
   const idx = organisations.findIndex((o) => o.orgId === orgId && o.id === req.params.id);

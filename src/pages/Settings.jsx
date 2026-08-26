@@ -26,6 +26,8 @@ import { useAutoSave } from '@/lib/useAutoSave';
 import SaveStatus from '@/components/SaveStatus';
 import {
   useOrganisations,
+  useActiveOrganisation,
+  isStandaloneOrg,
   fetchXeroProfile,
   getActiveOrganisationId,
   useVisibleTaxRates,
@@ -673,12 +675,16 @@ function Placeholder({ label }) {
 
 const TITLES = Object.fromEntries(NAV.flatMap((s) => s.items).map((i) => [i.key, i.label]));
 
-// Business settings → Connections. Accounting software is the live one (CYBills
-// posts to Xero through the cyworkspace relay); Back up and Cost connections are
-// shown for parity with Dext but not yet wired.
+// Business settings → Connections. Xero is the only accounting software CYBills
+// speaks to (through the cyworkspace relay), and the page says so about THIS
+// entity — a bridge entity reaches Xero through the entity it publishes into,
+// which is a different answer from "connected" and from "not connected".
 function Connections() {
-  const { data: organisations = [] } = useOrganisations();
-  const linked = organisations.filter((o) => o.tenantId || o.tenantName);
+  const organisation = useActiveOrganisation();
+  const bridge = isStandaloneOrg(organisation);
+  const parentName = organisation?.parentName || '';
+  const tenantName = organisation?.tenantName || '';
+  const status = tenantName ? 'Connected' : bridge ? 'Indirect' : 'Not connected';
 
   return (
     <div className="space-y-5">
@@ -686,43 +692,42 @@ function Connections() {
         <div className="rounded-lg border p-5">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="font-medium">Connect and manage software for bookkeeping</p>
+              <p className="font-medium">Publish bookkeeping to Xero</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Retrieve data from your accounting software and publish transactions directly to it.
+                {bridge
+                  ? 'Expense claims raised here are published into the Xero of the entity below. There is no chart of accounts to read on this side — that is what makes it a bridge.'
+                  : `CYBills reads ${organisation?.name || 'this entity'}'s chart, tax rates and contacts from Xero, and publishes bills and expense claims back to it.`}
               </p>
             </div>
-            <a
-              href="#"
-              onClick={(e) => e.preventDefault()}
-              className="pointer-events-none inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium text-muted-foreground"
-            >
-              {linked.length ? 'Connected' : 'Connect'}
-            </a>
+            <span className="inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium text-muted-foreground">
+              {status}
+            </span>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            {/* Xero is the only supported provider today; the rest are shown greyed for parity. */}
+            {/* Xero and nothing else. The greyed-out QuickBooks / Sage / "+22
+                more" that used to sit here were Dext's list, not ours — names of
+                software CYBills has never spoken to, offered as though they were
+                a click away. */}
             <span className="inline-flex h-8 items-center rounded-md border border-foreground/30 bg-muted px-3 text-sm font-medium">
               Xero
             </span>
-            {['QuickBooks', 'Sage', 'KashFlow', 'FreeAgent'].map((p) => (
-              <span key={p} className="inline-flex h-8 items-center rounded-md border px-3 text-sm text-muted-foreground/60">
-                {p}
-              </span>
-            ))}
-            <span className="inline-flex h-8 items-center rounded-md bg-muted px-3 text-xs text-muted-foreground">+22 more</span>
           </div>
-          {linked.length > 0 ? (
+          {tenantName ? (
             <p className="mt-4 text-sm text-muted-foreground">
-              Linked to Xero:{' '}
-              <span className="font-medium text-foreground">
-                {linked.map((o) => o.tenantName || o.name).join(', ')}
-              </span>
-              .
+              Linked to <span className="font-medium text-foreground">{tenantName}</span> in Xero.
+            </p>
+          ) : bridge ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">{organisation.name}</span> keeps no books of
+              its own — it is <span className="font-medium text-foreground">indirectly linked</span> through{' '}
+              <span className="font-medium text-foreground">{parentName || 'the entity it publishes into'}</span>,
+              whose Xero receives the expense claims raised here. Its categories map to that entity&apos;s
+              accounts in <span className="font-medium text-foreground">Lists → Categories</span>.
             </p>
           ) : (
             <p className="mt-4 text-sm text-muted-foreground">
-              Only Xero is available right now. Link a Xero organisation from the workspace menu
-              (top-left) to publish bills through the relay.
+              Not linked yet. Add a Xero organisation from the entity menu (top-left) to publish
+              through the relay.
             </p>
           )}
         </div>

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { env, xeroEnabled } from './env.js';
+import { env, googleEnabled, xeroEnabled } from './env.js';
 import { dataScopeForOrg, getOrganisation, isStandalone, publishTargetFor } from './organisations.js';
 import { workspaceId } from './workspace.js';
 import { readSetting } from './settings.js';
@@ -7,6 +7,7 @@ import { referenceFor, dateFor } from './claimRef.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
+import { memberForSession } from './users.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -248,7 +249,16 @@ xeroRouter.get('/status', (_req, res) => {
 
 // GET /api/xero/tenants — Xero organisations connected in cyworkspace, for the
 // add-organisation picker.
-xeroRouter.get('/tenants', async (_req, res) => {
+xeroRouter.get('/tenants', async (req, res) => {
+  // Every Xero organisation the practice has connected — which is the firm's
+  // client list. A client's own admin has no business reading it, and had no
+  // reason to: linking an entity is the practice's job. Asked BEFORE whether
+  // the relay is configured, so the answer is "not yours" rather than a hint
+  // about the deployment.
+  const me = memberForSession(req);
+  if (googleEnabled && !(me?.practice && !me.deactivated)) {
+    return res.status(403).json({ error: 'not_practice_team' });
+  }
   if (notConfigured(res)) return;
   try {
     const tenants = await listTenants();

@@ -1156,6 +1156,20 @@ usersRouter.get('/join/people', (req, res) => {
   res.json({ people });
 });
 
+// GET /api/users/join/companies — the companies somebody joining can pick from.
+//
+// Names only, and it exists because the entity list itself is no longer served
+// to a caller who is on nobody's roster (see GET /api/organisations): a person
+// mid-signup has to choose their company, and that is a different question from
+// "which clients may you open".
+usersRouter.get('/join/companies', (req, res) => {
+  if (googleEnabled && !readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
+  const ws = workspaceId(req);
+  res.json({
+    companies: listOrganisations(ws).map((o) => ({ id: o.id, name: o.name })),
+  });
+});
+
 // POST /api/users/join — self-signup onboarding. The signed-in user submits
 // their details and the company (organisation) they belong to; they become a
 // pending roster member until an admin approves. Idempotent: re-joining updates

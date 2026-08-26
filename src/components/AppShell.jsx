@@ -143,6 +143,13 @@ function SidebarLink({ to, label, icon: Icon, showLabel = true }) {
 // "Add organisation" entry point.
 function OrganisationSwitcher() {
   const { data: organisations = [], isFetching } = useOrganisations();
+  const { membership, googleEnabled } = useAuth();
+  // Adding and removing client entities is the PRACTICE's job. A client's own
+  // admin switches between the entities they've been given and nothing more —
+  // and the Xero picker behind "Add organisation" is a list of every client the
+  // firm has connected, which is not theirs to read. The server refuses either
+  // way; this stops the door being shown at all.
+  const canManageEntities = isPracticeTeam(membership, googleEnabled);
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -248,7 +255,10 @@ function OrganisationSwitcher() {
                     setOpen(false);
                     setRemoveTarget(o);
                   }}
-                  className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-colors hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                  className={cn(
+                    'shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-colors hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100',
+                    !canManageEntities && 'hidden',
+                  )}
                   aria-label={`Remove ${o.name}`}
                   title="Remove organisation"
                 >
@@ -256,19 +266,21 @@ function OrganisationSwitcher() {
                 </button>
               </div>
             ))}
-            <div className="mt-1 border-t pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setAddOpen(true);
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-              >
-                <Plus className="h-4 w-4 text-muted-foreground" strokeWidth={2} />
-                Add organisation
-              </button>
-            </div>
+            {canManageEntities && (
+              <div className="mt-1 border-t pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    setAddOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                >
+                  <Plus className="h-4 w-4 text-muted-foreground" strokeWidth={2} />
+                  Add organisation
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}
