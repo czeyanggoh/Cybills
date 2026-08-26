@@ -2,10 +2,11 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID, randomBytes, createHash, scryptSync, timingSafeEqual } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId } from './workspace.js';
-import { getOrganisation, primaryOrgId, listOrganisations } from './organisations.js';
+import { getOrganisation, primaryOrgId, listOrganisations, dataScopeForOrg } from './organisations.js';
 import { setSession, readSession } from './auth.js';
-import { env } from './env.js';
+import { env, googleEnabled } from './env.js';
 import { sendMail, inviteEmail, passwordResetEmail, passwordChangedEmail } from './mailer.js';
+import { reassignPerson } from './store.js';
 
 // Password login (non-Google), so staff on Google Workspace accounts that Google
 // blocks can still sign in. Passwords are salted + scrypt-hashed (Node built-in,
@@ -147,7 +148,7 @@ export function publicUser(u: User) {
   // stores as its owner), not a mailbox anyone can write to — so the roster
   // reports it as having none, and the UI treats it accordingly: nothing to
   // invite, nothing to reset.
-  const email = u.general ? '' : rest.email;
+  const email = u.general || isInternalAddress(rest.email) ? '' : rest.email;
   return { ...rest, email, hasPassword: Boolean(passwordHash) };
 }
 
@@ -308,6 +309,33 @@ export const GENERAL_USER_NAME = 'General';
 // construction), on a domain that doesn't resolve, and the UI shows the row as
 // having no email at all.
 const generalEmailFor = (orgId: string) => `${orgId}.general@cybills.local`;
+
+// The same trick, for a person who has no mailbox.
+//
+// Plenty of people on a client's roster are never going to sign in — the ST
+// Engineering staff claiming through a bridge entity are the case that forced
+// this. A document's owner is always an EMAIL, and the directory that resolves
+// owners skips anyone without one, so a person added with a blank address
+// existed on the roster and could own nothing: they never appeared in the
+// Document owner picker, and no claim could be made out to them.
+//
+// So they get an identity instead of a mailbox: derived from their name, on a
+// domain that doesn't resolve, hidden by publicUser and never written to.
+const INTERNAL_DOMAIN = '@cybills.local';
+export const isInternalAddress = (email: string) => norm(email).endsWith(INTERNAL_DOMAIN);
+
+function internalEmailFor(orgId: string, name: string, taken: Set<string>): string {
+  const slug = norm(name).replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'person';
+  const base = `${slug}.${orgId || 'workspace'}`;
+  let candidate = `${base}${INTERNAL_DOMAIN}`;
+  let n = 1;
+  while (taken.has(candidate)) {
+    n += 1;
+    candidate = `${base}.${n}${INTERNAL_DOMAIN}`;
+  }
+  taken.add(candidate);
+  return candidate;
+}
 
 const isGeneralRow = (u: User, ws: string, org: string) =>
   u.workspaceId === ws && !u.removed && u.general && inOrg(u, org);
@@ -823,6 +851,17 @@ export function grantClientAccess(ws: string, emailNorm: string, orgId: string):
   return true;
 }
 
+// Is this the entity's general account rather than a person? The general
+// account exists to OWN what nobody claimed — a company's own paperwork. Money
+// cannot be paid back to it, so a claim made out to it is a claim payable to
+// nobody.
+export function isGeneralPerson(ws: string, org: string, value: string): boolean {
+  const want = norm(value);
+  if (!want) return false;
+  if (want === norm(GENERAL_USER_NAME)) return true;
+  return ensure(ws).some((u) => isGeneralRow(u, ws, org) && (norm(u.name) === want || norm(u.email) === want));
+}
+
 export function memberForSession(req: Request): User | null {
   const s = readSession(req);
   if (!s?.email) return null;
@@ -942,7 +981,9 @@ export async function sendInvites(
   const invites: InviteResult[] = [];
   const inviter = memberForSession(req)?.name || readSession(req)?.name;
   for (const nu of created) {
-    if (!nu.email) continue;
+    // No mailbox to invite: the general account, and anybody added without an
+    // address (their identity is internal — see internalEmailFor).
+    if (!nu.email || isInternalAddress(nu.email)) continue;
     const raw = issueToken(nu, 'invite');
     nu.invitedAt = new Date().toISOString();
     const link = resetUrl(req, raw);
@@ -1031,6 +1072,42 @@ usersRouter.get('/me', (req, res) => {
   });
 });
 
+// GET /api/users/join/people?orgId= — the people an admin has already added to
+// this company who have never signed in.
+//
+// The admin types somebody's name and role when they add them; asking that
+// person to type it all again on the join form invites a second, differently
+// spelled row for the same human — and the documents they already own stay on
+// the first one. So the join form offers the admin's list instead: pick
+// yourself, and your request attaches to the row that already exists.
+//
+// Names and roles only. It is readable by anyone signed in (a person joining is
+// by definition not yet a member), so it must not leak addresses or say
+// anything about people who can already sign in.
+usersRouter.get('/join/people', (req, res) => {
+  // Mock/dev has no sessions at all, and stays open like every other route.
+  if (googleEnabled && !readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
+  const ws = workspaceId(req);
+  const org = String(req.query.orgId ?? '').trim();
+  if (!org || !getOrganisation(ws, org)) return res.json({ people: [] });
+  const people = ensure(ws)
+    .filter(
+      (u) =>
+        u.workspaceId === ws &&
+        !u.removed &&
+        !u.deactivated &&
+        !u.general &&
+        !u.practice &&
+        (u.organisationId || '') === org &&
+        // Never anybody with a real address: that is somebody else's identity,
+        // and claiming it is how you would sign in as them.
+        isInternalAddress(u.email)
+    )
+    .map((u) => ({ id: u.id, name: u.name, role: u.role }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ people });
+});
+
 // POST /api/users/join — self-signup onboarding. The signed-in user submits
 // their details and the company (organisation) they belong to; they become a
 // pending roster member until an admin approves. Idempotent: re-joining updates
@@ -1058,6 +1135,40 @@ usersRouter.post('/join', (req, res) => {
     companyName: String(b.companyName || '').trim(),
     role: String(b.role || 'Standard'),
   };
+  // Claiming the row an admin already made for them (see GET /join/people).
+  // Their name and role are the ADMIN's — that is what the documents this
+  // person already owns are filed under, and re-typing it is how the same human
+  // ends up on the roster twice.
+  const claimId = String(b.claimId || '').trim();
+  const claimed = claimId
+    ? items.find(
+        (u) =>
+          u.workspaceId === ws &&
+          u.id === claimId &&
+          !u.removed &&
+          !u.general &&
+          !u.practice &&
+          isInternalAddress(u.email)
+      )
+    : null;
+  if (claimed) {
+    const previousIdentity = claimed.email;
+    // A stray row from an earlier attempt is the same person; one email must
+    // resolve to exactly one row, so it steps aside rather than becoming a twin.
+    for (const u of items) {
+      if (u.workspaceId === ws && u.id !== claimed.id && !u.removed && norm(u.email) === email) u.removed = true;
+    }
+    claimed.email = session.email;
+    claimed.pending = true;
+    claimed.login = 'No';
+    claimed.deactivated = false;
+    if (fields.mobile) claimed.mobile = fields.mobile;
+    save(items);
+    // The documents they already own move with them.
+    const moved = reassignPerson(dataScopeForOrg(claimed.organisationId || ''), previousIdentity, claimed.email);
+    return res.json({ status: 'pending', user: publicUser(claimed), documentsMoved: moved });
+  }
+
   let user = items.find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === email);
   if (user) {
     if (!user.pending && user.login === 'Yes' && !user.deactivated) {
@@ -1116,10 +1227,25 @@ usersRouter.post('/', async (req, res) => {
         continue;
       }
     }
+    // Somebody added without an email still has to be a person the app can
+    // name: they own documents and claims are made out to them. They get an
+    // internal identity rather than a blank, and no login — there is no address
+    // to sign in with.
+    const displayName = (String(u.name || '') || `${u.firstName || ''} ${u.lastName || ''}`).trim();
+    const identity = email || internalEmailFor(org, displayName, new Set(items.map((x) => norm(x.email))));
     // Stamped with the selected organisation — an admin adds people to the
     // entity they are currently working in.
     const newUser = full(
-      { ...u, id: undefined, general: false, organisationId: org, companyId: u.companyId || org, companyName: u.companyName || orgLabel },
+      {
+        ...u,
+        id: undefined,
+        email: identity,
+        login: email ? u.login : 'No',
+        general: false,
+        organisationId: org,
+        companyId: u.companyId || org,
+        companyName: u.companyName || orgLabel,
+      },
       ws
     );
     items.unshift(newUser);

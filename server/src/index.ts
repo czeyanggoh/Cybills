@@ -71,6 +71,12 @@ app.use((req, res, next) => {
 // behaves exactly as before.
 app.use((req, res, next) => {
   if (!googleEnabled || !req.path.startsWith('/api/')) return next();
+  // Two endpoints answer "who am I / let me in", and neither is about the
+  // entity in the header. Self-signup names the company it is joining in its
+  // BODY, and the browser is still carrying whichever entity it last had open —
+  // so the one request that exists to MAKE somebody a member was refused for
+  // not already being one, and the join form could only say "please try again".
+  if (req.path.startsWith('/api/users/join') || req.path === '/api/users/me') return next();
   const requested = (req.header('X-Org-Id') || '').trim();
   if (!requested) return next();
   const me = memberForSession(req);

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole } from './users.js';
+import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
 import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed, parseAmount } from './store.js';
 
@@ -549,6 +549,19 @@ claimsRouter.post('/:id/submit', (req, res) =>
           `${incomplete.length} item${incomplete.length === 1 ? '' : 's'} on this claim ${incomplete.length === 1 ? 'is' : 'are'} incomplete — ` +
           `${incomplete[0].t.supplier || 'one'} needs ${incomplete[0].missing.join(', ')}. ` +
           'Fill those in before asking somebody to approve the claim.',
+      });
+    }
+    // A claim is money paid back to a PERSON. The general account is what owns
+    // the documents nobody claimed — the company's own paperwork — so a claim
+    // made out to it has nobody to reimburse and nobody whose manager could
+    // approve it. Most often it means the documents were uploaded by a
+    // colleague from outside the entity and never attributed to anyone.
+    if (isGeneralPerson(workspaceId(req), claim.orgId, claim.claimFor)) {
+      return res.status(422).json({
+        error: 'claim_for_general',
+        message:
+          'This claim is made out to the general account, which is not a person — there is nobody to pay it back to. ' +
+          'Set "Claim for" to whoever paid, adding them under Users first if they are not on the roster yet.',
       });
     }
     const manager = directManagerFor(workspaceId(req), claim.claimFor);

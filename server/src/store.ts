@@ -606,6 +606,32 @@ export function insertBill(input: BillInput): Bill {
   return bill;
 }
 
+// Move every document from one identity to another, inside one book.
+//
+// Somebody added to a roster without an email owns documents under an internal
+// identity (users.ts, internalEmailFor). The day they sign in for the first
+// time and claim that row, the identity becomes their real address — and the
+// documents already theirs have to come with it, or their name silently drops
+// off work they did. Returns how many moved.
+export function reassignPerson(orgId: string, from: string, to: string): number {
+  const a = String(from ?? '').trim().toLowerCase();
+  const b = String(to ?? '').trim();
+  if (!a || !b || a === b.toLowerCase()) return 0;
+  const bills = load();
+  let moved = 0;
+  for (const bill of bills) {
+    if (bill.orgId !== orgId) continue;
+    let touched = false;
+    if (String(bill.owner ?? '').trim().toLowerCase() === a) { bill.owner = b; touched = true; }
+    // The uploader is history and normally never rewritten — but this is the
+    // same person under a new address, not a different one.
+    if (String(bill.createdBy ?? '').trim().toLowerCase() === a) { bill.createdBy = b; touched = true; }
+    if (touched) moved += 1;
+  }
+  if (moved) persist(bills);
+  return moved;
+}
+
 // Re-evaluate a bill's ready/inbox status from its current fields, after a
 // field edit. Persists if it changed. Returns the bill (or null if not found).
 export function reconcileReadiness(orgId: string, id: string): Bill | null {

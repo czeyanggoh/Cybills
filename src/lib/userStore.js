@@ -255,13 +255,36 @@ export async function approveUser(id) {
 
 // Self-signup: the signed-in user submits their details + chosen company. They
 // become a pending member until an admin approves. Returns { status, user }.
+// The people an admin has already added to this company who have never signed
+// in — so somebody joining can say "that's me" instead of typing their name a
+// second time and becoming a second row. Names and roles only.
+export async function fetchJoinPeople(orgId) {
+  if (!orgId) return [];
+  try {
+    const res = await fetch(`/api/users/join/people?orgId=${encodeURIComponent(orgId)}`);
+    if (!res.ok) return [];
+    const body = await res.json();
+    return Array.isArray(body.people) ? body.people : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function joinCompany(payload) {
+  // No X-Org-Id: the company being joined is in the body, and the header would
+  // be whichever entity this browser last had open — which the caller, by
+  // definition, is not yet a member of.
   const res = await fetch('/api/users/join', {
     method: 'POST',
-    headers: { ...orgHeaders(), 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload ?? {}),
   });
-  if (!res.ok) throw new Error(`join failed (${res.status})`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.message || body.error || `join failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
   await refreshPeople();
   return res.json();
 }
