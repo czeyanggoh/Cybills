@@ -485,7 +485,15 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                 {userMenu && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setUserMenu(false)} aria-hidden="true" />
-                    <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                    <div className="absolute right-0 z-20 mt-2 w-64 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                      {/* Which account this actually is. The name alone can't
+                          answer it — a Google profile and a CYBills roster row
+                          can read the same, and signing in as somebody else
+                          then looks exactly like not having switched at all. */}
+                      <div className="border-b px-3 pb-2 pt-1.5">
+                        <p className="truncate text-sm font-medium">{displayUser?.name || 'Account'}</p>
+                        <p className="truncate text-xs text-muted-foreground">{user?.email || displayUser?.email || 'Not signed in'}</p>
+                      </div>
                       <button
                         type="button"
                         onClick={() => { setUserMenu(false); navigate('/profile'); }}

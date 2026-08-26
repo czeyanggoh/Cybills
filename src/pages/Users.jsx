@@ -306,6 +306,23 @@ export default function Users() {
                       Default owner
                     </span>
                   )}
+                  {/* Adding somebody CREATES their row — that is what lets them
+                      own documents and be claimed for before they ever sign in.
+                      Without saying so, a person who has never been through the
+                      invitation reads as an active user, and the admin is left
+                      wondering how they got here. */}
+                  {!u.general && u.login === 'Yes' && u.lastLogin === '—' && (
+                    <span
+                      className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                      title={
+                        u.invitedAt
+                          ? 'Invited, but has never signed in. Invitation links are one-time and expire — use Resend invitation if theirs no longer works. They can also sign in with Google using this address.'
+                          : 'Has login access but has never signed in. Send them an invitation, or they can sign in with Google using this address.'
+                      }
+                    >
+                      {u.invitedAt ? 'Invited' : 'Never signed in'}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-3 text-muted-foreground">{u.email || '—'}</td>
                 <td className="px-3 py-3 text-muted-foreground">{u.companyName || workspaceCompany || '—'}</td>
