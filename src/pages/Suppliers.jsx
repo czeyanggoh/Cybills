@@ -14,7 +14,7 @@ import { noTaxRateName } from '@/lib/extractionSettings';
 import { useCostsDocs } from '@/lib/costsData';
 import { updateBill } from '@/lib/bills';
 import { CURRENCIES, clearSupplierRule, getSupplierRule, setSupplierRule, supplierRulePatch, supplierRuleCount, useSupplierRules } from '@/lib/supplierRules';
-import { removedSupplierSet, removedSuppliers, removeSuppliers, restoreSuppliers, useSupplierList } from '@/lib/supplierList';
+import { removedSupplierSet, removedSuppliers, removeSuppliers, restoreSuppliers, useSupplierList, mergeSupplierNames, supplierNamesFromDocs } from '@/lib/supplierList';
 import { namesMergedAway, planSupplierMerge } from '@/lib/supplierMerge';
 import { cn } from '@/lib/utils';
 
@@ -74,7 +74,7 @@ export default function Suppliers() {
   const [note, setNote] = useState('');
   const categoryOptions = useCategoryOptions();
   // Suppliers + customers come from the active org's (CYBM) live Xero contacts.
-  const supplierNames = useXeroSuppliers();
+  const xeroSupplierNames = useXeroSuppliers();
   const customerOptions = useXeroCustomers();
   const projectOptions = useXeroProjectOptions(0);
   const paymentMethods = useXeroPaymentMethods();
@@ -94,6 +94,11 @@ export default function Suppliers() {
     const k = String(d.supplier || '').trim().toLowerCase();
     if (k) counts[k] = (counts[k] || 0) + 1;
   }
+  // The list is the Xero contacts PLUS the merchants this entity's documents
+  // name. Without the second half a bridge entity's Suppliers page was empty
+  // while its inbox was full of Grab receipts — and no supplier rule could be
+  // written for any of them.
+  const supplierNames = mergeSupplierNames(xeroSupplierNames, supplierNamesFromDocs(allDocs || []));
   const q = query.trim().toLowerCase();
   const removed = removedSupplierSet();
   const rows = supplierNames

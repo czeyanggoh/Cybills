@@ -112,3 +112,32 @@ export function useSupplierList() {
   }, []);
   return v;
 }
+
+// Every supplier this entity can name, A→Z.
+//
+// The Xero contact list is only half of it — and for a bridge entity it is none
+// of it, since there is no Xero to ask. The other half is the merchants its own
+// documents already name: Grab, a food court, a carpark. Those are exactly the
+// "suppliers" the people claiming here deal with, and they are never contacts
+// in anybody's ledger, because the bill that eventually posts is payable to the
+// CLAIMANT, not to the merchant.
+//
+// Case-insensitive, first spelling wins, and anything removed from the list
+// stays removed however it got here.
+export function mergeSupplierNames(fromXero, fromDocuments) {
+  const seen = new Set();
+  const out = [];
+  for (const name of [...(fromXero || []), ...(fromDocuments || [])]) {
+    const clean = String(name || '').trim();
+    const key = clean.toLowerCase();
+    if (!clean || seen.has(key)) continue;
+    seen.add(key);
+    out.push(clean);
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+// The supplier names appearing on a set of documents.
+export function supplierNamesFromDocs(docs) {
+  return mergeSupplierNames([], (docs || []).map((d) => d?.supplier));
+}

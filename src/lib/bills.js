@@ -1,6 +1,8 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
 import { nameForEmail } from '@/lib/userStore';
-import { getActiveOrganisationId, getExtractionTaxRates, getExtractionProjects, getExtractionCategories } from '@/lib/organisations';
+import { useState, useEffect } from 'react';
+import { getActiveOrganisationId, ORGANISATION_EVENT, getExtractionTaxRates, getExtractionProjects, getExtractionCategories } from '@/lib/organisations';
+import { supplierNamesFromDocs } from '@/lib/supplierList';
 import { isGstRegistered } from '@/lib/businessProfile';
 import { fetchReviewInstructions } from '@/lib/reviewInstructions';
 import { requestedProvider } from '@/lib/readerProvider';
@@ -403,6 +405,33 @@ export async function fetchShareLinks(ids) {
   } catch {
     return {};
   }
+}
+
+// The suppliers this entity's own documents name, for the pickers. Kept here
+// rather than in each page because two of them ask (the document's Supplier
+// field and the Suppliers list) and a bridge entity has no Xero contacts to
+// fall back on. Never throws: an unreachable server yields no options, and the
+// field stays free text.
+export function useDocumentSuppliers() {
+  const [names, setNames] = useState([]);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetchBills()
+        .then((bills) => {
+          if (live) setNames(supplierNamesFromDocs(bills.filter((b) => b.kind !== 'sales')));
+        })
+        .catch(() => {});
+    load();
+    window.addEventListener(BILLS_CHANGED_EVENT, load);
+    window.addEventListener(ORGANISATION_EVENT, load);
+    return () => {
+      live = false;
+      window.removeEventListener(BILLS_CHANGED_EVENT, load);
+      window.removeEventListener(ORGANISATION_EVENT, load);
+    };
+  }, []);
+  return names;
 }
 
 // Whether a bill has a stored file (+ its type), resolved globally by id — works

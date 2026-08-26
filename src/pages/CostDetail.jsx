@@ -24,12 +24,13 @@ import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
+import { mergeSupplierNames } from '@/lib/supplierList';
 import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -217,7 +218,10 @@ export default function CostDetail() {
   const catMode = useCategoryDisplayMode();
   // Projects come from the active org's live Xero tracking category (managed in
   // Lists → Projects); fall back to the bundled seed only when Xero isn't linked.
-  const supplierOptions = useXeroSuppliers();
+  // Xero contacts AND the merchants this entity's own documents already name.
+  // A bridge entity has no Xero to ask, so without the second half its Supplier
+  // field offered nothing at all and every name had to be typed.
+  const supplierOptions = mergeSupplierNames(useXeroSuppliers(), useDocumentSuppliers());
   const xeroProjects = useXeroProjectOptions();
   const seedProjects = useProjectOptions();
   const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;
