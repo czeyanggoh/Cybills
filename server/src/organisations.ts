@@ -9,7 +9,7 @@ import { WORKSPACE_ID, workspaceId } from './workspace.js';
 // in users.ts next to the rows it reads. (users.ts imports this module back for
 // the org lookups — neither one calls the other while loading, so the cycle is
 // inert.)
-import { memberForSession, canAccessOrg, canManagePractice, ensureGeneralUser } from './users.js';
+import { memberForSession, canAccessOrg, canManagePractice, ensureGeneralUser, grantClientAccess } from './users.js';
 
 // Organisations = the client entities bills are published for. Each one is
 // linked to a Xero organisation (tenant) that cyworkspace holds a connection
@@ -133,9 +133,22 @@ export const organisationsRouter = Router();
 // which is not the same as being able to work in all of them.
 organisationsRouter.get('/', (req, res) => {
   const primary = primaryOrgId();
-  const me = memberForSession(req);
+  const ws = workspaceId(req);
+  let me = memberForSession(req);
+  // Repair the entities created before creating one granted its creator access
+  // (see grantClientAccess): they exist, they belong to this person, and they
+  // are invisible to them. Re-read the row when anything changed, so THIS
+  // response already includes them rather than the next one.
+  if (me?.email && !me.allClients) {
+    const mine = String(me.email).trim().toLowerCase();
+    const repaired = listOrganisations(ws)
+      .filter((o) => String(o.createdBy || '').trim().toLowerCase() === mine)
+      .map((o) => grantClientAccess(ws, mine, o.id))
+      .some(Boolean);
+    if (repaired) me = memberForSession(req) ?? me;
+  }
   const wantsAll = req.query.all === '1' && (!me || canManagePractice(me));
-  const organisations = listOrganisations(workspaceId(req))
+  const organisations = listOrganisations(ws)
     .filter((o) => wantsAll || canAccessOrg(me, o.id))
     .map((o) => ({ ...o, isPrimary: o.id === primary }));
   res.json({ organisations });
@@ -204,6 +217,11 @@ organisationsRouter.post('/', (req, res) => {
   };
   organisations.push(organisation);
   persist(organisations);
+  // Client access is an explicit list, so a brand-new entity is in nobody's —
+  // including the list of the person who just created it. Without this the
+  // dialog closes on a successful create and the switcher shows nothing new,
+  // which is indistinguishable from the create having failed.
+  if (me?.email) grantClientAccess(orgId, String(me.email).trim().toLowerCase(), organisation.id);
   // A linked client entity starts with one user: its general account, which
   // owns everything nobody claimed — every document a practice colleague adds
   // here lands on it unless they name one of the client's own people. Created

@@ -142,7 +142,7 @@ function SidebarLink({ to, label, icon: Icon, showLabel = true }) {
 // it's the default destination when publishing to Xero), and hosts the
 // "Add organisation" entry point.
 function OrganisationSwitcher() {
-  const { data: organisations = [] } = useOrganisations();
+  const { data: organisations = [], isFetching } = useOrganisations();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -159,13 +159,18 @@ function OrganisationSwitcher() {
   // makes every consumer agree on the same org from the start.
   useEffect(() => {
     if (!organisations.length) return;
+    // A list being refetched cannot say what is on offer. Adding an entity
+    // selects it and refetches at the same moment, so judging the new selection
+    // against the OLD list found it missing and bounced straight back to the
+    // first entity A→Z — the new one looked as though it had never been created.
+    if (isFetching) return;
     // Also covers a selection that is no longer offered — an entity that was
     // unlinked, or one this user's client access no longer includes. Left
     // pinned, every request would carry an org header the server rejects.
     if (activeId && organisations.some((o) => o.id === activeId)) return;
     setActiveOrganisationId(organisations[0].id);
     setActiveId(organisations[0].id);
-  }, [activeId, organisations]);
+  }, [activeId, organisations, isFetching]);
 
   const select = (id) => {
     if (id === activeId) {

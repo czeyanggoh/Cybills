@@ -800,6 +800,29 @@ export function memberByEmail(ws: string, emailNorm: string): User | null {
   return matches.find((u) => u.practice) ?? matches[0];
 }
 
+// Let one person open one client entity.
+//
+// Client access is an explicit list, so an entity that did not exist when the
+// list was written is invisible to everyone but an allClients colleague — the
+// person who just CREATED it included. They add "Red Alpha - ST Engineering",
+// the dialog closes, and nothing appears in the switcher, with no error to
+// explain it. Whoever makes an entity can open it.
+//
+// Narrow on purpose: it grants exactly the one entity, only to a practice
+// colleague (a client employee belongs to their own entity and has no such
+// list), and no-ops for anyone who can already open it.
+export function grantClientAccess(ws: string, emailNorm: string, orgId: string): boolean {
+  if (!emailNorm || !orgId) return false;
+  const items = load();
+  const user = items.find((u) => u.workspaceId === ws && !u.removed && norm(u.email) === emailNorm && u.practice);
+  if (!user || user.allClients) return false;
+  const list = Array.isArray(user.clientAccess) ? user.clientAccess : [];
+  if (list.includes(orgId)) return false;
+  user.clientAccess = [...list, orgId];
+  save(items);
+  return true;
+}
+
 export function memberForSession(req: Request): User | null {
   const s = readSession(req);
   if (!s?.email) return null;
