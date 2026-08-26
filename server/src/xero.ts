@@ -3,6 +3,7 @@ import { env, xeroEnabled } from './env.js';
 import { dataScopeForOrg, getOrganisation, isStandalone, publishTargetFor } from './organisations.js';
 import { workspaceId } from './workspace.js';
 import { readSetting } from './settings.js';
+import { referenceFor } from './claimRef.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
@@ -1039,10 +1040,22 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     );
   };
   const tc = await firstTrackingCategory(target.tenantId);
+  // A bridge entity's claims carry NO TAX.
+  //
+  // It is not a company: it has no GST registration and no tax position, so
+  // there is no input tax for it to claim — and the entity whose ledger receives
+  // the bill is being handed a reimbursement, not a tax invoice of its own. So
+  // the line posts at the full amount with No Tax, which is what the practice
+  // has always booked by hand.
+  //
+  // The tax the claim recorded is not dropped, it is FOLDED IN: the unit amount
+  // becomes the whole figure rather than the net. The bill in Xero is worth
+  // exactly what the claim is worth, which is the only rule that can't bend.
+  const noTax = isStandalone(organisation);
   const lineItems = (claim.transactions ?? [])
     .map((t) => {
       const total = parseAmount(t.total);
-      const tax = parseAmount(t.tax);
+      const tax = noTax ? 0 : parseAmount(t.tax);
       const bill = getBillByIdAny(String(t.itemId));
       const line = {
         Description: describe(t),
@@ -1052,6 +1065,10 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
         UnitAmount: Math.max(0, total - tax),
         AccountCode: codeOf(t.category),
         TaxAmount: tax,
+        // Named explicitly rather than left to the account's default rate in
+        // Xero, which would put GST on a figure that has none and make the bill
+        // disagree with the claim.
+        ...(noTax ? { TaxType: 'NONE' } : {}),
         __total: total,
         __category: String(t.category ?? '').trim(),
       } as Record<string, unknown>;
@@ -1124,7 +1141,10 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     LineAmountTypes: 'Exclusive',
     LineItems: postable,
     Status: status,
-    Reference: claim.name || 'Expense claim',
+    // How the practice has always identified these bills: the claim's own name,
+    // its date and its Claim ID — "ST Eng Exp Claim 20-Aug-2026 21324972410".
+    // The name alone repeats every month and identifies nothing.
+    Reference: await referenceFor(claim),
   };
   if (claim.currency) payload.CurrencyCode = claim.currency;
 

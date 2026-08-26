@@ -138,6 +138,17 @@ check('…as three lines', r.posted.LineItems.length, 3);
 check('…each on the account its category maps to', r.posted.LineItems.map((l: any) => l.AccountCode), ['493', '420', '449']);
 check('…for the money the claim is worth', r.posted.LineItems.reduce((t: number, l: any) => t + l.UnitAmount + l.TaxAmount, 0), 42);
 check('…payable to the claimant', r.posted.Contact.Name, 'Wei Ming Tan');
+
+// What the practice has always booked by hand, and what the bill has to match:
+// No Tax, at the full amount. A bridge entity has no GST registration, so there
+// is no input tax to claim — and the tax the claim recorded is folded into the
+// cost rather than dropped, or the bill would be worth less than the claim.
+check('…every line is No Tax', r.posted.LineItems.map((l: any) => l.TaxType), ['NONE', 'NONE', 'NONE']);
+check('…with no tax amount on any of them', r.posted.LineItems.map((l: any) => l.TaxAmount), [0, 0, 0]);
+check('…the unit price being the whole figure', r.posted.LineItems.map((l: any) => l.UnitAmount), [24, 12, 6]);
+
+// The Reference identifies WHICH claim. The name alone repeats every month.
+check('…referenced by name, date and Claim ID', /^August claim 20-Aug-2026 \d+$/.test(String(r.posted.Reference)), true);
 check('the claim records the parent as where it went', r.body.claim.xeroTenantName, 'Red Alpha (SG)');
 
 // 3) Publishing the same claim again is still refused.

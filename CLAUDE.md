@@ -363,6 +363,16 @@ the message says to map it rather than to "use a coded category", which would
 send those people looking for a chart they don't have. `npm test` in `server/`
 posts a bridge claim end to end against a stubbed relay.
 
+**A bridge claim posts with NO TAX**, at the full amount. The entity has no GST
+registration and no tax position of its own, so there is no input tax to claim;
+the tax the claim recorded is folded into the cost rather than dropped, so the
+bill is worth exactly what the claim is worth. `TaxType: 'NONE'` is named
+explicitly — left to the account's default rate, Xero would put GST on a figure
+that has none. The bill's **Reference** is the claim's own name, date and Claim
+ID ("ST Eng Exp Claim 20-Aug-2026 21324972410"), built from the same pure module
+that prints that number on the claim page, the PDF and the CSV
+(`src/lib/claimReference.js`, loaded server-side by `claimRef.ts`).
+
 Still to do: a user who works in two entities (`extraAccess` on the roster row)
 — today access is per-entity equality, so a bridge user is a separate roster
 row. And privilege enforcement inside the entity is `docs/roles-enforcement.md`,
