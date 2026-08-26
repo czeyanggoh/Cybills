@@ -23,9 +23,16 @@ import { billsByXeroInvoiceId, updateBill, type Bill } from './store.js';
 //     a 500, a slow reply — counts as a failed delivery, and enough failures
 //     disable the webhook at Xero's end. So the reply goes out first and the
 //     Xero read-back happens after it, off the request.
-//   - The very first POST is an "intent to receive" validation carrying a
-//     deliberately WRONG signature, which we're expected to reject with 401.
-//     That falls out of the rule above rather than needing a case of its own.
+//   - Before any event is delivered, the subscription has to pass an "intent to
+//     receive" handshake: Xero POSTs an empty-events payload twice, once signed
+//     CORRECTLY (must be answered 2xx) and once signed WRONGLY (must be
+//     answered 401), and both have to be right or the subscription stays off.
+//     Verifying the signature and answering 200/401 on the result is the whole
+//     of it — which is why there is no special case for it here. It does mean
+//     the handshake cannot pass until XERO_WEBHOOK_KEY is set: without a key
+//     the correctly signed half is refused along with everything else.
+//   - Xero also requires that the response carry no cookies, which is another
+//     reason this route sits ahead of everything that might set one.
 
 export type XeroWebhookEvent = {
   resourceId?: string;
