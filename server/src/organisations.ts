@@ -21,11 +21,36 @@ export type Organisation = {
   id: string;
   orgId: string; // workspace scope (signed-in email domain — see bills.ts orgIdFor)
   name: string; // display name in CYBills (defaults to the Xero org name)
-  tenantId: string; // Xero tenant UUID, resolved by the cyworkspace relay
+  // Xero tenant UUID, resolved by the cyworkspace relay. EMPTY for a standalone
+  // entity — kept a required string rather than made optional so the dozens of
+  // `.tenantId` reads across xero.ts don't each need a null check; every one of
+  // them already guards on falsiness.
+  tenantId: string;
   tenantName: string; // Xero organisation name at link time (display only)
+  // An entity that is not a real company and has no books of its own: a bridge
+  // between the people who submit costs and the company whose ledger receives
+  // them. Absent (or '') reads as 'xero', so nothing needs migrating.
+  kind?: 'xero' | 'standalone';
+  // For a standalone entity, the linked entity whose Xero its claims post into.
+  parentOrgId?: string;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
 };
+
+export const isStandalone = (o: Organisation | null | undefined): boolean =>
+  o?.kind === 'standalone';
+
+// The entity whose Xero tenant actually receives this one's postings: itself
+// when it has a tenant, otherwise its parent. Null when there is nowhere to
+// post — no parent, a parent that has since been unlinked, or a parent that is
+// itself standalone (bridges never chain, or "where does this post?" stops
+// having one answer).
+export function publishTargetFor(ws: string, o: Organisation | null): Organisation | null {
+  if (!o) return null;
+  if (o.tenantId) return o;
+  const parent = o.parentOrgId ? getOrganisation(ws, o.parentOrgId) : null;
+  return parent && parent.tenantId ? parent : null;
+}
 
 // Same location strategy as the bills store: server/.data survives the
 // deploy's `git reset --hard`; BILLS_DATA_DIR overrides for both stores.
@@ -123,11 +148,33 @@ organisationsRouter.post('/', (req, res) => {
   const b = req.body ?? {};
   const tenantId = String(b.tenantId ?? '').trim();
   const tenantName = String(b.tenantName ?? '').trim();
-  if (!tenantId) return res.status(400).json({ error: 'tenant_required' });
-
+  const standalone = String(b.kind ?? '') === 'standalone';
+  const parentOrgId = String(b.parentOrgId ?? '').trim();
   const orgId = workspaceId(req);
   const organisations = load();
-  const dup = organisations.find((o) => o.orgId === orgId && o.tenantId === tenantId);
+
+  // A standalone entity has no Xero of its own, so it needs a name of its own
+  // (there is no tenant name to fall back on) and somewhere for its claims to
+  // go. A parent that is itself standalone is refused: bridges must not chain,
+  // or "where does this post?" stops having one answer.
+  if (standalone) {
+    if (!String(b.name ?? '').trim()) return res.status(400).json({ error: 'name_required' });
+    if (!parentOrgId) return res.status(400).json({ error: 'parent_required' });
+    const parent = organisations.find((o) => o.orgId === orgId && o.id === parentOrgId);
+    if (!parent) return res.status(400).json({ error: 'parent_not_found' });
+    if (!parent.tenantId) {
+      return res.status(400).json({
+        error: 'parent_not_connected',
+        message: `"${parent.name}" isn't connected to Xero, so it can't receive another entity's claims.`,
+      });
+    }
+  } else if (!tenantId) {
+    return res.status(400).json({ error: 'tenant_required' });
+  }
+
+  // Only meaningful for a Xero-linked entity: every standalone one stores '',
+  // so an unguarded check would 409 the SECOND one against the first.
+  const dup = tenantId ? organisations.find((o) => o.orgId === orgId && o.tenantId === tenantId) : null;
   if (dup) return res.status(409).json({ error: 'already_linked', organisation: dup });
 
   // Also block a second organisation with the same display name — the earlier
@@ -149,8 +196,9 @@ organisationsRouter.post('/', (req, res) => {
     id: `org_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`,
     orgId,
     name: desiredName,
-    tenantId,
-    tenantName,
+    tenantId: standalone ? '' : tenantId,
+    tenantName: standalone ? '' : tenantName,
+    ...(standalone ? { kind: 'standalone' as const, parentOrgId } : {}),
     createdAt: new Date().toISOString(),
     createdBy: me?.email ?? '',
   };

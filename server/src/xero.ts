@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { env, xeroEnabled } from './env.js';
-import { dataScopeForOrg, getOrganisation } from './organisations.js';
+import { dataScopeForOrg, getOrganisation, publishTargetFor } from './organisations.js';
 import { workspaceId } from './workspace.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
@@ -114,7 +114,40 @@ function requireOrganisation(req: any, res: any) {
     res.status(404).json({ error: 'organisation_not_found' });
     return null;
   }
+  // A standalone entity has no Xero of its own, so every route that reads a
+  // chart, a tax rate or a contact has nothing to serve. Say so once, here,
+  // rather than sending a request with no tenant_id and relaying back whatever
+  // shape the failure happens to take.
+  if (!organisation.tenantId) {
+    res.status(409).json({
+      error: 'no_xero_connection',
+      message: `"${organisation.name}" isn't connected to Xero, so it has no chart of accounts of its own.`,
+    });
+    return null;
+  }
   return organisation;
+}
+
+// Publishing is the one thing a standalone entity CAN do with Xero, because it
+// posts into its parent's. So it resolves its own target rather than going
+// through the gate above — the entity the document lives in, and the entity the
+// money lands in, are deliberately two different things here.
+function requirePublishTarget(req: any, res: any) {
+  const ws = workspaceId(req);
+  const organisation = getOrganisation(ws, req.params.id);
+  if (!organisation) {
+    res.status(404).json({ error: 'organisation_not_found' });
+    return null;
+  }
+  const target = publishTargetFor(ws, organisation);
+  if (!target) {
+    res.status(409).json({
+      error: 'no_publish_target',
+      message: `"${organisation.name}" has no Xero to post into. Set the entity it publishes into, and make sure that one is connected to Xero.`,
+    });
+    return null;
+  }
+  return { organisation, target };
 }
 
 // Which entity's book to read on a route that names the organisation in its
@@ -143,7 +176,10 @@ export type XeroAccountRef = { code: string; name: string; description: string; 
 export async function accountsForOrg(ws: string, orgId: string): Promise<XeroAccountRef[]> {
   if (!xeroEnabled || !orgId) return [];
   const organisation = getOrganisation(ws, orgId);
-  if (!organisation) return [];
+  // No organisation, or a standalone one with no Xero of its own. Explicit,
+  // because the relay would otherwise be called with no tenant_id and the
+  // failure swallowed — degrading by accident rather than on purpose.
+  if (!organisation?.tenantId) return [];
   try {
     const result = await relay('Accounts', { tenantId: organisation.tenantId, query: { where: 'Status=="ACTIVE"' } });
     if (!result.ok) return [];
@@ -167,7 +203,10 @@ export async function accountsForOrg(ws: string, orgId: string): Promise<XeroAcc
 export async function taxRatesForOrg(ws: string, orgId: string): Promise<Array<{ name: string; code: string; rate: number }>> {
   if (!xeroEnabled || !orgId) return [];
   const organisation = getOrganisation(ws, orgId);
-  if (!organisation) return [];
+  // No organisation, or a standalone one with no Xero of its own. Explicit,
+  // because the relay would otherwise be called with no tenant_id and the
+  // failure swallowed — degrading by accident rather than on purpose.
+  if (!organisation?.tenantId) return [];
   try {
     const result = await relay('TaxRates', { tenantId: organisation.tenantId });
     if (!result.ok) return [];
@@ -186,7 +225,10 @@ export async function taxRatesForOrg(ws: string, orgId: string): Promise<Array<{
 export async function projectOptionsForOrg(ws: string, orgId: string): Promise<string[]> {
   if (!xeroEnabled || !orgId) return [];
   const organisation = getOrganisation(ws, orgId);
-  if (!organisation) return [];
+  // No organisation, or a standalone one with no Xero of its own. Explicit,
+  // because the relay would otherwise be called with no tenant_id and the
+  // failure swallowed — degrading by accident rather than on purpose.
+  if (!organisation?.tenantId) return [];
   try {
     const tc = await firstTrackingCategory(organisation.tenantId);
     return tc ? [...tc.options] : [];

@@ -19,6 +19,22 @@ export const ORGANISATION_EVENT = 'cybills:organisation-changed';
 // Supplier bills post to expense-type accounts, so those drive categorisation.
 const isExpenseType = (t) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(String(t || '').toUpperCase());
 
+// Which entity a Xero-backed lookup should use.
+//
+// The explicit selection always wins. What changes is the FALLBACK: the list is
+// sorted A→Z, so "Red Alpha - ST Engineering" comes before "Red Alpha
+// Cybersecurity" — and a bridge entity has no chart, no tax rates and no
+// contacts. Without `xeroOnly` it would silently become the default source for
+// anyone who has never picked an entity, and their category dropdown would come
+// back empty for no visible reason.
+export function pickOrgId(organisations, active, { xeroOnly = false } = {}) {
+  const list = Array.isArray(organisations) ? organisations : [];
+  const chosen = list.find((o) => o.id === active);
+  if (chosen) return chosen.id;
+  const usable = xeroOnly ? list.filter((o) => o.tenantId) : list;
+  return usable[0]?.id || '';
+}
+
 export function getActiveOrganisationId() {
   try {
     return localStorage.getItem(ACTIVE_KEY) || '';
@@ -86,18 +102,24 @@ export function fetchXeroTenants() {
   return getJson('/api/xero/tenants').then((b) => b.tenants ?? []);
 }
 
-export async function createOrganisation({ name, tenantId, tenantName }) {
+// `kind: 'standalone'` creates an entity with no Xero of its own — a bridge
+// whose claims post into `parentOrgId`'s ledger instead.
+export async function createOrganisation({ name, tenantId, tenantName, kind, parentOrgId }) {
   const res = await fetch('/api/organisations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, tenantId, tenantName }),
+    body: JSON.stringify({ name, tenantId, tenantName, kind, parentOrgId }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const said = {
+      already_linked: `"${body.organisation?.name}" is already linked to that Xero organisation.`,
+      name_required: 'Give the entity a name.',
+      parent_required: 'Choose the entity whose Xero its claims should post into.',
+      parent_not_found: 'That entity no longer exists — pick another.',
+    }[body.error];
     const err = /** @type {any} */ (new Error(
-      body.error === 'already_linked'
-        ? `"${body.organisation?.name}" is already linked to that Xero organisation.`
-        : body.message || 'Could not add the organisation.'
+      said || body.message || 'Could not add the organisation.'
     ));
     err.code = body.error;
     throw err;
@@ -160,8 +182,7 @@ export function useXeroSuppliers() {
 // document dropdowns. Falls back to the first linked org.
 function useActiveOrgId() {
   const { data: organisations = [] } = useOrganisations();
-  const active = getActiveOrganisationId();
-  return organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  return pickOrgId(organisations, getActiveOrganisationId(), { xeroOnly: true });
 }
 
 // Customer-allocation options: the active org's Xero customer contacts, live via
@@ -244,7 +265,7 @@ export function useVisibleTaxRates() {
 export function useXeroPaymentMethods() {
   const { data: organisations = [] } = useOrganisations();
   const active = getActiveOrganisationId();
-  const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  const orgId = pickOrgId(organisations, active, { xeroOnly: true });
   const { data } = useQuery({
     queryKey: ['xero-payment-methods', orgId],
     queryFn: () => fetchXeroPaymentMethods(orgId),
@@ -330,8 +351,7 @@ export async function resolveCategorisationOrgId() {
   try {
     const orgs = (await getJson('/api/organisations')).organisations ?? [];
     if (!orgs.length) return '';
-    const active = getActiveOrganisationId();
-    return (orgs.find((o) => o.id === active) || orgs[0]).id;
+    return pickOrgId(orgs, getActiveOrganisationId(), { xeroOnly: true });
   } catch {
     return '';
   }
@@ -417,7 +437,7 @@ export async function getExtractionProjects() {
 export function useCategoryOptions() {
   const { data: organisations = [] } = useOrganisations();
   const active = getActiveOrganisationId();
-  const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  const orgId = pickOrgId(organisations, active, { xeroOnly: true });
   const { data } = useQuery({
     queryKey: ['xero-accounts', orgId],
     queryFn: () => fetchXeroAccounts(orgId),
@@ -450,7 +470,7 @@ export function useCategoryOptions() {
 export function useXeroBankAccounts() {
   const { data: organisations = [] } = useOrganisations();
   const active = getActiveOrganisationId();
-  const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+  const orgId = pickOrgId(organisations, active, { xeroOnly: true });
   const { data } = useQuery({
     queryKey: ['xero-accounts', orgId],
     queryFn: () => fetchXeroAccounts(orgId),

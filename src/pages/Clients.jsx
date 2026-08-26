@@ -68,7 +68,13 @@ export default function Clients() {
         <StatCard
           label="Connected clients"
           value={isLoading ? '—' : clients.length}
-          sub="Linked Xero organisations"
+          // Not every client is a Xero organisation any more: a bridge entity
+          // keeps no books of its own and posts into another entity's.
+          sub={
+            isLoading
+              ? 'Client entities'
+              : `${clients.filter((c) => c.tenantId).length} linked to Xero`
+          }
         />
         <StatCard
           label="AI API — today"
