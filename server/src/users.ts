@@ -117,6 +117,18 @@ export type User = {
   clientAccess: string[];
   // Access to every linked client, including ones added later.
   allClients: boolean;
+  // OTHER client entities this person also works in, each with the role they
+  // hold there.
+  //
+  // One person, one row: sign-in is by email, so a second row for the same
+  // address would be a second identity — and the documents they own, the claims
+  // made out to them and their manager would split between the two. So a person
+  // who works in more than one entity keeps their row and gains access here.
+  //
+  // A distinct field from `clientAccess` on purpose: that one belongs to the
+  // practice team and is WIPED from every non-practice row on load
+  // (assignPractice), so it could never carry this.
+  extraAccess?: Array<{ orgId: string; role: string }>;
   // The user's direct manager (another user's id) — the approver a claim is
   // auto-routed to when this person submits it for approval.
   managerId?: string;
@@ -191,6 +203,7 @@ export function full(u: Partial<User>, ws: string): User {
     practice: Boolean(u.practice),
     practiceRole: currentPracticeRole(u.practiceRole),
     clientAccess: Array.isArray(u.clientAccess) ? u.clientAccess.filter(Boolean) : [],
+    extraAccess: normaliseExtraAccess(u.extraAccess),
     allClients: Boolean(u.allClients),
     organisationId: u.organisationId || '',
     general: Boolean(u.general),
@@ -293,7 +306,28 @@ export function orgScope(req: Request): string {
   return defaultOrgFor(ws, me);
 }
 
-const inOrg = (u: User, org: string) => (u.organisationId || '') === org;
+// Whatever was stored, as a clean list. Junk reads as "no extra access" rather
+// than throwing: this is consulted on every request that names an entity.
+function normaliseExtraAccess(v: unknown): Array<{ orgId: string; role: string }> {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  const out: Array<{ orgId: string; role: string }> = [];
+  for (const raw of v) {
+    const orgId = String((raw as { orgId?: unknown })?.orgId ?? '').trim();
+    if (!orgId || seen.has(orgId)) continue;
+    seen.add(orgId);
+    out.push({ orgId, role: currentRole(String((raw as { role?: unknown })?.role ?? '')) });
+  }
+  return out;
+}
+
+const extraAccessFor = (u: User | null | undefined, org: string) =>
+  (Array.isArray(u?.extraAccess) ? u!.extraAccess : []).find((e) => e.orgId === org) ?? null;
+
+// The entity this person's row belongs to, OR any other they were given access
+// to. Everything that answers "who is in this entity" reads this: the roster,
+// the directory a document's owner is picked from, and the claimants.
+const inOrg = (u: User, org: string) => (u.organisationId || '') === org || Boolean(extraAccessFor(u, org));
 
 // --- The entity's general account --------------------------------------------
 // Every linked organisation gets one row that isn't a person: the account the
@@ -555,7 +589,7 @@ export function canAccessOrg(u: User | null | undefined, orgId: string): boolean
   if (!u) return true;
   if (!orgId) return true; // nothing linked yet — one implicit scope everyone shares
   if (u.practice) return Boolean(u.allClients) || (u.clientAccess || []).includes(orgId);
-  return (u.organisationId || '') === orgId;
+  return (u.organisationId || '') === orgId || Boolean(extraAccessFor(u, orgId));
 }
 
 // The entities this person may open, in the order the client should offer them.
@@ -581,7 +615,10 @@ function defaultOrgFor(ws: string, u: User | null | undefined): string {
 export function effectiveRoleFor(u: User | null | undefined, orgId: string): string {
   if (!u) return 'Business Admin';
   if (u.practice) return canAccessOrg(u, orgId) ? 'Business Admin' : 'Standard';
-  return currentRole(u.role);
+  // In a second entity they hold the role they were given THERE — an admin of
+  // their own company is not automatically an admin of somebody else's.
+  const extra = extraAccessFor(u, orgId);
+  return currentRole(extra ? extra.role : u.role);
 }
 
 // The caller's role in the entity they currently have selected.
@@ -910,7 +947,7 @@ function normalizeRoles(items: User[], ws: string): boolean {
   return changed;
 }
 
-const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'project', 'emailHandle'];
+const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'project', 'emailHandle', 'extraAccess'];
 
 // Who is on the practice team, what they may run, and which clients they may
 // open. Only whoever manages the practice may touch these — a client entity's
@@ -1031,7 +1068,18 @@ usersRouter.get('/', (req, res) => {
   res.json({
     users: ensure(ws)
       .filter((u) => u.workspaceId === ws && !u.removed && !u.practice && inOrg(u, org))
-      .map(publicUser),
+      // Somebody who works here as well as somewhere else holds the role they
+      // were given HERE, and their row says which entity they belong to — an
+      // admin of their own company is not an admin of this one, and the roster
+      // must not read as though they were.
+      .map((u) => ({
+        ...publicUser(u),
+        role: effectiveRoleFor(u, org),
+        homeOrgName:
+          (u.organisationId || '') === org
+            ? ''
+            : getOrganisation(ws, u.organisationId)?.name || u.companyName || '',
+      })),
   });
 });
 
@@ -1210,19 +1258,38 @@ usersRouter.post('/', async (req, res) => {
   const orgName = String(req.body?.orgName || '').trim();
   const message = String(req.body?.message || '').trim();
   const created: User[] = [];
-  const duplicates: Array<{ email: string; name: string; organisationName: string }> = [];
+  const duplicates: Array<{ email: string; name: string; organisationName: string; practice?: boolean }> = [];
+  // People who already existed and now also work here.
+  const linked: Array<{ email: string; name: string; role: string }> = [];
   for (const u of incoming) {
     const email = norm(String(u.email || ''));
     if (email) {
       // Checked across the whole account, not just this organisation: sign-in is
-      // by email, so one address must resolve to exactly one person. Report
-      // which organisation already has them so the admin knows where to look.
+      // by email, so one address must resolve to exactly one person.
       const dup = items.find((x) => x.workspaceId === ws && !x.removed && norm(x.email) === email);
       if (dup) {
+        // Somebody who already exists ELSEWHERE is not a duplicate — they are
+        // the same person, working in a second entity. Adding them here gives
+        // their existing row access to this one, with the role they were given
+        // here. A second row would be a second identity: their documents, their
+        // claims and their manager would split between the two.
+        const elsewhere = !dup.practice && !inOrg(dup, org) && org;
+        if (elsewhere) {
+          dup.extraAccess = [
+            ...(Array.isArray(dup.extraAccess) ? dup.extraAccess : []).filter((e) => e.orgId !== org),
+            { orgId: org, role: currentRole(String(u.role ?? '')) },
+          ];
+          linked.push({ email: dup.email, name: dup.name, role: effectiveRoleFor(dup, org) });
+          continue;
+        }
+        // A practice colleague reaches a client through client access, not
+        // through the client's own roster; and somebody already in THIS entity
+        // is simply already here.
         duplicates.push({
           email: dup.email,
           name: dup.name,
           organisationName: getOrganisation(ws, dup.organisationId)?.name || dup.companyName || '',
+          practice: Boolean(dup.practice),
         });
         continue;
       }
@@ -1253,7 +1320,7 @@ usersRouter.post('/', async (req, res) => {
   }
   const invites = notify ? await sendInvites(req, created, { orgName, message }) : [];
   save(items);
-  res.json({ users: created.map(publicUser), duplicates, invites });
+  res.json({ users: created.map(publicUser), duplicates, linked, invites });
 });
 
 // POST /api/users/login — non-Google sign-in with email + password. Issues the
@@ -1506,6 +1573,18 @@ usersRouter.patch('/:id', (req, res) => {
       me?.id || ''
     );
     if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
+    // A role set on somebody whose row lives in ANOTHER entity applies here and
+    // only here. Writing it to `role` would promote them in their own company
+    // from a page that is not their company's.
+    const org = orgScope(req);
+    const visiting = Boolean(org) && (user.organisationId || '') !== org && Boolean(extraAccessFor(user, org));
+    if (visiting && typeof filtered.role === 'string') {
+      const role = currentRole(filtered.role);
+      user.extraAccess = (Array.isArray(user.extraAccess) ? user.extraAccess : []).map((e) =>
+        e.orgId === org ? { ...e, role } : e
+      );
+      delete filtered.role;
+    }
     const from = user.organisationId;
     applyEditable(user, filtered, workspaceId(req));
     if (user.organisationId !== from) detachManagerLinks(items, user);

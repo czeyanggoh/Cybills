@@ -143,14 +143,29 @@ export default function Users() {
   // whether the invitation was emailed (or that mail isn't configured).
   const reportAdd = (r) => {
     const dups = r?.duplicates || [];
+    const linked = r?.linked || [];
     const invites = r?.invites || [];
+    // Somebody who already existed elsewhere now works here too: one person,
+    // one login, two entities. Say so plainly — "already a user, not added
+    // again" was the old answer and it was a refusal, not a result.
+    if (linked.length) {
+      const who = linked.map((l) => `${l.name || l.email}${l.role ? ` (${l.role})` : ''}`).join(', ');
+      showToast(`${who} now also works in this entity — they keep their existing login.`);
+      return;
+    }
     if (dups.length) {
       // One email = one person across the whole business (sign-in is by email),
       // so name the organisation that already has them rather than just refusing.
       const who = dups
         .map((d) => (d.organisationName ? `${d.email} (already in ${d.organisationName})` : d.email))
         .join(', ');
-      showToast(`Already a user: ${who} — not added again.`);
+      // A practice colleague is reached through client access, not through a
+      // client's own roster — pointing at the wrong page is worse than silence.
+      showToast(
+        dups.some((d) => d.practice)
+          ? `${who} is on the practice team — give them access to this client from Colleagues.`
+          : `Already a user: ${who} — not added again.`,
+      );
       return;
     }
     const sent = invites.filter((i) => i.sent);
@@ -311,6 +326,17 @@ export default function Users() {
                       Without saying so, a person who has never been through the
                       invitation reads as an active user, and the admin is left
                       wondering how they got here. */}
+                  {/* Their row lives in another entity — they work here too.
+                      One person, one login; the role shown is the one they hold
+                      HERE, which is often not the one they hold at home. */}
+                  {u.homeOrgName && (
+                    <span
+                      className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                      title={`Belongs to ${u.homeOrgName} and also works here. Their role here is set on this page; their role there is not.`}
+                    >
+                      Also in {u.homeOrgName}
+                    </span>
+                  )}
                   {!u.general && u.login === 'Yes' && u.lastLogin === '—' && (
                     <span
                       className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"

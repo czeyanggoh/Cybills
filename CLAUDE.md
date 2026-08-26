@@ -380,9 +380,19 @@ happened on or before that. Only a claim with nothing dated at all falls back to
 today, which is what every claim used to do: August's expenses landing in
 whichever month somebody pressed the button.
 
-Still to do: a user who works in two entities (`extraAccess` on the roster row)
-— today access is per-entity equality, so a bridge user is a separate roster
-row. And privilege enforcement inside the entity is `docs/roles-enforcement.md`,
+**One person can work in two entities.** Sign-in is by email, so a second roster
+row for the same address would be a second identity — their documents, their
+claims and their manager would split between the two, and only one could ever
+sign in. So adding somebody who already exists elsewhere GRANTS their existing
+row access here (`extraAccess: [{orgId, role}]` in `users.ts`, read by
+`canAccessOrg` / `effectiveRoleFor` / `inOrg`) rather than creating a row. The
+role is per entity — an admin of their own company is not an admin of somebody
+else's — and a role edited on this entity's roster writes to `extraAccess`, never
+to their own company's `role`. Deliberately NOT `clientAccess`, which belongs to
+the practice team and is wiped from every non-practice row on load. Covered by
+`npm test` in `server/`.
+
+Still to do: privilege enforcement inside the entity is `docs/roles-enforcement.md`,
 which is deliberately untouched here: until it lands, everyone in a bridge
 entity sees every document in it. Fine for testing, not for real ST Eng staff.
 
