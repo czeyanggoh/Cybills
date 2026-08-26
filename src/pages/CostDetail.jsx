@@ -24,7 +24,7 @@ import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
-import { mergeSupplierNames } from '@/lib/supplierList';
+import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
 import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
@@ -221,7 +221,10 @@ export default function CostDetail() {
   // Xero contacts AND the merchants this entity's own documents already name.
   // A bridge entity has no Xero to ask, so without the second half its Supplier
   // field offered nothing at all and every name had to be typed.
-  const supplierOptions = mergeSupplierNames(useXeroSuppliers(), useDocumentSuppliers());
+  const supplierOptions = mergeSupplierNames(useXeroSuppliers(), [
+    ...useDocumentSuppliers(),
+    ...addedSuppliers(),
+  ]);
   const xeroProjects = useXeroProjectOptions();
   const seedProjects = useProjectOptions();
   const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;

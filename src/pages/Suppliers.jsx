@@ -14,7 +14,7 @@ import { noTaxRateName } from '@/lib/extractionSettings';
 import { useCostsDocs } from '@/lib/costsData';
 import { updateBill } from '@/lib/bills';
 import { CURRENCIES, clearSupplierRule, getSupplierRule, setSupplierRule, supplierRulePatch, supplierRuleCount, useSupplierRules } from '@/lib/supplierRules';
-import { removedSupplierSet, removedSuppliers, removeSuppliers, restoreSuppliers, useSupplierList, mergeSupplierNames, supplierNamesFromDocs } from '@/lib/supplierList';
+import { removedSupplierSet, removedSuppliers, removeSuppliers, restoreSuppliers, useSupplierList, mergeSupplierNames, supplierNamesFromDocs, addedSuppliers } from '@/lib/supplierList';
 import { namesMergedAway, planSupplierMerge } from '@/lib/supplierMerge';
 import { cn } from '@/lib/utils';
 
@@ -98,7 +98,12 @@ export default function Suppliers() {
   // name. Without the second half a bridge entity's Suppliers page was empty
   // while its inbox was full of Grab receipts — and no supplier rule could be
   // written for any of them.
-  const supplierNames = mergeSupplierNames(xeroSupplierNames, supplierNamesFromDocs(allDocs || []));
+  const supplierNames = mergeSupplierNames(
+    xeroSupplierNames,
+    // Both the other ways a supplier gets here: named on a document, or brought
+    // in from a CSV (the only route that exists when there is no Xero to read).
+    [...supplierNamesFromDocs(allDocs || []), ...addedSuppliers()],
+  );
   const q = query.trim().toLowerCase();
   const removed = removedSupplierSet();
   const rows = supplierNames

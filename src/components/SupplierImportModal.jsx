@@ -1,12 +1,20 @@
 import { useRef, useState } from 'react';
 import { X, CheckCircle2 } from 'lucide-react';
 import { setSupplierRule } from '@/lib/supplierRules';
+import { addSuppliers } from '@/lib/supplierList';
 
 // Import a suppliers list from CSV, mirroring Dext's "CSV Upload" dialog. The
 // columns are Dext's: Code, Name, Currency code, Category code, Category name,
-// Tax code, Tax name. Suppliers themselves come from Xero, so this sets each
-// named supplier's standing defaults (its rule): currency, category (built as
-// "code - name", CYBills' convention), and tax rate. A blank cell is left alone.
+// Tax code, Tax name.
+//
+// Every named row JOINS THE LIST, and any defaults it carries become that
+// supplier's standing rule: currency, category (built as "code - name",
+// CYBills' convention), and tax rate. A blank cell is left alone.
+//
+// The list part matters most where there is no Xero to read contacts from — a
+// bridge entity's suppliers can only arrive this way, or one document at a
+// time. Importing used to set rules alone, so a file of 300 names could be
+// accepted in full and change nothing anybody could see.
 const EXAMPLE = [
   { code: '401HGL', name: 'Kevin', currency: 'GBP', catCode: '626000', catName: 'TELEPHONE', taxCode: 'VAT10', taxName: 'VAT (10%)' },
   { code: '401AMA', name: 'Bob', currency: 'USD', catCode: '626001', catName: 'MISC', taxCode: 'VAT15', taxName: 'VAT (15%)' },
@@ -92,16 +100,20 @@ export default function SupplierImportModal({ open, onClose, onImported }) {
       if (idx.name == null) { setError('The first row must be a header with a "Name" column. See the example above.'); return; }
       let applied = 0;
       let skipped = 0;
+      const names = [];
       for (const line of lines.slice(1)) {
         const cols = parseCsvLine(line);
         const name = (cols[idx.name] || '').trim();
+        // A row with no name is the only unusable one. A row with nothing but a
+        // name is a supplier — it just has no defaults yet.
         if (!name) { skipped += 1; continue; }
+        names.push(name);
         const patch = rowToPatch(cols, idx);
-        if (Object.keys(patch).length === 0) { skipped += 1; continue; }
-        setSupplierRule(name, patch);
+        if (Object.keys(patch).length) setSupplierRule(name, patch);
         applied += 1;
       }
-      setResult({ applied, skipped });
+      const added = addSuppliers(names);
+      setResult({ applied, skipped, added });
       onImported?.(applied);
     } catch {
       setError('Could not read that file. Make sure it is a CSV.');
@@ -123,9 +135,17 @@ export default function SupplierImportModal({ open, onClose, onImported }) {
           {result ? (
             <div className="flex flex-col items-center gap-3 py-10 text-center">
               <CheckCircle2 className="h-10 w-10" strokeWidth={1.5} />
-              <p className="text-sm font-medium">Set defaults for {result.applied} supplier{result.applied === 1 ? '' : 's'}.</p>
+              <p className="text-sm font-medium">
+                Imported {result.applied} supplier{result.applied === 1 ? '' : 's'}
+                {result.added > 0 ? ` — ${result.added} new to the list.` : '.'}
+              </p>
+              {result.applied > result.added && (
+                <p className="text-xs text-muted-foreground">
+                  The rest were already here; their defaults were updated.
+                </p>
+              )}
               {result.skipped > 0 && (
-                <p className="text-xs text-muted-foreground">{result.skipped} row{result.skipped === 1 ? '' : 's'} skipped (no name or nothing to set).</p>
+                <p className="text-xs text-muted-foreground">{result.skipped} row{result.skipped === 1 ? '' : 's'} skipped (no name).</p>
               )}
             </div>
           ) : (

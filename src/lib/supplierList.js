@@ -30,8 +30,38 @@ function read() {
   const v = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
   return {
     removed: Array.isArray(v.removed) ? v.removed.map(String) : [],
+    added: Array.isArray(v.added) ? v.added.map(String) : [],
     notDuplicates: Array.isArray(v.notDuplicates) ? v.notDuplicates.map(String) : [],
   };
+}
+
+// --- Suppliers this entity added itself --------------------------------------
+// A CSV import is how a supplier list arrives when there is no Xero to read one
+// from — which is every bridge entity. Without this the import could set each
+// supplier's standing rules and yet leave the list empty, because the names had
+// nowhere to live: a rule for a supplier the page never shows.
+
+export function addedSuppliers() {
+  return read().added;
+}
+
+export function addSuppliers(names) {
+  const wanted = (Array.isArray(names) ? names : [names]).map(String).filter((n) => n.trim());
+  if (!wanted.length) return 0;
+  const state = read();
+  const seen = new Set(state.added.map(norm));
+  const next = [...state.added];
+  let added = 0;
+  for (const n of wanted) {
+    if (seen.has(norm(n))) continue;
+    seen.add(norm(n));
+    next.push(n.trim());
+    added += 1;
+  }
+  if (!added) return 0;
+  store.set({ ...state, added: next });
+  emit();
+  return added;
 }
 
 export function removedSuppliers() {
