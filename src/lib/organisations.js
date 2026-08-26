@@ -55,6 +55,40 @@ async function activeOrganisationRow() {
   }
 }
 
+// An inbound link that names the entity it belongs to (`?org=`).
+//
+// A link from OUTSIDE the app — the "Go to CYBills" button on a Xero bill, a
+// URL pasted into chat — lands in whichever entity this browser last had open.
+// For a claim that lives somewhere else that reads as "Expense claim not
+// found", which is both wrong and alarming: the claim is right there, in the
+// entity nobody switched to.
+//
+// So the entity is switched first and the page loaded fresh, once, with the
+// parameter stripped — a reload rather than a re-render because every store,
+// query and header in flight is scoped to the OLD entity, and half-switching is
+// how a page ends up showing one entity's data under another's name.
+//
+// Ignored when it names an entity this person can't open (the page then says
+// what it would have said anyway) or the one already open.
+export function adoptOrgFromUrl(organisations) {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  const wanted = url.searchParams.get('org');
+  if (!wanted) return;
+  const known = (organisations || []).some((o) => o.id === wanted);
+  const already = getActiveOrganisationId() === wanted;
+  url.searchParams.delete('org');
+  const clean = `${url.pathname}${url.search}${url.hash}`;
+  if (!known || already) {
+    // Nothing to switch, but the parameter should not survive: a later manual
+    // switch would be undone by a refresh.
+    window.history.replaceState(null, '', clean);
+    return;
+  }
+  setActiveOrganisationId(wanted);
+  window.location.replace(clean);
+}
+
 // Reactive form: the active entity's record, or null.
 export function useActiveOrganisation() {
   const { data: organisations = [] } = useOrganisations();

@@ -27,6 +27,7 @@ import {
   useOrganisations,
   getActiveOrganisationId,
   setActiveOrganisationId,
+  adoptOrgFromUrl,
 } from '@/lib/organisations';
 import { canManageBusiness, canManageUsers } from '@/lib/userStore';
 import { isPracticeTeam, canManagePractice } from '@/lib/practiceStore';
@@ -155,6 +156,13 @@ function OrganisationSwitcher() {
   const [addOpen, setAddOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState(null);
   const [activeId, setActiveId] = useState(getActiveOrganisationId);
+
+  // A link that names its entity (the "Go to CYBills" button on a Xero bill)
+  // switches to it before the page reads anything.
+  useEffect(() => {
+    if (isFetching || !organisations.length) return;
+    adoptOrgFromUrl(organisations);
+  }, [organisations, isFetching]);
 
   const active = organisations.find((o) => o.id === activeId) ?? null;
   const label = active?.name || 'CYBM Workspace';

@@ -880,7 +880,7 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   if (bill.invoiceNumber) payload.InvoiceNumber = bill.invoiceNumber;
   // "Go to CYBills" on the bill in Xero — straight back to the document this
   // was published from, and the original paper attached to it.
-  payload.Url = `${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}`;
+  payload.Url = `${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`;
   if (bill.currency) payload.CurrencyCode = bill.currency;
 
   // PUT = create-only (POST would upsert); summarizeErrors=false makes Xero
@@ -1172,7 +1172,10 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     // bills carry "Go to Dext". Somebody reviewing the ledger can open the claim
     // this came from, with its items, its approvals and the receipts behind
     // them, instead of hunting for it.
-    Url: `${appOrigin(req)}/expense-claims/${encodeURIComponent(claim.id)}`,
+    // The entity rides along: the app remembers whichever one you last had open,
+    // so a link into a claim that lives in the bridge entity landed in CYBM and
+    // reported the claim missing. Naming it makes the link self-contained.
+    Url: `${appOrigin(req)}/expense-claims/${encodeURIComponent(claim.id)}?org=${encodeURIComponent(organisation.id)}`,
   };
   if (claim.currency) payload.CurrencyCode = claim.currency;
 

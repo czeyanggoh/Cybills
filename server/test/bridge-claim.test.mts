@@ -141,7 +141,10 @@ check('…payable to the claimant', r.posted.Contact.Name, 'Wei Ming Tan');
 // Xero shows this as a "Go to CYBills" button on the bill: whoever is reviewing
 // the ledger opens the claim it came from — its items, its approvals and the
 // receipts behind them — instead of hunting for it.
-check('…linking back to the claim it came from', /\/expense-claims\/claim-1$/.test(String(r.posted.Url)), true);
+// …and the link names the entity, because the app opens whichever one this
+// browser last had. Without it a claim in the bridge entity was looked for in
+// CYBM and reported missing.
+check('…linking back to the claim it came from', /\/expense-claims\/claim-1\?org=org-ste$/.test(String(r.posted.Url)), true);
 
 // What the practice has always booked by hand, and what the bill has to match:
 // No Tax, at the full amount. A bridge entity has no GST registration, so there
