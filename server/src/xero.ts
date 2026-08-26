@@ -953,6 +953,22 @@ xeroRouter.post('/organisations/:id/attach-file', async (req, res) => {
   res.json({ ok: true, attachment });
 });
 
+// GET /api/xero/organisations/:id/target-accounts — the expense accounts this
+// entity's claims can post INTO. For a linked entity that is its own chart; for
+// a bridge entity it is the parent's, which is the whole point: mapping a plain
+// category to an account means choosing from the ledger that receives the money.
+//
+// Deliberately not the plain /accounts route: that one refuses a tenant-less
+// entity (it has no chart of its own), and it would answer about the wrong
+// company anyway.
+xeroRouter.get('/organisations/:id/target-accounts', async (req, res) => {
+  if (notConfigured(res)) return;
+  const resolved = requirePublishTarget(req, res);
+  if (!resolved) return;
+  const accounts = await accountsForOrg(workspaceId(req), resolved.target.id);
+  res.json({ accounts, target: { id: resolved.target.id, name: resolved.target.name } });
+});
+
 // POST /api/xero/organisations/:id/publish-claim — post an APPROVED expense
 // claim as an ACCPAY bill payable to the employee. Each claim line becomes an
 // invoice line (account code from its category); Xero applies each account's

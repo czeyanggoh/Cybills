@@ -164,6 +164,19 @@ export function fetchXeroAccounts(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/accounts`).then((b) => b.accounts ?? []);
 }
 
+// The expense accounts this entity's claims post INTO — its own chart when it is
+// linked to Xero, its PARENT's when it is a bridge entity. Used by the category
+// mapping, which is a choice from the ledger that receives the money.
+export function useTargetAccounts(organisationId) {
+  return useQuery({
+    queryKey: ['xero-target-accounts', organisationId],
+    queryFn: () => getJson(`/api/xero/organisations/${organisationId}/target-accounts`),
+    enabled: Boolean(organisationId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
 // The linked organisation's Xero chart of accounts (account codes), fetched
 // live through the cyworkspace relay. Only runs once an organisation is picked.
 export function useXeroAccounts(organisationId) {

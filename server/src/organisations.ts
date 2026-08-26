@@ -148,9 +148,19 @@ organisationsRouter.get('/', (req, res) => {
     if (repaired) me = memberForSession(req) ?? me;
   }
   const wantsAll = req.query.all === '1' && (!me || canManagePractice(me));
-  const organisations = listOrganisations(ws)
+  const all = listOrganisations(ws);
+  const organisations = all
     .filter((o) => wantsAll || canAccessOrg(me, o.id))
-    .map((o) => ({ ...o, isPrimary: o.id === primary }));
+    // A bridge entity's parent is very often one the caller CANNOT open — an ST
+    // Engineering admin works in the bridge and nowhere else. Resolving the
+    // name here rather than leaving the client to find it in a list it was
+    // never given is the difference between "posts into Red Alpha" and the
+    // Categories tab announcing that no parent is set.
+    .map((o) => ({
+      ...o,
+      isPrimary: o.id === primary,
+      parentName: o.parentOrgId ? all.find((p) => p.id === o.parentOrgId)?.name || '' : '',
+    }));
   res.json({ organisations });
 });
 
