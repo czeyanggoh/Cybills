@@ -249,21 +249,36 @@ function CategoriesFromList({ organisation }) {
   const asOption = (a) => ({ code: a.code, label: `${a.code} - ${a.name}` });
   // Expenses first, because that is what most categories want; everything else
   // is still there, under its own heading, for the ones that don't.
-  const expenseOptions = postable.filter(isExpense).map(asOption);
-  const otherOptions = postable.filter((a) => !isExpense(a)).map(asOption);
-  const options = [...expenseOptions, ...otherOptions];
+  // The accounts this entity ALREADY posts to come first, most-used first. A
+  // bridge arrangement books to one or two accounts out of a chart of sixty, so
+  // after the first choice the right one should never have to be hunted for
+  // again — and which one that is belongs to the entity, not to a hard-coded
+  // list of somebody's account codes.
+  const useCount = new Map();
+  for (const code of Object.values(map)) {
+    const key = String(code || '');
+    if (key) useCount.set(key, (useCount.get(key) || 0) + 1);
+  }
+  const usedOptions = postable
+    .filter((a) => useCount.has(String(a.code)))
+    .sort((a, b) => (useCount.get(String(b.code)) || 0) - (useCount.get(String(a.code)) || 0)
+      || String(a.code).localeCompare(String(b.code)))
+    .map(asOption);
+  const rest = postable.filter((a) => !useCount.has(String(a.code)));
+  const expenseOptions = rest.filter(isExpense).map(asOption);
+  const otherOptions = rest.filter((a) => !isExpense(a)).map(asOption);
+  const options = [...usedOptions, ...expenseOptions, ...otherOptions];
+  const group = (label, list) =>
+    list.length > 0 && (
+      <optgroup label={label}>
+        {list.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+      </optgroup>
+    );
   const optionGroups = (
     <>
-      {expenseOptions.length > 0 && (
-        <optgroup label="Expenses">
-          {expenseOptions.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
-        </optgroup>
-      )}
-      {otherOptions.length > 0 && (
-        <optgroup label="Other accounts">
-          {otherOptions.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
-        </optgroup>
-      )}
+      {group('Used here', usedOptions)}
+      {group('Expenses', expenseOptions)}
+      {group('Other accounts', otherOptions)}
     </>
   );
 
