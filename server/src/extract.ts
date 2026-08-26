@@ -319,6 +319,18 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
         .join('\n')
     : '';
 
+  // A bridge entity has no chart of accounts — its people pick the plain names
+  // off their own claim policy. The enum alone would leave the model matching on
+  // wording; what it needs is what the names MEAN, which is different guidance
+  // from an account's description.
+  const categoriesGuide = !accounts.length && inp.categories.length
+    ? '\n\nClassify `category` into exactly one of the categories below. These are this organisation\'s own expense categories — plain names from its claim policy, not accounting codes — so choose by WHAT WAS BOUGHT:\n' +
+      '- Transport is the MODE the document names: a taxi or private-hire receipt is the taxi category, a rail fare the train one, an airline the flights one. Never a general one when the specific one exists.\n' +
+      '- Where the categories distinguish WHEN (a weekday late-night meal against a weekend one, an overnight allowance against a per-trip one), the document\'s own date and time decide it.\n' +
+      '- When none of them plainly fits, use "Others". Never the closest-sounding one — a wrong category here is a wrong line on somebody\'s claim.\n' +
+      inp.categories.map((c) => `- "${c}"`).join('\n')
+    : '';
+
   // Tax rates the org has written rules for, and the guide that teaches them.
   const taxRates = inp.taxRates;
   const taxRateNames = taxRates.map((t) => t.name);
@@ -367,6 +379,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'If a field is not present, use an empty string or 0. ' +
     'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
     accountsGuide +
+    categoriesGuide +
     taxRatesGuide +
     projectsGuide;
 
@@ -671,6 +684,18 @@ extractRouter.post('/extract-lines', async (req, res) => {
       accounts.map((a) => `- "${a.code} - ${a.name}"${a.description ? `: ${a.description}` : ''}`).join('\n')
     : '';
 
+  // A bridge entity has no chart of accounts — its people pick the plain names
+  // off their own claim policy. The enum alone would leave the model matching on
+  // wording; what it needs is what the names MEAN, which is different guidance
+  // from an account's description.
+  const categoriesGuide = !accounts.length && bodyCats.length
+    ? '\n\nClassify `category` into exactly one of the categories below. These are this organisation\'s own expense categories — plain names from its claim policy, not accounting codes — so choose by WHAT WAS BOUGHT:\n' +
+      '- Transport is the MODE the document names: a taxi or private-hire receipt is the taxi category, a rail fare the train one, an airline the flights one. Never a general one when the specific one exists.\n' +
+      '- Where the categories distinguish WHEN (a weekday late-night meal against a weekend one, an overnight allowance against a per-trip one), the document\'s own date and time decide it.\n' +
+      '- When none of them plainly fits, use "Others". Never the closest-sounding one — a wrong category here is a wrong line on somebody\'s claim.\n' +
+      bodyCats.map((c) => `- "${c}"`).join('\n')
+    : '';
+
   // Cached per organisation, exactly like /extract: nothing per-document here,
   // including the reconciliation feedback on a retry (that rides in `prompt`).
   const stablePrompt =
@@ -688,6 +713,7 @@ extractRouter.post('/extract-lines', async (req, res) => {
     'Only when neither is true (the document itself settles an earlier balance, say) may they differ, and then `note` must say why.\n' +
     'A document with no itemised table has no lines: return an empty array rather than one line for the total.' +
     accountsGuide +
+    categoriesGuide +
     projectsGuide;
 
   const isPdf = mediaType === PDF_MEDIA;

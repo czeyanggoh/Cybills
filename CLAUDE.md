@@ -320,6 +320,55 @@ estimate from real token counts. Override a rate with
 `LLM_PRICES='{"gpt-5":{"input":1.25,"output":10}}'` (`ANTHROPIC_PRICES` still
 works; the two are merged).
 
+## A bridge entity (Red Alpha - ST Engineering)
+
+Some people who submit costs don't work for any client entity CYBills holds. ST
+Engineering staff claim against **Red Alpha's** ledger without being Red Alpha
+employees, and they have never seen a chart of accounts. So an entity can be
+**standalone**: `kind: 'standalone'` + `parentOrgId` on the organisation record,
+no Xero tenant of its own, its own isolated Costs book (`dataScopeForOrg` gives
+it one for free), and its claims posting into the parent's Xero
+(`publishTargetFor`). `requireOrganisation` refuses the chart/tax/contact routes
+for it with `no_xero_connection`; `requirePublishTarget` is the one that resolves
+the parent, and publishing is the only Xero thing it can do.
+
+**Its categories are plain names.** "Transport - Taxi", "Meal Weekday (after
+9pm)" — the rows off the client's own claim form. The list and the add/hide
+rules live in one pure module (`src/lib/categoryList.js`) because BOTH sides
+read it: the dropdown (`useCategoryOptions`) and the document reader, including
+the emailed-document path, which loads it by file path
+(`server/src/categories.ts`, same arrangement as `taxRules.ts`). The reader is
+given the names instead of accounts (`categories` on `/extract` +
+`/extract-lines`, which no client had ever sent) plus a guide for what a plain
+name MEANS — the mode a transport receipt names, the date and time deciding a
+weekday-late meal from a weekend one, "Others" rather than the closest-sounding
+guess.
+
+**" - " does not mean "code - name".** Half the claim-policy names contain that
+separator, and the old split read "Transport - Taxi" as the account code
+"Transport": a code no chart has, on a line that would post to the wrong place,
+and a Name-only dropdown showing a column of unrelated categories all called
+"Taxi", "Train", "Bus". A code always has a digit in it — `categoryCode` /
+`categoryName` / `categoryCodeEnd` in `categoryList.js` decide it once, for the
+display path and the publish path both (`codeFromCategory` in `xero.ts` applies
+the same rule server-side). Covered by `npm test` at the repo root.
+
+**The map is what lets it publish.** One setting per bridge entity,
+`cybills.category-accounts.v1`, `{ "Transport - Taxi": "493" }`, edited on Lists
+-> Categories -> **Posts to** against the PARENT's accounts. `publish-claim`
+consults it first and falls back to the label's own digits, so a linked entity
+is unaffected. An unmapped category is refused (422, `unpostable_lines`) and
+NAMED — never posted around, the same rule a bill's own line items follow — and
+the message says to map it rather than to "use a coded category", which would
+send those people looking for a chart they don't have. `npm test` in `server/`
+posts a bridge claim end to end against a stubbed relay.
+
+Still to do: a user who works in two entities (`extraAccess` on the roster row)
+— today access is per-entity equality, so a bridge user is a separate roster
+row. And privilege enforcement inside the entity is `docs/roles-enforcement.md`,
+which is deliberately untouched here: until it lands, everyone in a bridge
+entity sees every document in it. Fine for testing, not for real ST Eng staff.
+
 ## Xero via the cyworkspace relay
 
 CYBills never holds Xero credentials. All Xero traffic goes through

@@ -11,6 +11,7 @@ import { insertBill, updateBill, reconcileReadiness } from './store.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
 import { runExtraction } from './extract.js';
+import { categoriesForOrg } from './categories.js';
 import { recordUsage } from './usage.js';
 import { readSetting } from './settings.js';
 import { workspaceId } from './workspace.js';
@@ -53,6 +54,11 @@ async function extractionInputsFor(ws: string, realOrgId: string) {
   const usable = expense.length ? expense : shown;
   const accounts = usable.map((a) => ({ code: a.code, name: a.name, description: a.description || '' }));
 
+  // A bridge entity has no chart at all, so the reader is given the plain names
+  // its people actually claim against instead ("Transport - Taxi"). Empty for a
+  // linked entity, whose accounts above are the list.
+  const categories = await categoriesForOrg(ws, realOrgId);
+
   // The rates, chart and registration the tax decision needs — assembled in one
   // shared place so the emailed document is coded exactly as an uploaded one is.
   const taxCtx = await taxContextFor(ws, realOrgId);
@@ -74,7 +80,7 @@ async function extractionInputsFor(ws: string, realOrgId: string) {
   // `cybills.review-instructions.<orgId>`; readSetting's exact-key fallback finds it.
   const instructions = readSetting<string>(ws, `cybills.review-instructions.${realOrgId || 'default'}`) || '';
 
-  return { accounts, taxCtx, taxRates, projects, instructions };
+  return { accounts, categories, taxCtx, taxRates, projects, instructions };
 }
 
 // Providers to attempt, org's choice first then the other enabled one, so a
@@ -102,7 +108,7 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
     inputs = await extractionInputsFor(ws, realOrgId);
   } catch (e) {
     console.error('[inbound] could not assemble extraction inputs', e);
-    inputs = { accounts: [], taxCtx: EMPTY_TAX_CONTEXT, taxRates: [], projects: [], instructions: '' };
+    inputs = { accounts: [], categories: [], taxCtx: EMPTY_TAX_CONTEXT, taxRates: [], projects: [], instructions: '' };
   }
 
   let lastNote = 'no reader available';
@@ -112,7 +118,7 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
       imageBase64: fileBase64,
       mediaType,
       accounts: inputs.accounts,
-      categories: [],
+      categories: inputs.categories,
       taxRates: inputs.taxRates,
       projects: inputs.projects,
       instructions: inputs.instructions,

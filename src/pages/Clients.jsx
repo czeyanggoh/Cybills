@@ -44,6 +44,14 @@ export default function Clients() {
   const rows = clients.filter((c) =>
     `${c.name} ${c.tenantName || ''}`.toLowerCase().includes(query.trim().toLowerCase())
   );
+  // A bridge entity has no Xero of its own, so the column would read as a bare
+  // "—" — indistinguishable from a client whose connection has broken. Say what
+  // is actually true of it: its claims land in another entity's ledger.
+  const xeroColumn = (c) => {
+    if (c.tenantName) return c.tenantName;
+    const parent = clients.find((o) => o.id === c.parentOrgId);
+    return parent ? `Posts into ${parent.name}` : '—';
+  };
 
   const open = (client) => {
     setActiveOrganisationId(client.id);
@@ -162,7 +170,7 @@ export default function Clients() {
                   </span>
                   {c.isPrimary && <span className="ml-6 text-xs text-muted-foreground">Practice entity</span>}
                 </td>
-                <td className="px-3 py-3 text-muted-foreground">{c.tenantName || '—'}</td>
+                <td className="px-3 py-3 text-muted-foreground">{xeroColumn(c)}</td>
                 <td className="px-3 py-3">
                   {c.colleagues.length ? (
                     <span className="flex flex-wrap items-center gap-1">

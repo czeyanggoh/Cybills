@@ -1,6 +1,6 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
 import { nameForEmail } from '@/lib/userStore';
-import { getActiveOrganisationId, getExtractionTaxRates, getExtractionProjects } from '@/lib/organisations';
+import { getActiveOrganisationId, getExtractionTaxRates, getExtractionProjects, getExtractionCategories } from '@/lib/organisations';
 import { isGstRegistered } from '@/lib/businessProfile';
 import { fetchReviewInstructions } from '@/lib/reviewInstructions';
 import { requestedProvider } from '@/lib/readerProvider';
@@ -65,6 +65,10 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
   // document can be allocated by what it says rather than only by who uploaded
   // it. None written → the field isn't offered to the model at all.
   const projects = await getExtractionProjects().catch(() => []);
+  // A bridge entity has no chart of accounts, so it classifies into the plain
+  // names its people claim against instead. Empty for a linked entity, whose
+  // `accounts` are the list — the server prefers accounts whenever it has them.
+  const categories = await getExtractionCategories().catch(() => []);
   const res = await fetch('/api/costs/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
@@ -72,6 +76,7 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
       imageBase64,
       mediaType,
       accounts,
+      categories,
       instructions,
       taxRates,
       projects,
@@ -159,6 +164,7 @@ export async function fetchExtractLines(imageBase64, mediaType, accounts) {
   // allocated to the outlet or site it names — an invoice billing three outlets
   // on one page is exactly what a per-line breakdown is for.
   const projects = await getExtractionProjects().catch(() => []);
+  const categories = await getExtractionCategories().catch(() => []);
   const res = await fetch('/api/costs/extract-lines', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
@@ -166,6 +172,7 @@ export async function fetchExtractLines(imageBase64, mediaType, accounts) {
       imageBase64,
       mediaType,
       accounts,
+      categories,
       instructions,
       projects,
       provider: requestedProvider(),

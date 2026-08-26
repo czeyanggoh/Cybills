@@ -94,7 +94,7 @@ export async function buildMergePreview(docs) {
 
   let extracted = null;
   try {
-    extracted = await fetchExtract(base64, 'application/pdf', getExtractionAccounts());
+    extracted = await fetchExtract(base64, 'application/pdf', await getExtractionAccounts());
   } catch {
     extracted = null;
   }

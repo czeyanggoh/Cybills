@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 import { blobStore } from '@/lib/blobStore';
+// What is a code and what is a plain name is decided in one place — a claim
+// policy's "Transport - Taxi" is not the account "Transport".
+import { categoryCodeEnd, categoryCode, categoryName } from '@/lib/categoryList';
 
 // How cost categories are shown AND ordered in the dropdowns — configured in
 // Business settings → Automation → Categorisation ("Category display" +
@@ -38,19 +41,20 @@ export function setCategorySortMode(sort) {
   emit();
 }
 
-// Transform a "412 - Consulting & Accounting" label for display. Free-text
-// categories with no " - " (e.g. "Uncategorised") pass through unchanged.
+// Transform a "412 - Consulting & Accounting" label for display. A category
+// with no code (e.g. "Uncategorised", "Transport - Taxi") passes through
+// unchanged — there is nothing to hide in either direction.
 export function formatCategory(label, mode = getCategoryDisplayMode()) {
   const s = String(label ?? '');
-  const idx = s.indexOf(' - ');
+  const idx = categoryCodeEnd(s);
   if (idx === -1) return s;
   if (mode === 'code') return s.slice(0, idx);
   if (mode === 'name') return s.slice(idx + 3);
   return s;
 }
 
-const codeOf = (s) => { const i = s.indexOf(' - '); return i === -1 ? '' : s.slice(0, i); };
-const nameOf = (s) => { const i = s.indexOf(' - '); return i === -1 ? s : s.slice(i + 3); };
+const codeOf = categoryCode;
+const nameOf = categoryName;
 
 // Order category labels by code (numeric-aware, blanks last) or by name.
 // Free-text categories with no code sort to the end under "Code".

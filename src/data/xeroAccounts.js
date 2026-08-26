@@ -1,3 +1,5 @@
+import { categoryCode } from '@/lib/categoryList';
+
 // A standard Xero chart of accounts (expense / direct-cost / overhead
 // accounts), used as the categorisation taxonomy for OCR. Each account carries
 // its Xero description — the reader uses those descriptions to classify an expense
@@ -41,13 +43,6 @@ export function accountLabel(a) {
 export const XERO_CATEGORY_LABELS = XERO_ACCOUNTS.map(accountLabel);
 
 // Pull the leading Xero account code out of a "429 - General Expenses" (or
-// "200-10 - Sales - Projects") label — the code is everything before the first
-// " - " separator. Returns '' for free-text categories like "Uncategorised".
-export function accountCodeFromCategory(category) {
-  const s = String(category || '');
-  const i = s.indexOf(' - ');
-  if (i === -1) return '';
-  const code = s.slice(0, i).trim();
-  // Xero codes are short alphanumerics (digits, letters, internal hyphens).
-  return /^[A-Za-z0-9][A-Za-z0-9-]{0,14}$/.test(code) ? code : '';
-}
+// "200-10 - Sales - Projects") label. Returns '' for a category that carries no
+// code — "Uncategorised", or a bridge entity's plain "Transport - Taxi".
+export const accountCodeFromCategory = categoryCode;

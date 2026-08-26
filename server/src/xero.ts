@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { env, xeroEnabled } from './env.js';
-import { dataScopeForOrg, getOrganisation, publishTargetFor } from './organisations.js';
+import { dataScopeForOrg, getOrganisation, isStandalone, publishTargetFor } from './organisations.js';
 import { workspaceId } from './workspace.js';
+import { readSetting } from './settings.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, markBillPosted, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, saveClaimXero } from './claims.js';
@@ -622,12 +623,16 @@ async function activeAccountCodes(tenantId: string): Promise<Set<string>> {
 
 // "315 - Outlet Laundry" -> "315". The label the app stores is built from the
 // Xero account as `<code> - <name>`, so the code is simply its head.
+// The same rule as accountCodeFromCategory in src/data/xeroAccounts.js, which is
+// what the browser applies to the same labels.
 function codeFromCategory(category: unknown): string {
   const s = String(category ?? '');
   const i = s.indexOf(' - ');
   if (i === -1) return '';
   const code = s.slice(0, i).trim();
-  return /^[A-Za-z0-9][A-Za-z0-9-]{0,14}$/.test(code) ? code : '';
+  // A code always contains a digit. Without that test a bridge entity's plain
+  // category "Transport - Taxi" reads as the account code "Transport".
+  return /^(?=.*\d)[A-Za-z0-9][A-Za-z0-9-]{0,14}$/.test(code) ? code : '';
 }
 
 // Build the Xero lines for a bill that has its own line items, so each one
@@ -949,14 +954,20 @@ xeroRouter.post('/organisations/:id/attach-file', async (req, res) => {
 });
 
 // POST /api/xero/organisations/:id/publish-claim — post an APPROVED expense
-// claim to the linked Xero org as an ACCPAY bill payable to the employee. Each
-// claim line becomes an invoice line (account code parsed from its category);
-// Xero applies each account's default tax rate. Defaults to DRAFT so it's
-// reviewable in Xero, not finalised. Re-publishing is refused (409) unless force.
+// claim as an ACCPAY bill payable to the employee. Each claim line becomes an
+// invoice line (account code from its category); Xero applies each account's
+// default tax rate. Defaults to DRAFT so it's reviewable in Xero, not finalised.
+// Re-publishing is refused (409) unless force.
+//
+// The claim's entity and the entity whose ledger receives it are deliberately
+// two different things: a bridge entity has no Xero of its own, so its claims
+// post into its parent's (`requirePublishTarget`). Everywhere else the target
+// IS the organisation, so nothing changes for a linked entity.
 xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
   if (notConfigured(res)) return;
-  const organisation = requireOrganisation(req, res);
-  if (!organisation) return;
+  const resolved = requirePublishTarget(req, res);
+  if (!resolved) return;
+  const { organisation, target } = resolved;
 
   const b = req.body ?? {};
   const claimId = String(b.claimId ?? '');
@@ -980,8 +991,24 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     });
   }
 
-  // Account code = the leading digits of the category label ("412 - …" → "412").
-  const codeOf = (cat: string) => (String(cat ?? '').match(/\b(\d{3,})\b/) || [])[1] || '';
+  // Account code for a claim line.
+  //
+  // A linked entity's categories ARE its chart, so the code is the label's own
+  // head ("412 - …" → "412"). A bridge entity's are plain names off a claim
+  // policy — "Transport - Taxi" is not account "Transport" — so the entity's
+  // own mapping (Business settings → Lists → Categories → Posts to) is what
+  // turns them into codes in the parent's chart. The mapping is consulted first
+  // either way: an entity that has written one means it.
+  const accountMap = readSetting<Record<string, unknown>>(workspaceId(req), 'cybills.category-accounts.v1', organisation.id) || {};
+  const mapped = new Map(
+    Object.entries(accountMap).map(([name, code]) => [name.trim().toLowerCase(), String(code ?? '').trim()])
+  );
+  const codeOf = (cat: string) => {
+    const name = String(cat ?? '').trim();
+    const own = mapped.get(name.toLowerCase());
+    if (own) return own;
+    return (name.match(/\b(\d{3,})\b/) || [])[1] || '';
+  };
   // Dext-style line description: "<Supplier> #<ItemID> - <Description>". Falls
   // back to the live bill's description for items claimed before descriptions
   // were stored on the transaction, then to supplier + category.
@@ -995,7 +1022,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       'Expense'
     );
   };
-  const tc = await firstTrackingCategory(organisation.tenantId);
+  const tc = await firstTrackingCategory(target.tenantId);
   const lineItems = (claim.transactions ?? [])
     .map((t) => {
       const total = parseAmount(t.total);
@@ -1010,6 +1037,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
         AccountCode: codeOf(t.category),
         TaxAmount: tax,
         __total: total,
+        __category: String(t.category ?? '').trim(),
       } as Record<string, unknown>;
       // Tag the PIC (tracking category) from the underlying cost doc's project.
       const tracking = trackingFor(tc, String(bill?.project || t.project || ''));
@@ -1026,12 +1054,33 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
   // same rule a bill's own line items already follow: a breakdown that disagrees
   // with its paper is a mistake to fix, not to post around.
   const unpostable = lineItems.filter((l) => !l.AccountCode || !(Number(l.__total) > 0));
-  const postable = lineItems.filter((l) => l.AccountCode && Number(l.__total) > 0).map(({ __total, ...line }) => line);
+  const postable = lineItems
+    .filter((l) => l.AccountCode && Number(l.__total) > 0)
+    .map(({ __total, __category, ...line }) => line);
+
+  // What a reviewer has to DO about a refusal differs by entity, so the message
+  // does too. A linked entity's item needs a coded category; a bridge entity's
+  // category is fine as it is and needs mapping to an account in the parent's
+  // chart — telling those people to "use a coded category" would send them
+  // looking for a chart they don't have.
+  const unmappedCategories = [
+    ...new Set(
+      unpostable
+        .filter((l) => !l.AccountCode && Number(l.__total) > 0)
+        .map((l) => String(l.__category ?? ''))
+        .filter(Boolean)
+    ),
+  ];
+  const fixIt = isStandalone(organisation)
+    ? `map each category to a ${target.name} account in Business settings → Lists → Categories` +
+      (unmappedCategories.length ? ` (${unmappedCategories.slice(0, 6).map((c) => `"${c}"`).join(', ')})` : '')
+    : 'give each item a coded category (e.g. "412 - Consulting & Accounting")';
 
   if (!postable.length) {
     return res.status(400).json({
       error: 'no_lines',
-      message: 'No claim lines have a Xero account code. Categorise each item with a coded category (e.g. "412 - Consulting & Accounting") first.',
+      categories: unmappedCategories.slice(0, 20),
+      message: `No claim line has an account code to post to — ${fixIt}.`,
     });
   }
   if (unpostable.length) {
@@ -1039,10 +1088,11 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       error: 'unpostable_lines',
       count: unpostable.length,
       lines: unpostable.map((l) => String(l.Description ?? '')).slice(0, 10),
+      categories: unmappedCategories.slice(0, 20),
       message:
-        `${unpostable.length} of the ${lineItems.length} items on this claim can't become a Xero line — each needs a ` +
-        'coded category (e.g. "412 - Consulting & Accounting") and an amount above 0. Publishing now would post a bill ' +
-        'for less than the claim is worth, so fix those items first.',
+        `${unpostable.length} of the ${lineItems.length} items on this claim can't become a Xero line — ` +
+        `${fixIt}, and each item needs an amount above 0. Publishing now would post a bill for less than the ` +
+        'claim is worth, so fix those items first.',
     });
   }
 
@@ -1064,7 +1114,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
 
   const result = await relay('Invoices', {
     method: 'PUT',
-    tenantId: organisation.tenantId,
+    tenantId: target.tenantId,
     query: { summarizeErrors: 'false' },
     body: { Invoices: [payload] },
   });
@@ -1085,7 +1135,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
 
   const updated = saveClaimXero(org, claim.id, {
     xeroInvoiceId: String(invoice.InvoiceID ?? ''),
-    xeroTenantName: organisation.tenantName || organisation.name,
+    xeroTenantName: target.tenantName || target.name,
     xeroPostedAt: today,
     archived: true, // a published claim leaves the inbox for the Archive tab
   });
@@ -1103,7 +1153,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       const fileName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/(\.pdf)?$/i, '.pdf');
       const att = await relay(`Invoices/${invoiceId}/Attachments/${encodeURIComponent(fileName)}`, {
         method: 'POST',
-        tenantId: organisation.tenantId,
+        tenantId: target.tenantId,
         rawBody: bytes,
         contentType: 'application/pdf',
       });

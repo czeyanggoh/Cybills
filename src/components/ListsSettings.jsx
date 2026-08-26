@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
-import { addToList, removeFromList, setListVisible, setMetaField, useHiddenSet, useMeta } from '@/lib/listsStore';
+import { addToList, removeFromList, setListVisible, setMetaField, useHiddenSet, useList, useMeta } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
-import { useOrganisations, useXeroTracking, useXeroCategories, updateXeroCategoryDescription, getActiveOrganisationId, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
+import { useOrganisations, useXeroTracking, useXeroCategories, useXeroAccounts, updateXeroCategoryDescription, getActiveOrganisationId, isStandaloneOrg, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
+import { useCategoryAccounts, setCategoryAccount } from '@/lib/categoryAccounts';
 import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
 import { cn } from '@/lib/utils';
 import { useAutoSave } from '@/lib/useAutoSave';
@@ -212,6 +213,117 @@ function CategoriesFromXero() {
       <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {(categories || []).length} categories</p>
     </div>
   );
+}
+
+// Categories for a BRIDGE entity — one with no Xero of its own, so there is no
+// chart to read. The list is CYBills' own: the seed from the client's claim
+// form plus whatever this entity adds, each row switchable off.
+//
+// The "Posts to" column is the whole reason a bridge can publish at all. A claim
+// raised here is paid out of the PARENT's ledger, and Xero needs an account
+// code — so each plain name is mapped once, here, by whoever knows both sides.
+// A category with no mapping is not silently dropped at publish time: the claim
+// is refused and the category named.
+function CategoriesFromList({ organisation, organisations }) {
+  const rows = useList('categories');
+  const map = useCategoryAccounts();
+  const [query, setQuery] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const { selected, toggle, clear } = useSelection();
+
+  const parent = organisations.find((o) => o.id === organisation.parentOrgId) || null;
+  const { data: accounts = [] } = useXeroAccounts(parent?.tenantId ? parent.id : '');
+  const options = accounts
+    .filter((a) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(String(a.type || '').toUpperCase()))
+    .map((a) => ({ code: a.code, label: `${a.code} - ${a.name}` }));
+
+  const q = query.trim().toLowerCase();
+  const filtered = rows.filter((r) => !q || r.name.toLowerCase().includes(q));
+
+  return (
+    <div>
+      <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">{organisation.name}</span> has no accounting
+        connection of its own, so its categories are plain names rather than a chart of accounts —
+        the ones the people claiming here already recognise. Set{' '}
+        <span className="font-medium text-foreground">Posts to</span> to say which{' '}
+        {parent ? <span className="font-medium text-foreground">{parent.name}</span> : 'parent entity'}{' '}
+        account each one becomes when a claim is published. A category with no account can’t be
+        published — the claim is refused and says which ones need mapping, rather than posting for
+        less than it’s worth.
+      </p>
+      <Toolbar
+        hasSelection={selected.size > 0}
+        onDelete={() => { removeFromList('categories', [...selected]); clear(); }}
+        query={query}
+        setQuery={setQuery}
+      >
+        <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Add category</button>
+      </Toolbar>
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead className="border-b bg-muted/40 text-left text-muted-foreground">
+            <tr><th className="w-10 px-3 py-2.5" /><th className="w-full px-3 py-2.5 font-medium">Name</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Posts to</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Visible</th></tr>
+          </thead>
+          <tbody>
+            {filtered.map((r) => (
+              <tr key={r.id} className="border-b align-middle last:border-0 hover:bg-muted/40">
+                <td className="px-3 py-3"><input type="checkbox" checked={selected.has(r.id)} onChange={() => toggle(r.id)} className="h-4 w-4 accent-black" /></td>
+                <td className="px-3 py-3 font-medium">{r.name}</td>
+                <td className="px-3 py-2">
+                  {options.length ? (
+                    <select
+                      value={map[r.name] || ''}
+                      onChange={(e) => setCategoryAccount(r.name, e.target.value)}
+                      className="h-9 w-64 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <option value="">Not mapped</option>
+                      {options.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
+                    </select>
+                  ) : (
+                    // The parent's chart is what fills this dropdown, so when it
+                    // can't be loaded the mapping already saved still has to be
+                    // legible — otherwise a mapped category looks unmapped.
+                    <span className="text-xs text-muted-foreground">
+                      {!parent
+                        ? 'No parent entity is set.'
+                        : map[r.name]
+                          ? `Account ${map[r.name]} — reconnect ${parent.name} to change it`
+                          : `Couldn’t load ${parent.name}’s accounts.`}
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-3"><VisibleToggle on={r.visible} onToggle={() => setListVisible('categories', r.id, !r.visible)} /></td>
+              </tr>
+            ))}
+            {filtered.length === 0 && (
+              <tr><td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">No categories{q ? ' match your search' : ''}.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Showing {filtered.length} of {rows.length} categories · {rows.filter((r) => r.visible && !map[r.name]).length} not mapped to an account
+      </p>
+      <AddDialog
+        open={addOpen}
+        title="Add category"
+        fields={[{ key: 'name', label: 'Name', placeholder: 'e.g. Transport - Taxi' }]}
+        required={['name']}
+        onClose={() => setAddOpen(false)}
+        onAdd={(f) => addToList('categories', { name: f.name.trim(), code: '' })}
+      />
+    </div>
+  );
+}
+
+// Which Categories tab this entity gets: a bridge entity keeps its own list,
+// everything else reads its Xero chart.
+function Categories() {
+  const { data: organisations = [] } = useOrganisations();
+  const organisation = organisations.find((o) => o.id === getActiveOrganisationId()) || null;
+  if (isStandaloneOrg(organisation)) return <CategoriesFromList organisation={organisation} organisations={organisations} />;
+  return <CategoriesFromXero />;
 }
 
 // The "when to use" rule for one row. Free text the org writes itself — it rides
@@ -530,7 +642,7 @@ export default function ListsSettings() {
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="mb-4 text-lg font-semibold tracking-tight">{TITLES[tab]}</h2>
-        {tab === 'categories' ? <CategoriesFromXero /> : tab === 'review' ? <ReviewInstructions /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : tab === 'payment' ? <PaymentMethodsFromXero /> : <Placeholder label={TITLES[tab]} />}
+        {tab === 'categories' ? <Categories /> : tab === 'review' ? <ReviewInstructions /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : tab === 'payment' ? <PaymentMethodsFromXero /> : <Placeholder label={TITLES[tab]} />}
       </div>
     </div>
   );

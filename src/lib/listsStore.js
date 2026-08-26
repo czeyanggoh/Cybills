@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { blobStore } from '@/lib/blobStore';
+import { SEED_CATEGORIES } from '@/lib/categoryList';
 
 const KEY = 'cybills.lists.v1';
 export const LISTS_EVENT = 'cybills:lists-changed';
@@ -12,14 +13,10 @@ const emit = () => window.dispatchEvent(new Event(LISTS_EVENT));
 const store = blobStore(KEY, { added: {}, hidden: {}, meta: {} }, emit, { perOrg: true });
 
 // --- Seeds (from the client's ST Eng workspace) -----------------------------
-export const SEED_CATEGORIES = [
-  'Offshore L.H (overnight)', 'Meal Weekday (after 9pm)', 'Transport -Claim by mileage',
-  'Standby Allowance', 'Offshore H.S per trip', 'Offshore L.S (overnight)', 'Meal Weekend & PH',
-  'Offshore L.H per trip', 'Transport - Taxi', 'Parking', 'Recall Allowance - Weekday',
-  'Transport - Train', 'Transport - Bus', 'ERP - Cashcard', 'Recall Allowance - Weekend Crossover',
-  'Recall Allowance - Weekend/PH', 'Transport - Ferry', 'Recall Allowance - weekday over cross midnight',
-  "Contractor's pass fee", 'PPE Safety', 'Courses/Workshop/Training Fees', 'Transport - Flights', 'Others',
-].map((name) => ({ name, code: '' }));
+// The categories themselves live in a pure module, because the SERVER reads
+// them too — an emailed document is classified into the same list the dropdown
+// offers (src/lib/categoryList.js, loaded by server/src/categories.ts).
+export { SEED_CATEGORIES } from '@/lib/categoryList';
 
 export const SEED_TAX_RATES = [
   ['2023 Bad Debt Recovery', 'BADDEBTRECOVERYY23', 8.0],
