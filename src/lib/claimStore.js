@@ -284,10 +284,19 @@ export function pendingApprovalsFor(claims, user) {
 
 // Reactive read of the selected entity's claims: fetches on mount, refetches on
 // any mutation — and on an entity switch, which changes which claims these are.
-export function useClaims() {
+// The active entity's claims, plus whether the first fetch has come back.
+// A page that looks a claim up by id needs the difference: an empty list
+// because nothing has loaded yet is not the same as a claim that isn't there,
+// and treating them alike is how a valid claim flashed "not found" on its way
+// in.
+export function useClaimsState() {
   const [claims, setClaims] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const reload = useCallback(() => {
-    fetchClaims().then(setClaims);
+    fetchClaims().then((rows) => {
+      setClaims(rows);
+      setLoaded(true);
+    });
   }, []);
   useEffect(() => {
     reload();
@@ -298,5 +307,24 @@ export function useClaims() {
       window.removeEventListener(ORGANISATION_EVENT, reload);
     };
   }, [reload]);
-  return claims;
+  return { claims, loaded };
+}
+
+export function useClaims() {
+  return useClaimsState().claims;
+}
+
+// Which entity a claim belongs to, asked of the server across entities. Returns
+// null when there is no such claim, or it is one this person may not open —
+// the two are deliberately the same answer. Used only when a claim is absent
+// from the active entity's list, so the page can offer to switch rather than
+// say a claim that exists does not.
+export async function whereIsClaim(id) {
+  try {
+    const res = await fetch(`/api/claims/${encodeURIComponent(id)}/where`, { headers: orgHeaders() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
 }

@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole } from './users.js';
+import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, canAccessOrg } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
 import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed } from './store.js';
+import { listOrganisations } from './organisations.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
 // X-Org-Id scoping as bills). Replaces the old per-browser localStorage claim
@@ -234,6 +235,34 @@ function withDescriptions(c: Claim): Claim {
 claimsRouter.get('/', (req, res) => {
   const org = orgIdFor(req);
   res.json({ claims: load().filter((c) => c.orgId === org && !c.deleted).map(withDescriptions) });
+});
+
+// GET /api/claims/:id/where — which entity a claim belongs to.
+//
+// The list above is scoped to the entity you are standing in, and the detail
+// page finds its claim in that list — so opening a claim's URL while a
+// different entity is selected reported "Expense claim not found", which is
+// both wrong and unhelpful: the claim exists, it is just in another book. A
+// claim URL is exactly the kind of link that gets emailed for approval or
+// bookmarked, so arriving at it from the wrong entity is ordinary.
+//
+// This resolves the id ACROSS entities and says where it lives, so the page can
+// offer to switch rather than deny the claim exists. It answers only for an
+// entity the caller may open — for anyone else it is a 404, the same answer
+// they would get for an id that really doesn't exist, so this can't be used to
+// probe another client's claims.
+claimsRouter.get('/:id/where', (req, res) => {
+  const claim = load().find((c) => c.id === req.params.id && !c.deleted);
+  if (!claim) return res.status(404).json({ error: 'not_found' });
+  const me = memberForSession(req);
+  if (!canAccessOrg(me, claim.orgId)) return res.status(404).json({ error: 'not_found' });
+  const org = listOrganisations(workspaceId(req)).find((o) => o.id === claim.orgId);
+  res.json({
+    orgId: claim.orgId,
+    orgName: org?.name || '',
+    claimFor: claim.claimFor,
+    name: claim.name,
+  });
 });
 
 // POST /api/claims — create a claim.

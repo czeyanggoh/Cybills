@@ -21,7 +21,8 @@ import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
 import {
-  useClaims,
+  useClaimsState,
+  whereIsClaim,
   submitForApproval,
   approveClaim,
   rejectClaim,
@@ -41,7 +42,7 @@ import { costPath } from '@/lib/bills';
 import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
 import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
-import { useOrganisations, getActiveOrganisationId, publishClaimToXero } from '@/lib/organisations';
+import { useOrganisations, getActiveOrganisationId, setActiveOrganisationId, publishClaimToXero } from '@/lib/organisations';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
 import { claimExportName, claimRef } from '@/lib/exportFormat';
@@ -127,8 +128,17 @@ export default function ExpenseClaimDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user, membership, googleEnabled } = useAuth();
-  const claims = useClaims();
+  const { claims, loaded } = useClaimsState();
   const claim = claims.find((c) => String(c.id) === String(id)) || null;
+  // Where a claim lives when it isn't in this entity's list: null = not asked
+  // yet, false = there is no such claim (for this person), else the entity.
+  const [elsewhere, setElsewhere] = useState(null);
+  useEffect(() => {
+    if (!loaded || claim) { setElsewhere(null); return; }
+    let alive = true;
+    whereIsClaim(id).then((r) => { if (alive) setElsewhere(r || false); });
+    return () => { alive = false; };
+  }, [loaded, claim, id]);
   const [tab, setTab] = useState('details');
   const [catOverrides, setCatOverrides] = useState({});
   const [selected, setSelected] = useState(() => new Set());
@@ -235,9 +245,44 @@ export default function ExpenseClaimDetail() {
   };
 
   if (!claim) {
+    // Claims are scoped to one client entity, and a claim's URL is exactly the
+    // kind of link that gets emailed for approval or bookmarked — so arriving
+    // here from the wrong entity is ordinary, and "not found" was both wrong
+    // and a dead end. Say where it is and offer to go there.
     return (
       <AppShell subnav={<CostsSubnav />}>
-        <p className="text-sm text-muted-foreground">Expense claim not found.</p>
+        {!loaded || elsewhere === null ? (
+          <p className="text-sm text-muted-foreground">Loading expense claim…</p>
+        ) : elsewhere ? (
+          <div className="max-w-lg rounded-lg border p-5">
+            <h1 className="text-base font-semibold tracking-tight">
+              This claim belongs to {elsewhere.orgName || 'another client entity'}
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {elsewhere.claimFor ? `${elsewhere.claimFor}’s ` : ''}
+              {elsewhere.name || 'expense claim'} is in a different entity&rsquo;s book, so it isn&rsquo;t in the
+              list you are looking at. Switch to open it.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => { setActiveOrganisationId(elsewhere.orgId); setElsewhere(null); }}
+                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Switch to {elsewhere.orgName || 'that entity'}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/expense-claims')}
+                className="inline-flex h-9 items-center rounded-md border px-4 text-sm transition-colors hover:bg-muted"
+              >
+                Back to expense claims
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Expense claim not found.</p>
+        )}
       </AppShell>
     );
   }

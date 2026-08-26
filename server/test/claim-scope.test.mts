@@ -141,6 +141,25 @@ const autoCybm = auto('org-cybm');
 check('the same period in another entity gets its own claim', [autoCybm.created, autoCybm.claimId !== autoRed.claimId], [true, true]);
 check('filing Red Alpha’s period again reuses its own open claim', auto('org-red').claimId, autoRed.claimId);
 
+// 5) Finding a claim from the WRONG entity. A claim's URL gets emailed for
+// approval and bookmarked, so opening it while standing in another entity is
+// ordinary — and the list, being scoped, cannot answer. /where can.
+const where = async (orgId: string, id: string) => {
+  const res = await fetch(`${base}/${id}/where`, { headers: asOrg(orgId) as any });
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+};
+
+const fromWrongEntity = await where('org-cybm', 'legacy-red');
+check('a claim in another entity is found, not denied', fromWrongEntity.status, 200);
+check('and it names the entity it lives in', fromWrongEntity.body.orgId, 'org-red');
+check('with enough to say which claim it is', [fromWrongEntity.body.claimFor, fromWrongEntity.body.name], ['Cze Yang Goh', 'test claim CY']);
+
+const fromOwnEntity = await where('org-red', 'legacy-red');
+check('asking from its own entity works too', fromOwnEntity.status, 200);
+
+const missing = await where('org-cybm', 'no-such-claim');
+check('an id that does not exist is a 404', missing.status, 404);
+
 server.close();
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);
