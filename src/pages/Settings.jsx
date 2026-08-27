@@ -586,7 +586,17 @@ function Extraction() {
       </Card>
 
       <Card title="Payment status">
-        <p className="text-sm text-muted-foreground">Mark costs documents as paid or not paid by default.</p>
+        {/* Two things this does NOT do, both of which read as it being broken:
+            it doesn't reach back over documents already added (Paid is the
+            reviewer's own flag, and rewriting it would overwrite somebody's
+            answer), and it doesn't beat a supplier's own rule. Said here rather
+            than left to be worked out from a document that won't change. */}
+        <p className="text-sm text-muted-foreground">
+          How a costs document arrives, by its type. This is the starting point for documents added from now
+          on — it doesn&rsquo;t change ones already in the inbox, and a supplier whose rules set Paid wins over it.
+          To change documents already here, tick them in the Costs inbox and use{' '}
+          <span className="font-medium text-foreground">Bulk edit → Paid</span>.
+        </p>
         <Row label="Receipts"><SelectBox value={form.payReceipts} onChange={(v) => set('payReceipts', v)} options={PAID_OPTIONS} /></Row>
         <Row label="Invoices"><SelectBox value={form.payInvoices} onChange={(v) => set('payInvoices', v)} options={PAID_OPTIONS} /></Row>
         <Row label="Credit notes"><SelectBox value={form.payCreditNotes} onChange={(v) => set('payCreditNotes', v)} options={PAID_OPTIONS} /></Row>
