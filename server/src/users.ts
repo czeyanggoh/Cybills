@@ -700,6 +700,77 @@ function normalizeRoster(items: User[], ws: string): boolean {
   return changed;
 }
 
+// One address, one person.
+//
+// Sign-in is by email; a document's OWNER is an email; a claim is made out to
+// one. So two live rows carrying the same address are two identities for one
+// human, and which of them somebody "is" comes down to whichever the lookup
+// happens to reach first. That is how a colleague came back as a stranger
+// wearing her own address: the edit dialog let go of hers, somebody was added
+// under it, and the roster then had two answers to the same question.
+//
+// The practice row wins — a colleague's membership of the firm is their primary
+// identity, and it is the preference memberByEmail already applies. This MERGES
+// rather than discards: anything the loser carried that the keeper lacks comes
+// across first, so nobody loses a password, an inbound address or the entity
+// they were working in. The documents need no repair at all, because they are
+// stored against the ADDRESS — the one thing both rows agreed on.
+function normalizeIdentities(items: User[], ws: string): boolean {
+  const groups = new Map<string, User[]>();
+  for (const u of items) {
+    if (u.workspaceId !== ws || u.removed) continue;
+    // The general account is not a person; its address is an internal identity
+    // that belongs to the entity.
+    if (u.general) continue;
+    const email = norm(u.email);
+    if (!email) continue;
+    const g = groups.get(email);
+    if (g) g.push(u);
+    else groups.set(email, [u]);
+  }
+  let changed = false;
+  for (const dups of groups.values()) {
+    if (dups.length < 2) continue;
+    const keeper =
+      dups.find((d) => d.practice) ||
+      dups.find((d) => d.passwordHash) ||
+      dups.find((d) => SEED_IDS.has(d.id)) ||
+      dups[0];
+    for (const d of dups) {
+      if (d === keeper) continue;
+      if (!keeper.passwordHash && d.passwordHash) keeper.passwordHash = d.passwordHash;
+      // An inbound address is a live pipe: mail is already being forwarded to
+      // it, and dropping the row it sits on would silently stop that arriving.
+      if (!keeper.emailHandle && d.emailHandle) keeper.emailHandle = d.emailHandle;
+      if (!keeper.mobile && d.mobile) keeper.mobile = d.mobile;
+      // Whatever entity the losing row was working in, the keeper keeps reach
+      // of — by the route that fits what the keeper is. A colleague reaches a
+      // client through client access; a client's employee through extraAccess,
+      // which is what "one person, two entities" is for.
+      const org = d.organisationId;
+      if (org && org !== keeper.organisationId) {
+        if (keeper.practice) {
+          if (!keeper.allClients) {
+            const list = Array.isArray(keeper.clientAccess) ? keeper.clientAccess : [];
+            if (!list.includes(org)) keeper.clientAccess = [...list, org];
+          }
+        } else {
+          const list = Array.isArray(keeper.extraAccess) ? keeper.extraAccess : [];
+          if (!list.some((e) => e.orgId === org)) {
+            keeper.extraAccess = [...list, { orgId: org, role: currentRole(d.role) }];
+          }
+        }
+      }
+      d.removed = true;
+      changed = true;
+      console.log(
+        `[users] one address, one person: "${d.name || d.id}" folded into "${keeper.name || keeper.id}" (${keeper.email})`
+      );
+    }
+  }
+  return changed;
+}
+
 // The account owners: the seeded admins (Astrid, Cze) plus anyone listed in
 // OWNER_EMAILS. The env list is the break-glass for an owner whose roster row
 // carries neither the seed email nor the seed name — nothing in the code can
@@ -854,6 +925,7 @@ export function ensure(ws: string): User[] {
   if (assignOrganisations(items, ws)) changed = true;
   if (ensureGeneralUsers(items, ws)) changed = true;
   if (normalizeRoster(items, ws)) changed = true;
+  if (normalizeIdentities(items, ws)) changed = true;
   if (normalizeRoles(items, ws)) changed = true;
   if (reconcileSeedAdmins(items, ws)) changed = true;
   if (assignPractice(items, ws)) changed = true;

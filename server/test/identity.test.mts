@@ -51,7 +51,7 @@ const rowOf = (id: string) => ensure('cybm').find((u) => u.id === id)!;
 
 // A practice colleague who does NOT sign in with a password — which is most of
 // them, and the exact shape every one of these bugs needed.
-function seedColleague(id: string, email: string) {
+function seedColleague(id: string, email: string, name = 'Rowan Tester') {
   const items = ensure('cybm');
   const existing = items.find((u) => u.id === id);
   const row = (existing ?? {}) as Record<string, unknown>;
@@ -61,9 +61,9 @@ function seedColleague(id: string, email: string) {
     // Deliberately not a name the seed roster already carries: rows are
     // de-duplicated by organisation + name, so a fixture called "Astrid Yang"
     // gets collapsed into the seeded one and the test measures that instead.
-    name: 'Rowan Tester',
-    firstName: 'Rowan',
-    lastName: 'Tester',
+    name,
+    firstName: name.split(' ')[0],
+    lastName: name.split(' ').slice(1).join(' '),
     email,
     login: 'No',
     role: 'Business Admin',
@@ -123,6 +123,12 @@ check('a real address replaces the old one', rowOf('colleague1').email, 'astrid.
     practice: false,
     practiceRole: 'Standard',
     allClients: false,
+    clientAccess: [],
+    // What it carried that the keeper does not: somebody signs in with this
+    // password, and it was working in another entity.
+    passwordHash: 'salt:hash',
+    mobile: '6590001111',
+    organisationId: 'org_two0002',
   } as never);
   save(items);
   check(
@@ -132,19 +138,38 @@ check('a real address replaces the old one', rowOf('colleague1').email, 'astrid.
   );
 }
 
+// --- One address, one person -------------------------------------------------
+// Two live rows carrying the same address are two identities for one human, and
+// which of them somebody IS comes down to whichever the lookup reaches first.
+// The stray is folded into the colleague — merged, not discarded.
+{
+  const kept = rowOf('colleague1');
+  const gone = ensure('cybm').find((u) => u.id === 'stray1')!;
+  check('the stray row is removed', gone.removed, true);
+  check('and the colleague is the one kept', kept.removed, false);
+  // Merged, not discarded. Nothing the stray carried is lost: a password
+  // somebody signs in with, and the entity it was working in.
+  check('the password comes across', kept.passwordHash, 'salt:hash');
+  check('the entity it worked in stays reachable', Boolean(kept.clientAccess?.includes('org_two0002') || kept.allClients), true);
+  // The keeper's own details win where it has them — this is their row.
+  check('the keeper keeps its own number', kept.mobile, '6591112222');
+  check('and its own inbound address', kept.emailHandle, rowOf('colleague1').emailHandle);
+  check('and the address now resolves to one person', memberByEmail('cybm', 'astrid.yang@cy-bm.sg')?.id, 'colleague1');
+}
+
 // --- The break-glass ---------------------------------------------------------
 // OWNER_EMAILS exists so no state of the data can lock the practice's own owner
 // out of it. It used to be consulted only for somebody ALREADY on the practice
 // team — precisely the person who does not need it.
+seedColleague('owner1', 'owner@cy-bm.sg', 'Ash Owner');
 {
   const items = ensure('cybm');
-  const stray = items.find((u) => u.id === 'stray1')!;
-  stray.email = 'owner@cy-bm.sg';
-  stray.practice = false;
-  stray.practiceRole = 'Standard';
-  stray.allClients = false;
+  const demoted = items.find((u) => u.id === 'owner1')!;
+  demoted.practice = false;
+  demoted.practiceRole = 'Standard';
+  demoted.allClients = false;
   save(items);
-  const after = rowOf('stray1'); // ensure() runs the repair on load
+  const after = rowOf('owner1'); // ensure() runs the repair on load
   check('an account owner is put back on the practice team', after.practice, true);
   check('as an Owner', after.practiceRole, 'Owner');
   check('with every client', after.allClients, true);
@@ -156,14 +181,9 @@ check('a real address replaces the old one', rowOf('colleague1').email, 'astrid.
 // filled it in became a pending employee of whichever company the form named,
 // under whatever name was typed. Their login is 'No', which is what put them in
 // reach of that branch in the first place.
-seedColleague('colleague2', 'joiner@example.com');
-// A second fixture needs its own name: the roster collapses two rows that share
-// an organisation and a name, which would take this one out from under the test.
-{
-  const items = ensure('cybm');
-  items.find((u) => u.id === 'colleague2')!.name = 'Wren Tester';
-  save(items);
-}
+// Its own name: the roster collapses two rows sharing an organisation and a
+// name, which would take this fixture out from under the test.
+seedColleague('colleague2', 'joiner@example.com', 'Wren Tester');
 const postJoin = async (body: unknown) => {
   const res = await fetch('http://127.0.0.1:4627/api/users/join', {
     method: 'POST',

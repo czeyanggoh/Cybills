@@ -86,8 +86,17 @@ practice row outright and otherwise fills only what is BLANK. Turning login off
 says somebody may not SIGN IN; changing an address is its own deliberate act
 (Manage -> Change email). `OWNER_EMAILS` is the break-glass, and it now applies
 to a row that has LOST its practice membership rather than only to one that
-still has it — which was the one case it existed for. Covered by `npm test` in
-`server/` (`test/identity.test.mts`).
+still has it — which was the one case it existed for.
+
+**So one address resolves to one person, on every load.** `normalizeIdentities`
+folds live rows sharing an address into one — the practice row wins, the same
+preference `memberByEmail` applies — and MERGES rather than discards: a
+password, an inbound handle, a mobile and the entity the losing row worked in
+all come across (as `clientAccess` for a colleague, `extraAccess` for a client's
+employee), so nothing anybody was using is lost. The documents need no repair,
+because they are stored against the ADDRESS, which is what both rows agreed on.
+It is the same soft `removed: true` the Users page's own delete writes. Covered
+by `npm test` in `server/` (`test/identity.test.mts`).
 
 ## The document reader: Claude or OpenAI
 
