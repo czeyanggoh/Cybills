@@ -55,9 +55,16 @@ export default function ComboSelect({
   // The current value first (so it's the first thing seen on open), then
   // everything else in the order given. An unknown value — a free-text
   // category, or one since removed from Xero — is kept so it stays selectable.
+  //
+  // The blank option counts as a value here. `value ? [value, ...rest] : rest`
+  // dropped it whenever the field was already empty — so the SAME picker
+  // offered "Not set" on a document that had a tax rate and not on one that
+  // didn't, which reads as two different lists rather than one list with a row
+  // that happens to be a no-op.
   const all = useMemo(() => {
     const rest = options.filter((o) => o !== value);
-    return value ? [value, ...rest] : rest;
+    const has = Boolean(value) || options.includes(value);
+    return has ? [value, ...rest] : rest;
   }, [options, value]);
 
   const listed = useMemo(
