@@ -54,6 +54,14 @@ A colleague belongs to no single client entity, so their documents go where an
 emailed one of theirs goes: their own organisation, else the practice's primary
 one.
 
+**Changing that number later** saves fine and takes effect for matching, but it
+cannot move the group — WhatsApp has no way to swap a number inside one. Either
+add the new number from inside the group, or use **Open a new group with this
+number**, which is the only thing that ever creates a second one. The old group
+is marked replaced rather than deleted: CYWS still files its messages under that
+submission id, so anything sent into it keeps arriving until it is deleted at
+the WhatsApp end.
+
 **A whole entity** — several people in one group — is set up under Connections
 instead:
 

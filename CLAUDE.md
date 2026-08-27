@@ -440,6 +440,19 @@ account. A colleague's group is filed under their own organisation, else the
 practice's primary one: the same rule an emailed document of theirs follows. The
 entity-wide group under Connections is the same thing with more people in it.
 
+**The number and the group are two different things.** Saving a new number
+changes who a bill is MATCHED to from then on; it cannot change the group,
+because WhatsApp has no way to swap a number inside one. Said as a bare warning
+with no action — which is what it was, since the Connect button hides once a
+group is open — it read as the number failing to save, and was reported as one.
+So the card says what Save does, prints the number the group was opened with
+beside it, and the group gets its own button: **Open a new group with this
+number** (`replace: true`, the only way a second group is ever made). The old
+channel is marked `replaced`, never deleted — CYWS still files that group's
+messages under its submission id, and they have to keep arriving until somebody
+deletes the group at the WhatsApp end. A replaced channel is also never RESUMED,
+or its submission id would hand back the very group being replaced.
+
 **WhatsApp not adding somebody is not an error, and not silence either** — but
 what it will say is usually only a count. `participants_added` comes back as
 **LIDs** (`217630539546875`), the opaque per-user ids WhatsApp uses so a group

@@ -132,11 +132,11 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const connect = async () => {
+  const connect = async (replace = false) => {
     setBusy(true);
     setError(null);
     try {
-      await connectWhatsappForUser({ userId: user.id, mobile });
+      await connectWhatsappForUser({ userId: user.id, mobile, replace });
     } catch (err) {
       setError(err);
     } finally {
@@ -184,7 +184,7 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
         {!open && (
           <button
             type="button"
-            onClick={connect}
+            onClick={() => connect(false)}
             disabled={busy || loading || !enabled || !canManage || !mobile.trim()}
             className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
           >
@@ -202,6 +202,9 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
       {open ? (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">Connected</span> — {channel.subject}
+          {/* Which number the group actually holds. Without it, a mismatch below
+              is an accusation with nothing to check it against. */}
+          {inGroup ? <> · opened with <span className="font-mono">{inGroup}</span></> : null}
           {channel.received ? ` · ${channel.received} ${channel.received === 1 ? 'bill' : 'bills'} so far` : ''}
         </div>
       ) : !enabled && !loading ? (
@@ -215,12 +218,38 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
         </p>
       ) : null}
 
+      {/* The number and the group are two separate things, and the warning that
+          used to sit here said so without giving anybody anywhere to go: it
+          reported a mismatch, offered no action (the Connect button is hidden
+          once a group is open), and stayed up after Save — which reads exactly
+          like the number failing to save, and was reported as one.
+
+          So it says what Save does, and the group gets a button of its own. */}
       {drifted && (
-        <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          The group still has {inGroup} in it — changing the number here doesn&rsquo;t move it. Bills from the new
-          number will be filed under {user.name || 'them'}; bills from the old one won&rsquo;t.
-        </p>
+        <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-50 px-3 py-2.5 dark:bg-amber-500/10">
+          <p className="flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-200">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              <span className="font-medium">Save</span> stores this number, and bills sent from it are filed
+              under {user.name || 'them'} from then on. It doesn&rsquo;t change the group, though — that one was
+              opened with <span className="font-mono">{inGroup}</span> and WhatsApp has no way to swap a number
+              inside it.
+            </span>
+          </p>
+          <div className="flex flex-wrap items-center gap-3 pl-5">
+            <button
+              type="button"
+              onClick={() => connect(true)}
+              disabled={busy || !enabled || !canManage}
+              className="inline-flex h-8 items-center rounded-md border border-amber-700/40 bg-background px-3 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
+            >
+              {busy ? 'Opening…' : 'Open a new group with this number'}
+            </button>
+            <span className="text-xs text-amber-800/80 dark:text-amber-200/70">
+              or add it from inside the existing group — the old one keeps working either way.
+            </span>
+          </div>
+        </div>
       )}
 
       {error && (

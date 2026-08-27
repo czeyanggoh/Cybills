@@ -212,18 +212,53 @@ createReply = {
 };
 r = await post('channels/user', { userId: dean.id, mobile: '+65 9111 2222' });
 check('connecting a person opens a group', r.status, 200);
+const callsBefore = createCalls.length;
 // The same pipe under a second name: send a bill to that address or into this
 // group and it is filed under exactly the same person.
 check('named for their own CYBills address', r.body.channel.subject, 'astrid4@cybills.sg');
 check('and tied to them', r.body.channel.userId, dean.id);
 check('the number is stored as typed', ensure('cybm').find((u) => u.id === dean.id)?.mobile, '+65 9111 2222');
 
+// --- Changing a connected person's number ------------------------------------
+// Two different things, and only one of them is a new group. The number is
+// saved either way — from now on a bill from it is filed under this person —
+// but their existing group is untouched unless somebody says, in those words,
+// that they want another one. Anything less would put a second real WhatsApp
+// group in front of a client for a typo correction.
+r = await post('channels/user', { userId: dean.id, mobile: '6595556666' });
+check('a new number alone opens no second group', r.body.unchanged, true);
+check('and is saved all the same', ensure('cybm').find((u) => u.id === dean.id)?.mobile, '6595556666');
+check('nothing was asked of CYWS', createCalls.length, callsBefore);
+
+createReply = {
+  status: 200,
+  body: {
+    data: {
+      chat_id: '120363777@g.us',
+      subject: 'astrid4@cybills.sg',
+      submission_id: 'x',
+      participants_added: ['6595556666'],
+      participants_requested: ['6595556666'],
+      already_existed: false,
+    },
+  },
+};
+r = await post('channels/user', { userId: dean.id, mobile: '6595556666', replace: true });
+check('asking for one in those words opens it', r.body.replaced, true);
+check('with the new number', r.body.channel.participantsRequested, ['6595556666']);
+const replaced = await (await fetch(`http://127.0.0.1:4623/api/whatsapp/channels?userId=${dean.id}`)).json();
+check('and exactly one group is live', replaced.channels.filter((c: any) => c.status === 'open').length, 1);
+// The old one is kept, never deleted: CYWS still files that group's messages
+// under its submission id, and they have to keep arriving.
+check('the old one is still on file', replaced.channels.some((c: any) => c.status === 'replaced'), true);
+check('under its own id, so its messages still land', replaced.channels.length, 2);
+
 r = await post('channels/user', { userId: 'nobody', mobile: '6591112222' });
 check('a person CYBills has no row for is refused', r.status, 404);
 
 r = await post('channels/user', { userId: dean.id, mobile: '0123456789' });
 check('and so is a number in national format', r.status, 400);
-check('leaving the stored one alone', ensure('cybm').find((u) => u.id === dean.id)?.mobile, '+65 9111 2222');
+check('leaving the stored one alone', ensure('cybm').find((u) => u.id === dean.id)?.mobile, '6595556666');
 
 // A person's half-made group must not adopt the ENTITY's pending submission id:
 // they are different conversations, and the entity's was pointed elsewhere.

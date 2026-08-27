@@ -87,7 +87,10 @@ export type WaChannel = {
   userId: string;
   subject: string;
   chatId: string; // '' until CYWS answers
-  status: 'pending' | 'open' | 'failed';
+  // 'replaced' — a group superseded because the person's number changed. Kept,
+  // never deleted: its submission id is what CYWS still files that group's
+  // messages under, and bills sent into it have to keep arriving.
+  status: 'pending' | 'open' | 'failed' | 'replaced';
   participantsRequested: string[];
   participantsAdded: string[];
   // Whether CYWS actually told us who ended up in the group. An ADOPTED group
@@ -226,8 +229,14 @@ export async function createChannel(
   // Scoped to the same person (or to neither), because these are different
   // conversations: connecting one person must not adopt the entity-wide
   // group's pending id and quietly put their bills wherever that was pointed.
+  // Only a HALF-MADE one. A replaced group must never be resumed: reusing its
+  // submission id would have CYWS hand back the very group being replaced.
   const existing = items.find(
-    (c) => c.workspaceId === ws && c.orgId === orgId && (c.userId ?? '') === userId && c.status !== 'open'
+    (c) =>
+      c.workspaceId === ws &&
+      c.orgId === orgId &&
+      (c.userId ?? '') === userId &&
+      (c.status === 'pending' || c.status === 'failed')
   );
   const channel: WaChannel = existing ?? {
     id: mintSubmissionId(orgId),
@@ -609,6 +618,27 @@ whatsappRouter.post('/channels/user', async (req, res) => {
     }
   }
 
+  // Already connected. Two different things are being asked for here and only
+  // one of them is a new group:
+  //
+  //   • the NUMBER changed — that is saved above, and from now on a bill from
+  //     it is filed under this person. Their existing group is untouched and
+  //     keeps working, so there is nothing to create.
+  //   • `replace` — the caller has decided the group itself is pointed at the
+  //     wrong number and wants a new one. That is a second real WhatsApp group,
+  //     so it happens only when asked for in those words.
+  //
+  // The old group is marked replaced rather than removed: CYWS still files its
+  // messages under that submission id, and anything sent into it has to keep
+  // arriving until somebody deletes the group at the WhatsApp end.
+  const live = loadChannels().find(
+    (c) => c.workspaceId === ws && c.userId === userId && c.status === 'open'
+  );
+  if (live && req.body?.replace !== true) {
+    return res.json({ ok: true, channel: publicChannel(live), unchanged: true, mobile });
+  }
+  if (live) patchChannel(live.id, { status: 'replaced' });
+
   const org = getOrganisation(ws, person.orgId);
   const me = memberForSession(req);
   const result = await createChannel(ws, person.orgId, {
@@ -625,7 +655,7 @@ whatsappRouter.post('/channels/user', async (req, res) => {
       channel: result.channel ? publicChannel(result.channel) : null,
     });
   }
-  res.json({ ok: true, channel: publicChannel(result.channel), mobile });
+  res.json({ ok: true, channel: publicChannel(result.channel), mobile, replaced: Boolean(live) });
 });
 
 // POST /api/whatsapp/channels — body { mobile? | participants?, subject? }.

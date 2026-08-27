@@ -121,11 +121,15 @@ export function useWhatsappForUser(userId) {
 // this is their WhatsApp number, and the server stores it as part of connecting
 // — an unstored number means the bills that arrive can't be matched back to
 // them.
-export async function connectWhatsappForUser({ userId, mobile }) {
+// `replace` opens a SECOND group, for when the one that exists is pointed at the
+// wrong number — a real WhatsApp group, so it is never implied by anything else.
+// Without it, calling this for somebody already connected saves the number and
+// returns the group they have.
+export async function connectWhatsappForUser({ userId, mobile, replace = false }) {
   const res = await fetch('/api/whatsapp/channels/user', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId, mobile }),
+    body: JSON.stringify({ userId, mobile, replace }),
   });
   const data = await res.json().catch(() => null);
   if (res.ok) return data.channel;
