@@ -13,6 +13,12 @@ import { WORKSPACE_ID } from './workspace.js';
 export type Bill = {
   id: string;
   orgId: string;
+  // Set on every page cut from one multi-page PDF (Add documents → "Split PDF
+  // by page"): a shared id for the file they came from, and this page's place
+  // in it. Not a guess about what belongs together — the app did the cutting.
+  splitGroup?: string;
+  splitPage?: number;
+  splitPages?: number;
   fileHash: string; // sha256 hex of the raw upload; exact-file dedup key
   fileName: string;
   supplier: string;

@@ -655,6 +655,17 @@ billsRouter.post('/bills', async (req, res) => {
     status: ALLOWED_STATUSES.includes(String(b.status)) ? String(b.status) : 'new',
     kind: b.kind === 'sales' ? 'sales' : b.kind === 'supplier_statement' ? 'supplier_statement' : 'cost',
     ...(Array.isArray(b.mergedFrom) ? { mergedFrom: b.mergedFrom.map(String) } : {}),
+    // Cut from a multi-page PDF by "Split PDF by page": which file, and which
+    // page of it. Merge detection reads these instead of guessing — pages of one
+    // receipt often share nothing it could match on (a trip map has no supplier,
+    // no total and no date), and here there is nothing to guess about.
+    ...(b.splitGroup
+      ? {
+          splitGroup: String(b.splitGroup),
+          splitPage: Number(b.splitPage) || 0,
+          splitPages: Number(b.splitPages) || 0,
+        }
+      : {}),
   });
 
   // Echo the overridden match back so the client can note "added despite dup".

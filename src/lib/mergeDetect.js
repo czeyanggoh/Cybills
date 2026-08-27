@@ -192,6 +192,18 @@ export function findMergeCandidates(docs) {
   const payments = [];
   for (let i = 0; i < pool.length; i += 1) {
     for (let j = i + 1; j < pool.length; j += 1) {
+      // Pages the app itself cut from one PDF. Not evidence to weigh — a record
+      // of what happened. They are tied before anything is compared, because
+      // the page that carries the trip map or the terms often shares nothing
+      // with the page that carries the money: no supplier, no total, no date,
+      // and so nothing any heuristic could match on.
+      const cut = pool[i].splitGroup && pool[i].splitGroup === pool[j].splitGroup;
+      if (cut) {
+        const pages = Number(pool[i].splitPages) || 0;
+        if (!why.has(i)) why.set(i, pages ? `pages of one ${pages}-page document you split` : 'pages of one document you split');
+        parent[root(i)] = root(j);
+        continue;
+      }
       const m = pairMatch(facts[i], facts[j]);
       if (!m) continue;
       if (m.kind === 'payment') payments.push({ i, j, why: m.why });

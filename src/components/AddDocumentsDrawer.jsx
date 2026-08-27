@@ -44,24 +44,34 @@ let uid = 0;
 // unchanged. Powers the "Split PDF by page" mode so each page of a batched
 // scan becomes its own document, extracted independently.
 async function splitPdfByPage(file) {
-  if (file.type !== 'application/pdf') return [file];
+  if (file.type !== 'application/pdf') return [{ file }];
   try {
     const src = await PDFDocument.load(await file.arrayBuffer());
     const n = src.getPageCount();
-    if (n <= 1) return [file];
+    if (n <= 1) return [{ file }];
     const base = file.name.replace(/\.pdf$/i, '');
+    // Every page of this file carries the same group id. Splitting is the one
+    // case where "these are pages of one document" is not a guess: we did the
+    // splitting. Merge detection is told rather than left to infer it from a
+    // shared supplier or total — which a trip map or a terms page doesn't have.
+    const splitGroup = `split_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const pages = [];
     for (let i = 0; i < n; i++) {
       const doc = await PDFDocument.create();
       const [page] = await doc.copyPages(src, [i]);
       doc.addPage(page);
       const bytes = await doc.save();
-      pages.push(new File([bytes], `${base} — p${i + 1}.pdf`, { type: 'application/pdf' }));
+      pages.push({
+        file: new File([bytes], `${base} — p${i + 1}.pdf`, { type: 'application/pdf' }),
+        splitGroup,
+        splitPage: i + 1,
+        splitPages: n,
+      });
     }
     return pages;
   } catch {
     // Encrypted or unreadable PDF — upload it whole rather than dropping it.
-    return [file];
+    return [{ file }];
   }
 }
 
@@ -493,7 +503,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
     };
     // In "Split PDF by page" mode, expand every multi-page PDF into per-page
     // files first, so each page flows through the pipeline as its own document.
-    let files = rawFiles;
+    let files = rawFiles.map((file) => ({ file }));
     if (!isStatement && mode === 'split' && rawFiles.some((f) => f.type === 'application/pdf')) {
       setSplitting(true);
       try {
@@ -502,7 +512,15 @@ export default function AddDocumentsDrawer({ open, onClose }) {
         setSplitting(false);
       }
     }
-    const created = files.map((file) => ({ id: ++uid, file, status: 'pending', fields: {} }));
+    const created = files.map(({ file, splitGroup, splitPage, splitPages }) => ({
+      id: ++uid,
+      file,
+      splitGroup,
+      splitPage,
+      splitPages,
+      status: 'pending',
+      fields: {},
+    }));
     setItems((prev) => [...created, ...prev]);
 
     // Resolve the categorisation chart once for the whole batch (live Xero
@@ -529,6 +547,11 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             kind,
             status: isStatement ? 'new' : 'processing',
             ...(owner ? { owner } : {}),
+            // Which file this page was cut from, and where in it. Kept on the
+            // document so the pages can be put back together later.
+            ...(it.splitGroup
+              ? { splitGroup: it.splitGroup, splitPage: it.splitPage, splitPages: it.splitPages }
+              : {}),
           };
           patch(it.id, { status: 'uploading', payload });
           // Business settings → Extraction → Duplicate detection decides what a

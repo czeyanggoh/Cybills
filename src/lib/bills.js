@@ -255,6 +255,12 @@ export function billToDoc(b) {
   return {
     id: b.id,
     persisted: true,
+    // Cut from a multi-page PDF on upload: which file, and which page of it.
+    // Merge detection uses this to tie the pages back together, and the row and
+    // the detail page use it to say which page they are.
+    ...(b.splitGroup
+      ? { splitGroup: b.splitGroup, splitPage: Number(b.splitPage) || 0, splitPages: Number(b.splitPages) || 0 }
+      : {}),
     kind: b.kind || 'cost',
     itemId: b.id,
     // The document's public number, as ASSIGNED by the server. Falls back to the

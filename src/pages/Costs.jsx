@@ -148,13 +148,26 @@ function ToolbarButton({ children, disabled = false, dropdown = false, danger = 
 // papered twice.
 function describeMergeGroup(g) {
   const n = g.docs.length;
+  // A split is not a guess, so it isn't phrased as one.
+  const cut = g.docs.find((d) => d?.splitGroup);
+  if (cut && g.docs.every((d) => d?.splitGroup === cut.splitGroup)) {
+    return `These ${n} documents are the pages of one PDF you split on upload — one receipt, not ${n}.`;
+  }
   return g.kind === 'pages'
     ? `${n} uploads look like parts of ONE document (${g.why}).`
     : 'A receipt and its card slip look like the same payment (the same total, from two different documents).';
 }
 
 // The short badge shown on a row that belongs to a suggestion.
-function mergeBadgeLabel(g) {
+//
+// A page the app itself cut out of a PDF is named for what it IS — "Page 2 of
+// 2" — rather than the hedged "Part of another document" a heuristic has to
+// use. Splitting a two-page receipt makes two rows out of one payment, and the
+// row that carries no money has to say plainly why it exists.
+function mergeBadgeLabel(g, doc) {
+  if (doc?.splitGroup && doc.splitPages > 1) {
+    return `Page ${doc.splitPage || '?'} of ${doc.splitPages} — merge back`;
+  }
   return g.kind === 'pages' ? 'Part of another document' : 'Receipt + card slip';
 }
 
@@ -560,6 +573,7 @@ export default function Costs() {
   // Read before the column list is built below — shownColumns evaluates
   // immediately, so these have to exist by then.
   const tablePrefs = useTablePrefs('costs');
+  const bridge = useBridgeEntity(); // decides whether the Tax rate column exists
   const densityClass = DENSITY_CLASS[tablePrefs.density] || DENSITY_CLASS.Medium;
   // Documents under side-by-side duplicate review — held as ids and paired with
   // what they matched at render time, so the panes follow the live rows. Up here
@@ -624,7 +638,7 @@ export default function Costs() {
               title={`${describeMergeGroup(mergeGroupFor.get(d.id))} Open the merge review for all ${mergeGroupFor.get(d.id).docs.length}.`}
               className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20"
             >
-              <Layers className="h-3 w-3" strokeWidth={2} /> {mergeBadgeLabel(mergeGroupFor.get(d.id))}
+              <Layers className="h-3 w-3" strokeWidth={2} /> {mergeBadgeLabel(mergeGroupFor.get(d.id), d)}
             </button>
           )}
         </div>
@@ -764,7 +778,6 @@ export default function Costs() {
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
   const taxRates = useVisibleTaxRates(); // shared managed list (Lists → Tax rates)
-  const bridge = useBridgeEntity();
   const allTaxRates = useManagedTaxRates(); // …and the same list unfiltered
   // Not GST-registered → No Tax is the only code on offer, and the row shows it
   // even for a document coded before the profile said so (opening the document

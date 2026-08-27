@@ -180,5 +180,35 @@ check('three pages chain into one group', chained.map((g) => ids(g.docs)), [['pa
 check('rows with no file are never candidates', findMergeCandidates([doc({ ...page1, hasFile: false }), page2]).length, 0);
 check('already-merged originals are left alone', findMergeCandidates([doc({ ...page1, status: 'merged' }), page2]).length, 0);
 
+// --- Pages the app cut itself ------------------------------------------------
+// "Split PDF by page" turns one receipt into several documents, and the pages
+// that aren't the money page carry nothing to match on — a Grab trip map has no
+// supplier, no total and no date. Nothing to infer: the app did the cutting, so
+// the pages are tied by that.
+{
+  const page = (id, extra) => ({
+    id, persisted: true, hasFile: true, status: 'new',
+    splitGroup: 'split_abc', splitPages: 2, ...extra,
+  });
+  const groups = findMergeCandidates([
+    page('a', { splitPage: 1, supplier: 'Grab', total: '12.70', date: '2026-08-26' }),
+    page('b', { splitPage: 2, supplier: '', total: '0', date: '' }),
+  ]);
+  check('a split PDF is one group', groups.length, 1);
+  check('…holding both pages', groups[0].docs.map((d) => d.id).sort().join(','), 'a,b');
+  check('…as pages, not a payment pair', groups[0].kind, 'pages');
+  check('…and says where they came from', /split/.test(groups[0].why), true);
+
+  // Two different splits in one inbox stay two documents apiece.
+  const two = findMergeCandidates([
+    page('a', { splitPage: 1, supplier: 'Grab', total: '12.70' }),
+    page('b', { splitPage: 2 }),
+    { id: 'c', persisted: true, hasFile: true, status: 'new', splitGroup: 'split_xyz', splitPage: 1, splitPages: 2, supplier: 'Koufu', total: '5.00' },
+    { id: 'd', persisted: true, hasFile: true, status: 'new', splitGroup: 'split_xyz', splitPage: 2, splitPages: 2 },
+  ]);
+  check('two splits are two groups', two.length, 2);
+  check('…never crossed', two.every((g) => g.docs.length === 2), true);
+}
+
 console.log(failures ? `\n${failures} failing` : '\nall passing');
 process.exit(failures ? 1 : 0);

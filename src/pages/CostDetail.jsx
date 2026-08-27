@@ -114,7 +114,20 @@ function ReceiptPreview({ doc, imageUrl, previewType }) {
   if (imageUrl) {
     return (
       <div className="overflow-hidden rounded-lg border bg-background">
-        <div className="border-b px-4 py-3 text-sm font-medium">Uploaded receipt</div>
+        <div className="flex items-center justify-between gap-3 border-b px-4 py-3 text-sm font-medium">
+          <span>Uploaded receipt</span>
+          {/* Which page of the original this is. "Split PDF by page" turns one
+              file into several documents that all look alike at a glance, and
+              there was no way to tell from here which page you had open. */}
+          {doc?.splitGroup && doc.splitPages > 1 && (
+            <span
+              className="rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+              title="This document is one page of a PDF you split on upload. The other pages are separate documents — merge them back if they are one receipt."
+            >
+              Page {doc.splitPage || '?'} of {doc.splitPages}
+            </span>
+          )}
+        </div>
         {previewType === 'pdf' ? (
           <iframe src={imageUrl} title="Uploaded document" className="h-[45vh] w-full md:h-[560px]" />
         ) : (
