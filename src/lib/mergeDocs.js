@@ -1,7 +1,8 @@
 import { buildReceiptsPdf } from '@/lib/docsExport';
-import { fetchExtract, addBill, updateBill, notifyBillsChanged } from '@/lib/bills';
+import { fetchExtract, fetchExtractLines, lineItemRows, addBill, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { getExtractionAccounts } from '@/lib/organisations';
 import { looksLikeDuplicates, mergeKind, orderForMerge } from '@/lib/mergeDetect';
+import { matchSupplierRule } from '@/lib/supplierRules';
 
 // "Merge documents" (Dext-style): combine 2+ cost documents that are really one
 // receipt (page 1 + page 2, an invoice + its backup, a re-upload) into a single
@@ -119,6 +120,31 @@ export async function buildMergePreview(docs) {
       }
     : { ...agg, total: String(agg.total), tax: String(agg.tax) };
 
+  // Line items survive the merge.
+  //
+  // Two ways they can, and the order matters. If the supplier is opted into
+  // "Extract line items", the combined PDF is read for them the way an upload
+  // is — the dedicated pass, checked against the document's own total, which is
+  // the whole point of that rule. Otherwise whatever the source documents
+  // already had is carried over, because merging must not lose work: rows the
+  // reader found or a reviewer typed were on the paper before the merge and are
+  // on it afterwards.
+  //
+  // Carried over only when exactly ONE source has them. Two pages that both
+  // have rows are two partial breakdowns of one document, and concatenating
+  // them is how a merged bill ends up worth twice the paper.
+  const vendorRule = matchSupplierRule(fields.supplier);
+  let lineItems = null;
+  if (vendorRule.extractLineItems) {
+    const read = await fetchExtractLines(base64, 'application/pdf', await getExtractionAccounts()).catch(() => null);
+    if (read?.lines?.length) lineItems = lineItemRows(read.lines, fields.category);
+  }
+  if (!lineItems) {
+    const withLines = mergeable.filter((d) => Array.isArray(d.lineItems) && d.lineItems.length);
+    if (withLines.length === 1) lineItems = withLines[0].lineItems;
+  }
+  if (lineItems?.length) fields.lineItems = lineItems;
+
   // Warn about a re-upload only when the sources really are the same document
   // twice — same supplier, same amount, and neither one filling a blank in the
   // other. Two halves of ONE document share a supplier and a total as well, and
@@ -155,6 +181,11 @@ export async function commitMerge(sources, base64, fields) {
     description: fields.description || '',
     total: fields.total != null ? String(fields.total) : '',
     tax: fields.tax != null ? String(fields.tax) : '',
+    // The rows the merge preview resolved: read from the combined PDF when the
+    // supplier is opted into "Extract line items", else carried from the source
+    // document that had them. Without this the merged document arrived with no
+    // breakdown at all and the rule looked broken.
+    ...(Array.isArray(fields.lineItems) && fields.lineItems.length ? { lineItems: fields.lineItems } : {}),
     kind: 'cost',
     fileBase64: base64,
     mediaType: 'application/pdf',

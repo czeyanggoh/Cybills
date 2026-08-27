@@ -18,6 +18,7 @@ import {
   deleteBillHard,
   storageKeyInUse,
   parseAmount,
+  type Bill,
   type Candidate,
 } from './store.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
@@ -297,6 +298,30 @@ function canReadBill(req: Request, bill: { orgId?: string }): boolean {
   return canAccessOrg(me, orgId);
 }
 
+// Line items as they are stored: every cell a string, nothing else carried over
+// from whatever the caller sent. Shared by the create and the update paths — a
+// merged document arrives with its rows already resolved, and they have to be
+// stored the same way the detail page's own edits are.
+type LineItem = NonNullable<Bill['lineItems']>[number];
+
+function normaliseLineItems(rows: unknown[]): LineItem[] {
+  return rows.map((raw) => {
+    const li = raw as Record<string, unknown>;
+    return {
+      description: String(li?.description ?? ''),
+      category: String(li?.category ?? ''),
+      // The two Xero tracking categories, per line. A bill whose lines carry
+      // their own project publishes as those lines rather than one summary one
+      // — see the publish path in xero.ts.
+      project: String(li?.project ?? ''),
+      project2: String(li?.project2 ?? ''),
+      net: String(li?.net ?? ''),
+      tax: String(li?.tax ?? ''),
+      total: String(li?.total ?? ''),
+    };
+  });
+}
+
 // Does this document's entity allow its images to be shared with exports?
 // Business settings -> Exports -> Image sharing, Dext's own toggle. Read on
 // every request rather than baked into the link, so switching it to No revokes
@@ -449,20 +474,7 @@ billsRouter.patch('/bills/:id', async (req, res) => {
     patch.duplicateOfId = '';
     patch.duplicateType = '';
   }
-  if (Array.isArray(b.lineItems)) {
-    patch.lineItems = b.lineItems.map((li: any) => ({
-      description: String(li?.description ?? ''),
-      category: String(li?.category ?? ''),
-      // The two Xero tracking categories, per line. A bill whose lines carry
-      // their own project publishes as those lines rather than one summary one
-      // — see the publish path in xero.ts.
-      project: String(li?.project ?? ''),
-      project2: String(li?.project2 ?? ''),
-      net: String(li?.net ?? ''),
-      tax: String(li?.tax ?? ''),
-      total: String(li?.total ?? ''),
-    }));
-  }
+  if (Array.isArray(b.lineItems)) patch.lineItems = normaliseLineItems(b.lineItems);
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
 
@@ -659,6 +671,12 @@ billsRouter.post('/bills', async (req, res) => {
     // page of it. Merge detection reads these instead of guessing — pages of one
     // receipt often share nothing it could match on (a trip map has no supplier,
     // no total and no date), and here there is nothing to guess about.
+    // A merged document arrives with its rows already resolved (read from the
+    // combined PDF, or carried from the source that had them). Dropping them
+    // here is what made "Extract line items" look broken after a merge.
+    ...(Array.isArray(b.lineItems) && b.lineItems.length
+      ? { lineItems: normaliseLineItems(b.lineItems) }
+      : {}),
     ...(b.splitGroup
       ? {
           splitGroup: String(b.splitGroup),
