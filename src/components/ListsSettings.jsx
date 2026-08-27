@@ -704,6 +704,12 @@ function Placeholder({ label }) {
 
 export default function ListsSettings() {
   const [tab, setTab] = useState('categories');
+  const bridge = isStandaloneOrg(
+    (useOrganisations().data ?? []).find((o) => o.id === getActiveOrganisationId()),
+  );
+  // A bridge entity has no tax codes of its own — its claims post with No Tax at
+  // the full amount — so a list of them is a list of somebody else's rates.
+  const subnav = SUBNAV.filter((s) => !(bridge && s.key === 'taxRates'));
   const TITLES = Object.fromEntries(SUBNAV.map((s) => [s.key, s.label]));
 
   return (
@@ -711,7 +717,7 @@ export default function ListsSettings() {
       <div className="w-48 shrink-0">
         <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lists</p>
         <div className="flex flex-col text-sm">
-          {SUBNAV.map((s) => (
+          {subnav.map((s) => (
             <button
               key={s.key}
               type="button"

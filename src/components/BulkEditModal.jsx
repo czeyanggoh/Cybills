@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useBridgeEntity } from '@/lib/organisations';
 import { X } from 'lucide-react';
 import ComboSelect from '@/components/ComboSelect';
 import { useUsers, getDirectory } from '@/lib/userStore';
@@ -22,7 +23,9 @@ const FIELDS = [
   { key: 'date', label: 'Date', kind: 'date' },
   { key: 'dueDate', label: 'Due date', kind: 'date' },
   { key: 'category', label: 'Category', kind: 'combo', source: 'categories' },
-  { key: 'taxRate', label: 'Tax rate', kind: 'combo', source: 'taxRates' },
+  // Hidden in a bridge entity: it has no tax codes of its own, and its claims
+  // post with No Tax at the full amount, so one set here could never be used.
+  { key: 'taxRate', label: 'Tax rate', kind: 'combo', source: 'taxRates', xeroOnly: true },
   { key: 'documentType', label: 'Type', kind: 'select', options: ['Invoice', 'Receipt', 'Credit note', 'Statement', 'Other'] },
   { key: 'description', label: 'Description', kind: 'text' },
   { key: 'paymentMethod', label: 'Payment method', kind: 'combo', source: 'paymentMethods' },
@@ -43,6 +46,7 @@ export default function BulkEditModal({
   categoryOptions = [],
   taxRateOptions = [],
 }) {
+  const bridge = useBridgeEntity();
   const [on, setOn] = useState({}); // which fields this edit actually touches
   const [values, setValues] = useState({});
   const [busy, setBusy] = useState(false);
@@ -92,7 +96,8 @@ export default function BulkEditModal({
 
   if (!open) return null;
 
-  const picked = FIELDS.filter((f) => on[f.key]);
+  const fields = FIELDS.filter((f) => !(f.xeroOnly && bridge));
+  const picked = fields.filter((f) => on[f.key]);
   const editable = count - publishedCount;
 
   const apply = async () => {
@@ -227,7 +232,7 @@ export default function BulkEditModal({
             </p>
           )}
           <div className="space-y-2">
-            {FIELDS.map((f) => (
+            {fields.map((f) => (
               <div key={f.key} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
                 <label className="flex items-center gap-2 text-sm sm:w-40 sm:shrink-0">
                   <input

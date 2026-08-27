@@ -555,12 +555,19 @@ function Extraction() {
             <Toggle on={form.publishToXeroAfterReading} onChange={(v) => set('publishToXeroAfterReading', v)} />
           </Row>
         )}
-        <Row label="Default tax rate for costs">
-          <SelectBox value={form.defaultTaxRateCosts || '— None —'} onChange={(v) => set('defaultTaxRateCosts', v === '— None —' ? '' : v)} options={taxRateOptions} />
-        </Row>
-        <Row label="Default tax rate for sales">
-          <SelectBox value={form.defaultTaxRateSales || '— None —'} onChange={(v) => set('defaultTaxRateSales', v === '— None —' ? '' : v)} options={taxRateOptions} />
-        </Row>
+        {/* Tax CODES, not the tax amount: a bridge entity has none of its own,
+            and its claims post with No Tax at the full amount. The amount is
+            still extracted above — that is what the paper says. */}
+        {!bridge && (
+          <>
+            <Row label="Default tax rate for costs">
+              <SelectBox value={form.defaultTaxRateCosts || '— None —'} onChange={(v) => set('defaultTaxRateCosts', v === '— None —' ? '' : v)} options={taxRateOptions} />
+            </Row>
+            <Row label="Default tax rate for sales">
+              <SelectBox value={form.defaultTaxRateSales || '— None —'} onChange={(v) => set('defaultTaxRateSales', v === '— None —' ? '' : v)} options={taxRateOptions} />
+            </Row>
+          </>
+        )}
       </Card>
 
       <Card title="Due dates">
