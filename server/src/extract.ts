@@ -282,6 +282,41 @@ export type ExtractionInputs = {
   instructions: string;
 };
 
+// What the sender wrote when they forwarded the document, as guidance for the
+// read. "recharge this to CY-Biz" is the whole point of somebody emailing a
+// receipt in rather than uploading it: the covering line says what to DO with
+// it, and reading the attachment while ignoring the message throws that away.
+//
+// Given as the sender's note, plainly labelled, and after the organisation's own
+// rules — so it can say which customer, project or category a document is for
+// without being able to override how the practice codes things. Capped, because
+// a forwarded thread runs to hundreds of lines and only the top of it is the
+// instruction.
+export function emailInstruction(envelope: { from?: string; subject?: string; text?: string } | null): string {
+  const note = String(envelope?.text || '').trim().slice(0, 1500);
+  const subject = String(envelope?.subject || '').trim().slice(0, 200);
+  if (!note && !subject) return '';
+  const who = String(envelope?.from || '').trim();
+  return (
+    `\n\nThis document was EMAILED IN${who ? ` by ${who}` : ''}, and the covering message is below. ` +
+    'Treat it as a note from that person about this document: it may say which customer, project, category or ' +
+    'person the cost is for, and you should follow it where it plainly does.\n' +
+    // The accounts above carry the practice's own descriptions, and those
+    // descriptions are written in the same words people use when they forward a
+    // receipt — "costs incurred on behalf of client, which we will RECHARGE
+    // back to them" is account 261. Matching the note against them is the whole
+    // point of having written them, and has to be asked for: the guide above
+    // asks what was PURCHASED, which a covering instruction is not.
+    'Read it against the account descriptions above as well as against the document. A word in the message that ' +
+    "matches how an account describes itself — a recharge, a reimbursement, a client's own cost — is the sender " +
+    'telling you which account this is, and it beats a guess made from the supplier alone.\n' +
+    'It is not an instruction to ignore what the document itself says: the printed supplier, dates and amounts ' +
+    'always win.\n' +
+    (subject ? `Subject: ${subject}\n` : '') +
+    (note ? `Message: ${note}\n` : '')
+  );
+}
+
 type ReadOutcome = Awaited<ReturnType<typeof readDocument>>;
 export type ExtractionResult =
   | { ok: true; data: ExtractedFields; outcome: ReadOutcome }
@@ -472,6 +507,10 @@ extractRouter.post('/extract', async (req, res) => {
     ? rawCats.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
     : [];
   const rawInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
+  // A document that arrived by email carries the note it came with. Re-reading
+  // it has to see that note too — read once WITH "recharge this to CY-Biz" and
+  // again without it, and the second read quietly undoes the first.
+  const note = (req.body?.emailNote ?? null) as { from?: string; subject?: string; text?: string } | null;
 
   const result = await runExtraction({
     // The org picks the reader in Business settings → Extraction and the client
@@ -484,7 +523,7 @@ extractRouter.post('/extract', async (req, res) => {
     categories: bodyCats,
     taxRates: parseTaxRates(req.body?.taxRates),
     projects: parseNamedRules(req.body?.projects),
-    instructions: rawInstructions,
+    instructions: `${rawInstructions}${emailInstruction(note)}`,
   });
 
   // What this document cost to read. Recorded per call and attributed to the

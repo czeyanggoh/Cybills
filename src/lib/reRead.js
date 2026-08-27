@@ -149,7 +149,9 @@ export async function reReadDocument(doc, ctx) {
   const rec = await fileForDoc(doc);
   if (!rec) return 'nofile';
   try {
-    const ex = await fetchExtract(rec.base64, rec.mediaType, ctx.accounts);
+    // Emailed documents keep the note they came with, so a re-read is given the
+    // same instruction the first read had.
+    const ex = await fetchExtract(rec.base64, rec.mediaType, ctx.accounts, doc?.email || null);
     if (!ex) return 'failed';
     const { patch } = readDecisions(doc, ex, ctx);
     await updateBill(doc.id, patch);

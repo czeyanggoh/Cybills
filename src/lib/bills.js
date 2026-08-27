@@ -53,7 +53,10 @@ export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif
 // classifies each expense into the account it should post to, using the
 // descriptions. Returns the extracted fields object, or null if extraction is
 // unavailable/failed (best-effort — the file is still stored + dedup-checked).
-export async function fetchExtract(imageBase64, mediaType, accounts) {
+// `emailNote` is the covering message a document arrived with (bill.email). A
+// re-read has to see it too: read once WITH "recharge this to CY-Biz" and again
+// without it, and the second read quietly undoes the first.
+export async function fetchExtract(imageBase64, mediaType, accounts, emailNote = null) {
   // The active org's Review instructions (business context + GST/coding rules)
   // ride along so the model classifies with that context. Best-effort.
   const instructions = await fetchReviewInstructions(getActiveOrganisationId());
@@ -80,6 +83,7 @@ export async function fetchExtract(imageBase64, mediaType, accounts) {
       accounts,
       categories,
       instructions,
+      ...(emailNote ? { emailNote } : {}),
       taxRates,
       projects,
       // '' = no org preference; the server applies its own default.

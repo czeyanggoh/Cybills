@@ -992,7 +992,9 @@ export default function CostDetail() {
     setAiError('');
     try {
       const accounts = await getExtractionAccounts();
-      const ex = await fetchExtract(imageBase64, mediaType, accounts);
+      // An emailed document is re-read with the note it arrived with, so a
+      // re-read can't quietly undo what the covering message asked for.
+      const ex = await fetchExtract(imageBase64, mediaType, accounts, doc?.email || null);
       if (!ex) { setAiError('Extraction failed — please try again.'); return; }
       // Which value wins — the supplier rule, the document's own paper, this
       // read, or what the document already carried — is decided in one place

@@ -155,6 +155,19 @@ the page takes the document back from the server rather than trusting what is on
 screen. One read per document at a time. A full browser reload still kills it —
 that aborts the request itself.
 
+**An emailed document is read with the note it came with.** "recharge this to
+CY-Biz" is why somebody emails a receipt in rather than uploading it: the
+covering line says what to DO with it. It goes to the reader as the sender's
+note (`emailInstruction` in `extract.ts`), after the org's own rules, and is
+explicitly pointed at the ACCOUNT DESCRIPTIONS — those are written in the same
+words people use when forwarding ("costs incurred on behalf of client, which we
+will recharge back to them" is 261), and the accounts guide only ever asked what
+was PURCHASED, which a covering instruction is not. It can name a customer,
+project or category; it can never override the printed supplier, dates or
+amounts. The note is stored on the document (`email`) and sent again on a
+RE-READ — read once with it and again without, and the second read quietly
+undoes the first.
+
 ## Merge detection: which uploads are really one document
 
 Two separate uploads are often one cost, and the two ways that happens do not
