@@ -7,9 +7,20 @@ import { costPath, fetchShareLinks } from '@/lib/bills';
 import { getExportSettings } from '@/lib/exportSettings';
 import { recordExport } from '@/lib/exportsStore';
 
-// A4 in points, with a comfortable margin.
-const W = 595.28;
-const H = 841.89;
+// A4 LANDSCAPE in points, with a comfortable margin.
+//
+// The report is a table — date, item, supplier, category, project and three
+// amounts — and a portrait page gave the two free-text columns about 90pt each,
+// so a supplier's name wrapped onto three lines and the whole thing was a
+// column of stubs. Read full-screen on any normal monitor a portrait page is
+// also height-constrained, which is what makes it small: turning the page the
+// same way round as the screen is the difference between reading it and
+// zooming into it.
+//
+// The RECEIPT pages appended after the report stay portrait (see A4 below) —
+// receipts are tall, and a landscape page would scale them DOWN to its height.
+const W = 841.89;
+const H = 595.28;
 const M = 32;
 const RIGHT = W - M;
 const BOTTOM = H - 56;
@@ -54,7 +65,7 @@ function summarise(txns) {
 // "Approval history" page built from the claim's activity log). Returns the
 // jsPDF doc so callers can open, download, or (in tests) serialise it.
 export function buildClaimDoc(claim, links = {}) {
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
   const title = `${claim.claimFor}'s Expense Claim`.toUpperCase();
   const totalExp = '{tp}';
   let page = 0;
@@ -145,11 +156,13 @@ export function buildClaimDoc(claim, links = {}) {
   section('TRANSACTIONS');
   const hasProject = claim.transactions.some((t) => t.project);
   // The amount columns need only their header's width ("Net (SGD)" ≈ 46pt), so
-  // they are pulled right to leave the free-text columns as much room as
-  // possible — supplier and category are the two that were being cut off.
+  // they are pinned to the right edge and everything the page gained goes to the
+  // free-text columns — supplier and category are the two that were being cut
+  // off, and on a landscape page they get roughly twice the room.
+  const amounts = { net: RIGHT - 143, tax: RIGHT - 71, total: RIGHT };
   const tc = hasProject
-    ? { date: M, item: 92, supplier: 168, category: 258, project: 330, net: 420, tax: 492, total: RIGHT }
-    : { date: M, item: 92, supplier: 168, category: 272, net: 420, tax: 492, total: RIGHT };
+    ? { date: M, item: 92, supplier: 168, category: 320, project: 470, ...amounts }
+    : { date: M, item: 92, supplier: 168, category: 340, ...amounts };
   // How wide each free-text cell may draw before the next column starts. They
   // WRAP within it rather than being clipped: a claim someone signs has to show
   // which supplier and which account, and "The Ice Cream …" is neither.
@@ -316,8 +329,14 @@ export async function buildClaimPdfBase64(claim) {
   }
 }
 
-// A4 in points, for placing receipt images one-per-page.
-const A4 = [W, H];
+// A4 PORTRAIT in points, for placing receipt images one-per-page. Deliberately
+// not the report's landscape: a receipt is tall, and a landscape page would
+// scale it down to fit the shorter side. Named separately from the report's
+// W/H because everything below measures against THIS page — scaling a receipt
+// to the report's dimensions is how an image ends up half off the paper.
+const RECEIPT_W = H;
+const RECEIPT_H = W;
+const A4 = [RECEIPT_W, RECEIPT_H];
 
 // Fetch a transaction's original receipt document and append it to `out` (a
 // pdf-lib doc). PDFs are copied page-for-page; images are placed one per page,
@@ -338,10 +357,10 @@ async function appendReceipt(out, itemId) {
     if (type.includes('png') || type.includes('jpg') || type.includes('jpeg')) {
       const img = type.includes('png') ? await out.embedPng(buf) : await out.embedJpg(buf);
       const page = out.addPage(A4);
-      const s = Math.min((W - 64) / img.width, (H - 64) / img.height, 1);
+      const s = Math.min((RECEIPT_W - 64) / img.width, (RECEIPT_H - 64) / img.height, 1);
       const w = img.width * s;
       const h = img.height * s;
-      page.drawImage(img, { x: (W - w) / 2, y: (H - h) / 2, width: w, height: h });
+      page.drawImage(img, { x: (RECEIPT_W - w) / 2, y: (RECEIPT_H - h) / 2, width: w, height: h });
       return true;
     }
     return false;
