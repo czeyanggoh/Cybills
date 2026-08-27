@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   AlertTriangle,
   RefreshCw,
+  MessageCircle,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import ListsSettings from '@/components/ListsSettings';
@@ -36,6 +37,7 @@ import {
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 import { useInboundConfig } from '@/lib/inboundSettings';
+import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig } from '@/lib/whatsapp';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
@@ -504,6 +506,56 @@ function ExtractByEmailCard() {
   );
 }
 
+// Business settings → Extraction → "Extract by WhatsApp". The other half of the
+// email card above: what the CYWorkspace operator needs to hand bills back to
+// CYBills. The group itself is per-entity and lives under Connections; these
+// two values are the deployment's.
+function ExtractByWhatsappCard() {
+  const config = useWhatsappConfig();
+  const { membership, googleEnabled } = useAuth();
+  // Same rule as the inbound-email secret, for the same reason: this key
+  // authorises filing documents into ANY client entity's book, so it is the
+  // practice's and not a client admin's.
+  const canSeeKey = isPracticeTeam(membership, googleEnabled);
+  return (
+    <Card title="Extract by WhatsApp">
+      <p className="text-sm text-muted-foreground">
+        Each entity gets a WhatsApp group (Business settings → Connections). CYWorkspace reads every
+        attachment sent into it and hands the supplier bills to CYBills, which files them under the sender
+        and reads them with whatever they typed alongside — &ldquo;recharge this to CY-Biz&rdquo; is an
+        instruction about that bill, and it is treated as one.
+      </p>
+      {canSeeKey ? (
+        <>
+          <div className="rounded-md border p-4">
+            <p className="mb-1 text-sm font-medium">Give these to the CYWorkspace operator</p>
+            <p className="mb-3 text-xs text-muted-foreground">
+              CYWorkspace POSTs one bill at a time to this URL with the key in <code>X-API-Key</code>.
+            </p>
+            {config ? (
+              <div className="space-y-2">
+                <CopyRow label="CYBILLS_INVOICE_URL" value={config.url || '—'} />
+                <CopyRow label="CYBILLS_API_KEY" value={config.apiKey || '—'} secret />
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The key is the whole deployment&rsquo;s — it authorises filing a bill into any client entity, so it
+            goes to CYWorkspace and nowhere else. Full contract: <code>deploy/WHATSAPP.md</code>.
+          </p>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          The WhatsApp connection itself is set up once for the whole account by the practice — there is
+          nothing to configure here.
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function Extraction() {
   const bridge = useBridgeEntity();
   const stored = useExtractionSettings();
@@ -522,6 +574,8 @@ function Extraction() {
       <DocumentReaderCard value={form.readerProvider} onChange={(v) => set('readerProvider', v)} />
 
       <ExtractByEmailCard />
+
+      <ExtractByWhatsappCard />
 
       <Card title="Inbox tabs">
         <Row label="Show To review and Ready tabs" hint="Show these tabs in the costs and sales inboxes.">
@@ -806,6 +860,196 @@ function PaymentStatusCard({ organisation }) {
   );
 }
 
+// Business settings → Connections → WhatsApp. One bill collection group per
+// client entity: the people who actually hold the invoices send photos and PDFs
+// into a WhatsApp group, CYWorkspace classifies each attachment, and the
+// supplier bills among them land in this entity's Costs inbox.
+//
+// The button makes a REAL WhatsApp group and adds real phone numbers to it, so
+// it is the only thing in the app that can: nothing here creates one on load,
+// on save, or as a side effect of anything else.
+function WhatsappCollectionCard() {
+  const organisation = useActiveOrganisation();
+  const [{ channels, enabled, canManage, loading }, reload] = useWhatsappChannels();
+  const [open, setOpen] = useState(false);
+  const [numbers, setNumbers] = useState('');
+  const [subject, setSubject] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const channel = channels[0] || null;
+  const pending = channel && channel.status !== 'open';
+
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const participants = numbers.split(/[\s,;]+/).map((n) => n.trim()).filter(Boolean);
+      await createWhatsappChannel({ participants, subject: subject.trim() });
+      setNumbers('');
+      setSubject('');
+      setOpen(false);
+      reload();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) return null;
+
+  const form = (
+    <div className="mt-4 space-y-3 border-t pt-4">
+      <div>
+        <label htmlFor="wa-numbers" className="text-sm font-medium">WhatsApp numbers</label>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Full international format, digits only — <code>60123456789</code>, not <code>0123456789</code>. Several
+          go on separate lines.
+        </p>
+        <textarea
+          id="wa-numbers"
+          rows={2}
+          value={numbers}
+          onChange={(e) => setNumbers(e.target.value)}
+          placeholder="60123456789"
+          className="mt-2 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+      </div>
+      <div>
+        <label htmlFor="wa-subject" className="text-sm font-medium">Group name</label>
+        <input
+          id="wa-subject"
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          placeholder={`CYBills - ${organisation?.name || 'this entity'}`}
+          className="mt-2 h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={create}
+          disabled={busy || !numbers.trim()}
+          className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {busy ? 'Creating…' : pending ? 'Try again' : 'Create the group'}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setOpen(false); setError(null); }}
+          className="text-sm text-muted-foreground hover:text-foreground"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {error.message}
+            {error.rejected?.length ? (
+              <> Check <span className="font-mono">{error.rejected.join(', ')}</span>.</>
+            ) : null}
+            {/* A group may exist at the far end even when the answer never came
+                back. Pressing again reuses the same submission id, so it adopts
+                that group instead of making a second one. */}
+            {error.retryable ? ' Pressing the button again is safe — it picks up the same group rather than making another.' : ''}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <Card title="WhatsApp bill collection">
+      <div className="rounded-lg border p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="flex items-center gap-2 font-medium">
+              <MessageCircle className="h-4 w-4" strokeWidth={1.75} /> Collect bills in a WhatsApp group
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              CYBot opens a WhatsApp group with the people who hold this entity&rsquo;s invoices. Anything they
+              send into it is read, and the supplier bills among them arrive in the Costs inbox. Receipts,
+              sales invoices and everything else are left where they are.
+            </p>
+          </div>
+          <span className="inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium text-muted-foreground">
+            {channel?.status === 'open' ? 'Open' : pending ? 'Not created' : 'Not set up'}
+          </span>
+        </div>
+
+        {!enabled ? (
+          <p className="mt-4 border-t pt-4 text-sm text-muted-foreground">
+            CYWorkspace isn&rsquo;t connected on this deployment yet, so there is nothing to create the group
+            with. It comes on with the same key the Xero relay uses.
+          </p>
+        ) : channel?.status === 'open' ? (
+          <>
+            <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 border-t pt-4 text-sm">
+              <dt className="text-muted-foreground">Group</dt>
+              <dd className="m-0 break-words font-medium">{channel.subject}</dd>
+              <dt className="text-muted-foreground">In the group</dt>
+              <dd className="m-0 break-words font-mono text-xs">{channel.participantsAdded.join(', ') || '—'}</dd>
+              <dt className="text-muted-foreground">Received</dt>
+              <dd className="m-0">
+                {channel.received} {channel.received === 1 ? 'bill' : 'bills'}
+              </dd>
+            </dl>
+            {/* WhatsApp silently refuses to add somebody whose privacy settings
+                disallow it, and answers as though nothing happened. Saying so is
+                the only way anybody finds out — otherwise that person waits to
+                be added to a group they will never see. */}
+            {channel.participantsMissing.length > 0 && (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  WhatsApp wouldn&rsquo;t add{' '}
+                  <span className="font-mono">{channel.participantsMissing.join(', ')}</span> — their privacy
+                  settings don&rsquo;t allow being added to groups. Send them the group&rsquo;s invite link
+                  instead.
+                </span>
+              </div>
+            )}
+            {canManage && !open && (
+              <button
+                type="button"
+                onClick={() => setOpen(true)}
+                className="mt-4 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+              >
+                Create another group for this entity
+              </button>
+            )}
+          </>
+        ) : (
+          <p className="mt-4 border-t pt-4 text-sm text-muted-foreground">
+            {pending
+              ? `The last attempt didn't complete${channel.lastError ? `: ${channel.lastError}` : '.'} Trying again picks up where it left off rather than creating a second group.`
+              : 'No group yet.'}
+          </p>
+        )}
+
+        {enabled && canManage && !open && channel?.status !== 'open' && (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="mt-4 inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-muted"
+          >
+            {pending ? 'Try again' : 'Set up the group'}
+          </button>
+        )}
+        {enabled && canManage && open && form}
+        {enabled && !canManage && (
+          <p className="mt-4 text-xs text-muted-foreground">
+            An admin of this entity sets the group up.
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function Connections() {
   const organisation = useActiveOrganisation();
   const bridge = isStandaloneOrg(organisation);
@@ -863,6 +1107,9 @@ function Connections() {
           into its parent's ledger, so its published bills have a status to
           check too. */}
       {organisation?.id && (tenantName || bridge) && <PaymentStatusCard organisation={organisation} />}
+      {/* Not gated on Xero: a bridge entity collects bills the same way, and a
+          group is about who sends the paperwork in, not about where it posts. */}
+      {organisation?.id && <WhatsappCollectionCard />}
     </div>
   );
 }

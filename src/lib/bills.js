@@ -53,7 +53,9 @@ export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif
 // classifies each expense into the account it should post to, using the
 // descriptions. Returns the extracted fields object, or null if extraction is
 // unavailable/failed (best-effort — the file is still stored + dedup-checked).
-// `emailNote` is the covering message a document arrived with (bill.email). A
+// `emailNote` is the covering message a document arrived with — the email it
+// was forwarded in, or the WhatsApp message it was attached to (see
+// lib/coveringNote.js, which reads either off the document into one shape). A
 // re-read has to see it too: read once WITH "recharge this to CY-Biz" and again
 // without it, and the second read quietly undoes the first.
 export async function fetchExtract(imageBase64, mediaType, accounts, emailNote = null) {
@@ -315,6 +317,10 @@ export function billToDoc(b) {
     // The message this document arrived in, when it came by email. Null for an
     // upload, which is what the Email tab reads to know it has nothing to show.
     email: b.email || null,
+    // The WhatsApp message it arrived in, for a document sent into a bill
+    // collection group. Null for anything else, which is what the WhatsApp tab
+    // reads to know it has nothing to show.
+    whatsapp: b.whatsapp || null,
     dueDate: b.dueDate || '',
     lineItems: Array.isArray(b.lineItems) ? b.lineItems : [],
     hasFile: Boolean(b.hasFile),

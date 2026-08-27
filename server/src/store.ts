@@ -42,6 +42,23 @@ export type Bill = {
   // document from the same PDF uploaded silently, and the covering note is
   // often the only place that says so.
   email?: { from: string; to: string; subject: string; date: string; text: string };
+  // The WhatsApp message a document arrived in, when it came through a bill
+  // collection group rather than by email or upload. Same purpose as `email`
+  // above and kept separate rather than folded into it: they are different
+  // envelopes (a chat has no subject and no recipient, and the sender is a
+  // phone number), and the document page shows each under its own tab.
+  whatsapp?: {
+    submissionId: string;
+    chatId: string;
+    chatSubject: string;
+    messageId: string;
+    waMessageId: string;
+    from: string;
+    senderName: string;
+    text: string;
+    sentAt: string;
+    fileName: string;
+  };
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   taxRateReason?: string; // why that tax code — the "when to use" rule it matched
   // A PERSON chose to leave the tax rate blank. An empty `taxRate` on its own

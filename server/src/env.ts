@@ -122,6 +122,20 @@ export const env = {
   CYWORKSPACE_RELAY_URL: process.env.CYWORKSPACE_RELAY_URL ?? 'https://cyworkspace.cy-bm.sg',
   CYWORKSPACE_API_KEY: process.env.CYWORKSPACE_API_KEY ?? '',
 
+  // CYWorkspace's PUBLIC origin. `CYWORKSPACE_RELAY_URL` is how we CALL it (on
+  // the VPS that is 127.0.0.1:3001 — both apps share a box), but the file links
+  // CYWS mints are public https URLs, and the only ones we will follow. Kept
+  // separate so the loopback shortcut doesn't quietly become the allowlist.
+  CYWORKSPACE_PUBLIC_URL: process.env.CYWORKSPACE_PUBLIC_URL ?? 'https://cyworkspace.cy-bm.sg',
+
+  // The key CYWS sends BACK when it hands over a WhatsApp bill (X-API-Key on
+  // POST /api/whatsapp/invoice). Ours to choose, and separate from
+  // CYWORKSPACE_API_KEY, which is what we send to THEM: one leaking should not
+  // hand over the other direction as well. Left unset, CYBills generates one on
+  // first use and keeps it, so a practice admin can read it out of the app and
+  // hand it over without any VPS access (see whatsapp.ts, inboundKey).
+  WHATSAPP_INBOUND_KEY: process.env.WHATSAPP_INBOUND_KEY ?? '',
+
   // The webhook key from the Xero app's Webhooks page (My Apps -> Webhooks).
   // Xero signs every delivery with it (x-xero-signature, HMAC-SHA256 over the
   // RAW body), and that signature is the only thing that says a POST really
@@ -236,6 +250,11 @@ export const defaultReaderProvider: 'claude' | 'openai' =
 // Xero (via the cyworkspace relay) switches on once the shared webhook API key
 // is configured. Until then the Xero endpoints return 503 xero_not_configured.
 export const xeroEnabled = Boolean(env.CYWORKSPACE_API_KEY);
+
+// WhatsApp bill collection runs entirely through CYWorkspace, on the same
+// shared key as the Xero relay — so it switches on with that key, and the
+// "create a group" button 503s until it is set.
+export const whatsappEnabled = Boolean(env.CYWORKSPACE_API_KEY);
 
 // Whether inbound Xero webhooks are accepted. Separate from `xeroEnabled`:
 // calling OUT to Xero needs the relay key, being called IN by Xero needs the

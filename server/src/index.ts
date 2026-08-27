@@ -19,6 +19,7 @@ import { mailRouter } from './mail.js';
 import { settingsRouter, adoptLegacySettings } from './settings.js';
 import { boardRouter } from './board.js';
 import { xeroWebhookRouter } from './xeroWebhook.js';
+import { whatsappRouter } from './whatsapp.js';
 import { scrubFillerText } from './store.js';
 import { verifyShareToken } from './shareLinks.js';
 
@@ -61,6 +62,9 @@ app.use((req, res, next) => {
   // Inbound email is machine-to-machine (the Cloudflare Email Worker), guarded
   // by its own shared secret rather than a user session.
   if (p === '/api/inbound/email') return next();
+  // Same for a bill handed over from a WhatsApp collection group: CYWorkspace
+  // calls it machine-to-machine and proves itself with its own X-API-Key.
+  if (p === '/api/whatsapp/invoice') return next();
   // An image link in an exported CSV, or an Item ID in an emailed claim PDF, is
   // opened by somebody with no session here — an accountant, an approver. It
   // carries a signed, expiring token naming the one document it opens instead
@@ -135,6 +139,11 @@ app.use('/api/auto-claims', autoClaimsRouter);
 // Users — server-backed + shared (people list + approver roster).
 app.use('/api/users', usersRouter);
 app.use('/api/inbound', inboundRouter);
+
+// Bill collection over WhatsApp, in partnership with CYWorkspace: asking it for
+// a group per submission, and receiving the supplier bills its classifier
+// picks out of that group. 503s until CYWORKSPACE_API_KEY is set.
+app.use('/api/whatsapp', whatsappRouter);
 
 // The practice (CYBM) itself: its colleagues, their client access, and the
 // connected-client list with what each has cost in Claude API usage.

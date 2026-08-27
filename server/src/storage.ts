@@ -25,6 +25,12 @@ function r2(): S3Client {
   return client;
 }
 
+// Storage-key prefix for an object that lives in the shared bucket but belongs
+// to another system (CYWorkspace's WhatsApp attachments). CYBills reads those
+// by key rather than copying the bytes — the two apps deliberately hold one
+// bucket — and never deletes them.
+export const SHARED_PREFIX = 'shared:';
+
 // File extension for the S3 object key from a MIME type; '' when unknown.
 export function extFor(mediaType: string): string {
   const map: Record<string, string> = {
@@ -105,6 +111,11 @@ export async function putBillFile(
 // and any backend error is logged but never fails the delete of the record.
 export async function deleteBillFile(storageKey: string): Promise<void> {
   if (!storageKey) return;
+  // `shared:` is an object ANOTHER system put in the bucket we share with it —
+  // a WhatsApp attachment CYWorkspace stored and still holds its own record of.
+  // Deleting a document here must not reach into their book and destroy the
+  // file behind it, so the reference is dropped and the object is left alone.
+  if (storageKey.startsWith(SHARED_PREFIX)) return;
   if (storageKey.startsWith('local:')) {
     const path = `${FILES_DIR}/${storageKey.slice('local:'.length)}`;
     try {
@@ -130,6 +141,9 @@ export async function getBillFile(
   storageKey: string,
   contentTypeHint = ''
 ): Promise<{ body: Readable; contentType: string } | null> {
+  // An object in the shared bucket that another system owns: read exactly like
+  // one of ours, because it IS in our bucket — only the ownership differs.
+  if (storageKey.startsWith(SHARED_PREFIX)) return getBill(storageKey.slice(SHARED_PREFIX.length));
   if (storageKey.startsWith('local:')) {
     const path = `${FILES_DIR}/${storageKey.slice('local:'.length)}`;
     if (!existsSync(path)) return null;

@@ -333,13 +333,21 @@ export type ExtractionInputs = {
 // without being able to override how the practice codes things. Capped, because
 // a forwarded thread runs to hundreds of lines and only the top of it is the
 // instruction.
-export function emailInstruction(envelope: { from?: string; subject?: string; text?: string } | null): string {
+export function emailInstruction(
+  envelope: { from?: string; subject?: string; text?: string; via?: string } | null
+): string {
   const note = String(envelope?.text || '').trim().slice(0, 1500);
   const subject = String(envelope?.subject || '').trim().slice(0, 200);
   if (!note && !subject) return '';
   const who = String(envelope?.from || '').trim();
+  // How it arrived, in the sentence that introduces the note. A WhatsApp
+  // caption and a covering email are the same KIND of thing — one person's
+  // instruction about this one document — and everything below applies to
+  // both; saying "emailed in" about a chat message would just be a lie the
+  // reader has to reconcile.
+  const arrived = envelope?.via === 'whatsapp' ? 'SENT IN OVER WHATSAPP' : 'EMAILED IN';
   return (
-    `\n\nThis document was EMAILED IN${who ? ` by ${who}` : ''}, and the covering message is below. ` +
+    `\n\nThis document was ${arrived}${who ? ` by ${who}` : ''}, and the covering message is below. ` +
     'Treat it as a note from that person about this document: it may say which customer, project, category or ' +
     'person the cost is for, and you should follow it where it plainly does.\n' +
     // The accounts above carry the practice's own descriptions, and those

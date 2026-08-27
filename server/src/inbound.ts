@@ -121,7 +121,7 @@ function readerOrder(preferred: Provider): Provider[] {
 export function overlaySupplierRule(
   patch: Record<string, unknown>,
   rule: Record<string, string> | null,
-  ctx: { supplier?: string; noteFollowed?: string }
+  ctx: { supplier?: string; noteFollowed?: string; via?: string }
 ): void {
   const noteDecided = Boolean(String(ctx.noteFollowed || '').trim());
   if (rule) {
@@ -135,11 +135,21 @@ export function overlaySupplierRule(
     if (rule.currency && !patch.currency) patch.currency = rule.currency;
   }
   if (noteDecided) {
-    patch.categoryReason = `From the email that sent this: ${String(ctx.noteFollowed).trim()}`;
+    // Name the thing the reviewer can go and read. A covering note arrives by
+    // email or in a WhatsApp collection group, and "the email that sent this"
+    // sends somebody looking through a mailbox for a message that was never
+    // there.
+    const where = ctx.via === 'whatsapp' ? 'the WhatsApp message' : 'the email';
+    patch.categoryReason = `From ${where} that sent this: ${String(ctx.noteFollowed).trim()}`;
   }
 }
 
-async function autoRead(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: { from?: string; subject?: string; text?: string } | null = null) {
+// Exported because a document can arrive by more than one road and they all end
+// here: the email pipe below, and the WhatsApp collection groups
+// (whatsapp.ts). Both file a document and then have it read with the covering
+// note it came with, and running two copies of that would be running two sets
+// of coding rules.
+export async function autoRead(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: { from?: string; subject?: string; text?: string; via?: string } | null = null) {
   if (!visionEnabled) return;
   const ws = workspaceId(req);
   let inputs: Awaited<ReturnType<typeof extractionInputsFor>>;
@@ -239,6 +249,7 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
     overlaySupplierRule(patch, supplierRuleFor(ws, realOrgId, d.supplier), {
       supplier: d.supplier,
       noteFollowed: d.noteFollowed,
+      via: envelope?.via,
     });
     updateBill(scope, billId, patch);
     reconcileReadiness(scope, billId);

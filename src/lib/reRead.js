@@ -16,6 +16,7 @@ import {
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
 import { taxRateOutcome } from '@/lib/extractionSettings';
+import { coveringNote } from '@/lib/coveringNote';
 
 // What a re-read decided, given the document as it stands (`current`) and what
 // the reader returned (`ex`). `patch` is what to save; the rest is the working
@@ -171,9 +172,10 @@ export async function reReadDocument(doc, ctx) {
   const rec = await fileForDoc(doc);
   if (!rec) return 'nofile';
   try {
-    // Emailed documents keep the note they came with, so a re-read is given the
-    // same instruction the first read had.
-    const ex = await fetchExtract(rec.base64, rec.mediaType, ctx.accounts, doc?.email || null);
+    // A document that arrived with a covering message — forwarded by email, or
+    // attached in a WhatsApp bill collection group — keeps it, so a re-read is
+    // given the same instruction the first read had.
+    const ex = await fetchExtract(rec.base64, rec.mediaType, ctx.accounts, coveringNote(doc));
     if (!ex) return 'failed';
     const { patch } = readDecisions(doc, ex, ctx);
     await updateBill(doc.id, patch);

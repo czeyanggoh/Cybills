@@ -407,6 +407,67 @@ switches to it and reloads once with the parameter stripped — a reload rather
 than a re-render, because every store and request in flight is scoped to the old
 entity.
 
+## Bill collection over WhatsApp (with CYWorkspace)
+
+The people who hold a client's invoices are not the people who log into CYBills,
+and asking them to is how a month of receipts ends up in a shoebox. So each
+client entity can have a **WhatsApp group**: they send photos and PDFs into it,
+CYWorkspace runs the number (CYBot, on its own WAHA server) and classifies every
+attachment, and the SUPPLIER BILLS among them are handed to CYBills. Receipts,
+sales invoices, bank statements and holiday photos are classified and left
+alone. `server/src/whatsapp.ts` is both ends of that pipe; `deploy/WHATSAPP.md`
+is the contract, and the page an operator is handed.
+
+**A group is a real group.** Creating one puts real phone numbers into a real
+WhatsApp group in front of a client, so exactly one thing in the app can do it —
+Business settings -> Connections -> **Set up the group** — never a page load, a
+save, or a retry loop. The submission id (`CYB-<orgId>-<hex>`) is written to disk
+BEFORE the call goes out, because the failure that matters is not "the call
+failed" but "the call succeeded and the answer was lost": CYWS is idempotent on
+that id, so pressing the button again adopts the group it may already have made.
+A fresh id would have made a second one, in front of the client, with nothing to
+say which was real.
+
+**WhatsApp not adding somebody is not an error, and not silence either.** It
+refuses to add a user whose privacy settings disallow it and answers as though
+nothing happened, so `participants_added` comes back shorter than
+`participants_requested` — and the difference is shown, named, with what to do
+about it (send them the invite link). Unsaid, that person waits to be added to a
+group they will never see.
+
+**The bytes never move.** Both systems hold the same R2 bucket, so CYWS passes
+the object KEY and the document stores a reference to it — `shared:` in
+`storage.ts`, which reads exactly like one of ours and is NEVER deleted:
+that object is also CYWS's own record of the message. The signed `file_url` is
+the fallback for a deploy with no R2 credentials, and is only followed when it
+points at CYWS itself — whoever holds the inbound key could otherwise hand the
+server any URL at all.
+
+**A caption is a covering note.** "recharge this to CY-Biz" typed with the file
+is the same KIND of thing as the line somebody writes when they forward a
+receipt by email, so it goes through the same machinery: `coveringNote()`
+(`src/lib/coveringNote.js`) reads either envelope into one shape, the reader is
+told which road it came in on (`emailInstruction`'s `via`), and it beats a
+standing supplier rule for the fields it decides — never for the money. It is
+kept on the document, so a RE-READ sees it too.
+
+**Deduped on `message_id`, and answered before it is read.** CYWS does not retry
+on its own — an operator re-tags a message — so a repeat is answered 2xx with the
+document that already exists; a non-2xx would leave it undelivered and invite a
+third send. The reply goes out as soon as the document is durably stored, because
+a model call takes 10-30s and CYWS gives up at 30.
+
+**Who owns it** is the sender's number matched against the roster's Mobile
+field, in any spelling; failing that, the entity's GENERAL account, which is what
+it is for. Never the person who created the group.
+
+Env (server/.env): `CYWORKSPACE_API_KEY` (the same key the Xero relay uses —
+creating groups switches on with it), `CYWORKSPACE_PUBLIC_URL` (the only host a
+file link may point at), `WHATSAPP_INBOUND_KEY` (the key CYWS sends BACK,
+generated and kept if unset so a practice admin can read it out of the app).
+Practice team only, like the inbound-email secret: it files documents into any
+client's book. Covered by `npm test` in `server/`.
+
 ## AI API spend
 
 Every model call records its token usage (`server/src/usage.ts`), attributed to

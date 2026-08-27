@@ -56,6 +56,7 @@ import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
 import { balanceLine, foldTaxIntoCost } from '@/lib/lineItems';
+import { coveringNote } from '@/lib/coveringNote';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -992,9 +993,10 @@ export default function CostDetail() {
     setAiError('');
     try {
       const accounts = await getExtractionAccounts();
-      // An emailed document is re-read with the note it arrived with, so a
-      // re-read can't quietly undo what the covering message asked for.
-      const ex = await fetchExtract(imageBase64, mediaType, accounts, doc?.email || null);
+      // A document that arrived with a covering message — emailed in, or
+      // attached in a WhatsApp bill collection group — is re-read with it, so a
+      // re-read can't quietly undo what that message asked for.
+      const ex = await fetchExtract(imageBase64, mediaType, accounts, coveringNote(doc));
       if (!ex) { setAiError('Extraction failed — please try again.'); return; }
       // Which value wins — the supplier rule, the document's own paper, this
       // read, or what the document already carried — is decided in one place
@@ -1073,6 +1075,11 @@ export default function CostDetail() {
   // edited here, so it must not round-trip through the editable form state.
   const mail = doc?.email || null;
   const mailDate = mail?.date ? fmtStamp(mail.date) : '';
+  // The WhatsApp message this document was attached to, for one sent into a
+  // bill collection group. Like the envelope above it is the DOCUMENT's record
+  // of what was received, never edited here.
+  const chat = doc?.whatsapp || null;
+  const chatDate = chat?.sentAt ? fmtStamp(chat.sentAt) : '';
   const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
   const lineItemsEdited =
     Array.isArray(lineSnapshot) && JSON.stringify(lineSnapshot) !== JSON.stringify(lineItems);
@@ -1904,13 +1911,47 @@ export default function CostDetail() {
 
           {tab === 'whatsapp' && (
             <div className="text-sm">
-              <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
-                WhatsApp isn&rsquo;t connected yet.
-                <br />
-                <span className="text-xs">
-                  Documents sent in by WhatsApp will show their message here, the way emailed ones do.
-                </span>
-              </p>
+              {chat ? (
+                <>
+                  {/* Who sent it and where from. A chat has no subject and no
+                      recipient, so this is the message header a chat actually
+                      has: the person, their number, the group, and when. */}
+                  <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
+                    <dt className="text-muted-foreground">From</dt>
+                    <dd className="m-0 break-words">
+                      {chat.senderName || '—'}
+                      {chat.from ? (
+                        <span className="ml-2 text-muted-foreground">{String(chat.from).split('@')[0]}</span>
+                      ) : null}
+                    </dd>
+                    <dt className="text-muted-foreground">Date</dt>
+                    <dd className="m-0">{chatDate || '—'}</dd>
+                    <dt className="text-muted-foreground">Group</dt>
+                    <dd className="m-0 break-words">{chat.chatSubject || '—'}</dd>
+                    <dt className="text-muted-foreground">File</dt>
+                    <dd className="m-0 break-words">{chat.fileName || '—'}</dd>
+                  </dl>
+                  {/* What they typed when they attached it. Kept as typed: this
+                      is the instruction the document was read with, so it is
+                      evidence rather than presentation. */}
+                  {chat.text ? (
+                    <p className="mt-4 whitespace-pre-wrap border-t pt-4 text-muted-foreground">{chat.text}</p>
+                  ) : (
+                    <p className="mt-4 border-t pt-4 text-muted-foreground">
+                      Sent with no message — just the file.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
+                  This document didn&rsquo;t come in over WhatsApp.
+                  <br />
+                  <span className="text-xs">
+                    Bills sent into this entity&rsquo;s collection group show their message here, the way emailed
+                    ones do. Business settings &rarr; Connections sets the group up.
+                  </span>
+                </p>
+              )}
             </div>
           )}
 
