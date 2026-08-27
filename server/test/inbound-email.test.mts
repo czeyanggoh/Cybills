@@ -113,6 +113,48 @@ r = await post({
 });
 check('a non-document attachment files nothing', r.body.created, 0);
 
+// --- A standing rule, and a note about one document --------------------------
+// "everything from Grab is travel" is a policy; "recharge this to CY-Biz" is an
+// instruction about THIS receipt. The specific one wins, or writing it was
+// pointless — and the reason says which was followed.
+const { overlaySupplierRule } = await import('../src/inbound.ts');
+const grabRule = { category: '493 - Travel - National', project: 'Ops' };
+
+{
+  // No note: the rule decides, as it always has.
+  const patch: Record<string, unknown> = { category: '261 - Reimbursement - No GST' };
+  overlaySupplierRule(patch, grabRule, { supplier: 'Grab', noteFollowed: '' });
+  check('with no note, the standing rule wins', patch.category, '493 - Travel - National');
+  check('…and says so', /Standing rule/.test(String(patch.categoryReason)), true);
+}
+
+{
+  // A note the reader acted on: its category survives the rule.
+  const patch: Record<string, unknown> = { category: '261 - Reimbursement - No GST' };
+  overlaySupplierRule(patch, grabRule, {
+    supplier: 'Grab',
+    noteFollowed: 'The sender asked to recharge this to CY-Biz — coded to the recharge account.',
+  });
+  check('a note about this document beats the rule', patch.category, '261 - Reimbursement - No GST');
+  check('…and the reason quotes the email', /From the email that sent this: The sender asked to recharge/.test(String(patch.categoryReason)), true);
+  check('…while the rule still fills what the note did not', patch.project, 'Ops');
+}
+
+{
+  // A note that said nothing about coding leaves the rule alone.
+  const patch: Record<string, unknown> = { category: '261 - Reimbursement - No GST' };
+  overlaySupplierRule(patch, grabRule, { supplier: 'Grab', noteFollowed: '   ' });
+  check('a note with nothing in it changes nothing', patch.category, '493 - Travel - National');
+}
+
+{
+  // The money is never up for negotiation.
+  const patch: Record<string, unknown> = { total: 12.7, tax: 0, category: '261 - Reimbursement - No GST' };
+  overlaySupplierRule(patch, { ...grabRule, taxRate: 'No Tax' }, { supplier: 'Grab', noteFollowed: 'recharge to CY-Biz' });
+  check('the total is untouched', patch.total, 12.7);
+  check('…and the tax code still follows the rule', patch.taxRate, 'No Tax');
+}
+
 server.close();
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

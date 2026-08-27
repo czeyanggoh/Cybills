@@ -87,6 +87,16 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'One short sentence explaining WHY this category fits — cite the account name/description it matched or the merchant/purchase type, e.g. "Software subscription invoice — matched the 485 Subscriptions account." or "Restaurant dining — matched Business meetings / staff meals." If uncategorised, say why nothing fit. If you genuinely cannot say, return an EMPTY STRING rather than filler such as "placeholder" or "N/A".',
       },
+      // Only meaningful when a covering message was supplied (an emailed
+      // document). It is what lets the note BEAT a standing supplier rule: a
+      // rule is a policy about every document from that supplier, a note is a
+      // person's instruction about this one, and the specific instruction has
+      // to win — but only when there actually was one, which is what this says.
+      noteFollowed: {
+        type: 'string',
+        description:
+          'ONLY when a covering message was supplied above AND you took something from it: one short sentence naming what you took and which field it decided, e.g. "The sender asked to recharge this to CY-Biz — coded to the recharge account." EMPTY STRING when no message was supplied, or when it said nothing that bears on how this document is coded (a bare "here you go", a signature, a forwarded thread with no instruction). Never invent one to seem useful: an empty string here means the organisation\'s own standing rules decide, which is the safe answer.',
+      },
       description: {
         type: 'string',
         description:
@@ -173,6 +183,7 @@ const ReceiptSchema = z.object({
   tax: z.number(),
   category: z.string(),
   categoryReason: z.string().optional().default(''),
+  noteFollowed: z.string().optional().default(''),
   description: z.string().optional().default(''),
   dueDate: z.string().optional().default(''),
   period: z.string().optional().default(''),
@@ -472,6 +483,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
         notFiller(parsed.data.period)
       ),
       categoryReason: notFiller(parsed.data.categoryReason),
+      noteFollowed: notFiller(parsed.data.noteFollowed),
       taxRate,
       taxRateReason: taxRate ? notFiller(parsed.data.taxRateReason) : '',
       project,

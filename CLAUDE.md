@@ -168,6 +168,17 @@ amounts. The note is stored on the document (`email`) and sent again on a
 RE-READ — read once with it and again without, and the second read quietly
 undoes the first.
 
+**A note about one document beats a standing rule about every document.** A
+supplier rule ("everything from Grab is travel") is a policy; a covering note
+("recharge this to CY-Biz") is a person's instruction about THIS receipt, so the
+specific one wins for the fields it decided — `overlaySupplierRule` in
+`inbound.ts`, mirrored in `readDecisions` for the re-read. The reader says what
+it took from the note (`noteFollowed`), which is empty unless it actually took
+something, so an emailed document whose message says nothing about coding still
+follows the rule. Never the money: a note cannot restate a total, and the tax
+code follows the account either way. The Reason field names which of the two was
+followed.
+
 ## Merge detection: which uploads are really one document
 
 Two separate uploads are often one cost, and the two ways that happens do not

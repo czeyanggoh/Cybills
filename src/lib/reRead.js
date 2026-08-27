@@ -102,10 +102,26 @@ export function readDecisions(
     patch.projectReason = projectReason;
   }
   // The rule has the last word on everything it sets…
-  Object.assign(patch, rule);
-  if (rule.category) patch.categoryReason = categoryReason;
+  //
+  // …except where the person who emailed the document said otherwise. A rule is
+  // a policy about every document from that supplier ("everything from Grab is
+  // travel"); the covering note is one person's instruction about THIS one
+  // ("recharge this to CY-Biz"), and the specific instruction wins — or writing
+  // it was pointless. `noteFollowed` is empty unless the reader actually took
+  // something from the note, so an emailed document with no instruction in it
+  // still follows the rule. Same precedence the inbound read applies.
+  const noteDecided = Boolean(String(ex.noteFollowed || '').trim());
+  const ruled = { ...rule };
+  if (noteDecided) {
+    if (ex.category) delete ruled.category;
+    if (ex.project) delete ruled.project;
+    if (ex.customer) delete ruled.customer;
+  }
+  Object.assign(patch, ruled);
+  if (ruled.category) patch.categoryReason = categoryReason;
   if (rule.taxRate) patch.taxRateReason = `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`;
-  if (rule.project) patch.projectReason = projectReason;
+  if (ruled.project) patch.projectReason = projectReason;
+  if (noteDecided) patch.categoryReason = `From the email that sent this: ${String(ex.noteFollowed).trim()}`;
   // …except the due date, where the document's own beats the rule's terms.
   if (ex.dueDate) patch.dueDate = ex.dueDate;
   if (ruleLines.length && !current.lineItems?.length) patch.lineItems = ruleLines;

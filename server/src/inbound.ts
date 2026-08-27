@@ -100,6 +100,40 @@ function readerOrder(preferred: Provider): Provider[] {
 // fire-and-forget: a failed read leaves a breadcrumb the reviewer can act on.
 //   scope     — the bills-store scope the document was filed under.
 //   realOrgId — the organisation record id, for its settings + Xero context.
+// Lay the supplier's standing rule over what the read produced.
+//
+// A rule normally wins: it is an explicit instruction, where the read is the
+// model's best answer. EXCEPT where the person who emailed the document said
+// otherwise — a rule is a policy about every document from that supplier
+// ("everything from Grab is travel"), a covering note is one person's
+// instruction about THIS one ("recharge this to CY-Biz"), and the specific,
+// deliberate, just-written instruction has to win or writing it was pointless.
+//
+// `noteFollowed` is empty unless the reader actually took something from the
+// note, so an emailed document whose message says nothing about coding still
+// follows the rule. The money is never up for negotiation: a note cannot
+// restate a total, and the tax code follows the account either way.
+export function overlaySupplierRule(
+  patch: Record<string, unknown>,
+  rule: Record<string, string> | null,
+  ctx: { supplier?: string; noteFollowed?: string }
+): void {
+  const noteDecided = Boolean(String(ctx.noteFollowed || '').trim());
+  if (rule) {
+    if (rule.category && !(noteDecided && patch.category)) {
+      patch.category = rule.category;
+      patch.categoryReason = `Standing rule: documents from ${ctx.supplier || 'this supplier'} are coded ${rule.category}.`;
+    }
+    if (rule.customer && !(noteDecided && patch.customer)) patch.customer = rule.customer;
+    if (rule.project && !(noteDecided && patch.project)) patch.project = rule.project;
+    if (rule.taxRate) patch.taxRate = rule.taxRate;
+    if (rule.currency && !patch.currency) patch.currency = rule.currency;
+  }
+  if (noteDecided) {
+    patch.categoryReason = `From the email that sent this: ${String(ctx.noteFollowed).trim()}`;
+  }
+}
+
 async function autoRead(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: { from?: string; subject?: string; text?: string } | null = null) {
   if (!visionEnabled) return;
   const ws = workspaceId(req);
@@ -182,14 +216,21 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
     // The supplier's standing rule overlays the read — a rule is an explicit
     // instruction, so it wins over the reader's guess (same precedence the
     // re-read path applies, src/lib/reRead.js).
-    const rule = supplierRuleFor(ws, realOrgId, d.supplier);
-    if (rule) {
-      if (rule.category) { patch.category = rule.category; patch.categoryReason = `Standing rule: documents from ${d.supplier} are coded ${rule.category}.`; }
-      if (rule.customer) patch.customer = rule.customer;
-      if (rule.project) patch.project = rule.project;
-      if (rule.taxRate) patch.taxRate = rule.taxRate;
-      if (rule.currency && !patch.currency) patch.currency = rule.currency;
-    }
+    //
+    // EXCEPT where the person who sent the document said otherwise. A rule is a
+    // policy about every document from that supplier ("everything from Grab is
+    // travel"); a covering note is one person's instruction about THIS one
+    // ("recharge this to CY-Biz"). The specific, deliberate, just-written
+    // instruction has to win, or writing it is pointless — and the reason says
+    // which of the two was followed, so nobody has to guess.
+    //
+    // Only for the fields the note actually decided (`noteFollowed` is empty
+    // unless the reader took something from it), and never for the money: a
+    // note cannot restate a total.
+    overlaySupplierRule(patch, supplierRuleFor(ws, realOrgId, d.supplier), {
+      supplier: d.supplier,
+      noteFollowed: d.noteFollowed,
+    });
     updateBill(scope, billId, patch);
     reconcileReadiness(scope, billId);
     return; // success
