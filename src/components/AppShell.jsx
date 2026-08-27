@@ -496,13 +496,6 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                   </NavLink>
                 ))}
               </nav>
-              <button
-                type="button"
-                className="text-muted-foreground transition-colors hover:text-foreground"
-                aria-label="Help"
-              >
-                <HelpCircle className="h-5 w-5" strokeWidth={1.75} />
-              </button>
               <div className="relative">
                 <button
                   type="button"
