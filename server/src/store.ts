@@ -19,6 +19,11 @@ export type Bill = {
   splitGroup?: string;
   splitPage?: number;
   splitPages?: number;
+  // A cost incurred on a client's behalf and billed back to them — Xero's
+  // "billable expense", Dext's "rebillable". With `customer`, publishing links
+  // the posted bill's lines to that client so Xero offers them on their next
+  // invoice. Meaningless without a customer: there would be nobody to bill.
+  rebillable?: boolean;
   fileHash: string; // sha256 hex of the raw upload; exact-file dedup key
   fileName: string;
   supplier: string;
@@ -720,6 +725,7 @@ const EDITABLE: (keyof Bill)[] = [
   'paid',
   'lineItems',
   'customer',
+  'rebillable',
   'project',
   'cardLast4',
   'note',

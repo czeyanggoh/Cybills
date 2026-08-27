@@ -644,6 +644,55 @@ function attachmentName(bill: Bill, contentType: string): string {
   return `${base}.${ext}`;
 }
 
+// Mark a posted bill's lines as BILLABLE EXPENSES against a customer — Xero's
+// "Assign expenses to a customer", which is what Dext calls "rebillable".
+//
+// It cannot ride along on the bill. Xero models it as a LinkedTransaction, and
+// that needs the SourceTransactionID and SourceLineItemID of a bill that already
+// exists — so this is a second call, made once the invoice comes back with its
+// line ids. `ContactID` is the customer who will be billed.
+//
+// Best-effort, like the attachment: the bill is already in the ledger, and a
+// failed link must not undo that. It IS reported, because a cost that was meant
+// to be recharged and silently wasn't is money nobody bills for.
+async function linkBillableExpenses(
+  tenantId: string,
+  invoice: { InvoiceID?: unknown; LineItems?: Array<{ LineItemID?: unknown }> },
+  contactId: string
+): Promise<{ ok: boolean; linked: number; error?: string } | null> {
+  const sourceId = String(invoice?.InvoiceID ?? '');
+  const lineIds = (invoice?.LineItems ?? []).map((l) => String(l?.LineItemID ?? '')).filter(Boolean);
+  if (!sourceId || !contactId || !lineIds.length) return null;
+  let linked = 0;
+  let error = '';
+  for (const lineId of lineIds) {
+    // eslint-disable-next-line no-await-in-loop -- one call per line; Xero has no batch form
+    const result = await relay('LinkedTransactions', {
+      method: 'PUT',
+      tenantId,
+      body: { SourceTransactionID: sourceId, SourceLineItemID: lineId, ContactID: contactId },
+    });
+    if (result.ok) linked += 1;
+    else if (!error) error = result.message || result.error || 'link_failed';
+  }
+  return { ok: linked === lineIds.length, linked, ...(error ? { error } : {}) };
+}
+
+// The Xero ContactID for a customer NAME, or '' when that name isn't one of the
+// org's customers. A billable expense names who gets invoiced, so a name Xero
+// doesn't hold is no answer at all.
+async function customerContactId(tenantId: string, name: string): Promise<string> {
+  const wanted = String(name || '').trim();
+  if (!wanted) return '';
+  const result = await relay('Contacts', {
+    tenantId,
+    query: { where: `Name=="${wanted.replace(/"/g, '')}"` },
+  });
+  if (!result.ok) return '';
+  const contact = (result.data?.Contacts ?? [])[0];
+  return String(contact?.ContactID ?? '');
+}
+
 // Put the original document on a Xero invoice. Best-effort by design: every
 // caller has already posted the invoice, and a failed upload must not undo that.
 async function attachBillFile(
@@ -1082,6 +1131,17 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     updated ?? bill
   );
 
+  // A cost incurred on a client's behalf: mark its lines billable to them, so
+  // Xero offers them up when that client's next invoice is raised. Needs the
+  // customer to be a Xero contact — without an id there is nobody to bill.
+  let rebilled: { ok: boolean; linked: number; error?: string } | null = null;
+  if (bill.rebillable && bill.customer) {
+    const contactId = await customerContactId(organisation.tenantId, String(bill.customer));
+    rebilled = contactId
+      ? await linkBillableExpenses(organisation.tenantId, invoice, contactId)
+      : { ok: false, linked: 0, error: `"${bill.customer}" isn't a contact in ${organisation.tenantName || 'Xero'}.` };
+  }
+
   res.json({
     ok: true,
     invoice: {
@@ -1093,6 +1153,7 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     lines: prepared.lines,
     perLine: prepared.perLine,
     attachment,
+    rebilled,
     bill: updated,
   });
 });

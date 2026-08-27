@@ -498,7 +498,7 @@ export default function CostDetail() {
     taxRate: 'taxRate', taxRateReason: 'taxRateReason', taxRateCleared: 'taxRateCleared',
     description: 'description', user: 'owner',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
-    customer: 'customer', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
+    customer: 'customer', rebillable: 'rebillable', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
     dueDate: 'dueDate',
   };
   // Naming the supplier by hand applies that supplier's standing rule.
@@ -1613,6 +1613,27 @@ export default function CostDetail() {
 
               <SectionHeading>Allocation</SectionHeading>
               <Field label="Customer"><ComboSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
+              {/* Xero's billable expense, Dext's "rebillable": a cost incurred
+                  for this client that gets billed back to them. Publishing links
+                  the posted bill's lines to that client, so Xero offers them up
+                  on their next invoice. Only offered once there IS a customer —
+                  a rebillable cost with nobody to bill can never be acted on. */}
+              {Boolean(data.customer) && (
+                <Field label="Rebillable">
+                  <div className="pt-1">
+                    <button type="button" onClick={() => set('rebillable', !data.rebillable)} className="flex items-center gap-2">
+                      <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', data.rebillable ? 'justify-end bg-foreground' : 'justify-start border')}>
+                        <span className={cn('h-4 w-4 rounded-full', data.rebillable ? 'bg-background' : 'bg-muted-foreground/50')} />
+                      </span>
+                      <span className="text-sm text-muted-foreground">{data.rebillable ? 'Yes' : 'No'}</span>
+                    </button>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Bills this cost back to {data.customer}. Published to Xero as a billable expense, so it is offered
+                      on that client&rsquo;s next invoice.
+                    </p>
+                  </div>
+                </Field>
+              )}
               <Field label="Project">
                 <ComboSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} />
                 {teach?.field === 'project' && (

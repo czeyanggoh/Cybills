@@ -41,6 +41,9 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
   // than swallowed: a bill in the ledger without its paper is worth knowing
   // about at the moment it happens, not weeks later in an audit.
   const [attachment, setAttachment] = useState(null);
+  // Whether the posted lines were marked billable to the customer (Xero's
+  // billable expense). Null when the document wasn't marked rebillable.
+  const [rebilled, setRebilled] = useState(null);
   // A company that isn't GST-registered publishes everything as No Tax, whatever
   // the bill still carries — the last gate before a stale code reaches Xero.
   const gstRegistered = useGstRegistered();
@@ -198,6 +201,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
       setDone(result.invoice);
       setPostedLines(Number(result.lines) || 0);
       setAttachment(result.attachment ?? null);
+      setRebilled(result.rebilled ?? null);
       onPublished?.(result);
     } catch (err) {
       setError(err.message);
@@ -237,6 +241,20 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
             </p>
             {attachment?.ok && (
               <p className="text-xs text-muted-foreground">The document is attached to it under Related Files.</p>
+            )}
+            {/* A cost meant to be recharged and silently not marked is money
+                nobody bills for, so it is said either way. */}
+            {rebilled?.ok && (
+              <p className="max-w-sm text-xs text-muted-foreground">
+                Billed back to the customer: {rebilled.linked} line{rebilled.linked === 1 ? '' : 's'} marked as a
+                billable expense in Xero, ready for their next invoice.
+              </p>
+            )}
+            {rebilled && !rebilled.ok && (
+              <p className="max-w-sm text-xs text-amber-700">
+                The bill posted, but it could not be marked billable to the customer: {rebilled.error} Assign it by
+                hand in Xero with “Assign expenses to a customer”.
+              </p>
             )}
             {attachment && !attachment.ok && (
               <p className="max-w-sm text-xs text-amber-700">

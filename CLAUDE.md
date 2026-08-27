@@ -177,6 +177,16 @@ CY-Biz"). A name not on the list is discarded rather than stored: this is the
 party who gets invoiced. Never blanks one already set by hand or by a supplier
 rule.
 
+**A recharged cost is marked billable in Xero.** Xero calls it a **billable
+expense** ("Assign expenses to a customer"); Dext calls it rebillable. It cannot
+ride along on the bill: Xero models it as a **LinkedTransaction**, which needs
+the `SourceTransactionID` + `SourceLineItemID` of a bill that already exists. So
+`publish-bill` posts first, then links each returned line to the customer's
+`ContactID` — best-effort like the attachment (the bill is already in the
+ledger), but always REPORTED, because a cost meant to be recharged and silently
+not marked is money nobody bills for. The document carries `rebillable`, offered
+only once it has a customer.
+
 **A note about one document beats a standing rule about every document.** A
 supplier rule ("everything from Grab is travel") is a policy; a covering note
 ("recharge this to CY-Biz") is a person's instruction about THIS receipt, so the

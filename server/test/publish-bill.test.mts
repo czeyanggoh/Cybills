@@ -24,6 +24,7 @@ writeFileSync(
 
 // --- stub relay --------------------------------------------------------------
 let posted: any = null;
+const linked: any[] = [];
 const stub = http.createServer((req, res) => {
   const path = decodeURIComponent(String(req.url)).split('?')[0];
   res.setHeader('content-type', 'application/json');
@@ -33,6 +34,19 @@ const stub = http.createServer((req, res) => {
       { Code: '313A', Name: 'Outlet Rental', Status: 'ACTIVE', Type: 'EXPENSE' },
       { Code: '429', Name: 'General Expenses', Status: 'ACTIVE', Type: 'EXPENSE' },
     ] }));
+    return;
+  }
+  if (path.endsWith('/Contacts')) {
+    res.end(JSON.stringify({ Contacts: [{ ContactID: 'contact-cybiz', Name: 'CY-Biz Pte. Ltd.' }] }));
+    return;
+  }
+  if (path.endsWith('/LinkedTransactions')) {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      linked.push(JSON.parse(body || '{}'));
+      res.end(JSON.stringify({ LinkedTransactions: [{ LinkedTransactionID: 'lt-1' }] }));
+    });
     return;
   }
   if (path.endsWith('/TrackingCategories')) {
@@ -47,7 +61,17 @@ const stub = http.createServer((req, res) => {
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       posted = JSON.parse(body || '{}').Invoices?.[0] ?? null;
-      res.end(JSON.stringify({ Invoices: [{ InvoiceID: 'inv-1', InvoiceNumber: 'BILL-1', Status: 'DRAFT', HasErrors: false }] }));
+      res.end(JSON.stringify({
+        Invoices: [{
+          InvoiceID: 'inv-1',
+          InvoiceNumber: 'BILL-1',
+          Status: 'DRAFT',
+          HasErrors: false,
+          // Xero echoes the posted lines back WITH their ids — which is the only
+          // way a billable expense can be created, since it needs them.
+          LineItems: (posted?.LineItems ?? []).map((_: unknown, i: number) => ({ LineItemID: `li-${i + 1}` })),
+        }],
+      }));
     });
     return;
   }
@@ -133,6 +157,28 @@ check('unreconciled: names both figures', [r.body.linesTotal, r.body.reason], [3
 r = await publish(bill({ total: '218', tax: '18', lineItems: [row({ total: '109', tax: '9' }), row({ total: '109', tax: '5' })] }).id);
 check('tax mismatch: refused', [r.status, r.body.reason], [422, 'tax']);
 check('tax mismatch: nothing sent to Xero', r.posted, null);
+
+// 3c) A cost incurred for a client, billed back to them: Xero's billable
+//     expense. It cannot ride along on the bill — it needs the ids of a bill
+//     that already exists — so it is a second call once the invoice comes back.
+{
+  linked.length = 0;
+  const b = bill({ total: '109', tax: '0', customer: 'CY-Biz Pte. Ltd.', rebillable: true, lineItems: [row({ total: '60' }), row({ total: '49' })] });
+  const out = await publish(b.id);
+  check('rebillable: the bill still posts', out.status, 200);
+  check('rebillable: one link per posted line', linked.length, 2);
+  check('rebillable: each names the bill and its line', linked.map((l) => `${l.SourceTransactionID}/${l.SourceLineItemID}`), ['inv-1/li-1', 'inv-1/li-2']);
+  check('rebillable: billed to the customer', [...new Set(linked.map((l) => l.ContactID))], ['contact-cybiz']);
+  check('rebillable: reported as done', [out.body.rebilled.ok, out.body.rebilled.linked], [true, 2]);
+}
+
+// 3d) Not marked rebillable -> nothing is linked, whatever the customer says.
+{
+  linked.length = 0;
+  const out = await publish(bill({ total: '50', tax: '0', customer: 'CY-Biz Pte. Ltd.' }).id);
+  check('not rebillable: nothing is linked', linked.length, 0);
+  check('not rebillable: nothing to report', out.body.rebilled, null);
+}
 
 // 4) No line items at all -> unchanged behaviour.
 r = await publish(bill({ total: '50', tax: '0', project: 'ASTP 01' }).id);

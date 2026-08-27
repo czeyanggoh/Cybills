@@ -475,6 +475,11 @@ billsRouter.patch('/bills/:id', async (req, res) => {
     patch.duplicateType = '';
   }
   if (Array.isArray(b.lineItems)) patch.lineItems = normaliseLineItems(b.lineItems);
+  // Recharged to a client: Xero's billable expense. Only meaningful alongside a
+  // customer, and cleared with one — a rebillable cost with nobody to bill is a
+  // flag that can never be acted on.
+  if (typeof b.rebillable === 'boolean') patch.rebillable = b.rebillable;
+  if ('customer' in b && !String(b.customer ?? '').trim()) patch.rebillable = false;
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
 
