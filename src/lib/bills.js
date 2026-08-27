@@ -1,7 +1,7 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
 import { nameForEmail } from '@/lib/userStore';
 import { useState, useEffect } from 'react';
-import { getActiveOrganisationId, ORGANISATION_EVENT, getExtractionTaxRates, getExtractionProjects, getExtractionCategories } from '@/lib/organisations';
+import { getActiveOrganisationId, ORGANISATION_EVENT, getExtractionTaxRates, getExtractionProjects, getExtractionCategories, getExtractionCustomers } from '@/lib/organisations';
 import { supplierNamesFromDocs } from '@/lib/supplierList';
 import { isGstRegistered } from '@/lib/businessProfile';
 import { fetchReviewInstructions } from '@/lib/reviewInstructions';
@@ -74,6 +74,10 @@ export async function fetchExtract(imageBase64, mediaType, accounts, emailNote =
   // names its people claim against instead. Empty for a linked entity, whose
   // `accounts` are the list — the server prefers accounts whenever it has them.
   const categories = await getExtractionCategories().catch(() => []);
+  // Who a cost can be recharged to. Usually decided by a covering message
+  // ("recharge this to CY-Biz") rather than by the document, which says nothing
+  // about who it is billed back to.
+  const customers = await getExtractionCustomers().catch(() => []);
   const res = await fetch('/api/costs/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
@@ -82,6 +86,7 @@ export async function fetchExtract(imageBase64, mediaType, accounts, emailNote =
       mediaType,
       accounts,
       categories,
+      customers,
       instructions,
       ...(emailNote ? { emailNote } : {}),
       taxRates,

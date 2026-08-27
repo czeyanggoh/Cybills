@@ -168,6 +168,15 @@ amounts. The note is stored on the document (`email`) and sent again on a
 RE-READ — read once with it and again without, and the second read quietly
 undoes the first.
 
+**A cost can name the client it is recharged to.** `customer` is read like the
+category is: an enum of the org's own active Xero customer contacts
+(`customerOptionsForOrg`, capped at 300 — a long-lived Xero holds thousands and
+the field is not worth that prompt), set only when the document names the client
+the cost was incurred for or the covering message says so ("recharge this to
+CY-Biz"). A name not on the list is discarded rather than stored: this is the
+party who gets invoiced. Never blanks one already set by hand or by a supplier
+rule.
+
 **A note about one document beats a standing rule about every document.** A
 supplier rule ("everything from Grab is travel") is a policy; a covering note
 ("recharge this to CY-Biz") is a person's instruction about THIS receipt, so the

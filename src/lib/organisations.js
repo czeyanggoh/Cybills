@@ -517,6 +517,25 @@ export async function getExtractionTaxRates() {
   return mergeManagedTaxRates(live).filter((t) => t.visible);
 }
 
+// The customers a cost can be recharged to, for the upload path (fetchExtract),
+// where hooks aren't available. Capped for the same reason the server caps it: a
+// long-lived Xero holds thousands of contacts, and a list that size in the
+// prompt costs more than the field is worth. Must never throw — any failure
+// yields no options and the Customer field stays for a person to set.
+const EXTRACTION_CUSTOMER_LIMIT = 300;
+
+export async function getExtractionCustomers() {
+  try {
+    const orgId = await resolveCategorisationOrgId();
+    if (!orgId) return [];
+    const rows = await fetchXeroCustomers(orgId);
+    const names = rows.map((c) => String(c?.name || '').trim()).filter(Boolean);
+    return names.length > EXTRACTION_CUSTOMER_LIMIT ? [] : names;
+  } catch {
+    return [];
+  }
+}
+
 // The project (Xero tracking) options a document can be allocated to, for the
 // upload path — EVERY option, each carrying whatever "when to use" rule the org
 // has written for it (Lists → Projects). The reader is given the whole list so

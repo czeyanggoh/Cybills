@@ -14,7 +14,7 @@ const DEFAULT_CATEGORIES = ['Uncategorised', 'Others'];
 // categories so the model must return one that maps to a real dropdown value.
 // additionalProperties:false + required on every field is mandatory for strict
 // structured outputs.
-function buildSchema(categories: string[], taxRateNames: string[], projectNames: string[]) {
+function buildSchema(categories: string[], taxRateNames: string[], projectNames: string[], customerNames: string[] = []) {
   // Tax-rate picking is only offered when the org has written "when to use"
   // rules (Lists → Tax rates). No rules → the fields are left out of the schema
   // entirely, so the model is never asked to guess a tax code.
@@ -48,12 +48,27 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         },
       }
     : {};
+  // Who this cost is to be billed BACK to — a cost incurred on a client's behalf
+  // and recharged to them. Only offered when the org has customers to choose
+  // from; without the list the field would be free text and a wrong name is
+  // worse than a blank one, because it is the party who gets invoiced.
+  const customerFields = customerNames.length
+    ? {
+        customer: {
+          type: 'string',
+          enum: ['', ...customerNames],
+          description:
+            'The CUSTOMER this cost is to be recharged / billed back to, from the list in the prompt. This is NOT who the document was issued to (that is this organisation) and NOT the supplier — it is the client who will be charged for this cost. Two things can put it there: the document itself naming the client the cost was incurred for, or a covering message saying so ("recharge this to X", "this is for X\'s job", "bill this back to X"). Return an EMPTY STRING unless one of those plainly names a customer on the list: an empty string leaves it for a person, and a wrong name here invoices the wrong client.',
+        },
+      }
+    : {};
   return {
     type: 'object',
     additionalProperties: false,
     properties: {
       ...taxRateFields,
       ...projectFields,
+      ...customerFields,
       supplier: {
         type: 'string',
         description:
@@ -184,6 +199,7 @@ const ReceiptSchema = z.object({
   category: z.string(),
   categoryReason: z.string().optional().default(''),
   noteFollowed: z.string().optional().default(''),
+  customer: z.string().optional().default(''),
   description: z.string().optional().default(''),
   dueDate: z.string().optional().default(''),
   period: z.string().optional().default(''),
@@ -288,6 +304,9 @@ export type ExtractionInputs = {
   mediaType: string;
   accounts: AccountRef[];
   categories: string[]; // plain fallback categories, used only when accounts is empty
+  // The org's customer contacts, for a cost being recharged to one of them.
+  // Empty = the field isn't offered at all.
+  customers?: string[];
   taxRates: TaxRateRef[];
   projects: NamedRule[];
   instructions: string;
@@ -381,6 +400,16 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       inp.categories.map((c) => `- "${c}"`).join('\n')
     : '';
 
+  // The customers a cost can be recharged to. A short guide, because the field is
+  // about a relationship the DOCUMENT usually doesn't state: a taxi receipt says
+  // nothing about who it is billed back to — the covering note does.
+  const customers = (inp.customers || []).filter(Boolean);
+  const customerSet = new Set(customers);
+  const customersGuide = customers.length
+    ? '\n\nRECHARGING. Some costs are incurred on a client\'s behalf and billed back to them. Set `customer` to the ONE client below that this cost is to be recharged to, when the document names them as who it was incurred for, or when the covering message says so. Otherwise return an empty string — most costs are the organisation\'s own and have no customer.\n' +
+      customers.map((c) => `- "${c}"`).join('\n')
+    : '';
+
   // Tax rates the org has written rules for, and the guide that teaches them.
   const taxRates = inp.taxRates;
   const taxRateNames = taxRates.map((t) => t.name);
@@ -431,7 +460,8 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     accountsGuide +
     categoriesGuide +
     taxRatesGuide +
-    projectsGuide;
+    projectsGuide +
+    customersGuide;
 
   const isPdf = mediaType === PDF_MEDIA;
 
@@ -442,7 +472,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       mediaType,
       maxTokens: 1024,
       schemaName: 'expense_document',
-      schema: buildSchema(categories, taxRateNames, projectNames),
+      schema: buildSchema(categories, taxRateNames, projectNames, customers),
       // Cached per organisation (see stablePrompt above) — the guides run to
       // thousands of tokens and must not be re-bought on every upload.
       systemPrompt: stablePrompt,
@@ -462,6 +492,9 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     // Belt-and-suspenders: snap to a known category if the model somehow strays.
     const taxRate = taxRateSet.has(parsed.data.taxRate) ? parsed.data.taxRate : '';
     const project = projectSet.has(parsed.data.project) ? parsed.data.project : '';
+    // Same for the customer: the party who gets invoiced for this cost is not a
+    // field to accept a name the org has never heard of.
+    const customer = customerSet.has(parsed.data.customer) ? parsed.data.customer : '';
     // A due date that isn't a real ISO date is no due date. Same for one that
     // merely echoes the invoice date, which is what the model produces when it
     // feels obliged to fill the field — and which posts to Xero as "due the day
@@ -484,6 +517,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       ),
       categoryReason: notFiller(parsed.data.categoryReason),
       noteFollowed: notFiller(parsed.data.noteFollowed),
+      customer,
       taxRate,
       taxRateReason: taxRate ? notFiller(parsed.data.taxRateReason) : '',
       project,
@@ -533,6 +567,9 @@ extractRouter.post('/extract', async (req, res) => {
     mediaType,
     accounts: parseAccounts(req.body?.accounts),
     categories: bodyCats,
+    customers: Array.isArray(req.body?.customers)
+      ? req.body.customers.filter((c: unknown): c is string => typeof c === 'string' && c.trim().length > 0)
+      : [],
     taxRates: parseTaxRates(req.body?.taxRates),
     projects: parseNamedRules(req.body?.projects),
     instructions: `${rawInstructions}${emailInstruction(note)}`,

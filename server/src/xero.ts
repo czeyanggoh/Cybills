@@ -339,6 +339,33 @@ export async function projectOptionsForOrg(ws: string, orgId: string): Promise<s
   }
 }
 
+// The org's active customer contacts, for the paths that read a document
+// server-side (the inbound-email reader). Names only, and capped: a long-lived
+// Xero can hold thousands of contacts, and a list that size in the prompt costs
+// more than the field is worth — past the cap the reader is given none and the
+// Customer stays for a person to set, which is what it did before it existed.
+const CUSTOMER_LIMIT = 300;
+
+export async function customerOptionsForOrg(ws: string, orgId: string): Promise<string[]> {
+  if (!xeroEnabled || !orgId) return [];
+  const organisation = getOrganisation(ws, orgId);
+  if (!organisation?.tenantId) return [];
+  try {
+    const result = await relay('Contacts', {
+      tenantId: organisation.tenantId,
+      query: { where: 'IsCustomer==true AND ContactStatus=="ACTIVE"' },
+    });
+    if (!result.ok) return [];
+    const names = (result.data?.Contacts ?? [])
+      .map((c: { Name?: unknown }) => String(c?.Name ?? '').trim())
+      .filter(Boolean)
+      .sort((a: string, b: string) => a.localeCompare(b));
+    return names.length > CUSTOMER_LIMIT ? [] : names;
+  } catch {
+    return [];
+  }
+}
+
 export const xeroRouter = Router();
 
 // GET /api/xero/status — capability probe for the frontend.

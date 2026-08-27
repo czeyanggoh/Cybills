@@ -5,7 +5,7 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import type { Request } from 'express';
 import { userByEmailHandle, setPendingForward, memberForSession } from './users.js';
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
-import { accountsForOrg, projectOptionsForOrg } from './xero.js';
+import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { insertBill, updateBill, reconcileReadiness } from './store.js';
 import { putBillFile } from './storage.js';
@@ -76,11 +76,16 @@ async function extractionInputsFor(ws: string, realOrgId: string) {
   const projectNames = await projectOptionsForOrg(ws, realOrgId);
   const projects = projectNames.map((name) => ({ name, rules: String(projMeta[name]?.rules || '').trim() }));
 
+  // Who a cost can be recharged to. Mostly used by the covering message — a
+  // taxi receipt says nothing about who it is billed back to, and "recharge
+  // this to CY-Biz" says everything.
+  const customers = await customerOptionsForOrg(ws, realOrgId);
+
   // Review instructions (business overview + GST/coding rules). Keyed
   // `cybills.review-instructions.<orgId>`; readSetting's exact-key fallback finds it.
   const instructions = readSetting<string>(ws, `cybills.review-instructions.${realOrgId || 'default'}`) || '';
 
-  return { accounts, categories, taxCtx, taxRates, projects, instructions };
+  return { accounts, categories, customers, taxCtx, taxRates, projects, instructions };
 }
 
 // Providers to attempt, org's choice first then the other enabled one, so a
@@ -142,7 +147,7 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
     inputs = await extractionInputsFor(ws, realOrgId);
   } catch (e) {
     console.error('[inbound] could not assemble extraction inputs', e);
-    inputs = { accounts: [], categories: [], taxCtx: EMPTY_TAX_CONTEXT, taxRates: [], projects: [], instructions: '' };
+    inputs = { accounts: [], categories: [], customers: [], taxCtx: EMPTY_TAX_CONTEXT, taxRates: [], projects: [], instructions: '' };
   }
 
   let lastNote = 'no reader available';
@@ -153,6 +158,7 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
       mediaType,
       accounts: inputs.accounts,
       categories: inputs.categories,
+      customers: inputs.customers,
       taxRates: inputs.taxRates,
       projects: inputs.projects,
       instructions: `${inputs.instructions}${emailInstruction(envelope)}`,
@@ -182,6 +188,9 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
       cardLast4: d.cardLast4,
       supplierGstRegNo: d.supplierGstRegNo,
       taxLabel: d.taxLabel,
+      // Only when the reader picked one from the org's own list — an empty
+      // string here would blank a customer somebody had set by hand.
+      ...(d.customer ? { customer: d.customer } : {}),
       // Only when the reader actually picked one, from a rule the org wrote.
       // Writing an empty string here would look exactly like a person choosing
       // "no code", and the tax decision below (or the listing's backfill) would

@@ -455,12 +455,26 @@ export default function AddDocumentsDrawer({ open, onClose }) {
         kind === 'cost'
           ? supplierRulePatch(vendorRule, { invoiceDate: iso, gstRegistered })
           : {};
+      // …except where the reader followed an instruction written about THIS
+      // document. `noteFollowed` is only non-empty when a covering message was
+      // supplied and the reader actually took something from it, so an ordinary
+      // upload is unaffected — see overlaySupplierRule in server/src/inbound.ts,
+      // which applies the same precedence to an emailed one.
+      const noteDecided = Boolean(String(extracted?.noteFollowed || '').trim());
       for (const [k, v] of Object.entries(rule)) {
         if (k === 'dueDate') continue;
+        if (noteDecided && ['category', 'customer', 'project'].includes(k) && p[k]) continue;
         p[k] = v;
       }
-      if (rule.category) p.categoryReason = supplierRuleCategoryReason(vendorRule, cur?.supplier);
+      if (rule.category && !(noteDecided && p.category)) {
+        p.categoryReason = supplierRuleCategoryReason(vendorRule, cur?.supplier);
+      }
+      if (noteDecided) p.categoryReason = `From the email that sent this: ${String(extracted.noteFollowed).trim()}`;
       if (rule.taxRate) p.taxRateReason = `Standing rule: documents from ${cur?.supplier} are coded ${rule.taxRate}.`;
+      // Who this cost is recharged to, when the reader could tell — from the
+      // document, or from the message it was sent with. Never blanks one the
+      // rule set.
+      if (extracted?.customer && !p.customer) p.customer = extracted.customer;
       if (!printedDue && rule.dueDate) p.dueDate = rule.dueDate;
       // "Extract line items" is opt-in per supplier: a document is otherwise a
       // single coded total, and the printed lines are pulled on demand from the
