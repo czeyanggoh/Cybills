@@ -64,6 +64,7 @@ const users = ensure('cybm');
 const dean = users.find((u) => u.email === 'astridy2004@gmail.com')!;
 dean.organisationId = 'org_one0001';
 dean.mobile = '+60 12-345 6789';
+dean.emailHandle = 'astrid4';
 save(users);
 
 const app = express();
@@ -138,6 +139,7 @@ check('the retry succeeds', r.status, 200);
 check('reusing the id, so no second group is made', createCalls[1].submission_id, firstId);
 check('the chat id comes back to be stored', r.body.channel.chatId, '120363000@g.us');
 check('the number WhatsApp would not add is surfaced', r.body.channel.participantsMissing, ['6591234567']);
+check('and counted', r.body.channel.addedShortfall, 1);
 check('only one channel exists for the entity', createCalls.length, 2);
 
 const submissionId = firstId;
@@ -163,6 +165,79 @@ r = await post('channels', { participants: ['6588887777'], subject: 'CYBills - S
 check('an adopted group opens', r.body.channel.status, 'open');
 check('and claims nobody was refused', r.body.channel.participantsMissing, []);
 check('because it never said who is in it', r.body.channel.participantsKnown, false);
+
+// --- What WhatsApp actually answers with --------------------------------------
+// It does not hand back phone numbers. `participants_added` comes back as LIDs
+// — opaque per-user ids — so against the numbers we asked with, every person
+// who WAS added looks like a stranger. That is how somebody sitting in the
+// group on her own phone got reported as having refused to join it.
+createReply = {
+  status: 200,
+  body: {
+    data: {
+      chat_id: '120363999@g.us',
+      subject: 'CYBills - Lids',
+      submission_id: 'x',
+      participants_added: ['217630539546875', '176940472352839'],
+      participants_requested: ['6582534031'],
+      already_existed: false,
+    },
+  },
+};
+r = await post('channels', { participants: ['6582534031'], subject: 'CYBills - Lids' }, { 'X-Org-Id': 'org_one0001' });
+check('an id that is not a phone number accuses nobody', r.body.channel.participantsMissing, []);
+check('nor counts anyone short — two ids for one person asked for', r.body.channel.addedShortfall, 0);
+// And the LIDs themselves never reach the page: two 15-digit numbers under
+// "In the group" tell the reader nothing about whose they are.
+check('the opaque ids are reported only as a count', r.body.channel.participantsAddedCount, 2);
+check('what is shown is what we asked with', r.body.channel.participantsRequested, ['6582534031']);
+
+// --- Connecting one person ---------------------------------------------------
+// The ordinary case: a group is a conversation with SOMEBODY, opened from their
+// own page. The number goes with the request and is saved as part of connecting
+// — an unstored number means the bills that arrive can't be matched back to
+// them, which is the one thing the button exists to prevent.
+createReply = {
+  status: 200,
+  body: {
+    data: {
+      chat_id: '120363222@g.us',
+      subject: 'astrid4@cybills.sg',
+      submission_id: 'x',
+      participants_added: ['6591112222'],
+      participants_requested: ['6591112222'],
+      already_existed: false,
+    },
+  },
+};
+r = await post('channels/user', { userId: dean.id, mobile: '+65 9111 2222' });
+check('connecting a person opens a group', r.status, 200);
+// The same pipe under a second name: send a bill to that address or into this
+// group and it is filed under exactly the same person.
+check('named for their own CYBills address', r.body.channel.subject, 'astrid4@cybills.sg');
+check('and tied to them', r.body.channel.userId, dean.id);
+check('the number is stored as typed', ensure('cybm').find((u) => u.id === dean.id)?.mobile, '+65 9111 2222');
+
+r = await post('channels/user', { userId: 'nobody', mobile: '6591112222' });
+check('a person CYBills has no row for is refused', r.status, 404);
+
+r = await post('channels/user', { userId: dean.id, mobile: '0123456789' });
+check('and so is a number in national format', r.status, 400);
+check('leaving the stored one alone', ensure('cybm').find((u) => u.id === dean.id)?.mobile, '+65 9111 2222');
+
+// A person's half-made group must not adopt the ENTITY's pending submission id:
+// they are different conversations, and the entity's was pointed elsewhere.
+const personChannel = await (await fetch(`http://127.0.0.1:4623/api/whatsapp/channels?userId=${dean.id}`)).json();
+check('the person has their own submission id', personChannel.channels[0].submissionId !== submissionId, true);
+
+// Put the roster number back — the rest of this file matches a document's
+// sender against it.
+{
+  const items = ensure('cybm');
+  const row = items.find((u) => u.id === dean.id)!;
+  row.mobile = '+60 12-345 6789';
+  save(items);
+}
 
 // --- Receiving a bill --------------------------------------------------------
 const invoice = {

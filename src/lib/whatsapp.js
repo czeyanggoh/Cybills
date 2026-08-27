@@ -82,3 +82,56 @@ export function useWhatsappConfig() {
   }, []);
   return config;
 }
+
+// One person's collection group — the "Connect to WhatsApp" card on their own
+// page. Deliberately not entity-scoped: a colleague's group is filed under the
+// practice's own organisation while the browser usually sits in some client
+// entity, and their page still has to find it.
+export function useWhatsappForUser(userId) {
+  const [state, setState] = useState({ channel: null, mobile: '', enabled: false, canManage: false, loading: true });
+
+  const reload = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`/api/whatsapp/channels?userId=${encodeURIComponent(userId)}`);
+      const data = res.ok ? await res.json() : null;
+      setState({
+        // At most one group per person. If an older one is still sitting there
+        // unfinished, the open one is the answer.
+        channel: (data?.channels ?? []).find((c) => c.status === 'open') ?? data?.channels?.[0] ?? null,
+        mobile: data?.mobile ?? '',
+        enabled: Boolean(data?.enabled),
+        canManage: Boolean(data?.canManage),
+        loading: false,
+      });
+    } catch {
+      setState((s) => ({ ...s, loading: false }));
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  return [state, reload];
+}
+
+// Open the group with one person. The number goes with the request rather than
+// being read from their saved row: pressing this is somebody asserting that
+// this is their WhatsApp number, and the server stores it as part of connecting
+// — an unstored number means the bills that arrive can't be matched back to
+// them.
+export async function connectWhatsappForUser({ userId, mobile }) {
+  const res = await fetch('/api/whatsapp/channels/user', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, mobile }),
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok) return data.channel;
+  const err = new Error(data?.message || 'Could not connect WhatsApp.');
+  err.code = data?.error || '';
+  err.retryable = Boolean(data?.retryable);
+  err.rejected = data?.rejected ?? [];
+  throw err;
+}

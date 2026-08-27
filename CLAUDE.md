@@ -428,12 +428,29 @@ that id, so pressing the button again adopts the group it may already have made.
 A fresh id would have made a second one, in front of the client, with nothing to
 say which was real.
 
-**WhatsApp not adding somebody is not an error, and not silence either.** It
-refuses to add a user whose privacy settings disallow it and answers as though
-nothing happened, so `participants_added` comes back shorter than
-`participants_requested` — and the difference is shown, named, with what to do
-about it (send them the invite link). Unsaid, that person waits to be added to a
-group they will never see.
+**A group belongs to a PERSON.** The ordinary way to open one is their own page
+(Users / Colleagues -> Edit details -> **Connect to WhatsApp**): one group, one
+person in it, named with their own CYBills address (`astrid4@cybills.sg`) — the
+same pipe under a second name, since a bill emailed to that address and one sent
+into that group are filed under exactly the same person. The number typed there
+IS the connection: it opens the group AND it is what a bill arriving from that
+number is matched back to, so it is saved as part of connecting rather than
+waiting on Save — unstored, everything they send lands on the entity's General
+account. A colleague's group is filed under their own organisation, else the
+practice's primary one: the same rule an emailed document of theirs follows. The
+entity-wide group under Connections is the same thing with more people in it.
+
+**WhatsApp not adding somebody is not an error, and not silence either** — but
+what it will say is usually only a count. `participants_added` comes back as
+**LIDs** (`217630539546875`), the opaque per-user ids WhatsApp uses so a group
+doesn't leak everyone's number, so measured against the numbers we asked with,
+every person who WAS added looks like a stranger: that is how somebody sitting in
+the group on her own phone was reported as having refused to join it. A name is
+claimed only where a returned id really is a number we sent; otherwise the
+shortfall is reported as a number, and the LIDs are never printed — two 15-digit
+ids under "In the group" say nothing about whose they are. There is no invite
+link to offer either (CYWS mints none), so the instruction is the one that can
+actually be followed: somebody already in the group adds them.
 
 **The bytes never move.** Both systems hold the same R2 bucket, so CYWS passes
 the object KEY and the document stores a reference to it — `shared:` in

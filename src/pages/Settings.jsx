@@ -990,8 +990,11 @@ function WhatsappCollectionCard() {
             <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 border-t pt-4 text-sm">
               <dt className="text-muted-foreground">Group</dt>
               <dd className="m-0 break-words font-medium">{channel.subject}</dd>
-              <dt className="text-muted-foreground">In the group</dt>
-              <dd className="m-0 break-words font-mono text-xs">{channel.participantsAdded.join(', ') || '—'}</dd>
+              {/* The numbers we ASKED with. WhatsApp answers with LIDs — opaque
+                  per-user ids — and printing those here put two 15-digit numbers
+                  in front of the reader with no way to tell whose they were. */}
+              <dt className="text-muted-foreground">Sending to</dt>
+              <dd className="m-0 break-words font-mono text-xs">{channel.participantsRequested.join(', ') || '—'}</dd>
               <dt className="text-muted-foreground">Received</dt>
               <dd className="m-0">
                 {channel.received} {channel.received === 1 ? 'bill' : 'bills'}
@@ -1000,15 +1003,30 @@ function WhatsappCollectionCard() {
             {/* WhatsApp silently refuses to add somebody whose privacy settings
                 disallow it, and answers as though nothing happened. Saying so is
                 the only way anybody finds out — otherwise that person waits to
-                be added to a group they will never see. */}
-            {channel.participantsMissing.length > 0 && (
+                be added to a group they will never see.
+                
+                Named only when WhatsApp gave back something we can match to a
+                number we sent; otherwise all that is honestly known is how many
+                are short. There is no invite link to offer — CYWS's API doesn't
+                mint one — so the instruction is what can actually be done. */}
+            {(channel.participantsMissing.length > 0 || channel.addedShortfall > 0) && (
               <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
-                  WhatsApp wouldn&rsquo;t add{' '}
-                  <span className="font-mono">{channel.participantsMissing.join(', ')}</span> — their privacy
-                  settings don&rsquo;t allow being added to groups. Send them the group&rsquo;s invite link
-                  instead.
+                  {channel.participantsMissing.length > 0 ? (
+                    <>
+                      WhatsApp wouldn&rsquo;t add{' '}
+                      <span className="font-mono">{channel.participantsMissing.join(', ')}</span> — their privacy
+                      settings don&rsquo;t allow being added to groups.
+                    </>
+                  ) : (
+                    <>
+                      WhatsApp added {channel.participantsAddedCount} of the{' '}
+                      {channel.participantsRequested.length} numbers asked for — the rest have privacy settings
+                      that don&rsquo;t allow being added to groups.
+                    </>
+                  )}{' '}
+                  Someone already in the group has to add them from inside WhatsApp.
                 </span>
               </div>
             )}

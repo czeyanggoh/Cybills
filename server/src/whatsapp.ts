@@ -3,15 +3,18 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { env, whatsappEnabled, r2Enabled, googleEnabled } from './env.js';
 import { workspaceId } from './workspace.js';
-import { dataScopeForOrg, getOrganisation } from './organisations.js';
+import { dataScopeForOrg, getOrganisation, primaryOrgId } from './organisations.js';
 import {
   canAccessOrg,
+  canManagePractice,
   effectiveRoleFor,
   ensure as ensureUsers,
+  save as saveUsers,
   generalUserFor,
   isBusinessAdminRole,
   memberForSession,
   appOrigin,
+  INBOUND_MAIL_DOMAIN,
   type User,
 } from './users.js';
 import { insertBill } from './store.js';
@@ -76,6 +79,12 @@ export type WaChannel = {
   id: string;
   workspaceId: string;
   orgId: string; // the organisation RECORD id (not the bills scope)
+  // The one person this group was opened for, when it was opened from their own
+  // page. A group is a conversation with SOMEBODY — the person who holds the
+  // paperwork — and CYWS's own model is one group per submission, so this is
+  // the ordinary case. Empty for an entity-wide group set up under Connections,
+  // which is the same thing with more people in it.
+  userId: string;
   subject: string;
   chatId: string; // '' until CYWS answers
   status: 'pending' | 'open' | 'failed';
@@ -207,16 +216,24 @@ async function askForGroup(body: {
 export async function createChannel(
   ws: string,
   orgId: string,
-  opts: { participants: string[]; subject: string; createdBy: string }
+  opts: { participants: string[]; subject: string; createdBy: string; userId?: string }
 ): Promise<{ ok: true; channel: WaChannel } | { ok: false; status: number; error: string; message: string; retryable: boolean; channel: WaChannel | null }> {
   const items = loadChannels();
-  // Resume rather than start again: an entity with a half-made channel already
-  // owns a submission id, and possibly a group at the far end.
-  const existing = items.find((c) => c.workspaceId === ws && c.orgId === orgId && c.status !== 'open');
+  const userId = opts.userId ?? '';
+  // Resume rather than start again: a half-made channel already owns a
+  // submission id, and possibly a group at the far end.
+  //
+  // Scoped to the same person (or to neither), because these are different
+  // conversations: connecting one person must not adopt the entity-wide
+  // group's pending id and quietly put their bills wherever that was pointed.
+  const existing = items.find(
+    (c) => c.workspaceId === ws && c.orgId === orgId && (c.userId ?? '') === userId && c.status !== 'open'
+  );
   const channel: WaChannel = existing ?? {
     id: mintSubmissionId(orgId),
     workspaceId: ws,
     orgId,
+    userId,
     subject: opts.subject,
     chatId: '',
     status: 'pending',
@@ -273,20 +290,64 @@ export async function createChannel(
   return { ok: true, channel: updated as WaChannel };
 }
 
-// Requested but not added — the people an operator has to send an invite link
-// to by hand. Derived, never stored: both lists are already on the record.
-export const participantsMissing = (c: WaChannel): string[] =>
-  c.participantsKnown ? c.participantsRequested.filter((p) => !c.participantsAdded.includes(p)) : [];
+// Two numbers that are the same person. WhatsApp/WAHA echo an id back in
+// whatever form they hold it, so a country code may be present on one side and
+// not the other; an 8-digit suffix match is the most either side can promise.
+function sameNumber(a: string, b: string): boolean {
+  const x = normaliseMobile(a) || String(a ?? '').replace(/\D+/g, '');
+  const y = normaliseMobile(b) || String(b ?? '').replace(/\D+/g, '');
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const short = x.length < y.length ? x : y;
+  return short.length >= 8 && (x.endsWith(y) || y.endsWith(x));
+}
+
+// Requested but demonstrably NOT added — the people somebody has to get into
+// the group by hand. Derived, never stored: both lists are on the record.
+//
+// This has to be able to answer "I don't know", because usually it doesn't.
+// WhatsApp no longer hands back phone numbers: `participants_added` comes back
+// as LIDs (`217630539546875`), the opaque per-user ids it uses so a group
+// doesn't leak everyone's number. Compared against the numbers we asked with,
+// every one of those looks like a stranger — which is how a person who WAS
+// added, and could see the group on her phone, was reported as having refused.
+//
+// So a name is only ever claimed when a returned id actually matches a number
+// we sent. Where the ids are opaque, the count is the only true thing there is
+// to say, and `addedShortfall` says it instead.
+export function participantsMissing(c: WaChannel): string[] {
+  if (!c.participantsKnown) return [];
+  const named = c.participantsRequested.filter((p) => c.participantsAdded.some((a) => sameNumber(a, p)));
+  // Nothing matched at all: these are LIDs, not numbers. We learned who is in
+  // the group only as a count, so naming anybody here would be a guess.
+  if (!named.length && c.participantsAdded.length) return [];
+  if (c.participantsAdded.length >= c.participantsRequested.length) return [];
+  return c.participantsRequested.filter((p) => !c.participantsAdded.some((a) => sameNumber(a, p)));
+}
+
+// How many of the people we asked for WhatsApp did not add, when it won't say
+// which. 0 when everyone is accounted for, or when we were never told.
+export function addedShortfall(c: WaChannel): number {
+  if (!c.participantsKnown) return 0;
+  return Math.max(0, c.participantsRequested.length - c.participantsAdded.length);
+}
 
 const publicChannel = (c: WaChannel) => ({
   submissionId: c.id,
   orgId: c.orgId,
+  userId: c.userId ?? '',
   subject: c.subject,
   chatId: c.chatId,
   status: c.status,
   participantsRequested: c.participantsRequested,
-  participantsAdded: c.participantsAdded,
+  // A COUNT, not the ids themselves. What WhatsApp returns is LIDs — opaque
+  // per-user ids — and printing them under "In the group" put two 15-digit
+  // numbers in front of somebody with no way to tell whose they were. The
+  // numbers we asked with are the ones a person recognises, and those are
+  // already above.
+  participantsAddedCount: c.participantsAdded.length,
   participantsMissing: participantsMissing(c),
+  addedShortfall: addedShortfall(c),
   participantsKnown: c.participantsKnown,
   createdAt: c.createdAt,
   createdBy: c.createdBy,
@@ -445,15 +506,126 @@ function mayManage(req: Request, orgId: string): boolean {
   return isBusinessAdminRole(effectiveRoleFor(me, orgId));
 }
 
-// GET /api/whatsapp/channels — the collection groups this entity has.
+// One person's own row, and the entity their documents are filed under.
+//
+// A colleague belongs to no single client entity, so theirs go where an EMAILED
+// document of theirs goes: their own organisation, else the practice's primary
+// one. Same rule in one more place rather than a second answer to the same
+// question (inbound.ts does it for mail).
+function personFor(ws: string, userId: string): { user: User; orgId: string } | null {
+  const user = ensureUsers(ws).find((u) => u.id === userId && !u.removed);
+  if (!user) return null;
+  return { user, orgId: user.organisationId || primaryOrgId() };
+}
+
+// Whose number this is, and who may connect it. Your own always; otherwise
+// whoever administers them — the practice for a colleague, a Business Admin for
+// a client entity's own staff.
+function mayManagePerson(req: Request, target: User, orgId: string): boolean {
+  const me = memberForSession(req);
+  if (!me) return !googleEnabled;
+  if (me.id === target.id) return true;
+  if (canManagePractice(me)) return true;
+  return canAccessOrg(me, orgId) && isBusinessAdminRole(effectiveRoleFor(me, orgId));
+}
+
+// The group's name as it appears in WhatsApp: the person's own CYBills address,
+// `astrid4@cybills.sg`.
+//
+// It is the same pipe under a second name — send a bill to that address or into
+// this group and it is filed under exactly the same person — so naming them the
+// same thing is the truest label there is, and it is unique per person without
+// having to bolt an entity onto a name. A person with no address yet falls back
+// to their name.
+function subjectFor(user: User, orgName: string): string {
+  if (user.emailHandle) return `${user.emailHandle}@${INBOUND_MAIL_DOMAIN}`;
+  return `CYBills - ${user.name || orgName}`;
+}
+
+// GET /api/whatsapp/channels — the collection groups this entity has, or (with
+// ?userId=) the one opened for a single person.
+//
+// The per-person lookup is deliberately NOT scoped to the header entity: a
+// colleague's group is filed under the practice's own organisation while the
+// browser is usually sitting in some client entity, and their own page must
+// still find it.
 whatsappRouter.get('/channels', (req, res) => {
+  const ws = workspaceId(req);
+  const userId = String(req.query.userId ?? '').trim();
+  if (userId) {
+    const person = personFor(ws, userId);
+    if (!person) return res.status(404).json({ error: 'unknown_user' });
+    if (!mayManagePerson(req, person.user, person.orgId)) return res.status(403).json({ error: 'not_an_admin' });
+    return res.json({
+      channels: loadChannels().filter((c) => c.workspaceId === ws && c.userId === userId).map(publicChannel),
+      enabled: whatsappEnabled,
+      canManage: true,
+      mobile: person.user.mobile || '',
+    });
+  }
   const orgId = orgIdFor(req);
   if (!orgId) return res.json({ channels: [], enabled: whatsappEnabled });
   res.json({
-    channels: channelsForOrg(workspaceId(req), orgId).map(publicChannel),
+    // The entity's own group, not every group of everyone who works in it —
+    // this is the Connections card, and a person's is on their own page.
+    channels: channelsForOrg(ws, orgId).filter((c) => !c.userId).map(publicChannel),
     enabled: whatsappEnabled,
     canManage: mayManage(req, orgId),
   });
+});
+
+// POST /api/whatsapp/channels/user — connect ONE person: open a WhatsApp group
+// with them, for the entity their documents are filed under.
+//
+// The number comes from the form rather than from the stored row, and is SAVED
+// as part of connecting. Pressing this is somebody asserting "this is their
+// WhatsApp number", and it has to be the stored one or the bills that arrive
+// can't be matched back to them — they would all land on the entity's General
+// account instead, which is the one thing this page exists to prevent.
+whatsappRouter.post('/channels/user', async (req, res) => {
+  if (!whatsappEnabled) return res.status(503).json({ error: 'whatsapp_not_configured' });
+  const ws = workspaceId(req);
+  const userId = String(req.body?.userId ?? '').trim();
+  const person = personFor(ws, userId);
+  if (!person) return res.status(404).json({ error: 'unknown_user' });
+  if (!mayManagePerson(req, person.user, person.orgId)) return res.status(403).json({ error: 'not_an_admin' });
+  if (!person.orgId) return res.status(400).json({ error: 'org_required' });
+
+  const asked = String(req.body?.mobile ?? person.user.mobile ?? '').trim();
+  const mobile = normaliseMobile(asked);
+  if (!mobile) {
+    return res.status(400).json({
+      error: 'participant_required',
+      message: MESSAGES.participant_required,
+      rejected: asked ? [asked] : [],
+    });
+  }
+  if (normaliseMobile(person.user.mobile) !== mobile) {
+    const items = ensureUsers(ws);
+    const row = items.find((u) => u.id === userId);
+    if (row) {
+      row.mobile = asked;
+      saveUsers(items);
+    }
+  }
+
+  const org = getOrganisation(ws, person.orgId);
+  const me = memberForSession(req);
+  const result = await createChannel(ws, person.orgId, {
+    participants: [mobile],
+    subject: subjectFor(person.user, org?.name || person.orgId),
+    createdBy: me?.email ?? '',
+    userId,
+  });
+  if (!result.ok) {
+    return res.status(result.status === 401 ? 502 : result.status).json({
+      error: result.error,
+      message: result.message,
+      retryable: result.retryable,
+      channel: result.channel ? publicChannel(result.channel) : null,
+    });
+  }
+  res.json({ ok: true, channel: publicChannel(result.channel), mobile });
 });
 
 // POST /api/whatsapp/channels — body { mobile? | participants?, subject? }.

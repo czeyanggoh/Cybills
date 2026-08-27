@@ -41,6 +41,22 @@ read out of the app and handed over without anyone having VPS access.
 
 ## Setting a group up
 
+**One person, from their own page** is the ordinary way: **Users / Colleagues →
+Manage → Edit details → Connect to WhatsApp**. It opens a group containing just
+them, named with their own CYBills address (`astrid4@cybills.sg`) — the same
+pipe under a second name, since a bill sent to that address and one sent into
+that group are filed under exactly the same person. The number typed there is
+saved as part of connecting: it is what a bill arriving from that number is
+matched back to, and an unstored one means everything they send lands on the
+entity's General account instead.
+
+A colleague belongs to no single client entity, so their documents go where an
+emailed one of theirs goes: their own organisation, else the practice's primary
+one.
+
+**A whole entity** — several people in one group — is set up under Connections
+instead:
+
 **Business settings → Connections → WhatsApp bill collection → Set up the
 group.** Enter the numbers in full international format (digits only —
 `60123456789`, not `0123456789`; a leading zero is refused rather than guessed
@@ -54,8 +70,13 @@ Two things to expect:
 
 - **Somebody may not be added.** WhatsApp silently refuses to add a user whose
   privacy settings disallow it, and answers as though nothing happened. That is
-  not an error, and the card names the numbers it happened to — send those
-  people the group's invite link instead.
+  not an error, and the card says so — but usually only as a count. WhatsApp
+  returns **LIDs** in `participants_added` (`217630539546875`), the opaque
+  per-user ids it uses so a group doesn't leak everyone's number, and no phone
+  number will ever match one. So a name is claimed only when a returned id
+  really is one of the numbers we sent; otherwise all that is honestly known is
+  how many are short. Whoever is missing has to be added from inside the group
+  — CYWS's API mints no invite link.
 - **A failed attempt is resumable.** The submission id is written to disk
   *before* the call goes out, because the dangerous failure is not "the call
   failed" but "the call succeeded and the answer was lost". Pressing the button

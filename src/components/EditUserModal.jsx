@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink } from 'lucide-react';
+import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink, MessageCircle, AlertTriangle } from 'lucide-react';
 import { ROLES, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
 import { useOrganisations } from '@/lib/organisations';
+import { useWhatsappForUser, connectWhatsappForUser } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
 
 // The mail domain user inbound addresses live on (mirrors the server's
@@ -120,6 +121,118 @@ function ExtractByEmail({ user, handle, setHandle, error }) {
   );
 }
 
+// "Connect to WhatsApp" — this person's own bill collection group.
+//
+// The number lives in this card rather than up with the name fields, the way
+// the inbound address lives in the one above: its whole job in CYBills is
+// WhatsApp. It is what the group is opened with AND what a bill arriving from
+// that number is matched back to, which is why one field does both.
+function ConnectWhatsapp({ user, mobile, setMobile }) {
+  const [{ channel, enabled, canManage, loading }, reload] = useWhatsappForUser(user.id);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const connect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await connectWhatsappForUser({ userId: user.id, mobile });
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+      // Reload either way. A FAILED attempt still left a channel behind — that
+      // is the point of it, since its submission id is what a retry reuses —
+      // and the card has to say so, or the button keeps offering to "Connect"
+      // something that is already half-made.
+      reload();
+    }
+  };
+
+  const open = channel?.status === 'open';
+  // A number changed after the fact does not move the group — the person in it
+  // stays whoever was added. Worth saying before Save, not after.
+  //
+  // Compared against the number the group was OPENED with, not against what
+  // WhatsApp echoed back: that comes back as a LID, an opaque per-user id, and
+  // no phone number will ever match one.
+  const inGroup = channel?.participantsRequested?.[0] || '';
+  const digits = String(mobile || '').replace(/\D+/g, '');
+  const drifted = open && inGroup && digits && !digits.endsWith(inGroup) && !inGroup.endsWith(digits);
+
+  return (
+    <div className="space-y-3 rounded-lg border p-4">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <MessageCircle className="h-4 w-4" strokeWidth={1.75} /> Connect to WhatsApp
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Opens a WhatsApp group with {user.name || 'this person'}. Bills they send into it are read and filed
+        under them — no sign-in, no app.
+      </p>
+      <label className="sr-only" htmlFor="wa-mobile">Mobile number</label>
+      <div className="flex items-center gap-2">
+        <input
+          id="wa-mobile"
+          type="tel"
+          value={mobile}
+          onChange={(e) => { setMobile(e.target.value); setError(null); }}
+          placeholder="60123456789"
+          spellCheck={false}
+          autoComplete="tel"
+          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        {!open && (
+          <button
+            type="button"
+            onClick={connect}
+            disabled={busy || loading || !enabled || !canManage || !mobile.trim()}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? 'Connecting…' : channel ? 'Try again' : 'Connect'}
+          </button>
+        )}
+      </div>
+      {/* Full international format, or WhatsApp simply adds nobody and says
+          nothing. A leading 0 is a national trunk prefix and is refused rather
+          than guessed at — no country code starts with one. */}
+      <p className="text-xs text-muted-foreground">
+        Country code first, digits only — <code>60123456789</code>, not <code>0123456789</code>.
+      </p>
+
+      {open ? (
+        <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Connected</span> — {channel.subject}
+          {channel.received ? ` · ${channel.received} ${channel.received === 1 ? 'bill' : 'bills'} so far` : ''}
+        </div>
+      ) : !enabled && !loading ? (
+        <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          CYWorkspace isn&rsquo;t connected on this deployment yet, so there is nothing to open the group with.
+        </p>
+      ) : channel ? (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          {channel.lastError || 'The last attempt didn’t complete.'} Trying again picks up the same group rather
+          than making a second one.
+        </p>
+      ) : null}
+
+      {drifted && (
+        <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          The group still has {inGroup} in it — changing the number here doesn&rsquo;t move it. Bills from the new
+          number will be filed under {user.name || 'them'}; bills from the old one won&rsquo;t.
+        </p>
+      )}
+
+      {error && (
+        <p className="text-xs text-destructive">
+          {error.message}
+          {error.rejected?.length ? ` Check ${error.rejected.join(', ')}.` : ''}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Toggle({ on, onToggle }) {
   return (
     <button type="button" onClick={onToggle} className="flex items-center gap-2">
@@ -159,6 +272,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
   const { data: organisations = [] } = useOrganisations();
   const [organisationId, setOrganisationId] = useState(user?.organisationId || '');
   const [handle, setHandle] = useState(user?.emailHandle || '');
+  const [mobile, setMobile] = useState(user?.mobile || '');
   const [handleError, setHandleError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -182,6 +296,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
           lastName,
           login: login ? 'Yes' : 'No',
           email: login ? email : '',
+          mobile,
           // Only when it actually changed — sending it unchanged would make an
           // edit to somebody's NAME fail on their own existing address.
           ...(wanted && wanted !== user.emailHandle ? { emailHandle: wanted } : {}),
@@ -272,6 +387,10 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                 setHandle={(v) => { setHandle(v); setHandleError(''); }}
                 error={handleError}
               />
+              {/* The other road a bill travels. Same shape as the card above on
+                  purpose: they are the two ways paperwork reaches CYBills
+                  without anybody signing in. */}
+              <ConnectWhatsapp user={user} mobile={mobile} setMobile={setMobile} />
             </div>
           ) : (
             <div className="space-y-5">
