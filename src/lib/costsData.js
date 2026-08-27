@@ -60,6 +60,30 @@ export function useCostsDocs() {
     return () => clearInterval(t);
   }, [processingCount, reload]);
 
+  // A document can arrive without this browser doing anything: emailed in
+  // ("Extract by email"), or added by somebody else. Nothing local fires then —
+  // BILLS_CHANGED_EVENT is dispatched by whoever did the uploading — so the
+  // inbox sat there looking empty while the server had already filed it, and
+  // the only way to find out was to reload the page by hand.
+  //
+  // Slow on purpose, and only while the tab is actually being looked at: this
+  // is a background refresh of a list somebody is reading, not a live feed.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === 'visible') reload();
+    };
+    const t = setInterval(tick, 30000);
+    // …and immediately on coming back to the tab, which is when a person is
+    // most likely to be waiting for something they sent a moment ago.
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [reload]);
+
   return { allDocs: uploaded, sampleDocs: [], uploaded, reload };
 }
 
