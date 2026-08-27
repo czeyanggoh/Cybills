@@ -507,6 +507,16 @@ told which road it came in on (`emailInstruction`'s `via`), and it beats a
 standing supplier rule for the fields it decides — never for the money. It is
 kept on the document, so a RE-READ sees it too.
 
+**Every call to the endpoint is recorded, refusals included.** "I sent a bill and
+nothing turned up" has two answers — CYWS never called, or it called and was
+turned away — and they need different people to fix them, so the app has to be
+able to tell them apart instead of guessing. The last 50 attempts (Extraction ->
+Extract by WhatsApp -> **What has arrived**, practice team only) name the outcome
+of each: filed, already had it, wrong key, unknown group, file unreadable. An
+EMPTY log is itself the answer — CYWS has not called at all, which is either the
+handback never done or its classifier deciding the attachment was not a supplier
+bill. The key is never written down; only that one did not match.
+
 **Deduped on `message_id`, and answered before it is read.** CYWS does not retry
 on its own — an operator re-tags a message — so a repeat is answered 2xx with the
 document that already exists; a non-2xx would leave it undelivered and invite a

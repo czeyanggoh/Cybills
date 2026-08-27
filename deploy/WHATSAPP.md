@@ -141,6 +141,21 @@ Notes on the contract:
   photos are classified by CYWS and not forwarded; plain text messages never
   are. `body` is the text attached to the invoice itself.
 
+## Nothing turned up
+
+"I sent a bill into the group and it isn't in the Costs inbox" has two answers
+that need different people, so CYBills records every call to the endpoint —
+refusals included — under **Business settings → Extraction → Extract by
+WhatsApp → What has arrived** (practice team only, last 50).
+
+| It says | It means |
+|---|---|
+| *nothing at all* | CYWS has not called. Give it the URL and key above, or the classifier decided the attachment was not a supplier bill and never forwarded it — that decision is CYWS's, and it does not reach here. |
+| **Wrong key** | CYWS is calling with a key this deploy doesn't hold. |
+| **Unknown group** | The `submission_id` names no group here. The group was made outside CYBills, or its record is gone. |
+| **File unreadable** | Neither the R2 key nor the signed link gave up the bytes. Safe to re-tag. |
+| **Filed** / **Already had it** | It arrived. If it isn't visible, check the entity — a colleague's group files into their own organisation, else the practice's primary one. |
+
 ## What the note does
 
 `body` is treated as an instruction about *that* document, exactly as a covering

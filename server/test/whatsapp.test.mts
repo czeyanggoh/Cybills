@@ -347,6 +347,24 @@ r = await post(
 check('a file link that is not CYWS is not followed', r.status, 502);
 check('and nothing was fetched', fileFetches, 2);
 
+// --- Was it us, or them? ------------------------------------------------------
+// "I sent a bill and nothing turned up" has two very different answers, and
+// they need different people to fix them. Every attempt is recorded, refusals
+// included — a call being MADE and turned away is the half CYBills can answer.
+{
+  const { recentDeliveries } = await import('../src/whatsapp.ts');
+  const log = recentDeliveries(20);
+  const outcomes = log.map((d) => d.outcome);
+  check('the filed bill is in the log', outcomes.includes('filed'), true);
+  check('so is the re-send', outcomes.includes('duplicate'), true);
+  check('and the one whose file would not come', outcomes.includes('file_unavailable'), true);
+  check('and the submission we do not hold', outcomes.includes('unknown_submission'), true);
+  check('and the call with the wrong key', outcomes.includes('bad_key'), true);
+  check('newest first', log[0]!.at >= log[log.length - 1]!.at, true);
+  // The key itself is never written down — only that one did not match.
+  check('the key is never stored', JSON.stringify(log).includes('inbound-key'), false);
+}
+
 server.close();
 globalThis.fetch = realFetch;
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

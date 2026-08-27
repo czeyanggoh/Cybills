@@ -501,6 +501,36 @@ function rememberMessage(row: SeenRow): void {
   saveCollection(SEEN, items);
 }
 
+// --- What actually arrived ----------------------------------------------------
+// "I sent a bill into the group and nothing turned up" has two very different
+// answers — CYWS never called us, or it called and we turned it away — and
+// until this existed there was no way to tell them apart from inside the app.
+// Every attempt is recorded, including the ones refused before a document could
+// exist: a wrong key, a submission id we don't hold, a file neither the bucket
+// nor the link would give up.
+//
+// The last 50, which is a few days of an ordinary client and enough to see a
+// pattern in a bad one.
+type Delivery = {
+  id: string;
+  at: string;
+  submissionId: string;
+  messageId: string;
+  outcome: 'filed' | 'duplicate' | 'bad_key' | 'unknown_submission' | 'incomplete' | 'file_unavailable';
+  detail: string;
+};
+const DELIVERIES = 'whatsapp-deliveries';
+const MAX_DELIVERIES = 50;
+
+function recordDelivery(row: Omit<Delivery, 'id' | 'at'>): void {
+  const items = loadCollection<Delivery>(DELIVERIES);
+  items.push({ id: randomBytes(6).toString('hex'), at: new Date().toISOString(), ...row });
+  saveCollection(DELIVERIES, items.slice(-MAX_DELIVERIES));
+}
+
+export const recentDeliveries = (limit = 10): Delivery[] =>
+  [...loadCollection<Delivery>(DELIVERIES)].reverse().slice(0, limit);
+
 // --- Routes -------------------------------------------------------------------
 export const whatsappRouter = Router();
 
@@ -718,6 +748,8 @@ whatsappRouter.get('/config', (req, res) => {
     url: `${appOrigin(req)}/api/whatsapp/invoice`,
     apiKey: inboundKey(),
     enabled: whatsappEnabled,
+    // So "nothing turned up" can be answered rather than guessed at.
+    deliveries: recentDeliveries(),
   });
 });
 
@@ -726,22 +758,41 @@ whatsappRouter.get('/config', (req, res) => {
 // Called machine-to-machine, so it carries its own proof (X-API-Key) instead of
 // a session, and is allowlisted past the session guard in index.ts.
 whatsappRouter.post('/invoice', async (req, res) => {
-  if (!keyMatches(req.header('X-API-Key') || '')) return res.status(401).json({ error: 'invalid_api_key' });
+  if (!keyMatches(req.header('X-API-Key') || '')) {
+    // Logged without echoing the key back or storing it: what matters is that
+    // somebody IS calling and being turned away, which is the difference
+    // between a misconfigured CYWS and a silent one.
+    recordDelivery({ submissionId: '', messageId: '', outcome: 'bad_key', detail: 'X-API-Key did not match' });
+    return res.status(401).json({ error: 'invalid_api_key' });
+  }
 
   const b = req.body ?? {};
   const submissionId = String(b.submission_id ?? '').trim();
   const messageId = String(b.message_id ?? '').trim();
-  if (!submissionId) return res.status(400).json({ error: 'submission_id_required' });
-  if (!messageId) return res.status(400).json({ error: 'message_id_required' });
+  if (!submissionId || !messageId) {
+    recordDelivery({
+      submissionId,
+      messageId,
+      outcome: 'incomplete',
+      detail: submissionId ? 'no message_id' : 'no submission_id',
+    });
+    return res.status(400).json({ error: submissionId ? 'message_id_required' : 'submission_id_required' });
+  }
 
   const channel = channelById(submissionId);
   // A submission CYBills has no record of. Deliberately not "create one": the
   // whole point of the id is that it names an entity's book, and guessing which
   // one would file a client's bills into somebody else's.
-  if (!channel) return res.status(404).json({ error: 'unknown_submission', submission_id: submissionId });
+  if (!channel) {
+    recordDelivery({ submissionId, messageId, outcome: 'unknown_submission', detail: 'no group here under that id' });
+    return res.status(404).json({ error: 'unknown_submission', submission_id: submissionId });
+  }
 
   const already = seenMessage(messageId);
-  if (already) return res.json({ ok: true, duplicate: true, bill_id: already.billId });
+  if (already) {
+    recordDelivery({ submissionId, messageId, outcome: 'duplicate', detail: already.billId });
+    return res.json({ ok: true, duplicate: true, bill_id: already.billId });
+  }
 
   const ws = channel.workspaceId;
   const orgId = channel.orgId;
@@ -751,7 +802,15 @@ whatsappRouter.post('/invoice', async (req, res) => {
   (req.headers as Record<string, string>)['x-org-id'] = orgId;
 
   const file = await fetchDocument(scope, b);
-  if (!file) return res.status(502).json({ error: 'file_unavailable' });
+  if (!file) {
+    recordDelivery({
+      submissionId,
+      messageId,
+      outcome: 'file_unavailable',
+      detail: String(b.r2_key ?? b.file_name ?? ''),
+    });
+    return res.status(502).json({ error: 'file_unavailable' });
+  }
 
   const fileHash = createHash('sha256').update(file.bytes).digest('hex');
   const sentAt = String(b.sent_at ?? '');
@@ -796,6 +855,12 @@ whatsappRouter.post('/invoice', async (req, res) => {
     kind: 'cost',
   });
   rememberMessage({ id: messageId, billId: bill.id, submissionId, at: new Date().toISOString() });
+  recordDelivery({
+    submissionId,
+    messageId,
+    outcome: 'filed',
+    detail: `${message.fileName || 'document'} → ${bill.displayId}`,
+  });
   patchChannel(submissionId, {
     lastMessageAt: sentAt || new Date().toISOString(),
     received: (channel.received || 0) + 1,

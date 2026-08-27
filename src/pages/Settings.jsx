@@ -510,6 +510,34 @@ function ExtractByEmailCard() {
 // email card above: what the CYWorkspace operator needs to hand bills back to
 // CYBills. The group itself is per-entity and lives under Connections; these
 // two values are the deployment's.
+// How each inbound attempt reads. Refusals are worth as much as successes here:
+// they say the call is being MADE, which is the half of the question CYBills
+// can answer on its own.
+const DELIVERY_LABEL = {
+  filed: 'Filed',
+  duplicate: 'Already had it',
+  bad_key: 'Wrong key',
+  unknown_submission: 'Unknown group',
+  incomplete: 'Incomplete',
+  file_unavailable: 'File unreadable',
+};
+const DELIVERY_TONE = {
+  filed: 'text-emerald-700',
+  duplicate: 'text-muted-foreground',
+  bad_key: 'text-red-600',
+  unknown_submission: 'text-red-600',
+  incomplete: 'text-amber-700',
+  file_unavailable: 'text-amber-700',
+};
+
+// A timestamp as somebody reads it back in a log — short, local, unambiguous.
+const fmtStamp = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+};
+
 function ExtractByWhatsappCard() {
   const config = useWhatsappConfig();
   const { membership, googleEnabled } = useAuth();
@@ -545,6 +573,31 @@ function ExtractByWhatsappCard() {
             The key is the whole deployment&rsquo;s — it authorises filing a bill into any client entity, so it
             goes to CYWorkspace and nowhere else. Full contract: <code>deploy/WHATSAPP.md</code>.
           </p>
+          {/* "I sent a bill and nothing turned up" has two very different
+              answers — CYWorkspace never called, or it called and was turned
+              away — and they need different people to fix them. Every attempt
+              is here, including the refused ones. */}
+          <div className="rounded-md border p-4">
+            <p className="mb-1 text-sm font-medium">What has arrived</p>
+            {config?.deliveries?.length ? (
+              <ul className="mt-2 space-y-1.5 text-xs">
+                {config.deliveries.map((d) => (
+                  <li key={d.id} className="flex items-start gap-2">
+                    <span className={cn('shrink-0 font-medium', DELIVERY_TONE[d.outcome] || 'text-muted-foreground')}>
+                      {DELIVERY_LABEL[d.outcome] || d.outcome}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">{d.detail || '—'}</span>
+                    <span className="shrink-0 text-muted-foreground">{fmtStamp(d.at)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                CYWorkspace has never called this endpoint. Until it is given the URL and key above, a bill sent
+                into a group is read by CYWorkspace and goes no further — nothing reaches CYBills to file.
+              </p>
+            )}
+          </div>
         </>
       ) : (
         <p className="text-xs text-muted-foreground">
