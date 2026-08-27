@@ -243,24 +243,12 @@ export function buildClaimDoc(claim, links = {}) {
   doc.text(n2(claim.total), tc.total, y, { align: 'right' });
   y += 40;
 
-  // ---- Approvals (signature block) ------------------------------------
-  ensure(120);
-  section('APPROVALS');
-  y += 14;
-  const sigRow = (label) => {
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(20);
-    doc.text(label, M, y);
-    doc.text('Date', 430, y);
-    doc.setDrawColor(160);
-    doc.setLineWidth(0.6);
-    doc.line(150, y + 2, 400, y + 2);
-    doc.line(465, y + 2, RIGHT, y + 2);
-    y += 48;
-  };
-  sigRow('Employee signature');
-  sigRow("Approver's signature");
+  // No signature block. Two ruled lines for an employee and an approver to sign
+  // are a paper form's way of recording who agreed to this, and nothing here is
+  // a paper form: the claim is submitted, routed to a named approver and
+  // approved in the app, and the page that follows is that trail with the names
+  // and timestamps on it. Printing blank lines beside it invites somebody to
+  // treat the real approval as unfinished.
 
   // ---- Approval history (added page) ----------------------------------
   nextPage();
