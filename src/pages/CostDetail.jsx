@@ -25,7 +25,7 @@ import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
 import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
-import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers } from '@/lib/organisations';
+import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
@@ -223,6 +223,7 @@ export default function CostDetail() {
   // Xero contacts AND the merchants this entity's own documents already name.
   // A bridge entity has no Xero to ask, so without the second half its Supplier
   // field offered nothing at all and every name had to be typed.
+  const bridge = useBridgeEntity();
   const supplierOptions = mergeSupplierNames(useXeroSuppliers(), [
     ...useDocumentSuppliers(),
     ...addedSuppliers(),
@@ -1617,19 +1618,33 @@ export default function CostDetail() {
               <SectionHeading>Amount</SectionHeading>
               <Field label="Currency"><Input value={data.currency} onChange={(v) => set('currency', v)} /></Field>
               <Field label="Total amount"><Input value={data.total} onChange={(v) => set('total', v)} /></Field>
-              <Field label="Tax rate">
-                <ComboSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
-                {!gstRegistered && (
+              {/* A bridge entity has no tax position of its own: its claims post
+                  with No Tax at the full amount (the tax the document records is
+                  folded into the cost). A tax code chosen here could never reach
+                  the ledger, so it isn't offered — the tax AMOUNT still is, since
+                  that is what the paper says. */}
+              {!bridge && (
+                <Field label="Tax rate">
+                  <ComboSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
+                  {!gstRegistered && (
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      Fixed to No Tax — this company isn’t GST-registered. Change that under Business
+                      settings → Business profile.
+                    </p>
+                  )}
+                  {gstRegistered && data.taxRateReason && (
+                    <p className="mt-1.5 text-xs text-muted-foreground">{data.taxRateReason}</p>
+                  )}
+                </Field>
+              )}
+              <Field label="Tax amount">
+                <Input value={data.tax} onChange={(v) => set('tax', v)} />
+                {bridge && (
                   <p className="mt-1.5 text-xs text-muted-foreground">
-                    Fixed to No Tax — this company isn’t GST-registered. Change that under Business
-                    settings → Business profile.
+                    Claims raised here post with No Tax at the full amount, so this is recorded but not claimed.
                   </p>
                 )}
-                {gstRegistered && data.taxRateReason && (
-                  <p className="mt-1.5 text-xs text-muted-foreground">{data.taxRateReason}</p>
-                )}
               </Field>
-              <Field label="Tax amount"><Input value={data.tax} onChange={(v) => set('tax', v)} /></Field>
               <Field label="Net amount"><Input value={(num(data.total) - num(data.tax)).toFixed(2)} readOnly /></Field>
               {num(data.total) > 0 && (
                 <div className="flex items-start gap-4 py-2">

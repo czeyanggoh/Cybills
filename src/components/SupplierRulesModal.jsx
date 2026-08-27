@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useBridgeEntity } from '@/lib/organisations';
 import { X, Info, ChevronDown } from 'lucide-react';
 import SearchSelect from '@/components/SearchSelect';
 import {
@@ -68,6 +69,7 @@ export default function SupplierRulesModal({
   onApply,
 }) {
   const [rule, setRule] = useState(emptySupplierRule);
+  const bridge = useBridgeEntity();
 
   // Load the supplier's saved rule each time the dialog opens — the same dialog
   // instance is reused as the reviewer moves between documents.
@@ -139,7 +141,15 @@ export default function SupplierRulesModal({
             </div>
             <div>
               <FieldLabel>Tax rate</FieldLabel>
-              {gstRegistered ? (
+              {/* A bridge entity has no tax position of its own — its claims post
+                  with No Tax at the full amount — so a standing tax code here
+                  could never reach the ledger. Said out loud rather than left as
+                  a dropdown that looks like it works. */}
+              {bridge ? (
+                <p className="pt-2 text-sm text-muted-foreground">
+                  Fixed to No Tax — claims raised here post at the full amount.
+                </p>
+              ) : gstRegistered ? (
                 <SearchSelect value={rule.taxRate} options={taxRateOptions} onChange={(v) => set('taxRate', v)} />
               ) : (
                 <p className="pt-2 text-sm text-muted-foreground">

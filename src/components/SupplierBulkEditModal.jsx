@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useBridgeEntity } from '@/lib/organisations';
 import { X, Info } from 'lucide-react';
 import ComboSelect from '@/components/ComboSelect';
 import { cn } from '@/lib/utils';
@@ -26,7 +27,10 @@ const LEFT = [
 const RIGHT = [
   { key: 'extractLineItems', label: 'Extract line items', bool: true },
   { key: 'extractStatements', label: 'Extract supplier statements', bool: true },
-  { key: 'taxRate', label: 'Tax rate', source: 'taxRates' },
+  // A bridge entity has no tax position of its own and its claims post with No
+  // Tax at the full amount, so a standing tax code here could never reach the
+  // ledger. Offering one is a control that looks like it works and can't.
+  { key: 'taxRate', label: 'Tax rate', source: 'taxRates', xeroOnly: true },
   { key: 'currency', label: 'Currency', source: 'currencies' },
   { key: 'paymentMethod', label: 'Payment method', source: 'paymentMethods' },
 ];
@@ -45,6 +49,8 @@ export default function SupplierBulkEditModal({
 }) {
   const [values, setValues] = useState({});
   const [busy, setBusy] = useState(false);
+  const bridge = useBridgeEntity();
+  const shown = (f) => !f.xeroOnly || !bridge;
 
   useEffect(() => {
     if (open) {
@@ -121,9 +127,15 @@ export default function SupplierBulkEditModal({
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-4">{LEFT.map(field)}</div>
-            <div className="space-y-4">{RIGHT.map(field)}</div>
+            <div className="space-y-4">{LEFT.filter(shown).map(field)}</div>
+            <div className="space-y-4">{RIGHT.filter(shown).map(field)}</div>
           </div>
+          {bridge && (
+            <p className="mt-4 text-xs text-muted-foreground">
+              Claims raised here post with <span className="font-medium text-foreground">No Tax</span>, so there is no
+              tax code to set.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t px-5 py-3.5">

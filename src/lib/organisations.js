@@ -104,6 +104,13 @@ export function switchOrganisationTo(id, path) {
   window.location.assign(path || `${window.location.pathname}${window.location.search}${window.location.hash}`);
 }
 
+// Is the entity currently open a bridge — no Xero of its own, claims posting
+// into another entity's? Several surfaces need the answer to hide things that
+// cannot mean anything here.
+export function useBridgeEntity() {
+  return isStandaloneOrg(useActiveOrganisation());
+}
+
 // Reactive form: the active entity's record, or null.
 export function useActiveOrganisation() {
   const { data: organisations = [] } = useOrganisations();

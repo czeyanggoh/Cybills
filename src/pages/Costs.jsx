@@ -28,6 +28,7 @@ import {
   fetchXeroAccounts,
   fetchXeroTaxRates,
   publishBillToXero,
+  useBridgeEntity,
 } from '@/lib/organisations';
 import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
@@ -726,6 +727,10 @@ export default function Costs() {
     },
   };
   const shownColumns = COST_COLUMNS
+    // A bridge entity has no tax position of its own — its claims post with No
+    // Tax at the full amount — so a tax code can never reach the ledger from
+    // here, and the column could only ever read "Not set".
+    .filter((c) => !(bridge && c.key === 'taxRate'))
     .filter((c) => c.fixed || tablePrefs.columns[c.key])
     .map((c) => ({ ...c, ...CELLS[c.key] }))
     .filter((c) => typeof c.cell === 'function');
@@ -759,6 +764,7 @@ export default function Costs() {
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
   const taxRates = useVisibleTaxRates(); // shared managed list (Lists → Tax rates)
+  const bridge = useBridgeEntity();
   const allTaxRates = useManagedTaxRates(); // …and the same list unfiltered
   // Not GST-registered → No Tax is the only code on offer, and the row shows it
   // even for a document coded before the profile said so (opening the document
