@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import type { Request } from 'express';
-import { userByEmailHandle, setPendingForward, memberForSession, isAdminRole } from './users.js';
+import { userByEmailHandle, setPendingForward, memberForSession } from './users.js';
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg } from './xero.js';
 import { decideTaxRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
@@ -15,7 +15,7 @@ import { categoriesForOrg } from './categories.js';
 import { recordUsage } from './usage.js';
 import { readSetting } from './settings.js';
 import { workspaceId } from './workspace.js';
-import { visionEnabled, claudeEnabled, openaiEnabled } from './env.js';
+import { visionEnabled, claudeEnabled, openaiEnabled, googleEnabled } from './env.js';
 
 const norm = (s: string) => String(s ?? '').trim().toLowerCase();
 
@@ -239,12 +239,21 @@ function parseForwardConfirmation(from: string, subject: string, body: string) {
   return { url: urlMatch ? urlMatch[0] : '', code: codeMatch ? codeMatch[1] : '' };
 }
 
-// GET /api/inbound/config — the webhook URL + shared secret + mail domain, for an
-// admin to copy into the Cloudflare Worker. Business/User Admins only; goes
-// through the normal session auth (only /email is allowlisted for the Worker).
+// GET /api/inbound/config — the webhook URL + shared secret + mail domain, for
+// whoever sets up the Cloudflare Worker.
+//
+// PRACTICE TEAM ONLY. This secret is not a per-entity setting: it authorises
+// posting documents to the inbound endpoint for ANY user handle in ANY client
+// entity, so a client's own Business Admin reading it could file documents into
+// another client's books. It belongs to the deployment, and the deployment is
+// the practice's. (Goes through the normal session auth — only /email is
+// allowlisted, for the Worker itself.)
 inboundRouter.get('/config', (req, res) => {
   const member = memberForSession(req);
-  if (!member || !isAdminRole(member.role)) return res.status(403).json({ error: 'forbidden' });
+  if (member && (!member.practice || member.deactivated)) {
+    return res.status(403).json({ error: 'not_practice_team' });
+  }
+  if (!member && googleEnabled) return res.status(403).json({ error: 'forbidden' });
   const origin = (process.env.APP_ORIGIN || '').replace(/\/$/, '');
   res.json({
     url: `${origin}/api/inbound/email`,

@@ -37,6 +37,7 @@ import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from 
 import { useInboundConfig } from '@/lib/inboundSettings';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
+import { isPracticeTeam } from '@/lib/practiceStore';
 import { READER_PROVIDERS, readerLabel, effectiveProvider } from '@/lib/readerProvider';
 
 const NAV = [
@@ -173,13 +174,41 @@ function Toggle({ defaultOn = false, on: onProp = undefined, onChange = undefine
   );
 }
 
-function CopyRow({ label, value }) {
+// A value to copy into somebody else's configuration. `secret` keeps it off the
+// screen until asked for: a credential nobody is currently reading should not be
+// sitting in a window behind them, and it can still be copied without ever being
+// shown. (The icon used to be decoration — it copies now.)
+function CopyRow({ label, value, secret = false }) {
+  const [shown, setShown] = useState(!secret);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(String(value ?? ''));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard refused (no permission / insecure context) — reveal it so the
+      // value can be selected by hand rather than leaving nothing to do.
+      setShown(true);
+    }
+  };
   return (
     <div className="flex items-center justify-between gap-3 text-sm">
       <span className="text-muted-foreground">{label}</span>
       <span className="flex items-center gap-2 font-mono text-foreground">
-        <span className="truncate">{value}</span>
-        <Copy className="h-3.5 w-3.5 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground" />
+        <span className="truncate">{shown ? value : '•'.repeat(24)}</span>
+        {secret && (
+          <button
+            type="button"
+            onClick={() => setShown((v) => !v)}
+            className="shrink-0 font-sans text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            {shown ? 'Hide' : 'Reveal'}
+          </button>
+        )}
+        <button type="button" onClick={copy} aria-label={`Copy ${label}`} title={copied ? 'Copied' : 'Copy'}>
+          <Copy className={cn('h-3.5 w-3.5 shrink-0 cursor-pointer', copied ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')} />
+        </button>
       </span>
     </div>
   );
@@ -429,6 +458,12 @@ const optionHint = (id) => {
 // live on each user's page (Users → Manage → Edit user details).
 function ExtractByEmailCard() {
   const config = useInboundConfig();
+  const { membership, googleEnabled } = useAuth();
+  // The Worker credentials are the DEPLOYMENT's, not this entity's: that secret
+  // authorises submitting documents for any handle in any client entity, so a
+  // client's own admin has no business reading it. They still get the half that
+  // is theirs — the addresses their people forward bills to.
+  const canSeeWorker = isPracticeTeam(membership, googleEnabled);
   return (
     <Card title="Extract by Email">
       <p className="text-sm text-muted-foreground">
@@ -436,25 +471,34 @@ function ExtractByEmailCard() {
         CYBills files them under that person. Each user&rsquo;s address is on their page (Users → Manage → Edit user
         details).
       </p>
-      <div className="rounded-md border p-4">
-        <p className="mb-1 text-sm font-medium">Cloudflare Email Worker</p>
-        <p className="mb-3 text-xs text-muted-foreground">
-          Paste these into the <code>cybills-inbound</code> Worker (Settings → Variables), then set the catch-all route to
-          that Worker. No server access needed.
-        </p>
-        {config ? (
-          <div className="space-y-2">
-            <CopyRow label="CYBILLS_INBOUND_URL" value={config.url || '—'} />
-            <CopyRow label="INBOUND_SECRET" value={config.secret || '—'} />
+      {canSeeWorker ? (
+        <>
+          <div className="rounded-md border p-4">
+            <p className="mb-1 text-sm font-medium">Cloudflare Email Worker</p>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Paste these into the <code>cybills-inbound</code> Worker (Settings → Variables), then set the catch-all route to
+              that Worker. No server access needed.
+            </p>
+            {config ? (
+              <div className="space-y-2">
+                <CopyRow label="CYBILLS_INBOUND_URL" value={config.url || '—'} />
+                <CopyRow label="INBOUND_SECRET" value={config.secret || '—'} secret />
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            )}
           </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">Loading…</p>
-        )}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Keep <code>INBOUND_SECRET</code> private — it authorises the Worker to submit documents. Full setup:{' '}
-        <code>deploy/EMAIL-INBOUND.md</code>.
-      </p>
+          <p className="text-xs text-muted-foreground">
+            <code>INBOUND_SECRET</code> is the whole deployment&rsquo;s — it authorises submitting documents for any handle in
+            any client entity, so it goes into the Worker and nowhere else. Full setup: <code>deploy/EMAIL-INBOUND.md</code>.
+          </p>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          The mail routing itself is set up once for the whole account by the practice — there is nothing to configure
+          here.
+        </p>
+      )}
     </Card>
   );
 }
