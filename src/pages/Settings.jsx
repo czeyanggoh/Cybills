@@ -27,6 +27,7 @@ import SaveStatus from '@/components/SaveStatus';
 import {
   useOrganisations,
   useActiveOrganisation,
+  useBridgeEntity,
   isStandaloneOrg,
   fetchXeroProfile,
   getActiveOrganisationId,
@@ -504,6 +505,7 @@ function ExtractByEmailCard() {
 }
 
 function Extraction() {
+  const bridge = useBridgeEntity();
   const stored = useExtractionSettings();
   const [form, setForm] = useState(stored);
   const [dirty, setDirty] = useState(false);
@@ -540,12 +542,19 @@ function Extraction() {
         <Row label="Extract tax" hint="Extract the tax value from new costs and sales documents.">
           <Toggle on={form.extractTax} onChange={(v) => set('extractTax', v)} />
         </Row>
-        <Row
-          label="Publish to Xero after reading"
-          hint="Off by default. When on, a document that's been read is posted straight to Xero as Awaiting Approval — which means nobody checks the reading first, and publishing finishes the document: it archives, and can no longer go on an expense claim. Only complete documents are posted; anything missing a supplier, date, category or total stays here to publish by hand."
-        >
-          <Toggle on={form.publishToXeroAfterReading} onChange={(v) => set('publishToXeroAfterReading', v)} />
-        </Row>
+        {/* A bridge entity's costs never post on their own: it has no Xero, and
+            its categories are plain names with no account code in them. They
+            reach the parent's ledger as the lines of an expense claim, which is
+            where the category-to-account mapping is applied. Offering this here
+            was a switch that could only ever do nothing. */}
+        {!bridge && (
+          <Row
+            label="Publish to Xero after reading"
+            hint="Off by default. When on, a document that's been read is posted straight to Xero as Awaiting Approval — which means nobody checks the reading first, and publishing finishes the document: it archives, and can no longer go on an expense claim. Only complete documents are posted; anything missing a supplier, date, category or total stays here to publish by hand."
+          >
+            <Toggle on={form.publishToXeroAfterReading} onChange={(v) => set('publishToXeroAfterReading', v)} />
+          </Row>
+        )}
         <Row label="Default tax rate for costs">
           <SelectBox value={form.defaultTaxRateCosts || '— None —'} onChange={(v) => set('defaultTaxRateCosts', v === '— None —' ? '' : v)} options={taxRateOptions} />
         </Row>

@@ -1354,13 +1354,20 @@ export default function CostDetail() {
           ) : (
             // On a claim, this cost reaches Xero as a line of the claim's own
             // bill — publishing it separately would post it twice.
-            <TopButton
-              onClick={openPublish}
-              disabled={Boolean(claimForItem)}
-              title={claimForItem ? 'On an expense claim — the claim posts this cost to Xero. Remove it from the claim to publish it on its own.' : ''}
-            >
-              Publish to Xero
-            </TopButton>
+            //
+            // And in a bridge entity there is no separate route at all: no Xero
+            // of its own, and a plain category with no account code in it. The
+            // claim IS how these costs reach the parent's ledger, so the button
+            // isn't offered rather than offered and refused.
+            !bridge && (
+              <TopButton
+                onClick={openPublish}
+                disabled={Boolean(claimForItem)}
+                title={claimForItem ? 'On an expense claim — the claim posts this cost to Xero. Remove it from the claim to publish it on its own.' : ''}
+              >
+                Publish to Xero
+              </TopButton>
+            )
           ))}
         {/* A correction found after publishing used to have nowhere to go: the
             document could be fixed here and the ledger kept the first answer.

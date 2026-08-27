@@ -178,6 +178,7 @@ function mergeBadgeLabel(g, doc) {
 // were a menu of things that are each one click on their own — a second click
 // and a hunt through a list to reach them was pure overhead. The row wraps.
 function ToolbarActions({ tab, hasSelection, canMerge, a }) {
+  const bridge = useBridgeEntity();
   // One export, over whatever you're pointing at: the ticked rows if any are
   // ticked, otherwise everything the tab is showing. (Two separate buttons for
   // that were only ever a way to pick the wrong one.)
@@ -229,7 +230,10 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   const reviewDupBtn = a.dupCount > 0 ? (
     <ToolbarButton onClick={a.reviewDuplicates}>Review duplicates ({a.dupCount})</ToolbarButton>
   ) : null;
-  const publishBtn = (
+  // A bridge entity's costs reach the parent's ledger as the lines of an
+  // expense claim, never on their own — it has no Xero and its categories carry
+  // no account code. The button would refuse every time it was pressed.
+  const publishBtn = bridge ? null : (
     <ToolbarButton disabled={!hasSelection || a.busy} onClick={a.publish}>
       Publish to Xero
     </ToolbarButton>
