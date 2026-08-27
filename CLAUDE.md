@@ -187,6 +187,12 @@ ledger), but always REPORTED, because a cost meant to be recharged and silently
 not marked is money nobody bills for. The document carries `rebillable`, offered
 only once it has a customer.
 
+The READER sets it, alongside the customer — same judgement, and Cze asked for
+it to be automatic rather than a toggle somebody remembers. Never true without a
+customer: the flag says "bill this to that client", so with no client it is an
+instruction with no object, and it would publish as a billable expense against
+nobody. Enforced in `runExtraction`, and again at publish.
+
 **A note about one document beats a standing rule about every document.** A
 supplier rule ("everything from Grab is travel") is a policy; a covering note
 ("recharge this to CY-Biz") is a person's instruction about THIS receipt, so the

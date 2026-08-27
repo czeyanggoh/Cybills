@@ -103,7 +103,10 @@ export function readDecisions(
   }
   // Who the cost is recharged to, when the read could tell — from the document
   // or from the message it arrived with.
-  if (ex.customer) patch.customer = ex.customer;
+  if (ex.customer) {
+    patch.customer = ex.customer;
+    if (ex.rebillable) patch.rebillable = true;
+  }
   // The rule has the last word on everything it sets…
   //
   // …except where the person who emailed the document said otherwise. A rule is

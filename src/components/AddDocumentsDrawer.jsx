@@ -474,7 +474,12 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // Who this cost is recharged to, when the reader could tell — from the
       // document, or from the message it was sent with. Never blanks one the
       // rule set.
-      if (extracted?.customer && !p.customer) p.customer = extracted.customer;
+      if (extracted?.customer && !p.customer) {
+        p.customer = extracted.customer;
+        // …and whether it is being billed back to them, which is the same
+        // judgement and useless without the customer beside it.
+        if (extracted.rebillable) p.rebillable = true;
+      }
       if (!printedDue && rule.dueDate) p.dueDate = rule.dueDate;
       // "Extract line items" is opt-in per supplier: a document is otherwise a
       // single coded total, and the printed lines are pulled on demand from the

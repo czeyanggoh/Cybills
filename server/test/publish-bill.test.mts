@@ -180,6 +180,15 @@ check('tax mismatch: nothing sent to Xero', r.posted, null);
   check('not rebillable: nothing to report', out.body.rebilled, null);
 }
 
+// 3e) The flag alone is not enough: a rebillable cost with nobody to bill
+//     cannot become a billable expense, and must not try.
+{
+  linked.length = 0;
+  const out = await publish(bill({ total: '40', tax: '0', rebillable: true }).id);
+  check('rebillable with no customer: nothing is linked', linked.length, 0);
+  check('…and the bill still posts', out.status, 200);
+}
+
 // 4) No line items at all -> unchanged behaviour.
 r = await publish(bill({ total: '50', tax: '0', project: 'ASTP 01' }).id);
 check('no rows: one line', r.posted.LineItems.length, 1);

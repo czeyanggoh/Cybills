@@ -190,7 +190,7 @@ async function autoRead(req: Request, scope: string, realOrgId: string, preferre
       taxLabel: d.taxLabel,
       // Only when the reader picked one from the org's own list — an empty
       // string here would blank a customer somebody had set by hand.
-      ...(d.customer ? { customer: d.customer } : {}),
+      ...(d.customer ? { customer: d.customer, rebillable: Boolean(d.rebillable) } : {}),
       // Only when the reader actually picked one, from a rule the org wrote.
       // Writing an empty string here would look exactly like a person choosing
       // "no code", and the tax decision below (or the listing's backfill) would

@@ -54,6 +54,16 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
   // worse than a blank one, because it is the party who gets invoiced.
   const customerFields = customerNames.length
     ? {
+        // Xero's billable expense, Dext's "rebillable". Asked alongside the
+        // customer because it is the same judgement: a cost the organisation
+        // paid on a client's behalf and will bill back. Meaningless without a
+        // customer — there would be nobody to bill — so it is only offered when
+        // the customer list is.
+        rebillable: {
+          type: 'boolean',
+          description:
+            'TRUE only when this cost was incurred on the named customer\'s behalf and will be BILLED BACK to them — a recharge, a reimbursable disbursement, a cost the covering message says to recharge or rebill. FALSE for the organisation\'s own costs, which is most of them. Never true without a customer: it means "bill this to that client", and with no client named there is nobody to bill.',
+        },
         customer: {
           type: 'string',
           enum: ['', ...customerNames],
@@ -200,6 +210,7 @@ const ReceiptSchema = z.object({
   categoryReason: z.string().optional().default(''),
   noteFollowed: z.string().optional().default(''),
   customer: z.string().optional().default(''),
+  rebillable: z.boolean().optional().default(false),
   description: z.string().optional().default(''),
   dueDate: z.string().optional().default(''),
   period: z.string().optional().default(''),
@@ -407,7 +418,8 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
   const customerSet = new Set(customers);
   const customersGuide = customers.length
     ? '\n\nRECHARGING. Some costs are incurred on a client\'s behalf and billed back to them. Set `customer` to the ONE client below that this cost is to be recharged to, when the document names them as who it was incurred for, or when the covering message says so. Otherwise return an empty string — most costs are the organisation\'s own and have no customer.\n' +
-      customers.map((c) => `- "${c}"`).join('\n')
+      customers.map((c) => `- "${c}"`).join('\n') +
+      '\nSet `rebillable` TRUE only alongside such a customer, and only when the cost is genuinely being billed back to them — that is what puts it on their next invoice. FALSE for the organisation\'s own costs.'
     : '';
 
   // Tax rates the org has written rules for, and the guide that teaches them.
@@ -495,6 +507,10 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     // Same for the customer: the party who gets invoiced for this cost is not a
     // field to accept a name the org has never heard of.
     const customer = customerSet.has(parsed.data.customer) ? parsed.data.customer : '';
+    // Never rebillable without somebody to bill. The flag says "charge this to
+    // that client", so with no client it is an instruction with no object — and
+    // it would publish as a billable expense against nobody.
+    const rebillable = Boolean(customer) && parsed.data.rebillable === true;
     // A due date that isn't a real ISO date is no due date. Same for one that
     // merely echoes the invoice date, which is what the model produces when it
     // feels obliged to fill the field — and which posts to Xero as "due the day
@@ -518,6 +534,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       categoryReason: notFiller(parsed.data.categoryReason),
       noteFollowed: notFiller(parsed.data.noteFollowed),
       customer,
+      rebillable,
       taxRate,
       taxRateReason: taxRate ? notFiller(parsed.data.taxRateReason) : '',
       project,
