@@ -72,6 +72,23 @@ either spelling to the one email and refuses to guess an ambiguous name; the
 rows written before the split are repaired on the next listing (`backfillOwners`
 in `bills.ts`). Covered by `npm test` in `server/`.
 
+**An address is an identity, not a field.** The session resolves by it, every
+document a person owns is stored against it, and a claim is made out to it — so
+taking it off a row detaches a human being from their own work, and lets the
+next person added under that address inherit their seat. Three paths could do
+it, and all three are closed: the Edit-details dialog sent `email: ''` whenever
+Login access was OFF (which most colleagues are), so saving a NAME or a phone
+number wiped it; `applyEditable` now ignores a blank address over an existing
+one, whoever sends it; and `/join` used to `Object.assign` the join form over
+any row it found, which turned a colleague into a pending employee of whichever
+company the form named, under whatever name was typed — it now refuses a
+practice row outright and otherwise fills only what is BLANK. Turning login off
+says somebody may not SIGN IN; changing an address is its own deliberate act
+(Manage -> Change email). `OWNER_EMAILS` is the break-glass, and it now applies
+to a row that has LOST its practice membership rather than only to one that
+still has it — which was the one case it existed for. Covered by `npm test` in
+`server/` (`test/identity.test.mts`).
+
 ## The document reader: Claude or OpenAI
 
 Uploaded receipts, invoices and Vault documents are read by one of two

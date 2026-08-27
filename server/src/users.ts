@@ -772,6 +772,18 @@ function assignPractice(items: User[], ws: string): boolean {
       u.practice = looksLikePracticeMember(u);
       changed = true;
     }
+    // An account owner is ALWAYS on the practice team. This sat below the
+    // `!u.practice` bail below, which made it a break-glass that only worked
+    // for somebody who didn't need it: a row that had lost its membership —
+    // rewritten by the join form, or re-created under the same address — could
+    // not be restored by the one lever that exists for exactly that, because it
+    // was no longer practice, so the loop skipped it before ever looking. The
+    // whole point of naming an address in OWNER_EMAILS is that no state of the
+    // data can lock that person out of the practice they own.
+    if (u.email && owners.has(norm(u.email)) && !u.practice) {
+      u.practice = true;
+      changed = true;
+    }
     if (!u.practice) {
       if (u.clientAccess?.length || u.allClients) {
         u.clientAccess = [];
@@ -984,7 +996,18 @@ function applyEditable(user: User, b: Partial<User>, ws: string) {
   // round-trips a row would otherwise save that blank over the identity every
   // document of theirs is stored against.
   const internalEmail = user.general ? user.email : '';
+  // An address, once a person has one, is never taken away by an edit. It is
+  // not a field like the others: the session resolves by it, every document
+  // they own is stored against it, and a claim is made out to it — so blanking
+  // it doesn't clear a value, it detaches a human being from their own work and
+  // lets the next person to be added under that address inherit their seat.
+  //
+  // Every caller that meant to send one sends one; a caller sending '' is
+  // making a mistake, and the client that did exactly this (turning Login
+  // access off) is fixed too. Changing an address is its own deliberate act.
+  const keepEmail = user.email && !String(b.email ?? '').trim() ? user.email : '';
   for (const k of EDITABLE) if (k in b) (user as Record<string, unknown>)[k] = (b as Record<string, unknown>)[k];
+  if (keepEmail) user.email = keepEmail;
   if (internalEmail) user.email = internalEmail;
   if ('firstName' in b || 'lastName' in b) {
     const nm = `${user.firstName || ''} ${user.lastName || ''}`.trim();
@@ -1236,7 +1259,27 @@ usersRouter.post('/join', (req, res) => {
     if (!user.pending && user.login === 'Yes' && !user.deactivated) {
       return res.json({ status: 'active', user: publicUser(user) }); // already a member
     }
-    Object.assign(user, fields, { email: session.email, login: 'No', pending: true, deactivated: false });
+    // A colleague is already a member of the firm, and this form is how a
+    // CLIENT'S employee asks to be let in. Rewriting their row with it turned
+    // one of the practice's own people into a pending employee of whichever
+    // company the form named — under whatever name was typed into it.
+    if (user.practice) {
+      return res.json({ status: 'active', user: publicUser(user) });
+    }
+    // Fill what is BLANK; never restate what is already recorded. Their name
+    // and role are the ADMIN's — that is what the documents this person already
+    // owns are filed under, and re-typing it is how one human ends up on the
+    // roster twice, or under a name nobody recognises. Same rule the claim path
+    // above applies, and for the same reason.
+    const blank = (v: unknown) => !String(v ?? '').trim();
+    const keep: Partial<User> = {
+      ...(blank(user.name) ? { name: fields.name, firstName: fields.firstName, lastName: fields.lastName } : {}),
+      ...(blank(user.role) ? { role: fields.role } : {}),
+      ...(blank(user.organisationId) ? { organisationId: fields.organisationId } : {}),
+      ...(blank(user.companyName) ? { companyId: fields.companyId, companyName: fields.companyName } : {}),
+      ...(fields.mobile ? { mobile: fields.mobile } : {}),
+    };
+    Object.assign(user, keep, { email: session.email, login: 'No', pending: true, deactivated: false });
   } else {
     user = full({ ...fields, email: session.email, login: 'No', pending: true }, ws);
     items.unshift(user);

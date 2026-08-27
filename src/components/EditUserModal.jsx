@@ -324,7 +324,18 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
           firstName,
           lastName,
           login: login ? 'Yes' : 'No',
-          email: login ? email : '',
+          // The address is sent only when login is ON. Turning login OFF says
+          // this person may not SIGN IN; it does not say they stop existing —
+          // and this used to send `email: ''`, which wiped the address their
+          // whole identity hangs off: the session resolves by it, their
+          // documents are owned by it, their claims are made out to it. A
+          // colleague sitting at Login access = No (which is most of them) lost
+          // their address the moment anybody pressed Save on this dialog for
+          // any reason at all — a name, an inbound handle, a phone number.
+          //
+          // Changing the address itself is a deliberate act with its own dialog
+          // (Manage → Change email), and that is where it belongs.
+          ...(login ? { email } : {}),
           mobile,
           // Only when it actually changed — sending it unchanged would make an
           // edit to somebody's NAME fail on their own existing address.
