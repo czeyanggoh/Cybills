@@ -56,6 +56,7 @@ import { missingFields } from '@/lib/readiness';
 import { cn } from '@/lib/utils';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import ComboSelect from '@/components/ComboSelect';
+import SortTh, { sortRows } from '@/components/SortTh';
 
 // The GL/account code CYHR should book the payable against — the leading number
 // on the category (e.g. "412 - Consulting" → "412"). Only returned when every
@@ -175,6 +176,9 @@ export default function ExpenseClaimDetail() {
   const [moveTarget, setMoveTarget] = useState('');
   const [moveNewName, setMoveNewName] = useState('');
   const [query, setQuery] = useState('');
+  // Which column the items table is ordered by, and which way. Above the early
+  // return below, because a hook has to run on every render.
+  const [sort, setSort] = useState({ key: '', dir: 'asc' });
   const [exportMenu, setExportMenu] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
@@ -389,7 +393,16 @@ export default function ExpenseClaimDetail() {
     );
   // Show the most recently added item on top (transactions are stored in add
   // order). Only the on-screen table is reversed; the PDF stays chronological.
-  const displayRows = [...rows].reverse();
+  // Newest first by default — transactions are stored in add order, and the
+  // line somebody just added is the one they are looking for. A chosen sort
+  // replaces that; the PDF stays chronological either way.
+  const displayRows = sort.key
+    ? sortRows(rows, sort, {
+        fields: { itemId: 'displayId' },
+        numeric: ['net', 'tax', 'total'],
+        dates: ['date'],
+      })
+    : [...rows].reverse();
   const setRowCategory = (itemId, category) => {
     if (locked) return;
     setCatOverrides((o) => ({ ...o, [itemId]: category })); // optimistic
@@ -788,9 +801,15 @@ export default function ExpenseClaimDetail() {
                     <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={locked} className="h-4 w-4 accent-black disabled:opacity-40" aria-label="Select all" />
                   </th>
                   {shownColumns.map((c) => (
-                    <th key={c.key} className={cn('px-3 py-2.5 font-medium', CELLS[c.key].headClass)}>
-                      {CELLS[c.key].head ?? c.label}
-                    </th>
+                    <SortTh
+                      key={c.key}
+                      label={CELLS[c.key].head ?? c.label}
+                      sortKey={c.key}
+                      sort={sort}
+                      setSort={setSort}
+                      align={CELLS[c.key].headClass?.includes('text-right') ? 'right' : 'left'}
+                      className={CELLS[c.key].headClass}
+                    />
                   ))}
                   <th className="w-10 px-2 py-2.5"><span className="sr-only">Remove</span></th>
                 </tr>

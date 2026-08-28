@@ -56,6 +56,7 @@ import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
+import SortTh from '@/components/SortTh';
 
 // Type-to-find category dropdown styled to match the row cells. `options` is
 // the active org's live Xero chart (bundled fallback), which runs to hundreds
@@ -311,24 +312,6 @@ function SearchAndTools({ query, setQuery }) {
         <Settings2 className="h-4 w-4" strokeWidth={1.75} />
       </button>
     </>
-  );
-}
-
-// Sortable table header cell: click to sort, with an up/down arrow.
-function SortTh({ label, sortKey, sort, setSort, align = 'left' }) {
-  const active = sort.key === sortKey;
-  const arrow = !active ? '↕' : sort.dir === 'asc' ? '↑' : '↓';
-  return (
-    <th className={cn('px-3 py-2.5 font-medium', align === 'right' && 'text-right')}>
-      <button
-        type="button"
-        onClick={() => setSort((s) => (s.key === sortKey ? { key: sortKey, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: sortKey, dir: 'asc' }))}
-        className={cn('inline-flex items-center gap-1 hover:text-foreground', align === 'right' && 'flex-row-reverse', active ? 'text-foreground' : 'text-muted-foreground')}
-      >
-        {label}
-        <span className={cn('text-[11px]', active ? 'text-foreground' : 'text-muted-foreground/50')}>{arrow}</span>
-      </button>
-    </th>
   );
 }
 
