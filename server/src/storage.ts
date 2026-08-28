@@ -1,4 +1,5 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import type { S3ClientConfig } from '@aws-sdk/client-s3';
 import { mkdirSync, writeFileSync, createReadStream, existsSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Readable } from 'node:stream';
@@ -11,17 +12,38 @@ import { env, r2Enabled } from './env.js';
 export { r2Enabled };
 
 let client: S3Client | null = null;
+
+// The client's configuration, exported so a test can check what actually goes
+// over the wire rather than trusting the options are still set.
+export function r2Config(): S3ClientConfig {
+  return {
+    region: 'auto',
+    endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: env.R2_ACCESS_KEY_ID,
+      secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+    },
+    // R2 speaks S3, but not every part of it. From v3.729 the AWS SDK sends a
+    // CRC32 checksum header on every upload by default (and asks for one back
+    // on every download), which R2 refuses — so a PutObject fails outright,
+    // for a reason that has nothing to do with the credentials or the bucket.
+    //
+    // It matters more here than it looks: putBillFile catches that failure and
+    // writes to local disk instead, so nothing appears broken — receipts still
+    // open — while the bucket quietly holds none of them. And the WhatsApp
+    // integration rests entirely on that bucket being shared with CYWorkspace,
+    // which passes an object KEY rather than bytes.
+    //
+    // 'WHEN_REQUIRED' still sends a checksum where the API demands one; it
+    // just stops adding them where they are optional. Correct against real S3
+    // too, so this is not an R2-only workaround.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
+  };
+}
+
 function r2(): S3Client {
-  if (!client) {
-    client = new S3Client({
-      region: 'auto',
-      endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-      credentials: {
-        accessKeyId: env.R2_ACCESS_KEY_ID,
-        secretAccessKey: env.R2_SECRET_ACCESS_KEY,
-      },
-    });
-  }
+  if (!client) client = new S3Client(r2Config());
   return client;
 }
 
