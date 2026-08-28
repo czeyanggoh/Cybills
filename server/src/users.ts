@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import {
   newSecret,
   otpauthUri,
+  qrSvg,
   readableSecret,
   totpMatches,
   sealSecret,
@@ -1694,7 +1695,7 @@ function enrollingUser(req: Request): User | null {
   return ensure(workspaceId(req)).find((u) => u.id === id && !u.removed && !u.deactivated) ?? null;
 }
 
-usersRouter.post('/totp/start', (req, res) => {
+usersRouter.post('/totp/start', async (req, res) => {
   const me = enrollingUser(req);
   if (!me) return res.status(401).json({ error: 'unauthenticated' });
   if (me.totpSecret) return res.status(409).json({ error: 'already_enabled' });
@@ -1703,10 +1704,14 @@ usersRouter.post('/totp/start', (req, res) => {
   const secret = newSecret();
   row.totpPending = sealSecret(secret);
   save(items);
+  const uri = otpauthUri(secret, row.email || row.name || 'CYBills');
   res.json({
     secret,
     readable: readableSecret(secret),
-    uri: otpauthUri(secret, row.email || row.name || 'CYBills'),
+    uri,
+    // Drawn here so the browser carries no QR library. Empty if it could not
+    // be drawn — the key is still on the page, which every authenticator takes.
+    qr: await qrSvg(uri),
   });
 });
 

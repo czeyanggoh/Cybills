@@ -126,9 +126,18 @@ export default function TwoFactorSetup({ enabled, recoveryCodesLeft = 0, onChang
     return (
       <div className="space-y-3 rounded-lg border p-4">
         <p className="text-sm font-medium">Add CYBills to your authenticator</p>
-        <p className="text-xs text-muted-foreground">
-          Google Authenticator, 1Password, Authy — any of them. Add an account by hand and type this key in.
-        </p>
+        <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+          <li>Install an authenticator app on your phone — Google Authenticator, 1Password or Authy.</li>
+          <li>Scan the square below with it. No camera? Add an account by hand and type the key instead.</li>
+          <li>Enter the 6-digit code it shows. It changes every 30 seconds.</li>
+        </ol>
+        {secret.qr ? (
+          <div
+            className="w-[200px] rounded-md border bg-white p-2"
+            // Drawn by our own server from our own string — no user input in it.
+            dangerouslySetInnerHTML={{ __html: secret.qr }}
+          />
+        ) : null}
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
           <Mono>{secret.readable}</Mono>
           <span className="flex-1" />

@@ -8,6 +8,7 @@ import {
   scryptSync,
 } from 'node:crypto';
 import { env } from './env.js';
+import QRCode from 'qrcode';
 
 // Time-based one-time passwords (RFC 6238), for the people who sign in with an
 // email and a password.
@@ -194,6 +195,23 @@ export function openSecret(sealed: string): string {
   } catch {
     // A secret sealed under a different SESSION_SECRET. Unreadable is the
     // honest answer; the person re-enrols.
+    return '';
+  }
+}
+
+// --- The square you point a phone at ------------------------------------------
+// Typing a 32-character key off a screen is the wrong thing to ask of somebody
+// setting this up on their phone, and it was: the first person to meet the
+// enrolment screen asked what they were supposed to do with it.
+//
+// Returned as an SVG string so the server renders it and the browser bundle
+// carries no QR library at all. Never fatal: if it cannot be drawn the key
+// itself is still on the page, which is what every authenticator accepts as the
+// manual route.
+export async function qrSvg(uri: string): Promise<string> {
+  try {
+    return await QRCode.toString(uri, { type: 'svg', margin: 1, width: 200, errorCorrectionLevel: 'M' });
+  } catch {
     return '';
   }
 }

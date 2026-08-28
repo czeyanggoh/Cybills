@@ -23,6 +23,7 @@
     "morgan": "^1.10.0",
     "nodemailer": "^9.0.5",
     "openai": "^7.5.0",
+    "qrcode": "^1.5.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -33,6 +34,7 @@
     "@types/mailparser": "^3.4.6",
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.9.0",
+    "@types/qrcode": "^1.5.6",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }

@@ -189,10 +189,22 @@ export default function Login() {
              let people through "just this once" would be one in name only. */
           <form onSubmit={submitSetup} className="space-y-2.5 text-left">
             <p className="text-center text-sm font-medium">Set up two-step sign-in</p>
-            <p className="text-xs text-muted-foreground">
-              CYBills asks for a code from your phone as well as your password. Add this key to an
-              authenticator app — Google Authenticator, 1Password, Authy — then enter the code it shows.
-            </p>
+            {/* Numbered, because "add this key to an authenticator app"
+                assumes somebody already knows what one is — and the first
+                person to meet this screen asked what to do with it. */}
+            <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+              <li>Install an authenticator app on your phone — Google Authenticator, 1Password or Authy.</li>
+              <li>Scan the square below with it. No camera? Add an account by hand and type the key instead.</li>
+              <li>Enter the 6-digit code it shows. It changes every 30 seconds.</li>
+            </ol>
+            {setup.qr ? (
+              <div
+                className="mx-auto w-[200px] rounded-md border bg-white p-2"
+                // The SVG is drawn by our own server from our own string; there
+                // is no user input anywhere in it.
+                dangerouslySetInnerHTML={{ __html: setup.qr }}
+              />
+            ) : null}
             <div className="rounded-md border bg-muted/30 px-3 py-2 text-center font-mono text-sm tracking-wide">
               {setup.readable}
             </div>
