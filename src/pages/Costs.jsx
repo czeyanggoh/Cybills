@@ -7,7 +7,6 @@ import {
   Search,
   Filter,
   Settings2,
-  ListChecks,
   Info,
   Trash2,
   AlertTriangle,
@@ -83,7 +82,6 @@ const TABS = [
   { key: 'processing', label: 'Processing', counted: true },
   { key: 'review', label: 'To review', counted: true },
   { key: 'ready', label: 'Ready', counted: true },
-  { key: 'approvals', label: 'Approvals' },
   { key: 'archive', label: 'Archive', counted: true },
 ];
 
@@ -429,59 +427,6 @@ function CostsToolbar({ query, setQuery, filters, setFilters, adv, setAdv, userO
         )}
       </div>
       <TableSettingsMenu table="costs" />
-    </>
-  );
-}
-
-// Approvals has its own toolbar + empty state.
-function ApprovalsPanel() {
-  const navigate = useNavigate();
-  const [scope, setScope] = useState('me');
-  const [q, setQ] = useState('');
-  return (
-    <>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <ToolbarButton disabled dropdown>Approve</ToolbarButton>
-        <ToolbarButton disabled>Reject</ToolbarButton>
-        <ToolbarButton disabled dropdown>Actions</ToolbarButton>
-        <ToolbarButton disabled>Archive</ToolbarButton>
-        <div className="ml-auto inline-flex overflow-hidden rounded-md border text-sm">
-          {[
-            { key: 'me', label: 'Assigned to me' },
-            { key: 'all', label: 'All items' },
-          ].map((s) => (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => setScope(s.key)}
-              className={cn(
-                'px-3 py-1.5 transition-colors',
-                scope === s.key ? 'bg-foreground text-background' : 'hover:bg-muted'
-              )}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-        <SearchAndTools query={q} setQuery={setQ} />
-      </div>
-
-      <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-xl border">
-          <ListChecks className="h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
-        </div>
-        <p className="text-lg font-semibold tracking-tight">
-          {scope === 'me' ? 'No documents assigned to you' : 'No documents awaiting approval'}
-        </p>
-        <p className="text-sm text-muted-foreground">
-          Documents that need your approval will appear here.
-        </p>
-        <div className="mt-2 flex gap-2">
-          <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
-            View all approvals
-          </button>
-        </div>
-      </div>
     </>
   );
 }
@@ -1281,9 +1226,7 @@ export default function Costs() {
         })}
       </div>
 
-      {tab === 'approvals' ? (
-        <ApprovalsPanel />
-      ) : tab === 'processing' ? (
+      {tab === 'processing' ? (
         <CostProcessingView
           rows={rowsByTab.processing}
           onMoveOne={(id) => moveToInbox([id])}

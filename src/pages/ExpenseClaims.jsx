@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock } from 'lucide-react';
+import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock, Download } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
@@ -12,6 +12,8 @@ import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval,
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
+import { exportClaimsList } from '@/lib/claimCsv';
+import { useExportSettings } from '@/lib/exportSettings';
 
 // Status pill for a claim's approval state (Not submitted / Waiting / Approved / Rejected).
 function ClaimStatusBadge({ status, label }) {
@@ -79,6 +81,7 @@ function ClaimsActions({ disabled, tab, onArchive, onDelete }) {
 function ClaimsToolbar({
   query, setQuery, filters, setFilters, adv, setAdv, narrowed,
   statusOptions, reimbursementOptions, typeOptions, claimForOptions,
+  monthOptions, approverOptions,
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [advOpen, setAdvOpen] = useState(false);
@@ -87,10 +90,10 @@ function ClaimsToolbar({
   const field = 'h-8 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
   const label = 'mb-1 block text-xs text-muted-foreground';
 
-  const Select = ({ value, onChange, options, anyLabel }) => (
+  const Select = ({ value, onChange, options, anyLabel, format = (v) => v }) => (
     <select value={value} onChange={(e) => onChange(e.target.value)} className={field}>
       <option value="">{anyLabel}</option>
-      {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      {options.map((o) => <option key={o} value={o}>{format(o)}</option>)}
     </select>
   );
 
@@ -122,6 +125,17 @@ function ClaimsToolbar({
                   <span className={label}>Claim for</span>
                   <Select value={adv.claimFor} onChange={(v) => setA('claimFor', v)} options={claimForOptions} anyLabel="Anyone" />
                 </div>
+                {/* A claim covers a month, so that is how people ask for one —
+                    "August's claims", not "claims ending between the 1st and the
+                    31st". The date range below still says the second thing. */}
+                <div>
+                  <span className={label}>Expense month</span>
+                  <Select value={adv.month} onChange={(v) => setA('month', v)} options={monthOptions.map((m) => m.value)} format={(v) => monthOptions.find((m) => m.value === v)?.label || v} anyLabel="Any month" />
+                </div>
+                <div>
+                  <span className={label}>Approver</span>
+                  <Select value={adv.approver} onChange={(v) => setA('approver', v)} options={approverOptions} anyLabel="Anyone" />
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <span className={label}>Total from</span>
@@ -145,7 +159,7 @@ function ClaimsToolbar({
               </div>
               <button
                 type="button"
-                onClick={() => setAdv({ min: '', max: '', from: '', to: '', claimFor: '' })}
+                onClick={() => setAdv({ min: '', max: '', from: '', to: '', claimFor: '', month: '', approver: '' })}
                 className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
               >
                 Clear
@@ -216,7 +230,7 @@ export default function ExpenseClaims() {
   // "Advanced" that did nothing at all — the buttons were there, the handlers
   // never were, and Cze quite reasonably reported them as broken.
   const [filters, setFilters] = useState({ status: '', reimbursement: '', type: '' });
-  const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', claimFor: '' });
+  const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', claimFor: '', month: '', approver: '' });
   const [approveOpen, setApproveOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
 
@@ -232,6 +246,7 @@ export default function ExpenseClaims() {
     setTab('inbox');
   };
   const { user, googleEnabled, membership } = useAuth();
+  const exportSettings = useExportSettings();
   const roster = useUsers();
   const meName = user?.name || user?.email || '';
   // Claim-for options: the real roster, with the current user always available.
@@ -267,7 +282,10 @@ export default function ExpenseClaims() {
   const q = query.trim().toLowerCase();
   const amount = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const rows = base.filter((c) => {
-    if (q && ![c.claimFor, c.name, c.type].some((v) => String(v || '').toLowerCase().includes(q))) return false;
+    // The approver is searchable too. "Search by approver name" was asked for
+    // and the box did not answer it: it read the claimant, the name and the
+    // type, so typing the one person a claim is WAITING on found nothing.
+    if (q && ![c.claimFor, c.name, c.type, c.approver, c.decidedBy].some((v) => String(v || '').toLowerCase().includes(q))) return false;
     if (filters.status && statusOf(c) !== filters.status) return false;
     // Reimbursement is what Xero says about the bill the claim posted as, so a
     // claim that was never published has none — which is its own answer.
@@ -277,6 +295,10 @@ export default function ExpenseClaims() {
     }
     if (filters.type && String(c.type || '') !== filters.type) return false;
     if (adv.claimFor && String(c.claimFor || '') !== adv.claimFor) return false;
+    if (adv.month && String(c.endDate || '').slice(0, 7) !== adv.month) return false;
+    // Before a decision the approver is who it waits on; after, who made it —
+    // the same pair the Approver column shows, so filtering agrees with reading.
+    if (adv.approver && ![c.decidedBy, c.approver].some((v) => String(v || '') === adv.approver)) return false;
     if (adv.min && amount(c.total) < amount(adv.min)) return false;
     if (adv.max && amount(c.total) > amount(adv.max)) return false;
     // Dates compare as ISO strings, which is what the claim stores.
@@ -293,6 +315,16 @@ export default function ExpenseClaims() {
   // has its own list for CREATING one. Filtering by somebody with no claims is
   // an empty screen with no explanation.
   const claimantsPresent = [...new Set(base.map((c) => String(c.claimFor || '')).filter(Boolean))].sort();
+  // The months these claims actually cover, newest first, labelled the way the
+  // rows are ("Aug 2026") but valued as the YYYY-MM the endDate carries.
+  const monthOptions = [...new Set(base.map((c) => String(c.endDate || '').slice(0, 7)).filter((m) => /^\d{4}-\d{2}$/.test(m)))]
+    .sort()
+    .reverse()
+    .map((value) => ({
+      value,
+      label: new Date(`${value}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
+    }));
+  const approverOptions = [...new Set(base.flatMap((c) => [c.decidedBy, c.approver]).map((v) => String(v || '')).filter(Boolean))].sort();
   const narrowed =
     Object.values(filters).filter(Boolean).length + Object.values(adv).filter(Boolean).length;
   const hasSelection = selected.size > 0;
@@ -302,6 +334,17 @@ export default function ExpenseClaims() {
     archiveClaims([...selected], on);
     clear();
   };
+  const doExport = () => {
+    const picked = hasSelection ? rows.filter((c) => selected.has(c.id)) : rows;
+    if (!picked.length) return;
+    exportClaimsList(picked, {
+      settings: exportSettings,
+      // Never "You": the file is read by whoever opens it, and that word means
+      // a different person to each of them.
+      exportedBy: membership?.user?.name || user?.name || user?.email || '',
+    });
+  };
+
   const doDelete = () => {
     // The receipts go too, so the list's own delete says so as plainly as the
     // claim page's does.
@@ -424,6 +467,19 @@ export default function ExpenseClaims() {
           onArchive={() => doArchive(tab !== 'archive')}
           onDelete={doDelete}
         />
+        {/* One button, both cases — the ticked claims when anything is ticked,
+            otherwise everything the tab currently shows, filters and search
+            included. Which is also what makes the filter useful: narrow the
+            list, then export what you narrowed it to. */}
+        <button
+          type="button"
+          onClick={doExport}
+          disabled={!rows.length}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground/50"
+        >
+          <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+          {hasSelection ? `Export ${selected.size}` : 'Export all'}
+        </button>
         <ClaimsToolbar
           query={query}
           setQuery={setQuery}
@@ -436,6 +492,8 @@ export default function ExpenseClaims() {
           reimbursementOptions={reimbursementOptions}
           typeOptions={typeOptions}
           claimForOptions={claimantsPresent}
+          monthOptions={monthOptions}
+          approverOptions={approverOptions}
         />
       </div>
 
@@ -513,6 +571,12 @@ export default function ExpenseClaims() {
                 />
               </th>
               <th className="px-3 py-2.5 font-medium">Approval status</th>
+              {/* Whose call it is, and when they made it. Before a decision this
+                  is the person it is waiting on; after, the person who actually
+                  made it — which is the same name in the ordinary case and a
+                  different one when somebody else stepped in. */}
+              <th className="px-3 py-2.5 font-medium">Approver</th>
+              <th className="px-3 py-2.5 font-medium">Approved</th>
               {/* Approval is the company saying it owes the money; this is the
                   bank saying it left. A claimant's question is the second one,
                   and until now nothing here answered it. */}
@@ -546,6 +610,15 @@ export default function ExpenseClaims() {
                 </td>
                 <td className="px-3 py-3">
                   <ClaimStatusBadge status={c.approvalStatus} label={statusOf(c)} />
+                </td>
+                <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
+                  {c.decidedBy || c.approver || '—'}
+                </td>
+                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">
+                  {/* Only for an APPROVED claim. `decidedAt` is stamped by a
+                      rejection too, and a date under "Approved" beside a
+                      rejected claim reads as the opposite of what happened. */}
+                  {c.approvalStatus === 'approved' && c.decidedAt ? formatClaimDate(c.decidedAt) : '—'}
                 </td>
                 <td className="whitespace-nowrap px-3 py-3">
                   {(() => {

@@ -1,17 +1,33 @@
 import { useState } from 'react';
-import { X, ChevronDown } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useClaims, isClaimArchived, formatClaimDate } from '@/lib/claimStore';
 import { useClaimantNames } from '@/lib/userStore';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 import SearchSelect from '@/components/SearchSelect';
+import ComboSelect from '@/components/ComboSelect';
 import { cn } from '@/lib/utils';
 
 // "Add item to expense claim" dialog — add to an existing claim or spin up a
 // new one. UI-only: confirming closes and reports the chosen claim.
+// The last day of the month we are in, as the date input wants it.
+function endOfThisMonth() {
+  const now = new Date();
+  // Day 0 of next month IS the last day of this one, which also gets February
+  // and leap years right without a table.
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${last.getFullYear()}-${pad(last.getMonth() + 1)}-${pad(last.getDate())}`;
+}
+
 export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
   const [mode, setMode] = useState('existing');
   const [claim, setClaim] = useState('');
-  const [newClaim, setNewClaim] = useState({ claimFor: '', name: '', endDate: '' });
+  // A claim covers a month, and the date that closes it is the end of that
+  // month — so it is filled in rather than asked for. Somebody raising a claim
+  // on the 27th means "August", and typing 31 Aug into a date picker to say so
+  // is work the app can do. Still editable: a claim that genuinely ends
+  // mid-month is a real thing, just not the common one.
+  const [newClaim, setNewClaim] = useState({ claimFor: '', name: '', endDate: endOfThisMonth() });
   const allClaims = useClaims();
   // Only the claims an item can actually go onto. The dropdown offered every
   // claim ever made — six entries where the Expense claims page showed two —
@@ -19,6 +35,17 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
   // never reach the ledger, and approved ones, which the server refuses outright
   // (409 claim_locked). Offering those is offering a dead end.
   const claims = allClaims.filter((c) => !isClaimArchived(c) && c.approvalStatus !== 'approved');
+  // Named, then told apart. Three claims called "Expense claim" for the same
+  // person are indistinguishable on name alone, so the person, the date and the
+  // total come along — and because the picker searches the label, they are also
+  // what you can type to find one.
+  const byId = new Map(claims.map((c) => [c.id, c]));
+  const labelFor = (c) =>
+    c
+      ? [c.name, c.claimFor, c.endDate ? formatClaimDate(c.endDate) : '', `${c.currency || 'SGD'} ${c.total}`]
+          .filter(Boolean)
+          .join(' · ')
+      : '';
   // A colleague can be claimed for in the practice's OWN entity — that is where
   // their own expenses belong — and nowhere else.
   const { data: organisations = [] } = useOrganisations();
@@ -72,25 +99,22 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
             <label className="flex items-center gap-3 text-sm">
               <span className="w-28 shrink-0 text-muted-foreground">Expense claim</span>
               <div className="relative flex-1">
-                <select
+                {/* Type to find it, rather than scroll a list. A month of
+                    claims is dozens of lines that mostly read "Expense claim",
+                    and picking the right one out of a native dropdown means
+                    reading every entry. Each is labelled with the person, the
+                    date and the total, and all of that is searchable — so
+                    "cze aug" or "41.60" reaches it directly. */}
+                <ComboSelect
                   value={claim}
-                  onChange={(e) => setClaim(e.target.value)}
-                  className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <option value="">{claims.length ? 'Select a claim' : 'No open claims — make a new one'}</option>
-                  {/* Named, then told apart. Three claims called "Expense claim"
-                      for the same person are indistinguishable on name alone,
-                      so the total — and the date where there is one — comes
-                      along to say which is which. */}
-                  {claims.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {[c.name, c.claimFor, c.endDate ? formatClaimDate(c.endDate) : '', `${c.currency || 'SGD'} ${c.total}`]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  onChange={setClaim}
+                  options={claims.map((c) => c.id)}
+                  format={(id) => labelFor(byId.get(id))}
+                  placeholder={claims.length ? 'Type a name, person or amount…' : 'No open claims — make a new one'}
+                  emptyLabel={claims.length ? 'Select a claim' : 'No open claims — make a new one'}
+                  aria-label="Expense claim"
+                  disabled={!claims.length}
+                />
               </div>
             </label>
           ) : (
