@@ -1567,6 +1567,48 @@ function readChallenge(token: string): string {
   }
 }
 
+// --- Trusting a browser -------------------------------------------------------
+// Asked for a code once, then not again on this machine for a month. Without it
+// a second factor on a daily tool is a tax rather than a safeguard, and the way
+// people pay a tax like that is by picking a worse password.
+//
+// The token names ONE person and the moment their second factor was set up, so
+// it cannot be replayed for somebody else, and resetting or re-enrolling a
+// person's 2FA silently retires every browser they had trusted — which is what
+// you want on the day the laptop is the thing that went missing.
+const TRUST_COOKIE = 'cyb_trust';
+const TRUST_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+function trustBrowser(res: Response, user: User): void {
+  const token = jwt.sign({ sub: user.id, kind: 'trust', at: user.totpEnabledAt ?? '' }, env.SESSION_SECRET, {
+    expiresIn: TRUST_TTL_SECONDS,
+  });
+  res.cookie(TRUST_COOKIE, token, {
+    httpOnly: true,
+    secure: env.isProd,
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: TRUST_TTL_SECONDS * 1000,
+  });
+}
+
+function browserIsTrusted(req: Request, user: User): boolean {
+  const token = String((req.cookies as Record<string, string> | undefined)?.[TRUST_COOKIE] ?? '');
+  if (!token) return false;
+  try {
+    const payload = jwt.verify(token, env.SESSION_SECRET) as jwt.JwtPayload;
+    return (
+      payload?.kind === 'trust' &&
+      String(payload.sub ?? '') === user.id &&
+      // Tied to the enrolment it was granted under: a reset changes this, and
+      // every browser trusted before it has to ask again.
+      String(payload.at ?? '') === String(user.totpEnabledAt ?? '')
+    );
+  } catch {
+    return false;
+  }
+}
+
 usersRouter.post('/login', (req, res) => {
   const ws = workspaceId(req);
   const email = String(req.body?.email || '').trim().toLowerCase();
@@ -1581,7 +1623,24 @@ usersRouter.post('/login', (req, res) => {
   // The password was right, and for somebody with a second factor that is only
   // half of it. No session is set here.
   if (user.totpSecret) {
+    // …unless this browser has been trusted, which is the whole point of the
+    // checkbox: asked once, then not again on this machine for a month.
+    if (browserIsTrusted(req, user)) {
+      setSession(res, { sub: user.id, email: user.email, name: user.name });
+      return res.json({ user: publicUser(user), trusted: true });
+    }
     return res.json({ totpRequired: true, challenge: mintChallenge(user) });
+  }
+  // Nobody signs in with a password alone. Somebody who has one and has not set
+  // up a second factor is sent to do it now, before any session exists — a
+  // requirement that let people through "just this once" would be a requirement
+  // in name only, and the accounts it exists for are the ones that never get
+  // round to it.
+  //
+  // Google sign-in is untouched: it carries its own second factor, and this
+  // branch is only ever reached through the password form.
+  if (user.passwordHash) {
+    return res.json({ totpSetupRequired: true, challenge: mintChallenge(user) });
   }
   setSession(res, { sub: user.id, email: user.email, name: user.name });
   return res.json({ user: publicUser(user) });
@@ -1601,6 +1660,7 @@ usersRouter.post('/login/totp', (req, res) => {
   const typed = String(req.body?.code || '');
   if (totpMatches(openSecret(user.totpSecret), typed)) {
     setSession(res, { sub: user.id, email: user.email, name: user.name });
+    if (req.body?.trust) trustBrowser(res, user);
     return res.json({ user: publicUser(user) });
   }
   // A recovery code is spent by using it — that is what makes it one-time, and
@@ -1610,6 +1670,10 @@ usersRouter.post('/login/totp', (req, res) => {
     user.totpRecovery = left;
     save(items);
     setSession(res, { sub: user.id, email: user.email, name: user.name });
+    // Deliberately not trusted, whatever the checkbox said. A recovery code is
+    // what somebody reaches for when the second factor is not to hand, which is
+    // also what it looks like when the account is being taken — so it buys one
+    // session, not a month of not being asked.
     return res.json({ user: publicUser(user), usedRecoveryCode: true, recoveryCodesLeft: left.length });
   }
   return res.status(401).json({ error: 'invalid_code' });
@@ -1617,8 +1681,21 @@ usersRouter.post('/login/totp', (req, res) => {
 
 // POST /api/users/totp/start — begin enrolling. Returns a secret to put into an
 // authenticator; nothing about sign-in changes until a code from it verifies.
-usersRouter.post('/totp/start', (req, res) => {
+// Who is enrolling: somebody already signed in (Profile → Security), or
+// somebody standing at the sign-in form who has just proved their password and
+// is being made to set this up before they get any further. The challenge is
+// how the second case identifies itself — it grants nothing else, and expires
+// in five minutes.
+function enrollingUser(req: Request): User | null {
   const me = memberForSession(req);
+  if (me) return me;
+  const id = readChallenge(String(req.body?.challenge || ''));
+  if (!id) return null;
+  return ensure(workspaceId(req)).find((u) => u.id === id && !u.removed && !u.deactivated) ?? null;
+}
+
+usersRouter.post('/totp/start', (req, res) => {
+  const me = enrollingUser(req);
   if (!me) return res.status(401).json({ error: 'unauthenticated' });
   if (me.totpSecret) return res.status(409).json({ error: 'already_enabled' });
   const items = ensure(workspaceId(req));
@@ -1637,8 +1714,9 @@ usersRouter.post('/totp/start', (req, res) => {
 // The recovery codes are returned HERE and nowhere else: only their hashes are
 // kept, so this is the one moment they can be read.
 usersRouter.post('/totp/enable', (req, res) => {
-  const me = memberForSession(req);
+  const me = enrollingUser(req);
   if (!me) return res.status(401).json({ error: 'unauthenticated' });
+  const viaChallenge = !memberForSession(req);
   const items = ensure(workspaceId(req));
   const row = items.find((u) => u.id === me.id)!;
   if (row.totpSecret) return res.status(409).json({ error: 'already_enabled' });
@@ -1653,7 +1731,15 @@ usersRouter.post('/totp/enable', (req, res) => {
   row.totpEnabledAt = new Date().toISOString();
   row.totpRecovery = codes.map(hashRecovery);
   save(items);
-  res.json({ ok: true, recoveryCodes: codes });
+  // Enrolled at the sign-in form rather than from inside the app: they have now
+  // shown both factors, so this is where their session begins. Sending them
+  // back to type the password again would be asking twice for something they
+  // just proved.
+  if (viaChallenge) {
+    setSession(res, { sub: row.id, email: row.email, name: row.name });
+    if (req.body?.trust) trustBrowser(res, row);
+  }
+  res.json({ ok: true, recoveryCodes: codes, signedIn: viaChallenge, user: publicUser(row) });
 });
 
 // POST /api/users/totp/disable — turn it off. Needs a current code (or a

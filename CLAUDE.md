@@ -841,6 +841,25 @@ lost phone means waiting for an admin. An admin's reset (Users -> Manage) only
 ever CLEARS — there is nothing an admin can read that would let them sign in as
 somebody else — and it is logged.
 
+**Nobody signs in with a password alone.** A password user with no second
+factor is sent to set one up AT the sign-in form, before any session exists —
+a requirement that let people through "just this once" would be one in name
+only, and the accounts it exists for are the ones that never get round to it.
+`/totp/start` and `/totp/enable` therefore accept the CHALLENGE in place of the
+session those people do not have yet, and finishing enrolment is what gives them
+one. Google sign-in is untouched: that branch is only ever reached through the
+password form.
+
+**A trusted browser is asked once, then not again for 30 days** (`cyb_trust`,
+its own cookie). Without it a second factor on a daily tool is a tax, and the
+way people pay a tax like that is by choosing a worse password. The token names
+ONE person and the moment their factor was enrolled, so it cannot be replayed
+for somebody else, and a reset or a re-enrolment silently retires every browser
+trusted before it — which is what you want on the day the laptop is the thing
+that went missing. A RECOVERY code never trusts the browser it was used on,
+whatever the checkbox said: reaching for one is what it looks like when the
+phone is missing, and also what it looks like when the account is being taken.
+
 `/api/users/login/totp` is allowlisted past the session guard, and has to be:
 whoever is standing at the code prompt has no session yet, which is the entire
 point of the step. Guarding it locked out precisely the people it exists for —

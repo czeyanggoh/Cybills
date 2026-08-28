@@ -60,6 +60,12 @@ app.use((req, res, next) => {
   // out. It carries its own proof instead: a five-minute challenge that is not
   // a session and grants nothing on its own.
   if (p === '/api/users/login/totp') return next();
+  // And enrolling at that same prompt. Nobody signs in with a password alone
+  // now, so somebody who has never set a second factor up is made to do it
+  // before any session exists — which means these two are reached by people who
+  // have proved a password and have nothing else yet. Both require the
+  // challenge, which is what stands in for the session they do not have.
+  if (p === '/api/users/totp/start' || p === '/api/users/totp/enable') return next();
   // Invitation / password-reset links are opened by people who, by definition,
   // can't sign in yet — these three are the flow that gets them a password.
   if (p === '/api/users/forgot-password') return next();

@@ -30,7 +30,7 @@ const express = (await import('express')).default;
 const cookieParser = (await import('cookie-parser')).default;
 const jwt = (await import('jsonwebtoken')).default;
 const { usersRouter, ensure, save } = await import('../src/users.ts');
-const { totpCode, openSecret } = await import('../src/totp.ts');
+const { totpCode, openSecret, sealSecret, hashRecovery } = await import('../src/totp.ts');
 
 const app = express();
 app.use(express.json());
@@ -74,10 +74,38 @@ const admin = sessionFor('astrid', 'astridy2004@gmail.com');
 let r = await post('/dean/password', { password: 'correct-horse' }, admin);
 check('an admin sets a password', r.status, 200);
 
-// --- Without a second factor --------------------------------------------------
+// --- A password on its own is not a way in ------------------------------------
+// Nobody signs in with a password alone now. Somebody who has one and no second
+// factor is sent to set one up before any session exists — a requirement that
+// let people through "just this once" would be a requirement in name only, and
+// the accounts it exists for are the ones that never get round to it.
 r = await post('/login', { email: EMAIL, password: 'correct-horse' });
-check('the password alone signs them in', Boolean(r.body.user), true);
-check('and a session cookie comes back', r.setCookie.includes('cyb_session='), true);
+check('the password alone does not sign them in', Boolean(r.body.user), false);
+check('it sends them to set one up', r.body.totpSetupRequired, true);
+check('and no session is set on the way', r.setCookie.includes('cyb_session='), false);
+
+// Enrolling from the sign-in form itself, with the challenge standing in for
+// the session they do not have yet.
+const forced = r.body.challenge as string;
+r = await post('/totp/start', { challenge: forced });
+check('the challenge is enough to start enrolling', r.body.secret?.length, 32);
+const forcedSecret = r.body.secret as string;
+r = await post('/totp/enable', { challenge: forced, code: totpCode(forcedSecret) });
+check('and to finish', r.status, 200);
+// Both factors shown, so this is where the session begins — sending them back
+// to type the password again would ask twice for what they just proved.
+check('which signs them in', r.setCookie.includes('cyb_session='), true);
+check('and says so', r.body.signedIn, true);
+
+// Put it back to the no-second-factor state for the rest of the file.
+{
+  const items = ensure('cybm');
+  const row = items.find((u) => u.id === 'dean')!;
+  delete row.totpSecret;
+  delete row.totpEnabledAt;
+  delete row.totpRecovery;
+  save(items);
+}
 const dean = sessionFor('dean', EMAIL);
 
 // --- Enrolling ----------------------------------------------------------------
@@ -89,7 +117,8 @@ const secret = r.body.secret as string;
 // Until a code proves it, nothing about signing in has changed. A half-finished
 // enrolment must never be able to lock somebody out.
 r = await post('/login', { email: EMAIL, password: 'correct-horse' });
-check('a pending secret does not gate sign-in', Boolean(r.body.user), true);
+check('a pending secret does not count as a second factor', r.body.totpSetupRequired, true);
+check('and still mints no session', r.setCookie.includes('cyb_session='), false);
 
 r = await post('/totp/enable', { code: '000000' }, dean);
 check('a wrong code does not turn it on', r.status, 401);
@@ -101,8 +130,8 @@ check('and hands over the recovery codes, once', recovery.length, 10);
 
 // --- Signing in with it -------------------------------------------------------
 r = await post('/login', { email: EMAIL, password: 'correct-horse' });
-check('the password alone no longer signs them in', Boolean(r.body.user), false);
-check('it asks for the second factor', r.body.totpRequired, true);
+check('the password alone still does not sign them in', Boolean(r.body.user), false);
+check('but now it asks for the code rather than for setup', r.body.totpRequired, true);
 check('and sets no session on the way', r.setCookie.includes('cyb_session='), false);
 const challenge = r.body.challenge as string;
 
@@ -128,6 +157,62 @@ r = await post('/login/totp', {
 });
 check('an expired challenge is refused', r.body.error, 'challenge_expired');
 
+// --- Trusting a browser -------------------------------------------------------
+// Asked once, then not again on this machine. Without it a second factor on a
+// daily tool is a tax, and the way people pay a tax like that is by choosing a
+// worse password.
+{
+  r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+  const res = await fetch('http://127.0.0.1:4639/api/users/login/totp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ challenge: r.body.challenge, code: totpCode(secret), trust: true }),
+  });
+  const cookies = res.headers.get('set-cookie') ?? '';
+  check('asking to be trusted sets a second cookie', cookies.includes('cyb_trust='), true);
+  const trust = /cyb_trust=[^;]+/.exec(cookies)?.[0] ?? '';
+
+  // The password alone is enough on THIS browser now, and only this one.
+  const again = await fetch('http://127.0.0.1:4639/api/users/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: trust },
+    body: JSON.stringify({ email: EMAIL, password: 'correct-horse' }),
+  });
+  const body = (await again.json()) as any;
+  check('a trusted browser is not asked for a code', Boolean(body.user), true);
+  check('and says that is why', body.trusted, true);
+
+  // It names one person, so it cannot be carried to somebody else's sign-in.
+  const other = await fetch('http://127.0.0.1:4639/api/users/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: trust },
+    body: JSON.stringify({ email: 'astridy2004@gmail.com', password: 'nope' }),
+  });
+  check("another person's sign-in is unaffected by it", other.status, 401);
+
+  // A reset retires every browser trusted under the old enrolment — which is
+  // what you want on the day the laptop is the thing that went missing.
+  await post('/dean/totp/reset', {}, admin);
+  r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+  const enrol = r.body.challenge as string;
+  const started = await post('/totp/start', { challenge: enrol });
+  await post('/totp/enable', { challenge: enrol, code: totpCode(started.body.secret) });
+  const stale = await fetch('http://127.0.0.1:4639/api/users/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: trust },
+    body: JSON.stringify({ email: EMAIL, password: 'correct-horse' }),
+  });
+  const staleBody = (await stale.json()) as any;
+  check('a reset retires the browsers trusted before it', staleBody.totpRequired, true);
+
+  // Back to the original secret for the rest of the file.
+  const items = ensure('cybm');
+  const row = items.find((u) => u.id === 'dean')!;
+  row.totpSecret = sealSecret(secret);
+  row.totpRecovery = recovery.map(hashRecovery);
+  save(items);
+}
+
 // --- The phone in the drawer --------------------------------------------------
 r = await post('/login', { email: EMAIL, password: 'correct-horse' });
 r = await post('/login/totp', { challenge: r.body.challenge, code: recovery[0]! });
@@ -145,7 +230,7 @@ check('a walked-away-from session cannot turn it off on its own', r.status, 401)
 r = await post('/totp/disable', { code: totpCode(secret) }, dean);
 check('a current code can', r.status, 200);
 r = await post('/login', { email: EMAIL, password: 'correct-horse' });
-check('and the password alone works again', Boolean(r.body.user), true);
+check('and they are asked to set one up again', r.body.totpSetupRequired, true);
 
 // --- The phone that is genuinely gone -----------------------------------------
 r = await post('/totp/start', {}, dean);
@@ -157,7 +242,7 @@ check('it is on again', r.body.totpRequired, true);
 r = await post('/dean/totp/reset', {}, admin);
 check('an admin can put them back where they started', r.status, 200);
 r = await post('/login', { email: EMAIL, password: 'correct-horse' });
-check('so the password signs them in again', Boolean(r.body.user), true);
+check('so they are asked to set one up again', r.body.totpSetupRequired, true);
 // A reset clears it rather than revealing it: there is nothing an admin can
 // read that would let them sign in as that person later.
 check('and nothing of the secret is left', openSecret(ensure('cybm').find((u) => u.id === 'dean')!.totpSecret ?? ''), '');

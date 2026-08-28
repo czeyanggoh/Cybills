@@ -26,7 +26,7 @@ const ERROR_MESSAGES = {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { googleEnabled, mailEnabled, loginWithPassword, loginWithCode } = useAuth();
+  const { googleEnabled, mailEnabled, loginWithPassword, loginWithCode, enrolAtSignIn, refresh } = useAuth();
   const [params] = useSearchParams();
   const error = params.get('error');
   const [email, setEmail] = useState('');
@@ -38,13 +38,20 @@ export default function Login() {
   // session. Holding it here is what turns this form into two steps.
   const [challenge, setChallenge] = useState('');
   const [code, setCode] = useState('');
+  // Asked once, then not again on this machine — the whole reason a second
+  // factor on a daily tool stays bearable. Off on a shared computer.
+  const [trust, setTrust] = useState(true);
+  // Set when this person has a password but no second factor yet: they set one
+  // up here, before any session exists.
+  const [setup, setSetup] = useState(null);
+  const [codes, setCodes] = useState([]);
 
   const submitCode = async (e) => {
     e.preventDefault();
     setBusy(true);
     setPwError('');
     try {
-      const out = await loginWithCode(challenge, code.trim());
+      const out = await loginWithCode(challenge, code.trim(), trust);
       if (out.ok) navigate('/costs');
       // A challenge lasts five minutes. Saying so — and putting them back at
       // the password step — beats "invalid code" on a code that was right.
@@ -55,6 +62,28 @@ export default function Login() {
       } else setPwError('That code is not right.');
     } catch {
       setPwError('Could not sign in. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitSetup = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setPwError('');
+    try {
+      const out = await enrolAtSignIn(challenge, code.trim(), trust);
+      // The recovery codes exist in readable form exactly once, so they are
+      // shown before anybody goes anywhere.
+      if (out.ok) setCodes(out.recoveryCodes);
+      else if (out.error === 'challenge_expired') {
+        setChallenge('');
+        setSetup(null);
+        setCode('');
+        setPwError('That took too long — please sign in again.');
+      } else setPwError('That code is not right.');
+    } catch {
+      setPwError('Could not finish. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -78,7 +107,16 @@ export default function Login() {
     try {
       const ok = await loginWithPassword(email.trim(), password);
       if (ok?.totpRequired) setChallenge(ok.challenge);
-      else if (ok) navigate('/costs');
+      else if (ok?.totpSetupRequired) {
+        setChallenge(ok.challenge);
+        const res = await fetch('/api/users/totp/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ challenge: ok.challenge }),
+        });
+        if (res.ok) setSetup(await res.json());
+        else setPwError('Could not start two-step sign-in. Please try again.');
+      } else if (ok) navigate('/costs');
       else setPwError('Wrong email or password.');
     } catch {
       setPwError('Could not sign in. Please try again.');
@@ -125,7 +163,62 @@ export default function Login() {
         {/* Once the password is right and a second factor stands in front of the
             session, the page becomes the second step and nothing else — putting
             the password form back under it would only invite starting over. */}
-        {challenge ? (
+        {/* The codes, shown once and nowhere else — only their fingerprints are
+            kept. Nobody is sent onward until they have been seen. */}
+        {codes.length ? (
+          <div className="space-y-3 text-left">
+            <p className="text-center text-sm font-medium">Save these recovery codes</p>
+            <p className="text-xs text-muted-foreground">
+              This is the one time they can be read. Each works once, and they are the way back in if you lose
+              your phone. Without them, only an admin can reset it.
+            </p>
+            <div className="grid grid-cols-2 gap-1.5 rounded-md border bg-muted/30 p-3 font-mono text-xs">
+              {codes.map((c) => <span key={c}>{c}</span>)}
+            </div>
+            <button
+              type="button"
+              onClick={async () => { await refresh(); navigate('/costs'); }}
+              className="h-11 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              I have saved them — continue
+            </button>
+          </div>
+        ) : setup ? (
+          /* First sign-in for somebody with a password and no second factor.
+             They set it up here, before any session exists — a requirement that
+             let people through "just this once" would be one in name only. */
+          <form onSubmit={submitSetup} className="space-y-2.5 text-left">
+            <p className="text-center text-sm font-medium">Set up two-step sign-in</p>
+            <p className="text-xs text-muted-foreground">
+              CYBills asks for a code from your phone as well as your password. Add this key to an
+              authenticator app — Google Authenticator, 1Password, Authy — then enter the code it shows.
+            </p>
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-center font-mono text-sm tracking-wide">
+              {setup.readable}
+            </div>
+            <input
+              value={code}
+              onChange={(e) => { setCode(e.target.value); setPwError(''); }}
+              placeholder="123456"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              className="h-11 w-full rounded-md border bg-background px-3 text-center font-mono text-lg tracking-[0.3em] outline-none placeholder:tracking-normal placeholder:font-sans placeholder:text-base placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {pwError && <p className="text-center text-xs text-destructive">{pwError}</p>}
+            <label className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} className="accent-black" />
+              Trust this browser for 30 days
+            </label>
+            <button
+              type="submit"
+              disabled={busy || !code.trim()}
+              className="h-11 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {busy ? 'Checking…' : 'Turn on and sign in'}
+            </button>
+          </form>
+        ) : challenge ? (
           <form onSubmit={submitCode} className="space-y-2.5">
             <p className="mb-3 text-center text-sm text-muted-foreground">
               Enter the 6-digit code from your authenticator app.
@@ -140,6 +233,13 @@ export default function Login() {
               className="h-11 w-full rounded-md border bg-background px-3 text-center font-mono text-lg tracking-[0.3em] outline-none placeholder:tracking-normal placeholder:font-sans placeholder:text-base placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
             />
             {pwError && <p className="text-center text-xs text-destructive">{pwError}</p>}
+            {/* On by default: asked once, then not again on this machine. Worth
+                unticking on a shared computer, which is why it is visible
+                rather than assumed. */}
+            <label className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} className="accent-black" />
+              Trust this browser for 30 days
+            </label>
             <button
               type="submit"
               disabled={busy || !code.trim()}

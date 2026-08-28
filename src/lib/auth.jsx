@@ -92,22 +92,44 @@ export function AuthProvider({ children }) {
     if (!res.ok) return false;
     const data = await res.json();
     if (data?.totpRequired) return { totpRequired: true, challenge: data.challenge };
+    // Nobody signs in with a password alone: somebody who has never set a
+    // second factor up is sent to do it now, before any session exists.
+    if (data?.totpSetupRequired) return { totpSetupRequired: true, challenge: data.challenge };
     setUser(data?.user || null);
     return true;
   }, []);
 
   // The second step: a six-digit code from the authenticator, or one of the
   // recovery codes for the phone that is in a drawer somewhere.
-  const loginWithCode = useCallback(async (challenge, code) => {
+  const loginWithCode = useCallback(async (challenge, code, trust = false) => {
     const res = await fetch('/api/users/login/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ challenge, code }),
+      body: JSON.stringify({ challenge, code, trust }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) return { ok: false, error: data?.error || 'invalid_code' };
     setUser(data?.user || null);
     return { ok: true, usedRecoveryCode: Boolean(data?.usedRecoveryCode), recoveryCodesLeft: data?.recoveryCodesLeft };
+  }, []);
+
+  // Enrolling at the sign-in form, for somebody who has proved their password
+  // and has no second factor yet. The challenge stands in for the session they
+  // do not have; finishing it is what gives them one.
+  const enrolAtSignIn = useCallback(async (challenge, code, trust = false) => {
+    const res = await fetch('/api/users/totp/enable', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challenge, code, trust }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, error: data?.error || 'invalid_code' };
+    // Deliberately NOT setUser here. The session cookie is already set — the
+    // server did that — but the moment this context knows about it, the guard
+    // on /login sends the page to the app, and the recovery codes go with it.
+    // They exist in readable form exactly once, so the page shows them first
+    // and calls refresh() when the person says they have them.
+    return { ok: true, recoveryCodes: data?.recoveryCodes ?? [] };
   }, []);
 
   return (
@@ -125,6 +147,7 @@ export function AuthProvider({ children }) {
         signOut,
         loginWithPassword,
         loginWithCode,
+        enrolAtSignIn,
       }}
     >
       {children}
