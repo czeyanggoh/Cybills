@@ -22,7 +22,7 @@ import ListsSettings from '@/components/ListsSettings';
 import { cn } from '@/lib/utils';
 import { useCategoryDisplayMode, setCategoryDisplayMode, useCategorySortMode, setCategorySortMode } from '@/lib/categoryDisplay';
 import { useBusinessProfile, saveBusinessProfile, mergeXeroProfile } from '@/lib/businessProfile';
-import { useExportSettings, saveExportSettings, EXPORT_COLUMNS } from '@/lib/exportSettings';
+import { useExportSettings, saveExportSettings, EXPORT_COLUMNS, RECEIPT_FORMATS } from '@/lib/exportSettings';
 import { useAutoSave } from '@/lib/useAutoSave';
 import SaveStatus from '@/components/SaveStatus';
 import {
@@ -827,7 +827,11 @@ function Exports() {
     <div className="space-y-6">
       <Card title="CSV Exports">
         <p className="text-sm text-muted-foreground">Choose how the data in CSV file exports gets formatted.</p>
-        <Row label="Receipts and invoices"><SelectBox value={form.receiptsFormat} onChange={(v) => set('receiptsFormat', v)} options={['CYBills Default', 'Custom CSV', 'Xero', 'QuickBooks']} /></Row>
+        {/* CYBills Default and Custom CSV, and nothing else. "Xero" and
+            "QuickBooks" were Dext's list: neither ever shaped a file, so
+            picking one produced exactly the same CSV as the default — a choice
+            with no consequence, which is worse than no choice. */}
+        <Row label="Receipts and invoices"><SelectBox value={form.receiptsFormat} onChange={(v) => set('receiptsFormat', v)} options={RECEIPT_FORMATS} /></Row>
         <Row label="Bank statements"><SelectBox value={form.bankFormat} onChange={(v) => set('bankFormat', v)} options={['CYBills Excel', 'Custom']} /></Row>
         <Row label="Sales documents"><SelectBox value={form.salesFormat} onChange={(v) => set('salesFormat', v)} options={['CYBills Sales Default', 'Custom']} /></Row>
         <Row label="Expense reports"><SelectBox value={form.expenseFormat} onChange={(v) => set('expenseFormat', v)} options={['CYBills Default', 'Custom']} /></Row>

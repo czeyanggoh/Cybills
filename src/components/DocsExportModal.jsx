@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
 import { exportDocs } from '@/lib/docsExport';
 import { useAuth } from '@/lib/auth';
+import { useExportSettings } from '@/lib/exportSettings';
 import { cn } from '@/lib/utils';
 
 // Export dialog for Costs/Sales — CSV / PDF / ZIP. Runs fully client-side and
@@ -9,10 +10,16 @@ import { cn } from '@/lib/utils';
 export default function DocsExportModal({ open, kind, rows, onClose, onArchive = () => {} }) {
   const defaultLabel = kind === 'sales' ? 'CYBills sales default' : 'CYBills default';
   const { user, membership } = useAuth();
+  const settings = useExportSettings();
   const [tab, setTab] = useState('csv');
-  // Default to "Custom CSV" so the columns configured in Business settings →
-  // Exports actually drive the file. The full fixed template stays selectable.
-  const [csvFormat, setCsvFormat] = useState('Custom CSV');
+  // Opens on the format this entity chose in Business settings → Exports, which
+  // is what "choose how the data in CSV exports gets formatted" has to mean —
+  // it was stored and then never read, so the setting decided nothing and the
+  // dialog asked again every time. Still a choice here: a preference is where
+  // it STARTS, not a rule about one particular export.
+  const [csvFormat, setCsvFormat] = useState(
+    (kind === 'sales' ? settings.salesFormat : settings.receiptsFormat) === 'Custom CSV' ? 'Custom CSV' : defaultLabel
+  );
   const [archiveAfter, setArchiveAfter] = useState(false);
   const [busy, setBusy] = useState(false);
   if (!open) return null;

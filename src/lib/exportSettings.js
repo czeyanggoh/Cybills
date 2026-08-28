@@ -48,9 +48,19 @@ export const DEFAULT_EXPORT_SETTINGS = {
 const emit = () => window.dispatchEvent(new Event(EXPORT_SETTINGS_EVENT));
 const store = blobStore(KEY, DEFAULT_EXPORT_SETTINGS, emit);
 
+// The CSV formats an export can actually produce. "Xero" and "QuickBooks" were
+// on this list once and never shaped a file — picking one produced exactly the
+// same CSV as the default — so an entity that chose one is reading a preference
+// that was already only the default under another name.
+export const RECEIPT_FORMATS = ['CYBills Default', 'Custom CSV'];
+
 export function getExportSettings() {
   const v = store.get() || {};
-  return { ...DEFAULT_EXPORT_SETTINGS, ...v, columns: Array.isArray(v.columns) ? v.columns : DEFAULT_EXPORT_COLUMNS };
+  const s = { ...DEFAULT_EXPORT_SETTINGS, ...v, columns: Array.isArray(v.columns) ? v.columns : DEFAULT_EXPORT_COLUMNS };
+  // A saved format that is no longer offered reads as the default rather than
+  // leaving the picker showing a value that isn't in it.
+  if (!RECEIPT_FORMATS.includes(s.receiptsFormat)) s.receiptsFormat = DEFAULT_EXPORT_SETTINGS.receiptsFormat;
+  return s;
 }
 
 export function saveExportSettings(next) {
