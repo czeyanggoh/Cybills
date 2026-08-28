@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ChevronDown, Search, Filter, Settings2, X, Send, CalendarClock } from 'lucide-react';
+import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
@@ -67,6 +67,144 @@ function ClaimsActions({ disabled, tab, onArchive, onDelete }) {
   );
 }
 
+// Search, plus the two narrowings that sit beside it. Both were buttons with no
+// handler until now — the shape of a filter with none of the behaviour, which
+// is worse than no filter, because somebody clicks it and concludes the page is
+// broken rather than that the feature was never there.
+//
+// A column chooser used to sit here too (the gear). It is gone rather than
+// faked: the claims table renders a fixed set of columns, so choosing them
+// would need the table to honour the choice, and a third dead button is not an
+// improvement on two.
+function ClaimsToolbar({
+  query, setQuery, filters, setFilters, adv, setAdv, narrowed,
+  statusOptions, reimbursementOptions, typeOptions, claimForOptions,
+}) {
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [advOpen, setAdvOpen] = useState(false);
+  const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
+  const setA = (k, v) => setAdv((a) => ({ ...a, [k]: v }));
+  const field = 'h-8 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
+  const label = 'mb-1 block text-xs text-muted-foreground';
+
+  const Select = ({ value, onChange, options, anyLabel }) => (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={field}>
+      <option value="">{anyLabel}</option>
+      {options.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+
+  return (
+    <>
+      <div className="relative ml-auto hidden sm:block">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search"
+          className="h-8 w-52 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        <button
+          type="button"
+          onClick={() => { setAdvOpen((v) => !v); setFilterOpen(false); }}
+          className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          Advanced <ChevronDown className="h-3 w-3" />
+        </button>
+        {advOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setAdvOpen(false)} aria-hidden="true" />
+            <div className="absolute right-0 top-10 z-40 w-72 rounded-md border bg-popover p-3 shadow-lg">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Advanced search</p>
+              <div className="space-y-3">
+                <div>
+                  <span className={label}>Claim for</span>
+                  <Select value={adv.claimFor} onChange={(v) => setA('claimFor', v)} options={claimForOptions} anyLabel="Anyone" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className={label}>Total from</span>
+                    <input value={adv.min} onChange={(e) => setA('min', e.target.value)} inputMode="decimal" className={field} />
+                  </div>
+                  <div>
+                    <span className={label}>to</span>
+                    <input value={adv.max} onChange={(e) => setA('max', e.target.value)} inputMode="decimal" className={field} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className={label}>End date from</span>
+                    <input type="date" value={adv.from} onChange={(e) => setA('from', e.target.value)} className={field} />
+                  </div>
+                  <div>
+                    <span className={label}>to</span>
+                    <input type="date" value={adv.to} onChange={(e) => setA('to', e.target.value)} className={field} />
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdv({ min: '', max: '', from: '', to: '', claimFor: '' })}
+                className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                Clear
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => { setFilterOpen((v) => !v); setAdvOpen(false); }}
+          className={cn(
+            'flex h-8 items-center gap-1.5 rounded-md px-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+            narrowed && 'bg-muted text-foreground'
+          )}
+          aria-label="Filter"
+        >
+          <Filter className="h-4 w-4" strokeWidth={1.75} />
+          {/* How many narrowings are on, so a list that looks short has a
+              visible reason rather than looking like missing claims. */}
+          {narrowed ? <span className="text-xs font-medium">{narrowed}</span> : null}
+        </button>
+        {filterOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setFilterOpen(false)} aria-hidden="true" />
+            <div className="absolute right-0 top-10 z-40 w-64 rounded-md border bg-popover p-3 shadow-lg">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filter</p>
+              <div className="space-y-3">
+                <div>
+                  <span className={label}>Approval status</span>
+                  <Select value={filters.status} onChange={(v) => set('status', v)} options={statusOptions} anyLabel="Any" />
+                </div>
+                <div>
+                  <span className={label}>Reimbursement</span>
+                  <Select value={filters.reimbursement} onChange={(v) => set('reimbursement', v)} options={reimbursementOptions} anyLabel="Any" />
+                </div>
+                {typeOptions.length > 1 && (
+                  <div>
+                    <span className={label}>Type</span>
+                    <Select value={filters.type} onChange={(v) => set('type', v)} options={typeOptions} anyLabel="Any" />
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setFilters({ status: '', reimbursement: '', type: '' })}
+                className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                Clear
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function ExpenseClaims() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox');
@@ -74,6 +212,11 @@ export default function ExpenseClaims() {
   const [showCreate, setShowCreate] = useState(false);
   const [newClaim, setNewClaim] = useState({ claimFor: '', endDate: '', name: '' });
   const [query, setQuery] = useState('');
+  // Two narrowings beside the search box, which used to be a funnel and an
+  // "Advanced" that did nothing at all — the buttons were there, the handlers
+  // never were, and Cze quite reasonably reported them as broken.
+  const [filters, setFilters] = useState({ status: '', reimbursement: '', type: '' });
+  const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', claimFor: '' });
   const [approveOpen, setApproveOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
 
@@ -122,9 +265,36 @@ export default function ExpenseClaims() {
 
   const base = tab === 'inbox' ? inbox : tab === 'archive' ? archived : [];
   const q = query.trim().toLowerCase();
-  const rows = q
-    ? base.filter((c) => [c.claimFor, c.name, c.type].some((v) => String(v || '').toLowerCase().includes(q)))
-    : base;
+  const amount = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
+  const rows = base.filter((c) => {
+    if (q && ![c.claimFor, c.name, c.type].some((v) => String(v || '').toLowerCase().includes(q))) return false;
+    if (filters.status && statusOf(c) !== filters.status) return false;
+    // Reimbursement is what Xero says about the bill the claim posted as, so a
+    // claim that was never published has none — which is its own answer.
+    if (filters.reimbursement) {
+      const paid = xeroPaidStatus(c)?.label || 'Not published';
+      if (paid !== filters.reimbursement) return false;
+    }
+    if (filters.type && String(c.type || '') !== filters.type) return false;
+    if (adv.claimFor && String(c.claimFor || '') !== adv.claimFor) return false;
+    if (adv.min && amount(c.total) < amount(adv.min)) return false;
+    if (adv.max && amount(c.total) > amount(adv.max)) return false;
+    // Dates compare as ISO strings, which is what the claim stores.
+    if (adv.from && String(c.endDate || '') < adv.from) return false;
+    if (adv.to && String(c.endDate || '') > adv.to) return false;
+    return true;
+  });
+  // What the two popovers can offer, taken from the claims actually here — a
+  // filter listing a status nothing has is a dead end with a count of zero.
+  const statusOptions = [...new Set(base.map(statusOf))].sort();
+  const reimbursementOptions = [...new Set(base.map((c) => xeroPaidStatus(c)?.label || 'Not published'))].sort();
+  const typeOptions = [...new Set(base.map((c) => String(c.type || '')).filter(Boolean))].sort();
+  // Who actually has a claim in this tab — not the whole roster, which already
+  // has its own list for CREATING one. Filtering by somebody with no claims is
+  // an empty screen with no explanation.
+  const claimantsPresent = [...new Set(base.map((c) => String(c.claimFor || '')).filter(Boolean))].sort();
+  const narrowed =
+    Object.values(filters).filter(Boolean).length + Object.values(adv).filter(Boolean).length;
   const hasSelection = selected.size > 0;
 
   const clear = () => setSelected(new Set());
@@ -254,25 +424,19 @@ export default function ExpenseClaims() {
           onArchive={() => doArchive(tab !== 'archive')}
           onDelete={doDelete}
         />
-        <div className="relative ml-auto hidden sm:block">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search"
-            className="h-8 w-52 rounded-md border bg-background pl-8 pr-16 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          <button type="button" className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground">
-            Advanced <ChevronDown className="h-3 w-3" />
-          </button>
-        </div>
-        <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Filter">
-          <Filter className="h-4 w-4" strokeWidth={1.75} />
-        </button>
-        <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Table settings">
-          <Settings2 className="h-4 w-4" strokeWidth={1.75} />
-        </button>
+        <ClaimsToolbar
+          query={query}
+          setQuery={setQuery}
+          filters={filters}
+          setFilters={setFilters}
+          adv={adv}
+          setAdv={setAdv}
+          narrowed={narrowed}
+          statusOptions={statusOptions}
+          reimbursementOptions={reimbursementOptions}
+          typeOptions={typeOptions}
+          claimForOptions={claimantsPresent}
+        />
       </div>
 
       {/* Phone: cards. A claim's identity is whose it is, what it comes to and
