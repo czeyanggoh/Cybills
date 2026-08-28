@@ -3,32 +3,22 @@ import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink, MessageCir
 import { ROLES, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
 import { useOrganisations } from '@/lib/organisations';
+import { cleanHandle, inboundAddress, addressTail, suffixForUser } from '@/lib/inboundAddress';
 import { useWhatsappForUser, connectWhatsappForUser } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
 
-// The mail domain user inbound addresses live on (mirrors the server's
-// INBOUND_MAIL_DOMAIN default).
-const INBOUND_DOMAIN = 'cybills.sg';
-
-// Mirrors normaliseHandle in server/src/users.ts, so the address previewed here
-// is the address that gets saved. The server normalises again and has the last
-// word — this is to show the answer, not to be trusted for it.
-function cleanHandle(raw) {
-  return String(raw || '')
-    .toLowerCase()
-    .split('@')[0]
-    .replace(/[^a-z0-9.-]+/g, '')
-    .replace(/[.-]{2,}/g, '.')
-    .replace(/^[.-]+|[.-]+$/g, '')
-    .slice(0, 64);
-}
-
 // "Extract by email" — the user's inbound address plus any Gmail forwarding
 // confirmation CYBills is holding for them to click.
-function ExtractByEmail({ user, handle, setHandle, error }) {
+//
+// `suffix` is their entity's short form, set in Business settings → Extraction:
+// with one, this person is `martin.redalpha@cybills.sg` rather than `martin@`.
+// It is fixed here, like the domain — one entity, one short form, so choosing
+// it per person is not a thing that could mean anything.
+function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
   const [copied, setCopied] = useState(false);
   const clean = cleanHandle(handle);
-  const address = clean ? `${clean}@${INBOUND_DOMAIN}` : '';
+  const address = inboundAddress(clean, suffix);
+  const tail = addressTail(suffix);
   const pending = user.pendingForward;
   const copy = () => {
     if (!address) return;
@@ -61,7 +51,7 @@ function ExtractByEmail({ user, handle, setHandle, error }) {
             className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none"
           />
           <span className="shrink-0 select-none border-l bg-muted/40 px-2.5 py-2 text-sm text-muted-foreground">
-            @{INBOUND_DOMAIN}
+            {tail}
           </span>
         </div>
         <button type="button" onClick={copy} disabled={!address} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
@@ -81,8 +71,8 @@ function ExtractByEmail({ user, handle, setHandle, error }) {
           not after. */}
       {clean && user.emailHandle && clean !== user.emailHandle && (
         <p className="text-xs text-amber-700 dark:text-amber-400">
-          Mail sent to {user.emailHandle}@{INBOUND_DOMAIN} will stop arriving. Any forwarding rule already set up needs
-          repointing at the new address.
+          Mail sent to {inboundAddress(user.emailHandle, suffix)} will stop arriving. Any forwarding rule already set up
+          needs repointing at the new address.
         </p>
       )}
 
@@ -300,6 +290,10 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
   // — the row then only appears (and is only manageable) under that one.
   const { data: organisations = [] } = useOrganisations();
   const [organisationId, setOrganisationId] = useState(user?.organisationId || '');
+  // The short form this person's entity puts in their address. Read from the
+  // entity list the dialog already has, so nothing extra is fetched to print an
+  // address.
+  const suffix = suffixForUser(user, organisations);
   const [handle, setHandle] = useState(user?.emailHandle || '');
   const [mobile, setMobile] = useState(user?.mobile || '');
   const [handleError, setHandleError] = useState('');
@@ -350,7 +344,8 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
       // The dialog stays open on a rejected address, with the reason on the
       // field — closing it would throw away every other edit in the form.
       if (err?.code === 'handle_taken') {
-        setHandleError(`${err.info?.handle || cleanHandle(handle)}@${INBOUND_DOMAIN} is already used by ${err.info?.takenBy || 'someone else'}.`);
+        const taken = err.info?.address || inboundAddress(err.info?.handle || handle, suffix);
+        setHandleError(`${taken} is already used by ${err.info?.takenBy || 'someone else'}.`);
       } else if (err?.code === 'invalid_handle') {
         setHandleError('Use letters and numbers, optionally separated by dots or hyphens.');
       } else {
@@ -425,6 +420,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                 user={user}
                 handle={handle}
                 setHandle={(v) => { setHandle(v); setHandleError(''); }}
+                suffix={suffix}
                 error={handleError}
               />
               {/* The other road a bill travels. Same shape as the card above on

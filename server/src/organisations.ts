@@ -9,7 +9,21 @@ import { WORKSPACE_ID, workspaceId } from './workspace.js';
 // in users.ts next to the rows it reads. (users.ts imports this module back for
 // the org lookups — neither one calls the other while loading, so the cycle is
 // inert.)
-import { memberForSession, canAccessOrg, canManagePractice, ensureGeneralUser, grantClientAccess } from './users.js';
+import {
+  memberForSession,
+  canAccessOrg,
+  canManagePractice,
+  ensureGeneralUser,
+  grantClientAccess,
+  effectiveRoleFor,
+  isBusinessAdminRole,
+  normaliseSuffix,
+  localPart,
+  suffixForUser,
+  orgIdForUser,
+  ensure as ensureUsers,
+  INBOUND_MAIL_DOMAIN,
+} from './users.js';
 
 // Organisations = the client entities bills are published for. Each one is
 // linked to a Xero organisation (tenant) that cyworkspace holds a connection
@@ -33,6 +47,11 @@ export type Organisation = {
   kind?: 'xero' | 'standalone';
   // For a standalone entity, the linked entity whose Xero its claims post into.
   parentOrgId?: string;
+  // This entity's short form in an inbound email address:
+  // `martin.redalpha@cybills.sg`. Empty (the default) leaves its people on the
+  // bare `martin@cybills.sg` they have always had. See normaliseSuffix in
+  // users.ts, which owns the rules — an address is a fact about the roster.
+  emailSuffix?: string;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
 };
@@ -281,4 +300,75 @@ organisationsRouter.delete('/:id', (req, res) => {
   organisations.splice(idx, 1);
   persist(organisations);
   res.json({ ok: true });
+});
+
+// PUT /api/organisations/:id/email-suffix — set (or clear) the short form this
+// entity's inbound addresses carry: `martin.redalpha@cybills.sg`.
+//
+// Its own admin's decision, not the practice's: it is this entity's name in an
+// address, and the people who have to be told the address work here. What they
+// may NOT do is take a short form another client is already using — two
+// entities on one suffix would put two Martins on one address, and every bill
+// forwarded to it would file under whichever row was found first.
+//
+// A route of its own rather than a settings blob, because that is the only
+// place both halves of the check can be made: no other entity holds this
+// suffix, and no address it produces already reaches somebody else.
+organisationsRouter.put('/:id/email-suffix', (req, res) => {
+  const ws = workspaceId(req);
+  const organisations = load();
+  const organisation = organisations.find((o) => o.orgId === ws && o.id === req.params.id);
+  if (!organisation) return res.status(404).json({ error: 'not_found' });
+  const me = memberForSession(req);
+  const mayEdit = !googleEnabled
+    ? true
+    : me
+      ? canManagePractice(me) ||
+        (canAccessOrg(me, organisation.id) && isBusinessAdminRole(effectiveRoleFor(me, organisation.id)))
+      : false;
+  if (!mayEdit) return res.status(403).json({ error: 'not_an_admin' });
+
+  const raw = String(req.body?.suffix ?? '');
+  const suffix = normaliseSuffix(raw);
+  // Typed something, and nothing usable survived it. Storing '' would quietly
+  // read as "no suffix", which is the opposite of what was asked for.
+  if (raw.trim() && !suffix) return res.status(400).json({ error: 'invalid_suffix' });
+  if (suffix === normaliseSuffix(organisation.emailSuffix || '')) {
+    return res.json({ ok: true, organisation, addresses: 0 });
+  }
+
+  const clash = organisations.find(
+    (o) => o.orgId === ws && o.id !== organisation.id && normaliseSuffix(o.emailSuffix || '') === suffix && suffix
+  );
+  if (clash) return res.status(409).json({ error: 'suffix_taken', takenBy: clash.name });
+
+  // What the change would actually produce. A suffix is set once and read by
+  // every address in the entity, so the collision to look for is not the
+  // suffix's but the addresses' — `martin.redalpha` could already be somebody's
+  // bare handle, however unlikely, and finding that out afterwards means
+  // finding it out as misfiled paperwork.
+  const users = ensureUsers(ws).filter((u) => !u.removed && !u.general && u.emailHandle);
+  const memo = new Map<string, string>();
+  const mine = users.filter((u) => orgIdForUser(u) === organisation.id);
+  const others = users.filter((u) => orgIdForUser(u) !== organisation.id);
+  const takenElsewhere = new Map(
+    others.map((u) => [localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)), u])
+  );
+  for (const u of mine) {
+    const owner = takenElsewhere.get(localPart(String(u.emailHandle).toLowerCase(), suffix));
+    if (owner) {
+      return res.status(409).json({
+        error: 'address_taken',
+        address: `${localPart(String(u.emailHandle).toLowerCase(), suffix)}@${INBOUND_MAIL_DOMAIN}`,
+        person: u.name || u.email,
+        takenBy: owner.name || owner.email,
+      });
+    }
+  }
+
+  organisation.emailSuffix = suffix;
+  persist(organisations);
+  // How many people it just repointed, so the page can say so rather than
+  // leaving somebody to open a roster and count.
+  res.json({ ok: true, organisation, addresses: mine.length });
 });

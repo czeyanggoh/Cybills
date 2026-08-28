@@ -14,7 +14,7 @@ import {
   isBusinessAdminRole,
   memberForSession,
   appOrigin,
-  INBOUND_MAIL_DOMAIN,
+  addressForUser,
   type User,
 } from './users.js';
 import { insertBill, listBills, displayIdOf } from './store.js';
@@ -653,8 +653,10 @@ function mayManagePerson(req: Request, target: User, orgId: string): boolean {
 // having to bolt an entity onto a name. A person with no address yet falls back
 // to their name.
 function subjectFor(user: User, orgName: string): string {
-  if (user.emailHandle) return `${user.emailHandle}@${INBOUND_MAIL_DOMAIN}`;
-  return `CYBills - ${user.name || orgName}`;
+  // The whole address, suffix included — the group is named after the address
+  // precisely because they are one pipe, so naming it after half of one would
+  // undo the point.
+  return addressForUser(user) || `CYBills - ${user.name || orgName}`;
 }
 
 // GET /api/whatsapp/channels — the collection groups this entity has, or (with

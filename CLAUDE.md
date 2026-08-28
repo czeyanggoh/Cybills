@@ -471,6 +471,42 @@ switches to it and reloads once with the parameter stripped — a reload rather
 than a re-render, because every store and request in flight is scoped to the old
 entity.
 
+## One mail domain, many clients
+
+Every client entity collects bills through the SAME domain — one Cloudflare
+catch-all, one Worker, one inbound endpoint — so a handle is unique across the
+whole deployment rather than inside an entity. The first Martin took `martin`
+and Red Alpha's Martin was handed `martin2`, which is an address nobody can be
+told over the phone without explaining it.
+
+**So an entity has a short form**, `emailSuffix` on the organisation record, set
+in Business settings -> Extraction -> Extract by Email: its people become
+`martin.redalpha@cybills.sg`. Handles then only have to be unique as ADDRESSES,
+which is the thing that actually must not collide — `ensureEmailHandles` and the
+roster's own check (`addressClash`) both measure the whole local part, so a name
+already spent in another client's roster is free again here.
+
+**Setting one ADDS an address, it does not swap one.** `userByEmailHandle`
+answers to the full address first and to the bare handle second, so a forwarding
+rule written before the short form existed keeps arriving. Where two entities
+both have a `martin` the bare form resolves to whichever of them has no suffix —
+the person whose address IS the bare one — and to NOBODY when neither does: the
+delivery 404s and is reported, which is the only honest answer when the address
+cannot say which of them was meant.
+
+**Two entities may not share a short form**, and a short form that would hand
+somebody an address another person already answers to is refused by name
+(`PUT /api/organisations/:id/email-suffix`, `suffix_taken` / `address_taken`).
+It is a route rather than a settings blob because that is the only place both
+checks can be made. The entity's own Business Admin sets it — it is this
+entity's name in an address, and the people who have to be told the address work
+here.
+
+The rules live in `server/src/users.ts` next to the rows they read
+(`normaliseSuffix`, `localPart`, `addressForUser`), mirrored for the browser in
+`src/lib/inboundAddress.js` so the address a page previews is the address that
+gets saved. Covered by `npm test` at the root and in `server/`.
+
 ## Bill collection over WhatsApp (with CYWorkspace)
 
 The people who hold a client's invoices are not the people who log into CYBills,

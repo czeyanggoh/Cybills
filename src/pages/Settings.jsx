@@ -34,9 +34,12 @@ import {
   getActiveOrganisationId,
   useVisibleTaxRates,
   syncXeroPayments,
+  setEmailSuffix,
+  useInvalidateOrganisations,
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 import { useInboundConfig } from '@/lib/inboundSettings';
+import { cleanSuffix, addressTail } from '@/lib/inboundAddress';
 import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig, sendTestDelivery } from '@/lib/whatsapp';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
@@ -456,12 +459,101 @@ const optionHint = (id) => {
   return hint ? ` (${hint})` : '';
 };
 
+// The entity's short form in its people's addresses: martin.redalpha@cybills.sg.
+//
+// One mail domain serves every client, so handles are unique across the whole
+// deployment: the first Martin took `martin` and Red Alpha's Martin was handed
+// `martin2`, which is an address nobody can be told over the phone without
+// explaining it. A short form gives the entity its own namespace — its people
+// get their own names back, and the address says which company it files into.
+//
+// Saved on its own button rather than as-you-type: it repoints EVERYBODY in the
+// entity at once, which is not a thing to do on a keystroke.
+function EmailSuffixRow({ organisation, domain }) {
+  const saved = cleanSuffix(organisation?.emailSuffix || '');
+  const [value, setValue] = useState(saved);
+  const [state, setState] = useState({ busy: false, error: '', done: '' });
+  const refresh = useInvalidateOrganisations();
+  useEffect(() => { setValue(cleanSuffix(organisation?.emailSuffix || '')); }, [organisation?.id, organisation?.emailSuffix]);
+  if (!organisation) return null;
+  const clean = cleanSuffix(value);
+  const dirty = clean !== saved;
+
+  const save = async () => {
+    setState({ busy: true, error: '', done: '' });
+    try {
+      const body = await setEmailSuffix(organisation.id, clean);
+      refresh();
+      const n = body?.addresses ?? 0;
+      setState({
+        busy: false,
+        error: '',
+        done: clean
+          ? `Saved. ${n} ${n === 1 ? 'address' : 'addresses'} now end in .${clean}@${domain}.`
+          : `Cleared. ${n} ${n === 1 ? 'address is' : 'addresses are'} back to the plain handle.`,
+      });
+    } catch (err) {
+      setState({ busy: false, error: err?.message || 'Could not save the short form.', done: '' });
+    }
+  };
+
+  return (
+    <Row
+      label="Short form"
+      hint="Goes after every address in this entity, so one Martin here and another at a different client can each keep their own name."
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex h-9 min-w-0 flex-1 items-center overflow-hidden rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring">
+          <span className="shrink-0 select-none border-r bg-muted/40 px-2.5 py-2 text-sm text-muted-foreground">
+            &lt;handle&gt;.
+          </span>
+          <input
+            value={value}
+            onChange={(e) => { setValue(e.target.value); setState({ busy: false, error: '', done: '' }); }}
+            spellCheck={false}
+            autoCapitalize="none"
+            autoCorrect="off"
+            placeholder="redalpha"
+            aria-label="Entity short form"
+            className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none"
+          />
+          <span className="shrink-0 select-none border-l bg-muted/40 px-2.5 py-2 text-sm text-muted-foreground">
+            @{domain}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={save}
+          disabled={!dirty || state.busy}
+          className="inline-flex h-9 shrink-0 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {state.busy ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {state.error ? (
+        <p className="mt-2 text-xs text-destructive">{state.error}</p>
+      ) : state.done ? (
+        <p className="mt-2 text-xs text-muted-foreground">{state.done}</p>
+      ) : dirty && clean ? (
+        // What it will DO, before it is done: everyone moves, and the address
+        // they have been using goes on working while nobody else wants it.
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+          Every address in this entity becomes <code>&lt;handle&gt;.{clean}@{domain}</code>. The plain
+          {' '}<code>&lt;handle&gt;@{domain}</code> keeps arriving while no other entity is using it, so forwarding rules
+          already set up are not broken.
+        </p>
+      ) : null}
+    </Row>
+  );
+}
+
 // Real "Extract by Email" config: the values to wire into the Cloudflare Email
 // Worker so `<handle>@<domain>` addresses ingest into CYBills. Per-user addresses
 // live on each user's page (Users → Manage → Edit user details).
 function ExtractByEmailCard() {
   const config = useInboundConfig();
   const { membership, googleEnabled } = useAuth();
+  const organisation = useActiveOrganisation();
   // The Worker credentials are the DEPLOYMENT's, not this entity's: that secret
   // authorises submitting documents for any handle in any client entity, so a
   // client's own admin has no business reading it. They still get the half that
@@ -470,10 +562,12 @@ function ExtractByEmailCard() {
   return (
     <Card title="Extract by Email">
       <p className="text-sm text-muted-foreground">
-        Users email or forward bills to their own <code>&lt;handle&gt;@{config?.domain || 'cybills.sg'}</code> address and
+        Users email or forward bills to their own{' '}
+        <code>&lt;handle&gt;{addressTail(organisation?.emailSuffix, config?.domain || 'cybills.sg')}</code> address and
         CYBills files them under that person. Each user&rsquo;s address is on their page (Users → Manage → Edit user
         details).
       </p>
+      <EmailSuffixRow organisation={organisation} domain={config?.domain || 'cybills.sg'} />
       {canSeeWorker ? (
         <>
           <div className="rounded-md border p-4">

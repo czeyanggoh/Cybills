@@ -14,7 +14,7 @@ import {
   spendRecovery,
 } from './totp.js';
 import { loadCollection, saveCollection } from './jsonStore.js';
-import { workspaceId } from './workspace.js';
+import { workspaceId, WORKSPACE_ID } from './workspace.js';
 import { getOrganisation, primaryOrgId, listOrganisations, dataScopeForOrg } from './organisations.js';
 import { setSession, readSession } from './auth.js';
 import { env, googleEnabled } from './env.js';
@@ -278,8 +278,67 @@ export function full(u: Partial<User>, ws: string): User {
 
 // --- Inbound email handles ---------------------------------------------------
 // The domain user addresses live on (Cloudflare-managed). Every user's inbound
-// address is `<emailHandle>@INBOUND_MAIL_DOMAIN`.
+// address is `<emailHandle>@INBOUND_MAIL_DOMAIN`, or
+// `<emailHandle>.<entity suffix>@INBOUND_MAIL_DOMAIN` where their entity has
+// set one (see normaliseSuffix).
 export const INBOUND_MAIL_DOMAIN = process.env.INBOUND_MAIL_DOMAIN || 'cybills.sg';
+
+// An entity's short form in an address: `martin.redalpha@cybills.sg`.
+//
+// There is ONE mail domain and one Worker behind it, so a handle is unique
+// across the whole deployment rather than within a client entity: the first
+// Martin took `martin` and every Martin after him was handed `martin2`. The
+// suffix gives each entity its namespace back — its people are told an address
+// that says which company it files into, and a name already spent in another
+// client's roster is free again here.
+//
+// Letters, digits and hyphens only. A dot is what separates the person from the
+// entity, so a suffix carrying one would leave the local part reading as three
+// parts with nothing to say where the split was meant to be.
+export function normaliseSuffix(raw: string): string {
+  return String(raw || '')
+    .toLowerCase()
+    .split('@')[0]
+    .replace(/[^a-z0-9-]+/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24);
+}
+
+// Which entity's suffix a person's address carries: their own, else the
+// practice's primary one — the same rule an emailed document of theirs follows
+// (inbound.ts), so a colleague on no single client is reachable at one address
+// rather than none.
+export function orgIdForUser(u: User): string {
+  return u.organisationId || primaryOrgId();
+}
+
+// The suffix in force for a person, '' when their entity has set none. `memo`
+// lets a sweep over the whole roster read each entity once — every lookup here
+// is a read of the organisations file.
+export function suffixForUser(u: User, memo?: Map<string, string>): string {
+  const ws = u.workspaceId || WORKSPACE_ID;
+  const org = orgIdForUser(u);
+  const key = `${ws}|${org}`;
+  const hit = memo?.get(key);
+  if (hit !== undefined) return hit;
+  const value = org ? normaliseSuffix(getOrganisation(ws, org)?.emailSuffix || '') : '';
+  memo?.set(key, value);
+  return value;
+}
+
+// The local part of an address: the person, then their entity.
+export function localPart(handle: string, suffix: string): string {
+  const h = String(handle || '').toLowerCase();
+  const s = normaliseSuffix(suffix);
+  return h && s ? `${h}.${s}` : h;
+}
+
+// This person's inbound address, exactly as it should be printed for them.
+export function addressForUser(u: User, memo?: Map<string, string>): string {
+  const local = localPart(u.emailHandle || '', suffixForUser(u, memo));
+  return local ? `${local}@${INBOUND_MAIL_DOMAIN}` : '';
+}
 
 // A friendly, unique-per-workspace handle base from the person's name (falling
 // back to their email local-part). "Yakson Ong" -> "yakson"; collisions get a
@@ -291,20 +350,28 @@ function handleBase(u: Partial<User>): string {
 }
 
 // Assign a handle to every real (non-general, non-removed) user in `ws` that
-// lacks one, unique across the workspace. Returns true if anything changed.
+// lacks one. Returns true if anything changed.
+//
+// Uniqueness is measured on the whole ADDRESS, not the handle: what must not
+// collide is what mail is delivered to. So a second Martin in an entity that
+// has set a suffix keeps his own name — `martin.redalpha` is nobody else's
+// address — and only a genuine clash gets the numeric suffix it always did.
 function ensureEmailHandles(items: User[], ws: string): boolean {
+  const memo = new Map<string, string>();
+  const mine = items.filter((u) => u.workspaceId === ws);
   const taken = new Set(
-    items.filter((u) => u.workspaceId === ws && u.emailHandle).map((u) => String(u.emailHandle).toLowerCase())
+    mine.filter((u) => u.emailHandle).map((u) => localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)))
   );
   let changed = false;
-  for (const u of items) {
-    if (u.workspaceId !== ws || u.removed || u.general || u.emailHandle) continue;
+  for (const u of mine) {
+    if (u.removed || u.general || u.emailHandle) continue;
+    const suffix = suffixForUser(u, memo);
     const base = handleBase(u);
     let handle = base;
     let n = 1;
-    while (taken.has(handle)) { n += 1; handle = `${base}${n}`; }
+    while (taken.has(localPart(handle, suffix))) { n += 1; handle = `${base}${n}`; }
     u.emailHandle = handle;
-    taken.add(handle);
+    taken.add(localPart(handle, suffix));
     changed = true;
   }
   return changed;
@@ -325,12 +392,51 @@ export function normaliseHandle(raw: string): string {
     .slice(0, 64);
 }
 
-// Resolve an inbound address' local-part (handle) to its user, ignoring any
-// `+suffix` and case. Workspace-wide (the inbound mailbox is one for all).
+// Resolve an inbound address' local-part to its user, ignoring any `+tag` and
+// case. Deployment-wide (the inbound mailbox is one for all).
+//
+// Two spellings answer, in this order:
+//   1. The FULL address — `martin.redalpha`, the one their entity's suffix
+//      makes and the one their page prints for them.
+//   2. The bare handle — `martin`. Setting a suffix therefore ADDS an address
+//      rather than swapping one, so a forwarding rule written before it was set
+//      keeps arriving. Where two entities both have a Martin it resolves to the
+//      one whose address IS the bare form (an entity with no suffix); with no
+//      such person, and more than one candidate, it resolves to NOBODY — the
+//      delivery 404s and is reported, which is the only honest answer when the
+//      address does not say which of them was meant.
 export function userByEmailHandle(handle: string): User | null {
-  const h = String(handle || '').split('+')[0].trim().toLowerCase();
-  if (!h) return null;
-  return load().find((u) => !u.removed && !u.general && String(u.emailHandle || '').toLowerCase() === h) || null;
+  const want = String(handle || '').split('+')[0].trim().toLowerCase();
+  if (!want) return null;
+  const memo = new Map<string, string>();
+  const real = load().filter((u) => !u.removed && !u.general && u.emailHandle);
+  const exact = real.filter((u) => localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)) === want);
+  if (exact.length) return exact.length === 1 ? exact[0] : null;
+  const bare = real.filter((u) => String(u.emailHandle).toLowerCase() === want);
+  if (bare.length === 1) return bare[0];
+  const plain = bare.filter((u) => !suffixForUser(u, memo));
+  return plain.length === 1 ? plain[0] : null;
+}
+
+// Who else already answers to the address `handle` would give this person —
+// null when nobody does. Compared as ADDRESSES: two entities may each have a
+// `martin` once their suffixes differ, which is the point of having them, but
+// one address reaching two people means every bill forwarded to it files under
+// whichever row is found first, silently and for good.
+export function addressClash(target: User, handle: string): User | null {
+  const memo = new Map<string, string>();
+  const want = localPart(normaliseHandle(handle), suffixForUser(target, memo));
+  if (!want) return null;
+  return (
+    load().find(
+      (u) =>
+        u.id !== target.id &&
+        !u.removed &&
+        !u.general &&
+        u.emailHandle &&
+        localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)) === want
+    ) || null
+  );
 }
 
 // Store / clear the Gmail forwarding confirmation CYBills is holding for a user.
@@ -2008,9 +2114,15 @@ usersRouter.patch('/:id', (req, res) => {
   if ('emailHandle' in filtered) {
     const handle = normaliseHandle(String(filtered.emailHandle ?? ''));
     if (!handle) return res.status(400).json({ error: 'invalid_handle' });
-    const owner = userByEmailHandle(handle);
-    if (owner && owner.id !== req.params.id) {
-      return res.status(409).json({ error: 'handle_taken', handle, takenBy: owner.name || owner.email });
+    const target = load().find((u) => u.id === req.params.id && !u.removed);
+    const owner = target ? addressClash(target, handle) : null;
+    if (owner) {
+      return res.status(409).json({
+        error: 'handle_taken',
+        handle,
+        address: addressForUser({ ...target!, emailHandle: handle }),
+        takenBy: owner.name || owner.email,
+      });
     }
     filtered.emailHandle = handle;
   }

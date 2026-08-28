@@ -210,6 +210,33 @@ export async function createOrganisation({ name, tenantId, tenantName, kind, par
   return body.organisation;
 }
 
+// The short form this entity's inbound addresses carry
+// (`martin.redalpha@cybills.sg`). '' clears it, putting its people back on the
+// bare handle. The server has the last word on what is usable and on whether
+// another client already holds it — its reasons are carried through on `code`,
+// so the card can name the entity or the person in the way rather than showing
+// a status number.
+export async function setEmailSuffix(id, suffix) {
+  const res = await fetch(`/api/organisations/${id}/email-suffix`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ suffix }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const said = {
+      invalid_suffix: 'Use letters and numbers, optionally separated by hyphens.',
+      suffix_taken: `“${body.takenBy || 'Another entity'}” already uses that short form.`,
+      address_taken: `${body.address || 'That address'} is already used by ${body.takenBy || 'someone else'}.`,
+      not_an_admin: 'Only an admin of this entity can change its short form.',
+    }[body.error];
+    const err = /** @type {any} */ (new Error(said || body.message || 'Could not save the short form.'));
+    err.code = body.error;
+    throw err;
+  }
+  return body;
+}
+
 export async function deleteOrganisation(id) {
   const res = await fetch(`/api/organisations/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('delete_failed');
