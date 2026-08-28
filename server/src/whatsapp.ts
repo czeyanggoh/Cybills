@@ -1420,6 +1420,17 @@ whatsappRouter.get('/threads/:submissionId', (req, res) => {
           || (person ? person.user.name || person.user.email : '')
           || (mobileOf(m.sender) ? `+${mobileOf(m.sender)}` : '')
           || 'Unknown',
+      // The number to reply on, and the id to trace by — separate fields
+      // because they are separate things. WhatsApp increasingly identifies a
+      // sender only by a LID, which is not a number and cannot be turned into
+      // one; the number then comes from the roster row of the person the group
+      // was opened for, which is the number somebody would actually message.
+      senderNumber: m.direction === 'out'
+        ? ''
+        : (mobileOf(m.sender) ? `+${mobileOf(m.sender)}` : (person ? normaliseMobile(person.user.mobile || '') && `+${normaliseMobile(person.user.mobile || '')}` : '')) || '',
+      // Shown as-is so a message can always be traced back to a sender, even
+      // when all WhatsApp gave us was an opaque id.
+      senderId: m.direction === 'out' ? '' : String(m.sender || ''),
     })),
     canManage: mayManage(req, channel.orgId),
   });

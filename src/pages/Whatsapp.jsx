@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, FileText, Info, Loader2, MessageCircle, Search, Sparkles, Tag } from 'lucide-react';
+import { ChevronLeft, Download, FileText, Info, Loader2, MessageCircle, Search, Sparkles, Tag, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { cn } from '@/lib/utils';
 import { useActiveOrganisation } from '@/lib/organisations';
@@ -138,6 +138,10 @@ function Thread({ submissionId }) {
   const [{ channel, messages, canManage, loading, error }, reload] = useWhatsappThread(submissionId);
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
+  // The attachment being looked at, or null. In-window rather than a new tab:
+  // reading a bill is part of deciding what it is, and losing the thread behind
+  // a browser tab to check a total is the wrong shape for that.
+  const [preview, setPreview] = useState(null);
 
   async function run(id, fn) {
     setBusy(id);
@@ -198,6 +202,7 @@ function Thread({ submissionId }) {
               m={m}
               canManage={canManage}
               busy={busy === m.id}
+              onPreview={() => setPreview(m)}
               onCorrect={(cat) => run(m.id, async () => { await setMessageCategory(m.id, cat); })}
               onFile={() => run(m.id, async () => {
                 const out = await fileMessageAsCost(m.id);
@@ -207,21 +212,84 @@ function Thread({ submissionId }) {
           ))}
         </div>
       </div>
+
+      {preview && <AttachmentPreview m={preview} onClose={() => setPreview(null)} />}
     </AppShell>
   );
 }
 
-function MessageBubble({ m, canManage, busy, onCorrect, onFile }) {
+// The attachment, in the window. Same shape as the receipt lightbox elsewhere
+// in CYBills — an iframe for a PDF, an img for a picture — over the thread
+// rather than in a tab of its own.
+function AttachmentPreview({ m, onClose }) {
+  const isPdf = (m.contentType || '').includes('pdf');
+  const isImage = (m.contentType || '').startsWith('image/');
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-foreground/50" onClick={onClose} aria-hidden="true" />
+      <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg bg-background shadow-xl">
+        <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b px-4">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{m.fileName || 'Document'}</span>
+          <div className="flex shrink-0 items-center gap-3">
+            {m.fileUrl && (
+              <a href={m.fileUrl} download className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                <Download className="h-3.5 w-3.5" /> Download
+              </a>
+            )}
+            <button type="button" onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto bg-muted/30">
+          {!m.fileUrl ? (
+            <p className="p-12 text-center text-sm text-muted-foreground">
+              This attachment has no readable link — it was mirrored without one.
+            </p>
+          ) : isImage ? (
+            <img src={m.fileUrl} alt={m.fileName || 'attachment'} className="mx-auto max-h-[74vh] w-full object-contain" />
+          ) : isPdf ? (
+            <iframe src={m.fileUrl} title={m.fileName || 'Document'} className="h-[74vh] w-full" />
+          ) : (
+            // Neither renders in a frame reliably (a .docx, a .xlsx, an audio
+            // note), so say so and offer the file rather than showing a blank
+            // grey rectangle that looks like a broken viewer.
+            <div className="p-12 text-center text-sm text-muted-foreground">
+              <p>This file type can&rsquo;t be previewed here.</p>
+              <a href={m.fileUrl} download className="mt-2 inline-flex items-center gap-1 text-blue-600 hover:underline">
+                <Download className="h-3.5 w-3.5" /> Download {m.fileName || 'the file'}
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({ m, canManage, busy, onCorrect, onFile, onPreview }) {
   const isOut = m.direction === 'out';
   const hasFile = Boolean(m.r2Key || m.fileUrl);
   return (
     <div className={cn('flex', isOut ? 'justify-end' : 'justify-start')}>
       <div className={cn('max-w-[70%] rounded-lg px-3 py-2 text-sm shadow-sm', isOut ? 'bg-green-100 text-gray-900' : 'bg-white text-gray-900')}>
         {!isOut && m.senderLabel && (
-          <p className="mb-0.5 text-[11px] font-semibold text-green-700">{m.senderLabel}</p>
+          <p className="mb-0.5 text-[11px] font-semibold text-green-700">
+            {m.senderLabel}
+            {m.senderNumber && <span className="font-normal"> · {m.senderNumber}</span>}
+            {/* The raw WhatsApp id. Kept visible, and kept OUT of the number:
+                a LID is 15 digits and reads as a mobile if you let it, but it
+                is still the only handle on a sender WhatsApp will not name, so
+                a document can be traced back to whoever sent it. */}
+            {m.senderId && (
+              <span className="ml-1 font-normal text-gray-400" title={m.senderId}>
+                {/@lid$/i.test(m.senderId) ? `(LID ${m.senderId.split('@')[0]})` : ''}
+              </span>
+            )}
+          </p>
         )}
 
-        {hasFile && <Attachment m={m} />}
+        {hasFile && <Attachment m={m} onPreview={onPreview} />}
 
         {m.body && <p className="whitespace-pre-wrap break-words">{m.body}</p>}
         {m.translation && m.translation !== m.body && (
@@ -286,25 +354,24 @@ function MessageBubble({ m, canManage, busy, onCorrect, onFile }) {
 }
 
 // Image inline, PDF as the red card, anything else as a plain file row — the
-// same three shapes the CYBot inbox uses.
-function Attachment({ m }) {
+// same three shapes the CYBot inbox uses. All three open the in-window preview.
+function Attachment({ m, onPreview }) {
   const href = m.fileUrl || undefined;
   const type = m.contentType || '';
 
   if (type.startsWith('image/')) {
     return (
-      <a href={href} target="_blank" rel="noreferrer" className="mb-1.5 block">
+      <button type="button" onClick={onPreview} className="mb-1.5 block">
         <img src={href} alt={m.fileName || 'image'} className="max-h-56 max-w-full rounded-md object-cover" />
-      </a>
+      </button>
     );
   }
 
   if (type === 'application/pdf') {
     return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
+      <button
+        type="button"
+        onClick={onPreview}
         className="mb-1.5 flex w-full items-center gap-2.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2.5 text-left transition-colors hover:bg-gray-100"
       >
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-red-100">
@@ -314,19 +381,18 @@ function Attachment({ m }) {
           <p className="truncate text-xs text-gray-700">{m.fileName || 'Document'}</p>
           <p className="text-[10px] text-gray-400">PDF · tap to view</p>
         </div>
-      </a>
+      </button>
     );
   }
 
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="mb-1.5 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 transition-colors hover:bg-gray-100"
+    <button
+      type="button"
+      onClick={onPreview}
+      className="mb-1.5 flex w-full items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-left transition-colors hover:bg-gray-100"
     >
       <FileText className="h-4 w-4 shrink-0 text-gray-400" />
       <span className="truncate text-xs text-gray-700">{m.fileName || m.msgType}</span>
-    </a>
+    </button>
   );
 }
