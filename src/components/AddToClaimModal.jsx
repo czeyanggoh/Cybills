@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
-import { useClaims } from '@/lib/claimStore';
+import { useClaims, isClaimArchived, formatClaimDate } from '@/lib/claimStore';
 import { useClaimantNames } from '@/lib/userStore';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 import SearchSelect from '@/components/SearchSelect';
@@ -12,7 +12,13 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
   const [mode, setMode] = useState('existing');
   const [claim, setClaim] = useState('');
   const [newClaim, setNewClaim] = useState({ claimFor: '', name: '', endDate: '' });
-  const claims = useClaims();
+  const allClaims = useClaims();
+  // Only the claims an item can actually go onto. The dropdown offered every
+  // claim ever made — six entries where the Expense claims page showed two —
+  // including ones already published to Xero, where a line added here would
+  // never reach the ledger, and approved ones, which the server refuses outright
+  // (409 claim_locked). Offering those is offering a dead end.
+  const claims = allClaims.filter((c) => !isClaimArchived(c) && c.approvalStatus !== 'approved');
   // A colleague can be claimed for in the practice's OWN entity — that is where
   // their own expenses belong — and nowhere else.
   const { data: organisations = [] } = useOrganisations();
@@ -71,9 +77,17 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
                   onChange={(e) => setClaim(e.target.value)}
                   className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <option value="">Select a claim</option>
+                  <option value="">{claims.length ? 'Select a claim' : 'No open claims — make a new one'}</option>
+                  {/* Named, then told apart. Three claims called "Expense claim"
+                      for the same person are indistinguishable on name alone,
+                      so the total — and the date where there is one — comes
+                      along to say which is which. */}
                   {claims.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name} · {c.claimFor}</option>
+                    <option key={c.id} value={c.id}>
+                      {[c.name, c.claimFor, c.endDate ? formatClaimDate(c.endDate) : '', `${c.currency || 'SGD'} ${c.total}`]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </option>
                   ))}
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
