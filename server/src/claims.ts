@@ -532,6 +532,10 @@ claimsRouter.post('/:id/items/remove', (req, res) =>
     claim.transactions = claim.transactions.filter((t) => !ids.has(String(t.itemId)));
     const removed = before - claim.transactions.length;
     if (removed) {
+      // The documents come off the claim too. Without this they kept the
+      // 'expenseclaim' status with no claim to belong to — invisible in the
+      // inbox, invisible in Archive, and unclaimable by anybody else.
+      unmarkBillsClaimed([...ids].map(String));
       claim.history.unshift({ text: `${removed} item(s) removed from the expense claim`, by: me.name, at: nowIso() });
       noteChangeAfterSubmit(req, claim, me.name, `${removed} item(s) removed`);
     }
@@ -825,8 +829,8 @@ claimsRouter.post('/:id/archive', (req, res) =>
 claimsRouter.delete('/:id', (req, res) =>
   mutate(req, res, (claim) => {
     claim.deleted = true;
-    // Return the claim's items to the Costs inbox so they aren't stranded in the
-    // 'expenseclaim' state with no claim to belong to.
+    // Take the claim's items off it, so they aren't stranded in the
+    // 'expenseclaim' state with no claim to belong to. They go to Archive.
     unmarkBillsClaimed(claim.transactions.map((t) => String(t.itemId)));
   })
 );

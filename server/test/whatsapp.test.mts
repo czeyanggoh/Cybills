@@ -347,6 +347,31 @@ r = await post(
 check('a file link that is not CYWS is not followed', r.status, 502);
 check('and nothing was fetched', fileFetches, 2);
 
+// --- Whose bill is it -----------------------------------------------------
+// WhatsApp increasingly puts a LID in the sender field — the opaque per-user id
+// it uses so a group doesn't leak everyone's number — and matched against a
+// roster of phone numbers that is a stranger. A group opened for ONE person
+// settles the question without having to ask WhatsApp at all.
+{
+  const personGroup = channelById(personChannel.channels[0].submissionId)!;
+  r = await post(
+    'invoice',
+    {
+      ...invoice,
+      submission_id: personGroup.id,
+      message_id: 'clx8f2lid',
+      // Not a phone number. Nothing on the roster will ever match it.
+      sender: '217630539546875@lid',
+      sender_name: 'Astrid',
+    },
+    { 'X-API-Key': 'inbound-key' }
+  );
+  check('a bill from an unrecognisable sender is still accepted', r.status, 200);
+  const filedByLid = listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2lid')!;
+  // Theirs, because the group is theirs — not the General account.
+  check('and belongs to the person the group was opened for', filedByLid.owner, 'astridy2004@gmail.com');
+}
+
 // --- Testing it without CYWorkspace -------------------------------------------
 // Until CYWS is wired up there is no way to find out whether THIS side works.
 // The self-test posts to the real endpoint with the real key naming a real

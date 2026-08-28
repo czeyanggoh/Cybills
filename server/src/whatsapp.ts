@@ -475,15 +475,31 @@ async function fetchDocument(
 // utility bill — it lands on the entity's GENERAL account, which exists for
 // exactly this: the documents nobody claimed. Never on whoever opened the
 // group, which would put their name on work they did not do.
-function ownerFor(ws: string, orgId: string, senderWaId: string): string {
+function ownerFor(ws: string, channel: WaChannel, senderWaId: string): string {
+  // A group opened for ONE person is a conversation with that person, and that
+  // is the ordinary case. Whose it is was settled when the group was made, so
+  // it does not have to be worked out again from whatever WhatsApp puts in the
+  // sender field — which is increasingly not a phone number at all but a LID,
+  // the opaque per-user id it uses so a group doesn't leak everyone's number.
+  // Matched against a roster of phone numbers, a LID is a stranger, and every
+  // bill the person sent landed on the entity's General account.
+  if (channel.userId) {
+    const person = ensureUsers(ws).find((u: User) => u.id === channel.userId && !u.removed);
+    if (person?.email) return person.email;
+  }
+  // The entity-wide group has several people in it, so who sent it is a real
+  // question: the number, matched against the Mobile on the roster.
   const sender = mobileOf(senderWaId);
   if (sender) {
     const match = ensureUsers(ws).find(
-      (u: User) => !u.removed && !u.deactivated && normaliseMobile(u.mobile) === sender && canAccessOrg(u, orgId)
+      (u: User) =>
+        !u.removed && !u.deactivated && normaliseMobile(u.mobile) === sender && canAccessOrg(u, channel.orgId)
     );
     if (match?.email) return match.email;
   }
-  return generalUserFor(ws, orgId)?.email ?? '';
+  // Nobody we hold a number for: the entity's General account, which is what it
+  // is for. Never the person who created the group.
+  return generalUserFor(ws, channel.orgId)?.email ?? '';
 }
 
 // --- Already seen? ------------------------------------------------------------
@@ -959,7 +975,7 @@ whatsappRouter.post('/invoice', async (req, res) => {
 
   const fileHash = createHash('sha256').update(file.bytes).digest('hex');
   const sentAt = String(b.sent_at ?? '');
-  const owner = ownerFor(ws, orgId, String(b.sender ?? ''));
+  const owner = ownerFor(ws, channel, String(b.sender ?? ''));
   // What the sender typed when they attached the file. This is the covering
   // note — "recharge this to CY-Biz" — and it is kept on the document so a
   // RE-READ sees it too: read once with it and again without, and the second

@@ -838,10 +838,16 @@ export function markBillsClaimed(ids: string[]): number {
   return n;
 }
 
-// Inverse of markBillsClaimed: return the given bills from a claim back to the
-// Costs inbox (→ 'new', then auto-promoted to 'ready' if they're complete). Used
-// when a claim is deleted so its items aren't orphaned in the 'expenseclaim'
-// state with no claim to belong to.
+// Inverse of markBillsClaimed: take the given bills off a claim.
+//
+// They go to ARCHIVE, not back to the inbox. Taking a receipt off a claim is a
+// decision that it doesn't belong there — putting it back at the top of the
+// inbox makes it look like new work every time, and the reviewer has to deal
+// with it again to make it go away. Archive keeps it, out of the way, one click
+// from being brought back.
+//
+// Never deleted: the claim is not a bin, and the document may well be somebody
+// else's to claim, or belong on a different claim next month.
 export function unmarkBillsClaimed(ids: string[]): number {
   const wanted = new Set(ids.map(String));
   if (!wanted.size) return 0;
@@ -849,8 +855,7 @@ export function unmarkBillsClaimed(ids: string[]): number {
   let n = 0;
   for (const bill of bills) {
     if (!wanted.has(bill.id) || bill.status !== 'expenseclaim') continue;
-    bill.status = 'new';
-    applyAutoReady(bill);
+    bill.status = 'archived';
     n += 1;
   }
   if (n) persist(bills);

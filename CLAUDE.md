@@ -342,6 +342,14 @@ Beyond archive/claim/merge, the toolbar carries **Bulk edit**
 covers both cases: the ticked rows when anything is ticked, otherwise everything
 the tab shows.
 
+**A document taken off a claim goes to ARCHIVE**, not back to the inbox. Coming
+off a claim is a decision that it doesn't belong there; putting it back at the
+top of the inbox makes it look like new work every time, and the reviewer has to
+deal with it again to make it go away. Never deleted — it may be somebody else's
+to claim, or belong on next month's. Removing an ITEM does this too now: it
+previously left the document on `expenseclaim` with no claim to belong to, which
+made it invisible in the inbox, in Archive, and to anybody else's claim.
+
 Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
 field, set on the document or across a selection in Bulk edit; readiness is
 derived, so a "Move to ready" button could only ever agree with the server or
@@ -542,9 +550,15 @@ document that already exists; a non-2xx would leave it undelivered and invite a
 third send. The reply goes out as soon as the document is durably stored, because
 a model call takes 10-30s and CYWS gives up at 30.
 
-**Who owns it** is the sender's number matched against the roster's Mobile
-field, in any spelling; failing that, the entity's GENERAL account, which is what
-it is for. Never the person who created the group.
+**Who owns it is settled by the GROUP, not the sender field.** A group opened
+for one person is a conversation with that person, and that was decided when it
+was made — so it is not worked out again from whatever WhatsApp puts in
+`sender`, which is increasingly a LID rather than a number. Matched against a
+roster of phone numbers a LID is a stranger, and every bill she sent landed on
+the General account. The entity-wide group genuinely has several people in it,
+so there the sender's number is matched against the roster's Mobile field, in
+any spelling; failing that, the entity's GENERAL account, which is what it is
+for. Never the person who created the group.
 
 Env (server/.env): `CYWORKSPACE_API_KEY` (the same key the Xero relay uses —
 creating groups switches on with it), `CYWORKSPACE_PUBLIC_URL` (the only host a
