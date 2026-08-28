@@ -1031,6 +1031,13 @@ export type WaMirroredMessage = {
 // NOT 'whatsapp-messages' — that name belongs to the delivery dedup ledger
 // (SEEN, above), and sharing it would have the two overwrite each other's file.
 const MIRRORED = 'whatsapp-thread';
+
+// What the reader can call an attachment that makes it a COST. Both are records
+// of money spent — an invoice that bills the business, and proof a purchase was
+// already paid — so both are filed on arrival. Everything else it can say (a
+// bank statement, a sales invoice, a photo of a cat) is kept in the thread and
+// filed by nobody unless a person says otherwise.
+const FILEABLE = new Set(['supplier_bill', 'receipt']);
 const loadMessages = () => loadCollection<WaMirroredMessage>(MIRRORED);
 const saveMessages = (items: WaMirroredMessage[]) => saveCollection(MIRRORED, items);
 
@@ -1261,15 +1268,79 @@ whatsappRouter.post('/message', async (req, res) => {
     billDisplayId: existing?.billDisplayId || '',
   };
 
-  if (existing) Object.assign(existing, row);
-  else items.push(row);
+  // Work with the row that is actually IN the collection from here on. When a
+  // message is being revised, `row` is a detached copy that gets assigned into
+  // `existing` — so stamping the filed bill onto `row` wrote it nowhere, and
+  // the document was filed while the thread went on showing it as unfiled with
+  // a button to file it again.
+  let stored: WaMirroredMessage;
+  if (existing) {
+    Object.assign(existing, row);
+    stored = existing;
+  } else {
+    items.push(row);
+    stored = row;
+  }
   saveMessages(items);
 
   // The group's own "last heard from" follows the conversation, not just the
   // documents — a group that is busy but files nothing is not a quiet group.
-  if (!existing) patchChannel(submissionId, { lastMessageAt: row.sentAt });
+  if (!existing) patchChannel(submissionId, { lastMessageAt: stored.sentAt });
 
-  return res.json({ ok: true, updated: Boolean(existing) });
+  // If the reader says this is a cost, file it now. One post per message
+  // carries both the conversation and the verdict, and this is where the
+  // verdict is acted on — so a bill is never posted twice (once to be filed and
+  // once to be shown), which is what left it sitting in the thread with an
+  // "Add to Costs" button that would have made a second copy of a document
+  // already in the inbox.
+  //
+  // Guarded three ways because the classification arrives on a RE-SEND, so this
+  // path runs again for a message already handled: not already filed here, not
+  // already delivered under this id, and there has to be a file at all.
+  if (!stored.billId && FILEABLE.has(stored.docCategory) && (stored.r2Key || stored.fileUrl) && !seenMessage(stored.id)) {
+    const filed = await fileWhatsappDocument(req, channel, {
+      chat_id: stored.chatId,
+      chat_subject: channel.subject,
+      message_id: stored.id,
+      wa_message_id: stored.id,
+      r2_key: stored.r2Key,
+      file_url: stored.fileUrl,
+      file_name: stored.fileName,
+      content_type: stored.contentType,
+      body: stored.body,
+      sender: stored.sender,
+      sender_name: stored.senderName,
+      sent_at: stored.sentAt,
+    });
+    if (filed.ok) {
+      stored.billId = filed.bill.id;
+      stored.billDisplayId = filed.bill.displayId;
+      saveMessages(items);
+      rememberMessage({ id: stored.id, billId: filed.bill.id, submissionId, at: new Date().toISOString() });
+      recordDelivery({
+        submissionId,
+        messageId: stored.id,
+        outcome: 'filed',
+        detail: (stored.fileName || 'document') + ' -> ' + filed.bill.displayId + ' (' + stored.docCategory + ')',
+      });
+      // Answer before the read, same as /invoice: a model call takes 10-30s and
+      // CYWS gives up at 30.
+      res.json({ ok: true, updated: Boolean(existing), filed: true, bill_id: filed.bill.id, item_id: filed.bill.displayId });
+      filed.finishRead();
+      return;
+    }
+    recordDelivery({
+      submissionId,
+      messageId: stored.id,
+      outcome: 'file_unavailable',
+      detail: stored.r2Key || stored.fileName || '',
+    });
+    // The message is still mirrored — losing the conversation because the file
+    // could not be read would be worse — and the tab's own button can retry.
+    return res.json({ ok: true, updated: Boolean(existing), filed: false, error: 'file_unavailable' });
+  }
+
+  return res.json({ ok: true, updated: Boolean(existing), filed: false });
 });
 
 // GET /api/whatsapp/threads — the collection groups of the entity in the header,

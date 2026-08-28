@@ -566,11 +566,16 @@ because CYWS sends each one twice by design — once on arrival so the thread is
 live, once more when its classifier has decided what an attachment is. A
 category **set in CYBills is marked `manual` and never overwritten** by a later
 re-send; the model guessed from a photo, the reviewer opened the document, and a
-correction that gets quietly reverted is worse than no correction. And
-**mirroring is not filing**: a message becomes a cost document only via
-`/invoice` or the tab's **Add to Costs**, both of which go through the one
-`fileWhatsappDocument` builder, so a document filed by hand is identical to one
-CYWS handed over. Its collection is `whatsapp-thread` — deliberately NOT
+correction that gets quietly reverted is worse than no correction. And **the classification is what
+files it**: `supplier_bill` or `receipt` becomes a cost document on the send
+that carries that verdict, everything else stays in the thread until a person
+says otherwise. That is why it is ONE post per message — CYWS briefly also
+called `/invoice` for those two, which posted the same bill twice, filed by one
+call and shown as unfiled by the other with a button that would have made a
+second copy. Auto-filing, `/invoice` and the tab's **Add to Costs** all go
+through the one `fileWhatsappDocument` builder and share the `message_id`
+ledger, so a document is identical however it got there and can only be filed
+once. Its collection is `whatsapp-thread` — deliberately NOT
 `whatsapp-messages`, which is the delivery dedup ledger. Covered by `npm test`.
 
 This REPLACED a first version of the tab that derived the conversation from the

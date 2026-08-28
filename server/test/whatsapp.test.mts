@@ -490,8 +490,26 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   }, KEY);
   check('so is an attachment the classifier dismissed', r.status, 200);
 
+  // The verdict arrives on a re-send, and acting on it is what makes ONE post
+  // per message enough: the bill is filed here, not by a second call that would
+  // leave the thread showing it as unfiled with a button to file it again.
   r = await post('message', { ...base, wa_message_id: 'MSG-photo', msg_type: 'image', doc_category: 'receipt', r2_key: 'whatsapp/zz99.jpg', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=zz99&ct=jpg&s=sig' }, KEY);
   check('a re-send revises rather than duplicates', r.body.updated, true);
+  check('and a receipt is filed on the spot', r.body.filed, true);
+  const autoBill = r.body.bill_id;
+  check('with a document to show for it', Boolean(r.body.item_id), true);
+
+  // ...and saying so again does not file it twice.
+  r = await post('message', { ...base, wa_message_id: 'MSG-photo', msg_type: 'image', doc_category: 'receipt', r2_key: 'whatsapp/zz99.jpg', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=zz99&ct=jpg&s=sig' }, KEY);
+  check('a repeat of the same verdict files nothing new', r.body.filed, false);
+
+  // A bank statement is a document, not a cost. It stays in the thread.
+  r = await post('message', {
+    ...base, wa_message_id: 'MSG-stmt', msg_type: 'document', doc_category: 'bank_statement',
+    r2_key: 'whatsapp/stmt.pdf', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=stmt&ct=pdf&s=sig',
+    file_name: 'statement.pdf', content_type: 'application/pdf',
+  }, KEY);
+  check('a bank statement is kept but not filed', [r.status, r.body.filed], [200, false]);
 
   r = await post('message', { ...base, wa_message_id: 'MSG-x' }, { 'X-API-Key': 'wrong' });
   check('the mirror needs the key', r.status, 401);
@@ -501,7 +519,7 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   // The thread as the tab reads it.
   let t = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
   check('the thread reads back', t.status, 200);
-  check('with both messages, oldest first', t.body.messages.map((m: any) => m.id), ['MSG-text', 'MSG-photo']);
+  check('every message is there, oldest first', t.body.messages.map((m: any) => m.id), ['MSG-text', 'MSG-photo', 'MSG-stmt']);
   check('the classifier is credited for its guess', t.body.messages[1].categorySource, 'cyws');
   check('and text messages carry no category', t.body.messages[0].docCategory, '');
 
@@ -520,27 +538,28 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   check('and the LID is never shown as the sender', lid.senderLabel.includes('127676509610071'), false);
 
   const index = await get('threads', { 'X-Org-Id': 'org_one0001' });
-  check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 3);
-  check('and what is sitting there unfiled', index.body.threads.find((x: any) => x.submissionId === submissionId)?.unfiled, 1);
+  check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 4);
+  check('and what is sitting there unfiled — the statement, not the filed receipt', index.body.threads.find((x: any) => x.submissionId === submissionId)?.unfiled, 1);
 
   // A reviewer disagrees with the model. Theirs is the answer that sticks —
   // including against CYWS's next re-send, or correcting it would be pointless.
-  r = await patch('messages/MSG-photo', { doc_category: 'supplier_bill' });
+  r = await patch('messages/MSG-stmt', { doc_category: 'supplier_bill' });
   check('a reviewer can correct the classification', r.status, 200);
   check('and it is marked as theirs', r.body.message.categorySource, 'manual');
 
-  r = await post('message', { ...base, wa_message_id: 'MSG-photo', msg_type: 'image', doc_category: 'not_a_document', r2_key: 'whatsapp/zz99.jpg', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=zz99&ct=jpg&s=sig' }, KEY);
+  r = await post('message', { ...base, wa_message_id: 'MSG-stmt', msg_type: 'document', doc_category: 'bank_statement', r2_key: 'whatsapp/stmt.pdf', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=stmt&ct=pdf&s=sig' }, KEY);
   t = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
-  const photo = t.body.messages.find((m: any) => m.id === 'MSG-photo');
-  check('which CYWS cannot then overwrite', photo.docCategory, 'supplier_bill');
+  const stmt = t.body.messages.find((m: any) => m.id === 'MSG-stmt');
+  check('which CYWS cannot then overwrite', stmt.docCategory, 'supplier_bill');
 
-  // And then filed by hand — the document the classifier never sent.
-  r = await post('messages/MSG-photo/file', {}, { 'X-Org-Id': 'org_one0001' });
+  // And then filed by hand — the document the classifier would never have sent.
+  r = await post('messages/MSG-stmt/file', {}, { 'X-Org-Id': 'org_one0001' });
   check('it can be filed as a cost document', r.status, 200);
   check('and comes back with the document', Boolean(r.body.item_id), true);
   const billId = r.body.bill_id;
+  check('the auto-filed one is a different document', billId === autoBill, false);
 
-  r = await post('messages/MSG-photo/file', {}, { 'X-Org-Id': 'org_one0001' });
+  r = await post('messages/MSG-stmt/file', {}, { 'X-Org-Id': 'org_one0001' });
   check('filing twice says so instead of making a second', [r.body.already, r.body.bill_id], [true, billId]);
 
   r = await post('messages/MSG-text/file', {}, { 'X-Org-Id': 'org_one0001' });

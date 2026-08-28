@@ -191,10 +191,17 @@ POST https://cybills.cy-bm.sg/api/whatsapp/message   (X-API-Key, same key)
 - **A correction made in CYBills wins.** Once a reviewer sets the category on
   the WhatsApp tab it is marked `manual`, and a later CYWS re-send leaves it
   alone — otherwise correcting it would be pointless.
-- **Mirroring is not filing.** A mirrored message is the record of what was
-  said; it becomes a cost document only when CYWS hands it over as a bill or a
-  receipt (`/invoice`), or when somebody presses **Add to Costs** on the tab.
-  Both go through one builder, so what lands is the same document either way.
+- **The classification is what files it.** A message whose `doc_category` is
+  `supplier_bill` or `receipt` is filed as a cost document by this endpoint, on
+  the send that carries the verdict. Everything else — a bank statement, a sales
+  invoice, a photo — stays in the thread and is filed by nobody unless a person
+  says otherwise. **One post per message**: CYWS must NOT also call `/invoice`
+  for those two, or the bill is posted twice, filed by one call and shown as
+  unfiled by the other with a button that makes a second copy.
+- **`/invoice` remains** for the self-test and as the older contract, deduped on
+  `message_id` against the same ledger, so the two can never both file one
+  document. Both go through one builder, as does the tab's **Add to Costs**, so
+  what lands is the same document however it got there.
 
 The tab itself is **WhatsApp** in the left rail, below Costs and Sales: every
 group for the entity, its unfiled-attachment count, and the thread. Reading it
