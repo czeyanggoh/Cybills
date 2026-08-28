@@ -273,19 +273,13 @@ function MessageBubble({ m, canManage, busy, onCorrect, onFile, onPreview }) {
   return (
     <div className={cn('flex', isOut ? 'justify-end' : 'justify-start')}>
       <div className={cn('max-w-[70%] rounded-lg px-3 py-2 text-sm shadow-sm', isOut ? 'bg-green-100 text-gray-900' : 'bg-white text-gray-900')}>
+        {/* Name and the number to reply on. The raw WhatsApp id is NOT printed:
+            a LID is 15 digits and reads as a second phone number beside the real
+            one. It stays on the title, so it is still there to trace by. */}
         {!isOut && m.senderLabel && (
-          <p className="mb-0.5 text-[11px] font-semibold text-green-700">
+          <p className="mb-0.5 text-[11px] font-semibold text-green-700" title={m.senderId || undefined}>
             {m.senderLabel}
             {m.senderNumber && <span className="font-normal"> · {m.senderNumber}</span>}
-            {/* The raw WhatsApp id. Kept visible, and kept OUT of the number:
-                a LID is 15 digits and reads as a mobile if you let it, but it
-                is still the only handle on a sender WhatsApp will not name, so
-                a document can be traced back to whoever sent it. */}
-            {m.senderId && (
-              <span className="ml-1 font-normal text-gray-400" title={m.senderId}>
-                {/@lid$/i.test(m.senderId) ? `(LID ${m.senderId.split('@')[0]})` : ''}
-              </span>
-            )}
           </p>
         )}
 
