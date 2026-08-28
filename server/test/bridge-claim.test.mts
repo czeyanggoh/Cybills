@@ -189,6 +189,18 @@ r = await publish('org-orphan', 'claim-2');
 check('a bridge with no parent is refused', [r.status, r.body.error], [409, 'no_publish_target']);
 check('…nothing reached Xero', r.posted, null);
 
+// 6) A claim cannot be published into another entity's ledger.
+//
+// The worry is ordinary and worth pinning: two entities each hold a claim, the
+// browser is standing in one of them, and somebody publishes. The route resolves
+// BOTH the Xero it posts into and the book it reads the claim from off the
+// organisation named in the URL, and the claim lookup requires that entity to
+// own it — so naming the wrong one finds no claim rather than posting somebody
+// else's money into the wrong company's ledger.
+r = await publish('org-red', 'claim-1'); // claim-1 belongs to the bridge, not to Red Alpha
+check("another entity's claim is not found", [r.status, r.body.error], [404, 'claim_not_found']);
+check('…and nothing reached Xero', r.posted, null);
+
 server.close();
 stub.close();
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
