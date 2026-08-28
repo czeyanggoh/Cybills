@@ -29,6 +29,37 @@ export default function RequireAuth({ children }) {
   return children;
 }
 
+// Where a bare URL lands.
+//
+// The root used to redirect to /login unconditionally, so typing
+// cybills.cy-bm.sg put a signed-in person on a sign-in page — which reads as
+// having been logged out, and was reported as one ("can you make it save the
+// session so I don't have to keep logging in"). The session was fine the whole
+// time; the route simply never asked.
+export function HomeRedirect() {
+  const { loading, googleEnabled, user, membership } = useAuth();
+
+  if (loading) return <Loading />;
+  if (googleEnabled && !user) return <Navigate to="/login" replace />;
+  // Signed in but not yet approved: /join is where they belong, and it is what
+  // RequireAuth would send them to a moment later anyway.
+  if (googleEnabled && user && (membership.status === 'none' || membership.status === 'pending')) {
+    return <Navigate to="/join" replace />;
+  }
+  return <Navigate to="/costs" replace />;
+}
+
+// The sign-in page itself, which somebody already signed in has no business
+// sitting on — following a stale link or a bookmark should put them back in the
+// app, not in front of a form asking who they are.
+export function RedirectIfSignedIn({ children }) {
+  const { loading, googleEnabled, user } = useAuth();
+
+  if (loading) return <Loading />;
+  if (googleEnabled && user) return <Navigate to="/costs" replace />;
+  return children;
+}
+
 // Lighter guard for the /join onboarding page: requires a signed-in user (with
 // real auth) but does NOT require an approved profile — that's the whole point.
 export function RequireSignedIn({ children }) {

@@ -1,7 +1,7 @@
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth';
-import RequireAuth, { RequireSignedIn, RequireAdmin, RequireBusinessAdmin, RequirePracticeTeam, RequirePracticeAdmin } from '@/components/RequireAuth';
+import RequireAuth, { RequireSignedIn, RequireAdmin, RequireBusinessAdmin, RequirePracticeTeam, RequirePracticeAdmin, HomeRedirect, RedirectIfSignedIn } from '@/components/RequireAuth';
 import Login from './pages/Login';
 import SetPassword from './pages/SetPassword';
 import Join from './pages/Join';
@@ -41,8 +41,8 @@ function App() {
       <AuthProvider>
         <Router>
           <Routes>
-            <Route path="/" element={<Navigate to="/login" replace />} />
-            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<HomeRedirect />} />
+            <Route path="/login" element={<RedirectIfSignedIn><Login /></RedirectIfSignedIn>} />
             {/* Public: opened from an invitation / password-reset email. */}
             <Route path="/set-password" element={<SetPassword />} />
             <Route path="/join" element={<RequireSignedIn><Join /></RequireSignedIn>} />
@@ -75,7 +75,8 @@ function App() {
             <Route path="/support" element={<Protected><SupportDesk /></Protected>} />
             {/* Feature Requests merged into Support Desk — keep old links working. */}
             <Route path="/features" element={<Navigate to="/support" replace />} />
-            <Route path="*" element={<Navigate to="/login" replace />} />
+            {/* An unknown URL is not a reason to ask somebody to sign in. */}
+            <Route path="*" element={<HomeRedirect />} />
           </Routes>
         </Router>
       </AuthProvider>
