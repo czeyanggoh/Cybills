@@ -37,7 +37,7 @@ import {
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 import { useInboundConfig } from '@/lib/inboundSettings';
-import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig } from '@/lib/whatsapp';
+import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig, sendTestDelivery } from '@/lib/whatsapp';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
@@ -539,8 +539,30 @@ const fmtStamp = (iso) => {
 };
 
 function ExtractByWhatsappCard() {
-  const config = useWhatsappConfig();
+  const [config, reloadConfig] = useWhatsappConfig();
   const { membership, googleEnabled } = useAuth();
+  const [testing, setTesting] = useState(false);
+  const [testNote, setTestNote] = useState(null);
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestNote(null);
+    try {
+      const out = await sendTestDelivery();
+      setTestNote({
+        ok: true,
+        text: `Delivered to ${out.group} — filed as ${out.itemId || 'a new document'}. It is in the Costs inbox; delete it when you have seen it.`,
+      });
+    } catch (err) {
+      setTestNote({ ok: false, text: err.message });
+    } finally {
+      setTesting(false);
+      // Refresh the log, not the page: the attempt is in it either way — which
+      // is half of what the button proves — and reloading would throw away the
+      // sentence saying what happened before anybody could read it.
+      reloadConfig();
+    }
+  };
   // Same rule as the inbound-email secret, for the same reason: this key
   // authorises filing documents into ANY client entity's book, so it is the
   // practice's and not a client admin's.
@@ -578,7 +600,23 @@ function ExtractByWhatsappCard() {
               away — and they need different people to fix them. Every attempt
               is here, including the refused ones. */}
           <div className="rounded-md border p-4">
-            <p className="mb-1 text-sm font-medium">What has arrived</p>
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <p className="text-sm font-medium">What has arrived</p>
+              {/* Proves this side end to end without waiting on CYWorkspace:
+                  the server posts to its own public endpoint, over the real
+                  URL, with the real key, naming a real group. */}
+              <button
+                type="button"
+                onClick={runTest}
+                disabled={testing}
+                className="inline-flex h-8 shrink-0 items-center rounded-md border px-3 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                {testing ? 'Sending…' : 'Send a test bill'}
+              </button>
+            </div>
+            {testNote && (
+              <p className={cn('mb-2 text-xs', testNote.ok ? 'text-emerald-700' : 'text-red-600')}>{testNote.text}</p>
+            )}
             {config?.deliveries?.length ? (
               <ul className="mt-2 space-y-1.5 text-xs">
                 {config.deliveries.map((d) => (

@@ -68,19 +68,18 @@ export async function createWhatsappChannel({ participants, subject }) {
 // filing documents into any client entity's book.
 export function useWhatsappConfig() {
   const [config, setConfig] = useState(null);
-  useEffect(() => {
-    let live = true;
-    fetch('/api/whatsapp/config')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (live) setConfig(d);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
+  const reload = useCallback(async () => {
+    try {
+      const res = await fetch('/api/whatsapp/config');
+      setConfig(res.ok ? await res.json() : null);
+    } catch {
+      /* leave what we have */
+    }
   }, []);
-  return config;
+  useEffect(() => {
+    reload();
+  }, [reload]);
+  return [config, reload];
 }
 
 // One person's collection group — the "Connect to WhatsApp" card on their own
@@ -137,5 +136,21 @@ export async function connectWhatsappForUser({ userId, mobile, replace = false }
   err.code = data?.error || '';
   err.retryable = Boolean(data?.retryable);
   err.rejected = data?.rejected ?? [];
+  throw err;
+}
+
+// Send one delivery through the real endpoint, the way CYWorkspace would.
+// Until CYWS is wired up this is the only way to find out whether THIS side
+// works — and "nothing turned up" is the least useful bug report there is.
+export async function sendTestDelivery(submissionId = '') {
+  const res = await fetch('/api/whatsapp/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ submissionId }),
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok) return data;
+  const err = new Error(data?.message || 'The test delivery did not go through.');
+  err.code = data?.error || '';
   throw err;
 }

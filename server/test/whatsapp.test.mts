@@ -347,6 +347,21 @@ r = await post(
 check('a file link that is not CYWS is not followed', r.status, 502);
 check('and nothing was fetched', fileFetches, 2);
 
+// --- Testing it without CYWorkspace -------------------------------------------
+// Until CYWS is wired up there is no way to find out whether THIS side works.
+// The self-test posts to the real endpoint with the real key naming a real
+// group — but it needs the shared bucket to put a file in, and says so plainly
+// rather than failing later at `file_unavailable`, which would look like a
+// fault in the feature rather than a deploy without R2 configured.
+r = await post('test', {});
+// Nothing to deliver INTO: no group is named, and there is none to fall back on
+// without an entity in the header.
+check('with no group it says so rather than inventing one', r.body.error, 'no_group');
+
+r = await post('test', {}, { 'X-Org-Id': 'org_one0001' });
+check('the self-test needs the shared bucket', r.status, 503);
+check('and names that as the reason', r.body.error, 'no_bucket');
+
 // --- Was it us, or them? ------------------------------------------------------
 // "I sent a bill and nothing turned up" has two very different answers, and
 // they need different people to fix them. Every attempt is recorded, refusals

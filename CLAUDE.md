@@ -507,6 +507,14 @@ told which road it came in on (`emailInstruction`'s `via`), and it beats a
 standing supplier rule for the fields it decides — never for the money. It is
 kept on the document, so a RE-READ sees it too.
 
+**The pipe can be tested without CYWS.** Extraction -> Extract by WhatsApp ->
+**Send a test bill** posts one document to CYBills's OWN public endpoint — real
+URL, real key, real group — so everything from the network in is exercised:
+reachability, the key, the group lookup, the shared bucket, filing, the read. It
+splits "nothing turned up" in half, which is the only question worth answering
+first. Needs R2, and says so plainly when there is no bucket rather than failing
+later as `file_unavailable`.
+
 **Every call to the endpoint is recorded, refusals included.** "I sent a bill and
 nothing turned up" has two answers — CYWS never called, or it called and was
 turned away — and they need different people to fix them, so the app has to be

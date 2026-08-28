@@ -141,6 +141,23 @@ Notes on the contract:
   photos are classified by CYWS and not forwarded; plain text messages never
   are. `body` is the text attached to the invoice itself.
 
+## Testing it yourself
+
+**Extraction → Extract by WhatsApp → "Send a test bill"** (practice team only).
+
+The server posts one document to its own public endpoint — the real URL, the
+real key, naming a real group — so it exercises everything from the network in:
+reachability, the key, the group lookup, the shared bucket, filing, and the
+read. A one-page PDF appears in that group's Costs inbox; delete it once seen.
+
+That splits the problem in half. If the test files a document, the CYBills side
+works and what remains is CYWS's: the URL and key it holds, or its classifier
+deciding an attachment is not a supplier bill. If it fails, the message says
+which step did.
+
+It needs R2 configured — there is no shared bucket to put a file in otherwise,
+and it says so rather than failing later as `file_unavailable`.
+
 ## Nothing turned up
 
 "I sent a bill into the group and it isn't in the Costs inbox" has two answers

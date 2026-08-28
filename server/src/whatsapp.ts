@@ -753,6 +753,124 @@ whatsappRouter.get('/config', (req, res) => {
   });
 });
 
+// --- Testing it without CYWorkspace -------------------------------------------
+// A one-page PDF, assembled here so a test delivery carries a real file rather
+// than a blob the viewer can't open. Offsets are computed rather than typed:
+// a PDF with a wrong xref opens in some readers and not others, which is
+// exactly the ambiguity a test is supposed to remove.
+function testPdf(line: string): Buffer {
+  const body = `BT /F1 13 Tf 24 74 Td (CYBills test delivery) Tj 0 -22 Td (${line}) Tj ET`;
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 320 120]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+    `<</Length ${body.length}>>stream\n${body}\nendstream`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objects.forEach((o, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj${o}endobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, 'latin1');
+}
+
+// POST /api/whatsapp/test — deliver one document the way CYWorkspace would.
+//
+// Until CYWS is wired up there is no way to find out whether THIS side works,
+// and "nothing turned up" is the least useful bug report there is. So the
+// server posts to its own public endpoint, over the real URL, with the real
+// key, naming a real group: if a document appears, everything from the network
+// in — reachability, the key, the group lookup, the shared bucket, filing,
+// reading — is working, and what is left is CYWS's half. It shows up in the
+// delivery log like any other call, because it IS one.
+whatsappRouter.post('/test', async (req, res) => {
+  const member = memberForSession(req);
+  if (member && (!member.practice || member.deactivated)) {
+    return res.status(403).json({ error: 'not_practice_team' });
+  }
+  if (!member && googleEnabled) return res.status(403).json({ error: 'forbidden' });
+
+  const ws = workspaceId(req);
+  const wanted = String(req.body?.submissionId ?? '').trim();
+  // The group named, else this person's own, else the entity's.
+  const channel =
+    (wanted ? channelById(wanted) : null) ||
+    loadChannels().find((c) => c.workspaceId === ws && c.userId === member?.id && c.status === 'open') ||
+    loadChannels().find((c) => c.workspaceId === ws && c.orgId === orgIdFor(req) && c.status === 'open');
+  if (!channel) return res.status(400).json({ error: 'no_group', message: 'No WhatsApp group has been set up yet.' });
+
+  // The file half only exists when the shared bucket does. Said plainly rather
+  // than failing at `file_unavailable`, which would look like a fault.
+  if (!r2Enabled) {
+    return res.status(503).json({
+      error: 'no_bucket',
+      message: 'R2 is not configured on this deploy, so there is no shared bucket to put a test file in.',
+    });
+  }
+
+  const bytes = testPdf('Safe to delete.');
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  let key = '';
+  try {
+    const stored = await putBillFile(dataScopeForOrg(channel.orgId), hash, 'application/pdf', bytes);
+    key = stored.storageKey.startsWith('r2:') ? stored.storageKey.slice('r2:'.length) : '';
+  } catch {
+    key = '';
+  }
+  if (!key) return res.status(502).json({ error: 'store_failed', message: 'Could not put the test file in the bucket.' });
+
+  const url = `${appOrigin(req)}/api/whatsapp/invoice`;
+  let reply: { status: number; body: Record<string, unknown> };
+  try {
+    const out = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': inboundKey() },
+      body: JSON.stringify({
+        submission_id: channel.id,
+        chat_id: channel.chatId,
+        chat_subject: channel.subject,
+        // A new id every time, so the test is never answered "already had it".
+        message_id: `cybills-test-${randomBytes(6).toString('hex')}`,
+        r2_key: key,
+        file_name: 'cybills-test-delivery.pdf',
+        content_type: 'application/pdf',
+        body: 'Test delivery from CYBills. Safe to delete.',
+        sender_name: member?.name || 'CYBills',
+        sender: `${normaliseMobile(member?.mobile || '') || '0'}@c.us`,
+        sent_at: new Date().toISOString(),
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    reply = { status: out.status, body: (await out.json().catch(() => ({}))) as Record<string, unknown> };
+  } catch (err) {
+    // The endpoint could not be reached from the server itself — which is a
+    // real finding, and the one CYWS would hit too.
+    return res.status(502).json({
+      error: 'unreachable',
+      message: `Could not reach ${url}: ${err instanceof Error ? err.message : String(err)}`,
+      url,
+    });
+  }
+
+  if (reply.status !== 200) {
+    return res.status(502).json({ error: String(reply.body?.error ?? 'refused'), status: reply.status, url });
+  }
+  res.json({
+    ok: true,
+    url,
+    group: channel.subject,
+    orgId: channel.orgId,
+    itemId: String(reply.body?.item_id ?? ''),
+    billId: String(reply.body?.bill_id ?? ''),
+  });
+});
+
 // POST /api/whatsapp/invoice — CYWS hands over one supplier bill.
 //
 // Called machine-to-machine, so it carries its own proof (X-API-Key) instead of
