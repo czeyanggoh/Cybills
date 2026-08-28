@@ -405,6 +405,49 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   check('the key is never stored', JSON.stringify(log).includes('inbound-key'), false);
 }
 
+// --- Saying whose books a group feeds ----------------------------------------
+// CYWS files a document under a submission id and holds nothing else, so its
+// own inbox can only ever show the hex. Who that id IS is a fact only this side
+// has, and it is what lets an operator there read a group's assignment and
+// choose a different one.
+{
+  const get = async (path: string, headers: Record<string, string> = {}) => {
+    const res = await fetch(`http://127.0.0.1:4623/api/whatsapp/${path}`, { headers });
+    return { status: res.status, body: (await res.json()) as any };
+  };
+
+  let d = await get('directory');
+  check('the directory needs a key', d.status, 401);
+  d = await get('directory', { 'X-API-Key': 'wrong' });
+  check('and refuses the wrong one', d.status, 401);
+
+  d = await get('directory', { 'X-API-Key': 'inbound-key' });
+  check('with the key it answers', d.status, 200);
+
+  const entityWide = d.body.channels.find((c: { submission_id: string }) => c.submission_id === submissionId);
+  check('the entity-wide group is listed', Boolean(entityWide), true);
+  check('named as the entity it collects for', entityWide.org_name, 'Acme Pte Ltd');
+  // Not a lookup that failed: a group with several people in it genuinely has
+  // no one owner, and an operator has to be able to tell that from a group
+  // whose person has since left the roster.
+  check('and marked as belonging to no one person', entityWide.entity_wide, true);
+  check('so it claims no name', entityWide.person_name, '');
+  check('not reported as a broken link either', entityWide.person_missing, false);
+  // The group CYBills believes the id belongs to. CYWS compares it with the
+  // chat it is forwarding from, so a reassignment that crosses two groups shows
+  // up as a mismatch rather than quietly filing into the wrong book.
+  check('while still saying which group it is', entityWide.chat_id, '120363000@g.us');
+
+  const personal = d.body.channels.find((c: { entity_wide: boolean }) => !c.entity_wide);
+  check("a person's own group is listed too", Boolean(personal), true);
+  check('and resolves to them', personal.person_email, 'astridy2004@gmail.com');
+
+  // Putting a name on a group does not require handing over a directory of
+  // everyone's mobile, so the numbers stay on this side.
+  const asText = JSON.stringify(d.body);
+  check('no phone number is handed out', asText.includes('60123456789') || asText.includes('6595556666'), false);
+}
+
 server.close();
 globalThis.fetch = realFetch;
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

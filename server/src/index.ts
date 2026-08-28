@@ -65,6 +65,9 @@ app.use((req, res, next) => {
   // Same for a bill handed over from a WhatsApp collection group: CYWorkspace
   // calls it machine-to-machine and proves itself with its own X-API-Key.
   if (p === '/api/whatsapp/invoice') return next();
+  // And for the directory it reads to say WHOSE books a collection group feeds
+  // — same key, same reason, read-only.
+  if (p === '/api/whatsapp/directory') return next();
   // An image link in an exported CSV, or an Item ID in an emailed claim PDF, is
   // opened by somebody with no session here — an accountant, an approver. It
   // carries a signed, expiring token naming the one document it opens instead

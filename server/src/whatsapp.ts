@@ -573,6 +573,54 @@ function personFor(ws: string, userId: string): { user: User; orgId: string } | 
   return { user, orgId: user.organisationId || primaryOrgId() };
 }
 
+// GET /api/whatsapp/directory — every collection group, said in names.
+//
+// CYWS files a document under a submission id and nothing else, so its own
+// inbox can only ever show the hex: an operator looking at a group there cannot
+// tell whose books it feeds, and has nothing to choose from when a group needs
+// pointing at somebody. Both are the same missing fact — who a submission id
+// IS — and it is a fact only this side holds.
+//
+// Machine-to-machine like /invoice, and allowlisted past the session guard for
+// the same reason: it carries the inbound key instead of a session. Read-only,
+// and deliberately no phone numbers — naming the person and the entity is the
+// whole job, and a directory of everyone's mobile is not a thing to hand over
+// for it. A user or entity that no longer resolves is reported as absent rather
+// than skipped, because a group filing to nobody is exactly what an operator
+// needs to see.
+whatsappRouter.get('/directory', (req, res) => {
+  if (!keyMatches(req.header('X-API-Key') || '')) {
+    return res.status(401).json({ error: 'invalid_api_key' });
+  }
+  const channels = loadChannels().map((c) => {
+    const person = c.userId ? personFor(c.workspaceId, c.userId) : null;
+    const org = getOrganisation(c.workspaceId, c.orgId);
+    return {
+      submission_id: c.id,
+      // Empty when this is the entity-wide group rather than one person's —
+      // that is a real distinction, not a lookup that failed, so the caller is
+      // told which of the two it has.
+      person_name: person ? person.user.name || person.user.email || '' : '',
+      person_email: person ? person.user.email || '' : '',
+      entity_wide: !c.userId,
+      person_missing: Boolean(c.userId && !person),
+      org_id: c.orgId,
+      // Falls back to the id: organisations are linked separately, so a group
+      // can legitimately outlive (or precede) a named entity record.
+      org_name: org?.name || '',
+      // The group CYBills believes this id belongs to. CYWS compares it against
+      // the chat it is about to forward from, so pointing a chat at somebody
+      // else's submission shows up as a mismatch instead of silently misfiling.
+      subject: c.subject,
+      chat_id: c.chatId,
+      status: c.status,
+      received: c.received,
+      last_message_at: c.lastMessageAt,
+    };
+  });
+  res.json({ channels });
+});
+
 // Whose number this is, and who may connect it. Your own always; otherwise
 // whoever administers them — the practice for a colleague, a Business Admin for
 // a client entity's own staff.

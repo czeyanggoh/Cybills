@@ -3,13 +3,14 @@
 Each client entity gets a WhatsApp group. The people who actually hold that
 company's invoices send photos and PDFs into it; CYWorkspace (CYWS) runs the
 WhatsApp number ("CYBot") on its WAHA server, classifies every attachment, and
-hands the **supplier bills** to CYBills. They land in that entity's Costs inbox,
-owned by whoever sent them, read with whatever they typed alongside.
+hands the **supplier bills and receipts** to CYBills. They land in that entity's
+Costs inbox, owned by whoever sent them, read with whatever they typed
+alongside.
 
 ```
 client's people  →  WhatsApp group ("CYBills - Acme Pte Ltd")
         │
-CYWS (WAHA + classifier)          receipts / sales invoices / photos → not forwarded
+CYWS (WAHA + classifier)          sales invoices / statements / photos → not forwarded
         │   POST https://cybills.cy-bm.sg/api/whatsapp/invoice   (X-API-Key)
         ▼
 CYBills:  submission_id → the entity's book
@@ -108,6 +109,7 @@ Two things to expect:
   "body": "Please pay this",
   "sender_name": "Dean",
   "sender": "60123456789@c.us",
+  "doc_category": "supplier_bill",
   "sent_at": "2026-08-27T08:56:00.000Z"
 }
 ```
@@ -137,9 +139,54 @@ Notes on the contract:
   still CYWS's record of that message. The signed `file_url` is the fallback for
   a deploy with no R2 credentials, and is only ever followed when it points at
   CYWS itself.
-- **Only supplier bills.** Receipts, sales invoices, bank statements and random
-  photos are classified by CYWS and not forwarded; plain text messages never
-  are. `body` is the text attached to the invoice itself.
+- **Supplier bills and receipts only.** Both are records of a cost somebody is
+  claiming, so both are forwarded, and `doc_category` says which arrived
+  (`supplier_bill` — money owed; `receipt` — already paid). A sales invoice is
+  money owed TO the business rather than a submission, and it, bank statements
+  and random photos are classified by CYWS and left alone; plain text messages
+  never arrive. `body` is the text attached to the document itself.
+
+## Saying whose books a group feeds
+
+CYWS files everything under a submission id and holds nothing else, so its own
+inbox can only show the hex — it cannot say who `CYB-org_red00001-a1b2c3d4` is,
+and has nothing to offer when a group needs pointing at somebody. That fact
+lives here, so there is a read-only endpoint for it:
+
+```
+GET https://cybills.cy-bm.sg/api/whatsapp/directory   (X-API-Key, same key)
+```
+
+```json
+{
+  "channels": [
+    {
+      "submission_id": "CYB-org_red00001-a1b2c3d4",
+      "person_name": "Astrid Yang",
+      "person_email": "astrid@cybills.sg",
+      "entity_wide": false,
+      "person_missing": false,
+      "org_id": "org_red00001",
+      "org_name": "Acme Pte Ltd",
+      "subject": "astrid@cybills.sg",
+      "chat_id": "120363...@g.us",
+      "status": "open",
+      "received": 12,
+      "last_message_at": "2026-08-27T08:56:00.000Z"
+    }
+  ]
+}
+```
+
+- `entity_wide` is the entity's own group rather than one person's — a real
+  distinction, not a lookup that failed. `person_missing` is the lookup that
+  failed: a group whose person has left the roster, which is worth seeing.
+- `org_name` falls back to empty; entities are linked separately, so a group can
+  outlive or precede a named record.
+- `chat_id` is the group CYBills believes the id belongs to. Compare it with the
+  chat being forwarded from — if they differ, somebody has pointed one group at
+  another's submission, and the documents will file under the latter.
+- **No phone numbers.** Naming the person and the entity is the whole job.
 
 ## Testing it yourself
 
