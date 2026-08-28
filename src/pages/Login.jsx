@@ -45,6 +45,7 @@ export default function Login() {
   // up here, before any session exists.
   const [setup, setSetup] = useState(null);
   const [codes, setCodes] = useState([]);
+  const [keyCopied, setKeyCopied] = useState(false);
 
   const submitCode = async (e) => {
     e.preventDefault();
@@ -205,8 +206,24 @@ export default function Login() {
                 dangerouslySetInnerHTML={{ __html: setup.qr }}
               />
             ) : null}
-            <div className="rounded-md border bg-muted/30 px-3 py-2 text-center font-mono text-sm tracking-wide">
-              {setup.readable}
+            {/* Copyable, because a password manager on this same machine cannot
+                scan the screen it is on — and 32 characters is a lot to retype
+                to prove you own your own phone. */}
+            <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
+              <span className="min-w-0 flex-1 break-all text-center font-mono text-sm tracking-wide">
+                {setup.readable}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(setup.secret).catch(() => {});
+                  setKeyCopied(true);
+                  setTimeout(() => setKeyCopied(false), 1500);
+                }}
+                className="inline-flex h-8 shrink-0 items-center rounded-md border bg-background px-3 text-xs font-medium transition-colors hover:bg-muted"
+              >
+                {keyCopied ? 'Copied' : 'Copy'}
+              </button>
             </div>
             <input
               value={code}
