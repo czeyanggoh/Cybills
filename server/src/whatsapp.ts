@@ -18,7 +18,7 @@ import {
   type User,
 } from './users.js';
 import { insertBill } from './store.js';
-import { getBill, putBillFile } from './storage.js';
+import { getBill, putBill, putBillFile } from './storage.js';
 import { readSetting } from './settings.js';
 import { resolveProvider } from './llm.js';
 import { autoRead } from './inbound.js';
@@ -816,14 +816,31 @@ whatsappRouter.post('/test', async (req, res) => {
 
   const bytes = testPdf('Safe to delete.');
   const hash = createHash('sha256').update(bytes).digest('hex');
-  let key = '';
+  const key = `bills/${dataScopeForOrg(channel.orgId)}/${hash}.pdf`;
+  // Written with the RAW bucket call, not through putBillFile: that one catches
+  // an R2 failure and quietly writes to local disk instead, which is right for
+  // a receipt (never lose the bytes) and useless here. This test exists to find
+  // out whether the SHARED bucket works — the thing the whole integration rests
+  // on — so the error has to come back rather than be recovered from, and it is
+  // reported in the far end's own words. Same bytes every time, so however
+  // often the button is pressed there is only ever one such object.
   try {
-    const stored = await putBillFile(dataScopeForOrg(channel.orgId), hash, 'application/pdf', bytes);
-    key = stored.storageKey.startsWith('r2:') ? stored.storageKey.slice('r2:'.length) : '';
-  } catch {
-    key = '';
+    await putBill(key, bytes, 'application/pdf');
+  } catch (err) {
+    return res.status(502).json({
+      error: 'store_failed',
+      message: `Could not write to the R2 bucket "${env.R2_BUCKET}": ${err instanceof Error ? err.message : String(err)}`,
+    });
   }
-  if (!key) return res.status(502).json({ error: 'store_failed', message: 'Could not put the test file in the bucket.' });
+  // And read back, because writing to a bucket nobody can read from would pass
+  // a test the real path then fails.
+  const readable = await getBill(key);
+  if (!readable) {
+    return res.status(502).json({
+      error: 'read_failed',
+      message: `Wrote ${key} to "${env.R2_BUCKET}" but could not read it back.`,
+    });
+  }
 
   const url = `${appOrigin(req)}/api/whatsapp/invoice`;
   let reply: { status: number; body: Record<string, unknown> };
