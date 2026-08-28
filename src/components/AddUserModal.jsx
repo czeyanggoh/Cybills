@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, ChevronDown, HelpCircle } from 'lucide-react';
 import { ROLES, ROLE_INFO } from '@/lib/userStore';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
+import { mobileError, MOBILE_HINT } from '@/lib/mobile';
 import { cn } from '@/lib/utils';
 
 const EMPTY = {
@@ -43,7 +44,11 @@ export default function AddUserModal({ open, onClose, onAdd }) {
   const orgName = activeOrg?.name || '';
 
   const emailValid = !form.login || /.+@.+\..+/.test(form.email.trim());
-  const canNext = form.firstName.trim() && form.lastName.trim() && emailValid;
+  // Everyone added now gets a mobile number: it is how a bill they send in over
+  // WhatsApp is matched back to them, and without one everything they send
+  // lands on the entity's General account instead of on their name.
+  const mobileMsg = mobileError(form.mobile);
+  const canNext = form.firstName.trim() && form.lastName.trim() && emailValid && !mobileMsg;
   const isStandard = form.role === 'Standard';
 
   // Invite (notify) only when they have login access + an email; pass the active
@@ -92,6 +97,20 @@ export default function AddUserModal({ open, onClose, onAdd }) {
                   granted access via invitation later.
                 </p>
               )}
+              <label className="grid grid-cols-[140px_1fr] items-start gap-4 text-sm">
+                <span className="pt-2">Mobile <span className="text-destructive">*</span></span>
+                <div>
+                  <input
+                    value={form.mobile}
+                    onChange={(e) => set('mobile', e.target.value)}
+                    placeholder="60123456789"
+                    className={input}
+                  />
+                  <p className={cn('mt-1 text-xs', form.mobile.trim() && mobileMsg ? 'text-destructive' : 'text-muted-foreground')}>
+                    {form.mobile.trim() && mobileMsg ? mobileMsg : MOBILE_HINT}
+                  </p>
+                </div>
+              </label>
             </div>
           )}
 
@@ -162,16 +181,7 @@ export default function AddUserModal({ open, onClose, onAdd }) {
               ) : (
                 <p className="text-muted-foreground">This user is added without login access.</p>
               )}
-              <div className="flex items-center justify-between border-t pt-4">
-                <span className="text-sm">Add a mobile number</span>
-                <Toggle on={form.sendText} onToggle={() => set('sendText', !form.sendText)} />
-              </div>
-              {form.sendText && (
-                <label className="grid grid-cols-[140px_1fr] items-center gap-4">
-                  <span>Mobile number</span>
-                  <input value={form.mobile} onChange={(e) => set('mobile', e.target.value)} placeholder="+65…" className={input} />
-                </label>
-              )}
+
             </div>
           )}
         </div>

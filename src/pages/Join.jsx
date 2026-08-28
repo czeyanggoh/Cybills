@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { CheckCircle2, Clock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { joinCompany, fetchJoinPeople, fetchJoinCompanies } from '@/lib/userStore';
+import { mobileError, MOBILE_HINT } from '@/lib/mobile';
 
 // Self-signup asks for a simple role — an employee who submits, or an
 // admin/approver who reviews. The (CY) admin can fine-tune the exact role
@@ -82,6 +83,10 @@ export default function Join() {
     if (!claimed && (!firstName.trim() || !lastName.trim())) {
       return setError('Please enter your first and last name.');
     }
+    // The number is how a bill sent in over WhatsApp finds its way back to this
+    // person, so it is asked for here rather than chased afterwards.
+    const mobileMsg = mobileError(mobile);
+    if (mobileMsg) return setError(mobileMsg);
     setBusy(true);
     try {
       const picked = organisations.find((o) => o.id === companyId);
@@ -203,7 +208,13 @@ export default function Join() {
                 )}
 
                 <Field label="Contact Number">
-                  <input className={inputCls} value={mobile} onChange={(e) => setMobile(e.target.value)} />
+                  <input
+                    className={inputCls}
+                    value={mobile}
+                    onChange={(e) => setMobile(e.target.value)}
+                    placeholder="60123456789"
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">{MOBILE_HINT}</p>
                 </Field>
 
                 {!claimed && (

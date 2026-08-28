@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, ChevronDown, HelpCircle, Check, Search } from 'lucide-react';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
 import { useAllOrganisations } from '@/lib/organisations';
+import { mobileError, MOBILE_HINT } from '@/lib/mobile';
 import { cn } from '@/lib/utils';
 
 const EMPTY = {
@@ -42,7 +43,11 @@ export default function AddColleagueModal({ open, practiceName, onClose, onAdd }
   const close = () => { setStep('details'); setForm(EMPTY); setQ(''); onClose(); };
 
   const emailValid = !form.login || /.+@.+\..+/.test(form.email.trim());
-  const canNext = form.firstName.trim() && form.lastName.trim() && emailValid;
+  // Everyone added now gets a mobile number. It is how a bill they send in over
+  // WhatsApp is matched back to them — without one, everything they send lands
+  // on the entity's General account instead of on their name.
+  const mobileMsg = mobileError(form.mobile);
+  const canNext = form.firstName.trim() && form.lastName.trim() && emailValid && !mobileMsg;
 
   const toggleClient = (id) =>
     setForm((f) => ({
@@ -110,9 +115,19 @@ export default function AddColleagueModal({ open, practiceName, onClose, onAdd }
                   Without login access this colleague can’t sign in — no email is required.
                 </p>
               )}
-              <label className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
-                <span>Mobile</span>
-                <input value={form.mobile} onChange={(e) => set('mobile', e.target.value)} className={input} />
+              <label className="grid grid-cols-[140px_1fr] items-start gap-4 text-sm">
+                <span className="pt-2">Mobile <span className="text-destructive">*</span></span>
+                <div>
+                  <input
+                    value={form.mobile}
+                    onChange={(e) => set('mobile', e.target.value)}
+                    placeholder="60123456789"
+                    className={input}
+                  />
+                  <p className={cn('mt-1 text-xs', form.mobile.trim() && mobileMsg ? 'text-destructive' : 'text-muted-foreground')}>
+                    {form.mobile.trim() && mobileMsg ? mobileMsg : MOBILE_HINT}
+                  </p>
+                </div>
               </label>
             </div>
           )}

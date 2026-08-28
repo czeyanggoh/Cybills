@@ -3,6 +3,7 @@ import { X, ChevronDown } from 'lucide-react';
 import { ROLES } from '@/lib/userStore';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
+import { mobileError } from '@/lib/mobile';
 
 const blankPriv = () => ({ accessAll: false, createClaims: false, canPublish: false });
 const blankRow = () => ({ firstName: '', lastName: '', email: '', mobile: '', role: 'Standard', privileges: blankPriv() });
@@ -70,11 +71,21 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
     const parsed = parseCsv(text);
     if (parsed.length) setRows(parsed);
   };
+  // A row somebody actually filled in. Blank rows are the grid's own padding.
+  const filled = rows.filter((r) => r.firstName.trim() || r.lastName.trim() || r.email.trim());
+  // Everyone added gets a mobile number — it is how a bill they send in over
+  // WhatsApp is matched back to them. Named per row rather than refused as a
+  // batch: with twenty rows on screen, "some are invalid" is not a fix anybody
+  // can act on.
+  const badMobiles = filled
+    .map((r, i) => ({ row: rows.indexOf(r) + 1, msg: mobileError(r.mobile) }))
+    .filter((x) => x.msg);
+
   const commit = () => {
-    const valid = rows.filter((r) => r.firstName.trim() || r.lastName.trim() || r.email.trim());
     // `notify` controls whether new users are emailed an invite — it is NOT the
     // login-access flag (that defaults to Yes on the server).
-    if (valid.length) onAdd(valid, notify, effectiveMessage, orgName);
+    if (filled.length && !badMobiles.length) onAdd(filled, notify, effectiveMessage, orgName);
+    else if (badMobiles.length) return;
     close();
   };
 
@@ -195,8 +206,25 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
           </button>
         </div>
 
-        <div className="flex items-center justify-end border-t px-6 py-4">
-          <button type="button" onClick={commit} className="inline-flex h-9 items-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+        <div className="flex items-center justify-between gap-4 border-t px-6 py-4">
+          {/* Which row, and what is wrong with it. */}
+          {badMobiles.length ? (
+            <p className="text-xs text-destructive">
+              {badMobiles.length === 1
+                ? `Row ${badMobiles[0].row}: ${badMobiles[0].msg}`
+                : `${badMobiles.length} rows need a mobile number in full international format — rows ${badMobiles
+                    .map((b) => b.row)
+                    .join(', ')}.`}
+            </p>
+          ) : (
+            <span />
+          )}
+          <button
+            type="button"
+            onClick={commit}
+            disabled={!filled.length || badMobiles.length > 0}
+            className="inline-flex h-9 shrink-0 items-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
             Add
           </button>
         </div>

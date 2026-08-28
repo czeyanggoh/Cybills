@@ -41,6 +41,9 @@ export default function ClientAccessModal({ open, colleague, onClose, onSaved })
     });
 
   const save = async () => {
+    // Nothing to save for an owner: the server restores both fields on load, so
+    // writing them would only look like it had worked.
+    if (colleague.accountOwner) return onClose();
     setSaving(true);
     try {
       await updateUser(colleague.id, { allClients: all, clientAccess: [...picked] });
@@ -63,11 +66,25 @@ export default function ClientAccessModal({ open, colleague, onClose, onSaved })
         </div>
 
         <div className="flex-1 overflow-auto p-6">
-          <p className="mb-4 text-sm text-muted-foreground">
-            {colleague.name} can open the clients ticked below, and is a Business Admin
-            inside each one. Clients that aren&apos;t ticked stay out of reach — they
-            don&apos;t appear in the organisation switcher at all.
-          </p>
+          {/* An account owner's access is restored on every load, so narrowing
+              it here would be undone a second later — and used to be, silently:
+              you picked five clients, were told "updated — 5 clients", and the
+              column still said All clients with nothing to say why. Better to
+              not offer the choice than to take it and put it back. */}
+          {colleague.accountOwner ? (
+            <p className="mb-4 rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+              {colleague.name} is an <span className="font-medium">account owner</span>, so they work on every
+              client — including ones added later — and that cannot be narrowed here. It is what stops the
+              practice ever being left with nobody able to open a client. To change it, take them off
+              OWNER_EMAILS (or off the practice&rsquo;s own seed) first.
+            </p>
+          ) : (
+            <p className="mb-4 text-sm text-muted-foreground">
+              {colleague.name} can open the clients ticked below, and is a Business Admin
+              inside each one. Clients that aren&apos;t ticked stay out of reach — they
+              don&apos;t appear in the organisation switcher at all.
+            </p>
+          )}
 
           <div className="mb-5 flex items-center justify-between rounded-lg border px-4 py-3">
             <div>
@@ -130,7 +147,7 @@ export default function ClientAccessModal({ open, colleague, onClose, onSaved })
         <div className="flex shrink-0 items-center justify-end gap-2 border-t px-6 py-4">
           <button type="button" onClick={onClose} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">Cancel</button>
           <button type="button" onClick={save} disabled={saving} className="inline-flex h-9 items-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">
-            {saving ? 'Saving…' : 'Save access'}
+            {saving ? 'Saving…' : colleague.accountOwner ? 'Close' : 'Save access'}
           </button>
         </div>
       </div>

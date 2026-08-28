@@ -154,6 +154,18 @@ export type User = {
 
 // Public shape sent to the client — never leak the password hash or the reset
 // token; expose only whether a password has been set.
+// An account owner: the seeded admins, plus anyone named in OWNER_EMAILS. Their
+// practice role and their access to every client are restored on every load
+// (assignPractice), so that no edit — or accident — can leave the practice with
+// nobody able to run it or open a client.
+//
+// Exported because the UI has to know. Offering somebody a choice that is
+// silently put back a second later is worse than not offering it: Astrid picked
+// five clients, was told "Client access updated — 5 clients", and the column
+// still said All clients, with nothing anywhere to say why.
+export const isAccountOwner = (u: User | null | undefined): boolean =>
+  Boolean(u?.email) && ownerEmails().has(norm(u!.email));
+
 export function publicUser(u: User) {
   const { passwordHash, resetTokenHash, resetTokenExpires, resetTokenKind, ...rest } = u;
   // The general account's address is an internal identity (what a document
@@ -161,7 +173,7 @@ export function publicUser(u: User) {
   // reports it as having none, and the UI treats it accordingly: nothing to
   // invite, nothing to reset.
   const email = u.general || isInternalAddress(rest.email) ? '' : rest.email;
-  return { ...rest, email, hasPassword: Boolean(passwordHash) };
+  return { ...rest, email, hasPassword: Boolean(passwordHash), accountOwner: isAccountOwner(u) };
 }
 
 const COLLECTION = 'users';
