@@ -505,8 +505,22 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   check('the classifier is credited for its guess', t.body.messages[1].categorySource, 'cyws');
   check('and text messages carry no category', t.body.messages[0].docCategory, '');
 
+  // A LID is not a number. WhatsApp increasingly puts '1276...@lid' in the
+  // sender field — an opaque per-user id it hands out so a group does not leak
+  // everyone's number — and it cannot be turned back into one. Printing it puts
+  // a meaningless 15-digit string where a name belongs, so the group's own
+  // person answers instead.
+  r = await post('message', {
+    ...base, wa_message_id: 'MSG-lid', msg_type: 'chat', body: 'from a LID',
+    sender: '127676509610071@lid', sender_name: '',
+  }, KEY);
+  check('a message from a LID is accepted', r.status, 200);
+  t = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
+  const lid = t.body.messages.find((m: any) => m.id === 'MSG-lid');
+  check('and the LID is never shown as the sender', lid.senderLabel.includes('127676509610071'), false);
+
   const index = await get('threads', { 'X-Org-Id': 'org_one0001' });
-  check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 2);
+  check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 3);
   check('and what is sitting there unfiled', index.body.threads.find((x: any) => x.submissionId === submissionId)?.unfiled, 1);
 
   // A reviewer disagrees with the model. Theirs is the answer that sticks —

@@ -69,7 +69,19 @@ export function normaliseMobile(raw: string): string {
 
 // The same normalisation applied to WhatsApp's own sender id ('60123@c.us'), so
 // a sender can be matched against a roster row's Mobile field.
-export const mobileOf = (waId: string) => normaliseMobile(String(waId ?? '').split('@')[0]);
+//
+// '@lid' is NOT one of those. A LID is a linked identity — an opaque per-user id
+// WhatsApp increasingly sends instead of the number so a group does not leak
+// everyone's — and it happens to be 15 digits, which is exactly the length of a
+// long international number. So stripping the domain produced a plausible
+// number that belongs to nobody: matched against the roster it found no one,
+// and printed to a person it read as their colleague's mobile. It is refused
+// here rather than at each call site, because it is never a number anywhere.
+export const mobileOf = (waId: string) => {
+  const raw = String(waId ?? '');
+  if (/@lid$/i.test(raw)) return '';
+  return normaliseMobile(raw.split('@')[0]);
+};
 
 // --- The channel record ------------------------------------------------------
 // One per submission = one WhatsApp group. `id` IS the submission_id CYWS files
@@ -1004,6 +1016,9 @@ export type WaMirroredMessage = {
   /** 'cyws' — the classifier's guess; 'manual' — corrected here, and then never
    * overwritten by a later CYWS re-send. The correction is the whole point. */
   categorySource: string;
+  /** How sure the classifier was: 'low' | 'medium' | 'high'. Shown beside the
+   * category so a shaky guess doesn't read as a settled fact. */
+  categoryConfidence: string;
   replyToBody: string;
   reaction: string;
   sentAt: string;
@@ -1236,6 +1251,7 @@ whatsappRouter.post('/message', async (req, res) => {
     // correction pointless.
     docCategory: existing?.categorySource === 'manual' ? existing.docCategory : incomingCategory,
     categorySource: existing?.categorySource === 'manual' ? 'manual' : (incomingCategory ? 'cyws' : ''),
+    categoryConfidence: existing?.categorySource === 'manual' ? '' : String(b.doc_confidence ?? ''),
     replyToBody: String(b.reply_to_body ?? ''),
     reaction: String(b.reaction ?? ''),
     sentAt: String(b.sent_at ?? new Date().toISOString()),
@@ -1309,7 +1325,22 @@ whatsappRouter.get('/threads/:submissionId', (req, res) => {
       personName: person ? person.user.name || person.user.email || '' : '',
       entityWide: !channel.userId,
     },
-    messages: messagesForChannel(channel.id),
+    messages: messagesForChannel(channel.id).map((m) => ({
+      ...m,
+      // Never the raw sender id. WhatsApp increasingly sends a LID
+      // ('127676509610071@lid') — an opaque per-user id, not a number and not
+      // convertible to one — so showing it puts a meaningless 15-digit string
+      // where a name belongs. A group opened for one person is a conversation
+      // with that person, which was settled when it was made, so that is the
+      // answer; an entity-wide group falls back to the number when there
+      // really is one.
+      senderLabel: m.direction === 'out'
+        ? 'Us'
+        : m.senderName
+          || (person ? person.user.name || person.user.email : '')
+          || (mobileOf(m.sender) ? `+${mobileOf(m.sender)}` : '')
+          || 'Unknown',
+    })),
     canManage: mayManage(req, channel.orgId),
   });
 });
@@ -1328,6 +1359,8 @@ whatsappRouter.patch('/messages/:id', (req, res) => {
   const category = String(req.body?.doc_category ?? '').trim();
   row.docCategory = category;
   row.categorySource = category ? 'manual' : '';
+  // A person's answer has no confidence score; they read the document.
+  row.categoryConfidence = '';
   saveMessages(items);
   res.json({ ok: true, message: row });
 });
