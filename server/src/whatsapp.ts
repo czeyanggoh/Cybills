@@ -1224,6 +1224,12 @@ whatsappRouter.post('/message', async (req, res) => {
   const b = req.body ?? {};
   const submissionId = String(b.submission_id ?? '').trim();
   const waMessageId = String(b.wa_message_id ?? '').trim();
+  // CYWS's own row id for the message. Only used to recognise a document the
+  // RETIRED /invoice path already filed: that path deduped on this id, the
+  // mirror dedups on WhatsApp's, and without checking both a message filed
+  // before the two were merged would be filed a second time the first time it
+  // is mirrored. Every such document is already in somebody's Costs inbox.
+  const cywsMessageId = String(b.message_id ?? '').trim();
   if (!submissionId) return res.status(400).json({ error: 'submission_id_required' });
   if (!waMessageId) return res.status(400).json({ error: 'wa_message_id_required' });
 
@@ -1263,8 +1269,10 @@ whatsappRouter.post('/message', async (req, res) => {
     reaction: String(b.reaction ?? ''),
     sentAt: String(b.sent_at ?? new Date().toISOString()),
     receivedAt: existing?.receivedAt || new Date().toISOString(),
-    // Filing is this side's act, and it survives a re-send.
-    billId: existing?.billId || '',
+    // Filing is this side's act, and it survives a re-send. A document the old
+    // /invoice path filed is adopted by its id rather than re-filed, so the
+    // thread shows it as filed instead of offering to file it again.
+    billId: existing?.billId || (cywsMessageId ? seenMessage(cywsMessageId)?.billId || '' : ''),
     billDisplayId: existing?.billDisplayId || '',
   };
 
@@ -1297,7 +1305,8 @@ whatsappRouter.post('/message', async (req, res) => {
   // Guarded three ways because the classification arrives on a RE-SEND, so this
   // path runs again for a message already handled: not already filed here, not
   // already delivered under this id, and there has to be a file at all.
-  if (!stored.billId && FILEABLE.has(stored.docCategory) && (stored.r2Key || stored.fileUrl) && !seenMessage(stored.id)) {
+  const alreadyDelivered = Boolean(seenMessage(stored.id) || (cywsMessageId && seenMessage(cywsMessageId)));
+  if (!stored.billId && FILEABLE.has(stored.docCategory) && (stored.r2Key || stored.fileUrl) && !alreadyDelivered) {
     const filed = await fileWhatsappDocument(req, channel, {
       chat_id: stored.chatId,
       chat_subject: channel.subject,

@@ -503,6 +503,22 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   r = await post('message', { ...base, wa_message_id: 'MSG-photo', msg_type: 'image', doc_category: 'receipt', r2_key: 'whatsapp/zz99.jpg', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=zz99&ct=jpg&s=sig' }, KEY);
   check('a repeat of the same verdict files nothing new', r.body.filed, false);
 
+  // A document the RETIRED /invoice path already filed. The two deduped on
+  // different ids — CYWS's row id there, WhatsApp's here — so mirroring one for
+  // the first time would file it again, and it is already in the Costs inbox.
+  r = await post('message', {
+    ...base, wa_message_id: 'MSG-old', msg_type: 'document', doc_category: 'supplier_bill',
+    message_id: 'clx8f2aaa',
+    r2_key: 'whatsapp/ab12cd34.pdf', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=ab&ct=pdf&s=sig',
+    file_name: 'bridgers annual return.pdf', content_type: 'application/pdf',
+  }, KEY);
+  check('a bill the old path filed is not filed again', r.body.filed, false);
+  {
+    const tt = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
+    const old = tt.body.messages.find((m: any) => m.id === 'MSG-old');
+    check('and the thread shows it as filed, not as work to do', Boolean(old.billId), true);
+  }
+
   // A bank statement is a document, not a cost. It stays in the thread.
   r = await post('message', {
     ...base, wa_message_id: 'MSG-stmt', msg_type: 'document', doc_category: 'bank_statement',
@@ -519,7 +535,7 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   // The thread as the tab reads it.
   let t = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
   check('the thread reads back', t.status, 200);
-  check('every message is there, oldest first', t.body.messages.map((m: any) => m.id), ['MSG-text', 'MSG-photo', 'MSG-stmt']);
+  check('every message is there, oldest first', t.body.messages.map((m: any) => m.id), ['MSG-text', 'MSG-photo', 'MSG-old', 'MSG-stmt']);
   check('the classifier is credited for its guess', t.body.messages[1].categorySource, 'cyws');
   check('and text messages carry no category', t.body.messages[0].docCategory, '');
 
@@ -538,7 +554,7 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   check('and the LID is never shown as the sender', lid.senderLabel.includes('127676509610071'), false);
 
   const index = await get('threads', { 'X-Org-Id': 'org_one0001' });
-  check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 4);
+  check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 5);
   check('and what is sitting there unfiled — the statement, not the filed receipt', index.body.threads.find((x: any) => x.submissionId === submissionId)?.unfiled, 1);
 
   // A reviewer disagrees with the model. Theirs is the answer that sticks —
