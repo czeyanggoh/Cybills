@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import { env, mailConfigured } from './env.js';
 import { readSession } from './auth.js';
-import { memberForSession, isBusinessAdminRole } from './users.js';
+import { memberForSession } from './users.js';
 import {
   authorizeEndpoint,
   graphScopes,
@@ -23,17 +23,26 @@ const STATE_COOKIE = 'cyb_mail_state';
 
 export const mailRouter = Router();
 
-// Same posture as the rest of the admin surface: a session is required, and a
-// resolvable roster member must be an admin. Mock/dev (no roster member) stays
-// open so the flow can be exercised locally.
+// PRACTICE TEAM ONLY, and a session is required. Same posture as the inbound
+// Worker's secret, for the same reason: this is not a per-entity setting. There
+// is ONE sending mailbox for the whole deployment — every client's invitations,
+// password resets and password-changed notices leave from it — so a client's own
+// Business Admin reading this surface could disconnect everybody's account
+// email, or send from it. Mock/dev (no roster member) stays open so the flow can
+// be exercised locally.
+function mayManageMail(req: Request): boolean {
+  const me = memberForSession(req);
+  if (!me) return true; // no roster row — behaves as it did before
+  return Boolean(me.practice) && !me.deactivated;
+}
+
 function requireAdmin(req: Request, res: Response): boolean {
   if (!readSession(req)) {
     res.status(401).json({ error: 'unauthenticated' });
     return false;
   }
-  const me = memberForSession(req);
-  if (me && !isBusinessAdminRole(me.role)) {
-    res.status(403).json({ error: 'forbidden' });
+  if (!mayManageMail(req)) {
+    res.status(403).json({ error: 'not_practice_team' });
     return false;
   }
   return true;
@@ -51,6 +60,9 @@ function notConfigured(res: Response): boolean {
 // GET /api/mail/status — drives the Settings > Email panel.
 mailRouter.get('/status', (req, res) => {
   if (!readSession(req) && env.SESSION_SECRET) return res.status(401).json({ error: 'unauthenticated' });
+  // The panel it drives exists only for the practice, and the address it names
+  // is the deployment's. Nothing else in the app reads it.
+  if (!mayManageMail(req)) return res.status(403).json({ error: 'not_practice_team' });
   res.json(mailStatus());
 });
 
@@ -139,9 +151,8 @@ function requireAdminRedirect(
     back({ mail: 'error', reason: 'unauthenticated' });
     return false;
   }
-  const me = memberForSession(req);
-  if (me && !isBusinessAdminRole(me.role)) {
-    back({ mail: 'error', reason: 'forbidden' });
+  if (!mayManageMail(req)) {
+    back({ mail: 'error', reason: 'not_practice_team' });
     return false;
   }
   return true;

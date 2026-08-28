@@ -118,6 +118,31 @@ export function useActiveOrganisation() {
   return organisations.find((o) => o.id === active) ?? null;
 }
 
+// Whether the entity currently open is the practice's own — the primary one
+// (CY Business Management), which owns the account's legacy data and is where a
+// DEPLOYMENT-wide setting belongs.
+//
+// The sending mailbox is one mailbox for the whole account: every client's
+// invitations and password resets leave from it, and there is nothing per-entity
+// about it. Listed under each client's Business settings it read as that
+// client's own — and handed their admin a disconnect button for everybody's
+// mail.
+//
+// False while the list is still loading, so a section that is about to be
+// hidden doesn't flash. True when nothing is linked yet: there is no other
+// entity for it to belong to, and a fresh deployment still has to be able to
+// check its mail works.
+export function useIsPrimaryOrganisation() {
+  const { data: organisations, isLoading } = useOrganisations();
+  if (isLoading) return false;
+  const list = organisations ?? [];
+  if (!list.length) return true;
+  // Matches the header's own fallback (pickOrgId): the A→Z first entity is what
+  // is open when nobody has chosen one.
+  const active = list.find((o) => o.id === getActiveOrganisationId()) || list[0];
+  return Boolean(active?.isPrimary);
+}
+
 export function getActiveOrganisationId() {
   try {
     return localStorage.getItem(ACTIVE_KEY) || '';

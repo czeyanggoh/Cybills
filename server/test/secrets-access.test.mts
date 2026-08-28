@@ -2,11 +2,14 @@
 // whichever entity happens to be open.
 //
 // INBOUND_SECRET authorises submitting a document for any handle in any client
-// entity. CYBILLS_API_KEY authorises filing a bill into any client's book. So a
-// client's own Business Admin — who is an admin, and does see Business settings
-// — must not be able to read either: with one of them they could file documents
-// into another client's books, or read another client's paperwork out of their
-// own. They are the practice's, and the practice's only.
+// entity. CYBILLS_API_KEY authorises filing a bill into any client's book. The
+// SENDING MAILBOX is one mailbox for the whole account — every client's
+// invitations and password resets leave from it. So a client's own Business
+// Admin — who is an admin, and does see Business settings — must not be able to
+// reach any of them: with one of the keys they could file documents into another
+// client's books or read another client's paperwork out of their own, and with
+// the mailbox they could disconnect everybody's account email. They are the
+// practice's, and the practice's only.
 //
 // Checked on the SERVER, because the page hiding a block is a decision the
 // browser makes and anybody can ask the API directly.
@@ -38,6 +41,7 @@ const cookieParser = (await import('cookie-parser')).default;
 const jwt = (await import('jsonwebtoken')).default;
 const { inboundRouter } = await import('../src/inbound.ts');
 const { whatsappRouter } = await import('../src/whatsapp.ts');
+const { mailRouter } = await import('../src/mail.ts');
 const { ensure, save } = await import('../src/users.ts');
 
 // One of the practice's own, and one client entity's Business Admin.
@@ -62,6 +66,7 @@ app.use(express.json());
 app.use(cookieParser());
 app.use('/api/inbound', inboundRouter);
 app.use('/api/whatsapp', whatsappRouter);
+app.use('/api/mail', mailRouter);
 const server = app.listen(4635, '127.0.0.1');
 await new Promise((r) => server.once('listening', r));
 
@@ -80,6 +85,15 @@ const get = async (path: string, cookie?: string) => {
   return { status: res.status, body: (await res.json().catch(() => ({}))) as any };
 };
 
+const post = async (path: string, cookie?: string) => {
+  const res = await fetch(`http://127.0.0.1:4635${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
+    body: '{}',
+  });
+  return { status: res.status, body: (await res.json().catch(() => ({}))) as any };
+};
+
 // --- A client entity's own admin ---------------------------------------------
 let r = await get('/api/inbound/config', as('admin@acme.example'));
 check('a client admin cannot read the inbound-email secret', r.status, 403);
@@ -90,6 +104,16 @@ r = await get('/api/whatsapp/config', as('admin@acme.example'));
 check('nor the WhatsApp key', r.status, 403);
 check('and is told why', r.body.error, 'not_practice_team');
 check('the key is not in the body', JSON.stringify(r.body).includes('the-cyws-key'), false);
+
+// The sending mailbox is the deployment's too, and DISCONNECTING it would stop
+// account email for every client — so reading the panel, connecting, testing and
+// disconnecting are all the practice's.
+r = await get('/api/mail/status', as('admin@acme.example'));
+check('a client admin cannot read the sending mailbox', [r.status, r.body.error], [403, 'not_practice_team']);
+r = await post('/api/mail/disconnect', as('admin@acme.example'));
+check('nor disconnect it', [r.status, r.body.error], [403, 'not_practice_team']);
+r = await post('/api/mail/test', as('admin@acme.example'));
+check('nor send from it', [r.status, r.body.error], [403, 'not_practice_team']);
 
 // --- Nobody at all -----------------------------------------------------------
 r = await get('/api/inbound/config');
@@ -106,6 +130,9 @@ r = await get('/api/whatsapp/config', as('astridy2004@gmail.com'));
 check('and the WhatsApp key', r.status, 200);
 check('also the real one', r.body.apiKey, 'the-cyws-key');
 
+r = await get('/api/mail/status', as('astridy2004@gmail.com'));
+check('and the sending mailbox is theirs to see', r.status, 200);
+
 // --- A colleague who has been deactivated ------------------------------------
 {
   const rows = ensure('cybm');
@@ -113,6 +140,8 @@ check('also the real one', r.body.apiKey, 'the-cyws-key');
   save(rows);
   r = await get('/api/whatsapp/config', as('astridy2004@gmail.com'));
   check('a deactivated colleague loses them again', r.status, 403);
+  r = await get('/api/mail/status', as('astridy2004@gmail.com'));
+  check('the mailbox included', r.status, 403);
   rows.find((u) => u.id === colleague.id)!.deactivated = false;
   save(rows);
 }

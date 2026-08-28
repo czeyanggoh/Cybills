@@ -917,6 +917,18 @@ OAuth code flow) and the refresh token is kept, encrypted at rest with a key
 derived from `SESSION_SECRET`. A lapsed grant (password change, revoked consent)
 surfaces as "Reconnect needed" rather than silent failure.
 
+**It is the deployment's mailbox, so it lives in the practice's entity.** One
+mailbox sends every client's invitations and password resets; nothing about it
+is Red Alpha's or ST Engineering's. Listed under each client's Business settings
+it read as that client's own — and handed their Business Admin a Disconnect
+button for everybody's account email. So Settings -> Email is offered only to
+the practice team, in the PRIMARY entity (`useIsPrimaryOrganisation` +
+`isPracticeTeam`), and a deep link naming it from anywhere else lands on
+Business profile. Enforced again on the server (`mayManageMail` in `mail.ts`,
+status included, the same posture the inbound secret has), because hiding a
+section is a decision the browser makes and anybody can ask the API directly.
+Covered by `npm test` in `server/` (`test/secrets-access.test.mts`).
+
 Server-side: `server/src/mailer.ts` (token redemption + `sendMail` + templates),
 `mailAccount.ts` (sealed token store), `mail.ts` (connect/callback/disconnect/
 test); the flows live in `server/src/users.ts` (invite / reset / change

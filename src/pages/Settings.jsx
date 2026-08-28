@@ -36,6 +36,7 @@ import {
   syncXeroPayments,
   setEmailSuffix,
   useInvalidateOrganisations,
+  useIsPrimaryOrganisation,
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 import { useInboundConfig } from '@/lib/inboundSettings';
@@ -61,7 +62,19 @@ const NAV = [
   },
 ];
 
-function SettingsNav({ active, onSelect }) {
+// Sections that are the DEPLOYMENT's rather than this entity's. Account email
+// leaves from one mailbox for every client — nothing about it is Red Alpha's or
+// ST Engineering's — so it belongs in the practice's own entity and nowhere
+// else. The server enforces the same rule (mail.ts); this is what stops it
+// being offered.
+const ACCOUNT_WIDE = new Set(['email']);
+
+function navFor(accountWide) {
+  if (accountWide) return NAV;
+  return NAV.map((section) => ({ ...section, items: section.items.filter((i) => !ACCOUNT_WIDE.has(i.key)) }));
+}
+
+function SettingsNav({ nav, active, onSelect }) {
   const navigate = useNavigate();
   return (
     <div className="p-3 text-sm">
@@ -72,7 +85,7 @@ function SettingsNav({ active, onSelect }) {
       >
         <ChevronLeft className="h-4 w-4" strokeWidth={2} /> Back
       </button>
-      {NAV.map((section) => (
+      {nav.map((section) => (
         <div key={section.group} className="mb-3">
           <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {section.group}
@@ -1618,6 +1631,15 @@ export default function Settings() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get('section');
   const [section, setSection] = useState(() => (requested && TITLES[requested] ? requested : 'business'));
+  // The account-wide sections are the practice's, in the practice's own entity.
+  // Both halves matter: it is not a client's setting, and it is not a client
+  // admin's to change.
+  const { membership, googleEnabled } = useAuth();
+  const inPrimary = useIsPrimaryOrganisation();
+  const accountWide = inPrimary && isPracticeTeam(membership, googleEnabled);
+  // A deep link (or the mail callback) naming a section this entity does not
+  // have lands on Business profile rather than on a page that isn't offered.
+  const shown = ACCOUNT_WIDE.has(section) && !accountWide ? 'business' : section;
 
   const selectSection = (key) => {
     setSection(key);
@@ -1626,26 +1648,26 @@ export default function Settings() {
   };
 
   return (
-    <AppShell hideSidebar subnav={<SettingsNav active={section} onSelect={selectSection} />}>
-      <h1 className="mb-6 text-xl font-semibold tracking-tight">{TITLES[section]}</h1>
-      {section === 'business' ? (
+    <AppShell hideSidebar subnav={<SettingsNav nav={navFor(accountWide)} active={shown} onSelect={selectSection} />}>
+      <h1 className="mb-6 text-xl font-semibold tracking-tight">{TITLES[shown]}</h1>
+      {shown === 'business' ? (
         <BusinessProfile />
-      ) : section === 'connections' ? (
+      ) : shown === 'connections' ? (
         <Connections />
-      ) : section === 'extraction' ? (
+      ) : shown === 'extraction' ? (
         <Extraction />
-      ) : section === 'automation' ? (
+      ) : shown === 'automation' ? (
         <Automation />
-      ) : section === 'email' ? (
+      ) : shown === 'email' ? (
         <EmailSettings />
-      ) : section === 'exports' ? (
+      ) : shown === 'exports' ? (
         <Exports />
-      ) : section === 'lists' ? (
+      ) : shown === 'lists' ? (
         <ListsSettings />
-      ) : section === 'vault' ? (
+      ) : shown === 'vault' ? (
         <VaultSettings />
       ) : (
-        <Placeholder label={TITLES[section]} />
+        <Placeholder label={TITLES[shown]} />
       )}
     </AppShell>
   );
