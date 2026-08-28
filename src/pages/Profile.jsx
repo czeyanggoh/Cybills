@@ -9,6 +9,7 @@ import { updateUser, normalizeRole, canManageBusiness, canManageUsers } from '@/
 import { cn } from '@/lib/utils';
 import { useAutoSave } from '@/lib/useAutoSave';
 import SaveStatus from '@/components/SaveStatus';
+import TwoFactorSetup from '@/components/TwoFactorSetup';
 
 const NAV = [
   { key: 'personal', label: 'Personal details' },
@@ -211,12 +212,22 @@ function LoginDetails({ email, onChangeEmail }) {
   );
 }
 
-function Security({ onChangePassword }) {
+function Security({ onChangePassword, rosterUser, refresh }) {
   return (
     <Card title="Security">
       <ActionRow title="Password" desc="Update your password to keep your account safe">
         <OutlineButton onClick={onChangePassword}>Change</OutlineButton>
       </ActionRow>
+      {/* The second factor for the password sign-in. A Google account already
+          carries its own, which the card says rather than leaving somebody to
+          set up a code they will never be asked for. */}
+      <div className="border-t pt-4">
+        <TwoFactorSetup
+          enabled={Boolean(rosterUser?.totpEnabled)}
+          recoveryCodesLeft={rosterUser?.recoveryCodesLeft ?? 0}
+          onChanged={refresh}
+        />
+      </div>
     </Card>
   );
 }

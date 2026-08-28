@@ -805,6 +805,43 @@ notifying about **Invoices**. Env (server/.env): `XERO_WEBHOOK_KEY`, the key tha
 page shows. Unset, nothing can be verified and every delivery is refused — which
 is what an unconfigured deploy should do. Covered by `npm test` in `server/`.
 
+## Two-step sign-in (TOTP), for the password login
+
+A Google account already carries its own second factor, so this exists for the
+people who reach CYBills through the PASSWORD form — ST Engineering's staff, and
+anyone else without a Google account. For them the password was the only thing
+between an outsider and a client's whole book of paperwork.
+
+`server/src/totp.ts` is RFC 6238 written out rather than pulled in: it is thirty
+lines of HMAC, and the RFC ships test vectors, so it is checked against the
+standard itself (`test/totp.test.mts`) instead of against a library's behaviour.
+Six digits, thirty seconds, one step of tolerance either side — a phone's clock
+drifts and a person takes a moment to type, and refusing a code that was right
+four seconds ago fails honest people far more often than it stops anybody.
+
+**The password stops minting a session on its own.** For an enrolled user
+`/login` answers with a CHALLENGE instead: a five-minute token that says "this
+password was right, for this person" and grants nothing. `kind: 'totp'` is
+checked on the way back, because without it a session cookie would verify at the
+second step and skip the very thing it stands in front of.
+
+**The secret is sealed at rest** (`sealSecret`, the same AES-GCM-from-
+SESSION_SECRET arrangement `mailAccount.ts` uses) and stripped from
+`publicUser`: it is password-equivalent, so neither a copy of the data file nor
+a browser should ever hold one. A PENDING secret is kept apart from a live one,
+so a half-finished enrolment can never gate a sign-in.
+
+**Ten recovery codes, hashed, shown once**, and spent on use. Without them a
+lost phone means waiting for an admin. An admin's reset (Users -> Manage) only
+ever CLEARS — there is nothing an admin can read that would let them sign in as
+somebody else — and it is logged.
+
+`/api/users/login/totp` is allowlisted past the session guard, and has to be:
+whoever is standing at the code prompt has no session yet, which is the entire
+point of the step. Guarding it locked out precisely the people it exists for —
+found by driving the real HTTP path, since a test mounting the router directly
+never meets the guard at all.
+
 ## Account email via Microsoft Graph (delegated)
 
 Invitations, password resets, and password-changed notices are sent from a

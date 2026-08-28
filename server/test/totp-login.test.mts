@@ -1,0 +1,167 @@
+// Signing in with a second factor, end to end.
+//
+// This stands in front of the password form, which is how ST Engineering's
+// staff reach CYBills. Two things have to be true at once and they pull against
+// each other: nobody gets in without the code, and nobody who has it gets
+// locked out. So the refusals are tested as carefully as the successes — a
+// challenge that expires, a code from the wrong secret, a recovery code used
+// twice, and the session cookie being presented as the challenge it is meant to
+// stand in front of.
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-totp-'));
+process.env.BILLS_DATA_DIR = DATA_DIR;
+process.env.SESSION_SECRET = 'test-session-secret';
+process.env.GOOGLE_CLIENT_ID = 'x';
+process.env.GOOGLE_CLIENT_SECRET = 'x';
+
+writeFileSync(
+  join(DATA_DIR, 'organisations.json'),
+  JSON.stringify({
+    organisations: [
+      { id: 'org_one0001', orgId: 'cybm', name: 'CYBM', tenantId: 't-1', tenantName: 'CYBM', createdAt: new Date(0).toISOString(), createdBy: '' },
+    ],
+  })
+);
+
+const express = (await import('express')).default;
+const cookieParser = (await import('cookie-parser')).default;
+const jwt = (await import('jsonwebtoken')).default;
+const { usersRouter, ensure, save } = await import('../src/users.ts');
+const { totpCode, openSecret } = await import('../src/totp.ts');
+
+const app = express();
+app.use(express.json());
+app.use(cookieParser());
+app.use('/api/users', usersRouter);
+const server = app.listen(4639, '127.0.0.1');
+await new Promise((r) => server.once('listening', r));
+
+let failures = 0;
+const check = (name: string, got: unknown, want: unknown) => {
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  if (!ok) failures++;
+  console.log(`${ok ? 'PASS' : `FAIL got=${JSON.stringify(got)} want=${JSON.stringify(want)}`}  ${name}`);
+};
+
+const post = async (path: string, body: unknown, cookie?: string) => {
+  const res = await fetch(`http://127.0.0.1:4639/api/users${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
+    body: JSON.stringify(body),
+  });
+  return {
+    status: res.status,
+    body: (await res.json().catch(() => ({}))) as any,
+    setCookie: res.headers.get('set-cookie') ?? '',
+  };
+};
+
+// Somebody who signs in with a password, which is the whole point of this.
+const EMAIL = 'dean@st-eng.example';
+{
+  const items = ensure('cybm');
+  const seed = items.find((u) => u.email === 'astridy2004@gmail.com')!;
+  items.unshift({ ...seed, id: 'dean', name: 'Dean Tan', email: EMAIL, login: 'Yes', practice: false } as never);
+  save(items);
+}
+// Set a password the way an admin does.
+const sessionFor = (id: string, email: string) =>
+  `cyb_session=${jwt.sign({ sub: id, email, name: email }, 'test-session-secret', { expiresIn: '1h' })}`;
+const admin = sessionFor('astrid', 'astridy2004@gmail.com');
+let r = await post('/dean/password', { password: 'correct-horse' }, admin);
+check('an admin sets a password', r.status, 200);
+
+// --- Without a second factor --------------------------------------------------
+r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+check('the password alone signs them in', Boolean(r.body.user), true);
+check('and a session cookie comes back', r.setCookie.includes('cyb_session='), true);
+const dean = sessionFor('dean', EMAIL);
+
+// --- Enrolling ----------------------------------------------------------------
+r = await post('/totp/start', {}, dean);
+check('enrolling hands over a secret', r.body.secret?.length, 32);
+check('and the line an authenticator reads', r.body.uri?.startsWith('otpauth://totp/CYBills:'), true);
+const secret = r.body.secret as string;
+
+// Until a code proves it, nothing about signing in has changed. A half-finished
+// enrolment must never be able to lock somebody out.
+r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+check('a pending secret does not gate sign-in', Boolean(r.body.user), true);
+
+r = await post('/totp/enable', { code: '000000' }, dean);
+check('a wrong code does not turn it on', r.status, 401);
+
+r = await post('/totp/enable', { code: totpCode(secret) }, dean);
+check('the right code does', r.status, 200);
+const recovery = r.body.recoveryCodes as string[];
+check('and hands over the recovery codes, once', recovery.length, 10);
+
+// --- Signing in with it -------------------------------------------------------
+r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+check('the password alone no longer signs them in', Boolean(r.body.user), false);
+check('it asks for the second factor', r.body.totpRequired, true);
+check('and sets no session on the way', r.setCookie.includes('cyb_session='), false);
+const challenge = r.body.challenge as string;
+
+r = await post('/login/totp', { challenge, code: '000000' });
+check('a wrong code is refused', r.status, 401);
+r = await post('/login/totp', { challenge, code: totpCode(secret) });
+check('the right one signs them in', Boolean(r.body.user), true);
+check('now a session comes back', r.setCookie.includes('cyb_session='), true);
+// The secret never leaves the server.
+check('and the secret is not in the reply', JSON.stringify(r.body).includes(secret), false);
+check('nor is anything else that could mint a code', 'totpSecret' in r.body.user, false);
+check('but whether it is on is said', r.body.user.totpEnabled, true);
+
+// A session cookie is not a challenge. Without the `kind` check it would verify
+// here and skip the very step it is meant to stand behind.
+r = await post('/login/totp', { challenge: jwt.sign({ sub: 'dean', email: EMAIL }, 'test-session-secret'), code: totpCode(secret) });
+check('a session token is not accepted as a challenge', r.status, 401);
+
+// An expired challenge is not a way in either.
+r = await post('/login/totp', {
+  challenge: jwt.sign({ sub: 'dean', kind: 'totp' }, 'test-session-secret', { expiresIn: -10 }),
+  code: totpCode(secret),
+});
+check('an expired challenge is refused', r.body.error, 'challenge_expired');
+
+// --- The phone in the drawer --------------------------------------------------
+r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+r = await post('/login/totp', { challenge: r.body.challenge, code: recovery[0]! });
+check('a recovery code gets them in', Boolean(r.body.user), true);
+check('and says one was spent', r.body.usedRecoveryCode, true);
+check('with nine left', r.body.recoveryCodesLeft, 9);
+
+r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+r = await post('/login/totp', { challenge: r.body.challenge, code: recovery[0]! });
+check('the same recovery code cannot be used twice', r.status, 401);
+
+// --- Turning it off -----------------------------------------------------------
+r = await post('/totp/disable', { code: '000000' }, dean);
+check('a walked-away-from session cannot turn it off on its own', r.status, 401);
+r = await post('/totp/disable', { code: totpCode(secret) }, dean);
+check('a current code can', r.status, 200);
+r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+check('and the password alone works again', Boolean(r.body.user), true);
+
+// --- The phone that is genuinely gone -----------------------------------------
+r = await post('/totp/start', {}, dean);
+const second = r.body.secret as string;
+await post('/totp/enable', { code: totpCode(second) }, dean);
+r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+check('it is on again', r.body.totpRequired, true);
+
+r = await post('/dean/totp/reset', {}, admin);
+check('an admin can put them back where they started', r.status, 200);
+r = await post('/login', { email: EMAIL, password: 'correct-horse' });
+check('so the password signs them in again', Boolean(r.body.user), true);
+// A reset clears it rather than revealing it: there is nothing an admin can
+// read that would let them sign in as that person later.
+check('and nothing of the secret is left', openSecret(ensure('cybm').find((u) => u.id === 'dean')!.totpSecret ?? ''), '');
+
+server.close();
+console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
+process.exit(failures ? 1 : 0);

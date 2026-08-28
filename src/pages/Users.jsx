@@ -11,6 +11,7 @@ import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
+import { resetTotpFor } from '@/lib/totp';
 
 // Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
 // (de)activate, remove).
@@ -108,6 +109,29 @@ function ManageMenu({ user, onEdit, onToast }) {
             >
               {user.hasPassword ? 'Change password' : 'Set password'}
             </button>
+            {/* The phone that is genuinely gone, and the recovery codes with
+                it. This CLEARS the second factor — it never reveals one — so
+                the person is put back where they started, able to enrol again.
+                Offered only when there is something to clear. */}
+            {user.totpEnabled && (
+              <button
+                type="button"
+                className={item}
+                onClick={() =>
+                  run(async () => {
+                    if (!window.confirm(`Reset two-step sign-in for ${user.name}?\n\nThey will sign in with just their password until they set it up again. Do this only if they have lost both their phone and their recovery codes.`)) return;
+                    try {
+                      await resetTotpFor(user.id);
+                      onToast(`Two-step sign-in reset for ${user.name}.`);
+                    } catch {
+                      onToast('Could not reset two-step sign-in.');
+                    }
+                  })
+                }
+              >
+                Reset two-step sign-in
+              </button>
+            )}
             {user.deactivated ? (
               <button type="button" className={cn(item, 'text-emerald-600')} onClick={() => run(() => { setUserActive(user.id, true); onToast(`${user.name} reactivated.`); })}>Reactivate user</button>
             ) : (

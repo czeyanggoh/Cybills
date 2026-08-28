@@ -1,5 +1,17 @@
 import { Router, type Request, type Response } from 'express';
 import { randomUUID, randomBytes, createHash, scryptSync, timingSafeEqual } from 'node:crypto';
+import jwt from 'jsonwebtoken';
+import {
+  newSecret,
+  otpauthUri,
+  readableSecret,
+  totpMatches,
+  sealSecret,
+  openSecret,
+  newRecoveryCodes,
+  hashRecovery,
+  spendRecovery,
+} from './totp.js';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId } from './workspace.js';
 import { getOrganisation, primaryOrgId, listOrganisations, dataScopeForOrg } from './organisations.js';
@@ -150,6 +162,22 @@ export type User = {
   resetTokenExpires?: number; // epoch ms
   resetTokenKind?: 'invite' | 'reset';
   invitedAt?: string; // ISO timestamp of the last invitation sent
+  // --- Two-factor, for the password sign-in ----------------------------------
+  // Google accounts carry their own second factor, so this exists for the
+  // people who reach CYBills through the password form — ST Engineering's
+  // staff, and anyone else without a Google account. For them the password is
+  // otherwise a single secret between an outsider and a client's whole book.
+  //
+  // The secret is SEALED (totp.ts): it is password-equivalent, so a copy of the
+  // data file must not be a copy of everybody's second factor. `totpPending`
+  // holds one that has been shown but not yet proved — until a code from it
+  // verifies, nothing about sign-in changes, so a half-finished enrolment can
+  // never lock somebody out.
+  totpSecret?: string;
+  totpPending?: string;
+  totpEnabledAt?: string;
+  // SHA-256 of each unused recovery code, never the codes themselves.
+  totpRecovery?: string[];
 };
 
 // Public shape sent to the client — never leak the password hash or the reset
@@ -167,13 +195,33 @@ export const isAccountOwner = (u: User | null | undefined): boolean =>
   Boolean(u?.email) && ownerEmails().has(norm(u!.email));
 
 export function publicUser(u: User) {
-  const { passwordHash, resetTokenHash, resetTokenExpires, resetTokenKind, ...rest } = u;
+  const {
+    passwordHash,
+    resetTokenHash,
+    resetTokenExpires,
+    resetTokenKind,
+    // Password-equivalent, all three: the secret mints this person's codes
+    // forever, and an unspent recovery hash is what a code is checked against.
+    // None of them has any business reaching a browser.
+    totpSecret,
+    totpPending,
+    totpRecovery,
+    ...rest
+  } = u;
   // The general account's address is an internal identity (what a document
   // stores as its owner), not a mailbox anyone can write to — so the roster
   // reports it as having none, and the UI treats it accordingly: nothing to
   // invite, nothing to reset.
   const email = u.general || isInternalAddress(rest.email) ? '' : rest.email;
-  return { ...rest, email, hasPassword: Boolean(passwordHash), accountOwner: isAccountOwner(u) };
+  return {
+    ...rest,
+    email,
+    hasPassword: Boolean(passwordHash),
+    accountOwner: isAccountOwner(u),
+    // Whether a second factor is set up, and how many ways back in are left.
+    totpEnabled: Boolean(totpSecret),
+    recoveryCodesLeft: Array.isArray(totpRecovery) ? totpRecovery.length : 0,
+  };
 }
 
 const COLLECTION = 'users';
@@ -1492,6 +1540,33 @@ usersRouter.post('/', async (req, res) => {
 
 // POST /api/users/login — non-Google sign-in with email + password. Issues the
 // same session cookie as Google, so the rest of the app works unchanged.
+// --- Two-factor for the password sign-in --------------------------------------
+// Between the password and the session there is now a second step for anybody
+// who has set one up. The password alone must not mint a session, so what comes
+// back instead is a CHALLENGE: a short-lived token that says "this password was
+// right, for this person" and nothing else. It cannot be used as a session, it
+// expires in five minutes, and it carries no privileges of its own — so it is
+// safe to hand to a browser mid-sign-in.
+const TOTP_CHALLENGE_TTL_SECONDS = 5 * 60;
+
+function mintChallenge(user: User): string {
+  return jwt.sign({ sub: user.id, kind: 'totp' }, env.SESSION_SECRET, {
+    expiresIn: TOTP_CHALLENGE_TTL_SECONDS,
+  });
+}
+
+function readChallenge(token: string): string {
+  try {
+    const payload = jwt.verify(String(token ?? ''), env.SESSION_SECRET) as jwt.JwtPayload;
+    // `kind` matters: without it a SESSION cookie would verify here too, and
+    // the second factor could be skipped by presenting the very thing it is
+    // meant to be standing in front of.
+    return payload?.kind === 'totp' ? String(payload.sub ?? '') : '';
+  } catch {
+    return '';
+  }
+}
+
 usersRouter.post('/login', (req, res) => {
   const ws = workspaceId(req);
   const email = String(req.body?.email || '').trim().toLowerCase();
@@ -1503,8 +1578,124 @@ usersRouter.post('/login', (req, res) => {
   if (!user || !verifyPassword(password, user.passwordHash)) {
     return res.status(401).json({ error: 'invalid_login' });
   }
+  // The password was right, and for somebody with a second factor that is only
+  // half of it. No session is set here.
+  if (user.totpSecret) {
+    return res.json({ totpRequired: true, challenge: mintChallenge(user) });
+  }
   setSession(res, { sub: user.id, email: user.email, name: user.name });
   return res.json({ user: publicUser(user) });
+});
+
+// POST /api/users/login/totp — the second step. Body { challenge, code }, where
+// `code` is either a six-digit code from the authenticator or one of the
+// recovery codes.
+usersRouter.post('/login/totp', (req, res) => {
+  const ws = workspaceId(req);
+  const id = readChallenge(String(req.body?.challenge || ''));
+  if (!id) return res.status(401).json({ error: 'challenge_expired' });
+  const items = ensure(ws);
+  const user = items.find((u) => u.id === id && !u.removed && !u.deactivated);
+  if (!user?.totpSecret) return res.status(401).json({ error: 'invalid_login' });
+
+  const typed = String(req.body?.code || '');
+  if (totpMatches(openSecret(user.totpSecret), typed)) {
+    setSession(res, { sub: user.id, email: user.email, name: user.name });
+    return res.json({ user: publicUser(user) });
+  }
+  // A recovery code is spent by using it — that is what makes it one-time, and
+  // it is the difference between losing a phone and losing an account.
+  const left = spendRecovery(user.totpRecovery ?? [], typed);
+  if (left) {
+    user.totpRecovery = left;
+    save(items);
+    setSession(res, { sub: user.id, email: user.email, name: user.name });
+    return res.json({ user: publicUser(user), usedRecoveryCode: true, recoveryCodesLeft: left.length });
+  }
+  return res.status(401).json({ error: 'invalid_code' });
+});
+
+// POST /api/users/totp/start — begin enrolling. Returns a secret to put into an
+// authenticator; nothing about sign-in changes until a code from it verifies.
+usersRouter.post('/totp/start', (req, res) => {
+  const me = memberForSession(req);
+  if (!me) return res.status(401).json({ error: 'unauthenticated' });
+  if (me.totpSecret) return res.status(409).json({ error: 'already_enabled' });
+  const items = ensure(workspaceId(req));
+  const row = items.find((u) => u.id === me.id)!;
+  const secret = newSecret();
+  row.totpPending = sealSecret(secret);
+  save(items);
+  res.json({
+    secret,
+    readable: readableSecret(secret),
+    uri: otpauthUri(secret, row.email || row.name || 'CYBills'),
+  });
+});
+
+// POST /api/users/totp/enable — prove the authenticator has it, and turn it on.
+// The recovery codes are returned HERE and nowhere else: only their hashes are
+// kept, so this is the one moment they can be read.
+usersRouter.post('/totp/enable', (req, res) => {
+  const me = memberForSession(req);
+  if (!me) return res.status(401).json({ error: 'unauthenticated' });
+  const items = ensure(workspaceId(req));
+  const row = items.find((u) => u.id === me.id)!;
+  if (row.totpSecret) return res.status(409).json({ error: 'already_enabled' });
+  const pending = openSecret(row.totpPending ?? '');
+  if (!pending) return res.status(409).json({ error: 'not_started' });
+  if (!totpMatches(pending, String(req.body?.code || ''))) {
+    return res.status(401).json({ error: 'invalid_code' });
+  }
+  const codes = newRecoveryCodes();
+  row.totpSecret = row.totpPending;
+  delete row.totpPending;
+  row.totpEnabledAt = new Date().toISOString();
+  row.totpRecovery = codes.map(hashRecovery);
+  save(items);
+  res.json({ ok: true, recoveryCodes: codes });
+});
+
+// POST /api/users/totp/disable — turn it off. Needs a current code (or a
+// recovery code): a session that has been walked away from must not be able to
+// take somebody's second factor off on its own.
+usersRouter.post('/totp/disable', (req, res) => {
+  const me = memberForSession(req);
+  if (!me) return res.status(401).json({ error: 'unauthenticated' });
+  const items = ensure(workspaceId(req));
+  const row = items.find((u) => u.id === me.id)!;
+  if (!row.totpSecret) return res.json({ ok: true });
+  const typed = String(req.body?.code || '');
+  const ok = totpMatches(openSecret(row.totpSecret), typed) || Boolean(spendRecovery(row.totpRecovery ?? [], typed));
+  if (!ok) return res.status(401).json({ error: 'invalid_code' });
+  delete row.totpSecret;
+  delete row.totpPending;
+  delete row.totpEnabledAt;
+  delete row.totpRecovery;
+  save(items);
+  res.json({ ok: true });
+});
+
+// POST /api/users/:id/totp/reset — an admin takes somebody's second factor off,
+// for the phone that is genuinely gone and the recovery codes with it.
+//
+// Deliberately not "an admin can read it" or "an admin can set it": all this
+// does is put the person back where they started, able to enrol again. It is
+// logged in the console, because taking a second factor off somebody's account
+// is a thing that should leave a trace.
+usersRouter.post('/:id/totp/reset', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const items = ensure(workspaceId(req));
+  const row = items.find((u) => u.id === req.params.id && !u.removed);
+  if (!row) return res.status(404).json({ error: 'not_found' });
+  if (!row.totpSecret && !row.totpPending) return res.json({ ok: true, alreadyOff: true });
+  delete row.totpSecret;
+  delete row.totpPending;
+  delete row.totpEnabledAt;
+  delete row.totpRecovery;
+  save(items);
+  console.log(`[users] two-factor reset for ${row.email || row.id} by ${memberForSession(req)?.email || 'an admin'}`);
+  res.json({ ok: true });
 });
 
 // --- Account email flows (invite / reset / change password) -------------------

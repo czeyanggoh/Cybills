@@ -26,7 +26,7 @@ const ERROR_MESSAGES = {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { googleEnabled, mailEnabled, loginWithPassword } = useAuth();
+  const { googleEnabled, mailEnabled, loginWithPassword, loginWithCode } = useAuth();
   const [params] = useSearchParams();
   const error = params.get('error');
   const [email, setEmail] = useState('');
@@ -34,6 +34,31 @@ export default function Login() {
   const [pwError, setPwError] = useState('');
   const [busy, setBusy] = useState(false);
   const [resetNote, setResetNote] = useState('');
+  // Set once the password is right and a second factor stands in front of the
+  // session. Holding it here is what turns this form into two steps.
+  const [challenge, setChallenge] = useState('');
+  const [code, setCode] = useState('');
+
+  const submitCode = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setPwError('');
+    try {
+      const out = await loginWithCode(challenge, code.trim());
+      if (out.ok) navigate('/costs');
+      // A challenge lasts five minutes. Saying so — and putting them back at
+      // the password step — beats "invalid code" on a code that was right.
+      else if (out.error === 'challenge_expired') {
+        setChallenge('');
+        setCode('');
+        setPwError('That took too long — please sign in again.');
+      } else setPwError('That code is not right.');
+    } catch {
+      setPwError('Could not sign in. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // Real OAuth when configured; otherwise a mock sign-in straight into the app.
   const continueWithGoogle = () => {
@@ -52,7 +77,8 @@ export default function Login() {
     setPwError('');
     try {
       const ok = await loginWithPassword(email.trim(), password);
-      if (ok) navigate('/costs');
+      if (ok?.totpRequired) setChallenge(ok.challenge);
+      else if (ok) navigate('/costs');
       else setPwError('Wrong email or password.');
     } catch {
       setPwError('Could not sign in. Please try again.');
@@ -96,6 +122,47 @@ export default function Login() {
           </p>
         )}
 
+        {/* Once the password is right and a second factor stands in front of the
+            session, the page becomes the second step and nothing else — putting
+            the password form back under it would only invite starting over. */}
+        {challenge ? (
+          <form onSubmit={submitCode} className="space-y-2.5">
+            <p className="mb-3 text-center text-sm text-muted-foreground">
+              Enter the 6-digit code from your authenticator app.
+            </p>
+            <input
+              value={code}
+              onChange={(e) => { setCode(e.target.value); setPwError(''); }}
+              placeholder="123456"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              className="h-11 w-full rounded-md border bg-background px-3 text-center font-mono text-lg tracking-[0.3em] outline-none placeholder:tracking-normal placeholder:font-sans placeholder:text-base placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {pwError && <p className="text-center text-xs text-destructive">{pwError}</p>}
+            <button
+              type="submit"
+              disabled={busy || !code.trim()}
+              className="h-11 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {busy ? 'Checking…' : 'Sign in'}
+            </button>
+            {/* The phone in a drawer. Said here rather than left for somebody to
+                remember they have. */}
+            <p className="pt-1 text-center text-xs text-muted-foreground">
+              Lost your phone? Enter one of your recovery codes instead. If those are gone too, an admin can
+              reset it for you.
+            </p>
+            <button
+              type="button"
+              onClick={() => { setChallenge(''); setCode(''); setPwError(''); }}
+              className="w-full text-center text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+            >
+              Back
+            </button>
+          </form>
+        ) : (
+        <>
         <button
           type="button"
           onClick={continueWithGoogle}
@@ -153,6 +220,8 @@ export default function Login() {
             </button>
           )}
         </form>
+        </>
+        )}
 
         <p className="mt-8 text-center text-xs text-muted-foreground">
           By continuing you agree to the CYBills terms of use.

@@ -79,6 +79,10 @@ export function AuthProvider({ children }) {
   }, []);
 
   // Non-Google sign-in (email + password). Resolves true on success.
+  // Returns true when the password alone was enough, or `{ totpRequired,
+  // challenge }` when a second factor stands in front of the session. The
+  // challenge is not a session and carries nothing of its own — it says only
+  // "this password was right, for this person", and expires in five minutes.
   const loginWithPassword = useCallback(async (email, password) => {
     const res = await fetch('/api/users/login', {
       method: 'POST',
@@ -86,9 +90,24 @@ export function AuthProvider({ children }) {
       body: JSON.stringify({ email, password }),
     });
     if (!res.ok) return false;
-    const { user: u } = await res.json();
-    setUser(u || null);
+    const data = await res.json();
+    if (data?.totpRequired) return { totpRequired: true, challenge: data.challenge };
+    setUser(data?.user || null);
     return true;
+  }, []);
+
+  // The second step: a six-digit code from the authenticator, or one of the
+  // recovery codes for the phone that is in a drawer somewhere.
+  const loginWithCode = useCallback(async (challenge, code) => {
+    const res = await fetch('/api/users/login/totp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challenge, code }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, error: data?.error || 'invalid_code' };
+    setUser(data?.user || null);
+    return { ok: true, usedRecoveryCode: Boolean(data?.usedRecoveryCode), recoveryCodesLeft: data?.recoveryCodesLeft };
   }, []);
 
   return (
@@ -105,6 +124,7 @@ export function AuthProvider({ children }) {
         refresh,
         signOut,
         loginWithPassword,
+        loginWithCode,
       }}
     >
       {children}

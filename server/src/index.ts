@@ -53,6 +53,13 @@ app.use((req, res, next) => {
   if (!p.startsWith('/api/')) return next();
   if (p.startsWith('/api/auth')) return next();
   if (p === '/api/users/login') return next();
+  // The second step of that same sign-in. Somebody standing at the code prompt
+  // has proved their password and has no session yet — that is the whole point
+  // of the step — so guarding this one behind a session refuses precisely the
+  // people it exists for, and every account with two-step sign-in is locked
+  // out. It carries its own proof instead: a five-minute challenge that is not
+  // a session and grants nothing on its own.
+  if (p === '/api/users/login/totp') return next();
   // Invitation / password-reset links are opened by people who, by definition,
   // can't sign in yet — these three are the flow that gets them a password.
   if (p === '/api/users/forgot-password') return next();
