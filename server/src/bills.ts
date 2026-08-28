@@ -304,10 +304,20 @@ function canReadBill(req: Request, bill: { orgId?: string }): boolean {
 // stored the same way the detail page's own edits are.
 type LineItem = NonNullable<Bill['lineItems']>[number];
 
+// A cell's number, or null when it holds nothing usable. Null is the point: it
+// keeps "this cell is empty" apart from a real zero. Mirrors cellNumber in
+// src/lib/lineItems.js, which the grid uses.
+function cellNumber(value: unknown): number | null {
+  const text = String(value ?? '').replace(/[^0-9.-]/g, '').trim();
+  if (!text) return null;
+  const n = Number(text);
+  return Number.isFinite(n) ? n : null;
+}
+
 function normaliseLineItems(rows: unknown[]): LineItem[] {
   return rows.map((raw) => {
     const li = raw as Record<string, unknown>;
-    return {
+    const row = {
       description: String(li?.description ?? ''),
       category: String(li?.category ?? ''),
       // The two Xero tracking categories, per line. A bill whose lines carry
@@ -319,6 +329,25 @@ function normaliseLineItems(rows: unknown[]): LineItem[] {
       tax: String(li?.tax ?? ''),
       total: String(li?.total ?? ''),
     };
+    // Net, Tax and Total are one row seen three ways, so a row that states two
+    // of them has stated the third. Stored with the third missing, it is not a
+    // row with an empty field — it is a row that does not add up: the grid's
+    // Item total reads it as nothing ("Out by 33.00" against a document that is
+    // perfectly correct), and the publish path refuses the whole breakdown for
+    // failing to reconcile, falling back to one summary line.
+    //
+    // A row with nothing in it at all is left exactly as it is — that is an
+    // empty row somebody just added, not a contradiction. Same rule as
+    // completeLine in src/lib/lineItems.js.
+    const net = cellNumber(row.net);
+    const tax = cellNumber(row.tax);
+    const total = cellNumber(row.total);
+    if (net === null && tax === null && total === null) return row;
+    if (tax === null) row.tax = (total !== null && net !== null ? total - net : 0).toFixed(2);
+    const t = cellNumber(row.tax) ?? 0;
+    if (total === null && net !== null) row.total = (net + t).toFixed(2);
+    else if (net === null && total !== null) row.net = (total - t).toFixed(2);
+    return row;
   });
 }
 

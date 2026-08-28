@@ -61,6 +61,29 @@ check('…adding up to the document', merged.lineItems.reduce((t: number, l: any
 check('…keeping a line project', merged.lineItems[0].project, 'Site A');
 check('…and every cell a string', merged.lineItems.every((l: any) => typeof l.net === 'string' && typeof l.tax === 'string'), true);
 
+// --- A row that states two figures has stated the third ----------------------
+// Net, Tax and Total are one row seen three ways. Stored with the total blank,
+// the row does not add up: the grid totals it as nothing and reports the
+// document "out by" its own amount, and the publish path refuses the breakdown
+// for failing to reconcile — falling back to one summary line.
+const partial = await create({
+  kind: 'cost', fileHash: 'partial_x', fileName: 'partial.pdf', supplier: 'Grab',
+  documentType: 'Receipt', currency: 'SGD', total: '33', tax: '0', date: '2026-08-27',
+  lineItems: [
+    { description: 'Ride fare', category: '493 - Travel - National', net: '33', tax: '', total: '' },
+    { description: 'With tax', net: '100', tax: '9', total: '' },
+    { description: 'Total only', net: '', tax: '9', total: '109' },
+    // Nothing in it at all: an empty row somebody just added, left alone.
+    { description: 'Blank', net: '', tax: '', total: '' },
+  ],
+  force: true,
+});
+check('a row with only a net gets its total', partial.lineItems[0].total, '33.00');
+check('…and a tax of zero', partial.lineItems[0].tax, '0.00');
+check('a stated tax is carried into the total', partial.lineItems[1].total, '109.00');
+check('a row with only a total gets its net', partial.lineItems[2].net, '100.00');
+check('an empty row is left empty', [partial.lineItems[3].net, partial.lineItems[3].total], ['', '']);
+
 // Nothing sent, nothing stored — a document without a breakdown is normal.
 const plain = await create({
   kind: 'cost', fileHash: 'plain_x', fileName: 'p.pdf', supplier: 'Koufu',

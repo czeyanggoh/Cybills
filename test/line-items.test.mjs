@@ -1,6 +1,6 @@
 // A line of an itemised table has to agree with itself: net + tax = total,
 // whichever of the three somebody just typed.
-import { balanceLine, cellNumber, foldTaxIntoCost } from '../src/lib/lineItems.js';
+import { balanceLine, cellNumber, foldTaxIntoCost, completeLine, completeLines } from '../src/lib/lineItems.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -76,6 +76,23 @@ check('a negative survives', cellNumber('-5.25'), -5.25);
   check('an empty row is left alone', foldTaxIntoCost(blank)[0], blank[0]);
   check('a non-list is not a crash', foldTaxIntoCost(null), []);
 }
+
+// --- A row that states two figures has stated the third ----------------------
+// Net, Tax and Total are one row seen three ways. Stored with one missing, the
+// row does not add up: the grid totals it as nothing and reports the document
+// "out by" its own amount, and the publish path refuses the whole breakdown for
+// failing to reconcile.
+check('a net with no total is worth its net', completeLine({ net: '33', tax: '', total: '' }), { net: '33', tax: '0.00', total: '33.00' });
+check('with tax, the total carries it', completeLine({ net: '100', tax: '9', total: '' }), { net: '100', tax: '9', total: '109.00' });
+check('a total with no net gives the net back', completeLine({ net: '', tax: '9', total: '109' }), { net: '100.00', tax: '9', total: '109' });
+check('a total and a net state the tax between them', completeLine({ net: '100', tax: '', total: '109' }), { net: '100', tax: '9.00', total: '109' });
+// An empty row is somebody about to type, not a contradiction.
+check('an empty row is left alone', completeLine({ description: 'x', net: '', tax: '', total: '' }), { description: 'x', net: '', tax: '', total: '' });
+// A row that already adds up is not rewritten.
+check('a complete row is untouched', completeLine({ net: '10', tax: '0', total: '10' }), { net: '10', tax: '0', total: '10' });
+check('and other fields ride along', completeLine({ description: 'Ride fare', category: '493', net: '33', tax: '', total: '' }).description, 'Ride fare');
+check('completeLines maps them', completeLines([{ net: '1', tax: '', total: '' }, { net: '2', tax: '', total: '' }]).map((r) => r.total), ['1.00', '2.00']);
+check('and tolerates nothing at all', completeLines(null), []);
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

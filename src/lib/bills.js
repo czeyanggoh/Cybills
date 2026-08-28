@@ -6,6 +6,7 @@ import { supplierNamesFromDocs } from '@/lib/supplierList';
 import { isGstRegistered } from '@/lib/businessProfile';
 import { fetchReviewInstructions } from '@/lib/reviewInstructions';
 import { requestedProvider } from '@/lib/readerProvider';
+import { completeLines } from '@/lib/lineItems';
 
 // Every bill request carries the selected organisation so the server serves that
 // org's own Costs/Sales books (separate per client entity). Omitted when no org
@@ -322,7 +323,11 @@ export function billToDoc(b) {
     // reads to know it has nothing to show.
     whatsapp: b.whatsapp || null,
     dueDate: b.dueDate || '',
-    lineItems: Array.isArray(b.lineItems) ? b.lineItems : [],
+    // Completed on the way in, so a row stored before the server did it — a net
+    // with no total — reads as what it is worth rather than as nothing. The
+    // grid would otherwise total it at 0.00 and report the document "out by"
+    // its own amount.
+    lineItems: completeLines(Array.isArray(b.lineItems) ? b.lineItems : []),
     hasFile: Boolean(b.hasFile),
     contentType: b.contentType || '',
     // Xero provenance (set once published through the cyworkspace relay).

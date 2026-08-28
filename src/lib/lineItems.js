@@ -39,6 +39,34 @@ export function balanceLine(row, patch) {
   return next;
 }
 
+// A row that states two of its three figures has stated the third.
+//
+// Net, Tax and Total are one row seen three ways, so a row carrying a net and
+// an empty total is not a row with a missing field — it is a row that does not
+// add up, and everything downstream reads it as worth nothing: the grid's Item
+// total says 0.00 and "Out by 33.00" against a document that is perfectly
+// correct, and the publish path refuses the breakdown because the rows do not
+// reconcile with the document, falling back to one summary line.
+//
+// Filled only where a figure is genuinely absent. A row with nothing in it at
+// all is left alone — that is an empty row somebody just added and is about to
+// type into, not a contradiction.
+export function completeLine(row) {
+  const net = cellNumber(row?.net);
+  const tax = cellNumber(row?.tax);
+  const total = cellNumber(row?.total);
+  if (net === null && tax === null && total === null) return row;
+  const next = { ...row };
+  // Tax absent means no tax on the row, which is the ordinary case.
+  if (tax === null) next.tax = (total !== null && net !== null ? total - net : 0).toFixed(2);
+  const t = cellNumber(next.tax) ?? 0;
+  if (total === null && net !== null) next.total = (net + t).toFixed(2);
+  else if (net === null && total !== null) next.net = (total - t).toFixed(2);
+  return next;
+}
+
+export const completeLines = (rows) => (Array.isArray(rows) ? rows.map(completeLine) : []);
+
 // Fold every row's tax back into its own cost, leaving the row worth exactly
 // what it was worth before.
 //

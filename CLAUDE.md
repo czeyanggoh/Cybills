@@ -288,6 +288,18 @@ The toolbar keeps only the review affordances — "Merge suggestions (N)" and
 "Review duplicates (N)", each shown only when there is something to review.
 `npm test` at the repo root runs the rules.
 
+**A row that states two of its three figures has stated the third.** Net, Tax
+and Total are one row seen three ways, so a stored row carrying a net and an
+empty total is not a row with a missing field — it is a row that does not add
+up. The grid totals it as nothing ("Out by 33.00" against a document that is
+perfectly correct) and the publish path refuses the whole breakdown for failing
+to reconcile, falling back to one summary line. `completeLine` /`completeLines`
+(`lineItems.js`) fill whichever figure is absent, mirrored in
+`normaliseLineItems` (`bills.ts`) so nothing is STORED that way and applied in
+`billToDoc` so rows written before it read as what they are worth. A row with
+nothing in it at all is left alone — that is an empty row somebody just added,
+not a contradiction.
+
 **No Tax means no tax anywhere on the document.** A code that carries no tax and
 a line still carrying GST contradict each other, and the publish path refuses a
 breakdown that disagrees with its own paper — so a half-applied correction locks
