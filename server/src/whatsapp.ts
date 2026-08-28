@@ -620,10 +620,19 @@ whatsappRouter.get('/channels', (req, res) => {
   }
   const orgId = orgIdFor(req);
   if (!orgId) return res.json({ channels: [], enabled: whatsappEnabled });
+  // EVERY group this entity collects through, not just the entity-wide one.
+  // Showing only the latter meant the card reported "0 bills" beside a group
+  // nobody was using, while the person's own group — the one three bills had
+  // just arrived through — was not on the page at all. A replaced group is left
+  // out: it is superseded, and its successor is right there.
+  const people = ensureUsers(ws);
   res.json({
-    // The entity's own group, not every group of everyone who works in it —
-    // this is the Connections card, and a person's is on their own page.
-    channels: channelsForOrg(ws, orgId).filter((c) => !c.userId).map(publicChannel),
+    channels: channelsForOrg(ws, orgId)
+      .filter((c) => c.status !== 'replaced')
+      .map((c) => ({
+        ...publicChannel(c),
+        personName: c.userId ? people.find((u: User) => u.id === c.userId)?.name ?? '' : '',
+      })),
     enabled: whatsappEnabled,
     canManage: mayManage(req, orgId),
   });

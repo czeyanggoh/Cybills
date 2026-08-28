@@ -545,6 +545,14 @@ told which road it came in on (`emailInstruction`'s `via`), and it beats a
 standing supplier rule for the fields it decides — never for the money. It is
 kept on the document, so a RE-READ sees it too.
 
+**The Connections card lists EVERY group the entity collects through**, its
+people's own included. Showing only the entity-wide one had it report "0 bills"
+beside a group nobody was using, while the group three bills had just arrived
+through was not on the page at all. The status beside the heading is a status,
+not a button: WhatsApp has no link that opens a group by its id and CYWS mints
+no invite link, so there is nothing there to click and it no longer looks as
+though there is.
+
 **The pipe can be tested without CYWS.** Extraction -> Extract by WhatsApp ->
 **Send a test bill** posts one document to CYBills's OWN public endpoint — real
 URL, real key, real group — so everything from the network in is exercised:

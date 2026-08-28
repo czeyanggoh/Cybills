@@ -968,8 +968,11 @@ function WhatsappCollectionCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const channel = channels[0] || null;
+  // The entity-wide group is the one this card CREATES; the list below shows
+  // every group the entity collects through, its people's own included.
+  const channel = channels.find((c) => !c.userId) || null;
   const pending = channel && channel.status !== 'open';
+  const openGroups = channels.filter((c) => c.status === 'open');
 
   const create = async () => {
     setBusy(true);
@@ -1066,8 +1069,15 @@ function WhatsappCollectionCard() {
               sales invoices and everything else are left where they are.
             </p>
           </div>
-          <span className="inline-flex h-9 shrink-0 items-center rounded-md border px-4 text-sm font-medium text-muted-foreground">
-            {channel?.status === 'open' ? 'Open' : pending ? 'Not created' : 'Not set up'}
+          {/* A status, said as one. Boxed and button-sized it read as something
+              to click — and there is nothing to click: WhatsApp has no link that
+              opens a group by its id, and CYWorkspace mints no invite link. */}
+          <span className="shrink-0 pt-1 text-sm text-muted-foreground">
+            {openGroups.length
+              ? `${openGroups.length} group${openGroups.length === 1 ? '' : 's'}`
+              : pending
+                ? 'Not created'
+                : 'Not set up'}
           </span>
         </div>
 
@@ -1076,21 +1086,38 @@ function WhatsappCollectionCard() {
             CYWorkspace isn&rsquo;t connected on this deployment yet, so there is nothing to create the group
             with. It comes on with the same key the Xero relay uses.
           </p>
-        ) : channel?.status === 'open' ? (
+        ) : openGroups.length ? (
           <>
-            <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 border-t pt-4 text-sm">
-              <dt className="text-muted-foreground">Group</dt>
-              <dd className="m-0 break-words font-medium">{channel.subject}</dd>
-              {/* The numbers we ASKED with. WhatsApp answers with LIDs — opaque
-                  per-user ids — and printing those here put two 15-digit numbers
-                  in front of the reader with no way to tell whose they were. */}
-              <dt className="text-muted-foreground">Sending to</dt>
-              <dd className="m-0 break-words font-mono text-xs">{channel.participantsRequested.join(', ') || '—'}</dd>
-              <dt className="text-muted-foreground">Received</dt>
-              <dd className="m-0">
-                {channel.received} {channel.received === 1 ? 'bill' : 'bills'}
-              </dd>
-            </dl>
+            {/* Every group, because a count beside the wrong one is worse than
+                no count: this card showed "0 bills" for the entity's group while
+                three had just arrived through somebody's own, which was not on
+                the page at all. */}
+            <div className="mt-4 divide-y border-t">
+              {openGroups.map((g) => (
+                <div key={g.submissionId} className="flex items-start justify-between gap-4 py-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="break-words font-medium">{g.subject}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {g.personName ? (
+                        <>{g.personName}&rsquo;s own group</>
+                      ) : (
+                        <>This entity&rsquo;s group</>
+                      )}
+                      {/* The numbers we ASKED with. WhatsApp answers with LIDs —
+                          opaque per-user ids — and printing those put 15-digit
+                          numbers in front of the reader with no way to tell
+                          whose they were. */}
+                      {g.participantsRequested.length ? (
+                        <> · <span className="font-mono">{g.participantsRequested.join(', ')}</span></>
+                      ) : null}
+                    </p>
+                  </div>
+                  <span className="shrink-0 whitespace-nowrap text-muted-foreground">
+                    {g.received} {g.received === 1 ? 'bill' : 'bills'}
+                  </span>
+                </div>
+              ))}
+            </div>
             {/* WhatsApp silently refuses to add somebody whose privacy settings
                 disallow it, and answers as though nothing happened. Saying so is
                 the only way anybody finds out — otherwise that person waits to
@@ -1100,7 +1127,7 @@ function WhatsappCollectionCard() {
                 number we sent; otherwise all that is honestly known is how many
                 are short. There is no invite link to offer — CYWS's API doesn't
                 mint one — so the instruction is what can actually be done. */}
-            {(channel.participantsMissing.length > 0 || channel.addedShortfall > 0) && (
+            {channel && (channel.participantsMissing.length > 0 || channel.addedShortfall > 0) && (
               <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
