@@ -995,6 +995,32 @@ export function isGeneralPerson(ws: string, org: string, value: string): boolean
   return ensure(ws).some((u) => isGeneralRow(u, ws, org) && (norm(u.name) === want || norm(u.email) === want));
 }
 
+// The name a person goes by NOW, given one they may have gone by before.
+//
+// A document is stored against an ADDRESS, so folding two rows into one moves
+// nothing and breaks nothing. A CLAIM is made out to a NAME — a string, written
+// when it was raised — so it keeps saying whatever the roster said that day. It
+// is not only cosmetic: the claimant's own address is resolved back FROM that
+// name (emailForName), so a claim naming somebody who is no longer on the
+// roster has nowhere to send its approval or rejection.
+//
+// The fold leaves the trail needed to repair it. The losing row is still there,
+// soft-removed, carrying the old name and the shared address — so an old name
+// resolves to that row, its address to the row that absorbed it, and that row's
+// name is the answer. Empty when the name belongs to nobody we can place, which
+// is left alone rather than guessed at.
+export function canonicalPersonName(ws: string, name: string): string {
+  const want = norm(name);
+  if (!want) return '';
+  const items = ensure(ws);
+  const live = items.find((u) => u.workspaceId === ws && !u.removed && norm(u.name) === want);
+  if (live) return live.name;
+  const folded = items.find((u) => u.workspaceId === ws && u.removed && u.email && norm(u.name) === want);
+  if (!folded) return '';
+  const heir = memberByEmail(ws, norm(folded.email));
+  return heir && !heir.removed && norm(heir.name) !== want ? heir.name : '';
+}
+
 export function memberForSession(req: Request): User | null {
   const s = readSession(req);
   if (!s?.email) return null;

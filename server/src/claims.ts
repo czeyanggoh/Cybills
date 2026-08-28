@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, canAccessOrg } from './users.js';
+import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, canAccessOrg, canonicalPersonName } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
 import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed, parseAmount } from './store.js';
 import { listOrganisations } from './organisations.js';
@@ -152,6 +152,23 @@ function load(): Claim[] {
     if (c.orgId) continue;
     const fromItems = c.transactions.map((t) => billOrgId(String(t.itemId))).filter(Boolean);
     c.orgId = fromItems[0] || WORKSPACE_ID;
+    changed = true;
+  }
+  // A claim is made out to a NAME, written when it was raised, so it goes on
+  // saying whatever the roster said that day — including a name that has since
+  // been folded into the one person it always was. That is not only cosmetic:
+  // the claimant's own address is resolved back FROM this name, so a claim
+  // naming nobody on the roster has nowhere to send its approval.
+  //
+  // Only ever renamed to the SAME human: the old name resolves to the row that
+  // was folded away, its address to the row that absorbed it. A name that
+  // resolves to nobody is left exactly as it is.
+  for (const c of items) {
+    if (!c.claimFor) continue;
+    const now = canonicalPersonName(c.workspaceId || WORKSPACE_ID, c.claimFor);
+    if (!now || now === c.claimFor) continue;
+    console.log(`[claims] claim ${c.id} was made out to "${c.claimFor}" — now "${now}"`);
+    c.claimFor = now;
     changed = true;
   }
   if (changed) save(items);

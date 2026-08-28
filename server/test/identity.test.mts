@@ -157,6 +157,20 @@ check('a real address replaces the old one', rowOf('colleague1').email, 'astrid.
   check('and the address now resolves to one person', memberByEmail('cybm', 'astrid.yang@cy-bm.sg')?.id, 'colleague1');
 }
 
+// --- A claim is made out to a NAME -------------------------------------------
+// Documents move for free — they are stored against the address. A claim is
+// not: it carries the name written on it the day it was raised, and the
+// claimant's own address is resolved back FROM that name, so a claim naming
+// somebody no longer on the roster has nowhere to send its approval.
+{
+  const { canonicalPersonName } = await import('../src/users.ts');
+  check('the folded-away name resolves to the person it became', canonicalPersonName('cybm', 'astrid astrid'), 'Rowan Tester');
+  // A name nobody can be placed under is left alone rather than guessed at.
+  check('a name belonging to nobody is left alone', canonicalPersonName('cybm', 'Somebody Else'), '');
+  // Somebody who is simply still here keeps their own name.
+  check('a live name is its own answer', canonicalPersonName('cybm', 'Rowan Tester'), 'Rowan Tester');
+}
+
 // --- The break-glass ---------------------------------------------------------
 // OWNER_EMAILS exists so no state of the data can lock the practice's own owner
 // out of it. It used to be consulted only for somebody ALREADY on the practice

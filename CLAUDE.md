@@ -95,8 +95,19 @@ password, an inbound handle, a mobile and the entity the losing row worked in
 all come across (as `clientAccess` for a colleague, `extraAccess` for a client's
 employee), so nothing anybody was using is lost. The documents need no repair,
 because they are stored against the ADDRESS, which is what both rows agreed on.
-It is the same soft `removed: true` the Users page's own delete writes. Covered
-by `npm test` in `server/` (`test/identity.test.mts`).
+It is the same soft `removed: true` the Users page's own delete writes.
+
+**A document moves for free; a CLAIM has to be renamed.** A document is stored
+against the ADDRESS, so folding two rows into one moves nothing. A claim is made
+out to a NAME — a string, written the day it was raised — so it goes on saying
+whatever the roster said then. Not merely cosmetic: the claimant's own address is
+resolved back FROM that name (`emailForName`), so a claim naming somebody no
+longer on the roster has nowhere to send its approval or rejection.
+`canonicalPersonName` reads the trail the fold leaves — the losing row is still
+there, soft-removed, carrying the old name and the shared address — and
+`claims.ts`'s `load()` repairs stale ones on the next read, the same way document
+owners are. A name that resolves to nobody is left exactly as it is rather than
+guessed at. Covered by `npm test` in `server/` (`test/identity.test.mts`).
 
 ## The document reader: Claude or OpenAI
 
