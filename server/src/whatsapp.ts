@@ -826,70 +826,6 @@ whatsappRouter.get('/config', (req, res) => {
   });
 });
 
-// GET /api/whatsapp/chats — what has come in through each of this entity's
-// groups, as a conversation.
-//
-// Honest about its own limits, because the page it feeds looks like a chat and
-// a chat that is quietly missing most of itself is worse than no chat at all:
-// CYWorkspace forwards the BILLS AND RECEIPTS it classifies and nothing else.
-// Plain messages, the other attachments, the back-and-forth — none of it ever
-// reaches CYBills, and none of it can be shown here. What this holds is every
-// document that arrived, in the order it was sent, with whatever was typed
-// alongside it.
-whatsappRouter.get('/chats', (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!orgId) return res.json({ groups: [] });
-  const me = memberForSession(req);
-  // The same bar as the Costs inbox it draws from: this shows everybody's
-  // documents in the entity, not just the reader's own.
-  if (me && !(canAccessOrg(me, orgId) && isBusinessAdminRole(effectiveRoleFor(me, orgId)))) {
-    return res.status(403).json({ error: 'not_an_admin' });
-  }
-  if (!me && googleEnabled) return res.status(403).json({ error: 'forbidden' });
-
-  const people = ensureUsers(ws);
-  const docs = listBills(dataScopeForOrg(orgId)).filter((b) => b.whatsapp?.submissionId);
-  const groups = channelsForOrg(ws, orgId)
-    .filter((c) => c.status !== 'replaced')
-    .map((c) => {
-      const messages = docs
-        .filter((b) => b.whatsapp!.submissionId === c.id)
-        // Oldest first: this is read like a conversation, not like an inbox.
-        .sort((a, b) => String(a.whatsapp!.sentAt).localeCompare(String(b.whatsapp!.sentAt)))
-        .map((b) => ({
-          messageId: b.whatsapp!.messageId,
-          senderName: b.whatsapp!.senderName,
-          // The number, not the '@c.us' or '@lid' machinery after it — and a
-          // LID is not a number anybody recognises, so it is left to the name.
-          from: String(b.whatsapp!.from || '').split('@')[0],
-          text: b.whatsapp!.text,
-          sentAt: b.whatsapp!.sentAt,
-          fileName: b.whatsapp!.fileName,
-          billId: b.id,
-          itemId: displayIdOf(b.id) || b.displayId || '',
-          supplier: b.supplier,
-          total: b.total,
-          currency: b.currency,
-          hasFile: Boolean(b.storageKey),
-        }));
-      return {
-        submissionId: c.id,
-        subject: c.subject,
-        chatId: c.chatId,
-        personName: c.userId ? people.find((u: User) => u.id === c.userId)?.name ?? '' : '',
-        participants: c.participantsRequested,
-        lastMessageAt: messages.length ? messages[messages.length - 1]!.sentAt : c.lastMessageAt,
-        messages,
-      };
-    })
-    // The group something last arrived in comes first — that is the one being
-    // looked at.
-    .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
-
-  res.json({ groups, enabled: whatsappEnabled });
-});
-
 // --- Testing it without CYWorkspace -------------------------------------------
 // A one-page PDF, assembled here so a test delivery carries a real file rather
 // than a blob the viewer can't open. Offsets are computed rather than typed:
@@ -1035,6 +971,150 @@ whatsappRouter.post('/test', async (req, res) => {
   });
 });
 
+// --- The conversation itself --------------------------------------------------
+// A collection group is a conversation, and until now CYBills only ever saw the
+// documents CYWS picked out of it — so "I sent that last week" could not be
+// answered here at all, and a receipt the classifier called a holiday photo
+// vanished silently. CYWS now mirrors EVERY message, text included, and the
+// WhatsApp tab is where they are read.
+//
+// Kept separate from the cost document a message may also become. The mirror is
+// the record of what was said; filing is an accounting act performed on one of
+// them, and `billId` below is the link once somebody does it.
+
+export type WaMirroredMessage = {
+  /** CYWS's wa_message_id — WhatsApp's own id, and the upsert key. */
+  id: string;
+  submissionId: string;
+  workspaceId: string;
+  orgId: string;
+  chatId: string;
+  direction: string;
+  sender: string;
+  senderName: string;
+  body: string;
+  translation: string;
+  msgType: string;
+  r2Key: string;
+  fileUrl: string;
+  fileName: string;
+  contentType: string;
+  /** What the document is. CYWS's classifier proposes; a reviewer here decides. */
+  docCategory: string;
+  /** 'cyws' — the classifier's guess; 'manual' — corrected here, and then never
+   * overwritten by a later CYWS re-send. The correction is the whole point. */
+  categorySource: string;
+  replyToBody: string;
+  reaction: string;
+  sentAt: string;
+  receivedAt: string;
+  /** Set once this message has been filed as a cost document. */
+  billId: string;
+  billDisplayId: string;
+};
+
+// NOT 'whatsapp-messages' — that name belongs to the delivery dedup ledger
+// (SEEN, above), and sharing it would have the two overwrite each other's file.
+const MIRRORED = 'whatsapp-thread';
+const loadMessages = () => loadCollection<WaMirroredMessage>(MIRRORED);
+const saveMessages = (items: WaMirroredMessage[]) => saveCollection(MIRRORED, items);
+
+/** Every mirrored message for one group, oldest first — a thread reads forwards. */
+export function messagesForChannel(submissionId: string): WaMirroredMessage[] {
+  return loadMessages()
+    .filter((m) => m.submissionId === submissionId)
+    .sort((a, b) => String(a.sentAt).localeCompare(String(b.sentAt)));
+}
+
+/**
+ * Files one WhatsApp document as a cost document, and starts the read.
+ *
+ * ONE builder, because there are now two ways in and they must not drift: CYWS
+ * handing over a bill its classifier picked out (/invoice), and a reviewer
+ * pressing the button on the WhatsApp tab for one it classified as something
+ * else. The second exists precisely because the model is guessing from a photo
+ * while the person looking at it knows — so it has to produce exactly the
+ * document the first one would have.
+ *
+ * The read is deliberately NOT awaited. It comes back as `finishRead` so the
+ * caller can answer first: a model call takes 10-30s and CYWS gives up at 30.
+ */
+async function fileWhatsappDocument(
+  req: Request,
+  channel: WaChannel,
+  b: Record<string, any>,
+): Promise<{ ok: false } | { ok: true; bill: ReturnType<typeof insertBill>; orgId: string; finishRead: () => void }> {
+  const ws = channel.workspaceId;
+  const orgId = channel.orgId;
+  const scope = dataScopeForOrg(orgId);
+  // Attribute the read's API spend to this client entity on the Clients page
+  // (recordUsage reads the header; CYWS sends none).
+  (req.headers as Record<string, string>)['x-org-id'] = orgId;
+
+  const file = await fetchDocument(scope, b);
+  if (!file) return { ok: false };
+
+  const fileHash = createHash('sha256').update(file.bytes).digest('hex');
+  const sentAt = String(b.sent_at ?? '');
+  const owner = ownerFor(ws, channel, String(b.sender ?? ''));
+  // What the sender typed when they attached the file. This is the covering
+  // note — "recharge this to CY-Biz" — and it is kept on the document so a
+  // RE-READ sees it too: read once with it and again without, and the second
+  // read quietly undoes the first.
+  const message = {
+    submissionId: channel.id,
+    chatId: String(b.chat_id ?? channel.chatId),
+    chatSubject: String(b.chat_subject ?? channel.subject),
+    messageId: String(b.message_id ?? ''),
+    waMessageId: String(b.wa_message_id ?? ''),
+    from: String(b.sender ?? ''),
+    senderName: String(b.sender_name ?? ''),
+    text: String(b.body ?? '').trim().slice(0, 4000),
+    sentAt,
+    fileName: String(b.file_name ?? ''),
+  };
+
+  const bill = insertBill({
+    orgId: scope,
+    fileHash,
+    fileName: message.fileName || 'whatsapp-document',
+    supplier: '',
+    invoiceNumber: '',
+    documentType: '',
+    currency: '',
+    total: 0,
+    tax: 0,
+    date: '',
+    category: '',
+    // Who UPLOADED it is the person who sent it in; the owner is resolved the
+    // same way (they are the same person whenever we hold their number).
+    createdBy: owner,
+    owner,
+    whatsapp: message,
+    storageKey: file.storageKey,
+    contentType: file.contentType,
+    status: 'new',
+    kind: 'cost',
+  });
+
+  patchChannel(channel.id, {
+    lastMessageAt: sentAt || new Date().toISOString(),
+    received: (channel.received || 0) + 1,
+  });
+
+  const finishRead = () => {
+    const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', orgId);
+    const provider = resolveProvider(settings?.readerProvider);
+    void autoRead(req, scope, orgId, provider, bill.id, file.bytes.toString('base64'), file.contentType, {
+      via: 'whatsapp',
+      from: message.senderName || mobileOf(message.from),
+      text: message.text,
+    });
+  };
+
+  return { ok: true, bill, orgId, finishRead };
+}
+
 // POST /api/whatsapp/invoice — CYWS hands over one supplier bill.
 //
 // Called machine-to-machine, so it carries its own proof (X-API-Key) instead of
@@ -1076,15 +1156,8 @@ whatsappRouter.post('/invoice', async (req, res) => {
     return res.json({ ok: true, duplicate: true, bill_id: already.billId });
   }
 
-  const ws = channel.workspaceId;
-  const orgId = channel.orgId;
-  const scope = dataScopeForOrg(orgId);
-  // Attribute the read's API spend to this client entity on the Clients page
-  // (recordUsage reads the header; CYWS sends none).
-  (req.headers as Record<string, string>)['x-org-id'] = orgId;
-
-  const file = await fetchDocument(scope, b);
-  if (!file) {
+  const filed = await fileWhatsappDocument(req, channel, b);
+  if (!filed.ok) {
     recordDelivery({
       submissionId,
       messageId,
@@ -1093,71 +1166,216 @@ whatsappRouter.post('/invoice', async (req, res) => {
     });
     return res.status(502).json({ error: 'file_unavailable' });
   }
+  const { bill, orgId, finishRead } = filed;
 
-  const fileHash = createHash('sha256').update(file.bytes).digest('hex');
-  const sentAt = String(b.sent_at ?? '');
-  const owner = ownerFor(ws, channel, String(b.sender ?? ''));
-  // What the sender typed when they attached the file. This is the covering
-  // note — "recharge this to CY-Biz" — and it is kept on the document so a
-  // RE-READ sees it too: read once with it and again without, and the second
-  // read quietly undoes the first.
-  const message = {
-    submissionId,
-    chatId: String(b.chat_id ?? channel.chatId),
-    chatSubject: String(b.chat_subject ?? channel.subject),
-    messageId,
-    waMessageId: String(b.wa_message_id ?? ''),
-    from: String(b.sender ?? ''),
-    senderName: String(b.sender_name ?? ''),
-    text: String(b.body ?? '').trim().slice(0, 4000),
-    sentAt,
-    fileName: String(b.file_name ?? ''),
-  };
-
-  const bill = insertBill({
-    orgId: scope,
-    fileHash,
-    fileName: message.fileName || 'whatsapp-document',
-    supplier: '',
-    invoiceNumber: '',
-    documentType: '',
-    currency: '',
-    total: 0,
-    tax: 0,
-    date: '',
-    category: '',
-    // Who UPLOADED it is the person who sent it in; the owner is resolved the
-    // same way (they are the same person whenever we hold their number).
-    createdBy: owner,
-    owner,
-    whatsapp: message,
-    storageKey: file.storageKey,
-    contentType: file.contentType,
-    status: 'new',
-    kind: 'cost',
-  });
   rememberMessage({ id: messageId, billId: bill.id, submissionId, at: new Date().toISOString() });
   recordDelivery({
     submissionId,
     messageId,
     outcome: 'filed',
-    detail: `${message.fileName || 'document'} → ${bill.displayId}`,
-  });
-  patchChannel(submissionId, {
-    lastMessageAt: sentAt || new Date().toISOString(),
-    received: (channel.received || 0) + 1,
+    detail: `${bill.fileName || 'document'} → ${bill.displayId}`,
   });
 
   // Answer as soon as it is durably stored, then read it in the background: a
   // model call takes 10-30s, CYWS gives up at 30, and it does not retry — so a
   // slow read must never be what decides whether the bill was delivered.
   res.json({ ok: true, bill_id: bill.id, item_id: bill.displayId, org_id: orgId });
+  finishRead();
+});
 
-  const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', orgId);
-  const provider = resolveProvider(settings?.readerProvider);
-  void autoRead(req, scope, orgId, provider, bill.id, file.bytes.toString('base64'), file.contentType, {
-    via: 'whatsapp',
-    from: message.senderName || mobileOf(message.from),
-    text: message.text,
+// POST /api/whatsapp/message — CYWS mirrors one message from a collection group.
+//
+// Machine-to-machine like /invoice: its own X-API-Key, allowlisted past the
+// session guard. Everything arrives, text included — this is the conversation,
+// not the accounting, and a message nobody files is still what somebody said.
+//
+// Upserts on WhatsApp's own message id, because CYWS sends a message TWICE by
+// design: once the moment it lands (so the thread is live) and again once its
+// classifier has decided what the attachment is. The second must revise the
+// first, not sit beside it.
+whatsappRouter.post('/message', async (req, res) => {
+  if (!keyMatches(req.header('X-API-Key') || '')) {
+    recordDelivery({ submissionId: '', messageId: '', outcome: 'bad_key', detail: 'X-API-Key did not match (message mirror)' });
+    return res.status(401).json({ error: 'invalid_api_key' });
+  }
+
+  const b = req.body ?? {};
+  const submissionId = String(b.submission_id ?? '').trim();
+  const waMessageId = String(b.wa_message_id ?? '').trim();
+  if (!submissionId) return res.status(400).json({ error: 'submission_id_required' });
+  if (!waMessageId) return res.status(400).json({ error: 'wa_message_id_required' });
+
+  const channel = channelById(submissionId);
+  // Same refusal as /invoice, for the same reason: the id is what names the
+  // entity, and a group we have no record of belongs to nobody here.
+  if (!channel) return res.status(404).json({ error: 'unknown_submission', submission_id: submissionId });
+
+  const items = loadMessages();
+  const existing = items.find((m) => m.id === waMessageId);
+  const incomingCategory = String(b.doc_category ?? '');
+
+  const row: WaMirroredMessage = {
+    id: waMessageId,
+    submissionId,
+    workspaceId: channel.workspaceId,
+    orgId: channel.orgId,
+    chatId: String(b.chat_id ?? channel.chatId),
+    direction: String(b.direction ?? 'in'),
+    sender: String(b.sender ?? ''),
+    senderName: String(b.sender_name ?? ''),
+    body: String(b.body ?? '').slice(0, 8000),
+    translation: String(b.translation ?? '').slice(0, 8000),
+    msgType: String(b.msg_type ?? 'chat'),
+    r2Key: String(b.r2_key ?? ''),
+    fileUrl: String(b.file_url ?? ''),
+    fileName: String(b.file_name ?? ''),
+    contentType: String(b.content_type ?? ''),
+    // A correction made here outranks anything CYWS says later. Its classifier
+    // is guessing from a photo; somebody who opened the document is not, and
+    // having their answer quietly replaced on the next re-send would make the
+    // correction pointless.
+    docCategory: existing?.categorySource === 'manual' ? existing.docCategory : incomingCategory,
+    categorySource: existing?.categorySource === 'manual' ? 'manual' : (incomingCategory ? 'cyws' : ''),
+    replyToBody: String(b.reply_to_body ?? ''),
+    reaction: String(b.reaction ?? ''),
+    sentAt: String(b.sent_at ?? new Date().toISOString()),
+    receivedAt: existing?.receivedAt || new Date().toISOString(),
+    // Filing is this side's act, and it survives a re-send.
+    billId: existing?.billId || '',
+    billDisplayId: existing?.billDisplayId || '',
+  };
+
+  if (existing) Object.assign(existing, row);
+  else items.push(row);
+  saveMessages(items);
+
+  // The group's own "last heard from" follows the conversation, not just the
+  // documents — a group that is busy but files nothing is not a quiet group.
+  if (!existing) patchChannel(submissionId, { lastMessageAt: row.sentAt });
+
+  return res.json({ ok: true, updated: Boolean(existing) });
+});
+
+// GET /api/whatsapp/threads — the collection groups of the entity in the header,
+// each with what has actually arrived in it. This is the WhatsApp tab's index.
+whatsappRouter.get('/threads', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!orgId) return res.json({ threads: [], canManage: false });
+  const me = memberForSession(req);
+  if (googleEnabled && (!me || !canAccessOrg(me, orgId))) return res.status(403).json({ error: 'no_client_access' });
+
+  const all = loadMessages().filter((m) => m.workspaceId === ws && m.orgId === orgId);
+  const threads = channelsForOrg(ws, orgId)
+    .filter((c) => c.status !== 'replaced')
+    .map((c) => {
+      const mine = all.filter((m) => m.submissionId === c.id);
+      const last = mine.reduce<WaMirroredMessage | null>((acc, m) => (!acc || String(m.sentAt) > String(acc.sentAt) ? m : acc), null);
+      const person = c.userId ? personFor(ws, c.userId) : null;
+      return {
+        submissionId: c.id,
+        subject: c.subject,
+        chatId: c.chatId,
+        status: c.status,
+        personName: person ? person.user.name || person.user.email || '' : '',
+        entityWide: !c.userId,
+        messages: mine.length,
+        attachments: mine.filter((m) => m.r2Key).length,
+        // What is sitting there un-actioned: an attachment nobody has filed.
+        unfiled: mine.filter((m) => m.r2Key && !m.billId).length,
+        lastMessageAt: last?.sentAt || c.lastMessageAt || '',
+        lastMessagePreview: last ? (last.body ? last.body.slice(0, 120) : '[' + last.msgType + ']') : '',
+      };
+    })
+    .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
+
+  res.json({ threads, canManage: mayManage(req, orgId) });
+});
+
+// GET /api/whatsapp/threads/:submissionId — one conversation, oldest first.
+whatsappRouter.get('/threads/:submissionId', (req, res) => {
+  const channel = channelById(String(req.params.submissionId ?? ''));
+  if (!channel) return res.status(404).json({ error: 'unknown_submission' });
+  const me = memberForSession(req);
+  if (googleEnabled && (!me || !canAccessOrg(me, channel.orgId))) return res.status(403).json({ error: 'no_client_access' });
+
+  const person = channel.userId ? personFor(channel.workspaceId, channel.userId) : null;
+  res.json({
+    channel: {
+      submissionId: channel.id,
+      subject: channel.subject,
+      chatId: channel.chatId,
+      status: channel.status,
+      personName: person ? person.user.name || person.user.email || '' : '',
+      entityWide: !channel.userId,
+    },
+    messages: messagesForChannel(channel.id),
+    canManage: mayManage(req, channel.orgId),
   });
+});
+
+// PATCH /api/whatsapp/messages/:id — correct what the document is.
+//
+// The classifier reads a photo; the reviewer reads the document. When they
+// disagree the reviewer wins, and the answer is marked `manual` so CYWS's next
+// re-send leaves it alone.
+whatsappRouter.patch('/messages/:id', (req, res) => {
+  const items = loadMessages();
+  const row = items.find((m) => m.id === String(req.params.id ?? ''));
+  if (!row) return res.status(404).json({ error: 'unknown_message' });
+  if (!mayManage(req, row.orgId)) return res.status(403).json({ error: 'not_an_admin' });
+
+  const category = String(req.body?.doc_category ?? '').trim();
+  row.docCategory = category;
+  row.categorySource = category ? 'manual' : '';
+  saveMessages(items);
+  res.json({ ok: true, message: row });
+});
+
+// POST /api/whatsapp/messages/:id/file — file this attachment as a cost document.
+//
+// The manual counterpart to CYWS's own hand-off, for everything its classifier
+// did not send: a receipt it called a photo, an invoice it was unsure about.
+// Goes through the same builder, so what lands is the same document.
+whatsappRouter.post('/messages/:id/file', async (req, res) => {
+  const items = loadMessages();
+  const row = items.find((m) => m.id === String(req.params.id ?? ''));
+  if (!row) return res.status(404).json({ error: 'unknown_message' });
+  if (!mayManage(req, row.orgId)) return res.status(403).json({ error: 'not_an_admin' });
+  if (!row.r2Key && !row.fileUrl) return res.status(400).json({ error: 'no_attachment', message: 'This message has no file to file.' });
+  // Already filed. Answered with the document rather than an error, because
+  // "it is already there" is what whoever pressed it wants to know.
+  if (row.billId) return res.json({ ok: true, already: true, bill_id: row.billId, item_id: row.billDisplayId });
+
+  const channel = channelById(row.submissionId);
+  if (!channel) return res.status(404).json({ error: 'unknown_submission' });
+
+  const filed = await fileWhatsappDocument(req, channel, {
+    chat_id: row.chatId,
+    chat_subject: channel.subject,
+    message_id: row.id,
+    wa_message_id: row.id,
+    r2_key: row.r2Key,
+    file_url: row.fileUrl,
+    file_name: row.fileName,
+    content_type: row.contentType,
+    body: row.body,
+    sender: row.sender,
+    sender_name: row.senderName,
+    sent_at: row.sentAt,
+  });
+  if (!filed.ok) return res.status(502).json({ error: 'file_unavailable', message: 'The attachment could not be read from storage.' });
+
+  row.billId = filed.bill.id;
+  row.billDisplayId = filed.bill.displayId;
+  saveMessages(items);
+  recordDelivery({
+    submissionId: row.submissionId,
+    messageId: row.id,
+    outcome: 'filed',
+    detail: (row.fileName || 'document') + ' -> ' + filed.bill.displayId + ' (filed by hand)',
+  });
+
+  res.json({ ok: true, bill_id: filed.bill.id, item_id: filed.bill.displayId, org_id: filed.orgId });
+  filed.finishRead();
 });

@@ -553,16 +553,34 @@ not a button: WhatsApp has no link that opens a group by its id and CYWS mints
 no invite link, so there is nothing there to click and it no longer looks as
 though there is.
 
-**The WhatsApp tab is what was FILED, and says so.** A page under Costs and
-Sales (`/whatsapp`, Business Admin — which a colleague is inside every client
-they are given) shows each collection group as a conversation: every document
-that arrived, oldest first, with the caption it came with and a link to the
-document it became. It is deliberately NOT WhatsApp Web, and the page states
-that at the top rather than letting somebody find out: CYWS classifies
-everything sent into a group and forwards only the bills and receipts, so the
-plain messages and the other attachments never reach CYBills at all. A chat
-quietly missing most of itself would be read as the whole conversation, and
-somebody would conclude a client had sent nothing.
+**The whole conversation is mirrored, not only the bills.** CYWS posts every
+message in a collection group to `POST /api/whatsapp/message` (same inbound key,
+allowlisted past the session guard), text included, and the **WhatsApp** tab in
+the left rail is where they are read: groups for the entity, an unfiled count,
+and the thread. It exists because Costs can only ever show what the classifier
+picked OUT — so a receipt it read as a holiday photo appeared nowhere, and "I
+sent that last week" had no answer here.
+
+Three rules hold it together. Messages are **upserted on `wa_message_id`**,
+because CYWS sends each one twice by design — once on arrival so the thread is
+live, once more when its classifier has decided what an attachment is. A
+category **set in CYBills is marked `manual` and never overwritten** by a later
+re-send; the model guessed from a photo, the reviewer opened the document, and a
+correction that gets quietly reverted is worse than no correction. And
+**mirroring is not filing**: a message becomes a cost document only via
+`/invoice` or the tab's **Add to Costs**, both of which go through the one
+`fileWhatsappDocument` builder, so a document filed by hand is identical to one
+CYWS handed over. Its collection is `whatsapp-thread` — deliberately NOT
+`whatsapp-messages`, which is the delivery dedup ledger. Covered by `npm test`.
+
+This REPLACED a first version of the tab that derived the conversation from the
+documents that had been filed (`GET /api/whatsapp/chats`, `WhatsappChats.jsx`),
+which could only ever show the classifier's picks and said so at the top. The
+mirror is what that page was waiting for, so the endpoint and page are gone. Its
+access rule was kept, though, and widened in scope rather than relaxed: the tab
+shows everybody's documents AND everybody's messages in the entity, so it stays
+**Business Admin** — the same bar as the Costs inbox it sits beside — on the
+route and in the rail.
 
 **The pipe can be tested without CYWS.** Extraction -> Extract by WhatsApp ->
 **Send a test bill** posts one document to CYBills's OWN public endpoint — real

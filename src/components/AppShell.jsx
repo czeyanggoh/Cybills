@@ -19,8 +19,8 @@ import {
   UserCog,
   Trash2,
   Menu,
-  X,
   MessageCircle,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -43,9 +43,11 @@ import JoinRequestBanner from './JoinRequestBanner';
 const NAV = [
   { to: '/costs', label: 'Costs', icon: ShoppingCart },
   { to: '/sales', label: 'Sales', icon: Tag },
-  // What has come in through the entity's collection groups. Shows everybody's
-  // documents, so it is hidden from anybody who could not open the Costs inbox
-  // in the first place — the route guards it too.
+  // The collection groups themselves. Costs shows what was picked OUT of a
+  // group; this is the group — every message in it, so a document the reader
+  // called a holiday photo can still be found and filed. Shows everybody's
+  // documents and everybody's messages, so it is hidden from anybody who could
+  // not open the Costs inbox in the first place — the route guards it too.
   { to: '/whatsapp', label: 'WhatsApp', icon: MessageCircle, requires: 'business' },
 ];
 

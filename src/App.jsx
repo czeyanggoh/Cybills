@@ -12,7 +12,7 @@ import ExpenseClaimDetail from './pages/ExpenseClaimDetail';
 import Suppliers from './pages/Suppliers';
 import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
-import WhatsappChats from './pages/WhatsappChats';
+import Whatsapp from './pages/Whatsapp';
 import SalesDetail from './pages/SalesDetail';
 import Customers from './pages/Customers';
 import Exports from './pages/Exports';
@@ -53,6 +53,11 @@ function App() {
             <Route path="/sales" element={<Protected><Sales /></Protected>} />
             <Route path="/sales/exports" element={<Protected><Exports workspace="sales" /></Protected>} />
             <Route path="/sales/:id" element={<Protected><SalesDetail /></Protected>} />
+            {/* Everybody's documents AND everybody's messages in the entity,
+                so the same bar as the Costs inbox it sits beside: a Business
+                Admin, which a colleague is inside every client they are given. */}
+            <Route path="/whatsapp" element={<RequireBusinessAdmin><Whatsapp /></RequireBusinessAdmin>} />
+            <Route path="/whatsapp/:submissionId" element={<RequireBusinessAdmin><Whatsapp /></RequireBusinessAdmin>} />
             <Route path="/customers" element={<Protected><Customers /></Protected>} />
             <Route path="/bank" element={<Protected><Bank view="transactions" /></Protected>} />
             <Route path="/bank/statements" element={<Protected><Bank view="statements" /></Protected>} />
@@ -72,10 +77,6 @@ function App() {
             <Route path="/clients" element={<RequirePracticeTeam><Clients /></RequirePracticeTeam>} />
             <Route path="/submission-history" element={<Protected><SubmissionHistory /></Protected>} />
             <Route path="/settings" element={<RequireBusinessAdmin><Settings /></RequireBusinessAdmin>} />
-            {/* Everybody's documents in the entity, so the same bar as the
-                Costs inbox: a Business Admin, which a colleague is inside every
-                client they are given. */}
-            <Route path="/whatsapp" element={<RequireBusinessAdmin><WhatsappChats /></RequireBusinessAdmin>} />
             <Route path="/profile" element={<Protected><Profile /></Protected>} />
             <Route path="/support" element={<Protected><SupportDesk /></Protected>} />
             {/* Feature Requests merged into Support Desk — keep old links working. */}

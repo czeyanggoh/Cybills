@@ -448,6 +448,94 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   check('no phone number is handed out', asText.includes('60123456789') || asText.includes('6595556666'), false);
 }
 
+
+// --- The conversation, not just the documents --------------------------------
+// A collection group is a conversation. CYWS mirrors every message in it, text
+// included, so "I sent that last week" can be answered here — and so a document
+// its classifier called something else can still be found and filed by hand.
+{
+  const get = async (path: string, headers: Record<string, string> = {}) => {
+    const res = await fetch(`http://127.0.0.1:4623/api/whatsapp/${path}`, { headers });
+    return { status: res.status, body: (await res.json()) as any };
+  };
+  const patch = async (path: string, body: unknown) => {
+    const res = await fetch(`http://127.0.0.1:4623/api/whatsapp/${path}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Org-Id': 'org_one0001' },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as any };
+  };
+
+  const KEY = { 'X-API-Key': 'inbound-key' };
+  const base = {
+    submission_id: submissionId,
+    chat_id: '120363000@g.us',
+    direction: 'in',
+    sender: '60123456789@c.us',
+    sender_name: 'Dean',
+    sent_at: '2026-08-27T09:00:00.000Z',
+  };
+
+  let r = await post('message', { ...base, wa_message_id: 'MSG-text', msg_type: 'chat', body: 'morning, sending the bills now' }, KEY);
+  check('a plain text message is mirrored', r.status, 200);
+  check('and is new', r.body.updated, false);
+
+  // The whole point: an attachment the classifier got wrong still arrives.
+  r = await post('message', {
+    ...base, wa_message_id: 'MSG-photo', msg_type: 'image', body: '',
+    r2_key: 'whatsapp/zz99.jpg', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=zz99&ct=jpg&s=sig',
+    file_name: 'grab.jpg', content_type: 'image/jpeg',
+    doc_category: 'not_a_document',
+  }, KEY);
+  check('so is an attachment the classifier dismissed', r.status, 200);
+
+  r = await post('message', { ...base, wa_message_id: 'MSG-photo', msg_type: 'image', doc_category: 'receipt', r2_key: 'whatsapp/zz99.jpg', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=zz99&ct=jpg&s=sig' }, KEY);
+  check('a re-send revises rather than duplicates', r.body.updated, true);
+
+  r = await post('message', { ...base, wa_message_id: 'MSG-x' }, { 'X-API-Key': 'wrong' });
+  check('the mirror needs the key', r.status, 401);
+  r = await post('message', { ...base, submission_id: 'SUB-nobody', wa_message_id: 'MSG-y' }, KEY);
+  check('and refuses a submission it does not hold', r.status, 404);
+
+  // The thread as the tab reads it.
+  let t = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
+  check('the thread reads back', t.status, 200);
+  check('with both messages, oldest first', t.body.messages.map((m: any) => m.id), ['MSG-text', 'MSG-photo']);
+  check('the classifier is credited for its guess', t.body.messages[1].categorySource, 'cyws');
+  check('and text messages carry no category', t.body.messages[0].docCategory, '');
+
+  const index = await get('threads', { 'X-Org-Id': 'org_one0001' });
+  check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 2);
+  check('and what is sitting there unfiled', index.body.threads.find((x: any) => x.submissionId === submissionId)?.unfiled, 1);
+
+  // A reviewer disagrees with the model. Theirs is the answer that sticks —
+  // including against CYWS's next re-send, or correcting it would be pointless.
+  r = await patch('messages/MSG-photo', { doc_category: 'supplier_bill' });
+  check('a reviewer can correct the classification', r.status, 200);
+  check('and it is marked as theirs', r.body.message.categorySource, 'manual');
+
+  r = await post('message', { ...base, wa_message_id: 'MSG-photo', msg_type: 'image', doc_category: 'not_a_document', r2_key: 'whatsapp/zz99.jpg', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=zz99&ct=jpg&s=sig' }, KEY);
+  t = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
+  const photo = t.body.messages.find((m: any) => m.id === 'MSG-photo');
+  check('which CYWS cannot then overwrite', photo.docCategory, 'supplier_bill');
+
+  // And then filed by hand — the document the classifier never sent.
+  r = await post('messages/MSG-photo/file', {}, { 'X-Org-Id': 'org_one0001' });
+  check('it can be filed as a cost document', r.status, 200);
+  check('and comes back with the document', Boolean(r.body.item_id), true);
+  const billId = r.body.bill_id;
+
+  r = await post('messages/MSG-photo/file', {}, { 'X-Org-Id': 'org_one0001' });
+  check('filing twice says so instead of making a second', [r.body.already, r.body.bill_id], [true, billId]);
+
+  r = await post('messages/MSG-text/file', {}, { 'X-Org-Id': 'org_one0001' });
+  check('a text message has nothing to file', r.body.error, 'no_attachment');
+
+  const after = await get('threads', { 'X-Org-Id': 'org_one0001' });
+  check('nothing is left unfiled', after.body.threads.find((x: any) => x.submissionId === submissionId)?.unfiled, 0);
+}
+
 server.close();
 globalThis.fetch = realFetch;
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

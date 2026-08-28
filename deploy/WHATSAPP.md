@@ -146,6 +146,61 @@ Notes on the contract:
   and random photos are classified by CYWS and left alone; plain text messages
   never arrive. `body` is the text attached to the document itself.
 
+## The conversation, not just the documents
+
+A collection group is a conversation, and CYBills used to see only the documents
+CYWS picked out of it. So "I sent that last week" could not be answered here at
+all, and an invoice the classifier read as a holiday photo appeared nowhere.
+
+CYWS now mirrors **every** message in a collection group — text included — to:
+
+```
+POST https://cybills.cy-bm.sg/api/whatsapp/message   (X-API-Key, same key)
+```
+
+```json
+{
+  "submission_id": "CYB-org_red00001-a1b2c3d4",
+  "wa_message_id": "false_120363...@g.us_3EB0...",
+  "chat_id": "120363...@g.us",
+  "direction": "in",
+  "sender": "60123456789@c.us",
+  "sender_name": "Dean",
+  "body": "sending the bills now",
+  "translation": "",
+  "msg_type": "image",
+  "r2_key": "whatsapp/ab12cd34.jpg",
+  "file_url": "https://cyworkspace.cy-bm.sg/api/invoice-file?k=...",
+  "file_name": "grab.jpg",
+  "content_type": "image/jpeg",
+  "doc_category": "receipt",
+  "sent_at": "2026-08-27T08:56:00.000Z"
+}
+```
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{ok, updated}` | Stored. `updated: true` means it revised a message already held. |
+| 400 | `{error: "submission_id_required" \| "wa_message_id_required"}` | |
+| 401 | `{error: "invalid_api_key"}` | |
+| 404 | `{error: "unknown_submission"}` | Same refusal as `/invoice`, same reason. |
+
+- **Upserted on `wa_message_id`**, because CYWS sends each message TWICE by
+  design: once the moment it lands, so the thread is live, and again once its
+  classifier has decided what an attachment is. The second revises the first.
+- **A correction made in CYBills wins.** Once a reviewer sets the category on
+  the WhatsApp tab it is marked `manual`, and a later CYWS re-send leaves it
+  alone — otherwise correcting it would be pointless.
+- **Mirroring is not filing.** A mirrored message is the record of what was
+  said; it becomes a cost document only when CYWS hands it over as a bill or a
+  receipt (`/invoice`), or when somebody presses **Add to Costs** on the tab.
+  Both go through one builder, so what lands is the same document either way.
+
+The tab itself is **WhatsApp** in the left rail, below Costs and Sales: every
+group for the entity, its unfiled-attachment count, and the thread. Reading it
+needs access to the entity; correcting a category or filing a document needs
+Business Admin.
+
 ## Saying whose books a group feeds
 
 CYWS files everything under a submission id and holds nothing else, so its own

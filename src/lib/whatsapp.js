@@ -155,26 +155,98 @@ export async function sendTestDelivery(submissionId = '') {
   throw err;
 }
 
-// What has come in through this entity's groups, as a conversation.
-//
-// Not the whole conversation, and the page says so: CYWorkspace forwards only
-// the bills and receipts it classifies, so the plain messages and everything
-// else never reach CYBills to be shown.
-export function useWhatsappChats() {
-  const [state, setState] = useState({ groups: [], loading: true });
-  useEffect(() => {
-    let live = true;
-    fetch('/api/whatsapp/chats', { headers: orgHeaders() })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (live) setState({ groups: d?.groups ?? [], loading: false });
-      })
-      .catch(() => {
-        if (live) setState((s) => ({ ...s, loading: false }));
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
-  return state;
+// --- The conversation ---------------------------------------------------------
+// Costs shows what was picked OUT of a collection group. These read the group
+// itself — every message CYWorkspace mirrors across, so a document its
+// classifier read as something else can still be found, corrected and filed.
+
+async function json(url, init) {
+  const res = await fetch(url, init);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(body.message || body.error || `Request failed (${res.status})`);
+    err.code = body.error || `http_${res.status}`;
+    err.status = res.status;
+    throw err;
+  }
+  return body;
 }
+
+/** Every collection group of the current entity, with what has arrived in it. */
+export function useWhatsappThreads() {
+  const [state, setState] = useState({ threads: [], canManage: false, loading: true, error: '' });
+
+  const reload = useCallback(async () => {
+    setState((s) => ({ ...s, loading: true }));
+    try {
+      const data = await json('/api/whatsapp/threads', { headers: orgHeaders() });
+      setState({ threads: data.threads ?? [], canManage: Boolean(data.canManage), loading: false, error: '' });
+    } catch (err) {
+      setState({ threads: [], canManage: false, loading: false, error: err.message });
+    }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+  return [state, reload];
+}
+
+/** One group's messages, oldest first. `submissionId` empty = nothing to load. */
+export function useWhatsappThread(submissionId) {
+  const [state, setState] = useState({ channel: null, messages: [], canManage: false, loading: Boolean(submissionId), error: '' });
+
+  const reload = useCallback(async () => {
+    if (!submissionId) {
+      setState({ channel: null, messages: [], canManage: false, loading: false, error: '' });
+      return;
+    }
+    setState((s) => ({ ...s, loading: true }));
+    try {
+      const data = await json(`/api/whatsapp/threads/${encodeURIComponent(submissionId)}`, { headers: orgHeaders() });
+      setState({ channel: data.channel ?? null, messages: data.messages ?? [], canManage: Boolean(data.canManage), loading: false, error: '' });
+    } catch (err) {
+      setState({ channel: null, messages: [], canManage: false, loading: false, error: err.message });
+    }
+  }, [submissionId]);
+
+  useEffect(() => { reload(); }, [reload]);
+  return [state, reload];
+}
+
+/** Correct what a document is. The reviewer's answer, not the model's guess. */
+export async function setMessageCategory(waMessageId, docCategory) {
+  return json(`/api/whatsapp/messages/${encodeURIComponent(waMessageId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ doc_category: docCategory }),
+  });
+}
+
+/** File one attachment as a cost document — the manual counterpart to the
+ * hand-off CYWorkspace makes on its own. */
+export async function fileMessageAsCost(waMessageId) {
+  return json(`/api/whatsapp/messages/${encodeURIComponent(waMessageId)}/file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: '{}',
+  });
+}
+
+// What CYWorkspace's classifier can say a document is. Kept in the same order
+// and wording it uses, so a reviewer correcting one is choosing between the
+// same options the model had rather than a second, subtly different list.
+export const DOC_CATEGORIES = [
+  { id: 'supplier_bill', label: 'Supplier bill' },
+  { id: 'receipt', label: 'Receipt' },
+  { id: 'bank_statement', label: 'Bank statement' },
+  { id: 'sales_invoice', label: 'Sales invoice' },
+  { id: 'payment_proof', label: 'Payment proof' },
+  { id: 'supplier_statement', label: 'Supplier statement' },
+  { id: 'payslip', label: 'Payslip' },
+  { id: 'quotation', label: 'Quotation' },
+  { id: 'purchase_order', label: 'Purchase order' },
+  { id: 'contract', label: 'Contract / agreement' },
+  { id: 'other_document', label: 'Other document' },
+  { id: 'not_a_document', label: 'Not a document' },
+];
+
+export const categoryLabel = (id) => DOC_CATEGORIES.find((c) => c.id === id)?.label || id || '';
