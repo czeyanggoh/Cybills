@@ -133,7 +133,14 @@ export default function ExpenseClaims() {
     clear();
   };
   const doDelete = () => {
-    if (selected.size && window.confirm(`Delete ${selected.size} claim(s)?`)) {
+    // The receipts go too, so the list's own delete says so as plainly as the
+    // claim page's does.
+    if (
+      selected.size &&
+      window.confirm(
+        `Delete ${selected.size} claim${selected.size === 1 ? '' : 's'}?\n\nThe receipts on ${selected.size === 1 ? 'it' : 'them'} will be permanently deleted, including the stored files. This cannot be undone.`
+      )
+    ) {
       deleteClaims([...selected]);
       clear();
     }

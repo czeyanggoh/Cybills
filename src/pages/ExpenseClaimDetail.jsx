@@ -400,7 +400,7 @@ export default function ExpenseClaimDetail() {
   // the Costs inbox (removeItemsFromClaim resets its status), so it can be
   // re-filed, put on another claim, or published on its own.
   const removeItem = (t) => {
-    if (!window.confirm(`Remove this item from the claim?\n\n${t.supplier || 'The document'} goes back to your Costs inbox — it isn't deleted.`)) return;
+    if (!window.confirm(`Remove this item from the claim?\n\n${t.supplier || 'The document'} goes to your Archive — it isn't deleted.`)) return;
     removeItemsFromClaim(claim.id, [t.itemId]).catch(() => {});
     setSelected((sel) => {
       const n = new Set(sel);
@@ -451,7 +451,7 @@ export default function ExpenseClaimDetail() {
 
   const doRemove = async () => {
     if (!selected.size) return;
-    if (!window.confirm(`Remove ${selected.size} item${selected.size === 1 ? '' : 's'} from this claim?`)) return;
+    if (!window.confirm(`Remove ${selected.size} item${selected.size === 1 ? '' : 's'} from this claim?\n\nThey go to your Archive — they aren't deleted.`)) return;
     setActionsOpen(false);
     await removeItemsFromClaim(claim.id, [...selected]).catch(() => {});
     setSelected(new Set());
@@ -601,7 +601,16 @@ export default function ExpenseClaimDetail() {
           )}
         </div>
         <TopButton danger onClick={async () => {
-          if (!window.confirm('Delete this expense claim? Its items return to the Costs inbox. This cannot be undone.')) return;
+          // Says what it destroys. This deletes the RECEIPTS as well as the
+          // claim — and their stored files — so the count is spelled out rather
+          // than left as "its items".
+          const n = (claim.transactions || []).length;
+          if (
+            !window.confirm(
+              `Delete this expense claim?\n\nThe ${n} receipt${n === 1 ? '' : 's'} on it will be permanently deleted, including the stored file${n === 1 ? '' : 's'}. This cannot be undone.\n\nTo keep a receipt, remove it from the claim first — that sends it to Archive.`
+            )
+          )
+            return;
           await deleteClaims([claim.id]).catch(() => {});
           navigate('/expense-claims');
         }}>Delete claim</TopButton>

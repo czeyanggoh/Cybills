@@ -910,6 +910,34 @@ export function deleteBillHard(orgId: string, id: string): Bill | null {
   return removed;
 }
 
+// Hard-delete several bills at once and report which stored files nobody points
+// at any more, so the caller can reclaim them. Used when an expense claim is
+// DELETED: the practice's decision is that the claim's receipts go with it.
+//
+// The storage keys are returned rather than deleted here, because a `shared:`
+// object belongs to another system and must never be reclaimed — the caller
+// (deleteBillFile) is the one place that knows the difference.
+export function deleteBillsHard(ids: string[]): { removed: number; freedKeys: string[] } {
+  const wanted = new Set(ids.map(String));
+  if (!wanted.size) return { removed: 0, freedKeys: [] };
+  // Spliced IN PLACE, never rebuilt into a new array: `load()` returns the
+  // module's cached list and `persist()` only writes what it is handed, so
+  // persisting a copy would leave every later read serving the rows that were
+  // just deleted — and the next write of that stale cache would put them back.
+  const bills = load();
+  const gone: Bill[] = [];
+  for (let i = bills.length - 1; i >= 0; i -= 1) {
+    if (wanted.has(bills[i]!.id)) gone.push(...bills.splice(i, 1));
+  }
+  if (!gone.length) return { removed: 0, freedKeys: [] };
+  persist(bills);
+  // Only a key nothing left points at: identical uploads share one object, and
+  // reclaiming it would blank a receipt somebody else still has.
+  const stillUsed = new Set(bills.map((b) => b.storageKey).filter(Boolean));
+  const freedKeys = [...new Set(gone.map((b) => b.storageKey).filter((k) => k && !stillUsed.has(k)))];
+  return { removed: gone.length, freedKeys };
+}
+
 // Whether any remaining bill still references this stored file. Content-addressed
 // storage keys by file hash, so identical uploads (e.g. the same receipt emailed
 // twice) share ONE object — deleting one bill must not reclaim a file another

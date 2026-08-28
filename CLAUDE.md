@@ -342,13 +342,20 @@ Beyond archive/claim/merge, the toolbar carries **Bulk edit**
 covers both cases: the ticked rows when anything is ticked, otherwise everything
 the tab shows.
 
-**A document taken off a claim goes to ARCHIVE**, not back to the inbox. Coming
-off a claim is a decision that it doesn't belong there; putting it back at the
-top of the inbox makes it look like new work every time, and the reviewer has to
-deal with it again to make it go away. Never deleted — it may be somebody else's
-to claim, or belong on next month's. Removing an ITEM does this too now: it
-previously left the document on `expenseclaim` with no claim to belong to, which
-made it invisible in the inbox, in Archive, and to anybody else's claim.
+**Removing an ITEM from a claim archives it; DELETING the claim destroys it.**
+Two different acts, and the difference is deliberate. Taking one line off says
+"this doesn't belong on this claim", so the document goes to Archive — kept, out
+of the way, never back at the top of the inbox where it reads as new work
+somebody has to clear again. Deleting the whole claim is the practice's call
+(Cze's, asked and answered): the receipts on it are permanently deleted, stored
+files included, because they were captured to be claimed and there is nothing
+left for them to be. Both confirmations say which is which, and the claim itself
+is still only soft-deleted, so the record of what was claimed outlives the
+paperwork. Removing an item previously did nothing at all to the document: it
+kept `expenseclaim` with no claim to belong to, which made it invisible in the
+inbox, in Archive, and to anybody else's claim. `deleteBillsHard` splices the
+CACHED list in place — persisting a copy would leave every later read serving
+rows that were just deleted, and the next write would put them back.
 
 Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
 field, set on the document or across a selection in Bulk edit; readiness is

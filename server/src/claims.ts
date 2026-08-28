@@ -5,7 +5,8 @@ import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
 import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, canAccessOrg, canonicalPersonName } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
-import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed, parseAmount } from './store.js';
+import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed, deleteBillsHard, parseAmount } from './store.js';
+import { deleteBillFile } from './storage.js';
 import { listOrganisations } from './organisations.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
@@ -825,12 +826,28 @@ claimsRouter.post('/:id/archive', (req, res) =>
   })
 );
 
-// DELETE /api/claims/:id — soft delete.
+// DELETE /api/claims/:id — soft delete the claim, and PERMANENTLY remove the
+// receipts that were on it.
+//
+// The practice's call, and the destructive one: a claim thrown away takes its
+// paperwork with it, files included, rather than seeding the inbox with work
+// somebody has to clear again. The reasoning is that these documents exist here
+// to be claimed — captured for that claim — so there is nothing left for them to
+// be once it is gone.
+//
+// Removing a single ITEM is a different act and stays non-destructive: that says
+// "this doesn't belong on this claim", and the document goes to Archive.
+//
+// The claim itself is only soft-deleted, so the record of what was claimed, by
+// whom and for how much outlives the receipts.
 claimsRouter.delete('/:id', (req, res) =>
   mutate(req, res, (claim) => {
     claim.deleted = true;
-    // Take the claim's items off it, so they aren't stranded in the
-    // 'expenseclaim' state with no claim to belong to. They go to Archive.
-    unmarkBillsClaimed(claim.transactions.map((t) => String(t.itemId)));
+    const ids = claim.transactions.map((t) => String(t.itemId));
+    const { removed, freedKeys } = deleteBillsHard(ids);
+    if (removed) console.log(`[claims] claim ${claim.id} deleted — ${removed} receipt(s) went with it`);
+    // Files last, and best-effort: the records are already gone, and a storage
+    // hiccup must not turn a finished delete into an error.
+    for (const key of freedKeys) void deleteBillFile(key);
   })
 );
