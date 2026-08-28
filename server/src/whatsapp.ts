@@ -827,9 +827,19 @@ whatsappRouter.post('/test', async (req, res) => {
   try {
     await putBill(key, bytes, 'application/pdf');
   } catch (err) {
+    // Worth saying what this does and does not break, because the two are
+    // easily confused and only one of them is urgent. A REAL inbound bill is
+    // never written to the bucket — CYWorkspace has already put it there, and
+    // CYBills only reads it back by key (see fetchDocument). So a write
+    // permission stops uploads through the app, and stops this test, which has
+    // to put a file there to have something to deliver. It does not, on its
+    // own, stop WhatsApp.
     return res.status(502).json({
       error: 'store_failed',
-      message: `Could not write to the R2 bucket "${env.R2_BUCKET}": ${err instanceof Error ? err.message : String(err)}`,
+      message:
+        `Could not write to the R2 bucket "${env.R2_BUCKET}": ${err instanceof Error ? err.message : String(err)}. ` +
+        'That blocks uploads and this test, which needs to put a file in the bucket first — but not inbound ' +
+        'WhatsApp bills, which are only ever read from it.',
     });
   }
   // And read back, because writing to a bucket nobody can read from would pass

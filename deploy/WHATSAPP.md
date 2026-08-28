@@ -155,6 +155,12 @@ works and what remains is CYWS's: the URL and key it holds, or its classifier
 deciding an attachment is not a supplier bill. If it fails, the message says
 which step did.
 
+A write failure here (`Access Denied`) blocks uploads through the app and blocks
+this test — which has to put a file in the bucket to have something to deliver —
+but NOT inbound bills. CYWorkspace has already written those; CYBills only reads
+them back by key. A token with **Object Read** is enough for WhatsApp to work;
+**Object Read & Write** is what uploads and this button need.
+
 It needs R2 configured — there is no shared bucket to put a file in otherwise,
 and it says so rather than failing later as `file_unavailable`.
 
