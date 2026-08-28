@@ -17,7 +17,7 @@ import {
   INBOUND_MAIL_DOMAIN,
   type User,
 } from './users.js';
-import { insertBill } from './store.js';
+import { insertBill, listBills, displayIdOf } from './store.js';
 import { getBill, putBill, putBillFile } from './storage.js';
 import { readSetting } from './settings.js';
 import { resolveProvider } from './llm.js';
@@ -824,6 +824,70 @@ whatsappRouter.get('/config', (req, res) => {
     // So "nothing turned up" can be answered rather than guessed at.
     deliveries: recentDeliveries(),
   });
+});
+
+// GET /api/whatsapp/chats — what has come in through each of this entity's
+// groups, as a conversation.
+//
+// Honest about its own limits, because the page it feeds looks like a chat and
+// a chat that is quietly missing most of itself is worse than no chat at all:
+// CYWorkspace forwards the BILLS AND RECEIPTS it classifies and nothing else.
+// Plain messages, the other attachments, the back-and-forth — none of it ever
+// reaches CYBills, and none of it can be shown here. What this holds is every
+// document that arrived, in the order it was sent, with whatever was typed
+// alongside it.
+whatsappRouter.get('/chats', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!orgId) return res.json({ groups: [] });
+  const me = memberForSession(req);
+  // The same bar as the Costs inbox it draws from: this shows everybody's
+  // documents in the entity, not just the reader's own.
+  if (me && !(canAccessOrg(me, orgId) && isBusinessAdminRole(effectiveRoleFor(me, orgId)))) {
+    return res.status(403).json({ error: 'not_an_admin' });
+  }
+  if (!me && googleEnabled) return res.status(403).json({ error: 'forbidden' });
+
+  const people = ensureUsers(ws);
+  const docs = listBills(dataScopeForOrg(orgId)).filter((b) => b.whatsapp?.submissionId);
+  const groups = channelsForOrg(ws, orgId)
+    .filter((c) => c.status !== 'replaced')
+    .map((c) => {
+      const messages = docs
+        .filter((b) => b.whatsapp!.submissionId === c.id)
+        // Oldest first: this is read like a conversation, not like an inbox.
+        .sort((a, b) => String(a.whatsapp!.sentAt).localeCompare(String(b.whatsapp!.sentAt)))
+        .map((b) => ({
+          messageId: b.whatsapp!.messageId,
+          senderName: b.whatsapp!.senderName,
+          // The number, not the '@c.us' or '@lid' machinery after it — and a
+          // LID is not a number anybody recognises, so it is left to the name.
+          from: String(b.whatsapp!.from || '').split('@')[0],
+          text: b.whatsapp!.text,
+          sentAt: b.whatsapp!.sentAt,
+          fileName: b.whatsapp!.fileName,
+          billId: b.id,
+          itemId: displayIdOf(b.id) || b.displayId || '',
+          supplier: b.supplier,
+          total: b.total,
+          currency: b.currency,
+          hasFile: Boolean(b.storageKey),
+        }));
+      return {
+        submissionId: c.id,
+        subject: c.subject,
+        chatId: c.chatId,
+        personName: c.userId ? people.find((u: User) => u.id === c.userId)?.name ?? '' : '',
+        participants: c.participantsRequested,
+        lastMessageAt: messages.length ? messages[messages.length - 1]!.sentAt : c.lastMessageAt,
+        messages,
+      };
+    })
+    // The group something last arrived in comes first — that is the one being
+    // looked at.
+    .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
+
+  res.json({ groups, enabled: whatsappEnabled });
 });
 
 // --- Testing it without CYWorkspace -------------------------------------------

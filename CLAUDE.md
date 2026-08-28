@@ -553,6 +553,17 @@ not a button: WhatsApp has no link that opens a group by its id and CYWS mints
 no invite link, so there is nothing there to click and it no longer looks as
 though there is.
 
+**The WhatsApp tab is what was FILED, and says so.** A page under Costs and
+Sales (`/whatsapp`, Business Admin — which a colleague is inside every client
+they are given) shows each collection group as a conversation: every document
+that arrived, oldest first, with the caption it came with and a link to the
+document it became. It is deliberately NOT WhatsApp Web, and the page states
+that at the top rather than letting somebody find out: CYWS classifies
+everything sent into a group and forwards only the bills and receipts, so the
+plain messages and the other attachments never reach CYBills at all. A chat
+quietly missing most of itself would be read as the whole conversation, and
+somebody would conclude a client had sent nothing.
+
 **The pipe can be tested without CYWS.** Extraction -> Extract by WhatsApp ->
 **Send a test bill** posts one document to CYBills's OWN public endpoint — real
 URL, real key, real group — so everything from the network in is exercised:

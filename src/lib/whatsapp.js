@@ -154,3 +154,27 @@ export async function sendTestDelivery(submissionId = '') {
   err.code = data?.error || '';
   throw err;
 }
+
+// What has come in through this entity's groups, as a conversation.
+//
+// Not the whole conversation, and the page says so: CYWorkspace forwards only
+// the bills and receipts it classifies, so the plain messages and everything
+// else never reach CYBills to be shown.
+export function useWhatsappChats() {
+  const [state, setState] = useState({ groups: [], loading: true });
+  useEffect(() => {
+    let live = true;
+    fetch('/api/whatsapp/chats', { headers: orgHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (live) setState({ groups: d?.groups ?? [], loading: false });
+      })
+      .catch(() => {
+        if (live) setState((s) => ({ ...s, loading: false }));
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return state;
+}

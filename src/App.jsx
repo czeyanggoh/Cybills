@@ -12,6 +12,7 @@ import ExpenseClaimDetail from './pages/ExpenseClaimDetail';
 import Suppliers from './pages/Suppliers';
 import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
+import WhatsappChats from './pages/WhatsappChats';
 import SalesDetail from './pages/SalesDetail';
 import Customers from './pages/Customers';
 import Exports from './pages/Exports';
@@ -71,6 +72,10 @@ function App() {
             <Route path="/clients" element={<RequirePracticeTeam><Clients /></RequirePracticeTeam>} />
             <Route path="/submission-history" element={<Protected><SubmissionHistory /></Protected>} />
             <Route path="/settings" element={<RequireBusinessAdmin><Settings /></RequireBusinessAdmin>} />
+            {/* Everybody's documents in the entity, so the same bar as the
+                Costs inbox: a Business Admin, which a colleague is inside every
+                client they are given. */}
+            <Route path="/whatsapp" element={<RequireBusinessAdmin><WhatsappChats /></RequireBusinessAdmin>} />
             <Route path="/profile" element={<Protected><Profile /></Protected>} />
             <Route path="/support" element={<Protected><SupportDesk /></Protected>} />
             {/* Feature Requests merged into Support Desk — keep old links working. */}

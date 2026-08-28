@@ -20,6 +20,7 @@ import {
   Trash2,
   Menu,
   X,
+  MessageCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -42,6 +43,10 @@ import JoinRequestBanner from './JoinRequestBanner';
 const NAV = [
   { to: '/costs', label: 'Costs', icon: ShoppingCart },
   { to: '/sales', label: 'Sales', icon: Tag },
+  // What has come in through the entity's collection groups. Shows everybody's
+  // documents, so it is hidden from anybody who could not open the Costs inbox
+  // in the first place — the route guards it too.
+  { to: '/whatsapp', label: 'WhatsApp', icon: MessageCircle, requires: 'business' },
 ];
 
 // Right-aligned top-bar tabs (support channels). Feature Requests now lives as
@@ -357,6 +362,10 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
     practice: canManagePractice(membership, googleEnabled),
   };
   const bottomNav = BOTTOM.filter((item) => !item.requires || allowed[item.requires]);
+  // The primary rail is gated the same way. WhatsApp shows everybody's
+  // documents in the entity, so it is not offered to somebody who could not
+  // open the Costs inbox in the first place — the route refuses them too.
+  const mainNav = NAV.filter((item) => !item.requires || allowed[item.requires]);
   // Prefer the CYBills roster identity (managed in Users) over the raw session,
   // whose name comes from the Google profile — which may differ (e.g. a Google
   // account named "Astrid Yang" signed in under a different roster user).
@@ -414,7 +423,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
             )}
             {!settingsCol && (
               <nav className={cn('flex flex-col gap-1', showLabels ? 'px-3' : 'px-2')}>
-                {NAV.map((item) => (
+                {mainNav.map((item) => (
                   <SidebarLink key={item.to} {...item} showLabel={showLabels} />
                 ))}
               </nav>
@@ -586,7 +595,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                 <Plus className="h-4 w-4" strokeWidth={2} /> Add documents
               </button>
               <nav className="flex flex-col gap-1">
-                {NAV.map((item) => (
+                {mainNav.map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
