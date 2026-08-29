@@ -77,6 +77,11 @@ export type Bill = {
   customer?: string; // Xero customer contact the cost is allocated to
   project?: string; // Xero tracking option (project) the cost is allocated to
   cardLast4?: string; // last 4 digits of the payment card (a merge-match signal)
+  // The organisation the document is made out TO, as printed on its "Bill To"
+  // block. Read for exactly one purpose: deciding whether the document was
+  // filed under the right client entity — a colleague who works across several
+  // uploads into whichever one happens to be open. See tenantMatch.ts.
+  billedTo?: string;
   note?: string; // free-text note the reviewer adds on the document (Note tab)
   dueDate?: string; // ISO YYYY-MM-DD payment due date (from Extraction settings)
   // Per-line breakdown of the document (Dext-style). Stored as strings so they
@@ -745,6 +750,7 @@ const EDITABLE: (keyof Bill)[] = [
   'rebillable',
   'project',
   'cardLast4',
+  'billedTo',
   'note',
   'dueDate',
   'duplicateDismissed',
@@ -895,6 +901,88 @@ export function updateBill(orgId: string, id: string, patch: Partial<Bill>): Bil
   }
   persist(bills);
   return bill;
+}
+
+// Move documents into another client entity's book.
+//
+// A colleague who works across several entities uploads into whichever one
+// happens to be open, so a Red Alpha invoice lands in CY Business Management's
+// Costs book. The document says whose it is on its face; this is what acts on
+// that. A bill's `orgId` IS its book (see dataScopeForOrg), so the move is that
+// one field — and everything that only meant something in the old entity.
+//
+// Its own writer rather than a patch through updateBill, for the same reason
+// markBillPosted is: EDITABLE is the surface a PERSON may edit a document
+// through, and which book a document lives in is not a field on it.
+//
+// What is CLEARED, and why. A category, a tax code, a project, a customer and a
+// payment account are all names out of the OLD entity's own lists — its chart
+// of accounts, its Xero tracking categories, its contacts. Carried across they
+// are not merely stale: "429 - General Expenses" is a different account in
+// another chart, or no account at all, and the document would publish to the
+// wrong place or refuse at the last moment for a reason nobody can see. So the
+// document arrives in its new book stating only what the DOCUMENT says —
+// supplier, dates, figures, lines — and waits in To review for someone to code
+// it there, which is exactly what "Needs: Category" is for. The tax-rate
+// backfill on the new book's next listing fills what it can by itself.
+//
+// The duplicate verdicts go too: they were reached against the old book, and a
+// flag pointing at a document in another entity is one nobody can review.
+//
+// A merged document takes its sources with it. They are soft-hidden pages
+// (status 'merged') rather than documents of their own, and leaving them behind
+// would break Unmerge in both books at once.
+export function moveBillsToOrg(ids: string[], toScope: string): { moved: Bill[]; alreadyThere: string[] } {
+  const wanted = new Set(ids.map(String));
+  if (!wanted.size || !toScope) return { moved: [], alreadyThere: [] };
+  const bills = load();
+  // A merged document's sources come along, so they are gathered before the
+  // pass rather than looked for during it.
+  for (const b of bills) {
+    if (!wanted.has(b.id)) continue;
+    for (const src of b.mergedFrom ?? []) wanted.add(String(src));
+  }
+  const moved: Bill[] = [];
+  const alreadyThere: string[] = [];
+  for (const bill of bills) {
+    if (!wanted.has(bill.id)) continue;
+    if (bill.orgId === toScope) {
+      alreadyThere.push(bill.id);
+      continue;
+    }
+    bill.orgId = toScope;
+    bill.category = '';
+    bill.categoryReason = '';
+    bill.taxRate = '';
+    bill.taxRateReason = '';
+    // Nobody has decided the tax code in the NEW entity, so the backfill there
+    // must be free to. Leaving this set would freeze the field blank for good.
+    bill.taxRateCleared = false;
+    bill.project = '';
+    bill.projectReason = '';
+    bill.customer = '';
+    bill.rebillable = false;
+    bill.paymentMethod = '';
+    // Provenance for the OLD entity's supplier rules. The new entity's rules
+    // own nothing here yet, and they apply themselves on its next listing.
+    bill.ruleFields = [];
+    bill.duplicateOfId = '';
+    bill.duplicateType = '';
+    bill.duplicateDismissed = false;
+    // Lines carry the same entity-scoped names one level down.
+    if (Array.isArray(bill.lineItems)) {
+      bill.lineItems = bill.lineItems.map((li) => ({ ...li, category: '', project: '', project2: '' }));
+    }
+    // Nothing about the stored FILE moves. A storage key is an opaque handle
+    // the server resolves directly, identical uploads share one object, and a
+    // `shared:` key belongs to CYWorkspace outright — so re-keying it to match
+    // the new book's prefix would buy a tidier prefix at the risk of losing the
+    // only copy of somebody's receipt.
+    applyAutoReady(bill); // it arrives uncoded, so it lands in To review
+    moved.push(bill);
+  }
+  if (moved.length) persist(bills);
+  return { moved, alreadyThere };
 }
 
 // Permanently remove a bill from the store. Unlike a soft delete (status →

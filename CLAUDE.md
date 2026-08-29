@@ -342,6 +342,85 @@ names the rate, what IS visible at it, and points at Business settings → Lists
 Tax rates. A blank field with no explanation is
 indistinguishable from a bug, which is exactly how one was reported.
 
+## A document billed to one client, filed under another
+
+A colleague works across several client entities and uploads into whichever one
+happens to be open, so a Red Alpha invoice lands in CY Business Management's
+Costs book. Nothing noticed, and the only way back was to delete it and upload
+it again in the right place. The document says whose it is on its face — the
+"Bill To" block — and the person who uploaded it can already open both books, so
+the app can both SAY so and DO something about it.
+
+**The reader is asked who the document is made out TO.** `billedTo` in
+`extract.ts`, stored on the bill. Everywhere else in that prompt the bill-to
+party is something to IGNORE — it is never the project, never the supplier,
+never the customer a cost is recharged to — so the field is described narrowly
+and used for exactly one thing. A value that merely repeats the SUPPLIER is
+discarded (`billedToOf`): a reader that copies the party being PAID into the
+party BILLED would leave a whole book looking misfiled, with a button offering to
+move it. Read again on a re-read (`readDecisions`), and never blanked by one — an
+empty answer would quietly un-flag a document that was correctly flagged.
+
+**The comparison lives in one pure module**, `src/lib/tenantMatch.js`, tested by
+`npm test` at the root and loaded server-side by path
+(`server/src/tenantMatch.ts`, same arrangement as `taxRules.ts`). It answers or
+it says nothing: an exact match on the entity's name or its Xero tenant name,
+else one name containing the other as a run of whole WORDS with at least two
+words on the shorter side — and never when two entities fit equally well. "Red
+Alpha" alone cannot choose between "Red Alpha Cybersecurity" and "Red Alpha - ST
+Engineering", so it chooses neither. Legal forms are not names: "Pte. Ltd.",
+"Private Limited" and "Sdn Bhd" are stripped before anything is compared.
+
+**Only against the entities the CALLER may open.** That list is what makes the
+badge safe to show: an entity somebody cannot work in is never a candidate, so
+it can never be matched, named on screen, or transferred to — one client's staff
+cannot learn another client's name off a badge. Somebody who works in one entity
+sees none of this, because there is nothing to be wrong about.
+
+**Derived per request, never stored** — it is not a fact about the document
+alone, and stored it would be one person's answer shown to the next, going stale
+the moment client access changed. `forResponse` in `bills.ts` is the ONE place
+that shapes a bill for the wire, used by every route that hands one back: the
+detail page rebuilds itself from whichever response arrived last, so a flag only
+the listing carried would appear on a row, vanish when somebody typed in a field,
+and come back on refresh. Compared against the entity the document is actually
+IN (`orgIdOfScope`), never the one the caller has selected — a claim's item can
+live in another book.
+
+**A document already past moving is never flagged**, because the badge would
+offer a button that has to refuse: published (its figures are in that entity's
+ledger under an invoice id this book still points at), on an expense claim (the
+claim belongs to the entity it was raised in), or a page merged into another
+document (that document decides where it lives, and Unmerge has to find it).
+`transferBlockedReason` names all three, and the transfer route reports them
+rather than silently dropping them.
+
+**The button moves it.** `POST /api/costs/bills/transfer`, the row's own badge,
+the toolbar's **Wrong entity (N)** and the document page's **Move to <entity>**.
+A bill's `orgId` IS its book, so the move is that one field — plus everything
+that only meant something in the book it left. What is CLEARED is deliberate:
+category, tax code, project, customer and payment account all name the OLD
+entity's own Xero lists, and "429 - General Expenses" is a different account in
+another chart, or none at all. Carried across, the document would publish to the
+wrong place or refuse at the last moment for a reason nobody can see. So it
+arrives stating only what the DOCUMENT says — supplier, dates, figures, lines,
+its file — and lands in the new entity's To review with "Needs: Category", which
+is exactly what that badge is for. Its duplicate verdicts go too (they were
+reached against the other book), and a merged document takes its source pages
+with it. `taxRateCleared` is reset, or the new book's tax-rate backfill would
+never fill the field it just emptied.
+
+The stored FILE does not move. A storage key is an opaque handle the server
+resolves directly, identical uploads share one object, and a `shared:` key
+belongs to CYWorkspace outright — re-keying it would buy a tidier prefix at the
+risk of losing the only copy of somebody's receipt.
+
+Access is checked server-side on BOTH ends: the caller must be able to open the
+entity each document is in and the entity it is going to. The destination is
+named in a body, not in the `X-Org-Id` header the global guard reads, so it is
+the one thing that guard cannot cover. Covered by `npm test` in `server/`
+(`test/tenant-transfer.test.mts`) and at the root (`test/tenant-match.test.mjs`).
+
 ## The Costs inbox's bulk actions
 
 Every bulk action is a **button**. The "Move to" and "Actions" dropdowns this
@@ -353,6 +432,14 @@ Beyond archive/claim/merge, the toolbar carries **Bulk edit**
 (red — it drops the stored file too, and confirms first). One **Export** button
 covers both cases: the ticked rows when anything is ticked, otherwise everything
 the tab shows.
+
+**Wrong entity (N)** joins the two review affordances: like "Merge suggestions"
+and "Review duplicates", it starts no search — the server has already decided it
+on every listing — so it appears only when there is something to move and says
+how much. With rows ticked it moves those; with none it gathers every misfiled
+document in the book, which is the case somebody actually has: a morning's
+uploads that all went into the wrong entity. See "A document billed to one
+client, filed under another" above.
 
 **Removing an ITEM from a claim archives it; DELETING the claim destroys it.**
 Two different acts, and the difference is deliberate. Taking one line off says

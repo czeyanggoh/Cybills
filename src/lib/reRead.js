@@ -98,6 +98,10 @@ export function readDecisions(
   if (!current.taxRate) patch.taxRateReason = ex.taxRateReason || rate.reason || '';
   if (descr) patch.description = descr;
   if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
+  // Who it is billed TO, which is what decides whether it is in the right
+  // client's book. Only when the read found one: blanking it would take a
+  // document that had been correctly flagged as misfiled and quietly un-flag it.
+  if (ex.billedTo) patch.billedTo = ex.billedTo;
   if (ex.project) {
     patch.project = ex.project;
     patch.projectReason = projectReason;

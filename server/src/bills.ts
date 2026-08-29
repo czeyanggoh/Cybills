@@ -16,15 +16,17 @@ import {
   getBillById,
   getBillByIdAny,
   deleteBillHard,
+  moveBillsToOrg,
   storageKeyInUse,
   parseAmount,
   type Bill,
   type Candidate,
 } from './store.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
-import { dataScopeForOrg, primaryOrgId } from './organisations.js';
+import { dataScopeForOrg, getOrganisation, primaryOrgId } from './organisations.js';
 import { workspaceId, WORKSPACE_ID } from './workspace.js';
 import { canAccessOrg, emailForPerson, memberForSession, orgScope, ownerForOrg } from './users.js';
+import { misfiledLookup, orgIdOfScope, transferBlockedReason } from './tenantMatch.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
 import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from './taxRules.js';
@@ -245,7 +247,41 @@ async function repairZeroTaxAmounts(scope: string): Promise<void> {
   }
 }
 
-billsRouter.get('/bills', (req, res) => {
+// What a bill looks like on the wire: whether its file is stored, and whether
+// it is sitting in the wrong client's book.
+//
+// ONE place, used by every route that hands a bill back, because the detail
+// page rebuilds itself from whichever response arrived last — the listing, a
+// fetch by id, the reply to a save. A flag only the listing carried would appear
+// on the row, vanish the moment somebody typed in a field, and come back on the
+// next refresh, which reads as a bug rather than as a fact about the document.
+//
+// `misfiledTo` is derived per request rather than stored, because it is not a
+// fact about the document alone: it is the document's printed bill-to line
+// measured against the entities THIS caller may open. Stored, it would be one
+// person's answer shown to the next, and it would go stale the moment somebody's
+// client access changed or an entity was linked. It costs nothing at all unless
+// the caller can open more than one entity, and each distinct bill-to line is
+// compared once (see misfiledLookup).
+//
+// The comparison is against the entity the document is actually IN, never the
+// one the caller has selected — a claim's item can live in another book, and
+// judging it by the selected entity would report it misfiled for being
+// somewhere it was correctly filed. A document already past the point of moving
+// — published, on a claim, a merged-away page — is never flagged, because the
+// badge would offer a button that has to refuse.
+async function forResponse(req: Request, bills: Bill[]) {
+  const misfiled = await misfiledLookup(workspaceId(req), memberForSession(req));
+  return bills.map((b) => {
+    const wrongEntity = transferBlockedReason(b) ? null : misfiled(b.billedTo, orgIdOfScope(b.orgId));
+    return { ...b, hasFile: Boolean(b.storageKey), ...(wrongEntity ? { misfiledTo: wrongEntity } : {}) };
+  });
+}
+
+// One bill, shaped the same way.
+const oneForResponse = async (req: Request, bill: Bill) => (await forResponse(req, [bill]))[0];
+
+billsRouter.get('/bills', async (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
   backfillOwners(workspaceId(req), orgScope(req), orgId);
@@ -267,8 +303,7 @@ billsRouter.get('/bills', (req, res) => {
   } catch (err) {
     console.error('[autoClaims] sweep failed', err);
   }
-  const bills = listBills(orgId).map((b) => ({ ...b, hasFile: Boolean(b.storageKey) }));
-  res.json({ bills });
+  res.json({ bills: await forResponse(req, listBills(orgId)) });
 });
 
 // Content-Disposition for a stored file. Node rejects any header value outside
@@ -427,10 +462,10 @@ billsRouter.get('/bills/:id/file-meta', (req, res) => {
 // GET /api/costs/bills/:id — one bill by id, org-first then a global fallback,
 // so opening a claim's line item resolves its document even if it sits in a
 // different org's book (or the active org isn't the one it was created under).
-billsRouter.get('/bills/:id', (req, res) => {
+billsRouter.get('/bills/:id', async (req, res) => {
   const bill = getBillById(orgIdFor(req), req.params.id) || getBillByIdAny(req.params.id);
   if (!bill) return res.status(404).json({ error: 'not_found' });
-  res.json({ bill: { ...bill, hasFile: Boolean(bill.storageKey) } });
+  res.json({ bill: await oneForResponse(req, bill) });
 });
 
 // POST /api/costs/bills/:id/file — attach/replace the original file on an
@@ -451,7 +486,7 @@ billsRouter.post('/bills/:id/file', async (req, res) => {
     const stored = await putBillFile(orgId, keyHash, String(b.mediaType ?? ''), bytes);
     const updated = setBillFile(orgId, bill.id, stored.storageKey, stored.contentType);
     if (!updated) return res.status(404).json({ error: 'not_found' });
-    res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
+    res.json({ ok: true, bill: await oneForResponse(req, updated) });
   } catch (err) {
     console.error('[bills] attach file failed', err);
     res.status(500).json({ error: 'store_failed' });
@@ -477,7 +512,7 @@ function ownerEmail(req: Request, value: unknown, uploader = ''): string {
 billsRouter.patch('/bills/:id', async (req, res) => {
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'billedTo', 'note', 'dueDate']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   // Reassigning the owner never rewrites createdBy: who uploaded a document is
@@ -540,7 +575,7 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   if (['supplier', 'invoiceNumber', 'total', 'date'].some((k) => k in patch)) {
     updated = flagDuplicate(orgId, req.params.id) || updated;
   }
-  res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
+  res.json({ ok: true, bill: await oneForResponse(req, updated) });
 });
 
 // DELETE /api/costs/bills/:id — PERMANENT delete. Drops the record for good AND
@@ -563,12 +598,82 @@ billsRouter.delete('/bills/:id', async (req, res) => {
 // to Xero: clears the stored invoice id / tenant / date and brings it back out
 // of Archive so it can be published again. Local only — it does NOT delete or
 // void anything in Xero. For when the bill was removed at the Xero end.
-billsRouter.post('/bills/:id/unpublish', (req, res) => {
+billsRouter.post('/bills/:id/unpublish', async (req, res) => {
   const orgId = orgIdFor(req);
   const cleared = clearBillPosted(orgId, req.params.id);
   if (!cleared) return res.status(404).json({ error: 'not_found' });
   const bill = reconcileReadiness(orgId, req.params.id) || cleared;
-  res.json({ ok: true, bill: { ...bill, hasFile: Boolean(bill.storageKey) } });
+  res.json({ ok: true, bill: await oneForResponse(req, bill) });
+});
+
+// POST /api/costs/bills/transfer — move documents into another client entity's
+// book. Body: { ids, toOrgId }. Returns what moved, and what did not with the
+// reason, so the caller can say so out loud instead of reporting a count that
+// silently means less than it looks.
+//
+// This is the button behind "this invoice is billed to Red Alpha but it's in CY
+// Business Management". The app can say so because a colleague works across
+// several entities and the document names its own on its face; it can ACT on it
+// because that same colleague can already open both books. So the guard is that
+// pair, checked here and not inferred from anything the browser sent: the
+// caller must be able to open the entity each document is in AND the entity it
+// is going to. Without the second half, a link in a chat window could push one
+// client's paperwork into another client's ledger.
+//
+// It is deliberately not "move anything anywhere". A document whose figures are
+// already in a ledger, one sitting on somebody's expense claim, and a page that
+// has been merged into another document each have a promise standing over them
+// (see transferBlockedReason) — those are reported, never quietly moved and
+// never quietly dropped.
+billsRouter.post('/bills/transfer', (req, res) => {
+  const ws = workspaceId(req);
+  const me = memberForSession(req);
+  const toOrgId = String(req.body?.toOrgId ?? '').trim();
+  const target = getOrganisation(ws, toOrgId);
+  if (!target) return res.status(404).json({ error: 'organisation_not_found' });
+  // The same question the X-Org-Id guard asks of every per-entity call, asked
+  // again about the DESTINATION — which no header names.
+  if (!canAccessOrg(me, toOrgId)) {
+    return res.status(403).json({
+      error: 'no_access',
+      message: 'You don’t have access to that client entity.',
+    });
+  }
+
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 500).map(String) : [];
+  const skipped: Array<{ id: string; reason: string }> = [];
+  const movable: string[] = [];
+  for (const id of ids) {
+    // Resolved globally, then checked against the caller — a document can be in
+    // a book other than the one currently selected, and "not found" is the only
+    // honest answer for one they may not read.
+    const bill = getBillByIdAny(id);
+    if (!bill || !canReadBill(req, bill)) {
+      skipped.push({ id, reason: 'not_found' });
+      continue;
+    }
+    const blocked = transferBlockedReason(bill);
+    if (blocked) {
+      skipped.push({ id, reason: blocked });
+      continue;
+    }
+    movable.push(id);
+  }
+
+  const toScope = dataScopeForOrg(toOrgId);
+  const { moved, alreadyThere } = moveBillsToOrg(movable, toScope);
+  for (const id of alreadyThere) skipped.push({ id, reason: 'already_there' });
+  // Ready vs To review is derived from what a document CARRIES, and it arrives
+  // in its new book carrying no category — so it is re-derived here rather than
+  // waiting for the next edit to notice.
+  for (const b of moved) reconcileReadiness(toScope, b.id);
+
+  res.json({
+    ok: true,
+    moved: moved.map((b) => b.id),
+    skipped,
+    organisation: { id: target.id, name: target.name },
+  });
 });
 
 // POST /api/costs/bills/scan-duplicates — re-check every stored document
@@ -588,11 +693,11 @@ billsRouter.post('/bills/scan-duplicates', (req, res) => {
 // check now that supplier/invoice/total/date are known (the create-time check
 // only had the file hash). Returns { bill, duplicate } — the client removes the
 // row and offers "Add anyway" when a duplicate is reported.
-billsRouter.post('/bills/:id/finalize', (req, res) => {
+billsRouter.post('/bills/:id/finalize', async (req, res) => {
   const orgId = orgIdFor(req);
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'description', 'cardLast4', 'project', 'projectReason']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'description', 'cardLast4', 'billedTo', 'project', 'projectReason']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   if (b.total != null) patch.total = parseAmount(b.total);
@@ -621,7 +726,7 @@ billsRouter.post('/bills/:id/finalize', (req, res) => {
   } else {
     bill = reconcileReadiness(orgId, req.params.id) || bill;
   }
-  res.json({ ok: true, bill: { ...bill, hasFile: Boolean(bill.storageKey) }, duplicate: dup ?? null });
+  res.json({ ok: true, bill: await oneForResponse(req, bill), duplicate: dup ?? null });
 });
 
 // POST /api/costs/bills — persist an uploaded bill after a duplicate check.
@@ -721,5 +826,5 @@ billsRouter.post('/bills', async (req, res) => {
   });
 
   // Echo the overridden match back so the client can note "added despite dup".
-  res.json({ ok: true, bill: { ...bill, hasFile: Boolean(bill.storageKey) }, duplicate: dup ?? null });
+  res.json({ ok: true, bill: await oneForResponse(req, bill), duplicate: dup ?? null });
 });

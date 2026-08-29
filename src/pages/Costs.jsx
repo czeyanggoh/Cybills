@@ -11,6 +11,7 @@ import {
   Trash2,
   AlertTriangle,
   Layers,
+  ArrowRightLeft,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -44,6 +45,7 @@ import MergeModal from '@/components/MergeModal';
 import BulkEditModal from '@/components/BulkEditModal';
 import DocCardList from '@/components/DocCardList';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
+import TransferOrgModal from '@/components/TransferOrgModal';
 import { useCostsDocs, rowsFor, isInInbox, isComplete, needsReview, missingFields } from '@/lib/costsData';
 import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
@@ -229,6 +231,17 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   const reviewDupBtn = a.dupCount > 0 ? (
     <ToolbarButton onClick={a.reviewDuplicates}>Review duplicates ({a.dupCount})</ToolbarButton>
   ) : null;
+  // A document billed to one client and filed under another. Like the two scans
+  // beside it, nothing here starts a search — the server has already decided it
+  // on every listing — so the button appears only when there is something to
+  // move, and says how much. With rows ticked it moves those; with none it
+  // gathers every misfiled document in the book, which is the case somebody
+  // actually has: a morning's uploads that all went into the wrong entity.
+  const transferBtn = hasSelection || a.misfiledCount > 0 ? (
+    <ToolbarButton onClick={a.transfer}>
+      {hasSelection ? 'Move to another entity' : `Wrong entity (${a.misfiledCount})`}
+    </ToolbarButton>
+  ) : null;
   // A bridge entity's costs reach the parent's ledger as the lines of an
   // expense claim, never on their own — it has no Xero and its categories carry
   // no account code. The button would refuse every time it was pressed.
@@ -251,6 +264,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
         {bulkEditBtn}
         <ToolbarButton disabled={!hasSelection} onClick={() => a.move('new')}>Unarchive</ToolbarButton>
         <ToolbarButton onClick={() => a.navigate('/submission-history')}>See submission history</ToolbarButton>
+        {transferBtn}
         {deleteBtn}
       </>
     );
@@ -270,6 +284,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {mergeBtn}
       {scanBtn}
       {reviewDupBtn}
+      {transferBtn}
       {archiveBtn}
       {deleteBtn}
     </>
@@ -573,6 +588,21 @@ export default function Costs() {
               <Layers className="h-3 w-3" strokeWidth={2} /> {mergeBadgeLabel(mergeGroupFor.get(d.id), d)}
             </button>
           )}
+          {/* Billed to one client, filed under another. A badge rather than a
+              silent field, and the badge IS the way out of it: a colleague who
+              works across several entities uploads into whichever one happens
+              to be open, and the only person who can see the mistake is the one
+              reading this row. */}
+          {d.misfiledTo?.orgId && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setTransferDocs([d]); }}
+              title={`Billed to ${d.billedTo || d.misfiledTo.name}, which is ${d.misfiledTo.name} — not the entity this document is in. Move it there.`}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20"
+            >
+              <ArrowRightLeft className="h-3 w-3" strokeWidth={2} /> Belongs to {d.misfiledTo.name}
+            </button>
+          )}
         </div>
       ),
     },
@@ -700,6 +730,9 @@ export default function Costs() {
   const [mergeModalDocs, setMergeModalDocs] = useState(null); // docs under review in the merge modal
   const [mergeNote, setMergeNote] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
+  // Documents on their way to another client entity's book. Null = the dialog
+  // is shut; a row's own badge and the toolbar both open it with a set.
+  const [transferDocs, setTransferDocs] = useState(null);
   // Export all vs Actions → Export selected: the same dialog over a different
   // set of rows, so the button that opened it decides what goes in the file.
   const [exportSelectionOnly, setExportSelectionOnly] = useState(false);
@@ -740,6 +773,16 @@ export default function Costs() {
   const flaggedDocs = allDocs.filter(
     (d) => isInInbox(d) && d.duplicateOfId && !d.duplicateDismissed && docById.has(d.duplicateOfId)
   );
+
+  // Documents billed to a client entity other than this one. The server decides
+  // it on every listing, against the entities THIS person may open (see
+  // src/lib/tenantMatch.js), so a colleague who works in one entity never sees
+  // it at all and nobody is shown the name of a client they cannot work in.
+  //
+  // Whichever tab is open: a misfiled document is misfiled in Archive too, and
+  // "it's in the wrong company's book" is not something that stops mattering
+  // because somebody archived it.
+  const misfiledDocs = allDocs.filter((d) => d.misfiledTo?.orgId);
 
   // Merge detection, run over the whole inbox whenever the documents change —
   // the reviewer is TOLD which uploads are really one document rather than
@@ -1168,6 +1211,8 @@ export default function Costs() {
     mergeCount: mergeGroups.length,
     reviewDuplicates: () => setDupIds(flaggedDocs.map((d) => d.id)),
     dupCount: flaggedDocs.length,
+    transfer: () => setTransferDocs(hasSelection ? selectedDocs() : misfiledDocs),
+    misfiledCount: misfiledDocs.length,
     navigate,
   };
 
@@ -1418,6 +1463,13 @@ export default function Costs() {
         onClose={() => setDupIds(null)}
         onResolved={reload}
         onMerge={(docs) => { setDupIds(null); setMergeModalDocs(docs); }}
+      />
+
+      <TransferOrgModal
+        open={Boolean(transferDocs)}
+        docs={transferDocs || []}
+        onClose={() => setTransferDocs(null)}
+        onDone={() => { setSelected(new Set()); reload(); }}
       />
 
       <MergeModal

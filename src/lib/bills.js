@@ -129,6 +129,35 @@ export async function clearXeroPublish(id) {
   return res.json();
 }
 
+// Move documents into another client entity's book — the button behind "this
+// invoice is billed to Red Alpha but it's sitting in CY Business Management".
+//
+// Returns { moved, skipped, organisation }. `skipped` names each document that
+// did not move and why (published, on a claim, already there), because a bare
+// count of what moved says nothing about what didn't — and the documents that
+// refuse are the ones somebody has to do something else about.
+export async function transferBills(ids, toOrgId) {
+  const res = await fetch('/api/costs/bills/transfer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ ids, toOrgId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || body.error || 'transfer_failed');
+  }
+  return res.json();
+}
+
+// Why a document refused to move, in the words the person reading it needs.
+export const TRANSFER_SKIP_REASON = {
+  published: 'already published to Xero — clear the Xero link first if it was posted in the wrong entity',
+  on_a_claim: 'on an expense claim, which belongs to this entity',
+  merged_into_another: 'a page of another document — move that one instead',
+  already_there: 'already in that entity',
+  not_found: 'no longer available',
+};
+
 export async function fetchBills() {
   const res = await fetch('/api/costs/bills', { headers: orgHeaders() });
   if (!res.ok) return [];
@@ -314,6 +343,13 @@ export function billToDoc(b) {
     customer: b.customer || '',
     project: b.project || '',
     cardLast4: b.cardLast4 || '',
+    // The organisation the document is made out TO, as printed, and — when the
+    // two disagree — the client entity it should therefore have been filed
+    // under. `misfiledTo` is derived by the server on every response against the
+    // entities THIS person may open, so it is null for anyone who works in one
+    // entity and never names one they cannot get to.
+    billedTo: b.billedTo || '',
+    misfiledTo: b.misfiledTo || null,
     note: b.note || '',
     // The message this document arrived in, when it came by email. Null for an
     // upload, which is what the Email tab reads to know it has nothing to show.

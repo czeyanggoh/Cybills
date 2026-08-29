@@ -196,6 +196,9 @@ export async function autoRead(req: Request, scope: string, realOrgId: string, p
       dueDate: d.dueDate,
       period: d.period,
       cardLast4: d.cardLast4,
+      // Who the document is made out to — read for one purpose: whether it was
+      // filed under the right client entity. See server/src/tenantMatch.ts.
+      billedTo: d.billedTo,
       supplierGstRegNo: d.supplierGstRegNo,
       taxLabel: d.taxLabel,
       // Only when the reader picked one from the org's own list — an empty

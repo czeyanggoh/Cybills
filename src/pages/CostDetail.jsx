@@ -12,12 +12,14 @@ import {
   AlertCircle,
   Info,
   ExternalLink,
+  ArrowRightLeft,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import PublishToXeroModal from '@/components/PublishToXeroModal';
+import TransferOrgModal from '@/components/TransferOrgModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
@@ -324,6 +326,12 @@ export default function CostDetail() {
   const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
   const [compareOpen, setCompareOpen] = useState(false); // side-by-side duplicate review
   const [xeroBusy, setXeroBusy] = useState(''); // '' | 'attach' | 'clear'
+  // Open when this document turns out to be billed to another client entity.
+  // Becomes 'moved' once it has actually gone, because closing the dialog then
+  // has somewhere else to go: this page is looking at a document that has left
+  // the entity the page is scoped to, and its next autosave would be a PATCH
+  // into a book the document is no longer in.
+  const [transferOpen, setTransferOpen] = useState(false);
   const [xeroNote, setXeroNote] = useState('');
   const [teach, setTeach] = useState(null); // { field, value } after a manual correction
 
@@ -1397,6 +1405,19 @@ export default function CostDetail() {
             {xeroBusy === 'clear' ? 'Clearing…' : 'Clear Xero link'}
           </TopButton>
         )}
+        {/* Billed to one client, filed under another — the document said so on
+            its face and nobody was in a position to notice but whoever opened
+            it. Offered only where there is somewhere to move it TO: the server
+            decides that against the entities this person may open, so a
+            colleague who works in one entity never sees this at all. */}
+        {doc.persisted && doc.misfiledTo?.orgId && (
+          <TopButton
+            onClick={() => setTransferOpen(true)}
+            title={`Billed to ${doc.billedTo || doc.misfiledTo.name}, which is ${doc.misfiledTo.name} — not the entity this document is in.`}
+          >
+            <ArrowRightLeft className="h-3.5 w-3.5" /> Move to {doc.misfiledTo.name}
+          </TopButton>
+        )}
         <TopButton
           onClick={() => setClaimOpen(true)}
           disabled={Boolean(claimBlocked)}
@@ -2040,6 +2061,23 @@ export default function CostDetail() {
         pairs={duplicateOf ? [{ duplicate: doc, original: duplicateOf }] : []}
         onClose={() => setCompareOpen(false)}
         onResolved={() => { setCompareOpen(false); goToNextInbox(); }}
+      />
+
+      {/* Moving a document takes it out of this entity's book, so the dialog's
+          own "Open <entity>" is the way back to it — the page it is on right
+          now is about to be looking at a document that has left. */}
+      <TransferOrgModal
+        open={Boolean(transferOpen)}
+        docs={[doc]}
+        onClose={() => {
+          const moved = transferOpen === 'moved';
+          setTransferOpen(false);
+          if (moved) navigate('/costs');
+        }}
+        onDone={(res) => {
+          notifyBillsChanged();
+          if (res?.moved?.length) setTransferOpen('moved');
+        }}
       />
 
       <PublishToXeroModal

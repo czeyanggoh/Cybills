@@ -4,6 +4,7 @@ import { visionEnabled } from './env.js';
 import { apportion, notFiller, derivedDescription, withPeriod } from './store.js';
 import { recordUsage } from './usage.js';
 import { readDocument, resolveProvider, type Provider } from './llm.js';
+import { loadTenantMatch } from './tenantMatch.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
 // the model classifies into a value that actually exists in the UI. These are
@@ -142,6 +143,17 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'The LAST 4 DIGITS of the payment card if shown anywhere (e.g. "Mastercard ...7849", "XXXX XXXX XXXX 7849", "card ending 7849"). Digits only, exactly 4. Empty string if no card number is shown (cash, unknown).',
       },
+      // Who the document is made out TO. Everywhere else in this prompt that
+      // party is something to IGNORE — it is never the project, never the
+      // supplier and never the customer a cost is recharged to. It is asked for
+      // here to answer one question and no other: which of the practice's
+      // client entities this document belongs to, since a colleague uploads
+      // into whichever entity happens to be open (see src/lib/tenantMatch.js).
+      billedTo: {
+        type: 'string',
+        description:
+          'The organisation the document is BILLED TO / issued to, copied as printed — the company on the "Bill To", "Sold To", "Invoice To", "Customer" or delivery-address block, e.g. "RED ALPHA CYBERSECURITY PTE. LTD.". Copy the COMPANY, not the person: an "Attn:" name, a staff member or a department is not the party billed. NEVER the supplier — that is the party being PAID, which this is not, and returning one for the other is worse than returning nothing. Empty string when the document names no recipient organisation at all, which is most till receipts and card slips.',
+      },
       supplierGstRegNo: {
         type: 'string',
         description:
@@ -190,6 +202,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'supplierGstRegNo',
       'taxLabel',
       'cardLast4',
+      'billedTo',
       'lineItems',
       ...(taxRateNames.length ? ['taxRate', 'taxRateReason'] : []),
       ...(projectNames.length ? ['project', 'projectReason'] : []),
@@ -215,6 +228,7 @@ const ReceiptSchema = z.object({
   dueDate: z.string().optional().default(''),
   period: z.string().optional().default(''),
   cardLast4: z.string().optional().default(''),
+  billedTo: z.string().optional().default(''),
   supplierGstRegNo: z.string().optional().default(''),
   taxLabel: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
@@ -364,6 +378,26 @@ export function emailInstruction(
     (subject ? `Subject: ${subject}\n` : '') +
     (note ? `Message: ${note}\n` : '')
   );
+}
+
+// The party a document is BILLED TO, as it should be stored.
+//
+// Blank whenever it merely repeats the supplier. A reader that copies the party
+// being PAID into the party BILLED would leave every document looking as though
+// it were in the wrong entity, and the transfer button would offer to move a
+// whole book of them. The two names are compared the same way the entity match
+// compares them (legal forms and punctuation aside), so "Grab Singapore Pte
+// Ltd" against "GRAB SINGAPORE" counts as the repeat it is.
+//
+// If the match rules can't be loaded the value is kept as read: this is a guard
+// against one specific misreading, not the thing that decides anything.
+async function billedToOf(billedTo: string, supplier: string): Promise<string> {
+  const clean = notFiller(billedTo);
+  if (!clean) return '';
+  const mod = await loadTenantMatch();
+  if (!mod) return clean;
+  const norm = mod.normaliseEntityName(clean);
+  return norm && norm === mod.normaliseEntityName(supplier) ? '' : clean;
 }
 
 type ReadOutcome = Awaited<ReturnType<typeof readDocument>>;
@@ -548,6 +582,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       project,
       projectReason: project ? notFiller(parsed.data.projectReason) : '',
       dueDate,
+      billedTo: await billedToOf(parsed.data.billedTo, parsed.data.supplier),
       supplierGstRegNo: notFiller(parsed.data.supplierGstRegNo),
       taxLabel: notFiller(parsed.data.taxLabel),
       lineItems: parsed.data.lineItems.map((li) => ({ ...li, description: notFiller(li.description) })),
