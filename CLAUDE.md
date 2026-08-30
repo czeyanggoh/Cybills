@@ -718,6 +718,30 @@ told which road it came in on (`emailInstruction`'s `via`), and it beats a
 standing supplier rule for the fields it decides — never for the money. It is
 kept on the document, so a RE-READ sees it too.
 
+**A group's name follows the address, because they are one pipe.** A group is
+named after the person's own CYBills address — send a bill to
+`gcy.cybm@cybills.sg` or into the group called `gcy.cybm@cybills.sg` and it
+files under exactly the same person — but the name was a SNAPSHOT, written when
+the group was created and never touched again. So changing a handle, or giving
+an entity a short form, left the group standing under the address its owner used
+to have: the card read `czeyanggoh.cybm@cybills.sg` directly beneath an
+Extract-by-email field reading `gcy.cybm`, with nothing to say they were the same
+thing. Both routes that MOVE an address now take the group with it —
+`renameChannelsForUser` (`waRename.ts`) off the handle change in `users.ts` and
+the short form in `organisations.ts`, computing the name through the one
+`groupSubjectFor` the group was opened with, so the two cannot drift. CYWS does
+the renaming (`POST /api/webhooks/cybills/rename-group`, `deploy/WHATSAPP.md`);
+CYBills decides WHICH groups may be renamed, and never an ADOPTED one — that
+conversation is the client's, and renaming it from an accounting app is the same
+species of act as taking it apart — nor a closed one. Best-effort like the
+reaction: nobody waits on it, and the row records only what WhatsApp actually
+took, so a refusal is retried by the next address change rather than leaving the
+two silently disagreeing. Nothing about filing rides on it — a channel names its
+`userId`, never its subject. The channel rows moved to `waChannels.ts` to make
+that possible, a leaf like `waThread.ts`, so the rename reads them without
+importing the router that imports `users.ts`. Covered by `npm test` in `server/`
+(`test/whatsapp-rename.test.mts`).
+
 **A receipt sent into a group is answered in that group.** The sender gets no
 receipt of their own — the message sits there looking exactly like one nobody
 picked up, so the next thing they do is send it again, or ask. So CYBills reacts

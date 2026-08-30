@@ -14,7 +14,7 @@ import {
   isBusinessAdminRole,
   memberForSession,
   appOrigin,
-  addressForUser,
+  groupSubjectFor,
   type User,
 } from './users.js';
 import { insertBill, listBills, displayIdOf } from './store.js';
@@ -24,6 +24,14 @@ import { resolveProvider } from './llm.js';
 import { autoRead } from './inbound.js';
 import { type WaMirroredMessage, loadMessages, saveMessages, messagesForChannel } from './waThread.js';
 import { syncWhatsappReaction } from './waReactions.js';
+import {
+  type WaChannel,
+  loadChannels,
+  saveChannels,
+  channelsForOrg,
+  channelById,
+  patchChannel,
+} from './waChannels.js';
 
 // Bill collection over WhatsApp, in partnership with CYWorkspace (CYWS).
 //
@@ -85,75 +93,10 @@ export const mobileOf = (waId: string) => {
   return normaliseMobile(raw.split('@')[0]);
 };
 
-// --- The channel record ------------------------------------------------------
-// One per submission = one WhatsApp group. `id` IS the submission_id CYWS files
-// everything under, and it is written to disk BEFORE the group is asked for
-// (see createChannel) — that is what makes a retry safe.
-export type WaChannel = {
-  id: string;
-  workspaceId: string;
-  orgId: string; // the organisation RECORD id (not the bills scope)
-  // The one person this group was opened for, when it was opened from their own
-  // page. A group is a conversation with SOMEBODY — the person who holds the
-  // paperwork — and CYWS's own model is one group per submission, so this is
-  // the ordinary case. Empty for an entity-wide group set up under Connections,
-  // which is the same thing with more people in it.
-  userId: string;
-  subject: string;
-  chatId: string; // '' until CYWS answers
-  // 'replaced' — a group superseded because the person's number changed. Kept,
-  // never deleted: its submission id is what CYWS still files that group's
-  // messages under, and bills sent into it have to keep arriving.
-  // 'disconnected' — CYBills has stopped collecting through it; the WhatsApp
-  // group is untouched and carries on without us. 'deleted' — CYBot removed
-  // everyone and left, so there is no group at the far end any more. Both are
-  // closed, and the difference between them is only what happened in WhatsApp.
-  // The ROW survives either way: the documents already collected reference this
-  // submission id, and so does every mirrored message.
-  status: 'pending' | 'open' | 'failed' | 'replaced' | 'disconnected' | 'deleted';
-  participantsRequested: string[];
-  participantsAdded: string[];
-  // Whether CYWS actually told us who ended up in the group. An ADOPTED group
-  // (`already_existed`) comes back with empty participant arrays — CYWS is
-  // saying "this already exists", not "nobody is in it" — so without this the
-  // two are indistinguishable and a resumed channel would announce that
-  // WhatsApp had refused every single person.
-  participantsKnown: boolean;
-  // This group was already a conversation before CYBills was pointed at it
-  // (POST /channels/attach) rather than one CYBot opened. It matters when it is
-  // closed down: emptying and leaving a group the client started is destroying
-  // something that was never ours, so the two ways out are offered with that
-  // said rather than assumed either way. Absent on rows written before adoption
-  // existed, all of which we opened.
-  adopted?: boolean;
-  createdAt: string;
-  createdBy: string;
-  openedAt: string;
-  lastError: string;
-  lastMessageAt: string;
-  received: number;
-};
-
-const CHANNELS = 'whatsapp-channels';
-const loadChannels = () => loadCollection<WaChannel>(CHANNELS);
-const saveChannels = (items: WaChannel[]) => saveCollection(CHANNELS, items);
-
-export function channelsForOrg(ws: string, orgId: string): WaChannel[] {
-  return loadChannels().filter((c) => c.workspaceId === ws && c.orgId === orgId);
-}
-
-export function channelById(submissionId: string): WaChannel | null {
-  return loadChannels().find((c) => c.id === submissionId) ?? null;
-}
-
-function patchChannel(id: string, patch: Partial<WaChannel>): WaChannel | null {
-  const items = loadChannels();
-  const row = items.find((c) => c.id === id);
-  if (!row) return null;
-  Object.assign(row, patch);
-  saveChannels(items);
-  return row;
-}
+// The channel record and its storage live in waChannels.ts — a leaf, so the
+// rename can read the same rows without importing this router. Re-exported here
+// because this is where callers have always found them.
+export { type WaChannel, channelsForOrg, channelById };
 
 // A submission id that says where it came from. CYWS files everything under it
 // and an operator reads it in their logs, so it names the system and the client
@@ -696,12 +639,12 @@ function mayManagePerson(req: Request, target: User, orgId: string): boolean {
 // same thing is the truest label there is, and it is unique per person without
 // having to bolt an entity onto a name. A person with no address yet falls back
 // to their name.
-function subjectFor(user: User, orgName: string): string {
-  // The whole address, suffix included — the group is named after the address
-  // precisely because they are one pipe, so naming it after half of one would
-  // undo the point.
-  return addressForUser(user) || `CYBills - ${user.name || orgName}`;
-}
+// The whole address, suffix included — the group is named after the address
+// precisely because they are one pipe, so naming it after half of one would undo
+// the point. It lives in users.ts (`groupSubjectFor`) because a group is renamed
+// from two places that cannot import this router, and a group opened under one
+// rule and renamed under another would be worse than not renaming it at all.
+const subjectFor = groupSubjectFor;
 
 // GET /api/whatsapp/channels — the collection groups this entity has, or (with
 // ?userId=) the one opened for a single person.

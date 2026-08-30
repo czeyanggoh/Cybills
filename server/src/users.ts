@@ -20,6 +20,7 @@ import { setSession, readSession } from './auth.js';
 import { env, googleEnabled } from './env.js';
 import { sendMail, inviteEmail, passwordResetEmail, passwordChangedEmail } from './mailer.js';
 import { reassignPerson } from './store.js';
+import { renameChannelsForUser } from './waRename.js';
 
 // Password login (non-Google), so staff on Google Workspace accounts that Google
 // blocks can still sign in. Passwords are salted + scrypt-hashed (Node built-in,
@@ -338,6 +339,21 @@ export function localPart(handle: string, suffix: string): string {
 export function addressForUser(u: User, memo?: Map<string, string>): string {
   const local = localPart(u.emailHandle || '', suffixForUser(u, memo));
   return local ? `${local}@${INBOUND_MAIL_DOMAIN}` : '';
+}
+
+// The name of this person's WhatsApp collection group: their own CYBills
+// address, `astrid4@cybills.sg`.
+//
+// Here rather than in whatsapp.ts because two other places need it and neither
+// can import that router — the handle change below, and the entity short form
+// in organisations.ts, both of which MOVE the address and so have to rename the
+// group that was named after it. One definition, so the name a group is opened
+// with and the name it is renamed to cannot drift.
+//
+// A person with no address yet falls back to their name: it is the group's real
+// name in WhatsApp, and an empty one is not a thing to put in front of anybody.
+export function groupSubjectFor(u: User, orgName: string): string {
+  return addressForUser(u) || `CYBills - ${u.name || orgName}`;
 }
 
 // A friendly, unique-per-workspace handle base from the person's name (falling
@@ -2149,6 +2165,15 @@ usersRouter.patch('/:id', (req, res) => {
     const from = user.organisationId;
     applyEditable(user, filtered, workspaceId(req));
     if (user.organisationId !== from) detachManagerLinks(items, user);
+    // Their WhatsApp collection group is NAMED after the address, because they
+    // are one pipe — so an address that moves takes the group with it, rather
+    // than leaving it standing under the handle they used to have. Not awaited:
+    // this is a save of somebody's details, and it must not wait on WhatsApp.
+    if ('emailHandle' in filtered || user.organisationId !== from) {
+      const ws = workspaceId(req);
+      const orgName = getOrganisation(ws, orgIdForUser(user))?.name || '';
+      void renameChannelsForUser(ws, user.id, groupSubjectFor(user, orgName));
+    }
   });
 });
 

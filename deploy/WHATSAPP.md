@@ -267,6 +267,48 @@ POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/react   (X-API-Key, same 
 - Nothing is ever CLEARED. Taking a tick off says something happened to the
   document, and nothing here ever means that.
 
+## Renaming a group
+
+A collection group is NAMED after the address it collects for —
+`gcy.cybm@cybills.sg` — because the two are one pipe: a bill emailed to that
+address and one sent into that group are filed under exactly the same person.
+
+The name was a snapshot, though, taken when the group was created, so an address
+that moved left its group standing under the old one. There are two ways it
+moves — the person changes their handle (Users / Colleagues → Edit details), or
+their entity takes a short form (Business settings → Extraction → Extract by
+Email), which moves everybody's at once — and both now rename the group.
+
+```
+POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/rename-group   (X-API-Key, same key)
+{ "submission_id": "CYB-org_red00001-a1b2c3d4", "subject": "gcy.cybm@cybills.sg" }
+```
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{data: {chat_id, subject}}` | Renamed. A group already called that answers 200 with `unchanged: true` and is asked nothing. |
+| 400 | `{error: "submission_id_required" \| "subject_required"}` | A group with no name at all is not something to put in front of a client. |
+| 401 | `{error: "invalid_api_key"}` | |
+| 404 | `{error: "unknown_submission"}` | No group at CYWS under that id. |
+| 502 | `{error: "rename_failed"}` | WhatsApp refused — only an admin of a group may rename it. |
+| 503 | `{error: "group_rename_unavailable"}` | The CYBot number is not on WAHA. |
+
+- **CYBills decides which groups may be renamed**, and two kinds never are. An
+  **adopted** conversation is the client's own, merely pointed at CYBills, and
+  renaming it from an accounting app is the same species of act as taking it
+  apart — which the close path refuses to do unasked. A **closed** collection is
+  over, and editing a chat CYBills has stopped collecting through is no longer
+  any of its business. CYWS just does what it is told, to a group it holds.
+- **Named by submission id**, like the reaction and the teardown, so the group is
+  resolved at CYWS's end from its own record rather than from a chat id in the
+  request.
+- **Best-effort, and only what WhatsApp took is recorded.** Nobody waits on this
+  — it happens while somebody saves a form — and a refusal leaves the channel row
+  saying what the group is really called, so the next address change tries again
+  rather than believing the two already agree. An older CYWS answers 404 into the
+  log. Nothing about filing depends on it: a bill sent into the group files under
+  the person the CHANNEL names, never under its subject.
+
 ## Closing a group down
 
 Two acts, offered side by side on every group (Connections → the group's row,
