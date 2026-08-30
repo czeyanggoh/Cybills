@@ -587,6 +587,17 @@ whatsappRouter.get('/directory', (req, res) => {
       subject: c.subject,
       chat_id: c.chatId,
       status: c.status,
+      // Whether a chat may be POINTED at this collection. Said here rather than
+      // left for CYWS to work out from `status`, because what a status means is
+      // CYBills' to know — and getting it wrong is silent: a chat assigned to a
+      // superseded or closed collection goes on forwarding into a submission id
+      // that nothing reads. The WhatsApp tab hides those, so the documents
+      // simply would not appear, which looks exactly like nothing arriving.
+      //
+      // Everything is still LISTED. A group filing to nobody is precisely what
+      // an operator needs to see, and hiding it would leave them wondering why
+      // the id on their chat matches nothing at all.
+      assignable: c.status === 'open',
       received: c.received,
       last_message_at: c.lastMessageAt,
     };

@@ -365,6 +365,36 @@ POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/delete-group   (X-API-Key
   ex-members' chat lists showing they were removed; no API reaches their phones.
   The panel says so, because this is the half people assume works.
 
+### Which of them a chat may actually be pointed at
+
+`/directory` lists **every** channel CYBills has ever recorded, retired ones
+included — a collection filing to nobody is exactly what an operator needs to
+see, and hiding it would leave them wondering why the id on a chat matches
+nothing at all. Each row therefore carries **`assignable`**: true only while
+CYBills is still collecting through it.
+
+Retired rows accumulate for good reasons and are never deleted. "Open a new
+group with this number" marks the old one `replaced` and keeps it, because CYWS
+still files that group's messages under its submission id until somebody deletes
+the group at the WhatsApp end. An attempt that never completed leaves `pending`
+or `failed`, because the id is written to disk BEFORE the call goes out so a
+retry can reuse it. Closing leaves `disconnected` or `deleted`.
+
+So one person can legitimately have several rows, and only one of them live.
+**Do not offer a row with `assignable: false` as a destination.** Forwarding into
+one fails silently — the documents post to an id nothing reads, and CYBills' own
+WhatsApp tab hides those channels, so they never appear. That is
+indistinguishable from nothing arriving at all. `set_chat_cybills_submission`
+refuses one with `submission_not_collecting`; the picker shows a retired row
+only when it is the chat's current (wrong) assignment, so it can be seen and
+changed rather than showing as blank.
+
+Names differ between rows for the same person because only a live, non-adopted
+group is renamed when an address changes — a retired one stays frozen at
+whatever it was called when it was retired. Two rows reading
+`czeyanggoh@cybills.sg` and `czeyanggoh.cybm@cybills.sg` are the same person
+before and after their entity got a short form.
+
 ## Saying whose books a group feeds
 
 CYWS files everything under a submission id and holds nothing else, so its own

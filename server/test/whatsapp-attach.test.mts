@@ -52,6 +52,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   }
+  if (url.includes('/api/webhooks/cybills/delete-group')) {
+    return new Response(JSON.stringify({ data: { removed: 0, left: false, group_kept: true } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
   return realFetch(input as RequestInfo, init);
 }) as typeof fetch;
 
@@ -136,6 +142,26 @@ r = await post('channels/user', { userId: dean.id, mobile: '6591234567', replace
 check('replacing opens a new group', r.status, 200);
 check('the group CYBot opened is the one retired', channelById(opened)?.status, 'replaced');
 check('the adopted conversation is left alone', channelById(adopted)?.status, 'open');
+
+// --- What the directory offers as a destination ------------------------------
+// The retired group is still LISTED — a collection filing to nobody is exactly
+// what an operator needs to see — but it must not be offered as somewhere to
+// point a chat. Forwarding into it fails silently: documents post to an id
+// nothing reads, and CYBills' own tab hides it, which looks like nothing
+// arriving. Offering them is also why one person appeared three times over in
+// the picker.
+const dir = await get('directory', KEY);
+const rows = dir.body.channels as any[];
+const mine = rows.filter((c) => c.person_email === dean.email);
+check('every channel is still listed, retired ones included', mine.length >= 3, true);
+check('the replaced one is named as not assignable', rows.find((c) => c.submission_id === opened)?.assignable, false);
+check('the adopted one still is', rows.find((c) => c.submission_id === adopted)?.assignable, true);
+check('and it says which state it is in', rows.find((c) => c.submission_id === opened)?.status, 'replaced');
+
+// A closed collection is not a destination either.
+await post(`channels/${adopted}/close`, {}, ORG);
+const after = (await get('directory', KEY)).body.channels as any[];
+check('a closed collection stops being assignable', after.find((c) => c.submission_id === adopted)?.assignable, false);
 
 server.close();
 globalThis.fetch = realFetch;

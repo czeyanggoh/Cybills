@@ -666,6 +666,25 @@ against a chat CYWS already has, and CYWS stamps it on that chat. `/directory`
 carries a `people` list so CYWS can offer the roster. Contract:
 `deploy/WHATSAPP.md`.
 
+**A retired collection is listed, never offered.** `/directory` hands CYWS every
+channel CYBills has ever recorded, because a collection filing to nobody is
+exactly what an operator needs to see — but a chat pointed at one fails
+SILENTLY: documents post to a submission id nothing reads, and the WhatsApp tab
+hides those channels, so it is indistinguishable from nothing arriving. Rows
+accumulate for good reasons and are never deleted (a `replaced` group still has
+CYWS filing its messages until somebody deletes it at the WhatsApp end; a
+`pending`/`failed` one owns the id a retry reuses; a closed one owns its own
+history), so one person legitimately shows several — which is how three
+`czeyanggoh` entries came to sit in one dropdown. Each row now carries
+**`assignable`** (`status === 'open'`), said by CYBills rather than derived at
+the far end, because what a status MEANS is CYBills' to know;
+`set_chat_cybills_submission` refuses a dead one (`submission_not_collecting`)
+and the picker shows one only when it is the chat's current wrong assignment, so
+it can be seen and changed rather than showing blank. Names differ between a
+person's rows because only a live, non-adopted group is renamed when their
+address moves — `czeyanggoh@cybills.sg` and `czeyanggoh.cybm@cybills.sg` are the
+same person before and after the entity got its short form.
+
 **One GROUP one person, but a person may have several.** Attaching used to
 refuse somebody who already collected through a group (`already_connected`), so
 that a second id could not split their bills across two collections. That is
