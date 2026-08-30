@@ -737,10 +737,30 @@ client's book. Covered by `npm test` in `server/`.
 Every model call records its token usage (`server/src/usage.ts`), attributed to
 the client entity it was made for and priced at the published per-model rates —
 Claude and OpenAI models are both in the table. Practice -> Clients shows today's
-and month-to-date cost per client. There is no billing API behind this — it is an
-estimate from real token counts. Override a rate with
+cost per client and its cost **over a period you pick**. There is no billing API
+behind this — it is an estimate from real token counts. Override a rate with
 `LLM_PRICES='{"gpt-5":{"input":1.25,"output":10}}'` (`ANTHROPIC_PRICES` still
 works; the two are merged).
+
+**"What did last month cost?" is the question, so the period is the control.**
+Today and month-to-date were the only two windows, which answered it only on the
+first of the month. Everything on the page — both stat cards and the per-client
+column — is now totalled over one chosen window (`?range=last-month`, or
+`?range=custom&from=&to=` on `GET /api/practice/clients`), with today kept
+alongside it because that is what is running right now; picking Today drops the
+duplicate column rather than printing the same figure twice.
+
+**The key travels, not the dates.** A week starts on Monday and a day rolls over
+in the PRACTICE's timezone, which the browser asking may not be in, so the
+browser sends `today` / `week` / `last-month` / … and `resolveRange`
+(`usage.ts`) turns it into two day keys against the practice's own clock. The
+vocabulary and the words for it live in `src/lib/usageRange.js`; a server test
+walks that list and asserts every key it offers resolves, so the two halves
+can't drift. An unrecognised key resolves to this month and SAYS so — the page
+labels itself from the window that came back, never from the one it asked for.
+Retention is 400 days, so a range reaching past that is showing less than it
+asks for, and the page says that too. Covered by `npm test` at the root and in
+`server/`.
 
 ## A bridge entity (Red Alpha - ST Engineering)
 
