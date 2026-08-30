@@ -391,6 +391,18 @@ above the select already names that collection and says it has stopped
 collecting, so keeping the row only put a dead option in a list of destinations
 looking exactly as pickable as the live ones.
 
+**Nor a collection that already belongs to another group.** Each row carries
+`chat_id`. A submission id IS the collection, so pointing a second chat at one
+does not give that chat a collection — it folds two conversations into one row
+and one thread, and neither can be told from the other afterwards. That is the
+mismatch this page has always warned about; offering it in the list is how
+anybody reached it. `set_chat_cybills_submission` refuses with
+`submission_belongs_to_another_chat`.
+
+A collection is bound to a group the moment it opens or is attached, so in
+practice a chat with no collection has none to share — and the right action is
+always the person list, which mints one against THAT chat.
+
 Names differ between rows for the same person because only a live, non-adopted
 group is renamed when an address changes — a retired one stays frozen at
 whatever it was called when it was retired. Two rows reading

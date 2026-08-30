@@ -693,7 +693,14 @@ the far end, because what a status MEANS is CYBills' to know;
 and the picker leaves them out altogether, the chat's own assignment included —
 the notice above the select already names that collection and says it has
 stopped collecting, so keeping the row only put a dead option in a list of
-destinations looking as pickable as the live ones. Names differ between a
+destinations looking as pickable as the live ones. Nor is a collection that
+already belongs to ANOTHER group a destination (`chat_id` on each row,
+`submission_belongs_to_another_chat`): a submission id is the collection, so
+pointing a second chat at one folds two conversations into one row and one
+thread rather than giving the chat a collection. Since a collection is bound to
+a group the moment it opens or is attached, a chat with none has none to share,
+and the right action is always the person list — which mints one against THAT
+chat. Names differ between a
 person's rows because only a live, non-adopted group is renamed when their
 address moves — `czeyanggoh@cybills.sg` and `czeyanggoh.cybm@cybills.sg` are the
 same person before and after the entity got its short form.
