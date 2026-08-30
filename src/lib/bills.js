@@ -315,6 +315,10 @@ export function billToDoc(b) {
     exchangeRate: Number(b.exchangeRate) || 0,
     invoiceNumber: b.invoiceNumber || '',
     taxRate: b.taxRate || '',
+    // Whether a PERSON settled the code (or the blank). What a re-read reads to
+    // know whose answer it is about to revise.
+    taxRateCleared: Boolean(b.taxRateCleared),
+    taxRateEdited: Boolean(b.taxRateEdited),
     description: b.description || '',
     paymentMethod: b.paymentMethod || '',
     paid: Boolean(b.paid),

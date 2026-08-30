@@ -220,7 +220,17 @@ export function taxRateOutcome({
   // 0b. A code the org's own "when to use" rule matched, via the reader. The
   //     reader writes its own reason, so don't overwrite it.
   const picked = String(suggested || '').trim();
-  if (picked && list.some((r) => r.name === picked)) return { name: picked, reason: '', claimsTax: true };
+  if (picked && list.some((r) => r.name === picked)) {
+    return {
+      name: picked,
+      // The reader's own reason is the better one and the callers prefer it;
+      // this is the floor under it. A code sitting there with nothing beside it
+      // saying why is indistinguishable from a bug — which is how one was
+      // reported, on a document coded No Tax by exactly this route.
+      reason: `Coded ${picked}: the reader matched this organisation's own "when to use" rule for that code.`,
+      claimsTax: true,
+    };
+  }
 
   const t = num(total);
   const x = num(tax);
@@ -244,8 +254,23 @@ export function taxRateOutcome({
 
   if (!(x > 0 && net > 0)) {
     // No tax charged: the configured default, else No Tax.
+    //
+    // This has to SAY so. It is where a document whose tax the reader never
+    // found ends up — a foreign-currency invoice stating its GST only in the
+    // SGD tax block, a dark photo, a total typed in without its tax — and left
+    // silent it looks exactly like a document that was judged and declined.
+    // "No tax is shown on this document" is the one sentence that tells the
+    // reviewer to go and look at the Tax amount.
     const useDefault = defaultName && list.some((r) => r.name === defaultName) ? defaultName : '';
-    return { name: useDefault || (noTax ? noTax.name : ''), reason: '', claimsTax: false };
+    const chosen = useDefault || (noTax ? noTax.name : '');
+    return {
+      name: chosen,
+      reason: chosen
+        ? `No tax is shown on this document${t > 0 ? ` — a total of ${t.toFixed(2)} with nothing recorded as tax` : ''}, ` +
+          `so there is none to claim. Coded ${chosen}. If it does charge GST, correct the Tax amount and the code follows.`
+        : '',
+      claimsTax: false,
+    };
   }
 
   // The rate the supplier charged, taken from whichever pair states it most

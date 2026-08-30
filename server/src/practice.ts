@@ -150,14 +150,15 @@ practiceRouter.post('/colleagues', async (req, res) => {
 });
 
 // GET /api/practice/clients — every client entity the practice has connected,
-// with the colleagues on it and what it has cost in Claude API usage today and
-// month-to-date. A Standard colleague sees the clients they can open; whoever
-// runs the practice sees all of them.
+// with the colleagues on it and what it has cost in AI API usage today and over
+// the period being asked about (?range=last-month, or ?range=custom&from=&to=;
+// this month if nothing is named). A Standard colleague sees the clients they
+// can open; whoever runs the practice sees all of them.
 practiceRouter.get('/clients', (req, res) => {
   const { me, ok } = practiceMember(req, res);
   if (!ok) return;
   const ws = workspaceId(req);
-  const usage = usageSummary(ws);
+  const usage = usageSummary(ws, { range: req.query.range, from: req.query.from, to: req.query.to });
   const primary = primaryOrgId();
   const team = colleagues(ws).filter((u) => !u.deactivated);
   const everything = !me || canManagePractice(me);
@@ -184,7 +185,7 @@ practiceRouter.get('/clients', (req, res) => {
           .map((u) => ({ id: u.id, name: u.name, allClients: Boolean(u.allClients) })),
         usage: {
           today: window?.today ?? { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
-          monthToDate: window?.monthToDate ?? { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+          range: window?.range ?? { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
         },
       };
     });
@@ -198,6 +199,13 @@ practiceRouter.get('/clients', (req, res) => {
       ...usage.totals,
       unattributed: usage.unattributed,
       timezone: usage.timezone,
+      // The period actually priced, resolved in the practice's timezone — the
+      // page labels itself from this rather than from what it asked for, so a
+      // range it cannot resolve is visibly the one it fell back to.
+      window: usage.window,
+      // Nothing older than this is kept, so a range reaching past it is showing
+      // less than it asked for.
+      retainedFrom: usage.retainedFrom,
       // What the estimate is built from, so the number can be checked rather
       // than taken on faith. USD per million tokens.
       rates: priceTable(),

@@ -112,10 +112,25 @@ export function readDecisions(
     // money is unchanged, only the split moves.
     if (!exTaxOut) patch.baseTax = 0;
   }
-  if (!current.taxRate && inferredRate) patch.taxRate = inferredRate;
-  // Why it was coded that way — or, when nothing could be, why not. A blank tax
-  // rate with no explanation is indistinguishable from a bug.
-  if (!current.taxRate) patch.taxRateReason = ex.taxRateReason || rate.reason || '';
+  // A re-read is an explicit instruction to decide this document again, and it
+  // is usually pressed BECAUSE the first read got the code wrong. Refusing to
+  // revise any existing rate made that impossible: the document kept the very
+  // answer somebody pressed the button to change, and kept it silently, since
+  // the reason is written in the same breath and so was also held back. So only
+  // a rate a PERSON decided is protected — `taxRateEdited` for a code they
+  // picked, `taxRateCleared` for the blank they chose on purpose. A document
+  // written before either marker existed carries neither, which is exactly the
+  // population that needs re-deciding.
+  const personDecided = Boolean(current.taxRateEdited) || Boolean(current.taxRateCleared);
+  if (!personDecided && inferredRate) {
+    patch.taxRate = inferredRate;
+    // Why it was coded that way, written with the code so the two can't drift.
+    patch.taxRateReason = ex.taxRateReason || rate.reason || '';
+  } else if (!personDecided && !current.taxRate) {
+    // Nothing could be chosen. Say why, rather than leaving a blank field that
+    // is indistinguishable from a bug.
+    patch.taxRateReason = ex.taxRateReason || rate.reason || '';
+  }
   if (descr) patch.description = descr;
   if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
   if (ex.project) {

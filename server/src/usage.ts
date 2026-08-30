@@ -8,8 +8,8 @@ import { env } from './env.js';
 // document was uploaded for. There is no billing API to read from, so this is
 // the only record of what an extraction cost: every model call — Claude or
 // OpenAI — writes its token usage here, priced with the published per-model
-// rates below. The Practice → Clients page reads the aggregates (today /
-// month-to-date).
+// rates below. The Practice → Clients page reads the aggregates, totalled over
+// whichever period it is showing (see resolveRange).
 
 export type UsageEvent = {
   id: string;
@@ -185,20 +185,108 @@ function add(t: UsageTotals, e: UsageEvent): void {
   t.costUsd += e.costUsd;
 }
 
-export type UsageWindow = { today: UsageTotals; monthToDate: UsageTotals };
-const emptyWindow = (): UsageWindow => ({ today: emptyTotals(), monthToDate: emptyTotals() });
+// --- The window being priced --------------------------------------------------
+//
+// "What has this client cost me?" is asked over a period — this month, last
+// month, the week so far — so the page picks one and everything on it is
+// totalled over that. The vocabulary of presets lives in the browser's own
+// module (src/lib/usageRange.js); resolving one into dates lives HERE, because
+// a week starts and a day rolls over in the practice's timezone, which the
+// browser asking may not be in. A key nobody recognises resolves to this month
+// rather than to nothing, so a stale bookmark still shows a page.
 
-// Today's and this month's spend, split by organisation. One pass over the
-// window so the Clients page is a single read.
-export function usageSummary(ws: string): {
+export type ResolvedRange = { key: string; from: string; to: string };
+
+// Day arithmetic on 'YYYY-MM-DD' keys, done in UTC so it never crosses a
+// timezone: these are already the practice's own days, not instants.
+function shiftDays(key: string, days: number): string {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+const pad = (n: number) => String(n).padStart(2, '0');
+const startOfMonth = (key: string) => `${key.slice(0, 7)}-01`;
+// The last day of a month, as the day before the first of the next one — which
+// is right in February and in a leap year without knowing either.
+function endOfMonth(key: string): string {
+  const [y, m] = key.split('-').map(Number);
+  const nextMonth = m === 12 ? `${y + 1}-01-01` : `${y}-${pad(m + 1)}-01`;
+  return shiftDays(nextMonth, -1);
+}
+// Monday, the way a working week is counted here.
+function startOfWeek(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
+  return shiftDays(key, -((dow + 6) % 7));
+}
+function startOfQuarter(key: string): string {
+  const [y, m] = key.split('-').map(Number);
+  return `${y}-${pad(Math.floor((m - 1) / 3) * 3 + 1)}-01`;
+}
+
+const isDayKey = (v: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '').trim());
+
+export function resolveRange(
+  input: { range?: unknown; from?: unknown; to?: unknown } = {},
+  today: string = dayKey(new Date())
+): ResolvedRange {
+  const key = String(input.range ?? '').trim() || 'month';
+  const from = String(input.from ?? '').trim();
+  const to = String(input.to ?? '').trim();
+  const at = (k: string, f: string, t: string): ResolvedRange => ({ key: k, from: f, to: t });
+
+  switch (key) {
+    case 'today':
+      return at(key, today, today);
+    case 'yesterday':
+      return at(key, shiftDays(today, -1), shiftDays(today, -1));
+    case 'week':
+      return at(key, startOfWeek(today), today);
+    case 'last-week': {
+      const start = shiftDays(startOfWeek(today), -7);
+      return at(key, start, shiftDays(start, 6));
+    }
+    case 'last-month': {
+      const start = startOfMonth(shiftDays(startOfMonth(today), -1));
+      return at(key, start, endOfMonth(start));
+    }
+    case 'last-30':
+      return at(key, shiftDays(today, -29), today);
+    case 'quarter':
+      return at(key, startOfQuarter(today), today);
+    case 'year':
+      return at(key, `${today.slice(0, 4)}-01-01`, today);
+    case 'custom': {
+      // Either end may be left blank — a start with no end means "since then".
+      // Dates the wrong way round are read as the range they describe rather
+      // than refused: nobody means an empty window by typing them.
+      const a = isDayKey(from) ? from : startOfMonth(today);
+      const b = isDayKey(to) ? to : today;
+      return a <= b ? at(key, a, b) : at(key, b, a);
+    }
+    default:
+      return at('month', startOfMonth(today), today);
+  }
+}
+
+export type UsageWindow = { today: UsageTotals; range: UsageTotals };
+const emptyWindow = (): UsageWindow => ({ today: emptyTotals(), range: emptyTotals() });
+
+// What the chosen window cost, split by organisation, with today alongside it —
+// today is what is running right now and is worth seeing whatever period is
+// being reviewed. One pass over the file so the Clients page is a single read.
+export function usageSummary(
+  ws: string,
+  rangeInput: { range?: unknown; from?: unknown; to?: unknown } = {}
+): {
   totals: UsageWindow;
   byOrganisation: Record<string, UsageWindow>;
   unattributed: UsageWindow;
   timezone: string;
+  window: ResolvedRange;
+  retainedFrom: string;
 } {
-  const now = new Date();
-  const today = dayKey(now);
-  const month = today.slice(0, 7);
+  const today = dayKey(new Date());
+  const window = resolveRange(rangeInput, today);
   const totals = emptyWindow();
   const byOrganisation: Record<string, UsageWindow> = {};
   const unattributed = emptyWindow();
@@ -206,16 +294,28 @@ export function usageSummary(ws: string): {
   for (const e of loadCollection<UsageEvent>(COLLECTION)) {
     if (e.workspaceId !== ws) continue;
     const key = dayKey(new Date(e.ts));
-    if (!key.startsWith(month)) continue; // month-to-date is the widest window read
+    const inRange = key >= window.from && key <= window.to;
+    if (!inRange && key !== today) continue;
     const bucket = e.organisationId
       ? (byOrganisation[e.organisationId] ??= emptyWindow())
       : unattributed;
-    add(bucket.monthToDate, e);
-    add(totals.monthToDate, e);
+    if (inRange) {
+      add(bucket.range, e);
+      add(totals.range, e);
+    }
     if (key === today) {
       add(bucket.today, e);
       add(totals.today, e);
     }
   }
-  return { totals, byOrganisation, unattributed, timezone: env.PRACTICE_TIMEZONE };
+  return {
+    totals,
+    byOrganisation,
+    unattributed,
+    timezone: env.PRACTICE_TIMEZONE,
+    window,
+    // Rows older than this were pruned, so a range reaching past it is showing
+    // less than it asks for — the page says so rather than reporting a quiet $0.
+    retainedFrom: shiftDays(today, -RETAIN_DAYS),
+  };
 }

@@ -202,6 +202,8 @@ function initialData(doc) {
     exchangeRate: doc.exchangeRate ? String(doc.exchangeRate) : '',
     taxRate: doc.taxRate ?? '',
     taxRateReason: doc.taxRateReason ?? '',
+    taxRateCleared: Boolean(doc.taxRateCleared),
+    taxRateEdited: Boolean(doc.taxRateEdited),
     description: doc.description ?? '',
     paymentMethod: doc.paymentMethod ?? '',
     paid: Boolean(doc.paid),
@@ -507,6 +509,7 @@ export default function CostDetail() {
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
     baseCurrency: 'baseCurrency', baseTotal: 'baseTotal', baseTax: 'baseTax', exchangeRate: 'exchangeRate',
     taxRate: 'taxRate', taxRateReason: 'taxRateReason', taxRateCleared: 'taxRateCleared',
+    taxRateEdited: 'taxRateEdited',
     description: 'description', user: 'owner',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
     customer: 'customer', rebillable: 'rebillable', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
@@ -986,10 +989,13 @@ export default function CostDetail() {
   // A rate with a % also fills the tax amount from the GST-inclusive total.
   const setTaxRate = (name) => {
     set('taxRate', name);
-    // Leaving it blank on purpose is recorded as a decision — see changeTaxRate
-    // in Costs.jsx. Without it the listing's backfill can't tell this apart from
-    // a reader that simply had no code to offer.
+    // Both halves of the decision are recorded, because both have to outlast
+    // anything that runs by itself: leaving it blank on purpose is not a reader
+    // with no code to offer, and a code somebody PICKED is not one the
+    // arithmetic reached for — a re-read revises the second and must not touch
+    // this one. See changeTaxRate in Costs.jsx, which writes the same pair.
     set('taxRateCleared', !name);
+    set('taxRateEdited', Boolean(name));
     const r = rateFor(name);
     const total = num(data.total);
     const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;

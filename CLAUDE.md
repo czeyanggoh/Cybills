@@ -442,13 +442,40 @@ from its OWN total, the same sum the inline Tax rate cell does.
 **Rerun processing reads the documents again**, and the precedence it applies is
 decided in one place: `src/lib/reRead.js` (`readDecisions`) — supplier rule, then
 the document's own printed due date, then this read, then what the document
-already carried (a hand-edited tax rate, existing line items are never
-clobbered). The document page's single re-read and the inbox's bulk one both call
-it, so they can't drift. It exists because a first read can come back with
+already carried (a PERSON's tax code, existing line items are never clobbered).
+The document page's single re-read and the inbox's bulk one both call it, so they
+can't drift. It exists because a first read can come back with
 nothing — a dark photo, a PDF that is really a scan — leaving the document in the
 inbox as "Unknown supplier / 0.00" with no way forward but typing it in; it is
 also how a supplier rule written AFTER the upload reaches the documents it was
-written for. A read that comes back with neither a supplier nor a total is
+written for.
+
+**A re-read may revise the code CYBills itself chose — only a person's is
+kept.** It used to protect ANY existing tax rate, which made a re-read unable to
+do the very thing it is usually pressed for: the document kept the answer
+somebody was trying to change, and kept it silently, because the reason is
+written in the same breath and so was held back too. The two can be told apart
+now, because a person's decision is recorded as one — `taxRateEdited` for a code
+they picked, `taxRateCleared` for the blank they chose on purpose — by the
+document page, the inline cell and Bulk edit alike. Neither flag had ever
+reached the server: `PATCH /api/costs/bills/:id` took only strings, so
+`taxRateCleared` was dropped on every write and the listing's backfill and the
+supplier rules were guarding on a flag that could never be set. A document
+written before the markers existed carries neither, which is exactly the
+population a re-read needs to re-decide.
+
+**And a blank Reason is a bug wherever it appears.** Two paths through
+`taxRateOutcome` still returned one: a code the reader picked from the org's own
+rule, and — the one that matters — "no tax charged", which is where a document
+whose tax the reader never FOUND ends up. Coded No Tax with nothing said, that
+is indistinguishable from a document that was judged and declined; "No tax is
+shown on this document — a total of 22.20 with nothing recorded as tax" is the
+sentence that sends the reviewer to the Tax amount field. Only two silences
+remain, both deliberate: an entity that isn't GST-registered (the screens say so
+themselves) and a code an org's own written rule matched, where the reader's
+reason is preferred and this is merely the floor under it.
+
+A read that comes back with neither a supplier nor a total is
 reported as such rather than counted as a success: twice blank is the FILE's
 fault, and running it a third time won't help. The run goes one document at a
 time — each read is a model call billed to that client entity.

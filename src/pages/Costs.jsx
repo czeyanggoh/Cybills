@@ -835,7 +835,14 @@ export default function Costs() {
     // an empty tax rate on its own is also what a reader leaves behind when it
     // has no code to offer, and the two must not look alike — otherwise the
     // listing's backfill either overrules this person or never repairs those.
-    const patch = { taxRate: name, tax: tax ? tax.toFixed(2) : '0.00', taxRateCleared: !name };
+    const patch = {
+      taxRate: name,
+      tax: tax ? tax.toFixed(2) : '0.00',
+      taxRateCleared: !name,
+      // …and a code they PICKED is a decision too, held against a later re-read
+      // the same way the blank is held against the backfill.
+      taxRateEdited: Boolean(name),
+    };
     if (d.persisted) updateBill(d.id, patch).then(reload).catch(() => {});
     else setDocOverride(d.id, patch);
   };
@@ -1034,6 +1041,13 @@ export default function Costs() {
 
   const applyBulkEdit = async (patch) => {
     setBulkOpen(false);
+    // Coding a selection is as much a person's decision as coding one document,
+    // so it is recorded as one — otherwise a later re-read would put its own
+    // answer back over forty of them at once.
+    if ('taxRate' in patch) {
+      patch.taxRateEdited = Boolean(patch.taxRate);
+      patch.taxRateCleared = !patch.taxRate;
+    }
     const names = Object.keys(patch).length;
     await patchSelected(patch, `Updated ${names} field${names === 1 ? '' : 's'}`);
   };

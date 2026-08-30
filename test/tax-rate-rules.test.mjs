@@ -142,12 +142,22 @@ check('not registered -> No Tax', [r.name, r.reason, r.claimsTax], ['No Tax', ''
 
 // 14) A code the org's own written rule matched keeps the reader's reason.
 r = ask({ total: 109, tax: 9, suggested: 'Bad Debt Relief' });
-check('a matched rule wins, silently', [r.name, r.reason], ['Bad Debt Relief', '']);
+check('a matched rule wins', r.name, 'Bad Debt Relief');
 check('a suggestion the org does not have is ignored', ask({ total: 109, tax: 9, suggested: 'Nonsense' }).name, 'Standard-Rated Purchases');
 
 // 15) No tax charged: the configured default, else No Tax.
 check('no tax -> configured default', ask({ total: 100, tax: 0, defaultName: 'Zero-Rated Purchases' }).name, 'Zero-Rated Purchases');
 check('no tax, no default -> No Tax', ask({ total: 100, tax: 0 }).name, 'No Tax');
+// …and it says so. This is where a document whose tax the reader never found
+// ends up, and left silent it looks exactly like one that was judged and
+// declined — which is how a foreign-currency invoice coded No Tax with an empty
+// Reason came to be reported as a bug.
+has('no tax: says the document shows none', ask({ total: 100, tax: 0 }).reason, 'No tax is shown on this document');
+has('no tax: names the total it saw', ask({ total: 100, tax: 0 }).reason, 'total of 100.00');
+has('no tax: says what would change it', ask({ total: 100, tax: 0 }).reason, 'correct the Tax amount');
+// A code the reader picked from the org's own rule says that much, too — the
+// reader's own reason is preferred by the callers, this is the floor under it.
+has('a matched rule says which rule', ask({ total: 109, tax: 9, suggested: 'Bad Debt Relief' }).reason, 'when to use');
 check('8% lands on 2023 (name-only helper)', inferTaxRateName(108, 8, SG, { currency: 'SGD', ...SGGST }), '2023 Standard-Rated Purchases');
 
 // 16) The No Tax lookup every screen shares.

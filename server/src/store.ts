@@ -75,6 +75,11 @@ export type Bill = {
   // what separates "nobody has decided yet" from "somebody decided: none", and
   // it is the only thing that stops the backfill filling a deliberate blank.
   taxRateCleared?: boolean;
+  // A person PICKED the code. The pair say the same thing about two different
+  // answers — this document's code was decided by a human, not worked out — and
+  // between them they are what stops anything that runs by itself (the
+  // listing's backfill, a supplier rule, a re-read) overruling somebody.
+  taxRateEdited?: boolean;
   // Which fields the SUPPLIER RULE last wrote. Provenance, not a guess: it is
   // what lets an edited rule update the documents it already filled while
   // leaving alone anything a person typed. A field a person edits drops out of
@@ -747,6 +752,7 @@ const EDITABLE: (keyof Bill)[] = [
   'taxRate',
   'taxRateReason',
   'taxRateCleared',
+  'taxRateEdited',
   'ruleFields',
   'description',
   'status',

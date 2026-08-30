@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Building2, ExternalLink, Info } from 'lucide-react';
+import { Search, Building2, ExternalLink, Info, CalendarRange } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { useClients, formatUsd, formatTokens } from '@/lib/practiceStore';
+import {
+  USAGE_RANGES,
+  DEFAULT_USAGE_RANGE,
+  windowLabel,
+  formatDayRange,
+} from '@/lib/usageRange';
 import { useOrganisations, setActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
@@ -24,15 +30,18 @@ function StatCard({ label, value, sub }) {
 }
 
 // The practice's client list: every Xero tenant CYBills is connected to, who on
-// the team works on it, and what it has cost in AI API usage today and this
-// month. The cost is an estimate — it is priced from the tokens each extraction
-// actually reported, at the published per-model rates, so it tracks the bill
-// without being the bill.
+// the team works on it, and what it has cost in AI API usage — today, and over
+// whichever period is being asked about. The cost is an estimate — it is priced
+// from the tokens each extraction actually reported, at the published per-model
+// rates, so it tracks the bill without being the bill.
 export default function Clients() {
   const [query, setQuery] = useState('');
   const [showRates, setShowRates] = useState(false);
+  // The period every AI API figure on the page is totalled over. Only the KEY
+  // is chosen here; the dates come back resolved, in the practice's timezone.
+  const [range, setRange] = useState({ key: DEFAULT_USAGE_RANGE, from: '', to: '' });
   const navigate = useNavigate();
-  const { data, isLoading, error } = useClients();
+  const { data, isLoading, error, isFetching } = useClients(range);
   // The switcher's list is what the signed-in user may actually open; a practice
   // manager can see clients here that they haven't given themselves access to.
   const { data: mine = [] } = useOrganisations();
@@ -41,6 +50,17 @@ export default function Clients() {
   const clients = data?.clients ?? [];
   const usage = data?.usage;
   const practiceName = data?.practice?.name || 'the practice';
+  // What the server actually priced, which is what the page names itself after:
+  // a range it could not read is visibly the one it fell back to.
+  const period = usage?.window ?? { key: range.key, from: '', to: '' };
+  const periodLabel = windowLabel(period.key, period.from, period.to);
+  const periodDates = formatDayRange(period.from, period.to);
+  // Today is worth seeing whatever period is under review — except when it IS
+  // the period, where the same figure twice says nothing.
+  const showToday = period.key !== 'today';
+  // Rows older than the retention window were pruned, so a range reaching past
+  // it is showing less than it asked for.
+  const truncated = Boolean(usage?.retainedFrom && period.from && period.from < usage.retainedFrom);
   const rows = clients.filter((c) =>
     `${c.name} ${c.tenantName || ''}`.toLowerCase().includes(query.trim().toLowerCase())
   );
@@ -64,7 +84,7 @@ export default function Clients() {
         <h1 className="text-xl font-semibold tracking-tight">Clients</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Every Xero organisation {practiceName} is connected to, who works on it, and what
-          it has cost in AI API usage.
+          it has cost in AI API usage over the period you pick.
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           The practice&apos;s own list — it doesn&apos;t change with the client entity you have open.
@@ -72,7 +92,43 @@ export default function Clients() {
         </p>
       </div>
 
-      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <CalendarRange className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
+        <select
+          value={range.key}
+          onChange={(e) => setRange((r) => ({ ...r, key: e.target.value }))}
+          className="h-8 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {USAGE_RANGES.map((r) => (
+            <option key={r.key} value={r.key}>{r.label}</option>
+          ))}
+        </select>
+        {range.key === 'custom' && (
+          <>
+            <input
+              type="date"
+              value={range.from}
+              max={range.to || undefined}
+              onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+              className="h-8 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <span className="text-sm text-muted-foreground">to</span>
+            <input
+              type="date"
+              value={range.to}
+              min={range.from || undefined}
+              onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+              className="h-8 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </>
+        )}
+        {periodDates && range.key !== 'custom' && (
+          <span className="text-xs text-muted-foreground">{periodDates}</span>
+        )}
+        {isFetching && <span className="text-xs text-muted-foreground">Updating…</span>}
+      </div>
+
+      <div className={cn('mb-5 grid grid-cols-1 gap-3', showToday ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
         <StatCard
           label="Connected clients"
           value={isLoading ? '—' : clients.length}
@@ -84,15 +140,17 @@ export default function Clients() {
               : `${clients.filter((c) => c.tenantId).length} linked to Xero`
           }
         />
+        {showToday && (
+          <StatCard
+            label="AI API — today"
+            value={usage ? formatUsd(usage.today.costUsd) : '—'}
+            sub={usage ? `${usage.today.calls} call${usage.today.calls === 1 ? '' : 's'} · ${formatTokens(usage.today.inputTokens + usage.today.outputTokens)} tokens` : ' '}
+          />
+        )}
         <StatCard
-          label="AI API — today"
-          value={usage ? formatUsd(usage.today.costUsd) : '—'}
-          sub={usage ? `${usage.today.calls} call${usage.today.calls === 1 ? '' : 's'} · ${formatTokens(usage.today.inputTokens + usage.today.outputTokens)} tokens` : ' '}
-        />
-        <StatCard
-          label="AI API — month to date"
-          value={usage ? formatUsd(usage.monthToDate.costUsd) : '—'}
-          sub={usage ? `${usage.monthToDate.calls} call${usage.monthToDate.calls === 1 ? '' : 's'} · ${formatTokens(usage.monthToDate.inputTokens + usage.monthToDate.outputTokens)} tokens` : ' '}
+          label={`AI API — ${periodLabel}`}
+          value={usage ? formatUsd(usage.range.costUsd) : '—'}
+          sub={usage ? `${usage.range.calls} call${usage.range.calls === 1 ? '' : 's'} · ${formatTokens(usage.range.inputTokens + usage.range.outputTokens)} tokens` : ' '}
         />
       </div>
 
@@ -104,12 +162,17 @@ export default function Clients() {
           </button>
           <p className="mt-1.5">
             Every extraction records the tokens it used; those are priced at the published
-            per-model rates. Days roll over in {usage.timezone}. Prompt-cache reads and writes
-            are priced at 0.1× and 1.25× the input rate.
-            {usage.unattributed?.monthToDate?.calls > 0 && (
-              <> {formatUsd(usage.unattributed.monthToDate.costUsd)} this month was used before a
+            per-model rates. Days roll over in {usage.timezone}, so {periodDates} means those
+            days there. Prompt-cache reads and writes are priced at 0.1× and 1.25× the input
+            rate.
+            {usage.unattributed?.range?.calls > 0 && (
+              <> {formatUsd(usage.unattributed.range.costUsd)} of this period was used before a
               client was selected, so it isn&apos;t attributed to a row below (it is still in the
               totals above).</>
+            )}
+            {truncated && (
+              <> Usage is only kept back to {formatDayRange(usage.retainedFrom, usage.retainedFrom)},
+              so anything earlier in this period isn&apos;t counted.</>
             )}
           </p>
           {showRates && (
@@ -155,8 +218,8 @@ export default function Clients() {
               <th className="px-3 py-2.5 font-medium">Name</th>
               <th className="px-3 py-2.5 font-medium">Xero organisation</th>
               <th className="px-3 py-2.5 font-medium">Account managers</th>
-              <th className="px-3 py-2.5 text-right font-medium">API today</th>
-              <th className="px-3 py-2.5 text-right font-medium">API month to date</th>
+              {showToday && <th className="px-3 py-2.5 text-right font-medium">API today</th>}
+              <th className="px-3 py-2.5 text-right font-medium">API · {periodLabel}</th>
               <th className="px-3 py-2.5 font-medium"> </th>
             </tr>
           </thead>
@@ -191,13 +254,15 @@ export default function Clients() {
                     <span className="text-xs text-muted-foreground">Nobody assigned</span>
                   )}
                 </td>
+                {showToday && (
+                  <td className="px-3 py-3 text-right tabular-nums">
+                    {formatUsd(c.usage.today.costUsd)}
+                    <span className="block text-xs text-muted-foreground">{c.usage.today.calls} calls</span>
+                  </td>
+                )}
                 <td className="px-3 py-3 text-right tabular-nums">
-                  {formatUsd(c.usage.today.costUsd)}
-                  <span className="block text-xs text-muted-foreground">{c.usage.today.calls} calls</span>
-                </td>
-                <td className="px-3 py-3 text-right tabular-nums">
-                  {formatUsd(c.usage.monthToDate.costUsd)}
-                  <span className="block text-xs text-muted-foreground">{c.usage.monthToDate.calls} calls</span>
+                  {formatUsd(c.usage.range.costUsd)}
+                  <span className="block text-xs text-muted-foreground">{c.usage.range.calls} calls</span>
                 </td>
                 <td className="px-3 py-3 text-right">
                   <button
@@ -217,7 +282,7 @@ export default function Clients() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={showToday ? 6 : 5} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {error
                     ? 'Only the practice team can see the client list.'
                     : isLoading

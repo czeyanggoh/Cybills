@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { USERS_EVENT } from '@/lib/userStore';
 import { ORGANISATION_EVENT } from '@/lib/organisations';
+import { DEFAULT_USAGE_RANGE } from '@/lib/usageRange';
 
 // The practice (CYBM) — the firm that runs CYBills for its clients.
 //
@@ -95,15 +96,29 @@ export function useColleagues() {
   return query;
 }
 
-// Every connected client, with the colleagues on it and its AI API spend
-// (today and month-to-date). Refetched on organisation changes so linking or
-// unlinking a client is reflected straight away.
-export function useClients() {
+// Every connected client, with the colleagues on it and its AI API spend —
+// today, and over the period asked for (a preset key, or 'custom' with two
+// dates). The KEY is what travels: the server resolves it, because a week
+// starts and a day rolls over in the practice's timezone rather than in the
+// browser's. Refetched on organisation changes so linking or unlinking a client
+// is reflected straight away.
+export function useClients(range = {}) {
   const qc = useQueryClient();
+  const key = range.key || DEFAULT_USAGE_RANGE;
+  const from = key === 'custom' ? range.from || '' : '';
+  const to = key === 'custom' ? range.to || '' : '';
   const query = useQuery({
-    queryKey: ['practice-clients'],
-    queryFn: () => getJson('/api/practice/clients'),
+    queryKey: ['practice-clients', key, from, to],
+    queryFn: () => {
+      const params = new URLSearchParams({ range: key });
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      return getJson(`/api/practice/clients?${params.toString()}`);
+    },
     retry: false,
+    // Changing the period re-reads the same list, so the table stays on screen
+    // with the old figures rather than emptying itself for a moment.
+    placeholderData: (previous) => previous,
   });
   useEffect(() => {
     const reload = () => qc.invalidateQueries({ queryKey: ['practice-clients'] });

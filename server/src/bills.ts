@@ -510,6 +510,13 @@ billsRouter.patch('/bills/:id', async (req, res) => {
     if (kept.length !== owned.length) patch.ruleFields = kept;
   }
   if (typeof b.paid === 'boolean') patch.paid = b.paid;
+  // A person's own decision about the tax code, so nothing that runs by itself
+  // can quietly overrule it. Neither field arrived here before — the route took
+  // only strings, so `taxRateCleared` was dropped on every write, and the
+  // backfill and the supplier rules have been guarding on a flag that could
+  // never be set.
+  if (typeof b.taxRateEdited === 'boolean') patch.taxRateEdited = b.taxRateEdited;
+  if (typeof b.taxRateCleared === 'boolean') patch.taxRateCleared = b.taxRateCleared;
   restatementPatch(b, patch);
   // "Not a duplicate" — the reviewer's verdict, which clears the flag and
   // survives every later re-check.
