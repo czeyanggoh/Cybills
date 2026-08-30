@@ -44,8 +44,8 @@ for (const [input, want] of CASES) {
 }
 
 // --- What the person typing it is told ---------------------------------------
-check('a blank is required by default', client.mobileError(''), 'A mobile number is required.');
-check('and optional when the caller says so', client.mobileError('', { required: false }), '');
+check('a blank passes — the number can be filled in later', client.mobileError(''), '');
+check('and is refused only when the caller insists', client.mobileError('', { required: true }), 'A mobile number is required.');
 check('a national number says what to do', client.mobileError('0123456789'), 'Start with the country code — 65… or 60…, not 0…');
 check('a short one says so', client.mobileError('12345'), 'That is not the right length — 8 to 15 digits including the country code.');
 check('a good one says nothing', client.mobileError('+65 9123 4567'), '');

@@ -29,9 +29,12 @@ export function normaliseMobile(raw) {
 export const MOBILE_HINT = 'Country code first, digits only — 60123456789, not 0123456789.';
 
 // Why a number was refused, in the words the person typing it needs. Empty when
-// it is fine. `required` is what an onboarding form passes: everyone added now
-// gets a number, because it is how their documents find them.
-export function mobileError(raw, { required = true } = {}) {
+// it is fine — a BLANK one included: somebody added without a number simply
+// isn't collecting over WhatsApp yet, and their number can be filled in later
+// (Edit details, or Connect to WhatsApp, which saves it as it opens the group).
+// What is refused is a number that has been typed and can't be used. `required`
+// is left for a caller that genuinely can't proceed without one.
+export function mobileError(raw, { required = false } = {}) {
   const typed = String(raw ?? '').trim();
   if (!typed) return required ? 'A mobile number is required.' : '';
   if (normaliseMobile(typed)) return '';

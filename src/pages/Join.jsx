@@ -84,7 +84,8 @@ export default function Join() {
       return setError('Please enter your first and last name.');
     }
     // The number is how a bill sent in over WhatsApp finds its way back to this
-    // person, so it is asked for here rather than chased afterwards.
+    // person, so it is asked for here rather than chased afterwards — asked,
+    // not demanded: a blank one is accepted, an unusable one is not.
     const mobileMsg = mobileError(mobile);
     if (mobileMsg) return setError(mobileMsg);
     setBusy(true);

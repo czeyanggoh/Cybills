@@ -43,9 +43,10 @@ export default function AddColleagueModal({ open, practiceName, onClose, onAdd }
   const close = () => { setStep('details'); setForm(EMPTY); setQ(''); onClose(); };
 
   const emailValid = !form.login || /.+@.+\..+/.test(form.email.trim());
-  // Everyone added now gets a mobile number. It is how a bill they send in over
-  // WhatsApp is matched back to them — without one, everything they send lands
-  // on the entity's General account instead of on their name.
+  // A mobile number is asked for, not demanded: it is how a bill they send in
+  // over WhatsApp is matched back to them, but plenty of people are added who
+  // will never send one in, and a number can be filled in later. A number that
+  // IS typed still has to be usable.
   const mobileMsg = mobileError(form.mobile);
   const canNext = form.firstName.trim() && form.lastName.trim() && emailValid && !mobileMsg;
 
@@ -116,7 +117,7 @@ export default function AddColleagueModal({ open, practiceName, onClose, onAdd }
                 </p>
               )}
               <label className="grid grid-cols-[140px_1fr] items-start gap-4 text-sm">
-                <span className="pt-2">Mobile <span className="text-destructive">*</span></span>
+                <span className="pt-2">Mobile</span>
                 <div>
                   <input
                     value={form.mobile}
@@ -124,8 +125,8 @@ export default function AddColleagueModal({ open, practiceName, onClose, onAdd }
                     placeholder="60123456789"
                     className={input}
                   />
-                  <p className={cn('mt-1 text-xs', form.mobile.trim() && mobileMsg ? 'text-destructive' : 'text-muted-foreground')}>
-                    {form.mobile.trim() && mobileMsg ? mobileMsg : MOBILE_HINT}
+                  <p className={cn('mt-1 text-xs', mobileMsg ? 'text-destructive' : 'text-muted-foreground')}>
+                    {mobileMsg || MOBILE_HINT}
                   </p>
                 </div>
               </label>

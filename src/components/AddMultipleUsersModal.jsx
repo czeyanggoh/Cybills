@@ -73,10 +73,11 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
   };
   // A row somebody actually filled in. Blank rows are the grid's own padding.
   const filled = rows.filter((r) => r.firstName.trim() || r.lastName.trim() || r.email.trim());
-  // Everyone added gets a mobile number — it is how a bill they send in over
-  // WhatsApp is matched back to them. Named per row rather than refused as a
-  // batch: with twenty rows on screen, "some are invalid" is not a fix anybody
-  // can act on.
+  // A blank mobile is fine — the number can be filled in later. A number that
+  // has been TYPED has to be usable, or the bills that person sends in over
+  // WhatsApp won't find them. Named per row rather than refused as a batch:
+  // with twenty rows on screen, "some are invalid" is not a fix anybody can act
+  // on.
   const badMobiles = filled
     .map((r, i) => ({ row: rows.indexOf(r) + 1, msg: mobileError(r.mobile) }))
     .filter((x) => x.msg);
