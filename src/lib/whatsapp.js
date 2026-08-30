@@ -87,17 +87,24 @@ export function useWhatsappConfig() {
 // practice's own organisation while the browser usually sits in some client
 // entity, and their page still has to find it.
 export function useWhatsappForUser(userId) {
-  const [state, setState] = useState({ channel: null, mobile: '', enabled: false, canManage: false, loading: true });
+  const [state, setState] = useState({ channel: null, alsoCollecting: [], mobile: '', enabled: false, canManage: false, loading: true });
 
   const reload = useCallback(async () => {
     if (!userId) return;
     try {
       const res = await fetch(`/api/whatsapp/channels?userId=${encodeURIComponent(userId)}`);
       const data = res.ok ? await res.json() : null;
+      // A person may collect through several groups: the one CYBot opened for
+      // them, and any conversation of their own that was pointed at CYBills.
+      const open = (data?.channels ?? []).filter((c) => c.status === 'open');
       setState({
-        // At most one group per person. If an older one is still sitting there
-        // unfinished, the open one is the answer.
-        channel: (data?.channels ?? []).find((c) => c.status === 'open') ?? data?.channels?.[0] ?? null,
+        // The card is about the group CYBot OPENED — it is the one opened with
+        // a number, so the only one a changed number can have drifted from. An
+        // adopted conversation is shown beside it rather than in its place.
+        // If none is open, an unfinished one is still the answer: its
+        // submission id is what a retry reuses.
+        channel: open.find((c) => !c.adopted) ?? open[0] ?? data?.channels?.[0] ?? null,
+        alsoCollecting: open.filter((c) => c.adopted),
         mobile: data?.mobile ?? '',
         enabled: Boolean(data?.enabled),
         canManage: Boolean(data?.canManage),

@@ -119,7 +119,7 @@ function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
 // WhatsApp. It is what the group is opened with AND what a bill arriving from
 // that number is matched back to, which is why one field does both.
 function ConnectWhatsapp({ user, mobile, setMobile }) {
-  const [{ channel, enabled, canManage, loading }, reload] = useWhatsappForUser(user.id);
+  const [{ channel, alsoCollecting, enabled, canManage, loading }, reload] = useWhatsappForUser(user.id);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -242,6 +242,22 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           </div>
         </div>
       )}
+
+      {/* Conversations of their own that were pointed at CYBills rather than
+          opened by CYBot — a client chat that already held their bills. They
+          file under the same person, so they belong on this card; they are not
+          the group above, though, and folding them into it is exactly the
+          mistake that made two chats look like one. */}
+      {alsoCollecting?.map((g) => (
+        <div key={g.submissionId} className="space-y-2 rounded-md border bg-muted/30 px-3 py-2">
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Also collecting</span> — {g.subject}
+            {' '}· a group of their own, pointed at CYBills rather than opened by CYBot
+            {g.received ? ` · ${g.received} ${g.received === 1 ? 'bill' : 'bills'} so far` : ''}
+          </p>
+          <CloseWhatsappGroup channel={g} canManage={canManage} onClosed={reload} />
+        </div>
+      ))}
 
       {/* Closing it down. Sits at the foot of the card rather than beside
           "Connected", because it is the end of the group and not a detail of

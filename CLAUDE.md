@@ -662,10 +662,33 @@ the one with the paperwork filed under nobody. The pipe could already adopt
 that group) but nothing could ask, because the id is minted inside the same call
 that makes the group. `POST /api/whatsapp/channels/attach` is the missing half —
 inbound key, no session, no mobile, nothing opened in WhatsApp: it mints the id
-against a chat CYWS already has, and CYWS stamps it on that chat. One person one
-group and one group one person are both still enforced (409 `already_connected`
-/ `chat_in_use`); `/directory` carries a `people` list so CYWS can offer the
-roster. Contract: `deploy/WHATSAPP.md`.
+against a chat CYWS already has, and CYWS stamps it on that chat. `/directory`
+carries a `people` list so CYWS can offer the roster. Contract:
+`deploy/WHATSAPP.md`.
+
+**One GROUP one person, but a person may have several.** Attaching used to
+refuse somebody who already collected through a group (`already_connected`), so
+that a second id could not split their bills across two collections. That is
+right about OPENING a group and wrong about adopting one: the conversation
+already exists and bills are already going into it, so refusing prevents no
+split — it forces an ALIAS, because the operator's only remaining way to point
+the chat at that person is to hand it their existing group's submission id. And
+two chats on one id is strictly worse than two ids, because a submission id IS
+the collection here: CYBills cannot tell them apart at all, and both fold into
+one row and one thread. Which is how a bridge chat came to appear as somebody's
+personal group, with CYWS itself printing the warning nobody could act on.
+
+Nothing actually splits: every channel names the same `userId`, so the documents
+file under the same person into the same book. What stays apart is the THREAD
+and its counts, which is what they are for. `chat_in_use` survives untouched —
+it is about a group, not a person, and two channels on one chat id really would
+file one bill into two people's books. The card on a person's page shows the
+group CYBot OPENED (the only one opened with a number, so the only one a changed
+number can have drifted from) and lists the adopted ones beside it; **Open a new
+group with this number** only ever retires a group of our making, since marking
+an adopted conversation replaced would quietly stop collecting from a chat the
+client is still using. Covered by `npm test` in `server/`
+(`test/whatsapp-attach.test.mts`).
 
 **WhatsApp not adding somebody is not an error, and not silence either** — but
 what it will say is usually only a count. `participants_added` comes back as

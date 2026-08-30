@@ -792,13 +792,20 @@ whatsappRouter.post('/channels/user', async (req, res) => {
   // The old group is marked replaced rather than removed: CYWS still files its
   // messages under that submission id, and anything sent into it has to keep
   // arriving until somebody deletes the group at the WhatsApp end.
-  const live = loadChannels().find(
-    (c) => c.workspaceId === ws && c.userId === userId && c.status === 'open'
-  );
+  // A person can now collect through several groups (see /channels/attach), so
+  // "the group" has to be chosen rather than found. The one CYBot OPENED is the
+  // one this card is about — it is the only one that was opened with a number,
+  // and so the only one a changed number can be said to have drifted from.
+  const mine = loadChannels().filter((c) => c.workspaceId === ws && c.userId === userId && c.status === 'open');
+  const live = mine.find((c) => !c.adopted) ?? mine[0] ?? null;
   if (live && req.body?.replace !== true) {
     return res.json({ ok: true, channel: publicChannel(live), unchanged: true, mobile });
   }
-  if (live) patchChannel(live.id, { status: 'replaced' });
+  // Only ever a group of OUR making. Marking an adopted conversation replaced
+  // would quietly stop collecting from a chat the client is still using, on the
+  // strength of somebody fixing a phone number — and CYBot cannot swap a number
+  // inside a group it merely joined any more than one it opened.
+  if (live && !live.adopted) patchChannel(live.id, { status: 'replaced' });
 
   const org = getOrganisation(ws, person.orgId);
   const me = memberForSession(req);
@@ -852,19 +859,29 @@ whatsappRouter.post('/channels/attach', (req, res) => {
   if (!person.orgId) return res.status(400).json({ error: 'org_required' });
 
   const items = loadChannels();
-  // One person, one group — the same rule /channels/user keeps. Refused rather
-  // than replaced: a second id for the same person would split their bills
-  // across two collections with nothing saying which is current.
-  const live = items.find((c) => c.workspaceId === ws && c.userId === userId && c.status === 'open');
-  if (live) {
-    return res.status(409).json({
-      error: 'already_connected',
-      message: `${person.user.name || person.user.email} already collects through a group ("${live.subject}").`,
-      channel: publicChannel(live),
-    });
-  }
-  // And one group, one person. Two open channels on one chat id would file the
-  // same bill into two people's books.
+  // A person may collect through MORE THAN ONE group, and this is the route
+  // where that has to be true.
+  //
+  // It used to refuse — one person, one group — on the reasoning that a second
+  // id would split their bills across two collections with nothing saying which
+  // is current. That reasoning is right for OPENING a group and wrong for
+  // adopting one: the conversation already exists and people are already
+  // sending bills into it, so refusing does not prevent a split. It forces an
+  // ALIAS instead — the operator's only way to point the chat at somebody is to
+  // hand it the submission id of a group they already have — and two chats on
+  // one id is strictly worse, because CYBills cannot then tell them apart at
+  // all: one row in the WhatsApp tab, one thread, two conversations folded into
+  // it. That is how a bridge chat came to appear as somebody's personal group.
+  //
+  // Nothing actually splits. Both channels carry the same `userId`, so the
+  // documents file under the same person in the same book. What stays separate
+  // is the THREAD and its counts, which is correct — they are separate
+  // conversations, and the whole point of the tab is to show what was said in
+  // each. Opening a second group is still refused (see /channels/user): that
+  // one would put a needless empty group in front of a client.
+  //
+  // One group, one person, though. Two open channels on one chat id would file
+  // the same bill into two people's books.
   const taken = items.find((c) => c.chatId === chatId && c.status === 'open');
   if (taken) {
     return res.status(409).json({

@@ -409,11 +409,28 @@ CYWS stamps the returned id on that chat and starts forwarding.
 - `subject` is optional — the group's real WhatsApp name, which is what the
   operator on the other side is looking at. Without it the channel is named the
   way one we opened ourselves would be (the person's CYBills address).
-- **409 `already_connected`** — that person already collects through a group. A
-  second id would split their bills across two collections with nothing saying
-  which is current.
+- **A person may collect through SEVERAL groups**, and this is the route where
+  that is true: their own, opened by CYBot, plus any conversation of theirs that
+  was pointed at CYBills. Each gets its own submission id, its own thread and
+  its own counts. Nothing splits in the book — every channel names the same
+  person, so the documents file under them either way; what stays apart is the
+  conversation, which is right, because they are different conversations.
+  Opening a second group is still refused (`/channels/user`): that one would put
+  a needless empty group in front of a client.
 - **409 `chat_in_use`** — that group already files somewhere. Two open channels
-  on one chat id would file the same bill into two people's books.
+  on one chat id would file the same bill into two people's books. This is the
+  invariant that survives, and it is the one that matters: it is about a GROUP,
+  not a person.
+
+  This route used to refuse a person who already had a group (`already_connected`),
+  on the reasoning that a second id would split their bills. That was right about
+  opening a group and wrong about adopting one — the conversation already exists
+  and bills are already going into it, so refusing prevents no split. It forces
+  an ALIAS instead: the operator's only way to point the chat at that person is
+  to hand it their existing group's id, and two chats on one id is strictly
+  worse, because CYBills then cannot tell them apart at all. One row in the
+  WhatsApp tab, one thread, two conversations folded into it — which is exactly
+  how a bridge chat came to show up as somebody's personal group.
 - No mobile is asked for. The number on their row is still what an emailed or
   forwarded document is matched by; this endpoint does not touch it.
 
