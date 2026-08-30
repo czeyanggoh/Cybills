@@ -21,38 +21,52 @@ export const DENSITY_CLASS = {
 // the top of the panel; the rest are opt-in extras. Only fields a document
 // actually carries are offered — an empty column nobody can fill is worse than
 // no column.
+//
+// `width` is the column's own share of the row, and it is here rather than left
+// to the browser because an auto-layout table hands the space to whatever
+// REFUSES to shrink. Almost every cell here is `whitespace-nowrap` — a badge, a
+// date, a dropdown — so they each held their full width while Supplier, the one
+// column made of ordinary wrapping prose, was squeezed down to its longest
+// single word: "Microsoft Regional Sales Pte Ltd" broken over four lines beside
+// a Status column with room to spare. The widths are preferences, not a fixed
+// layout: a column whose content genuinely needs more still takes it.
 export const COST_COLUMNS = [
-  { key: 'status', label: 'Status', primary: true, fixed: true },
-  { key: 'user', label: 'User', primary: true },
-  { key: 'date', label: 'Date', primary: true },
-  { key: 'supplier', label: 'Supplier', primary: true },
-  { key: 'category', label: 'Category', primary: true },
-  { key: 'total', label: 'Total', primary: true },
-  { key: 'tax', label: 'Tax', primary: true },
-  { key: 'taxRate', label: 'Tax rate', primary: true },
-  { key: 'ref', label: 'Document reference' },
-  { key: 'description', label: 'Description' },
-  { key: 'itemId', label: 'Item ID' },
-  { key: 'type', label: 'Type' },
-  { key: 'dueDate', label: 'Due date' },
+  // Wide enough for "Published to Xero"; the review badges below it wrap.
+  { key: 'status', label: 'Status', primary: true, fixed: true, width: 'w-[150px]' },
+  { key: 'user', label: 'User', primary: true, width: 'w-[120px]' },
+  { key: 'date', label: 'Date', primary: true, width: 'w-[110px]' },
+  // The widest of them, and the one that was starved: a supplier's registered
+  // name runs to five or six words and is what the reviewer reads the row by.
+  { key: 'supplier', label: 'Supplier', primary: true, width: 'w-[220px]' },
+  // The dropdown inside is w-44 (176px) + the cell's own px-3 either side.
+  { key: 'category', label: 'Category', primary: true, width: 'w-[200px]' },
+  { key: 'total', label: 'Total', primary: true, width: 'w-[110px]' },
+  { key: 'tax', label: 'Tax', primary: true, width: 'w-[80px]' },
+  // …and this one is w-36 (144px) + px-3 either side.
+  { key: 'taxRate', label: 'Tax rate', primary: true, width: 'w-[170px]' },
+  { key: 'ref', label: 'Document reference', width: 'w-[170px]' },
+  { key: 'description', label: 'Description', width: 'w-[260px]' },
+  { key: 'itemId', label: 'Item ID', width: 'w-[130px]' },
+  { key: 'type', label: 'Type', width: 'w-[110px]' },
+  { key: 'dueDate', label: 'Due date', width: 'w-[110px]' },
   // Xero's answer, on by default: a published bill being settled is the thing
   // the reviewer is waiting to see, and it used to be invisible unless somebody
   // knew to switch a column on. `paid` below stays opt-in — it is the capture
   // flag, not the ledger (src/lib/xeroPaidStatus.js).
-  { key: 'xeroPaid', label: 'Paid status', primary: true },
+  { key: 'xeroPaid', label: 'Paid status', primary: true, width: 'w-[120px]' },
   // The date beside the status, on by default with it: "Paid" answers whether,
   // and the next question is always when — a tooltip made that a hover away.
-  { key: 'paidDate', label: 'Paid date', primary: true },
-  { key: 'paymentRef', label: 'Payment reference' },
-  { key: 'paid', label: 'Paid' },
-  { key: 'paymentMethod', label: 'Payment method' },
-  { key: 'customer', label: 'Customer' },
-  { key: 'project', label: 'Project' },
-  { key: 'cardLast4', label: 'Card' },
-  { key: 'note', label: 'Note' },
-  { key: 'uploadDate', label: 'Upload date' },
-  { key: 'publishDate', label: 'Publish date' },
-  { key: 'xero', label: 'Xero' },
+  { key: 'paidDate', label: 'Paid date', primary: true, width: 'w-[110px]' },
+  { key: 'paymentRef', label: 'Payment reference', width: 'w-[180px]' },
+  { key: 'paid', label: 'Paid', width: 'w-[90px]' },
+  { key: 'paymentMethod', label: 'Payment method', width: 'w-[150px]' },
+  { key: 'customer', label: 'Customer', width: 'w-[170px]' },
+  { key: 'project', label: 'Project', width: 'w-[150px]' },
+  { key: 'cardLast4', label: 'Card', width: 'w-[100px]' },
+  { key: 'note', label: 'Note', width: 'w-[200px]' },
+  { key: 'uploadDate', label: 'Upload date', width: 'w-[120px]' },
+  { key: 'publishDate', label: 'Publish date', width: 'w-[120px]' },
+  { key: 'xero', label: 'Xero', width: 'w-[80px]' },
 ];
 
 // An expense claim's line items. The same idea as the Costs table's gear, over

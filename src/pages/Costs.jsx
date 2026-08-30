@@ -588,11 +588,15 @@ export default function Costs() {
           {/* What the reader could not decide, on the row that is waiting for
               it — a document sitting in To review with no reason shown is just
               a document you have to open to find out about. Suppressed on a
-              blank read, where the badge below says it better. */}
+              blank read, where the badge below says it better.
+
+              It WRAPS. "Needs: Supplier, Date, Category" is the longest thing
+              in this column by far, and holding it on one line made Status the
+              widest column on the page for the sake of a badge. */}
           {needsReview(d) && !statesNothing(docFacts(d)) && (
             <span
               title="The reader could not fill these in. Open the document and supply them — it moves to Ready by itself once they are there."
-              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700"
+              className="inline-flex items-start gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-left text-[11px] font-medium leading-tight text-amber-700"
             >
               Needs: {missingFields(d).join(', ')}
             </span>
@@ -616,9 +620,9 @@ export default function Costs() {
                 setMergeModalDocs(g.docs);
               }}
               title={`${describeMergeGroup(mergeGroupFor.get(d.id))} Open the merge review for all ${mergeGroupFor.get(d.id).docs.length}.`}
-              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20"
+              className="inline-flex items-start gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-left text-[11px] font-medium leading-tight text-amber-700 transition-colors hover:bg-amber-500/20"
             >
-              <Layers className="h-3 w-3" strokeWidth={2} /> {mergeBadgeLabel(mergeGroupFor.get(d.id), d)}
+              <Layers className="mt-px h-3 w-3 shrink-0" strokeWidth={2} /> {mergeBadgeLabel(mergeGroupFor.get(d.id), d)}
             </button>
           )}
         </div>
@@ -667,7 +671,7 @@ export default function Costs() {
       ),
     },
     ref: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.invoiceNumber || '—' },
-    description: { cellClass: 'max-w-[22rem] truncate text-muted-foreground', cell: (d) => d.description || '—' },
+    description: { cellClass: 'max-w-[260px] truncate text-muted-foreground', cell: (d) => d.description || '—' },
     itemId: { cellClass: 'whitespace-nowrap font-mono text-xs text-muted-foreground', cell: (d) => itemNumber(d) },
     type: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.type || '—' },
     dueDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.dueDate ? formatDate(d.dueDate) : '—') },
@@ -699,12 +703,12 @@ export default function Costs() {
       cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground',
       cell: (d) => (d.xeroPaidDate ? formatDate(d.xeroPaidDate) : '—'),
     },
-    paymentRef: { sortable: false, cellClass: 'max-w-[14rem] truncate text-muted-foreground', cell: (d) => d.xeroPaymentRef || '—' },
+    paymentRef: { sortable: false, cellClass: 'max-w-[180px] truncate text-muted-foreground', cell: (d) => d.xeroPaymentRef || '—' },
     paymentMethod: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.paymentMethod || '—' },
     customer: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.customer || '—' },
     project: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.project || '—' },
     cardLast4: { sortable: false, cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => (d.cardLast4 ? `•••• ${d.cardLast4}` : '—') },
-    note: { sortable: false, cellClass: 'max-w-[18rem] truncate text-muted-foreground', cell: (d) => d.note || '—' },
+    note: { sortable: false, cellClass: 'max-w-[200px] truncate text-muted-foreground', cell: (d) => d.note || '—' },
     uploadDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.createdAt ? formatDate(d.createdAt.slice(0, 10)) : '—') },
     publishDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.xeroPostedAt ? formatDate(d.xeroPostedAt.slice(0, 10)) : '—') },
     xero: {
@@ -1413,11 +1417,15 @@ export default function Costs() {
                       className="h-4 w-4 accent-black"
                     />
                   </th>
+                  {/* The header row is where the widths are set — in an
+                      auto-layout table the browser sizes each column from its
+                      widest cell, and the <th> is the one cell every column
+                      has. See COST_COLUMNS. */}
                   {shownColumns.map((c) =>
                     c.sortable === false ? (
-                      <th key={c.key} className={cn('whitespace-nowrap px-3 py-2.5 font-medium', c.align === 'right' && 'text-right')}>{c.label}</th>
+                      <th key={c.key} className={cn('whitespace-nowrap px-3 py-2.5 font-medium', c.width, c.align === 'right' && 'text-right')}>{c.label}</th>
                     ) : (
-                      <SortTh key={c.key} label={c.label} sortKey={c.key} sort={sort} setSort={setSort} align={c.align || 'left'} />
+                      <SortTh key={c.key} label={c.label} sortKey={c.key} sort={sort} setSort={setSort} align={c.align || 'left'} className={c.width} />
                     ),
                   )}
                   <th className="w-10 px-2 py-2.5"><span className="sr-only">Delete</span></th>
