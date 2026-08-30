@@ -3,11 +3,23 @@ import { useClaims, inboxClaimsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { USERS_EVENT, canManageBusiness } from '@/lib/userStore';
-import { isInInbox, isComplete, isReady, needsReview } from '@/lib/readiness';
+import { isInInbox, isComplete, isReady, needsReview, inCostsList, isUnpublished } from '@/lib/readiness';
 
 // Readiness and its opposite live in one pure module, so `npm test` can hold
 // them to account and the pages can't drift from the server's own rule.
-export { READY_FIELDS, isComplete, missingFields, INBOX_STATUSES, isInInbox, isReady, needsReview } from '@/lib/readiness';
+export {
+  READY_FIELDS,
+  isComplete,
+  missingFields,
+  INBOX_STATUSES,
+  isInInbox,
+  isReady,
+  needsReview,
+  ARCHIVE_STATUSES,
+  isArchived,
+  inCostsList,
+  isUnpublished,
+} from '@/lib/readiness';
 
 export function rowsFor(docs, key) {
   if (key === 'processing') return docs.filter((d) => d.status === 'processing');
@@ -20,6 +32,14 @@ export function rowsFor(docs, key) {
   if (key === 'review') return docs.filter(needsReview);
   if (key === 'ready') return docs.filter(isReady);
   if (key === 'archive') return docs.filter((d) => d.status === 'expenseclaim' || d.status === 'archived' || d.status === 'merged');
+  // Inbox and Archive are one tab now, and these are the two ways of looking at
+  // it: 'unpublished' is the work still to do, 'all' is the same list with the
+  // finished documents left in. 'inbox' and 'archive' survive because the
+  // things that genuinely mean one or the other still ask for them — merge
+  // detection leaves settled documents alone, and the document page's
+  // "next item" walks the inbox.
+  if (key === 'all') return docs.filter(inCostsList);
+  if (key === 'unpublished') return docs.filter(isUnpublished);
   return [];
 }
 
@@ -98,6 +118,10 @@ export function useCostsCounts() {
   const isAdmin = canManageBusiness(membership, googleEnabled);
   return {
     inbox: rowsFor(allDocs, 'inbox').length,
+    // What the Costs tab shows by default, so the subnav badge matches the list
+    // it opens on rather than a tab that no longer exists.
+    unpublished: rowsFor(allDocs, 'unpublished').length,
+    all: rowsFor(allDocs, 'all').length,
     review: rowsFor(allDocs, 'review').length,
     ready: rowsFor(allDocs, 'ready').length,
     archive: rowsFor(allDocs, 'archive').length,

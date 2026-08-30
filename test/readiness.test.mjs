@@ -4,7 +4,17 @@
 // review used to be a STATUS that only a toolbar button could write, so a
 // document needing attention appeared there only if somebody had already
 // noticed it and pressed the button.
-import { isComplete, missingFields, isReady, needsReview, isInInbox, READY_FIELDS } from '../src/lib/readiness.js';
+import {
+  isComplete,
+  missingFields,
+  isReady,
+  needsReview,
+  isInInbox,
+  isArchived,
+  inCostsList,
+  isUnpublished,
+  READY_FIELDS,
+} from '../src/lib/readiness.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -67,6 +77,42 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
   check('a row stamped ready that lost a field is back under review',
     [isReady(doc({ status: 'ready', category: '' })), needsReview(doc({ status: 'ready', category: '' }))],
     [false, true]);
+}
+
+// Inbox and Archive are one list, split by whether the document's figures have
+// reached Xero rather than by which tab somebody filed it under. Publishing is
+// what archives a document, so "unpublished" is NOT the old Inbox renamed.
+{
+  const inbox = doc({ status: 'new' });
+  const archivedNeverPublished = doc({ status: 'archived' });
+  const published = doc({ status: 'archived', xeroInvoiceId: 'inv-1' });
+  const onClaim = doc({ status: 'expenseclaim' });
+  const merged = doc({ status: 'merged' });
+  const stillReading = doc({ status: 'processing' });
+
+  check('an inbox document is in the list', inCostsList(inbox), true);
+  check('so is an archived one', inCostsList(archivedNeverPublished), true);
+  check('a document still being read is not', inCostsList(stillReading), false);
+  check('archive statuses are archived, inbox ones are not',
+    [isArchived(archivedNeverPublished), isArchived(onClaim), isArchived(merged), isArchived(inbox)],
+    [true, true, true, false]);
+
+  check('an inbox document is unpublished', isUnpublished(inbox), true);
+  check('an archived document nobody ever published is TOO — the point of one list',
+    isUnpublished(archivedNeverPublished), true);
+  check('a published one is not', isUnpublished(published), false);
+  check('nor is one riding on an expense claim, which reaches Xero as the claim',
+    isUnpublished(onClaim), false);
+  check('nor is one merged away into another document', isUnpublished(merged), false);
+  check('a document still being read is in neither half',
+    [isUnpublished(stillReading), inCostsList(stillReading)], [false, false]);
+
+  // Unpublished is a subset of the whole list, never a document outside it.
+  const all = [inbox, archivedNeverPublished, published, onClaim, merged, stillReading];
+  check('every unpublished document is in the list',
+    all.filter(isUnpublished).every(inCostsList), true);
+  check('and the list is the wider of the two',
+    [all.filter(inCostsList).length, all.filter(isUnpublished).length], [5, 2]);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');

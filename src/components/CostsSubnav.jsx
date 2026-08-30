@@ -38,7 +38,9 @@ export default function CostsSubnav() {
 
   // Live counts so the subnav badges match the inbox tab + expense claims list.
   const SUBNAV = [
-    { label: 'Costs inbox', count: counts.inbox, to: '/costs' },
+    // The Costs tab opens on the unpublished half of the list, so the badge
+    // counts that rather than the Inbox tab it replaced.
+    { label: 'Costs inbox', count: counts.unpublished, to: '/costs' },
     { label: 'Expense claims', count: counts.expenseClaims, pending: pendingApprovals, to: '/expense-claims' },
     { label: 'Supplier statements', to: '/supplier-statements' },
     { label: 'Exports', to: '/costs/exports' },

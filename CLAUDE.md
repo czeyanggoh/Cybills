@@ -288,6 +288,30 @@ The toolbar keeps only the review affordances — "Merge suggestions (N)" and
 "Review duplicates (N)", each shown only when there is something to review.
 `npm test` at the repo root runs the rules.
 
+**Inbox and Archive are one tab, split by whether Xero has the money.** They
+were two tabs over one pile of paper, and the split was never where the work
+is: publishing is what archives a document (`markBillPosted`), so a document
+somebody archived BY HAND and never published sat behind the tab labelled
+"done". The tab is now **Costs**, and a toggle above the toolbar says how much
+of it to look at — **Unpublished** (the default) or **All costs**, each carrying
+its own count. `isUnpublished` / `inCostsList` (`readiness.js`, pure, tested by
+`npm test`) draw the line: unpublished is a document with no Xero bill of its
+own, excluding one riding on an EXPENSE CLAIM (its route to the ledger is the
+claim's bill) and one MERGED away (the document it was folded into carries its
+money). Both are still there under All costs. `rowsFor` keeps `'inbox'` and
+`'archive'` because the things that genuinely mean one or the other still ask
+for them — merge detection leaves settled documents alone, and the document
+page's "next item" walks the inbox.
+
+**Archive and Unarchive share the row, and each moves only its own half.**
+Written across the whole selection they would each do real damage: Archive would
+strip `expenseclaim` off a document sitting on a live claim, Unarchive would
+knock a Ready inbox document back to New. So each is handed its own id list and
+is disabled when the selection holds nothing it can move. Unarchive is
+deliberately narrower than the old Archive tab's button — only a plain
+`archived` document — because pulling a claimed or merged-away one back into the
+inbox would make a second copy of money already accounted for.
+
 **A row that states two of its three figures has stated the third.** Net, Tax
 and Total are one row seen three ways, so a stored row carrying a net and an
 empty total is not a row with a missing field — it is a row that does not add

@@ -59,3 +59,29 @@ export function isReady(d) {
 export function needsReview(d) {
   return isInInbox(d) && !isComplete(d);
 }
+
+// The settled statuses — everything that has left the inbox. These used to be a
+// tab of their own ("Archive"); they are now the far half of one list.
+export const ARCHIVE_STATUSES = ['expenseclaim', 'archived', 'merged'];
+export const isArchived = (d) => ARCHIVE_STATUSES.includes(d?.status);
+
+// Every document the Costs list holds — inbox and archive together. The only
+// thing left out is a document still being read, which isn't work anybody can
+// do yet.
+export const inCostsList = (d) => isInInbox(d) || isArchived(d);
+
+// The working half of that list: nothing has carried this document's figures
+// into Xero yet, so somebody still has to.
+//
+// Publishing is what archives a document (markBillPosted), so this is NOT the
+// old Inbox tab renamed — it also surfaces the documents that were archived by
+// hand and never published, which is precisely what folding the two tabs
+// together is for. A document sitting on an EXPENSE CLAIM is excluded because
+// its route to the ledger is the claim's bill rather than its own, and one
+// MERGED away is excluded because it no longer exists as a cost — the document
+// it was folded into carries its money. Both are still there under "All costs".
+export function isUnpublished(d) {
+  if (!inCostsList(d)) return false;
+  if (d?.xeroInvoiceId) return false;
+  return d?.status !== 'expenseclaim' && d?.status !== 'merged';
+}

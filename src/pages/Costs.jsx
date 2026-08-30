@@ -78,12 +78,61 @@ function CategorySelect({ value, onChange, options }) {
 // Tabs whose badge shows a live count of their rows. Processing/Approvals have
 // no count badge (they render their own panels).
 const TABS = [
-  { key: 'inbox', label: 'Inbox', counted: true },
+  { key: 'all', label: 'Costs', counted: true },
   { key: 'processing', label: 'Processing', counted: true },
   { key: 'review', label: 'To review', counted: true },
   { key: 'ready', label: 'Ready', counted: true },
-  { key: 'archive', label: 'Archive', counted: true },
 ];
+
+// Inbox and Archive were two tabs over one pile of paper, and the split was
+// never where the work is: a document archived by hand and never published sat
+// behind the tab labelled "done". So they are one list, and this is the control
+// that says how much of it to look at.
+//
+// "Unpublished" is the working half — every document whose figures have not
+// reached Xero, wherever it sits — and it is the default, because it is the
+// question the page exists to answer. "All costs" is the same list with the
+// finished work left in. Publishing is what archives a document, so an inbox
+// document is always unpublished: the toggle only ever changes this tab, which
+// is why it is drawn only here.
+const SCOPES = [
+  { key: 'unpublished', label: 'Unpublished' },
+  { key: 'all', label: 'All costs' },
+];
+
+function ScopeToggle({ scope, setScope, counts }) {
+  return (
+    <div className="mb-3 inline-flex rounded-md border p-0.5" role="group" aria-label="Which costs to show">
+      {SCOPES.map((s) => {
+        const active = scope === s.key;
+        return (
+          <button
+            key={s.key}
+            type="button"
+            aria-pressed={active}
+            onClick={() => setScope(s.key)}
+            className={cn(
+              'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded px-3 text-sm transition-colors',
+              active
+                ? 'bg-foreground font-medium text-background'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {s.label}
+            <span
+              className={cn(
+                'rounded-full px-1.5 text-xs',
+                active ? 'bg-background/20 text-background' : 'bg-muted text-muted-foreground'
+              )}
+            >
+              {counts[s.key] ?? 0}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 // `published` distinguishes the two ways a document leaves the inbox for
 // Archive: published to Xero, or carried by an expense claim. Both are finished
@@ -240,25 +289,22 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   const claimBtn = (
     <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
   );
+  // Archive and its undo now sit in the same row, because the two kinds of
+  // document sit in the same list. Each is offered only against a selection it
+  // can actually act on — ticking three archived rows and pressing Archive
+  // would be a button that does nothing and says nothing — and each moves only
+  // its own half of a mixed selection.
   const archiveBtn = (
-    <ToolbarButton disabled={!hasSelection} onClick={() => a.move('archived')}>Archive</ToolbarButton>
+    <ToolbarButton disabled={!a.canArchive} onClick={a.archive}>Archive</ToolbarButton>
+  );
+  const unarchiveBtn = (
+    <ToolbarButton disabled={!a.canUnarchive} onClick={a.unarchive}>Unarchive</ToolbarButton>
   );
 
-  if (tab === 'archive') {
-    return (
-      <>
-        {exportBtn}
-        {bulkEditBtn}
-        <ToolbarButton disabled={!hasSelection} onClick={() => a.move('new')}>Unarchive</ToolbarButton>
-        <ToolbarButton onClick={() => a.navigate('/submission-history')}>See submission history</ToolbarButton>
-        {deleteBtn}
-      </>
-    );
-  }
   if (tab === 'processing') {
     return <ToolbarButton onClick={a.exportCsv}>Export all</ToolbarButton>;
   }
-  // Inbox / To review / Ready share one row — they are the same pool of work
+  // Costs / To review / Ready share one row — they are the same pool of work
   // seen through different filters.
   return (
     <>
@@ -271,6 +317,8 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {scanBtn}
       {reviewDupBtn}
       {archiveBtn}
+      {unarchiveBtn}
+      <ToolbarButton onClick={() => a.navigate('/submission-history')}>See submission history</ToolbarButton>
       {deleteBtn}
     </>
   );
@@ -680,7 +728,10 @@ export default function Costs() {
     .filter((c) => c.fixed || tablePrefs.columns[c.key])
     .map((c) => ({ ...c, ...CELLS[c.key] }))
     .filter((c) => typeof c.cell === 'function');
-  const [tab, setTab] = useState('inbox');
+  const [tab, setTab] = useState('all');
+  // Which half of the combined list the Costs tab is showing. Defaults to the
+  // work still to do — see SCOPES.
+  const [scope, setScope] = useState('unpublished');
   const settings = useExtractionSettings();
   // Business settings → Extraction can hide the To review + Ready tabs (their
   // docs still live under Inbox with their status tag).
@@ -688,7 +739,7 @@ export default function Costs() {
     (t) => settings.showReviewReadyTabs || (t.key !== 'review' && t.key !== 'ready')
   );
   useEffect(() => {
-    if (!settings.showReviewReadyTabs && (tab === 'review' || tab === 'ready')) setTab('inbox');
+    if (!settings.showReviewReadyTabs && (tab === 'review' || tab === 'ready')) setTab('all');
   }, [settings.showReviewReadyTabs, tab]);
   const [selected, setSelected] = useState(() => new Set());
   const [query, setQuery] = useState('');
@@ -724,10 +775,17 @@ export default function Costs() {
   // Every tab's rows, so its badge count ties to what the tab actually shows.
   const rowsByTab = {
     processing: rowsFor(allDocs, 'processing'),
-    inbox: rowsFor(allDocs, 'inbox'),
+    // The combined Inbox + Archive list, seen through whichever scope is
+    // selected — so the tab's own badge counts what the tab is actually
+    // showing, the way every other badge here does.
+    all: rowsFor(allDocs, scope),
     review: rowsFor(allDocs, 'review'),
     ready: rowsFor(allDocs, 'ready'),
-    archive: rowsFor(allDocs, 'archive'),
+  };
+  // Both sides of the toggle, so each option can carry its own count.
+  const scopeCounts = {
+    unpublished: rowsFor(allDocs, 'unpublished').length,
+    all: rowsFor(allDocs, 'all').length,
   };
   const allRows = rowsByTab[tab] ?? [];
   // Everything flagged, whichever tab it's in — a flag raised on an inbox
@@ -989,6 +1047,16 @@ export default function Costs() {
     }
   };
 
+  // Which of the ticked rows each of the two moves can act on. Unarchive is
+  // deliberately narrower than the Archive tab's old button: a document on a
+  // live expense claim, or one MERGED away into another, is not "archived" —
+  // pulling either back into the inbox would make a second copy of money that
+  // is already accounted for somewhere.
+  const archivableIds = allRows.filter((d) => selected.has(d.id) && isInInbox(d)).map((d) => d.id);
+  const unarchivableIds = allRows
+    .filter((d) => selected.has(d.id) && d.status === 'archived')
+    .map((d) => d.id);
+
   // The selected documents, in the order the table shows them.
   const selectedDocs = () => {
     const byId = new Map(allRows.map((r) => [r.id, r]));
@@ -1182,6 +1250,15 @@ export default function Costs() {
     mergeCount: mergeGroups.length,
     reviewDuplicates: () => setDupIds(flaggedDocs.map((d) => d.id)),
     dupCount: flaggedDocs.length,
+    // Archiving and its undo now sit in one row over one list, so each acts on
+    // the half of the selection it MEANS and leaves the rest alone. Written
+    // across the whole selection they would each do real damage: Archive would
+    // strip 'expenseclaim' off a document sitting on a live claim, and
+    // Unarchive would knock a Ready inbox document back to New.
+    archive: () => moveSelected('archived', archivableIds),
+    unarchive: () => moveSelected('new', unarchivableIds),
+    canArchive: archivableIds.length > 0,
+    canUnarchive: unarchivableIds.length > 0,
     navigate,
   };
 
@@ -1240,6 +1317,20 @@ export default function Costs() {
         })}
       </div>
 
+      {/* Which half of the combined list — only the tab that holds both. */}
+      {tab === 'all' && (
+        <ScopeToggle
+          scope={scope}
+          setScope={(next) => {
+            setScope(next);
+            // Narrowing the list would otherwise leave rows ticked that are no
+            // longer on screen, and the next bulk action would act on them.
+            setSelected(new Set());
+          }}
+          counts={scopeCounts}
+        />
+      )}
+
       {tab === 'processing' ? (
         <CostProcessingView
           rows={rowsByTab.processing}
@@ -1273,7 +1364,7 @@ export default function Costs() {
             </div>
           )}
 
-          {(tab === 'inbox' || tab === 'review' || tab === 'ready') && (
+          {(tab === 'all' || tab === 'review' || tab === 'ready') && (
             // Explanatory, not essential — on a phone it cost a screenful
             // before the first document, so it waits for the room to say it.
             <div className="mb-3 hidden items-start gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground md:flex">
