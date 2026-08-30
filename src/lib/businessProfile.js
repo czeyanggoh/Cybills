@@ -61,6 +61,17 @@ export function saveBusinessProfile(profile) {
   emit();
 }
 
+// The entity's own currency as a 3-letter code. The profile keeps it the way
+// Xero words it ("SGD - Singapore, Dollars"), and every screen that compares a
+// document's currency against the entity's needs the code alone.
+export function baseCurrencyCode(profile) {
+  return String(profile?.baseCurrency || 'SGD').trim().toUpperCase().slice(0, 3);
+}
+
+export function useBaseCurrency() {
+  return baseCurrencyCode(useBusinessProfile());
+}
+
 export function useBusinessProfile() {
   const [p, setP] = useState(getBusinessProfile);
   useEffect(() => {

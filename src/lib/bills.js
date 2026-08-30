@@ -306,6 +306,13 @@ export function billToDoc(b) {
     currency: b.currency || 'SGD',
     total: b.total != null ? String(b.total) : '—',
     tax: b.tax != null ? String(b.tax) : '0.00',
+    // What a foreign-currency document says the same money is worth in the base
+    // currency, and the rate it printed to say so. Zeroes on every ordinary
+    // document, which is what the page reads to know it has nothing to show.
+    baseCurrency: b.baseCurrency || '',
+    baseTotal: Number(b.baseTotal) || 0,
+    baseTax: Number(b.baseTax) || 0,
+    exchangeRate: Number(b.exchangeRate) || 0,
     invoiceNumber: b.invoiceNumber || '',
     taxRate: b.taxRate || '',
     description: b.description || '',

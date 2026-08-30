@@ -190,6 +190,13 @@ export async function autoRead(req: Request, scope: string, realOrgId: string, p
       currency: d.currency,
       total: d.total,
       tax: d.tax,
+      // What a foreign-currency document says the same money is worth in SGD.
+      // Written as one thing: the tax decision reads the pair, and the Xero
+      // publish reads the rate.
+      baseCurrency: d.baseCurrency,
+      baseTotal: d.baseTotal,
+      baseTax: d.baseTax,
+      exchangeRate: d.exchangeRate,
       category: d.category,
       categoryReason: d.categoryReason,
       description: d.description,

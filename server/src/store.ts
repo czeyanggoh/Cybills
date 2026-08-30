@@ -32,6 +32,15 @@ export type Bill = {
   currency: string;
   total: number;
   tax: number;
+  // What the document says the same money is worth in the base currency, and
+  // the rate it printed to say so. Only ever set on a foreign-currency document
+  // that restates itself for tax purposes (see `restatement` in extract.ts):
+  // it decides the GST percentage, and it is what goes to Xero as CurrencyRate
+  // so the ledger's GST report agrees with the figure on the paper.
+  baseCurrency?: string;
+  baseTotal?: number; // including tax, in baseCurrency
+  baseTax?: number; // in baseCurrency
+  exchangeRate?: number; // units of baseCurrency per 1 unit of `currency`
   date: string; // as extracted, ISO YYYY-MM-DD when determinable
   category: string;
   categoryReason?: string; // why the AI chose this category (account/rule cited)
@@ -727,6 +736,10 @@ const EDITABLE: (keyof Bill)[] = [
   'currency',
   'total',
   'tax',
+  'baseCurrency',
+  'baseTotal',
+  'baseTax',
+  'exchangeRate',
   'date',
   'category',
   'categoryReason',

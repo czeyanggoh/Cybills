@@ -323,6 +323,47 @@ tax GST. The numbers can't settle it — Thailand's VAT is 7% and Malaysia's SST
 that the document codes to No Tax and the tax amount is NOT recorded — it stays
 inside the cost, which is what foreign tax is. The total never changes.
 
+**A foreign-currency invoice says what it is worth in SGD, and that is the half
+that matters.** A Singapore GST-registered supplier billing in USD has to
+restate the supply in SGD on the face of the invoice, because that is the figure
+its customer puts in a SGD GST return — Microsoft prints "Total Charges
+(excluding VAT) SGD 20.36 / Total GST SGD 1.84 / Total Charges (including GST)
+SGD 22.20 / Exchange rate: 1 USD = 1.29300000008314 SGD". Three things ride on
+reading that block (`restatement` in `extract.ts`, stored as `baseCurrency` /
+`baseTotal` / `baseTax` / `exchangeRate`, kept only when its own halves agree —
+a tax inside its total, and a rate that carries the billing total onto the
+stated one):
+
+- **It is the proof.** Only a Singapore GST-registered supplier prints it, so
+  `claimableSgGst` now takes it as evidence in its own right. It answers the
+  very question the registration number and the wording were standing in for:
+  the Thai and Malaysian invoices those exist to catch state their tax in baht
+  and ringgit, never in SGD. A number the reader missed, or a template that says
+  "excluding VAT" one line above "Total GST", no longer costs the client input
+  tax it plainly paid.
+- **It is the percentage.** The SGD pair is the supplier's exact one; the
+  billing-currency pair beside it is that divided by a rate and rounded to two
+  places. Foreign currency itself is no longer a reason to decline: a document
+  that reached that step already passed the evidence gate, so 9% is ordinary
+  input tax whatever it was billed in, and only a rate that is not a Singapore
+  rate at all is still coded No Tax for being foreign.
+- **It is the rate Xero posts at.** `CurrencyRate` on the bill (`currencyRateFor`
+  in `xero.ts`), sent only when the entity's own base currency IS the currency
+  the document restated itself in. Without it Xero converts at its XE.com day
+  rate, which puts a GST figure in the return that appears nowhere on the
+  invoice and that nobody can ever reconcile.
+
+The document page shows the pair the way Dext does — **Total amount (SGD)**
+editable, **Tax amount (SGD)** derived — because the three parts are one fact:
+editing the base total re-derives the tax and the rate from the document's own
+split, and editing the billing total or tax moves the base pair at the settled
+rate. Where the supplier printed nothing, this is where somebody supplies it
+rather than letting the ledger pick. `baseTax` is given up wherever `tax` is
+(No Tax, not registered, not claimable) — the base TOTAL stays, because the
+money is unchanged and only the split moves. Covered by `npm test` at the root
+(`test/tax-rate-rules.test.mjs`) and in `server/` (`restatement`,
+`publish-bill`).
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

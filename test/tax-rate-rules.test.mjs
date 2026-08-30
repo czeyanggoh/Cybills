@@ -185,5 +185,100 @@ check('noTaxRateName', [noTaxRateName(SG), noTaxRateName([]), noTaxRateName(hidd
   check('the org\'s own list beats the name', zeroTaxRate('No Tax', [{ name: 'No Tax', code: 'INPUTY24', rate: 9 }]), false);
 }
 
+// --- A foreign-currency invoice that restates itself in SGD ------------------
+// A Singapore GST-registered supplier billing in USD has to print what the
+// supply is worth in SGD, because that is the figure its customer puts in a SGD
+// GST return. Microsoft's invoice does it like this:
+//
+//   Total Charges (excluding VAT)   SGD 20.36
+//   Total GST                       SGD  1.84
+//   Total Charges (including GST)   SGD 22.20
+//   Exchange rate: 1 USD = 1.29300000008314 SGD
+//
+// The SGD pair is the supplier's exact one. The USD pair beside it is the same
+// money divided by that rate and rounded to two places, which on a small
+// invoice is enough to move the percentage off 9 and out of every vintage.
+{
+  const MSFT = { baseTotal: 22.2, baseTax: 1.84, statedCurrency: 'SGD', currency: 'USD' };
+  let r = ask({ total: 17.17, tax: 1.42, ...MSFT });
+  check('the stated SGD pair codes it standard-rated', r.name, 'Standard-Rated Purchases');
+  check('...and it claims the tax', r.claimsTax, true);
+  has('...saying which figures it read', r.reason, 'SGD figures the document states');
+  has('...in SGD, so it can be checked against the paper', r.reason, 'SGD 1.84 on SGD 20.36');
+
+  // The pairs disagreeing is the case this exists for. A document whose two
+  // currencies are mixed up between its total and its tax reads as 12% and is
+  // declined for being a foreign rate; the SGD pair it prints is 9% and right.
+  const mixed = { currency: 'USD', total: 17.17, tax: 1.84 };
+  check('the USD total against the SGD tax reads as no Singapore rate', ask(mixed).name, 'No Tax');
+  has('...and says the percentage it saw', ask(mixed).reason, '12.0%');
+  check(
+    'the same document with its SGD pair reads as 9%',
+    ask({ ...mixed, baseTotal: 22.2, baseTax: 1.84, statedCurrency: 'SGD' }).name,
+    'Standard-Rated Purchases'
+  );
+
+  // Half a block says nothing: a total with no tax beside it, or a tax that is
+  // not inside its own total, is a misread rather than a restatement, and the
+  // billing figures answer as they always did.
+  check('a total with no tax beside it is ignored', ask({ total: 109, tax: 9, currency: 'USD', baseTotal: 141, statedCurrency: 'SGD' }).name, 'Standard-Rated Purchases');
+  check('a tax larger than its total is ignored', ask({ total: 109, tax: 9, currency: 'USD', baseTotal: 5, baseTax: 90, statedCurrency: 'SGD' }).name, 'Standard-Rated Purchases');
+}
+
+// --- The SGD restatement is itself the proof of a GST-registered supplier ----
+// Only a Singapore GST-registered supplier restates its own tax in SGD; IRAS
+// requires it of one issuing a foreign-currency tax invoice and of nobody else.
+// So it answers the question the registration number and the wording were
+// standing in for, and it answers it where they cannot.
+{
+  const BLOCK = { baseTotal: 22.2, baseTax: 1.84, statedCurrency: 'SGD', currency: 'USD', total: 17.17, tax: 1.42 };
+  const at = (o) => taxRateOutcome({ rates: SG, kind: 'cost', ...BLOCK, ...o });
+
+  let r = at({ gstRegNo: '', taxLabel: 'GST' });
+  check('a reg number the reader missed no longer costs the claim', [r.name, r.claimsTax], ['Standard-Rated Purchases', true]);
+
+  // Microsoft's own template: "Total Charges (excluding VAT)" one line above
+  // "Total GST". Read either way round, the SGD block settles it.
+  r = at({ gstRegNo: '', taxLabel: 'VAT' });
+  check('a template that says VAT beside its GST still claims', [r.name, r.claimsTax], ['Standard-Rated Purchases', true]);
+
+  // An older M-number, printed with its separators, is a Singapore one.
+  check('the older GST-only registration formats', [
+    isSingaporeGstRegNo('M2-0009302-4'),
+    isSingaporeGstRegNo('MR-8500071-4'),
+    isSingaporeGstRegNo('M90370287L'),
+  ], [true, true, true]);
+
+  // A restatement into a THIRD currency proves nothing about Singapore: a
+  // Malaysian invoice restating USD in MYR is still Malaysian.
+  r = at({ gstRegNo: '', taxLabel: 'SST', statedCurrency: 'MYR' });
+  check('a restatement in somebody else’s currency proves nothing', [r.name, r.claimsTax], ['No Tax', false]);
+
+  // And with no restatement at all, the evidence rule is exactly as it was.
+  r = taxRateOutcome({ rates: SG, kind: 'cost', currency: 'USD', total: 109, tax: 9, gstRegNo: '', taxLabel: 'VAT' });
+  check('no block, no number, no claim', [r.name, r.claimsTax], ['No Tax', false]);
+}
+
+// --- Foreign currency is a jurisdiction question, not a rate one -------------
+// Reached only by a document that already passed the evidence gate, so being
+// foreign is no longer evidence of anything: 9% from a Singapore GST-registered
+// supplier is ordinary input tax whatever it was billed in. Only a rate that is
+// not a Singapore rate at all is still declined for being foreign.
+{
+  // The org has switched its 9% code off in Lists -> Tax rates, so the visible
+  // list can't answer and Xero's own standard code has to.
+  const hidden = SG.filter((t) => t.code !== 'INPUTY24');
+  const r = taxRateOutcome({
+    rates: hidden, allRates: SG, kind: 'cost', ...SGGST,
+    currency: 'USD', total: 109, tax: 9,
+  });
+  check('a hidden code does not make a USD 9% invoice foreign tax', r.name, 'Standard-Rated Purchases');
+  check('...and it still claims', r.claimsTax, true);
+
+  // 10% is not a Singapore rate at any vintage — that one is still declined.
+  const au = taxRateOutcome({ rates: SG, kind: 'cost', ...SGGST, currency: 'AUD', total: 110, tax: 10 });
+  check('10% in a foreign currency is still No Tax', [au.name, au.claimsTax], ['No Tax', false]);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

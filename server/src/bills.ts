@@ -236,7 +236,9 @@ async function repairZeroTaxAmounts(scope: string): Promise<void> {
   );
   for (const b of wrong) {
     if (!(await isZeroTaxRate(b.taxRate))) continue;
-    const patch: Record<string, unknown> = { tax: 0 };
+    // baseTax alongside: it is the same figure restated in the entity's own
+    // currency, so it cannot go on claiming what this one has given up.
+    const patch: Record<string, unknown> = { tax: 0, baseTax: 0 };
     if (lineTax(b) > 0) {
       const folded = await foldLineTaxIntoCost(b.lineItems);
       if (folded) patch.lineItems = folded;
@@ -472,6 +474,18 @@ function ownerEmail(req: Request, value: unknown, uploader = ''): string {
   return ownerForOrg(workspaceId(req), orgScope(req), raw, uploader);
 }
 
+// The base-currency restatement a foreign-currency document carries, off a
+// request body. Written by all three write paths (create / finalize / patch)
+// through this one reader, because the four fields are a single fact — a total
+// without its rate, or a rate without the currency it converts to, is not half
+// an answer but a wrong one.
+function restatementPatch(b: Record<string, unknown>, into: Record<string, unknown>): void {
+  if (typeof b.baseCurrency === 'string') into.baseCurrency = b.baseCurrency.trim().toUpperCase().slice(0, 3);
+  for (const k of ['baseTotal', 'baseTax', 'exchangeRate'] as const) {
+    if (b[k] != null) into[k] = parseAmount(b[k]);
+  }
+}
+
 // PATCH /api/costs/bills/:id — update editable fields (e.g. category) or the
 // workflow status ('ready' moves it out of the inbox).
 billsRouter.patch('/bills/:id', async (req, res) => {
@@ -496,6 +510,7 @@ billsRouter.patch('/bills/:id', async (req, res) => {
     if (kept.length !== owned.length) patch.ruleFields = kept;
   }
   if (typeof b.paid === 'boolean') patch.paid = b.paid;
+  restatementPatch(b, patch);
   // "Not a duplicate" — the reviewer's verdict, which clears the flag and
   // survives every later re-check.
   if (b.duplicateDismissed === true) {
@@ -597,6 +612,7 @@ billsRouter.post('/bills/:id/finalize', (req, res) => {
   }
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
+  restatementPatch(b, patch);
 
   const updated = updateBill(orgId, req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'not_found' });
@@ -680,6 +696,10 @@ billsRouter.post('/bills', async (req, res) => {
     currency: String(b.currency ?? ''),
     total: candidate.total,
     tax: parseAmount(b.tax),
+    baseCurrency: String(b.baseCurrency ?? '').trim().toUpperCase().slice(0, 3),
+    baseTotal: parseAmount(b.baseTotal),
+    baseTax: parseAmount(b.baseTax),
+    exchangeRate: parseAmount(b.exchangeRate),
     date: candidate.date,
     category: String(b.category ?? ''),
     categoryReason: String(b.categoryReason ?? ''),

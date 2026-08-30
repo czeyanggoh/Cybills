@@ -404,6 +404,11 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           gstRegistered,
           defaultName: defRate,
           currency: cur?.currency,
+          // The SGD pair a foreign-currency document prints for tax purposes,
+          // which is the exact one — see taxRateOutcome.
+          baseTotal: cur?.baseTotal,
+          baseTax: cur?.baseTax,
+          statedCurrency: cur?.baseCurrency,
           kind,
           accountTaxType: account?.taxType || '',
           accountLabel: account?.code || '',
@@ -420,7 +425,11 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // Nothing to claim → the tax isn't recorded as GST; it stays inside the
       // cost. Either this business isn't registered, or the supplier's tax
       // isn't Singapore GST (see claimableSgGst).
-      if (!settings.extractTax || !gstRegistered || !claimsTax) p.tax = 0;
+      // The base-currency tax follows the tax it restates: the two are one
+      // figure said in two currencies, and a document showing 0.00 of GST
+      // beside 0.72 of SGD GST is not one anybody can act on. The base TOTAL
+      // stays — the money is unchanged, only the split moves.
+      if (!settings.extractTax || !gstRegistered || !claimsTax) { p.tax = 0; p.baseTax = 0; }
       // And whoever chose the code, a code that carries no tax means no tax
       // recorded. The decision above only runs when the document arrived
       // WITHOUT a rate — so a reader that named "No Tax" itself skipped every
@@ -428,6 +437,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // document came to show No Tax and 65.25 of GST at the same time.
       if (zeroTaxRate(p.taxRate ?? cur?.taxRate, visibleTaxRates)) {
         p.tax = 0;
+        p.baseTax = 0;
         // The lines carry the same tax the document just gave up. Left as they
         // were they would contradict it, and a breakdown that contradicts its
         // own paper cannot be published at all.

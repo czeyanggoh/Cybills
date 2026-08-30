@@ -142,6 +142,34 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'The LAST 4 DIGITS of the payment card if shown anywhere (e.g. "Mastercard ...7849", "XXXX XXXX XXXX 7849", "card ending 7849"). Digits only, exactly 4. Empty string if no card number is shown (cash, unknown).',
       },
+      // A Singapore GST-registered supplier that bills in foreign currency has
+      // to restate the supply in SGD on the face of the invoice, so its
+      // customer can put a SGD figure in a SGD GST return. Microsoft prints it
+      // as "Tax Information: … Total Charges (excluding GST) SGD 20.36 / Total
+      // GST SGD 1.84 / Exchange rate: 1 USD = 1.293". Those figures are the
+      // supplier's exact ones — the billing-currency pair is the same money
+      // divided by the rate and rounded — so they decide the GST percentage,
+      // and the rate goes to Xero so its GST report agrees with the paper.
+      baseCurrency: {
+        type: 'string',
+        description:
+          'ONLY when the document restates its own totals in a SECOND currency for tax purposes (a "Tax Information" / "For tax purposes" block, or a local-currency GST/VAT line beside the billing-currency one): the 3-letter ISO code of that second currency, e.g. "SGD". Empty string when the document states its amounts in one currency only, and empty when the block merely repeats the billing currency.',
+      },
+      baseTotal: {
+        type: 'number',
+        description:
+          'The total INCLUDING tax as stated in `baseCurrency`, e.g. "Total Charges (including GST) SGD 22.20" → 22.20. 0 when there is no such block. Never converted by you — copy the printed figure.',
+      },
+      baseTax: {
+        type: 'number',
+        description:
+          'The tax as stated in `baseCurrency`, e.g. "Total GST SGD 1.84" → 1.84. 0 when there is no such block. Never converted by you — copy the printed figure.',
+      },
+      exchangeRate: {
+        type: 'number',
+        description:
+          'The exchange rate the document PRINTS between its billing currency and `baseCurrency`, expressed as how many units of `baseCurrency` one unit of the billing currency buys: "Exchange rate: 1 USD = 1.29300000008314 SGD" on a USD invoice → 1.293. If it is printed the other way round ("1 SGD = 0.7734 USD"), invert it so it still reads base-per-billing. 0 when no rate is printed.',
+      },
       supplierGstRegNo: {
         type: 'string',
         description:
@@ -150,7 +178,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       taxLabel: {
         type: 'string',
         description:
-          'What the document CALLS the tax it charges, copied as printed — "GST", "GST 9%", "GST charged at 9%", "VAT", "Sales Tax", "SST", "Consumption Tax", "TVA". Empty string when it charges no tax. Copy the words; do not translate "VAT" into "GST".',
+          'What the document CALLS the tax on the line that carries the tax AMOUNT, copied as printed — "GST", "GST 9%", "GST charged at 9%", "VAT", "Sales Tax", "SST", "Consumption Tax", "TVA". Empty string when it charges no tax. Copy the words; do not translate "VAT" into "GST" — but do not translate "GST" into "VAT" either: where a template says "Total Charges (excluding VAT)" one line above "Total GST", the tax charged is GST, and that is the line to copy.',
       },
       lineItems: {
         type: 'array',
@@ -187,6 +215,10 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'description',
       'dueDate',
       'period',
+      'baseCurrency',
+      'baseTotal',
+      'baseTax',
+      'exchangeRate',
       'supplierGstRegNo',
       'taxLabel',
       'cardLast4',
@@ -215,6 +247,10 @@ const ReceiptSchema = z.object({
   dueDate: z.string().optional().default(''),
   period: z.string().optional().default(''),
   cardLast4: z.string().optional().default(''),
+  baseCurrency: z.string().optional().default(''),
+  baseTotal: z.number().optional().default(0),
+  baseTax: z.number().optional().default(0),
+  exchangeRate: z.number().optional().default(0),
   supplierGstRegNo: z.string().optional().default(''),
   taxLabel: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
@@ -371,6 +407,60 @@ export type ExtractionResult =
   | { ok: true; data: ExtractedFields; outcome: ReadOutcome }
   | { ok: false; error: 'refused' | 'no_data' | 'extraction_failed'; status: number; outcome?: ReadOutcome };
 
+// --- The document's restatement of itself in a second currency ---------------
+// A Singapore GST-registered supplier billing in foreign currency must print
+// what the supply is worth in SGD, so its customer can put a SGD figure in a
+// SGD GST return. Those printed figures are the supplier's exact ones, and the
+// rate beside them is the rate the tax was actually charged at — which is why
+// they are kept rather than re-derived later: the billing-currency pair is the
+// same money divided by that rate and rounded to two places, and on a small
+// invoice the rounding alone is enough to turn 9% into 8.8%.
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const cur3 = (v: unknown) => String(v ?? '').trim().toUpperCase().slice(0, 3);
+
+export type Restatement = {
+  baseCurrency: string;
+  baseTotal: number;
+  baseTax: number;
+  exchangeRate: number; // units of baseCurrency per 1 unit of the billing currency
+};
+const NO_RESTATEMENT: Restatement = { baseCurrency: '', baseTotal: 0, baseTax: 0, exchangeRate: 0 };
+
+// Kept only when the block really is a restatement of THIS invoice: a second
+// currency, a tax that sits inside its total, and a rate that carries the
+// billing total onto the stated one. Anything less is a misread — and a misread
+// rate is not cosmetic, because it is published to Xero and restates the GST on
+// a live return.
+export function restatement(d: {
+  currency?: unknown;
+  total?: unknown;
+  baseCurrency?: unknown;
+  baseTotal?: unknown;
+  baseTax?: unknown;
+  exchangeRate?: unknown;
+}): Restatement {
+  const doc = cur3(d.currency);
+  const base = cur3(d.baseCurrency);
+  if (!base || !doc || base === doc) return NO_RESTATEMENT;
+  const billed = Number(d.total) || 0;
+  const stated = Number(d.baseTotal) || 0;
+  const tax = Number(d.baseTax) || 0;
+  const printed = Number(d.exchangeRate) || 0;
+  // Either half can stand in for the other: a document that prints the rate but
+  // not the totals, or the totals but not the rate, has still said what the
+  // supply is worth in the base currency.
+  const rate = printed > 0 ? printed : stated > 0 && billed > 0 ? stated / billed : 0;
+  const baseTotal = stated > 0 ? stated : rate > 0 ? round2(billed * rate) : 0;
+  if (!(rate > 0 && baseTotal > 0)) return NO_RESTATEMENT;
+  if (!(tax >= 0) || tax >= baseTotal) return NO_RESTATEMENT;
+  // A cent of rounding is expected between the two halves; a percent means they
+  // are not describing the same invoice.
+  if (billed > 0 && Math.abs(billed * rate - baseTotal) > Math.max(0.05, baseTotal * 0.01)) {
+    return NO_RESTATEMENT;
+  }
+  return { baseCurrency: base, baseTotal: round2(baseTotal), baseTax: round2(tax), exchangeRate: rate };
+}
+
 // The one document read, free of Express — a receipt image or PDF invoice
 // through the org's chosen reader, classified into the Xero chart of accounts
 // (when `accounts` is given) or a plain category list, with the same tax-code /
@@ -475,6 +565,8 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'Read `supplierGstRegNo` and `taxLabel` from the document exactly as printed. They decide whether the tax charged is Singapore GST a business may claim, ' +
     'or a foreign tax it may not — a Thai invoice at 7% VAT and a Singapore one at 7% GST look identical in the numbers alone, and only the registration number and the wording tell them apart. ' +
     'The registration number must be the SUPPLIER\'s, never the buyer\'s. ' +
+    'Where the document restates its own totals in a SECOND currency for tax purposes — a Singapore GST-registered supplier billing in foreign currency has to show what the supply is worth in SGD — read `baseCurrency`, `baseTotal`, `baseTax` and `exchangeRate` off that block exactly as printed. ' +
+    '`total` and `tax` stay in the BILLING currency: the block is the same money said again for the tax authority, never a second charge, so never add the two together. ' +
     'If a field is not present, use an empty string or 0. ' +
     'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
     accountsGuide +
@@ -528,8 +620,20 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
         ? parsed.data.dueDate
         : '';
     const category = categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised';
+    const restated = restatement(parsed.data);
+    // A supplier whose billing-currency face shows no tax line has still charged
+    // the GST its tax block states. Left at 0 the document would be coded No Tax
+    // against its own paper, so the billing-currency amount is derived from the
+    // stated one at the document's own rate — which is the figure Xero converts
+    // straight back to the SGD printed on the invoice.
+    const tax =
+      parsed.data.tax > 0 || !(restated.baseTax > 0)
+        ? parsed.data.tax
+        : round2(restated.baseTax / restated.exchangeRate);
     const data: ExtractedFields = {
       ...parsed.data,
+      ...restated,
+      tax,
       category,
       // Nothing usable from the reader (it declined, or wrote filler) — compose
       // one from the fields we did read rather than leave the field blank. It's

@@ -36,6 +36,10 @@ const stub = http.createServer((req, res) => {
     ] }));
     return;
   }
+  if (path.endsWith('/Organisation')) {
+    res.end(JSON.stringify({ Organisations: [{ Name: 'Demo Co', BaseCurrency: 'SGD' }] }));
+    return;
+  }
   if (path.endsWith('/Contacts')) {
     res.end(JSON.stringify({ Contacts: [{ ContactID: 'contact-cybiz', Name: 'CY-Biz Pte. Ltd.' }] }));
     return;
@@ -198,6 +202,54 @@ check('no rows: the document account', r.posted.LineItems[0].AccountCode, '429')
 // document it was published from, with the original paper attached.
 check('the bill links back to its document', /\/costs\/\d+\?org=org-1$/.test(String(r.posted.Url)), true);
 check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 'Projects', Option: 'ASTP 01' }]);
+
+// 5) A foreign-currency bill posts at the rate the DOCUMENT printed.
+//
+// Xero converts a USD bill to the base currency at its own XE.com day rate
+// unless it is told otherwise — which would put a figure in the GST return that
+// appears nowhere on the invoice, and that nobody could ever reconcile. A
+// Singapore GST-registered supplier billing in USD prints its own rate for
+// exactly this reason ("Exchange rate: 1 USD = 1.29300000008314 SGD"), so that
+// is the rate that goes up.
+{
+  const b = bill({
+    currency: 'USD', total: '17.17', tax: '1.42',
+    baseCurrency: 'SGD', baseTotal: '22.20', baseTax: '1.84', exchangeRate: '1.293',
+  });
+  const out = await publish(b.id);
+  check('foreign bill: published', out.status, 200);
+  check('foreign bill: posted in its own currency', out.posted.CurrencyCode, 'USD');
+  check('foreign bill: at the rate the document printed', out.posted.CurrencyRate, 1.293);
+  // The point of sending it: the base-currency tax Xero derives is the figure
+  // printed on the paper, to the cent.
+  check(
+    'foreign bill: converts back to the stated SGD tax',
+    Math.round(out.posted.LineItems.reduce((t: number, l: any) => t + l.TaxAmount, 0) * 1.293 * 100) / 100,
+    1.84
+  );
+}
+
+// 5b) No rate to send is not a rate of 1: an ordinary SGD bill, and a foreign
+//     one whose document printed nothing, both go up without CurrencyRate and
+//     let Xero decide.
+{
+  const plain = await publish(bill({ total: '109', tax: '9' }).id);
+  check('a base-currency bill sends no rate', plain.posted.CurrencyRate, undefined);
+  const bare = await publish(bill({ currency: 'USD', total: '109', tax: '9' }).id);
+  check('a foreign bill with no printed rate sends none either', bare.posted.CurrencyRate, undefined);
+}
+
+// 5c) A rate onto a currency that is NOT this entity base currency is not its
+//     rate at all. Sending it would restate the whole bill by the exchange rate.
+{
+  const out = await publish(
+    bill({
+      currency: 'USD', total: '100', tax: '0',
+      baseCurrency: 'MYR', baseTotal: '470', baseTax: '0', exchangeRate: '4.7',
+    }).id
+  );
+  check('a rate into another currency is not sent', out.posted.CurrencyRate, undefined);
+}
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 server.close();

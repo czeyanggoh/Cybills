@@ -109,6 +109,9 @@ export async function decideTaxRate(
     total?: unknown;
     tax?: unknown;
     currency?: unknown;
+    baseCurrency?: unknown;
+    baseTotal?: unknown;
+    baseTax?: unknown;
     category?: unknown;
     taxRate?: unknown;
     supplierGstRegNo?: unknown;
@@ -128,6 +131,12 @@ export async function decideTaxRate(
       gstRegistered: ctx.gstRegistered,
       defaultName: ctx.defaultTaxRateCosts,
       currency: String(doc.currency ?? ''),
+      // What the document itself says the supply is worth in SGD, where it
+      // restates itself for tax purposes — the pair the GST percentage is read
+      // from when there is one.
+      baseTotal: doc.baseTotal,
+      baseTax: doc.baseTax,
+      statedCurrency: String(doc.baseCurrency ?? ''),
       kind: 'cost',
       accountTaxType: ctx.accountTaxTypes.get(category) || '',
       accountLabel: category,

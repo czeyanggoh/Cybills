@@ -46,7 +46,7 @@ import TeachRule from '@/components/TeachRule';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { readDecisions } from '@/lib/reRead';
-import { useGstRegistered } from '@/lib/businessProfile';
+import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
 import { useAutoSave } from '@/lib/useAutoSave';
 import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
 import { xeroBillUrl } from '@/lib/autoPublish';
@@ -193,6 +193,13 @@ function initialData(doc) {
     currency: doc.currency,
     total: doc.total,
     tax: doc.tax,
+    // What the document is worth in the entity's own currency, and the rate
+    // between the two. One fact in three parts, so they are held together and
+    // written together — see setBaseTotal.
+    baseCurrency: doc.baseCurrency ?? '',
+    baseTotal: doc.baseTotal ? String(doc.baseTotal) : '',
+    baseTax: doc.baseTax ? String(doc.baseTax) : '',
+    exchangeRate: doc.exchangeRate ? String(doc.exchangeRate) : '',
     taxRate: doc.taxRate ?? '',
     taxRateReason: doc.taxRateReason ?? '',
     description: doc.description ?? '',
@@ -266,6 +273,8 @@ export default function CostDetail() {
   // Not GST-registered → every document codes to No Tax and no GST is split out,
   // and the picker offers nothing else.
   const gstRegistered = useGstRegistered();
+  // The entity's own currency, and whether this document was billed in another.
+  const baseCurrency = useBaseCurrency();
   const noTaxName = noTaxRateName(taxRateSource);
   const taxRateOptions = gstRegistered
     ? taxRateSource.map((t) => t.name)
@@ -496,6 +505,7 @@ export default function CostDetail() {
   const SERVER_FIELDS = {
     supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
     currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
+    baseCurrency: 'baseCurrency', baseTotal: 'baseTotal', baseTax: 'baseTax', exchangeRate: 'exchangeRate',
     taxRate: 'taxRate', taxRateReason: 'taxRateReason', taxRateCleared: 'taxRateCleared',
     description: 'description', user: 'owner',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
@@ -601,6 +611,57 @@ export default function CostDetail() {
         }
       })
       .catch(() => setFieldSave('error'));
+  };
+
+  // Billed in something other than the entity's own currency. Blank currency is
+  // not foreign — an unread document says nothing either way.
+  const foreign =
+    Boolean(String(data.currency || '').trim()) &&
+    String(data.currency).trim().toUpperCase().slice(0, 3) !== baseCurrency;
+
+  // --- The document in the entity's own currency ------------------------------
+  // A foreign-currency document is worth two amounts: what the supplier billed,
+  // and what it is worth here — which is the one the GST return is made from. A
+  // Singapore GST-registered supplier prints both on the invoice (IRAS requires
+  // it), so the reader takes them off the paper; this is where they are checked,
+  // and where somebody supplies them for a document that printed none rather
+  // than letting the ledger convert at a rate the invoice never mentions.
+  //
+  // The total, the tax inside it and the rate between the currencies are one
+  // fact, so all three are written together. A base total edited on its own
+  // would put a figure in the GST return that the document's own split
+  // contradicts, and the publish path would then post a rate that doesn't
+  // reproduce either of them.
+  const setBaseTotal = (value) => {
+    const bt = num(value);
+    const t = num(data.total);
+    if (!(bt > 0) || !(t > 0)) {
+      return setMany({ baseCurrency: '', baseTotal: value, baseTax: '', exchangeRate: '' });
+    }
+    const rate = bt / t;
+    return setMany({
+      baseCurrency,
+      baseTotal: value,
+      baseTax: (num(data.tax) * rate).toFixed(2),
+      exchangeRate: String(rate),
+    });
+  };
+
+  // Total and Tax carry that pair with them. The RATE is what the reviewer
+  // settled (or the supplier printed), so it is held and the two base figures
+  // follow — the other way round, correcting a total would silently restate the
+  // exchange rate as well.
+  const setAmount = (key, value) => {
+    const rate = num(data.exchangeRate);
+    if (!foreign || !(rate > 0)) return set(key, value);
+    const next = { ...data, [key]: value };
+    const t = num(next.total);
+    const x = num(next.tax);
+    return setMany({
+      [key]: value,
+      baseTotal: t > 0 ? (t * rate).toFixed(2) : '',
+      baseTax: x > 0 ? (x * rate).toFixed(2) : '',
+    });
   };
 
   // A rule saved from the Supplier field lands on this document straight away —
@@ -1667,7 +1728,7 @@ export default function CostDetail() {
 
               <SectionHeading>Amount</SectionHeading>
               <Field label="Currency"><Input value={data.currency} onChange={(v) => set('currency', v)} /></Field>
-              <Field label="Total amount"><Input value={data.total} onChange={(v) => set('total', v)} /></Field>
+              <Field label="Total amount"><Input value={data.total} onChange={(v) => setAmount('total', v)} /></Field>
               {/* A bridge entity has no tax position of its own: its claims post
                   with No Tax at the full amount (the tax the document records is
                   folded into the cost). A tax code chosen here could never reach
@@ -1688,7 +1749,7 @@ export default function CostDetail() {
                 </Field>
               )}
               <Field label="Tax amount">
-                <Input value={data.tax} onChange={(v) => set('tax', v)} />
+                <Input value={data.tax} onChange={(v) => setAmount('tax', v)} />
                 {bridge && (
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     Claims raised here post with No Tax at the full amount, so this is recorded but not claimed.
@@ -1696,6 +1757,29 @@ export default function CostDetail() {
                 )}
               </Field>
               <Field label="Net amount"><Input value={(num(data.total) - num(data.tax)).toFixed(2)} readOnly /></Field>
+              {/* A foreign-currency document is worth two amounts, and the
+                  second one is the one that reaches the GST return. The reader
+                  takes both off the paper where the supplier printed them — a
+                  Singapore GST-registered supplier billing in USD has to — and
+                  this is where they are checked, or supplied for a document
+                  that printed none. Editing the total re-derives the tax and
+                  the rate from this document's own split, so the two currencies
+                  can never say different things about the same invoice. */}
+              {foreign && (
+                <>
+                  <Field label={`Total amount (${baseCurrency})`}>
+                    <Input value={data.baseTotal} onChange={setBaseTotal} />
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      {num(data.exchangeRate) > 0
+                        ? `At 1 ${String(data.currency).trim().toUpperCase().slice(0, 3)} = ${num(data.exchangeRate).toFixed(4)} ${baseCurrency}. Published to Xero with the bill, so the ledger converts at the document's own rate rather than the day's.`
+                        : `The document didn't state one. Without it Xero converts at its own rate for the day, and the GST it reports won't be the figure on this invoice.`}
+                    </p>
+                  </Field>
+                  <Field label={`Tax amount (${baseCurrency})`}>
+                    <Input value={data.baseTax} readOnly />
+                  </Field>
+                </>
+              )}
               {num(data.total) > 0 && (
                 <div className="flex items-start gap-4 py-2">
                   <div className="w-40 shrink-0" />

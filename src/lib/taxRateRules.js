@@ -60,11 +60,18 @@ const STANDARD_CODES = {
 //   201614382R     local company (9 digits + letter, year-prefixed)
 //   T08LL1234A     other entities (T/S/R + 2 digits + 2 letters + 4 digits + letter)
 //   M90370287L     GST registration / OVR (M + 8 digits + letter)
+//   M2-0009302-4   the older GST-only registration, still printed by some
 const SG_UEN = [
   /^\d{8}[A-Z]$/,
   /^(19|20)\d{7}[A-Z]$/,
   /^[TSR]\d{2}[A-Z]{2}\d{4}[A-Z]$/,
-  /^M\d{8}[A-Z]$/,
+  // IRAS issues these to entities with no UEN and they are printed two ways:
+  // the OVR form M90370287L, and the older M2-0009302-4 / MR-8500071-4 (M, one
+  // letter or digit, 7 digits, a check character). Separators are stripped
+  // before matching, so one pattern covers both — and it has to, because an
+  // overseas vendor billing in foreign currency is exactly where the older
+  // form still turns up.
+  /^M[A-Z0-9]\d{7}[A-Z0-9]$/,
 ];
 export function isSingaporeGstRegNo(value) {
   const v = String(value || '').toUpperCase().replace(/[\s.-]/g, '');
@@ -83,7 +90,25 @@ export function looksLikeGst(taxLabel) {
 }
 
 // Whether the tax on this document is Singapore GST, and so claimable.
-export function claimableSgGst({ gstRegNo = '', taxLabel = '' } = {}) {
+//
+// `restatedInBase` is the second, independent proof: the document restates its
+// own tax in the base currency —
+//
+//   Total Charges (excluding GST)  SGD 20.36
+//   Total GST                      SGD  1.84
+//   Total Charges (including GST)  SGD 22.20
+//   Exchange rate: 1 USD = 1.29300000008314 SGD
+//
+// — which is a thing only a Singapore GST-registered supplier does, because
+// IRAS requires it of one issuing a foreign-currency tax invoice and of nobody
+// else. It stands on its own because it answers the very question the number
+// and the wording were standing in for: the Thai and Malaysian invoices those
+// exist to catch state their tax in baht and ringgit, never in SGD. So a
+// registration number the reader couldn't find, or a template that says
+// "excluding VAT" one line above "Total GST", no longer costs the client the
+// input tax it plainly paid.
+export function claimableSgGst({ gstRegNo = '', taxLabel = '', restatedInBase = false } = {}) {
+  if (restatedInBase) return true;
   return isSingaporeGstRegNo(gstRegNo) && looksLikeGst(taxLabel);
 }
 
@@ -140,8 +165,10 @@ export function noTaxRateName(rates) {
 //      entertainment account defaulting to Disallowed Expenses at 9% is right,
 //      where "9% therefore Standard-Rated Purchases" would wrongly claim it.
 //   2. The standard-rated vintage whose % matches — the ordinary case.
-//   3. Foreign-currency document whose rate isn't in the chart → No Tax,
-//      because foreign GST isn't Singapore input tax.
+//   3. Foreign-currency document at a rate that is not a Singapore one → No
+//      Tax, because foreign GST isn't Singapore input tax. A STANDARD rate is
+//      not such a rate: 9% on a USD invoice from a Singapore GST-registered
+//      supplier is ordinary input tax, so it goes on to 4 instead.
 //   4. Xero's own standard-rated code for that percentage (9% purchases are
 //      INPUTY24 in every Singapore Xero). Reached when the visible list can't
 //      supply it — switched off in Lists, or not loaded — because "the standard
@@ -163,6 +190,17 @@ export function taxRateOutcome({
   defaultName = '',
   currency = '',
   baseCurrency = 'SGD',
+  // What the document says it is worth in the BASE currency. A Singapore
+  // GST-registered supplier billing in foreign currency has to restate the
+  // supply in SGD on the face of the invoice (IRAS's rule for a foreign-currency
+  // tax invoice), which is why a Microsoft USD invoice carries "Total Charges
+  // (excluding GST) SGD 20.36 / Total GST SGD 1.84 / Exchange rate 1 USD =
+  // 1.2930". Those are the figures the GST return is made from, and they are the
+  // supplier's exact ones — the billing-currency pair beside them is the same
+  // money divided by a rate and rounded to two places. See `pct` below.
+  baseTotal = 0,
+  baseTax = 0,
+  statedCurrency = '', // the currency that restatement is in
   kind = 'cost',
   accountTaxType = '',
   accountLabel = '',
@@ -192,18 +230,42 @@ export function taxRateOutcome({
   const isForeign = Boolean(cur) && Boolean(base) && cur !== base;
   const wanted = kind === 'sales' ? AUTO_SUPPLY : AUTO_PURCHASE;
 
+  // The base-currency restatement, kept only when it is internally coherent:
+  // a tax inside a total, both positive. A half-read block says nothing.
+  const bt = num(baseTotal);
+  const bx = num(baseTax);
+  const baseGst = bt > 0 && bx > 0 && bx < bt ? bx : 0;
+  const baseNet = baseGst ? bt - bx : 0;
+  const statedCur = String(statedCurrency || '').toUpperCase().slice(0, 3) || base;
+  // Restated in OUR currency, with a tax figure in it — the proof described on
+  // claimableSgGst. A restatement into some third currency proves nothing about
+  // Singapore.
+  const restatedInBase = baseGst > 0 && statedCur === base;
+
   if (!(x > 0 && net > 0)) {
     // No tax charged: the configured default, else No Tax.
     const useDefault = defaultName && list.some((r) => r.name === defaultName) ? defaultName : '';
     return { name: useDefault || (noTax ? noTax.name : ''), reason: '', claimsTax: false };
   }
 
-  const pct = (x / net) * 100;
+  // The rate the supplier charged, taken from whichever pair states it most
+  // exactly. Rounding in the billing currency is not a rounding error on a
+  // small invoice: USD 15.75 + 1.42 reads as 9.0%, but USD 1.71 + 0.15 reads as
+  // 8.8% and USD 0.56 + 0.05 as 8.9%, and at that point a real 9% Singapore
+  // invoice falls outside every vintage and is coded No Tax for being foreign.
+  // The SGD pair the document itself prints doesn't drift, so it decides.
+  const stated = baseNet > 0 && baseGst > 0;
+  const pct = stated ? (baseGst / baseNet) * 100 : (x / net) * 100;
+  // Said in whichever currency the percentage was read from, so the sentence can
+  // be checked against the document rather than only believed.
+  const shown = stated
+    ? { cur: `${statedCur} `, tax: baseGst, net: baseNet }
+    : { cur: '', tax: x, net };
 
   // Tax IS charged — but only Singapore GST from a registered supplier can be
   // claimed. Without that evidence the tax is part of the cost, not input tax:
   // No Tax, and the amount is not recorded as GST.
-  if (kind !== 'sales' && !claimableSgGst({ gstRegNo, taxLabel })) {
+  if (kind !== 'sales' && !claimableSgGst({ gstRegNo, taxLabel, restatedInBase })) {
     const label = String(taxLabel || '').trim();
     const why = !isSingaporeGstRegNo(gstRegNo)
       ? String(gstRegNo || '').trim()
@@ -213,7 +275,7 @@ export function taxRateOutcome({
     return {
       name: noTax ? noTax.name : '',
       reason:
-        `Tax of ${x.toFixed(2)} (${pctOf(pct)}) is on the document, but ${why} — so it isn't Singapore input tax to claim. ` +
+        `Tax of ${shown.cur}${shown.tax.toFixed(2)} (${pctOf(pct)}) is on the document, but ${why} — so it isn't Singapore input tax to claim. ` +
         'Coded No Tax, with the tax left in the cost. If the supplier IS Singapore GST-registered, set the code by hand.',
       claimsTax: false,
     };
@@ -244,13 +306,27 @@ export function taxRateOutcome({
   if (best && bestDiff <= TOLERANCE) {
     return {
       name: best,
-      reason: `GST of ${x.toFixed(2)} on ${net.toFixed(2)} is ${pctOf(pct)} — matched ${best}.`,
+      reason:
+        `GST of ${shown.cur}${shown.tax.toFixed(2)} on ${shown.cur}${shown.net.toFixed(2)} is ${pctOf(pct)} — matched ${best}.` +
+        (stated ? ` Read from the ${statedCur} figures the document states for tax purposes, not the ${cur} ones.` : ''),
       claimsTax: true,
     };
   }
 
-  // 3. Foreign-currency invoice whose rate isn't in our chart.
-  if (isForeign && noTax) {
+  // Xero's own standard code for that percentage, if it is one. Worked out
+  // before step 3 rather than inside step 4, because it is what step 3 has to
+  // know: a foreign-currency document at a STANDARD rate is not a document at
+  // an unrecognised rate, it is an ordinary Singapore supply whose code this
+  // org happens to have switched off in Lists.
+  const std = (STANDARD_CODES[kind === 'sales' ? 'sales' : 'cost'] ?? []).find(
+    (c) => Math.abs(c.pct - pct) <= TOLERANCE
+  );
+
+  // 3. Foreign-currency invoice at a rate that is not a Singapore one at all.
+  //    Note this is reached only by a document that already PASSED the
+  //    registration-number gate above, so it is a rate question, not a
+  //    jurisdiction one — which is why a standard rate is exempt from it.
+  if (isForeign && !std && noTax) {
     return {
       name: noTax.name,
       reason: `A ${cur} document taxed at ${pctOf(pct)}, which isn't a rate in this chart — foreign GST isn't Singapore input tax, so nothing is claimed.`,
@@ -261,9 +337,6 @@ export function taxRateOutcome({
   // 4. Xero's standard code for that rate. The organisation wrote no rule and
   //    its visible list didn't answer, but 9% purchases are INPUTY24 everywhere
   //    — leaving that blank helps nobody.
-  const std = (STANDARD_CODES[kind === 'sales' ? 'sales' : 'cost'] ?? []).find(
-    (c) => Math.abs(c.pct - pct) <= TOLERANCE
-  );
   if (std) {
     // Prefer what this organisation calls it; fall back to Xero's own name.
     const own = everything.find((r) => String(r.code || '').trim().toUpperCase() === std.code);

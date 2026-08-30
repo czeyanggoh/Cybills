@@ -57,6 +57,12 @@ export function readDecisions(
     gstRegistered,
     defaultName: defaultTaxRateCosts,
     currency: ex.currency || current.currency,
+    // The SGD figures a foreign-currency document prints for tax purposes: the
+    // supplier's exact ones, where the billing-currency pair beside them is
+    // those divided by a rate and rounded.
+    baseTotal: ex.baseTotal != null ? ex.baseTotal : current.baseTotal,
+    baseTax: ex.baseTax != null ? ex.baseTax : current.baseTax,
+    statedCurrency: ex.baseCurrency || current.baseCurrency || '',
     kind: 'cost',
     accountTaxType: account?.taxType || '',
     accountLabel: account?.code || '',
@@ -88,10 +94,24 @@ export function readDecisions(
   if (ex.documentType) patch.documentType = ex.documentType;
   if (ex.invoiceNumber) patch.invoiceNumber = ex.invoiceNumber;
   if (ex.currency) patch.currency = ex.currency;
+  // The restatement moves as one thing or not at all: a rate kept from the old
+  // read beside totals from the new one would convert the wrong money.
+  if (ex.baseCurrency) {
+    patch.baseCurrency = ex.baseCurrency;
+    patch.baseTotal = ex.baseTotal ?? 0;
+    patch.baseTax = ex.baseTax ?? 0;
+    patch.exchangeRate = ex.exchangeRate ?? 0;
+  }
   if (ex.category) patch.category = ex.category;
   if (ex.categoryReason) patch.categoryReason = ex.categoryReason;
   if (ex.total != null) patch.total = ex.total;
-  if (ex.tax != null || !gstRegistered || rate.claimsTax === false) patch.tax = exTaxOut;
+  if (ex.tax != null || !gstRegistered || rate.claimsTax === false) {
+    patch.tax = exTaxOut;
+    // The base-currency tax is the same figure in the other currency, so it
+    // cannot stay behind when this one is given up. The base TOTAL stays: the
+    // money is unchanged, only the split moves.
+    if (!exTaxOut) patch.baseTax = 0;
+  }
   if (!current.taxRate && inferredRate) patch.taxRate = inferredRate;
   // Why it was coded that way — or, when nothing could be, why not. A blank tax
   // rate with no explanation is indistinguishable from a bug.

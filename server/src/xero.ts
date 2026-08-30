@@ -751,6 +751,47 @@ function xeroLineDescription(supplier: string, id: string, description: string):
   return out.trim();
 }
 
+// The linked Xero org's base currency. Cached for the life of the process: it
+// is fixed when the organisation is created in Xero and can't be changed once
+// it has transactions, so re-asking on every publish would spend a relay call
+// on an answer that never moves. Only a real answer is cached, so a relay
+// hiccup can't pin '' there for good.
+const baseCurrencies = new Map<string, string>();
+async function baseCurrencyFor(tenantId: string): Promise<string> {
+  const hit = baseCurrencies.get(tenantId);
+  if (hit) return hit;
+  const result = await relay('Organisation', { tenantId });
+  const code = result.ok
+    ? String(result.data?.Organisations?.[0]?.BaseCurrency ?? '').trim().toUpperCase()
+    : '';
+  if (code) baseCurrencies.set(tenantId, code);
+  return code;
+}
+
+// The exchange rate to post a foreign-currency bill at — the one the SUPPLIER
+// printed, not the one Xero would reach for.
+//
+// Xero's CurrencyRate is base-per-foreign: a USD bill in a SGD org at 1.293
+// lands in the ledger as SGD. Left unset, Xero converts at its own XE.com rate
+// for the day, which is not the rate the GST was charged at — so the GST return
+// would report a figure the invoice doesn't contain, and no amount of checking
+// would reconcile the two. A Singapore GST-registered supplier billing in
+// foreign currency has to print its rate for exactly this reason, and that rate
+// is the only one that reproduces the SGD tax on the paper.
+//
+// Sent only when the org's base currency IS the currency the document restated
+// itself in. A USD-to-SGD rate handed to a USD-based Xero would restate the
+// whole bill by the exchange rate; where the base currency can't be read,
+// nothing is sent, because Xero's day rate is a worse answer than the paper's
+// but a rate applied the wrong way round is worse than both.
+async function currencyRateFor(bill: Bill, tenantId: string): Promise<number> {
+  const rate = Number(bill.exchangeRate) || 0;
+  const stated = String(bill.baseCurrency ?? '').trim().toUpperCase();
+  const billed = String(bill.currency ?? '').trim().toUpperCase();
+  if (!(rate > 0) || !stated || !billed || stated === billed) return 0;
+  return (await baseCurrencyFor(tenantId)) === stated ? rate : 0;
+}
+
 type TrackingCat = { name: string; options: Set<string> };
 
 // The org's ACTIVE tracking categories in Xero's own order — [0] is the "PIC"
@@ -999,6 +1040,10 @@ async function buildBillInvoice(
   // was published from, and the original paper attached to it.
   payload.Url = `${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`;
   if (bill.currency) payload.CurrencyCode = bill.currency;
+  // At the rate the document itself printed, so the ledger's GST report shows
+  // the SGD tax the invoice states rather than Xero's day-rate conversion of it.
+  const currencyRate = await currencyRateFor(bill, organisation.tenantId);
+  if (currencyRate) payload.CurrencyRate = currencyRate;
   // `lines`/`perLine` are how it went up — the document's own breakdown, or one
   // summary line — which the caller reports back to the dialog.
   return { ok: true as const, payload, lines: lineItems.length, perLine: built.kind === 'lines' };
