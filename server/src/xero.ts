@@ -7,7 +7,7 @@ import { referenceFor, dateFor } from './claimRef.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, listBills, markBillPosted, markBillXeroPayment, parseAmount, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, markClaimXeroPayment, publishedClaims, saveClaimXero } from './claims.js';
-import { appOrigin, memberForSession } from './users.js';
+import { appOrigin, isPracticeTeam, memberForSession } from './users.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -382,7 +382,7 @@ xeroRouter.get('/tenants', async (req, res) => {
   // the relay is configured, so the answer is "not yours" rather than a hint
   // about the deployment.
   const me = memberForSession(req);
-  if (googleEnabled && !(me?.practice && !me.deactivated)) {
+  if (googleEnabled && !isPracticeTeam(me)) {
     return res.status(403).json({ error: 'not_practice_team' });
   }
   if (notConfigured(res)) return;

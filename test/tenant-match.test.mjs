@@ -3,7 +3,7 @@
 // this very module rather than re-implementing it: a second copy of the rule
 // that decides whose book a receipt moves into is exactly the drift that must
 // not happen.
-import { normaliseEntityName, matchOrganisation, misfiledOrganisation } from '../src/lib/tenantMatch.js';
+import { normaliseEntityName, matchOrganisation, misfiledOrganisation, misfiledNotice } from '../src/lib/tenantMatch.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -72,22 +72,75 @@ const misfiled = (billedTo, currentOrgId, organisations = ORGS) =>
 check(
   'a Red Alpha invoice uploaded into CYBM',
   misfiled('Red Alpha Cybersecurity Pte Ltd', 'org-cybm'),
-  { orgId: 'org-red', name: 'Red Alpha Cybersecurity', exact: true }
+  { orgId: 'org-red', name: 'Red Alpha Cybersecurity', exact: true, access: true }
 );
 check('…and the same invoice in its own book says nothing', misfiled('Red Alpha Cybersecurity Pte Ltd', 'org-red'), null);
 check('a document billed to nobody we hold says nothing', misfiled('Some Other Company Pte Ltd', 'org-cybm'), null);
 
-// One entity has nothing to be wrong about, and an entity the caller cannot
-// open is not in the list — so it can never be matched, named, or moved to.
+// One entity has nothing to be wrong about. An entity that is not among the
+// candidates at all cannot be matched, named, or moved to — which is how a
+// client's own employee never learns another client's name.
 check(
-  'a single accessible entity is never wrong',
+  'a single candidate entity is never wrong',
   misfiled('Red Alpha Cybersecurity Pte Ltd', 'org-cybm', [ORGS[0]]),
   null
 );
 check(
-  'an entity the caller cannot open is not an answer',
+  'an entity outside the candidates is not an answer',
   misfiled('Red Alpha Cybersecurity Pte Ltd', 'org-cybm', [ORGS[0], ORGS[2]]),
   null
+);
+
+// --- Compared against, but not open to you -----------------------------------
+// A practice colleague is compared against every entity the firm holds, so the
+// answer can be "it belongs somewhere, and it isn't somewhere you can reach" —
+// which is the case they most need telling, and the one silence hides.
+check(
+  'an entity they may not open still answers, and says so',
+  misfiledOrganisation({
+    billedTo: 'Red Alpha Cybersecurity Pte Ltd',
+    currentOrgId: 'org-cybm',
+    organisations: ORGS,
+    accessibleIds: ['org-cybm'],
+  }),
+  { orgId: 'org-red', name: 'Red Alpha Cybersecurity', exact: true, access: false }
+);
+check(
+  'no access list means everything is open (mock/dev)',
+  misfiled('Red Alpha Cybersecurity Pte Ltd', 'org-cybm').access,
+  true
+);
+
+// --- What gets said ----------------------------------------------------------
+const notice = (billedTo, misfiledTo) => misfiledNotice({ billedTo, misfiledTo });
+check('a document where it belongs says nothing', notice('Whoever', null), null);
+check(
+  'a move you can make is offered',
+  notice('RED ALPHA CYBERSECURITY PTE. LTD.', { orgId: 'org-red', name: 'Red Alpha Cybersecurity', exact: true, access: true }).canMove,
+  true
+);
+check(
+  '…and names where it goes',
+  notice('RED ALPHA CYBERSECURITY PTE. LTD.', { orgId: 'org-red', name: 'Red Alpha Cybersecurity', exact: true, access: true }).label,
+  'Belongs to Red Alpha Cybersecurity'
+);
+// Named, but not a button: the entity is known to them and the remedy is named.
+check(
+  'a move you cannot make is never offered as one',
+  notice('RED ALPHA CYBERSECURITY PTE. LTD.', { orgId: 'org-red', name: 'Red Alpha Cybersecurity', exact: true, access: false }).canMove,
+  false
+);
+check(
+  '…and says which entity, when they may be told',
+  notice('RED ALPHA CYBERSECURITY PTE. LTD.', { orgId: 'org-red', name: 'Red Alpha Cybersecurity', exact: true, access: false }).label,
+  'No access — Red Alpha Cybersecurity'
+);
+// Redacted: the fact survives without the name, and the name they see is the
+// one printed on their own document.
+check(
+  '…and only that it is elsewhere, when they may not',
+  notice('RED ALPHA CYBERSECURITY PTE. LTD.', { orgId: '', name: '', exact: true, access: false }).label,
+  'Billed to another entity'
 );
 // "It isn't this one" drawn from a list that never held this one is an artefact,
 // not a conclusion.

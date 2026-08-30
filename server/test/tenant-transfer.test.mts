@@ -85,6 +85,7 @@ check('a Red Alpha invoice in CYBM is named as Red Alpha’s', row.misfiledTo, {
   orgId: 'org-red',
   name: 'Red Alpha Cybersecurity',
   exact: true,
+  access: true,
 });
 check('a document billed to the entity it is in says nothing', (await rowIn('org-cybm', athome.id)).misfiledTo, undefined);
 check('a receipt naming no recipient says nothing', (await rowIn('org-cybm', anonymous.id)).misfiledTo, undefined);
@@ -162,6 +163,49 @@ check('…so Unmerge still finds them', listBills('org-red').filter((b) => [page
 // where it lives, so asking to move one alone is refused.
 r = await call('POST', '/api/costs/bills/transfer', 'org-red', { ids: [pageOne.id], toOrgId: 'org-cybm' });
 check('a page cannot be moved on its own', r.body.skipped, [{ id: pageOne.id, reason: 'merged_into_another' }]);
+
+// --- Who is asking -----------------------------------------------------------
+// The listing above ran sessionless (mock/dev), where everything is open. The
+// three real callers differ in what they are compared against and how much of
+// the answer they may be told, so they are exercised on the lookup directly
+// rather than through an authenticated round trip.
+const { misfiledLookup } = await import('../src/tenantMatch.ts');
+const who = (over: Record<string, unknown>) =>
+  ({ workspaceId: 'cybm', removed: false, deactivated: false, clientAccess: [], allClients: false, extraAccess: [], ...over } as any);
+
+const ask = async (user: any) => (await misfiledLookup('cybm', user))('Red Alpha Cybersecurity Pte Ltd', 'org-cybm');
+
+// A client's own employee, in CYBM. Red Alpha is not a candidate at all, so
+// there is nothing to say — and no way to learn another client's name.
+check(
+  'a client’s employee is told nothing about a client they are not in',
+  await ask(who({ id: 'u-emp', email: 'staff@cybm.example', organisationId: 'org-cybm', role: 'Standard' })),
+  null
+);
+
+// A colleague of the practice, with client access to CYBM only. The document IS
+// misfiled and they are the person who misfiled it, so silence would be the
+// wrong answer — but the entity is not named to them.
+check(
+  'a colleague without access is told, but not which entity',
+  await ask(who({ id: 'u-col', email: 'martin@cy-bm.sg', practice: true, practiceRole: 'Standard', organisationId: 'org-cybm', clientAccess: ['org-cybm'] })),
+  { orgId: '', name: '', exact: true, access: false }
+);
+
+// A practice manager can already list every client the firm holds, and holds
+// the remedy, so naming it adds nothing they could not look up.
+check(
+  'a practice manager is told which entity',
+  await ask(who({ id: 'u-mgr', email: 'admin@cy-bm.sg', practice: true, practiceRole: 'Practice Admin', organisationId: 'org-cybm', clientAccess: ['org-cybm'] })),
+  { orgId: 'org-red', name: 'Red Alpha Cybersecurity', exact: true, access: false }
+);
+
+// And with the access, it becomes a move they can make.
+check(
+  'the same colleague, once given client access',
+  await ask(who({ id: 'u-col2', email: 'martin@cy-bm.sg', practice: true, practiceRole: 'Standard', organisationId: 'org-cybm', clientAccess: ['org-cybm', 'org-red'] })),
+  { orgId: 'org-red', name: 'Red Alpha Cybersecurity', exact: true, access: true }
+);
 
 server.close();
 console.log(failures ? `\n${failures} test(s) failed` : '\nAll tests passed');

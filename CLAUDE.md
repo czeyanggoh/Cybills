@@ -371,11 +371,36 @@ Alpha" alone cannot choose between "Red Alpha Cybersecurity" and "Red Alpha - ST
 Engineering", so it chooses neither. Legal forms are not names: "Pte. Ltd.",
 "Private Limited" and "Sdn Bhd" are stripped before anything is compared.
 
-**Only against the entities the CALLER may open.** That list is what makes the
-badge safe to show: an entity somebody cannot work in is never a candidate, so
-it can never be matched, named on screen, or transferred to — one client's staff
-cannot learn another client's name off a badge. Somebody who works in one entity
-sees none of this, because there is nothing to be wrong about.
+**Who is asking decides two things**: what the document is COMPARED against, and
+how much of the answer may be said. A client's own EMPLOYEE is compared only
+against the entities they may open — an entity they cannot work in is never a
+candidate, so it can never be matched, named, or transferred to, and one
+client's staff cannot learn another client's name off a badge. Somebody who
+works in one entity sees none of this, because there is nothing to be wrong
+about.
+
+**A practice COLLEAGUE is compared against every entity the firm holds**, because
+silence is the wrong answer for them. A colleague works across several clients
+and is the very person who files a document in the wrong one; told nothing, they
+cannot tell "correctly filed" from "misfiled somewhere I can't reach" — and the
+second is exactly the case they need to act on. So the match carries `access`:
+true offers the move, false says why there isn't one. What they are TOLD is
+bounded by what they could already look up — the entity is named only to a
+practice manager, who can already list the firm's clients (`?all=1`, the Clients
+page) and holds the remedy. To everyone else it reads "Billed to another
+entity", which tells them nothing the bill-to line on their own document does
+not. `candidateOrgs` picks the comparison list, `misfiledLookup` redacts, and
+the wording for all three lives in one place (`misfiledNotice`, the same
+arrangement `xeroPaidStatus.js` uses) so the row and the document page can't
+drift.
+
+**The way out is client access, not a merged login.** One person who is both a
+colleague and a client's employee under the SAME address is already one row —
+`normalizeIdentities` folds them on load and the client entity becomes
+`clientAccess`, so both books open and the move works. Under two DIFFERENT
+addresses they are two people, and nothing joins them: the answer is to tick
+that entity under Colleagues → Manage → Client access (Owner / Practice Admin
+only), which is what the blocked badge says.
 
 **Derived per request, never stored** — it is not a fact about the document
 alone, and stored it would be one person's answer shown to the next, going stale

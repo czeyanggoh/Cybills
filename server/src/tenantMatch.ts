@@ -1,6 +1,6 @@
-import { getOrganisation, primaryOrgId } from './organisations.js';
+import { getOrganisation, listOrganisations, primaryOrgId } from './organisations.js';
 import { WORKSPACE_ID } from './workspace.js';
-import { accessibleOrgIds, type User } from './users.js';
+import { accessibleOrgIds, canManagePractice, isPracticeTeam, type User } from './users.js';
 
 // Was this document filed under the right client entity? Server-side.
 //
@@ -11,13 +11,30 @@ import { accessibleOrgIds, type User } from './users.js';
 // second copy of the rule that decides whose book a receipt moves into is
 // exactly the drift that must not happen.
 //
-// What this file adds is WHO is asking. Being in the wrong book is a fact about
-// the document, but the answer is only ever given against the entities the
-// CALLER may open: an entity somebody cannot work in is not a candidate, so it
-// can never be matched, named on screen, or transferred to. That is what keeps
-// one client's staff from learning another client's name off a badge.
+// What this file adds is WHO is asking, which decides two separate things: what
+// the document is COMPARED against, and how much of the answer may be said.
+//
+// A client's own employee is compared only against the entities they may open.
+// An entity they cannot work in is not a candidate at all, so it can never be
+// matched, named, or transferred to — that is what keeps one client's staff
+// from learning another client's name off a badge.
+//
+// A PRACTICE COLLEAGUE is compared against every entity the firm holds, because
+// silence is the wrong answer for them. A colleague works across several
+// clients and is the very person who files a document in the wrong one; told
+// nothing, they cannot tell "correctly filed" from "misfiled somewhere I can't
+// reach", and the second is exactly the case they need to act on. What they are
+// told is bounded by what they could already see: the entity is NAMED only to
+// somebody who can already list the firm's clients (a practice manager, who
+// also holds the remedy — client access). To everyone else the answer is that
+// it belongs to another client entity they don't have access to, which tells
+// them nothing the bill-to line printed on their own document does not.
 
-export type TenantMatch = { orgId: string; name: string; exact: boolean };
+// `access` is the difference between a badge that offers a button and one that
+// explains why there isn't one. With access false the move would be refused
+// server-side, and orgId/name are blank unless the caller may be told which
+// entity it is.
+export type TenantMatch = { orgId: string; name: string; exact: boolean; access: boolean };
 
 type TenantMatchModule = {
   normaliseEntityName: (value: unknown) => string;
@@ -25,6 +42,7 @@ type TenantMatchModule = {
     billedTo: unknown;
     currentOrgId: string;
     organisations: Array<{ id: string; name: string; tenantName: string }>;
+    accessibleIds?: string[] | null;
   }) => TenantMatch | null;
 };
 
@@ -52,13 +70,23 @@ export async function loadTenantMatch(): Promise<TenantMatchModule | null> {
   return cache;
 }
 
-// The entities this caller may open, as the match rules want them. A sessionless
-// mock/dev caller sees every linked entity, exactly as it does everywhere else.
+const asRow = (o: { id: string; name: string; tenantName: string }) => ({
+  id: o.id,
+  name: o.name,
+  tenantName: o.tenantName,
+});
+
+// What this caller's documents are compared against. A practice colleague is
+// measured against every entity the firm holds (so "it belongs somewhere you
+// can't reach" is sayable at all); everybody else only against what they may
+// open. A sessionless mock/dev caller gets every linked entity, exactly as it
+// does everywhere else.
 export function candidateOrgs(ws: string, me: User | null): Array<{ id: string; name: string; tenantName: string }> {
+  if (!me || isPracticeTeam(me)) return listOrganisations(ws).map(asRow);
   return accessibleOrgIds(ws, me)
     .map((id) => getOrganisation(ws, id))
     .filter((o): o is NonNullable<typeof o> => Boolean(o))
-    .map((o) => ({ id: o.id, name: o.name, tenantName: o.tenantName }));
+    .map(asRow);
 }
 
 // The entity a stored bill lives in, from the data SCOPE it carries. The primary
@@ -75,19 +103,27 @@ export const orgIdOfScope = (scope: string | undefined): string =>
 // rather than five hundred.
 //
 // Returns a function that answers null for everything when there is nothing to
-// decide — one accessible entity, or no match rules — so the caller never has
-// to ask whether the feature is on.
+// decide — one candidate entity, or no match rules — so the caller never has to
+// ask whether the feature is on.
 export async function misfiledLookup(
   ws: string,
   me: User | null
 ): Promise<(billedTo: unknown, currentOrgId: string) => TenantMatch | null> {
   const none = () => null;
   const organisations = candidateOrgs(ws, me);
-  // One entity to work in is one entity a document can be in: nothing to be
-  // wrong about, and no other client's name to put on screen.
+  // One entity to compare against is one entity a document can be in: nothing
+  // to be wrong about, and no other client's name to put on screen.
   if (organisations.length < 2) return none;
   const mod = await loadTenantMatch();
   if (!mod) return none;
+  const accessibleIds = me ? accessibleOrgIds(ws, me) : organisations.map((o) => o.id);
+  // Who may be TOLD which entity it is. A practice manager can already list
+  // every client the firm holds (GET /api/organisations?all=1, and the Clients
+  // page), and holds the remedy — so naming it to them adds nothing they could
+  // not look up, and makes the message actionable. Anyone else is told only
+  // that it belongs elsewhere, which their own document's bill-to line already
+  // says. Sessionless mock/dev behaves as it does everywhere: fully open.
+  const mayName = !me || canManagePractice(me);
   const memo = new Map<string, TenantMatch | null>();
   return (billedTo: unknown, currentOrgId: string) => {
     const billed = String(billedTo ?? '').trim();
@@ -96,7 +132,12 @@ export async function misfiledLookup(
     if (memo.has(key)) return memo.get(key) ?? null;
     let answer: TenantMatch | null = null;
     try {
-      answer = mod.misfiledOrganisation({ billedTo: billed, currentOrgId, organisations });
+      answer = mod.misfiledOrganisation({ billedTo: billed, currentOrgId, organisations, accessibleIds });
+      // Redacted, not withheld: the fact that it is filed in the wrong place is
+      // the useful half, and it survives without the name. The id goes too —
+      // one that reached the browser would be a client id the caller was never
+      // given, and a move naming it would be refused anyway.
+      if (answer && !answer.access && !mayName) answer = { ...answer, orgId: '', name: '' };
     } catch (e) {
       console.error('[tenantMatch] could not decide', e);
     }

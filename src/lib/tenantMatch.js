@@ -11,8 +11,10 @@
 //
 // It answers or it says nothing. A wrong answer here moves somebody's paperwork
 // into another client's book, so every uncertainty — a near-miss, two entities
-// that both fit, an entity the caller can't open — resolves to "no answer" and
-// the document stays exactly where it was put.
+// that both fit — resolves to "no answer" and the document stays exactly where
+// it was put. An entity the caller cannot OPEN is a different thing from an
+// uncertainty: the answer is known, it just can't be acted on, and saying so is
+// worth more than silence (see `access` below).
 
 // Legal forms, not names. "Red Alpha Cybersecurity Pte. Ltd." on an invoice and
 // "Red Alpha Cybersecurity" in CYBills are one company, and the difference is
@@ -131,20 +133,77 @@ export function matchOrganisation(billedTo, organisations) {
   return { orgId: org.id, name: org.name || org.tenantName || '', exact: exact.length > 0 };
 }
 
+// Every id, when the caller didn't narrow it. Keeps "no list given" meaning
+// "everything is open", which is what a session-less mock/dev context is.
+const idsOf = (list) => list.map((o) => o.id);
+
 // The entity this document should have been filed under, when that is not the
 // one it IS filed under. Null in every other case, including the ordinary one.
 //
-// `organisations` is the list the CALLER may open, which is what makes this
-// safe to show: an entity somebody can't work in is not in the list, so it can
-// never be matched, named on screen, or transferred to. A single accessible
-// entity has nothing to be wrong about, and the current one has to be among
-// them — "it isn't this one" drawn from a list that never held it is not a
-// conclusion, it is an artefact.
-export function misfiledOrganisation({ billedTo, currentOrgId, organisations }) {
+// `organisations` is what the document is COMPARED against, and `accessibleIds`
+// is the subset the caller may actually open. They are two different questions,
+// and keeping them apart is what lets the answer be "this belongs somewhere,
+// and it isn't somewhere you can reach" — which is a useful thing to be told,
+// and impossible to say when the comparison list is the access list.
+//
+// Who is given which comparison list, and whether the entity may be NAMED to
+// them, is not decided here: it is a question about people rather than about
+// names, so it lives beside the roster (server/src/tenantMatch.ts).
+//
+// One candidate has nothing to be wrong about, and the current entity has to be
+// among them — "it isn't this one" drawn from a list that never held it is not
+// a conclusion, it is an artefact.
+export function misfiledOrganisation({ billedTo, currentOrgId, organisations, accessibleIds = null }) {
   const list = (Array.isArray(organisations) ? organisations : []).filter((o) => o && o.id);
   if (list.length < 2) return null;
   if (!list.some((o) => o.id === currentOrgId)) return null;
   const match = matchOrganisation(billedTo, list);
   if (!match || match.orgId === currentOrgId) return null;
-  return match;
+  const open = new Set(Array.isArray(accessibleIds) ? accessibleIds : idsOf(list));
+  // `access` is what separates a badge that offers a button from one that
+  // explains why there isn't one. A move the caller cannot make must never be
+  // offered: the server would refuse it, and a button that refuses is worse
+  // than no button.
+  return { ...match, access: open.has(match.orgId) };
+}
+
+// What to SAY about a document that is in the wrong book, in one place because
+// the row and the document page both say it and must not drift — the same
+// arrangement src/lib/xeroPaidStatus.js uses for the Paid wording.
+//
+// Three answers, and the difference between them is whether the reader can do
+// anything about it:
+//   - they can open the entity → name it, and offer the move
+//   - they cannot, but may be told which → name it, and say what to do instead
+//   - they cannot, and may not be told → say that it belongs elsewhere, which
+//     the bill-to line on their own document already told them
+//
+// Null when the document is where it belongs, which is nearly always.
+export function misfiledNotice(doc) {
+  const match = doc?.misfiledTo;
+  if (!match) return null;
+  const billed = String(doc?.billedTo || '').trim();
+  const where = billed ? `Billed to ${billed}` : 'The bill-to line names another entity';
+  if (match.access && match.orgId) {
+    return {
+      canMove: true,
+      name: match.name,
+      label: `Belongs to ${match.name}`,
+      title: `${where}, which is ${match.name} — not the entity this document is in. Move it there.`,
+    };
+  }
+  if (match.name) {
+    return {
+      canMove: false,
+      name: match.name,
+      label: `No access — ${match.name}`,
+      title: `${where}, which is ${match.name} — not the entity this document is in. You don’t have client access to that entity, so it can’t be moved from here. Add it under Colleagues → Manage → Client access.`,
+    };
+  }
+  return {
+    canMove: false,
+    name: '',
+    label: 'Billed to another entity',
+    title: `${where}, which is another client entity — not the one this document is in. You don’t have access to it, so it can’t be moved from here. Ask a practice admin for client access.`,
+  };
 }

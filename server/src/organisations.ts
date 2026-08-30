@@ -13,6 +13,7 @@ import {
   memberForSession,
   canAccessOrg,
   canManagePractice,
+  isPracticeTeam,
   ensureGeneralUser,
   grantClientAccess,
   effectiveRoleFor,
@@ -149,7 +150,7 @@ export const organisationsRouter = Router();
 function requirePracticeTeam(req: Request, res: Response): boolean {
   if (!googleEnabled) return true;
   const me = memberForSession(req);
-  if (me?.practice && !me.deactivated) return true;
+  if (isPracticeTeam(me)) return true;
   res.status(403).json({
     error: 'not_practice_team',
     message: 'Only the practice team can add or remove client entities.',

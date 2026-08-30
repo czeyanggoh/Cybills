@@ -345,9 +345,10 @@ export function billToDoc(b) {
     cardLast4: b.cardLast4 || '',
     // The organisation the document is made out TO, as printed, and — when the
     // two disagree — the client entity it should therefore have been filed
-    // under. `misfiledTo` is derived by the server on every response against the
-    // entities THIS person may open, so it is null for anyone who works in one
-    // entity and never names one they cannot get to.
+    // under. `misfiledTo` is derived by the server on every response, and carries
+    // `access`: false means the answer is known but the move isn't this person's
+    // to make, and the entity is only NAMED where they could already have looked
+    // it up. See src/lib/tenantMatch.js (misfiledNotice) for the wording.
     billedTo: b.billedTo || '',
     misfiledTo: b.misfiledTo || null,
     note: b.note || '',

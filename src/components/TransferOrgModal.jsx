@@ -31,7 +31,10 @@ export default function TransferOrgModal({ open, docs = [], onClose, onDone }) {
   const suggested = useMemo(() => {
     const tally = new Map();
     for (const d of docs) {
-      const id = d?.misfiledTo?.orgId;
+      // Only a match this person can actually act on. One naming an entity they
+      // have no access to is a real answer, but not a destination — the move
+      // would be refused, and offering it here would be offering that refusal.
+      const id = d?.misfiledTo?.access ? d.misfiledTo.orgId : '';
       if (id) tally.set(id, (tally.get(id) ?? 0) + 1);
     }
     return [...tally.entries()].sort((a, b) => b[1] - a[1]);
@@ -58,7 +61,7 @@ export default function TransferOrgModal({ open, docs = [], onClose, onDone }) {
     if (!targetId) return [];
     // Nothing was suggested at all (a hand-picked move) → everything selected.
     if (!suggested.length) return docs;
-    const matching = docs.filter((d) => d?.misfiledTo?.orgId === targetId);
+    const matching = docs.filter((d) => d?.misfiledTo?.access && d.misfiledTo.orgId === targetId);
     return matching.length ? matching : docs;
   }, [docs, targetId, suggested]);
   const leftBehind = docs.length - going.length;

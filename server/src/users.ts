@@ -742,10 +742,18 @@ export function lockoutRisk(ws: string, target: User, change: AccessChange, acto
   return `${target.name || 'This colleague'} is the only Owner of the practice, so you can’t ${what} — there would be nobody left who can appoint another. Make someone else an Owner first.`;
 }
 
+// On the practice's own team — a colleague of the firm, whatever they may do
+// inside it. Distinct from canManagePractice below, which is about RUNNING the
+// practice: this is the wider "is one of us", and it is what decides the things
+// the firm's own staff may see that a client's employee may not.
+export function isPracticeTeam(u: User | null | undefined): u is User {
+  return Boolean(u && u.practice && !u.removed && !u.deactivated);
+}
+
 // Run the practice itself — the Colleagues roster and the client list. Owners
 // and Practice Admins only; a Standard colleague does client work.
 export function canManagePractice(u: User | null | undefined): boolean {
-  if (!u || u.removed || u.deactivated || !u.practice) return false;
+  if (!isPracticeTeam(u)) return false;
   const role = currentPracticeRole(u.practiceRole);
   return role === 'Owner' || role === 'Practice Admin';
 }

@@ -20,6 +20,7 @@ import SplitItemModal from '@/components/SplitItemModal';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import PublishToXeroModal from '@/components/PublishToXeroModal';
 import TransferOrgModal from '@/components/TransferOrgModal';
+import { misfiledNotice } from '@/lib/tenantMatch';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
@@ -331,7 +332,7 @@ export default function CostDetail() {
   // has somewhere else to go: this page is looking at a document that has left
   // the entity the page is scoped to, and its next autosave would be a PATCH
   // into a book the document is no longer in.
-  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(/** @type {false|'open'|'moved'} */ (false));
   const [xeroNote, setXeroNote] = useState('');
   const [teach, setTeach] = useState(null); // { field, value } after a manual correction
 
@@ -1407,16 +1408,25 @@ export default function CostDetail() {
         )}
         {/* Billed to one client, filed under another — the document said so on
             its face and nobody was in a position to notice but whoever opened
-            it. Offered only where there is somewhere to move it TO: the server
-            decides that against the entities this person may open, so a
-            colleague who works in one entity never sees this at all. */}
-        {doc.persisted && doc.misfiledTo?.orgId && (
-          <TopButton
-            onClick={() => setTransferOpen(true)}
-            title={`Billed to ${doc.billedTo || doc.misfiledTo.name}, which is ${doc.misfiledTo.name} — not the entity this document is in.`}
-          >
-            <ArrowRightLeft className="h-3.5 w-3.5" /> Move to {doc.misfiledTo.name}
+            it. A colleague who works in one entity never sees any of this,
+            because there is nothing to be wrong about.
+
+            A button where the move can be made; where it cannot — the entity is
+            one this person has no client access to — the same fact in the shape
+            that isn't a button, beside the readiness chip. Saying nothing there
+            would read as "correctly filed", which is the one thing it isn't. */}
+        {doc.persisted && misfiledNotice(doc)?.canMove && (
+          <TopButton onClick={() => setTransferOpen('open')} title={misfiledNotice(doc).title}>
+            <ArrowRightLeft className="h-3.5 w-3.5" /> Move to {misfiledNotice(doc).name}
           </TopButton>
+        )}
+        {doc.persisted && misfiledNotice(doc) && !misfiledNotice(doc).canMove && (
+          <span
+            title={misfiledNotice(doc).title}
+            className="inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2.5 text-xs text-muted-foreground"
+          >
+            <ArrowRightLeft className="h-3.5 w-3.5" /> {misfiledNotice(doc).label}
+          </span>
         )}
         <TopButton
           onClick={() => setClaimOpen(true)}

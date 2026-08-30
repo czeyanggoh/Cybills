@@ -46,6 +46,7 @@ import BulkEditModal from '@/components/BulkEditModal';
 import DocCardList from '@/components/DocCardList';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import TransferOrgModal from '@/components/TransferOrgModal';
+import { misfiledNotice } from '@/lib/tenantMatch';
 import { useCostsDocs, rowsFor, isInInbox, isComplete, needsReview, missingFields } from '@/lib/costsData';
 import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
@@ -589,19 +590,34 @@ export default function Costs() {
             </button>
           )}
           {/* Billed to one client, filed under another. A badge rather than a
-              silent field, and the badge IS the way out of it: a colleague who
-              works across several entities uploads into whichever one happens
-              to be open, and the only person who can see the mistake is the one
-              reading this row. */}
-          {d.misfiledTo?.orgId && (
+              silent field, and where the move can be made the badge IS the way
+              out of it: a colleague who works across several entities uploads
+              into whichever one happens to be open, and the only person who can
+              see the mistake is the one reading this row.
+
+              Where it CANNOT be made — the document belongs to a client entity
+              this person has no access to — it is still said, in the one shape
+              that isn't a button. Silence there reads as "correctly filed",
+              which is the one thing it isn't, and a button that has to refuse
+              is worse than no button. */}
+          {misfiledNotice(d)?.canMove ? (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setTransferDocs([d]); }}
-              title={`Billed to ${d.billedTo || d.misfiledTo.name}, which is ${d.misfiledTo.name} — not the entity this document is in. Move it there.`}
+              title={misfiledNotice(d).title}
               className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20"
             >
-              <ArrowRightLeft className="h-3 w-3" strokeWidth={2} /> Belongs to {d.misfiledTo.name}
+              <ArrowRightLeft className="h-3 w-3" strokeWidth={2} /> {misfiledNotice(d).label}
             </button>
+          ) : (
+            misfiledNotice(d) && (
+              <span
+                title={misfiledNotice(d).title}
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-muted-foreground/30 bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+              >
+                <ArrowRightLeft className="h-3 w-3" strokeWidth={2} /> {misfiledNotice(d).label}
+              </span>
+            )
           )}
         </div>
       ),
@@ -782,7 +798,10 @@ export default function Costs() {
   // Whichever tab is open: a misfiled document is misfiled in Archive too, and
   // "it's in the wrong company's book" is not something that stops mattering
   // because somebody archived it.
-  const misfiledDocs = allDocs.filter((d) => d.misfiledTo?.orgId);
+  // Only the ones this person can actually move: a document billed to a client
+  // entity they have no access to still wears its badge, but gathering it into
+  // a bulk move would be gathering work the server is bound to refuse.
+  const misfiledDocs = allDocs.filter((d) => d.misfiledTo?.access && d.misfiledTo.orgId);
 
   // Merge detection, run over the whole inbox whenever the documents change —
   // the reviewer is TOLD which uploads are really one document rather than
