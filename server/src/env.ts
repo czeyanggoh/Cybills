@@ -52,11 +52,15 @@ export const env = {
   // and PDFs against the same JSON schema, through the Responses API, so a
   // document read by either provider comes back in one shape.
   OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
-  // Defaults to GPT-5.6 Luna — the cheapest and fastest of the 5.6 tier, and
-  // reading fixed fields off an invoice is not work that wants a deeper model.
-  // Set OPENAI_EXTRACT_MODEL=gpt-5.6-terra for the balanced tier (10x Luna's
-  // rate) when documents are being misread. Whatever you pick must accept image
-  // + PDF input.
+  // The GPT-5.6 tier, as OpenAI positions the two:
+  //   gpt-5.6-luna  ($0.20/$1.20 per M) — bulk text extraction, routing,
+  //                 classification. The default: cheapest and fastest, and
+  //                 reading fixed fields off an invoice is not work that wants
+  //                 a deeper model.
+  //   gpt-5.6-terra ($2/$12 per M) — standard document summaries, invoice
+  //                 parsing. Ten times Luna's rate; worth it if documents are
+  //                 coming back misread.
+  // Whatever you pick must accept image + PDF input.
   OPENAI_EXTRACT_MODEL: process.env.OPENAI_EXTRACT_MODEL ?? 'gpt-5.6-luna',
   // How hard a reasoning model thinks before answering. Extraction is a reading
   // task, not a puzzle, so 'low' keeps it quick; raise to 'medium' if invoices
