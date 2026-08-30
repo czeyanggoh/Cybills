@@ -351,7 +351,16 @@ stated one):
   in `xero.ts`), sent only when the entity's own base currency IS the currency
   the document restated itself in. Without it Xero converts at its XE.com day
   rate, which puts a GST figure in the return that appears nowhere on the
-  invoice and that nobody can ever reconcile.
+  invoice and that nobody can ever reconcile. **The two rates point opposite
+  ways**: the document prints base per foreign (1 USD = 1.2930 SGD), Xero's
+  CurrencyRate is foreign per base (1 SGD = 0.7734 USD) and it DIVIDES by it. So
+  `exchangeRate` is stored as the paper says it — that is what the page shows
+  and what the SGD figures come from — and inverted at that one boundary. Sent
+  as printed, a USD 17.17 bill landed in a SGD ledger as 13.28: a
+  plausible-looking figure on a live bill, wrong by the square of the rate.
+  Which is why the test asserts the ARITHMETIC (divide the posted total, get the
+  stated one) and never the bare number — 1.2930 and 0.7734 are twins, and the
+  value alone will never tell you they have been swapped.
 
 The document page shows the pair the way Dext does — **Total amount (SGD)**
 editable, **Tax amount (SGD)** derived — because the three parts are one fact:

@@ -769,27 +769,37 @@ async function baseCurrencyFor(tenantId: string): Promise<string> {
 }
 
 // The exchange rate to post a foreign-currency bill at — the one the SUPPLIER
-// printed, not the one Xero would reach for.
+// printed, not the one Xero would reach for. Left unset, Xero converts at its
+// own XE.com rate for the day, which is not the rate the GST was charged at, so
+// the GST return would report a figure the invoice doesn't contain and nobody
+// could ever reconcile the two.
 //
-// Xero's CurrencyRate is base-per-foreign: a USD bill in a SGD org at 1.293
-// lands in the ledger as SGD. Left unset, Xero converts at its own XE.com rate
-// for the day, which is not the rate the GST was charged at — so the GST return
-// would report a figure the invoice doesn't contain, and no amount of checking
-// would reconcile the two. A Singapore GST-registered supplier billing in
-// foreign currency has to print its rate for exactly this reason, and that rate
-// is the only one that reproduces the SGD tax on the paper.
+// THE TWO RATES POINT OPPOSITE WAYS, and they are numerically almost twins, so
+// nothing about the value itself will tell you they have been swapped:
 //
-// Sent only when the org's base currency IS the currency the document restated
-// itself in. A USD-to-SGD rate handed to a USD-based Xero would restate the
-// whole bill by the exchange rate; where the base currency can't be read,
-// nothing is sent, because Xero's day rate is a worse answer than the paper's
-// but a rate applied the wrong way round is worse than both.
+//   the document prints  1 USD = 1.2930 SGD   (base per foreign)
+//   Xero wants           1 SGD = 0.7734 USD   (foreign per base)
+//
+// Xero's CurrencyRate is FOREIGN PER BASE: it divides the invoice amount by it
+// to reach base currency. Sent as printed, a USD 17.17 bill went into a SGD
+// ledger at "1 SGD to 1.293 USD" and came out as SGD 13.28 instead of SGD 22.20
+// — a plausible-looking figure, on a live bill, off by the square of the rate.
+// So the inversion happens HERE, at the one boundary that needs it, and
+// `exchangeRate` stays stored the way the paper says it, which is the way the
+// document page shows it and the way the SGD figures were derived.
+//
+// Sent only when the entity's base currency IS the currency the document
+// restated itself in. A USD-to-SGD rate handed to a USD-based Xero would restate
+// the whole bill; where the base currency can't be read, nothing is sent,
+// because Xero's day rate is a worse answer than the paper's but a rate applied
+// the wrong way round is worse than both.
 async function currencyRateFor(bill: Bill, tenantId: string): Promise<number> {
-  const rate = Number(bill.exchangeRate) || 0;
+  const printed = Number(bill.exchangeRate) || 0; // base per 1 foreign, as printed
   const stated = String(bill.baseCurrency ?? '').trim().toUpperCase();
   const billed = String(bill.currency ?? '').trim().toUpperCase();
-  if (!(rate > 0) || !stated || !billed || stated === billed) return 0;
-  return (await baseCurrencyFor(tenantId)) === stated ? rate : 0;
+  if (!(printed > 0) || !stated || !billed || stated === billed) return 0;
+  if ((await baseCurrencyFor(tenantId)) !== stated) return 0;
+  return 1 / printed; // foreign per 1 base, which is what Xero divides by
 }
 
 type TrackingCat = { name: string; options: Set<string> };

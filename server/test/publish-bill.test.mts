@@ -219,14 +219,20 @@ check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 
   const out = await publish(b.id);
   check('foreign bill: published', out.status, 200);
   check('foreign bill: posted in its own currency', out.posted.CurrencyCode, 'USD');
-  check('foreign bill: at the rate the document printed', out.posted.CurrencyRate, 1.293);
-  // The point of sending it: the base-currency tax Xero derives is the figure
-  // printed on the paper, to the cent.
+  // Asserted as ARITHMETIC, never as the bare number, because the two rates are
+  // numerically almost twins (1.2930 against 0.7734) and the value alone will
+  // never tell you they have been swapped. Xero DIVIDES the invoice amount by
+  // CurrencyRate to reach base currency, so that is what is checked: send the
+  // printed rate as printed and this bill lands as SGD 13.28.
+  const inBase = (n: number) => Math.round((n / out.posted.CurrencyRate) * 100) / 100;
+  check('foreign bill: the total converts to the stated SGD total', inBase(17.17), 22.2);
   check(
-    'foreign bill: converts back to the stated SGD tax',
-    Math.round(out.posted.LineItems.reduce((t: number, l: any) => t + l.TaxAmount, 0) * 1.293 * 100) / 100,
+    'foreign bill: the tax converts to the stated SGD tax',
+    inBase(out.posted.LineItems.reduce((t: number, l: any) => t + l.TaxAmount, 0)),
     1.84
   );
+  // And it is the inverse of what the document prints, not the printed figure.
+  check('foreign bill: sent foreign-per-base', Number(out.posted.CurrencyRate.toFixed(4)), 0.7734);
 }
 
 // 5b) No rate to send is not a rate of 1: an ordinary SGD bill, and a foreign
