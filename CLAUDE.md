@@ -698,7 +698,7 @@ kept on the document, so a RE-READ sees it too.
 **A receipt sent into a group is answered in that group.** The sender gets no
 receipt of their own — the message sits there looking exactly like one nobody
 picked up, so the next thing they do is send it again, or ask. So CYBills reacts
-on their own message: **✔️ grey** once it has read the document, **✅ green**
+on their own message: **☑️ grey** once it has read the document, **✅ green**
 once Xero says the bill was paid. WhatsApp keeps ONE reaction per account per
 message, so the green REPLACES the grey rather than sitting beside it — the tick
 they are already looking at changes as the document moves, and nobody has to

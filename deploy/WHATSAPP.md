@@ -217,7 +217,7 @@ are already looking — a reaction on their own message, which notifies nobody:
 
 | | when |
 |---|---|
-| ✔️ grey | filed here, and the reader got something off it |
+| ☑️ grey | filed here, and the reader got something off it |
 | ✅ green | Xero says the bill it became has been paid in full |
 
 WhatsApp keeps **one reaction per account per message**, so the green one
@@ -234,7 +234,7 @@ POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/react   (X-API-Key, same 
 {
   "submission_id": "CYB-org_red00001-a1b2c3d4",
   "wa_message_id": "false_120363...@g.us_3EB0...",
-  "emoji": "✔️"
+  "emoji": "☑️"
 }
 ```
 

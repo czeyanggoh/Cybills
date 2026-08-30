@@ -20,7 +20,7 @@ import { loadMessages, saveMessages } from './waThread.js';
 // the first rather than sitting beside it. That is the whole design: the tick
 // they can see goes from grey to green as the document moves, on the message
 // they sent, without anybody typing a word into the group.
-export const REACT_READ = '✔️'; // heavy check mark — the grey tick
+export const REACT_READ = '☑️'; // ballot box with check — the grey tick
 export const REACT_PAID = '✅'; // white heavy check mark — the green one
 
 /**
