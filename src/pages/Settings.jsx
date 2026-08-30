@@ -1109,7 +1109,7 @@ function WhatsappCollectionCard() {
       <div>
         <label htmlFor="wa-numbers" className="text-sm font-medium">WhatsApp numbers</label>
         <p className="mt-1 text-xs text-muted-foreground">
-          Full international format, digits only — <code>60123456789</code>, not <code>0123456789</code>. Several
+          Full international format, digits only — <code>6591234567</code>, not <code>91234567</code>. Several
           go on separate lines.
         </p>
         <textarea
@@ -1117,7 +1117,7 @@ function WhatsappCollectionCard() {
           rows={2}
           value={numbers}
           onChange={(e) => setNumbers(e.target.value)}
-          placeholder="60123456789"
+          placeholder="6591234567"
           className="mt-2 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>

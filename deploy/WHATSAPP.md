@@ -68,8 +68,8 @@ instead:
 
 **Business settings → Connections → WhatsApp bill collection → Set up the
 group.** Enter the numbers in full international format (digits only —
-`60123456789`, not `0123456789`; a leading zero is refused rather than guessed
-at, because no country code starts with one).
+`6591234567`, not `91234567`; a leading zero is refused rather than guessed at
+too, because no country code starts with one).
 
 This creates a **real WhatsApp group** and adds real people to it. It is the
 only thing in CYBills that can, and it happens only on that button — never on

@@ -213,7 +213,7 @@ export default function Join() {
                     className={inputCls}
                     value={mobile}
                     onChange={(e) => setMobile(e.target.value)}
-                    placeholder="60123456789"
+                    placeholder="6591234567"
                   />
                   <p className="mt-1 text-xs text-muted-foreground">{MOBILE_HINT}</p>
                 </Field>

@@ -166,7 +166,7 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           type="tel"
           value={mobile}
           onChange={(e) => { setMobile(e.target.value); setError(null); }}
-          placeholder="60123456789"
+          placeholder="6591234567"
           spellCheck={false}
           autoComplete="tel"
           className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -186,7 +186,7 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           nothing. A leading 0 is a national trunk prefix and is refused rather
           than guessed at — no country code starts with one. */}
       <p className="text-xs text-muted-foreground">
-        Country code first, digits only — <code>60123456789</code>, not <code>0123456789</code>.
+        Country code first, digits only — <code>6591234567</code>, not <code>91234567</code>.
       </p>
 
       {open ? (

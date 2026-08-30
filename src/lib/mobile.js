@@ -26,7 +26,7 @@ export function normaliseMobile(raw) {
   return bare;
 }
 
-export const MOBILE_HINT = 'Country code first, digits only — 60123456789, not 0123456789.';
+export const MOBILE_HINT = 'Country code first, digits only — 6591234567, not 91234567.';
 
 // Why a number was refused, in the words the person typing it needs. Empty when
 // it is fine — a BLANK one included: somebody added without a number simply

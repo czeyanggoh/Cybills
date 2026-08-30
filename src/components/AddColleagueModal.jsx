@@ -122,7 +122,7 @@ export default function AddColleagueModal({ open, practiceName, onClose, onAdd }
                   <input
                     value={form.mobile}
                     onChange={(e) => set('mobile', e.target.value)}
-                    placeholder="60123456789"
+                    placeholder="6591234567"
                     className={input}
                   />
                   <p className={cn('mt-1 text-xs', mobileMsg ? 'text-destructive' : 'text-muted-foreground')}>
