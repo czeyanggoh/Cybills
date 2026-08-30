@@ -12,6 +12,7 @@ import {
   DOC_CATEGORIES,
   categoryLabel,
 } from '@/lib/whatsapp';
+import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 
 // The collection groups, as conversations.
 //
@@ -42,11 +43,18 @@ export default function Whatsapp() {
 function ThreadList() {
   const navigate = useNavigate();
   const organisation = useActiveOrganisation();
-  const [{ threads, loading, error }] = useWhatsappThreads();
+  // What the page is for is the groups bills still arrive through. A collection
+  // that has been closed, superseded or deleted is kept — the conversation is
+  // the record of what was said, and closing a group does not unsay it — but it
+  // is not what somebody opening this page came to look at, so it sits behind
+  // the toggle. Same shape as the Costs tab's Unpublished / All costs.
+  const [showAll, setShowAll] = useState(false);
+  const [{ threads, collecting, total, loading, error }] = useWhatsappThreads(showAll);
   const [query, setQuery] = useState('');
 
   const q = query.trim().toLowerCase();
   const rows = q ? threads.filter((t) => `${t.subject} ${t.personName}`.toLowerCase().includes(q)) : threads;
+  const closedCount = Math.max(0, total - collecting);
 
   return (
     <AppShell>
@@ -68,6 +76,29 @@ function ThreadList() {
         Every message sent into {organisation?.name || 'this entity'}&rsquo;s collection groups, not only the documents that were picked out of them.
         Open a group to read the thread, correct anything the reader misjudged, and file it.
       </p>
+
+      {/* Only shown once there IS something behind it. A toggle offering a view
+          identical to the one you are looking at is a question with one answer. */}
+      {(closedCount > 0 || showAll) && (
+        <div className="mb-3 inline-flex rounded-md border p-0.5 text-sm">
+          {[
+            { on: false, label: 'Collecting', count: collecting },
+            { on: true, label: 'All groups', count: total },
+          ].map((tab) => (
+            <button
+              key={tab.label}
+              type="button"
+              onClick={() => setShowAll(tab.on)}
+              className={cn(
+                'rounded px-3 py-1 font-medium transition-colors',
+                showAll === tab.on ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {tab.label} <span className="tabular-nums opacity-70">{tab.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full min-w-[760px] text-sm">
@@ -92,6 +123,13 @@ function ThreadList() {
                   <span className="flex items-center gap-2">
                     <MessageCircle className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
                     {t.subject || t.submissionId}
+                    {/* Only reachable under All groups, where the whole point is
+                        telling the two apart. */}
+                    {t.status !== 'open' && (
+                      <span className="rounded-full border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground">
+                        {t.status}
+                      </span>
+                    )}
                   </span>
                 </td>
                 <td className="px-3 py-3 text-muted-foreground">
@@ -121,7 +159,9 @@ function ThreadList() {
                       ? 'Loading groups…'
                       : query
                         ? `No groups match “${query}”.`
-                        : 'No collection groups yet — open one from a person’s page, or from Business settings → Connections.'}
+                        : showAll
+                          ? 'No collection groups yet — open one from a person’s page, or from Business settings → Connections.'
+                          : 'No group is collecting — open one from a person’s page, or from Business settings → Connections.'}
                 </td>
               </tr>
             )}
@@ -177,8 +217,24 @@ function Thread({ submissionId }) {
                 ? `Collects for ${channel.personName}`
                 : 'The person this group was opened for is no longer on the roster'
             : ''}
+          {channel && channel.status !== 'open' ? ` · ${channel.status}, no longer collecting` : ''}
         </p>
       </div>
+
+      {/* Ending it, from the page where somebody is actually looking at the
+          group and can see what is in it. The list is where the clutter is
+          noticed; this is where there is enough on screen to decide. Closing it
+          takes it out of the default list, and the conversation stays readable
+          under All groups. */}
+      {channel && (
+        <div className="mb-3">
+          <CloseWhatsappGroup
+            channel={channel}
+            canManage={canManage}
+            onClosed={() => navigate('/whatsapp')}
+          />
+        </div>
+      )}
 
       {note && (
         <p className="mb-3 flex items-start gap-1.5 rounded-md border bg-muted/40 px-3 py-2 text-sm">

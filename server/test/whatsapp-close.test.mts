@@ -151,6 +151,37 @@ check('nothing is asked of CYWS for a closed one', closeCalls.length, before);
 r = await post('channels/CYB-nope-0000/close', {}, ORG);
 check('an id nobody holds is a 404', r.status, 404);
 
+// --- And it leaves the list ---------------------------------------------------
+// The point of closing one is that it stops being in the way. A collection that
+// has stopped collecting is not what the WhatsApp tab is for — but it is not
+// thrown away either, because the conversation is the record of what was said
+// and closing a group does not unsay it.
+const list = async (all = false) => {
+  const res = await fetch(`http://127.0.0.1:4627/api/whatsapp/threads${all ? '?all=1' : ''}`, { headers: ORG });
+  return (await res.json()) as any;
+};
+
+let seen = await list();
+check('the default list is the collecting ones', seen.threads.length, seen.collecting);
+
+const live = await openGroup();
+seen = await list();
+check('a new group is in the list', seen.threads.some((t: any) => t.submissionId === live), true);
+
+await post(`channels/${live}/close`, {}, ORG);
+seen = await list();
+check('once closed it is gone from the default list', seen.threads.some((t: any) => t.submissionId === live), false);
+
+seen = await list(true);
+check('but All groups still has it', seen.threads.some((t: any) => t.submissionId === live), true);
+check('wearing the state it is in', seen.threads.find((t: any) => t.submissionId === live)?.status, 'disconnected');
+check('and the two counts differ by exactly what is hidden', seen.total - seen.collecting > 0, true);
+
+// The conversation itself is always reachable by id — a link in somebody's
+// notes, or the row under All groups.
+const one = await fetch(`http://127.0.0.1:4627/api/whatsapp/threads/${live}`, { headers: ORG });
+check('the thread still opens', one.status, 200);
+
 server.close();
 globalThis.fetch = realFetch;
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

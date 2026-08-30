@@ -205,19 +205,32 @@ async function json(url, init) {
   return body;
 }
 
-/** Every collection group of the current entity, with what has arrived in it. */
-export function useWhatsappThreads() {
-  const [state, setState] = useState({ threads: [], canManage: false, loading: true, error: '' });
+/** Every collection group of the current entity, with what has arrived in it.
+ *
+ * `all` brings back the ones that have stopped collecting — closed, superseded,
+ * deleted. They are not thrown away, because the conversation is the record of
+ * what was said and closing a group does not unsay it; they are just not what
+ * the page is for. Both counts come back either way, so the toggle can say how
+ * much it is hiding. */
+export function useWhatsappThreads(all = false) {
+  const [state, setState] = useState({ threads: [], collecting: 0, total: 0, canManage: false, loading: true, error: '' });
 
   const reload = useCallback(async () => {
     setState((s) => ({ ...s, loading: true }));
     try {
-      const data = await json('/api/whatsapp/threads', { headers: orgHeaders() });
-      setState({ threads: data.threads ?? [], canManage: Boolean(data.canManage), loading: false, error: '' });
+      const data = await json(`/api/whatsapp/threads${all ? '?all=1' : ''}`, { headers: orgHeaders() });
+      setState({
+        threads: data.threads ?? [],
+        collecting: Number(data.collecting ?? 0),
+        total: Number(data.total ?? 0),
+        canManage: Boolean(data.canManage),
+        loading: false,
+        error: '',
+      });
     } catch (err) {
-      setState({ threads: [], canManage: false, loading: false, error: err.message });
+      setState({ threads: [], collecting: 0, total: 0, canManage: false, loading: false, error: err.message });
     }
-  }, []);
+  }, [all]);
 
   useEffect(() => { reload(); }, [reload]);
   return [state, reload];

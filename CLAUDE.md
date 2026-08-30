@@ -666,6 +666,17 @@ against a chat CYWS already has, and CYWS stamps it on that chat. `/directory`
 carries a `people` list so CYWS can offer the roster. Contract:
 `deploy/WHATSAPP.md`.
 
+**A closed group leaves the tab, and the conversation does not.** The WhatsApp
+tab is for the groups bills still arrive through, so `GET /api/whatsapp/threads`
+now drops a collection that is `replaced`, `disconnected` or `deleted` — with
+`?all=1` and a **Collecting / All groups** toggle carrying both counts, the same
+shape the Costs tab's Unpublished / All costs has. Nothing is thrown away: the
+conversation is the record of what was said and closing a group does not unsay
+it, so the rows are still there under All groups wearing their state, and a
+thread always opens by id. The close control is on the thread page too — the
+list is where clutter is noticed, but the group's own page is where there is
+enough on screen to decide.
+
 **A retired collection is listed, never offered.** `/directory` hands CYWS every
 channel CYBills has ever recorded, because a collection filing to nobody is
 exactly what an operator needs to see — but a chat pointed at one fails

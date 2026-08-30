@@ -1580,8 +1580,20 @@ whatsappRouter.get('/threads', (req, res) => {
   if (googleEnabled && (!me || !canAccessOrg(me, orgId))) return res.status(403).json({ error: 'no_client_access' });
 
   const all = loadMessages().filter((m) => m.workspaceId === ws && m.orgId === orgId);
-  const threads = channelsForOrg(ws, orgId)
-    .filter((c) => c.status !== 'replaced')
+  const forOrg = channelsForOrg(ws, orgId);
+  // What the page is FOR is the groups bills are still arriving through, so a
+  // collection that has been closed, superseded or deleted drops out of the
+  // default list. It is not thrown away — `?all=1` brings them back, and the
+  // thread itself always opens by id — because the conversation is the record
+  // of what was said and closing a group does not unsay it.
+  //
+  // Same shape as the Costs tab's Unpublished / All costs: one list, a toggle
+  // saying how much of it to look at, and a count on each so neither is a
+  // guess.
+  const collecting = (c: WaChannel) => c.status !== 'replaced' && !isClosed(c);
+  const showAll = String(req.query.all ?? '') === '1';
+  const threads = forOrg
+    .filter((c) => showAll || collecting(c))
     .map((c) => {
       const mine = all.filter((m) => m.submissionId === c.id);
       const last = mine.reduce<WaMirroredMessage | null>((acc, m) => (!acc || String(m.sentAt) > String(acc.sentAt) ? m : acc), null);
@@ -1603,7 +1615,17 @@ whatsappRouter.get('/threads', (req, res) => {
     })
     .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
 
-  res.json({ threads, canManage: mayManage(req, orgId) });
+  // Both counts, always, so the toggle can say how much it is hiding without a
+  // second request — and so "All groups" never looks like it would show the
+  // same thing.
+  const collectingCount = forOrg.filter(collecting).length;
+  res.json({
+    threads,
+    collecting: collectingCount,
+    total: forOrg.length,
+    showingAll: showAll,
+    canManage: mayManage(req, orgId),
+  });
 });
 
 // GET /api/whatsapp/threads/:submissionId — one conversation, oldest first.
@@ -1620,6 +1642,10 @@ whatsappRouter.get('/threads/:submissionId', (req, res) => {
       subject: channel.subject,
       chatId: channel.chatId,
       status: channel.status,
+      // Whether CYBot opened this group or merely joined a conversation the
+      // client already had. The close control asks, because emptying somebody
+      // else's group is not the same act as ending one of ours.
+      adopted: Boolean(channel.adopted),
       personName: person ? person.user.name || person.user.email || '' : '',
       entityWide: !channel.userId,
     },
