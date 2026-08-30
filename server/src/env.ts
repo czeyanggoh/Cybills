@@ -52,13 +52,18 @@ export const env = {
   // and PDFs against the same JSON schema, through the Responses API, so a
   // document read by either provider comes back in one shape.
   OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
-  // Defaults to gpt-5 — cheaper per token than the Claude default and strong on
-  // messy scans. Set OPENAI_EXTRACT_MODEL=gpt-5-mini to trade some accuracy for
-  // cost/speed. Whatever you pick must accept image + PDF input.
-  OPENAI_EXTRACT_MODEL: process.env.OPENAI_EXTRACT_MODEL ?? 'gpt-5',
+  // Defaults to GPT-5.6 Luna — the cheapest and fastest of the 5.6 tier, and
+  // reading fixed fields off an invoice is not work that wants a deeper model.
+  // Set OPENAI_EXTRACT_MODEL=gpt-5.6-terra for the balanced tier (10x Luna's
+  // rate) when documents are being misread. Whatever you pick must accept image
+  // + PDF input.
+  OPENAI_EXTRACT_MODEL: process.env.OPENAI_EXTRACT_MODEL ?? 'gpt-5.6-luna',
   // How hard a reasoning model thinks before answering. Extraction is a reading
   // task, not a puzzle, so 'low' keeps it quick; raise to 'medium' if invoices
   // with awkward layouts are being misread. Ignored by non-reasoning models.
+  // The accepted values differ by family — GPT-5.6 takes none/low/medium/high/
+  // xhigh/max, GPT-5 takes minimal/low/medium/high — and the model rejects one
+  // it doesn't know, so keep this to a value your chosen model accepts.
   OPENAI_REASONING_EFFORT: process.env.OPENAI_REASONING_EFFORT ?? 'low',
   // Optional: point at an OpenAI-compatible gateway (Azure OpenAI's v1 surface,
   // a proxy, a self-hosted endpoint). Blank = api.openai.com.

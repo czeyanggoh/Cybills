@@ -124,7 +124,8 @@ parts sum to the whole exactly). Rows printed gross have it taken back out
 instead, and a document that breaks tax down per row is left as printed.
 
 Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
-`claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5`),
+`claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5.6-luna`;
+`gpt-5.6-terra` is the deeper, 10x dearer tier),
 `OPENAI_REASONING_EFFORT` (default `low`), optional `OPENAI_BASE_URL` for an
 OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default
 (default `openai`). Either key alone switches extraction on; both means the

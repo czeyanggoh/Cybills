@@ -117,10 +117,18 @@ function strictify(node: unknown): unknown {
 }
 
 // Reasoning models take a `reasoning` block and would reject it otherwise, so
-// it's sent only to the families that have one.
+// it's sent only to the families that have one. The GPT-5.6 ids (gpt-5.6-luna,
+// -terra, -sol) match this too, which is what they want.
 const isReasoningModel = (model: string) => /^(gpt-5|o\d)/i.test(model.trim());
 
-const REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high']);
+// The union across the families we can be pointed at: GPT-5.6 takes
+// none/low/medium/high/xhigh/max, GPT-5 and the o-series take
+// minimal/low/medium/high. This gate only stops a typo reaching the API — the
+// model itself rejects an effort its own family doesn't have, which is a
+// clearer error than silently dropping the setting.
+const REASONING_EFFORTS = new Set([
+  'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
+]);
 
 async function readWithClaude(req: ReadRequest): Promise<ReadOutcome> {
   const model = env.ANTHROPIC_EXTRACT_MODEL;
@@ -207,7 +215,7 @@ async function readWithOpenAI(req: ReadRequest): Promise<ReadOutcome> {
     // `incomplete` with nothing parseable in it.
     max_output_tokens: isReasoningModel(model) ? req.maxTokens * 4 : req.maxTokens,
     ...(isReasoningModel(model) && REASONING_EFFORTS.has(effort)
-      ? { reasoning: { effort: effort as 'minimal' | 'low' | 'medium' | 'high' } }
+      ? { reasoning: { effort: effort as 'minimal' | 'low' | 'medium' | 'high' | 'none' | 'xhigh' | 'max' } }
       : {}),
     // The stable per-org block goes in `instructions`, which sits ahead of the
     // input — so OpenAI's automatic prefix caching covers it, the same tokens

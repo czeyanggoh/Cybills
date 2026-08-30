@@ -48,6 +48,14 @@ const LIST_PRICES: Record<string, { input: number; output: number }> = {
   'claude-sonnet-5': { input: 3, output: 15 },
   'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-haiku-4-5': { input: 1, output: 5 },
+  // GPT-5.6. These MUST stay listed explicitly: rateFor falls back to the
+  // longest matching prefix, and 'gpt-5' is a prefix of every 5.6 id — so
+  // without a row of its own, Luna would bill at gpt-5's $1.25/$10 instead of
+  // its own $0.20/$1.20.
+  'gpt-5.6': { input: 4, output: 20 }, // the bare alias routes to Sol
+  'gpt-5.6-sol': { input: 4, output: 20 },
+  'gpt-5.6-terra': { input: 2, output: 12 },
+  'gpt-5.6-luna': { input: 0.2, output: 1.2 },
   'gpt-5': { input: 1.25, output: 10 },
   'gpt-5-mini': { input: 0.25, output: 2 },
   'gpt-5-nano': { input: 0.05, output: 0.4 },
