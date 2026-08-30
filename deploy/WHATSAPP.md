@@ -208,6 +208,65 @@ group for the entity, its unfiled-attachment count, and the thread. Reading it
 needs access to the entity; correcting a category or filing a document needs
 Business Admin.
 
+## The tick on the message
+
+A person who photographs a receipt into a group gets no receipt of their own.
+The message sits there looking exactly like one that was never picked up, so the
+next thing they do is send it again, or ask. CYBills answers in the place they
+are already looking — a reaction on their own message, which notifies nobody:
+
+| | when |
+|---|---|
+| ✔️ grey | filed here, and the reader got something off it |
+| ✅ green | Xero says the bill it became has been paid in full |
+
+WhatsApp keeps **one reaction per account per message**, so the green one
+REPLACES the grey rather than sitting beside it. That is the design, not a
+limitation: the tick they are already looking at changes as the document moves.
+
+CYBills does not hold the WhatsApp session, so it asks CYWS:
+
+```
+POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/react   (X-API-Key, same key)
+```
+
+```json
+{
+  "submission_id": "CYB-org_red00001-a1b2c3d4",
+  "wa_message_id": "false_120363...@g.us_3EB0...",
+  "emoji": "✔️"
+}
+```
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{data: {chat_id, wa_message_id, emoji}}` | On the message. Sending the same emoji again leaves it as it was. |
+| 400 | `{error: "submission_id_required" \| "wa_message_id_required"}` | |
+| 401 | `{error: "invalid_api_key"}` | |
+| 404 | `{error: "unknown_submission"}` | No group at CYWS under that id. |
+| 502 | `{error: "react_failed"}` | WhatsApp refused. CYBills records nothing, so the next thing to happen to the document tries again. |
+| 503 | `{error: "react_not_supported"}` | The CYBot number's provider cannot send reactions. |
+
+- **Named by submission id, not chat id.** The shared key opens every chat on
+  that number, so CYWS resolves the group from its own record — a bug in CYBills
+  cannot then react in a conversation that has nothing to do with it.
+- **Which tick is decided from the DOCUMENT**, never from which caller asked
+  (`reactionFor` in `server/src/waReactions.ts`). Xero's "paid" reaches CYBills
+  by three routes — the invoice webhook, the payments sweep, and the reply to an
+  Update in Xero — and between them they produce exactly one reaction. A re-read
+  pressed AFTER the bill was paid cannot knock green back to grey, which would
+  tell the sender their paid bill had come undone.
+- **A read that got nothing is left bare on purpose.** No supplier and no total
+  means the file was unreadable — a dark photo, a scan the reader could not see.
+  Ticking it would say the receipt is in hand when what it needs is to be sent
+  again.
+- **Best-effort throughout.** Filing a bill is never held up by a reaction, and
+  an older CYWS with no such route just answers 404 into the log. Only what
+  actually reached WhatsApp is recorded (`whatsappReaction` on the document), so
+  a refusal retries rather than leaving the message bare for good.
+- Nothing is ever CLEARED. Taking a tick off says something happened to the
+  document, and nothing here ever means that.
+
 ## Saying whose books a group feeds
 
 CYWS files everything under a submission id and holds nothing else, so its own

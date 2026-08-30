@@ -695,6 +695,37 @@ told which road it came in on (`emailInstruction`'s `via`), and it beats a
 standing supplier rule for the fields it decides — never for the money. It is
 kept on the document, so a RE-READ sees it too.
 
+**A receipt sent into a group is answered in that group.** The sender gets no
+receipt of their own — the message sits there looking exactly like one nobody
+picked up, so the next thing they do is send it again, or ask. So CYBills reacts
+on their own message: **✔️ grey** once it has read the document, **✅ green**
+once Xero says the bill was paid. WhatsApp keeps ONE reaction per account per
+message, so the green REPLACES the grey rather than sitting beside it — the tick
+they are already looking at changes as the document moves, and nobody has to
+type into a client's chat. CYBills holds no WhatsApp session, so it asks CYWS
+(`POST /api/webhooks/cybills/react`), naming the message by SUBMISSION ID rather
+than chat id: the shared key opens every chat on that number, and the group is
+resolved at CYWS's end from its own record.
+
+Which tick is decided from the DOCUMENT — `reactionFor` in `waReactions.ts` —
+never from which caller reached it, and that is the whole safety of it. Xero's
+"paid" arrives by three routes (the invoice webhook, the payments sweep, the
+reply to an Update in Xero) and between them they produce exactly one reaction;
+a re-read pressed AFTER the bill was paid cannot knock green back to grey, which
+would tell the sender their paid bill had come undone. A read that came back
+with neither a supplier nor a total is left BARE deliberately — the file was
+unreadable, and ticking it would say the receipt is in hand when what it needs
+is to be sent again. `whatsappReaction` on the document records only what
+actually reached WhatsApp, so a refusal retries on the next thing to happen to
+it; nothing is ever cleared, because taking a tick off says something happened
+to the document and nothing here ever means that. Sending is best-effort
+throughout: filing is never held up by it, and an older CYWS answers 404 into
+the log. Covered by `npm test` in `server/` (`test/whatsapp-reaction.test.mts`).
+The mirror's storage lives in `waThread.ts` and the reaction in
+`waReactions.ts`, both leaves — kept in `whatsapp.ts` the reaction had to reach
+back into the router module, and through it into the Xero routes that trigger
+one.
+
 **The Connections card lists EVERY group the entity collects through**, its
 people's own included. Showing only the entity-wide one had it report "0 bills"
 beside a group nobody was using, while the group three bills had just arrived
