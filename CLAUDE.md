@@ -737,7 +737,10 @@ species of act as taking it apart — nor a closed one. Best-effort like the
 reaction: nobody waits on it, and the row records only what WhatsApp actually
 took, so a refusal is retried by the next address change rather than leaving the
 two silently disagreeing. Nothing about filing rides on it — a channel names its
-`userId`, never its subject. The channel rows moved to `waChannels.ts` to make
+`userId`, never its subject. A group opened BEFORE any of this is repaired on the
+next read of the channels listing, the way document owners and stale claim
+names are: the Edit dialog only sends a handle that CHANGED, so re-saving the
+right one would ask for nothing at all. The channel rows moved to `waChannels.ts` to make
 that possible, a leaf like `waThread.ts`, so the rename reads them without
 importing the router that imports `users.ts`. Covered by `npm test` in `server/`
 (`test/whatsapp-rename.test.mts`).

@@ -32,6 +32,7 @@ import {
   channelById,
   patchChannel,
 } from './waChannels.js';
+import { renameChannelsForUser } from './waRename.js';
 
 // Bill collection over WhatsApp, in partnership with CYWorkspace (CYWS).
 //
@@ -646,6 +647,10 @@ function mayManagePerson(req: Request, target: User, orgId: string): boolean {
 // rule and renamed under another would be worse than not renaming it at all.
 const subjectFor = groupSubjectFor;
 
+// The entity's name, for the fallback in `subjectFor` — a person with no
+// address yet, whose group is called after them instead.
+const orgNameFor = (ws: string, orgId: string) => getOrganisation(ws, orgId)?.name || orgId;
+
 // GET /api/whatsapp/channels — the collection groups this entity has, or (with
 // ?userId=) the one opened for a single person.
 //
@@ -653,6 +658,15 @@ const subjectFor = groupSubjectFor;
 // colleague's group is filed under the practice's own organisation while the
 // browser is usually sitting in some client entity, and their own page must
 // still find it.
+//
+// The listing also REPAIRS a group whose name has fallen behind the address it
+// collects for. The rename normally rides on the change that moved the address,
+// but every group opened before that existed is already wearing an old name,
+// and nothing about editing a person again would ever mention it — the dialog
+// only sends a handle that CHANGED, so re-saving the right one asks for
+// nothing. The same repair-on-next-read the document owners and the stale claim
+// names get. It costs nothing when the two already agree, which after the first
+// pass is every time.
 whatsappRouter.get('/channels', (req, res) => {
   const ws = workspaceId(req);
   const userId = String(req.query.userId ?? '').trim();
@@ -660,6 +674,7 @@ whatsappRouter.get('/channels', (req, res) => {
     const person = personFor(ws, userId);
     if (!person) return res.status(404).json({ error: 'unknown_user' });
     if (!mayManagePerson(req, person.user, person.orgId)) return res.status(403).json({ error: 'not_an_admin' });
+    void renameChannelsForUser(ws, userId, subjectFor(person.user, orgNameFor(ws, person.orgId)));
     return res.json({
       channels: loadChannels().filter((c) => c.workspaceId === ws && c.userId === userId).map(publicChannel),
       enabled: whatsappEnabled,
@@ -675,9 +690,13 @@ whatsappRouter.get('/channels', (req, res) => {
   // just arrived through — was not on the page at all. A replaced group is left
   // out: it is superseded, and its successor is right there.
   const people = ensureUsers(ws);
+  const mine = channelsForOrg(ws, orgId).filter((c) => c.status !== 'replaced');
+  for (const id of new Set(mine.map((c) => c.userId).filter(Boolean))) {
+    const person = people.find((u: User) => u.id === id);
+    if (person) void renameChannelsForUser(ws, id, subjectFor(person, orgNameFor(ws, orgId)));
+  }
   res.json({
-    channels: channelsForOrg(ws, orgId)
-      .filter((c) => c.status !== 'replaced')
+    channels: mine
       .map((c) => ({
         ...publicChannel(c),
         personName: c.userId ? people.find((u: User) => u.id === c.userId)?.name ?? '' : '',

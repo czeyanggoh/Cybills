@@ -110,11 +110,11 @@ const check = (name: string, got: unknown, want: unknown) => {
   console.log(`${ok ? 'PASS' : `FAIL got=${JSON.stringify(got)} want=${JSON.stringify(want)}`}  ${name}`);
 };
 
-const call = async (method: string, path: string, body: unknown, headers: Record<string, string> = {}) => {
+const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
   const res = await fetch(`http://127.0.0.1:4631${path}`, {
     method,
     headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return { status: res.status, body: (await res.json()) as any };
 };
@@ -176,6 +176,27 @@ renameReply = { status: 200, body: { data: {} } };
 await call('PATCH', `/api/users/${cze.id}`, { emailHandle: 'czeyang' });
 await settle();
 check('and the next change asks again', channelById(czeGroup)?.subject, 'czeyang.cybm@cybills.sg');
+
+// --- A name that fell behind before any of this existed ----------------------
+// Every group opened before the rename existed is already wearing an old name,
+// and nothing about editing that person again would mention it: the dialog only
+// sends a handle that CHANGED, so re-saving the right one asks for nothing. So
+// the listing repairs it, the way document owners and stale claim names are.
+{
+  const items = (await import('../src/waChannels.ts')).loadChannels();
+  const row = items.find((c) => c.id === czeGroup)!;
+  row.subject = 'czeyanggoh.cybm@cybills.sg'; // as it stood before the feature
+  (await import('../src/waChannels.ts')).saveChannels(items);
+}
+await call('GET', `/api/whatsapp/channels?userId=${cze.id}`, undefined, { 'X-Org-Id': 'org_cybm001' });
+await settle();
+check('reading the card repairs a name left behind', channelById(czeGroup)?.subject, 'czeyang.cybm@cybills.sg');
+
+// And costs nothing once they agree, which after the first pass is every time.
+before = renames.length;
+await call('GET', `/api/whatsapp/channels?userId=${cze.id}`, undefined, { 'X-Org-Id': 'org_cybm001' });
+await settle();
+check('and asks nothing when they already agree', renames.length, before);
 
 // --- A conversation that was never ours --------------------------------------
 // An ADOPTED group is the client's own, merely pointed at CYBills. Renaming it
