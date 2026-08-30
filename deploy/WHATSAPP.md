@@ -385,9 +385,11 @@ So one person can legitimately have several rows, and only one of them live.
 one fails silently — the documents post to an id nothing reads, and CYBills' own
 WhatsApp tab hides those channels, so they never appear. That is
 indistinguishable from nothing arriving at all. `set_chat_cybills_submission`
-refuses one with `submission_not_collecting`; the picker shows a retired row
-only when it is the chat's current (wrong) assignment, so it can be seen and
-changed rather than showing as blank.
+refuses one with `submission_not_collecting`, and the picker leaves retired rows
+out altogether — including the one a chat is currently assigned to. The notice
+above the select already names that collection and says it has stopped
+collecting, so keeping the row only put a dead option in a list of destinations
+looking exactly as pickable as the live ones.
 
 Names differ between rows for the same person because only a live, non-adopted
 group is renamed when an address changes — a retired one stays frozen at

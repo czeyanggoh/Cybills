@@ -679,8 +679,10 @@ history), so one person legitimately shows several — which is how three
 **`assignable`** (`status === 'open'`), said by CYBills rather than derived at
 the far end, because what a status MEANS is CYBills' to know;
 `set_chat_cybills_submission` refuses a dead one (`submission_not_collecting`)
-and the picker shows one only when it is the chat's current wrong assignment, so
-it can be seen and changed rather than showing blank. Names differ between a
+and the picker leaves them out altogether, the chat's own assignment included —
+the notice above the select already names that collection and says it has
+stopped collecting, so keeping the row only put a dead option in a list of
+destinations looking as pickable as the live ones. Names differ between a
 person's rows because only a live, non-adopted group is renamed when their
 address moves — `czeyanggoh@cybills.sg` and `czeyanggoh.cybm@cybills.sg` are the
 same person before and after the entity got its short form.
