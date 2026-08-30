@@ -146,6 +146,13 @@ export type Bill = {
   xeroStatus?: string; // Xero's own Status: PAID | AUTHORISED | VOIDED | …
   xeroPaidDate?: string; // FullyPaidOnDate, ISO YYYY-MM-DD; only ever set on PAID
   xeroPaymentRef?: string; // the payment's own Reference in Xero, joined if several
+  // The emoji CYBills last put on the WhatsApp message this document arrived
+  // in — '' when none has been sent. Not a person's field and not WhatsApp's
+  // answer either: it is what WE last said, kept so the same tick is not sent
+  // again on every read, every webhook burst and every payments sync. WhatsApp
+  // allows one reaction per account per message, so a later one REPLACES the
+  // earlier — which is exactly the progression wanted (received, then paid).
+  whatsappReaction?: string;
 };
 
 // What the caller knows about an incoming upload before it is stored.
@@ -836,6 +843,23 @@ export function markBillXeroPayment(
   bill.xeroStatus = info.xeroStatus;
   bill.xeroPaidDate = info.xeroPaidDate;
   bill.xeroPaymentRef = info.xeroPaymentRef;
+  persist(bills);
+  return true;
+}
+
+// Remember which emoji we last put on this document's WhatsApp message.
+//
+// Its own writer for the same reason markBillXeroPayment is: EDITABLE is the
+// surface a PERSON may change, and this is not that — it is a record of what
+// CYBills said out loud in somebody's WhatsApp group. Writing only on a real
+// change is what keeps a webhook burst, a payments sweep and a re-read from
+// each re-sending a tick that is already sitting on the message.
+export function markBillWhatsappReaction(orgId: string, id: string, emoji: string): boolean {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return false;
+  if ((bill.whatsappReaction ?? '') === emoji) return false;
+  bill.whatsappReaction = emoji;
   persist(bills);
   return true;
 }

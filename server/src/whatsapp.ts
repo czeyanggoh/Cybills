@@ -22,6 +22,8 @@ import { getBill, putBill, putBillFile } from './storage.js';
 import { readSetting } from './settings.js';
 import { resolveProvider } from './llm.js';
 import { autoRead } from './inbound.js';
+import { type WaMirroredMessage, loadMessages, saveMessages, messagesForChannel } from './waThread.js';
+import { syncWhatsappReaction } from './waReactions.js';
 
 // Bill collection over WhatsApp, in partnership with CYWorkspace (CYWS).
 //
@@ -1111,60 +1113,12 @@ whatsappRouter.post('/test', async (req, res) => {
 // the record of what was said; filing is an accounting act performed on one of
 // them, and `billId` below is the link once somebody does it.
 
-export type WaMirroredMessage = {
-  /** CYWS's wa_message_id — WhatsApp's own id, and the upsert key. */
-  id: string;
-  submissionId: string;
-  workspaceId: string;
-  orgId: string;
-  chatId: string;
-  direction: string;
-  sender: string;
-  senderName: string;
-  body: string;
-  translation: string;
-  msgType: string;
-  r2Key: string;
-  fileUrl: string;
-  fileName: string;
-  contentType: string;
-  /** What the document is. CYWS's classifier proposes; a reviewer here decides. */
-  docCategory: string;
-  /** 'cyws' — the classifier's guess; 'manual' — corrected here, and then never
-   * overwritten by a later CYWS re-send. The correction is the whole point. */
-  categorySource: string;
-  /** How sure the classifier was: 'low' | 'medium' | 'high'. Shown beside the
-   * category so a shaky guess doesn't read as a settled fact. */
-  categoryConfidence: string;
-  replyToBody: string;
-  reaction: string;
-  sentAt: string;
-  receivedAt: string;
-  /** Set once this message has been filed as a cost document. */
-  billId: string;
-  billDisplayId: string;
-};
-
-// NOT 'whatsapp-messages' — that name belongs to the delivery dedup ledger
-// (SEEN, above), and sharing it would have the two overwrite each other's file.
-const MIRRORED = 'whatsapp-thread';
-
 // What the reader can call an attachment that makes it a COST. Both are records
 // of money spent — an invoice that bills the business, and proof a purchase was
 // already paid — so both are filed on arrival. Everything else it can say (a
 // bank statement, a sales invoice, a photo of a cat) is kept in the thread and
 // filed by nobody unless a person says otherwise.
 const FILEABLE = new Set(['supplier_bill', 'receipt']);
-const loadMessages = () => loadCollection<WaMirroredMessage>(MIRRORED);
-const saveMessages = (items: WaMirroredMessage[]) => saveCollection(MIRRORED, items);
-
-/** Every mirrored message for one group, oldest first — a thread reads forwards. */
-export function messagesForChannel(submissionId: string): WaMirroredMessage[] {
-  return loadMessages()
-    .filter((m) => m.submissionId === submissionId)
-    .sort((a, b) => String(a.sentAt).localeCompare(String(b.sentAt)));
-}
-
 /**
  * Files one WhatsApp document as a cost document, and starts the read.
  *
@@ -1244,11 +1198,18 @@ async function fileWhatsappDocument(
   const finishRead = () => {
     const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', orgId);
     const provider = resolveProvider(settings?.readerProvider);
+    // The tick goes on when the READ settles, not when the file lands: a
+    // document nothing could be got off gets no tick, and that silence is the
+    // signal to send a clearer photo. autoRead swallows its own failures, so
+    // this runs either way and `reactionFor` decides from what the read left
+    // behind.
     void autoRead(req, scope, orgId, provider, bill.id, file.bytes.toString('base64'), file.contentType, {
       via: 'whatsapp',
       from: message.senderName || mobileOf(message.from),
       text: message.text,
-    });
+    })
+      .then(() => syncWhatsappReaction(scope, bill.id))
+      .catch((err) => console.error('[whatsapp] read/react failed', err));
   };
 
   return { ok: true, bill, orgId, finishRead };

@@ -8,6 +8,7 @@ import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, list
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, markClaimXeroPayment, publishedClaims, saveClaimXero } from './claims.js';
 import { appOrigin, memberForSession } from './users.js';
+import { syncWhatsappReaction } from './waReactions.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -1290,7 +1291,11 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
       }
       if (!payment.xeroStatus) continue;
       if (payment.xeroStatus === 'PAID') paid += 1;
-      if (markBillXeroPayment(bill.orgId, bill.id, payment)) updated += 1;
+      if (markBillXeroPayment(bill.orgId, bill.id, payment)) {
+        updated += 1;
+        // Same answer the webhook gives, for the bills it never heard about.
+        void syncWhatsappReaction(bill.orgId, bill.id);
+      }
     }
   }
 
@@ -1421,7 +1426,9 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
   // The answer names the bill's state as it now stands, so the document's own
   // Xero fields are refreshed from it rather than left to the next webhook.
   const payment = paymentFromInvoice(invoice);
-  if (payment.xeroStatus) markBillXeroPayment(bill.orgId, bill.id, payment);
+  if (payment.xeroStatus && markBillXeroPayment(bill.orgId, bill.id, payment)) {
+    void syncWhatsappReaction(bill.orgId, bill.id);
+  }
 
   res.json({
     ok: true,

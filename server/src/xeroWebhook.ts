@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from './env.js';
 import { fetchXeroInvoice, paymentFromInvoice } from './xero.js';
 import { billsByXeroInvoiceId, markBillXeroPayment } from './store.js';
+import { syncWhatsappReaction } from './waReactions.js';
 import { claimsByXeroInvoiceId, markClaimXeroPayment } from './claims.js';
 
 // Xero webhooks, inbound. The other direction from xero.ts: this is Xero
@@ -123,7 +124,13 @@ export async function applyInvoiceEvents(
     if (!payment.xeroStatus) continue;
 
     for (const bill of bills) {
-      if (markBillXeroPayment(bill.orgId, bill.id, payment)) changed += 1;
+      if (!markBillXeroPayment(bill.orgId, bill.id, payment)) continue;
+      changed += 1;
+      // A bill that came in over WhatsApp answers back into the group it came
+      // from — the grey tick the sender has been looking at turns green. Only
+      // on a real change, so the burst of events one bill draws (approve,
+      // attach, pay) does not send the same reaction three times.
+      void syncWhatsappReaction(bill.orgId, bill.id);
     }
     for (const claim of claims) {
       if (markClaimXeroPayment(claim.id, payment)) changed += 1;

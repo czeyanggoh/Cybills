@@ -29,6 +29,7 @@ import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
 import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from './taxRules.js';
 import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
+import { syncWhatsappReaction } from './waReactions.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -562,6 +563,12 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   if (['supplier', 'invoiceNumber', 'total', 'date'].some((k) => k in patch)) {
     updated = flagDuplicate(orgId, req.params.id) || updated;
   }
+  // A document that arrived over WhatsApp answers back into the group it came
+  // from, and an edit is one of the two ways it earns its tick: a re-read that
+  // finally got a supplier off a dark photo, or somebody simply typing it in.
+  // (The other is the read itself, on arrival.) Cheap and silent when there is
+  // nothing to say, which is every document that did not come in that way.
+  void syncWhatsappReaction(orgId, req.params.id);
   res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
 });
 
