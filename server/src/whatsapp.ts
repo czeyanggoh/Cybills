@@ -604,7 +604,8 @@ whatsappRouter.get('/directory', (req, res) => {
   if (!keyMatches(req.header('X-API-Key') || '')) {
     return res.status(401).json({ error: 'invalid_api_key' });
   }
-  const channels = loadChannels().map((c) => {
+  const all = loadChannels();
+  const channels = all.map((c) => {
     const person = c.userId ? personFor(c.workspaceId, c.userId) : null;
     const org = getOrganisation(c.workspaceId, c.orgId);
     return {
@@ -630,7 +631,34 @@ whatsappRouter.get('/directory', (req, res) => {
       last_message_at: c.lastMessageAt,
     };
   });
-  res.json({ channels });
+  // Who a group COULD be pointed at, alongside who one already feeds. The
+  // operator on the CYWS side is looking at a group that already exists and
+  // asking "whose is this?" — a question a list of channels can only answer
+  // for the people who already have one, which is exactly the people who need
+  // nothing. Same rule as above about numbers: names and entities, never a
+  // mobile.
+  //
+  // The GENERAL account is left out. It is the entity's unclaimed-documents
+  // bucket rather than a person, so there is nobody at the far end of a group
+  // opened for it.
+  const ws = workspaceId(req);
+  const connected = new Set(all.filter((c) => c.status === 'open' && c.userId).map((c) => c.userId));
+  const people = ensureUsers(ws)
+    .filter((u: User) => !u.removed && !u.deactivated && !u.general)
+    .map((u: User) => {
+      // Resolved exactly as personFor does, so the entity named here is the
+      // entity an attach would actually file into.
+      const orgId = u.organisationId || primaryOrgId();
+      return {
+        user_id: u.id,
+        name: u.name || u.email || '',
+        email: u.email || '',
+        org_id: orgId,
+        org_name: getOrganisation(ws, orgId)?.name || '',
+        has_channel: connected.has(u.id),
+      };
+    });
+  res.json({ channels, people });
 });
 
 // Whose number this is, and who may connect it. Your own always; otherwise
@@ -773,6 +801,93 @@ whatsappRouter.post('/channels/user', async (req, res) => {
     });
   }
   res.json({ ok: true, channel: publicChannel(result.channel), mobile, replaced: Boolean(live) });
+});
+
+// POST /api/whatsapp/channels/attach — body { user_id, chat_id, subject? }.
+//
+// Bind a group that ALREADY EXISTS to a person: mint their submission id
+// against it and open nothing in WhatsApp.
+//
+// Connecting somebody (above) is the only thing that mints an id, and it makes
+// a real group every time. So a client already talking to us in a group of
+// their own could not be pointed at CYBills without a second, empty group
+// appearing in front of them — and the first one, the one with all the bills
+// in it, stayed unfiled. Adoption was already possible in the pipe (CYWS
+// answers `already_existed` for an id it holds, and createChannel keeps that
+// group rather than making another) but nothing could ever ASK for it: the id
+// is minted inside the same call that creates the group. This is the missing
+// half — the id first, the group named rather than made.
+//
+// Machine-to-machine like /invoice and /directory, and allowlisted past the
+// session guard for the same reason: CYWS calls it from the chat its operator
+// has open, proving itself with the inbound key. No mobile is asked for. The
+// group exists, its members are whoever is already in it, and the number that
+// matters for matching is the one on the person's row.
+whatsappRouter.post('/channels/attach', (req, res) => {
+  if (!keyMatches(req.header('X-API-Key') || '')) {
+    return res.status(401).json({ error: 'invalid_api_key' });
+  }
+  const ws = workspaceId(req);
+  const userId = String(req.body?.user_id ?? '').trim();
+  const chatId = String(req.body?.chat_id ?? '').trim();
+  if (!chatId) return res.status(400).json({ error: 'chat_id_required' });
+  const person = personFor(ws, userId);
+  if (!person) return res.status(404).json({ error: 'unknown_user' });
+  if (!person.orgId) return res.status(400).json({ error: 'org_required' });
+
+  const items = loadChannels();
+  // One person, one group — the same rule /channels/user keeps. Refused rather
+  // than replaced: a second id for the same person would split their bills
+  // across two collections with nothing saying which is current.
+  const live = items.find((c) => c.workspaceId === ws && c.userId === userId && c.status === 'open');
+  if (live) {
+    return res.status(409).json({
+      error: 'already_connected',
+      message: `${person.user.name || person.user.email} already collects through a group ("${live.subject}").`,
+      channel: publicChannel(live),
+    });
+  }
+  // And one group, one person. Two open channels on one chat id would file the
+  // same bill into two people's books.
+  const taken = items.find((c) => c.chatId === chatId && c.status === 'open');
+  if (taken) {
+    return res.status(409).json({
+      error: 'chat_in_use',
+      message: `That group already files under ${taken.id}.`,
+      channel: publicChannel(taken),
+    });
+  }
+
+  const channel: WaChannel = {
+    id: mintSubmissionId(person.orgId),
+    workspaceId: ws,
+    orgId: person.orgId,
+    userId,
+    // CYWS sends the group's real WhatsApp name, which is what the operator
+    // there is looking at. Falls back to the address-derived name a group we
+    // opened ourselves would have carried.
+    subject: String(req.body?.subject ?? '').trim()
+      || subjectFor(person.user, getOrganisation(ws, person.orgId)?.name || person.orgId),
+    chatId,
+    status: 'open',
+    // Nothing was asked of WhatsApp, so there is nothing to measure a shortfall
+    // against. Left explicitly UNKNOWN rather than empty — empty-and-known is
+    // how the card says "everybody refused to join", which is a lie about a
+    // group that has been running for months.
+    participantsRequested: [],
+    participantsAdded: [],
+    participantsKnown: false,
+    createdAt: new Date().toISOString(),
+    createdBy: 'cyworkspace',
+    openedAt: new Date().toISOString(),
+    lastError: '',
+    lastMessageAt: '',
+    received: 0,
+  };
+  items.push(channel);
+  saveChannels(items);
+  console.log(`[whatsapp] attached existing group ${chatId} to ${person.user.email || userId} as ${channel.id}`);
+  res.json({ ok: true, channel: publicChannel(channel) });
 });
 
 // POST /api/whatsapp/channels — body { mobile? | participants?, subject? }.

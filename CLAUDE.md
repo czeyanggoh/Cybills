@@ -654,6 +654,19 @@ messages under its submission id, and they have to keep arriving until somebody
 deletes the group at the WhatsApp end. A replaced channel is also never RESUMED,
 or its submission id would hand back the very group being replaced.
 
+**A group that already exists is NAMED, not made.** Every button above creates a
+real group, which is wrong for a client who has been sending bills into one of
+their own for months: it puts a second, empty group in front of them and leaves
+the one with the paperwork filed under nobody. The pipe could already adopt
+(CYWS answers `already_existed` for an id it holds, and `createChannel` keeps
+that group) but nothing could ask, because the id is minted inside the same call
+that makes the group. `POST /api/whatsapp/channels/attach` is the missing half —
+inbound key, no session, no mobile, nothing opened in WhatsApp: it mints the id
+against a chat CYWS already has, and CYWS stamps it on that chat. One person one
+group and one group one person are both still enforced (409 `already_connected`
+/ `chat_in_use`); `/directory` carries a `people` list so CYWS can offer the
+roster. Contract: `deploy/WHATSAPP.md`.
+
 **WhatsApp not adding somebody is not an error, and not silence either** — but
 what it will say is usually only a count. `participants_added` comes back as
 **LIDs** (`217630539546875`), the opaque per-user ids WhatsApp uses so a group

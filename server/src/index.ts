@@ -84,6 +84,10 @@ app.use((req, res, next) => {
   // And for the conversation itself: CYWS mirrors every message in a collection
   // group, not just the ones its classifier picked out. Same key again.
   if (p === '/api/whatsapp/message') return next();
+  // And for binding a group CYWS already has to one of our people — the id is
+  // minted here, the group is not made at all. Same key, and the only write of
+  // the three.
+  if (p === '/api/whatsapp/channels/attach') return next();
   // An image link in an exported CSV, or an Item ID in an emailed claim PDF, is
   // opened by somebody with no session here — an accountant, an approver. It
   // carries a signed, expiring token naming the one document it opens instead

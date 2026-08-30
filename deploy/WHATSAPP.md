@@ -250,6 +250,58 @@ GET https://cybills.cy-bm.sg/api/whatsapp/directory   (X-API-Key, same key)
   another's submission, and the documents will file under the latter.
 - **No phone numbers.** Naming the person and the entity is the whole job.
 
+The same answer carries `people` — everyone on the roster a group *could* be
+pointed at, with `has_channel` saying whether they already collect through one:
+
+```json
+{
+  "people": [
+    {
+      "user_id": "nu_1a2b3c4d",
+      "name": "Martin Lim",
+      "email": "martin@acme.com",
+      "org_id": "org_red00001",
+      "org_name": "Acme Pte Ltd",
+      "has_channel": false
+    }
+  ]
+}
+```
+
+The entity's GENERAL account is left out — it is the unclaimed-documents bucket,
+not a person. Deactivated and removed rows are left out too. Still no numbers.
+
+## Linking a group that already exists
+
+**Set up the group** and **Connect to WhatsApp** both MAKE a group, every time.
+That is right when there isn't one — and wrong when the client has been sending
+their bills into a group for months, because it puts a second, empty group in
+front of them while the one holding the paperwork stays filed under nobody.
+
+There was no other way in: a submission id is minted here, and the only thing
+that minted one also created the group. So there is a write endpoint that mints
+the id alone and names the group it belongs to:
+
+```
+POST https://cybills.cy-bm.sg/api/whatsapp/channels/attach   (X-API-Key, same key)
+{ "user_id": "nu_1a2b3c4d", "chat_id": "120363...@g.us", "subject": "Acme — bills" }
+```
+
+Answers `{ ok: true, channel: { submissionId, ... } }`. Nothing is opened in
+WhatsApp; the group is CYWS's, and its members are whoever is already in it.
+CYWS stamps the returned id on that chat and starts forwarding.
+
+- `subject` is optional — the group's real WhatsApp name, which is what the
+  operator on the other side is looking at. Without it the channel is named the
+  way one we opened ourselves would be (the person's CYBills address).
+- **409 `already_connected`** — that person already collects through a group. A
+  second id would split their bills across two collections with nothing saying
+  which is current.
+- **409 `chat_in_use`** — that group already files somewhere. Two open channels
+  on one chat id would file the same bill into two people's books.
+- No mobile is asked for. The number on their row is still what an emailed or
+  forwarded document is matched by; this endpoint does not touch it.
+
 ## Testing it yourself
 
 **Extraction → Extract by WhatsApp → "Send a test bill"** (practice team only).
