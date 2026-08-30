@@ -267,6 +267,62 @@ POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/react   (X-API-Key, same 
 - Nothing is ever CLEARED. Taking a tick off says something happened to the
   document, and nothing here ever means that.
 
+## Closing a group down
+
+Two acts, offered side by side on every group (Connections → the group's row,
+or the person's own Edit details → Connect to WhatsApp):
+
+| | what happens in WhatsApp |
+|---|---|
+| **Stop collecting here** | Nothing. The group stays, everyone stays in it — CYBills simply stops taking anything from it. |
+| **Delete the group** | CYBot removes everyone, then leaves. |
+
+Both are offered whoever opened the group, because only the person pressing
+knows which they mean. A group CYBot opened for one colleague is usually
+finished with; a client's own conversation that was merely POINTED at CYBills
+(`/channels/attach`) is theirs, and taking it apart from an accounting app would
+destroy something that was never ours. The panel says which kind it is — the
+channel carries `adopted` — rather than deciding for anybody.
+
+**Neither touches what was collected.** The documents are accounting records and
+belong to the book, not to the group; the mirrored thread is the record of what
+was said. The channel row survives too, since all of those reference its
+submission id. What changes is its status: `disconnected` or `deleted`.
+
+```
+POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/delete-group   (X-API-Key, same key)
+{ "submission_id": "CYB-org_red00001-a1b2c3d4", "keep_group": false }
+```
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{data: {chat_id, removed, left, group_kept}}` | Done. `removed` is how many CYBot took out. |
+| 400 | `{error: "submission_id_required"}` | |
+| 401 | `{error: "invalid_api_key"}` | |
+| 404 | `{error: "unknown_submission"}` | No group at CYWS under that id. |
+| 502 | `{error: "remove_failed"}` | Could not empty it, so it was **left alone** rather than half-dismantled. |
+| 502 | `{error: "leave_failed"}` | Emptied, but CYBot could not walk out. |
+| 503 | `{error: "group_delete_unavailable"}` | The CYBot number is not on WAHA. |
+
+- **Members first, CYBot last.** Leaving is irreversible from our side — once
+  CYBot is out it is not an admin and can remove nobody — so a failure to remove
+  somebody aborts BEFORE the leave. The alternative is walking out of a group
+  named after a client's bills with the client still sitting in it and nobody
+  running it.
+- **A refusal leaves the collection OPEN.** A group somebody believes is gone,
+  still sitting in front of a client, is the failure that matters here, so
+  nothing is marked closed on the strength of a call that failed. CYWS's own
+  wording is passed through to the person who pressed the button.
+- **Deliveries stop at CYBills**, not only at CYWS. A closed collection answers
+  409 `channel_closed` to `/invoice` and `/message` and logs the attempt, because
+  "CYBills has stopped collecting through this group" is CYBills' decision and
+  must hold even if the call asking CYWS to stop forwarding never landed.
+- **Idempotent.** Closing an already-closed collection answers 200 and asks CYWS
+  nothing: somebody pressing twice wants it shut, and it is.
+- **It is not a delete for everyone.** WhatsApp has none. The group stays in the
+  ex-members' chat lists showing they were removed; no API reaches their phones.
+  The panel says so, because this is the half people assume works.
+
 ## Saying whose books a group feeds
 
 CYWS files everything under a submission id and holds nothing else, so its own

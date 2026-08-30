@@ -6,6 +6,7 @@ import { useOrganisations } from '@/lib/organisations';
 import { cleanHandle, inboundAddress, addressTail, suffixForUser } from '@/lib/inboundAddress';
 import { useWhatsappForUser, connectWhatsappForUser } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
+import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 
 // "Extract by email" — the user's inbound address plus any Gmail forwarding
 // confirmation CYBills is holding for them to click.
@@ -241,6 +242,11 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           </div>
         </div>
       )}
+
+      {/* Closing it down. Sits at the foot of the card rather than beside
+          "Connected", because it is the end of the group and not a detail of
+          it — and because expanded it is a panel, not a button. */}
+      <CloseWhatsappGroup channel={channel} canManage={canManage} onClosed={reload} />
 
       {error && (
         <p className="text-xs text-destructive">

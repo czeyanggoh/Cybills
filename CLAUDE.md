@@ -726,6 +726,34 @@ The mirror's storage lives in `waThread.ts` and the reaction in
 back into the router module, and through it into the Xero routes that trigger
 one.
 
+**Closing a group is two acts, and both are offered on every group.** **Stop
+collecting here** leaves it standing in WhatsApp with everyone in it and simply
+stops taking anything from it; **Delete the group** has CYBot remove everyone
+and leave. Which one is right depends on something only the person pressing
+knows — a group CYBot opened for a colleague is usually finished with, while a
+client's own conversation that was merely POINTED at CYBills (`adopted`, set by
+`/channels/attach`) is theirs, and taking it apart from an accounting app would
+destroy something that was never ours. So the panel SAYS which kind it is rather
+than deciding.
+
+`POST /api/whatsapp/channels/:id/close` (`{deleteGroup}`) asks CYWS's
+`/api/webhooks/cybills/delete-group`, where the ORDER is the whole of it:
+members first, CYBot last, because leaving is irreversible from our side — once
+out it is no longer an admin — so a failure to remove somebody aborts BEFORE the
+leave rather than walking out of a group named after a client's bills with the
+client still in it. A refusal leaves the collection **open** and passes CYWS's
+own words back: a group somebody believes is gone, still sitting in front of a
+client, is the failure that matters. Neither act touches the documents already
+collected (accounting records, they belong to the book) or the mirrored thread
+(the record of what was said), and the channel row survives carrying
+`disconnected` or `deleted` — all three reference its submission id. A closed
+collection then refuses deliveries HERE, 409 `channel_closed`, logged: that is
+CYBills' decision and it must hold even if the call telling CYWS to stop never
+landed. It is NOT a delete for everyone — WhatsApp has none — so the group stays
+in the ex-members' chat lists showing they were removed, which the panel says
+out loud because it is the half people assume works. Covered by `npm test` in
+`server/` (`test/whatsapp-close.test.mts`).
+
 **The Connections card lists EVERY group the entity collects through**, its
 people's own included. Showing only the entity-wide one had it report "0 bills"
 beside a group nobody was using, while the group three bills had just arrived

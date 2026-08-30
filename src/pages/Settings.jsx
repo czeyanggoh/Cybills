@@ -42,6 +42,7 @@ import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from 
 import { useInboundConfig } from '@/lib/inboundSettings';
 import { cleanSuffix, addressTail } from '@/lib/inboundAddress';
 import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig, sendTestDelivery } from '@/lib/whatsapp';
+import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
@@ -1205,7 +1206,8 @@ function WhatsappCollectionCard() {
                 the page at all. */}
             <div className="mt-4 divide-y border-t">
               {openGroups.map((g) => (
-                <div key={g.submissionId} className="flex items-start justify-between gap-4 py-3 text-sm">
+                <div key={g.submissionId} className="space-y-2 py-3 text-sm">
+                  <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <p className="break-words font-medium">{g.subject}</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
@@ -1226,6 +1228,11 @@ function WhatsappCollectionCard() {
                   <span className="shrink-0 whitespace-nowrap text-muted-foreground">
                     {g.received} {g.received === 1 ? 'bill' : 'bills'}
                   </span>
+                  </div>
+                  {/* Full width under the row rather than in the right-hand
+                      column: expanded this is three sentences and two buttons,
+                      and in a shrink-to-fit column it wraps to a word a line. */}
+                  <CloseWhatsappGroup channel={g} canManage={canManage} onClosed={reload} />
                 </div>
               ))}
             </div>

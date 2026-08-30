@@ -139,6 +139,32 @@ export async function connectWhatsappForUser({ userId, mobile, replace = false }
   throw err;
 }
 
+// Close a collection down. Two acts behind one call, because they are one
+// decision with two answers:
+//
+//   deleteGroup: false — CYBills stops collecting through the group. It carries
+//                        on in WhatsApp exactly as it was, everyone still in it.
+//   deleteGroup: true  — CYBot removes everyone and leaves.
+//
+// Neither touches the documents already collected or the thread already
+// mirrored: those are the record, and the group is only how they arrived.
+export async function closeWhatsappChannel({ submissionId, deleteGroup = false }) {
+  const res = await fetch(`/api/whatsapp/channels/${encodeURIComponent(submissionId)}/close`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ deleteGroup }),
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok) return data;
+  // CYWS writes its refusals for a person to read — "could not remove everyone,
+  // so the group was left alone rather than half-dismantled" — and the server
+  // passes them straight through, so they are shown rather than restated.
+  const err = new Error(data?.message || 'Could not close the group.');
+  err.code = data?.error || '';
+  err.retryable = Boolean(data?.retryable);
+  throw err;
+}
+
 // Send one delivery through the real endpoint, the way CYWorkspace would.
 // Until CYWS is wired up this is the only way to find out whether THIS side
 // works — and "nothing turned up" is the least useful bug report there is.

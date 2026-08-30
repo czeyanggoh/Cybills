@@ -104,7 +104,13 @@ export type WaChannel = {
   // 'replaced' — a group superseded because the person's number changed. Kept,
   // never deleted: its submission id is what CYWS still files that group's
   // messages under, and bills sent into it have to keep arriving.
-  status: 'pending' | 'open' | 'failed' | 'replaced';
+  // 'disconnected' — CYBills has stopped collecting through it; the WhatsApp
+  // group is untouched and carries on without us. 'deleted' — CYBot removed
+  // everyone and left, so there is no group at the far end any more. Both are
+  // closed, and the difference between them is only what happened in WhatsApp.
+  // The ROW survives either way: the documents already collected reference this
+  // submission id, and so does every mirrored message.
+  status: 'pending' | 'open' | 'failed' | 'replaced' | 'disconnected' | 'deleted';
   participantsRequested: string[];
   participantsAdded: string[];
   // Whether CYWS actually told us who ended up in the group. An ADOPTED group
@@ -113,6 +119,13 @@ export type WaChannel = {
   // two are indistinguishable and a resumed channel would announce that
   // WhatsApp had refused every single person.
   participantsKnown: boolean;
+  // This group was already a conversation before CYBills was pointed at it
+  // (POST /channels/attach) rather than one CYBot opened. It matters when it is
+  // closed down: emptying and leaving a group the client started is destroying
+  // something that was never ours, so the two ways out are offered with that
+  // said rather than assumed either way. Absent on rows written before adoption
+  // existed, all of which we opened.
+  adopted?: boolean;
   createdAt: string;
   createdBy: string;
   openedAt: string;
@@ -362,6 +375,7 @@ const publicChannel = (c: WaChannel) => ({
   subject: c.subject,
   chatId: c.chatId,
   status: c.status,
+  adopted: Boolean(c.adopted),
   participantsRequested: c.participantsRequested,
   // A COUNT, not the ids themselves. What WhatsApp returns is LIDs — opaque
   // per-user ids — and printing them under "In the group" put two 15-digit
@@ -546,7 +560,7 @@ type Delivery = {
   at: string;
   submissionId: string;
   messageId: string;
-  outcome: 'filed' | 'duplicate' | 'bad_key' | 'unknown_submission' | 'incomplete' | 'file_unavailable';
+  outcome: 'filed' | 'duplicate' | 'bad_key' | 'unknown_submission' | 'incomplete' | 'file_unavailable' | 'closed';
   detail: string;
 };
 const DELIVERIES = 'whatsapp-deliveries';
@@ -872,6 +886,10 @@ whatsappRouter.post('/channels/attach', (req, res) => {
       || subjectFor(person.user, getOrganisation(ws, person.orgId)?.name || person.orgId),
     chatId,
     status: 'open',
+    // Somebody else's conversation, borrowed. Recorded now because the moment
+    // it matters is much later, when a person is deciding whether closing this
+    // collection should also take the group apart.
+    adopted: true,
     // Nothing was asked of WhatsApp, so there is nothing to measure a shortfall
     // against. Left explicitly UNKNOWN rather than empty — empty-and-known is
     // how the card says "everybody refused to join", which is a lie about a
@@ -934,6 +952,128 @@ whatsappRouter.post('/channels', async (req, res) => {
     });
   }
   res.json({ ok: true, channel: publicChannel(result.channel), rejected });
+});
+
+// A collection that has been shut. Enforced HERE rather than trusted to stop at
+// CYWS, because "CYBills has stopped collecting through this group" is CYBills'
+// own decision and must hold even when the call asking CYWS to stop forwarding
+// never landed. A REPLACED channel is deliberately not closed: its group is
+// still live, and anything sent into it has to keep arriving.
+const isClosed = (c: WaChannel) => c.status === 'disconnected' || c.status === 'deleted';
+
+// --- Closing a collection down -----------------------------------------------
+// Two acts, and they are not degrees of one another:
+//
+//   Stop collecting  — CYBills forgets the group. It carries on in WhatsApp
+//                      exactly as it was, with everyone still in it.
+//   Delete the group — CYBot removes everyone and leaves.
+//
+// Both are offered for every group, whoever opened it, because only the person
+// pressing the button knows which they mean. A group CYBills opened for one
+// colleague is usually finished with; a client's own conversation that was
+// merely POINTED at CYBills is theirs, and taking it apart from an accounting
+// app would be destroying something that was never ours.
+//
+// What is NOT touched either way: the documents already collected (they are
+// accounting records, and they belong to the book, not to the group) and the
+// mirrored thread (it is the record of what was said). The channel row survives
+// too — every one of those references its submission id.
+
+/** Ask CYWS to close a group down. Unlike a reaction this is REPORTED, never
+ * best-effort: a group somebody believes is gone, that is still sitting in
+ * front of a client, is the failure that matters here. */
+async function askToDeleteGroup(body: { submission_id: string; keep_group: boolean }): Promise<
+  { ok: true; removed: number; left: boolean } | { ok: false; status: number; error: string; message: string }
+> {
+  if (!env.CYWORKSPACE_RELAY_URL || !env.CYWORKSPACE_API_KEY) {
+    return { ok: false, status: 503, error: 'whatsapp_not_configured', message: 'CYWorkspace is not connected on this deployment.' };
+  }
+  const url = `${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/delete-group`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-API-Key': env.CYWORKSPACE_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+      // Emptying a group is one call per member at the far end, so it is given
+      // longer than the 30s a create gets.
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (err) {
+    console.error('[whatsapp] CYWS unreachable (delete-group)', err);
+    return { ok: false, status: 502, error: 'relay_unreachable', message: MESSAGES.relay_unreachable };
+  }
+  const payload = (await res.json().catch(() => null)) as { data?: { removed?: number; left?: boolean }; error?: string; message?: string } | null;
+  if (res.ok) return { ok: true, removed: Number(payload?.data?.removed ?? 0), left: Boolean(payload?.data?.left) };
+  // CYWS writes these for a person to read — "could not remove everyone, so the
+  // group was left alone rather than half-dismantled" — so they are passed
+  // through rather than restated as a status code.
+  return {
+    ok: false,
+    status: res.status,
+    error: String(payload?.error ?? 'delete_failed'),
+    message: String(payload?.message ?? `CYWorkspace returned ${res.status}.`),
+  };
+}
+
+/** The channel, and whether this caller may close it. A group opened for one
+ * person is administered by whoever administers THEM; an entity-wide one by an
+ * admin of the entity it collects for. Same two rules that opened it. */
+function channelToClose(req: Request, submissionId: string): { channel: WaChannel; error?: undefined } | { channel?: undefined; error: { status: number; body: object } } {
+  const ws = workspaceId(req);
+  const channel = channelById(submissionId);
+  if (!channel || channel.workspaceId !== ws) return { error: { status: 404, body: { error: 'unknown_channel' } } };
+  const person = channel.userId ? personFor(ws, channel.userId) : null;
+  const allowed = person ? mayManagePerson(req, person.user, person.orgId) : mayManage(req, channel.orgId);
+  if (!allowed) return { error: { status: 403, body: { error: 'not_an_admin' } } };
+  return { channel };
+}
+
+// POST /api/whatsapp/channels/:submissionId/close — body { deleteGroup?: boolean }
+//
+// One route for both, because they are one decision with two answers and
+// splitting them would let the UI drift into offering a third.
+whatsappRouter.post('/channels/:submissionId/close', async (req, res) => {
+  const found = channelToClose(req, String(req.params.submissionId ?? ''));
+  if (found.error) return res.status(found.error.status).json(found.error.body);
+  const channel = found.channel;
+
+  const deleteGroup = req.body?.deleteGroup === true;
+  // Already closed. Answered as success with what is true now: somebody pressing
+  // it twice wants the group gone, and it is.
+  if (channel.status === 'disconnected' || channel.status === 'deleted') {
+    return res.json({ ok: true, channel: publicChannel(channel), already: true });
+  }
+
+  // A group that was never opened has nothing at the far end to close — the
+  // submission id was minted and the call failed or never went out. Forgetting
+  // it locally is the whole of it, and asking CYWS about a group it has never
+  // heard of would 404 and read as a failure.
+  const atFarEnd = Boolean(channel.chatId);
+  if (atFarEnd) {
+    const out = await askToDeleteGroup({ submission_id: channel.id, keep_group: !deleteGroup });
+    if (!out.ok) {
+      // Nothing is marked closed. The group is still collecting, and saying
+      // otherwise here would leave documents arriving into a collection the
+      // page says is shut.
+      patchChannel(channel.id, { lastError: out.message });
+      return res.status(out.status).json({ error: out.error, message: out.message, retryable: out.error === 'relay_unreachable' });
+    }
+    const updated = patchChannel(channel.id, {
+      status: deleteGroup ? 'deleted' : 'disconnected',
+      lastError: '',
+    });
+    return res.json({
+      ok: true,
+      channel: updated ? publicChannel(updated) : publicChannel(channel),
+      removed: out.removed,
+      left: out.left,
+      deleted: deleteGroup,
+    });
+  }
+
+  const updated = patchChannel(channel.id, { status: 'disconnected', lastError: '' });
+  res.json({ ok: true, channel: updated ? publicChannel(updated) : publicChannel(channel), removed: 0, left: false, deleted: false });
 });
 
 // GET /api/whatsapp/config — what the CYWS operator needs: where to POST, and
@@ -1250,6 +1390,11 @@ whatsappRouter.post('/invoice', async (req, res) => {
     return res.status(404).json({ error: 'unknown_submission', submission_id: submissionId });
   }
 
+  if (isClosed(channel)) {
+    recordDelivery({ submissionId, messageId, outcome: 'closed', detail: `${channel.subject} was ${channel.status}` });
+    return res.status(409).json({ error: 'channel_closed', submission_id: submissionId });
+  }
+
   const already = seenMessage(messageId);
   if (already) {
     recordDelivery({ submissionId, messageId, outcome: 'duplicate', detail: already.billId });
@@ -1315,6 +1460,11 @@ whatsappRouter.post('/message', async (req, res) => {
   // Same refusal as /invoice, for the same reason: the id is what names the
   // entity, and a group we have no record of belongs to nobody here.
   if (!channel) return res.status(404).json({ error: 'unknown_submission', submission_id: submissionId });
+
+  if (isClosed(channel)) {
+    recordDelivery({ submissionId, messageId: waMessageId, outcome: 'closed', detail: `${channel.subject} was ${channel.status}` });
+    return res.status(409).json({ error: 'channel_closed', submission_id: submissionId });
+  }
 
   const items = loadMessages();
   const existing = items.find((m) => m.id === waMessageId);
