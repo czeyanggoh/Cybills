@@ -17,6 +17,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
+import AddClaimItemsModal from '@/components/AddClaimItemsModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
@@ -159,6 +160,7 @@ export default function ExpenseClaimDetail() {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [bulkCatOpen, setBulkCatOpen] = useState(false);
   const [bulkCat, setBulkCat] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveTarget, setMoveTarget] = useState('');
   const [moveNewName, setMoveNewName] = useState('');
@@ -655,8 +657,8 @@ export default function ExpenseClaimDetail() {
             {!locked && (
             <button
               type="button"
-              onClick={() => navigate('/costs')}
-              title="Open the Costs inbox, then use “Add to expense claim” on the items you want"
+              onClick={() => setAddOpen(true)}
+              title="Pick unclaimed documents from your Costs inbox and put them on this claim"
               className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               <Plus className="h-3.5 w-3.5" /> Add items
@@ -977,6 +979,18 @@ export default function ExpenseClaimDetail() {
           )}
         </div>
       </div>
+
+      {/* Add items — the Costs inbox's claimable documents, picked from here.
+          Mounted only while open so it fetches when somebody asks for it
+          rather than on every claim page load. */}
+      {addOpen && (
+        <AddClaimItemsModal
+          open
+          claim={claim}
+          onClose={() => setAddOpen(false)}
+          onAdded={(n) => setPayNote(`Added ${n} item${n === 1 ? '' : 's'} to this claim.`)}
+        />
+      )}
 
       <ClaimExportModal
         open={exportOpen}
