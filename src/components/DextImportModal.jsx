@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
-import { X, Upload, FileText, AlertTriangle, Check } from 'lucide-react';
+import { X, Upload, FileText, Check } from 'lucide-react';
 import { parseDextExport, matchFiles, billPayload, patchPayload } from '@/lib/dextImport';
-import { addBill, updateBill, fetchDextImage, sha256Hex, billFileUrl, fetchBillFileMeta, deleteBill, notifyBillsChanged } from '@/lib/bills';
+import { addBill, updateBill, fetchDextImage, sha256Hex } from '@/lib/bills';
 import { useActiveOrganisation } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
@@ -34,162 +34,6 @@ const readAsBase64 = (file) =>
   });
 
 
-// One skipped row, with both documents put side by side on request.
-//
-// Naming a skip is not enough to act on it: "Anthropic · 2026-08-29 · SGD 300"
-// describes the pair equally well whether they are one receipt or two, and the
-// only thing that settles it is looking at them. So the Dext document and the
-// one already here are shown together — the Dext side fetched through the
-// server, since those links send no CORS headers and the browser is refused
-// them.
-function SkippedRow({ row, imported = false }) {
-  const [open, setOpen] = useState(false);
-  const [dext, setDext] = useState(undefined); // undefined = not asked, null = no good
-  const [mine, setMine] = useState(undefined);
-  const [failed, setFailed] = useState(false);
-  // Which of the pair has been deleted from here, so the pane says so instead
-  // of going on offering a document that is no longer there.
-  const [gone, setGone] = useState({});
-
-  // Deleting is the point of looking: once the two are on screen and one of
-  // them is plainly a second copy, sending somebody to the inbox to find it by
-  // its id is asking them to do the hard part again. Same confirmation the
-  // inbox's own delete gives, because it is the same irreversible thing —
-  // the stored file goes too.
-  const remove = async (which, id, label) => {
-    if (!id) return;
-    if (!window.confirm(`Permanently delete ${label}?\n\nThis removes it everywhere and deletes the file from storage — it can't be undone.`)) return;
-    try {
-      await deleteBill(id);
-      setGone((g) => ({ ...g, [which]: true }));
-      notifyBillsChanged();
-    } catch {
-      // Left as it is: the pane still shows the document, which is the truth.
-    }
-  };
-
-  const show = async () => {
-    const next = !open;
-    setOpen(next);
-    if (!next) return;
-    if (dext === undefined && row.image) {
-      const got = await fetchDextImage(row.image);
-      if (got) {
-        const bytes = bytesOf(got.base64);
-        setDext({
-          url: URL.createObjectURL(new Blob([bytes], { type: got.contentType || 'application/octet-stream' })),
-          type: got.contentType || '',
-        });
-      } else {
-        setDext(null);
-        setFailed(true);
-      }
-    }
-    // Its content type, not a guess from the URL: the file route names no
-    // extension, so a stored PDF would render into an <img> and show broken.
-    if (mine === undefined && row.matchedBillId) {
-      const meta = await fetchBillFileMeta(row.matchedBillId);
-      setMine(meta?.hasFile ? { url: billFileUrl(row.matchedBillId), type: meta.contentType || '' } : null);
-    }
-  };
-
-  return (
-    <li className="rounded-md border bg-background/60 p-2">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">{row.id}</span>
-          {row.what ? ` — ${row.what}` : ''}
-          {row.same
-            ? ' · the very same file as'
-            : ' · looks like'}
-          {row.matched
-            ? ` ${row.matched}${row.fromThisImport ? ' in this same export' : ' already in this book'}`
-            : ' another document'}
-          {imported && row.mineId ? ` · imported as ${row.mineId}` : ''}
-        </p>
-        {/* Nothing to compare when the two are byte-identical: they are the
-            same picture, and offering to show it twice is a waste of a click. */}
-        {(imported || !row.same) && (row.image || row.matchedBillId) && (
-          <button
-            type="button"
-            onClick={show}
-            className="shrink-0 text-xs font-medium underline underline-offset-2 hover:opacity-70"
-          >
-            {open ? 'Hide' : 'Compare'}
-          </button>
-        )}
-      </div>
-      {open && (
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          {/* Left: the row that was just imported. Its picture comes from Dext,
-              but the document it made is the one a delete removes. */}
-          <DocPane
-            label={`This one${row.mineId ? ` · ${row.mineId}` : ''}`}
-            src={dext?.url}
-            type={dext?.type}
-            pending={dext === undefined}
-            failed={failed}
-            gone={gone.mine}
-            onDelete={imported && row.mineBillId
-              ? () => remove('mine', row.mineBillId, `the document just imported as ${row.mineId}`)
-              : null}
-          />
-          <DocPane
-            label={`${row.fromThisImport ? 'The other row' : 'Already in this book'}${row.matched ? ` · ${row.matched}` : ''}`}
-            src={mine?.url}
-            type={mine?.type}
-            pending={mine === undefined && Boolean(row.matchedBillId)}
-            gone={gone.twin}
-            onDelete={row.matchedBillId
-              ? () => remove('twin', row.matchedBillId, `${row.matched || 'the other document'}`)
-              : null}
-          />
-        </div>
-      )}
-    </li>
-  );
-}
-
-// A document, however it is stored. A PDF needs a frame and an image needs an
-// img; guessing wrong shows a broken icon over a perfectly good receipt.
-function DocPane({ label, src, type = '', pending = false, failed = false, gone = false, onDelete = null }) {
-  const isPdf = /pdf/i.test(type) || /\.pdf($|\?)/i.test(String(src || ''));
-  return (
-    <div className="min-w-0">
-      <p className="mb-1 truncate text-[11px] text-muted-foreground">{label}</p>
-      <div className="flex h-64 items-center justify-center overflow-hidden rounded border bg-muted/30">
-        {/* Said out loud rather than left as an empty frame: a pane that simply
-            goes blank reads as something having broken, not as the delete
-            having worked. */}
-        {gone && <span className="text-[11px] text-muted-foreground">Deleted</span>}
-        {!gone && pending && <span className="text-[11px] text-muted-foreground">Loading…</span>}
-        {!gone && !pending && !src && (
-          <span className="px-2 text-center text-[11px] text-muted-foreground">
-            {failed ? 'Could not be fetched' : 'No document'}
-          </span>
-        )}
-        {!gone && !pending && src && (isPdf
-          ? <iframe title={label} src={src} className="h-full w-full" />
-          : <img alt={label} src={src} className="max-h-full max-w-full object-contain" />)}
-      </div>
-      {!gone && (src || onDelete) && (
-        <div className="mt-1 flex items-center gap-3">
-          {src && (
-            <a href={src} target="_blank" rel="noreferrer" className="text-[11px] underline underline-offset-2 hover:opacity-70">
-              Open full size
-            </a>
-          )}
-          {onDelete && (
-            <button type="button" onClick={onDelete} className="text-[11px] text-destructive underline underline-offset-2 hover:opacity-70">
-              Delete this one
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function DextImportModal({ open, onClose, onImported }) {
   const org = useActiveOrganisation();
   const [csvName, setCsvName] = useState('');
@@ -199,12 +43,6 @@ export default function DextImportModal({ open, onClose, onImported }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   const [progress, setProgress] = useState({ at: 0, of: 0 });
-  // A migration is moving a book, and CYBills' duplicate rule is not Dext's:
-  // same supplier, same total, a day apart is a work permit APPLIED for and the
-  // same permit ISSUED. Within one export those rows match each other, so
-  // skipping loses real paperwork — hence everything comes across by default,
-  // flagged rather than dropped. Unticking gets the cautious behaviour back.
-  const [importAll, setImportAll] = useState(true);
   const csvInput = useRef(null);
   const fileInput = useRef(null);
 
@@ -241,12 +79,7 @@ export default function DextImportModal({ open, onClose, onImported }) {
     if (!match || busy) return;
     setBusy(true);
     setError('');
-    const outcome = { created: 0, withFile: 0, skipped: [], flagged: [], failed: [] };
-    // Every document this run has created, so a match against one of them can
-    // be told from a match against something that was here before. Into an
-    // empty book they are all the former, and calling that "already here" is
-    // just wrong — it is the export resembling itself.
-    const mine = new Map(); // bill id -> the Dext row that made it
+    const outcome = { created: 0, withFile: 0, failed: [] };
     setProgress({ at: 0, of: match.pairs.length });
     for (let i = 0; i < match.pairs.length; i += 1) {
       const { row, file } = match.pairs[i];
@@ -278,53 +111,17 @@ export default function DextImportModal({ open, onClose, onImported }) {
         }
         // Straight to the inbox, not 'processing': there is nothing to read.
         //
-        // A document the server already has is NOT imported again — which is
-        // what keeps a run repeatable, so a migration can be topped up without
-        // making a second copy of everything. But a skip is never silent: every
-        // one is named, with what it is and what it matched, because "67 of 70
-        // imported" without saying which three is a puzzle rather than a
-        // report.
+        // force: everything in the export comes across. A migration is moving a
+        // book, and CYBills' duplicate rule is not Dext's — same supplier, same
+        // total, a day apart is a work permit APPLIED for and the same permit
+        // ISSUED — so a row left behind is real paperwork lost. Which of them
+        // resemble each other is not reported here: the inbox already flags
+        // them ("Possible duplicate", "Review duplicates"), and saying it twice
+        // in two places is two things to keep agreeing with each other.
         // eslint-disable-next-line no-await-in-loop
-        const res = await addBill(body, { force: importAll });
-        if (res?.bill?.id && res?.duplicate) {
-          // Imported anyway, and told apart from the rest by its OWN item id —
-          // without that the report names a document to go and look at and no
-          // way to find it.
-          const twin = mine.get(res.duplicate.bill?.id || '');
-          outcome.flagged.push({
-            id: row.receiptId || `line ${row.line}`,
-            what: [row.supplier, row.date, row.total && `${row.currency || ''} ${row.total}`.trim()]
-              .filter(Boolean)
-              .join(' · '),
-            same: res.duplicate.type === 'exact_file',
-            mineId: res.bill.displayId || '',
-            mineBillId: res.bill.id || '',
-            // When the twin came out of this same file, name it by its DEXT id:
-            // that is the number in the CSV in front of her, and a CYBills item
-            // id for a document created four seconds ago means nothing yet.
-            fromThisImport: Boolean(twin),
-            matched: twin ? twin.receiptId : res.duplicate.bill?.displayId || '',
-            image: row.image || '',
-            matchedBillId: res.duplicate.bill?.id || '',
-          });
-        }
-        if (res?.duplicate && !res?.bill) {
-          outcome.skipped.push({
-            id: row.receiptId || `line ${row.line}`,
-            what: [row.supplier, row.date, row.total && `${row.currency || ''} ${row.total}`.trim()]
-              .filter(Boolean)
-              .join(' · '),
-            // 'exact_file' is the same bytes; anything else is a resemblance.
-            same: res.duplicate.type === 'exact_file',
-            matched: res.duplicate.bill?.displayId || '',
-            // Both sides of the comparison, so the pair can be LOOKED at rather
-            // than reasoned about from a supplier and a total.
-            image: row.image || '',
-            matchedBillId: res.duplicate.bill?.id || '',
-          });
-        } else if (res?.bill?.id) {
+        const res = await addBill(body, { force: true });
+        if (res?.bill?.id) {
           outcome.created += 1;
-          mine.set(res.bill.id, { receiptId: row.receiptId || `line ${row.line}`, displayId: res.bill.displayId || '' });
           if (body.fileBase64) outcome.withFile += 1;
           const patch = patchPayload(row);
           // eslint-disable-next-line no-await-in-loop
@@ -347,14 +144,7 @@ export default function DextImportModal({ open, onClose, onImported }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-foreground/20" onClick={close} aria-hidden="true" />
-      {/* Wider once there is a pair to compare: two documents at 240px each are
-          a thumbnail, and the whole point is being able to tell them apart. */}
-      <div
-        className={cn(
-          'relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-lg bg-background shadow-xl',
-          done?.skipped?.length ? 'max-w-3xl' : 'max-w-lg'
-        )}
-      >
+      <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-lg bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h2 className="text-base font-semibold tracking-tight">Import from Dext</h2>
           <button type="button" onClick={close} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
@@ -369,41 +159,6 @@ export default function DextImportModal({ open, onClose, onImported }) {
                 <Check className="h-4 w-4" /> Imported {done.created} document{done.created === 1 ? '' : 's'} into {org?.name || 'this entity'}.
               </p>
               <Row>{done.withFile} of them came with their original file.</Row>
-              {done.flagged.length > 0 && (
-                <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
-                  <p className="flex items-start gap-1.5 text-sm font-medium">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    {done.flagged.length} resemble another document.
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {done.flagged.every((d) => d.fromThisImport)
-                      ? 'Each one resembles ANOTHER ROW OF THIS SAME EXPORT — nothing that was here before.'
-                      : 'Some resemble another row of this same export; others a document already in this book.'}{' '}
-                    All were imported, so nothing was left behind. Compare each pair and delete a
-                    copy only if it really is one — one supplier, one amount, a day apart is an
-                    ordinary week, not a mistake.
-                  </p>
-                  <ul className="mt-2 max-h-[22rem] space-y-2 overflow-y-auto">
-                    {done.flagged.map((d) => <SkippedRow key={d.id} row={d} imported />)}
-                  </ul>
-                </div>
-              )}
-              {done.skipped.length > 0 && (
-                <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
-                  <p className="flex items-start gap-1.5 text-sm font-medium">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    {done.skipped.length} skipped — CYBills already has them.
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Each is listed with what it is, so you can check it in Dext and add it by hand if
-                    it really is a separate document. Running this import again will skip them the
-                    same way rather than making a second copy.
-                  </p>
-                  <ul className="mt-2 max-h-[22rem] space-y-2 overflow-y-auto">
-                    {done.skipped.map((d) => <SkippedRow key={d.id} row={d} />)}
-                  </ul>
-                </div>
-              )}
               {done.failed.length > 0 && (
                 <p className="text-sm text-destructive">
                   {done.failed.length} could not be imported: {done.failed.slice(0, 8).join(', ')}
@@ -463,23 +218,6 @@ export default function DextImportModal({ open, onClose, onImported }) {
                   </div>
                 )}
               </div>
-
-              <label className="flex items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={importAll}
-                  onChange={(e) => setImportAll(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 accent-black"
-                />
-                <span>
-                  Import everything, even where it looks like a duplicate
-                  <span className="block text-xs text-muted-foreground">
-                    On, nothing in the export is left behind and lookalikes are flagged to compare.
-                    Off, a document CYBills already has is skipped — safe to re-run, but a genuine
-                    second receipt from the same supplier on the same day is dropped.
-                  </span>
-                </span>
-              </label>
 
               {error && <p className="text-sm text-destructive">{error}</p>}
               {busy && <Row>Importing {progress.at} of {progress.of}…</Row>}
