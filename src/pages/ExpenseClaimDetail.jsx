@@ -35,6 +35,7 @@ import {
   archiveClaims,
   deleteClaims,
   formatClaimDate,
+  formatClaimStamp,
   toIsoClaimDate,
 } from '@/lib/claimStore';
 import { costPath } from '@/lib/bills';
@@ -968,7 +969,11 @@ export default function ExpenseClaimDetail() {
                         <span className="font-medium">{e.text}</span>{' '}
                         <span className="text-muted-foreground">by {e.by}</span>
                       </p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{e.at}</p>
+                      {/* The server stamps an event with a raw ISO instant.
+                          Shown as one it is unreadable; shown as a bare date it
+                          loses the hour, which is half of what an activity
+                          trail is for. */}
+                      <p className="mt-0.5 text-xs text-muted-foreground">{formatClaimStamp(e.at)}</p>
                     </div>
                   </li>
                 ))}

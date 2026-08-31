@@ -487,6 +487,22 @@ inbox, in Archive, and to anybody else's claim. `deleteBillsHard` splices the
 CACHED list in place — persisting a copy would leave every later read serving
 rows that were just deleted, and the next write would put them back.
 
+**A claim's dates are of two kinds, and only one of them was ever a date.** An
+end date is TYPED, in whatever shape somebody types it — ISO, DD/MM/YYYY,
+DDMMYYYY, "31 Jul 2026" — and `parseDateParts` has always folded those into one
+"31 Jul 2026". A decision, a rejection, an activity entry and Xero's settlement
+date are STAMPED, by the server, as `new Date().toISOString()`, and matched none
+of those shapes — so the Approved column printed
+`2026-08-27T02:50:29.683Z` raw in a column of dates. The rules moved to
+`src/lib/claimDate.js` (pure, `npm test`, re-exported by `claimStore.js`) and
+now read a stamp as an INSTANT: rendered as the reader's own calendar day, since
+an approval given at 1:30am in Singapore is stamped 17:30Z the day before and
+must not read as yesterday. A bare `2026-08-27` is still split by hand rather
+than through `Date`, which reads it as midnight UTC and would render it as the
+26th anywhere west of Greenwich. `formatClaimStamp` is the same moment with its
+hour kept, for the activity feed — a trail of events where a bare date would say
+three things happened on Wednesday without saying which came first.
+
 Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
 field, set on the document or across a selection in Bulk edit; readiness is
 derived, so a "Move to ready" button could only ever agree with the server or

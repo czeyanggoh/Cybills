@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { displayItemId, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { getActiveOrganisationId, ORGANISATION_EVENT } from '@/lib/organisations';
 import { cleanHistoryText } from '@/lib/exportFormat';
+import { toIsoClaimDate } from '@/lib/claimDate';
 
 // Server-backed expense claims, shared by everyone working in one client entity.
 // Talks to /api/claims; mirrors the bills client pattern — fetch + a change
@@ -71,36 +72,10 @@ async function post(path, body) {
 }
 
 // --- Date normalisation ----------------------------------------------------
-// Claim end dates were stored in whatever shape they were entered — ISO, DD/MM/
-// YYYY, DDMMYYYY, "DD Mon YYYY" — which is why the list looked inconsistent.
-// Parse the common shapes to parts, then render/store them one canonical way.
-const CLAIM_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-function parseDateParts(v) {
-  const s = String(v ?? '').trim();
-  if (!s) return null;
-  let m;
-  if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s))) return { y: +m[1], mo: +m[2], d: +m[3] };
-  if ((m = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/.exec(s))) return { y: +m[3], mo: +m[2], d: +m[1] };
-  if ((m = /^(\d{2})(\d{2})(\d{4})$/.exec(s))) return { y: +m[3], mo: +m[2], d: +m[1] };
-  if ((m = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})$/.exec(s))) {
-    const mo = CLAIM_MON.findIndex((x) => x.toLowerCase() === m[2].slice(0, 3).toLowerCase()) + 1;
-    if (mo) return { y: +m[3], mo, d: +m[1] };
-  }
-  return null;
-}
-// Consistent display: "31 Jul 2026". Blank → "—"; unparseable → shown as-is.
-export function formatClaimDate(v) {
-  const p = parseDateParts(v);
-  if (!p) return v ? String(v) : '—';
-  if (p.mo < 1 || p.mo > 12) return String(v);
-  return `${String(p.d).padStart(2, '0')} ${CLAIM_MON[p.mo - 1]} ${p.y}`;
-}
-// Canonical ISO YYYY-MM-DD for storage + the native date picker value.
-export function toIsoClaimDate(v) {
-  const p = parseDateParts(v);
-  if (!p || p.mo < 1 || p.mo > 12) return '';
-  return `${p.y}-${String(p.mo).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;
-}
+// The rules live in their own pure module so `npm test` can hold them to
+// account, and are re-exported here because everything that shows a claim date
+// already reaches for them through this store.
+export { CLAIM_MON, parseDateParts, formatClaimDate, formatClaimStamp, toIsoClaimDate } from '@/lib/claimDate';
 
 // Create a new claim; resolves with the created (shaped) claim. endDate is
 // stored canonically as ISO YYYY-MM-DD.
