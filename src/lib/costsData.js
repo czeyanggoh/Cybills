@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useClaims, inboxClaimsFor } from '@/lib/claimStore';
+import { useClaims, unpublishedClaimsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { USERS_EVENT, canManageBusiness } from '@/lib/userStore';
@@ -111,9 +111,10 @@ export function useCostsDocs() {
 export function useCostsCounts() {
   const { allDocs } = useCostsDocs();
   const claims = useClaims();
-  // The Expense claims badge counts the INBOX, not every claim ever made —
-  // archived and Xero-published ones drop out, exactly as they do from the tab,
-  // and a non-admin only counts the claims they're allowed to see.
+  // The Expense claims badge counts what that page OPENS on — its unpublished
+  // half — rather than every claim ever made, and a non-admin only counts the
+  // claims they're allowed to see. Same rule the Costs badge follows, so a
+  // number beside a tab always describes the list behind it.
   const { user, googleEnabled, membership } = useAuth();
   const isAdmin = canManageBusiness(membership, googleEnabled);
   return {
@@ -125,6 +126,6 @@ export function useCostsCounts() {
     review: rowsFor(allDocs, 'review').length,
     ready: rowsFor(allDocs, 'ready').length,
     archive: rowsFor(allDocs, 'archive').length,
-    expenseClaims: inboxClaimsFor(claims, user, isAdmin).length,
+    expenseClaims: unpublishedClaimsFor(claims, user, isAdmin).length,
   };
 }

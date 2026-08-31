@@ -9,7 +9,7 @@ import AutoClaimsModal from '@/components/AutoClaimsModal';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate, isClaimArchived } from '@/lib/claimStore';
+import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
@@ -30,10 +30,11 @@ function ClaimStatusBadge({ status, label }) {
 }
 
 // Bulk "Actions" dropdown for the claims list.
-function ClaimsActions({ disabled, tab, onArchive, onDelete }) {
+function ClaimsActions({ disabled, onDelete }) {
   const [open, setOpen] = useState(false);
+  // Archive and Unarchive have their own buttons in the row; a menu that
+  // repeats them is a second place to keep in step with the selection.
   const items = [
-    { label: tab === 'archive' ? 'Unarchive' : 'Archive', onClick: onArchive },
     { label: 'Delete', onClick: onDelete, danger: true },
   ];
   return (
@@ -222,7 +223,14 @@ function ClaimsToolbar({
 
 export default function ExpenseClaims() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState('inbox');
+  // Inbox and Archive were two tabs over one pile of claims, exactly as they
+  // were on the Costs side before it folded them together. So this follows it:
+  // one list, and a control that says how much of it to look at. "Unpublished"
+  // is the working half — every claim whose figures have not reached Xero,
+  // including one archived by hand and never published, which is precisely what
+  // folding the two tabs is for. "All claims" is the same list with the finished
+  // work left in.
+  const [scope, setScope] = useState('unpublished');
   const [selected, setSelected] = useState(() => new Set());
   const [showCreate, setShowCreate] = useState(false);
   const [newClaim, setNewClaim] = useState({ claimFor: '', endDate: '', name: '' });
@@ -245,7 +253,7 @@ export default function ExpenseClaims() {
     });
     setShowCreate(false);
     setNewClaim({ claimFor: '', endDate: '', name: '' });
-    setTab('inbox');
+    setScope('unpublished');
   };
   const { user, googleEnabled, membership } = useAuth();
   const exportSettings = useExportSettings();
@@ -262,27 +270,26 @@ export default function ExpenseClaims() {
   const isAdmin = canManageBusiness(membership, googleEnabled);
   const claims = isAdmin ? allClaims : visibleClaimsFor(allClaims, user);
 
-  // Inbox = every claim that isn't approved yet — drafts, ones awaiting a
-  // Inbox holds every non-archived claim (like the Costs inbox) — each row shows
-  // its own Approval status, so there's no separate Approvals tab.
-  // Newest claim on top (createdAt is an ISO stamp, so lexical sort = chrono).
+  // Each row shows its own Approval status, so there is no separate Approvals
+  // tab and no draft/awaiting split — one list, sorted newest first (createdAt
+  // is an ISO stamp, so a lexical sort is chronological).
   const byNewest = (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
-  // A claim published to Xero belongs in Archive (out of the active inbox), even
-  // if it was published before auto-archiving was added — isClaimArchived is the
-  // shared rule, so the subnav badge counts exactly what the Inbox tab lists.
-  const inbox = claims.filter((c) => !isClaimArchived(c)).sort(byNewest);
-  const archived = claims.filter(isClaimArchived).sort(byNewest);
+  // Publishing is what settles a claim, so that — not the archive flag — is what
+  // the working half is measured by. A claim archived by hand and never
+  // published is still work somebody may have to finish, and it stays here.
+  const unpublished = claims.filter((c) => !c.xeroInvoiceId).sort(byNewest);
+  const everything = [...claims].sort(byNewest);
 
   // Per-claim approval status shown in its column (Dext wording).
   const STATUS_LABEL = { awaiting_approval: 'Waiting', approved: 'Approved', rejected: 'Rejected' };
   const statusOf = (c) => STATUS_LABEL[c.approvalStatus] || 'Not submitted';
 
-  const TABS = [
-    { key: 'inbox', label: 'Inbox', count: inbox.length },
-    { key: 'archive', label: 'Archive', count: archived.length || null },
+  const SCOPES = [
+    { key: 'unpublished', label: 'Unpublished', count: unpublished.length },
+    { key: 'all', label: 'All claims', count: everything.length },
   ];
 
-  const base = tab === 'inbox' ? inbox : tab === 'archive' ? archived : [];
+  const base = scope === 'all' ? everything : unpublished;
   const q = query.trim().toLowerCase();
   const amount = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const rows = base.filter((c) => {
@@ -338,8 +345,17 @@ export default function ExpenseClaims() {
     archiveClaims([...selected], on);
     clear();
   };
+  // Which of the ticked claims each of the two moves can act on. Without a tab
+  // to infer the direction from, the selection says it: a claim already
+  // archived cannot be archived again, and one that was never archived has
+  // nothing to come back from. A published claim is archived by the publishing
+  // and is not pulled back out of it here — its figures are in the ledger.
+  const picked = everything.filter((c) => selected.has(c.id));
+  const canArchive = picked.some((c) => !c.archived && !c.xeroInvoiceId);
+  const canUnarchive = picked.some((c) => c.archived && !c.xeroInvoiceId);
+
   // What Export acts on: the ticked claims when anything is ticked, otherwise
-  // everything the tab is showing, filters and search included.
+  // everything the list is showing, filters and search included.
   const toExport = hasSelection ? rows.filter((c) => selected.has(c.id)) : rows;
 
   const doDelete = () => {
@@ -396,36 +412,31 @@ export default function ExpenseClaims() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="mb-4 flex items-center gap-6 border-b">
-        {TABS.map((t) => {
-          const active = tab === t.key;
+      {/* One list, two ways of looking at it — the same control the Costs side
+          uses, so the two pages are read the same way. */}
+      <div className="mb-4 inline-flex rounded-md border p-0.5" role="group" aria-label="Which claims to show">
+        {SCOPES.map((sc) => {
+          const active = scope === sc.key;
           return (
             <button
-              key={t.key}
+              key={sc.key}
               type="button"
-              onClick={() => {
-                setTab(t.key);
-                setSelected(new Set());
-              }}
+              aria-pressed={active}
+              onClick={() => { setScope(sc.key); setSelected(new Set()); }}
               className={cn(
-                '-mb-px flex items-center gap-2 border-b-2 pb-3 pt-1 text-sm transition-colors',
-                active
-                  ? 'border-foreground font-medium text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
+                'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded px-3 text-sm transition-colors',
+                active ? 'bg-foreground font-medium text-background' : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              {t.label}
-              {t.count != null && (
-                <span
-                  className={cn(
-                    'rounded-full px-1.5 text-xs',
-                    active ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'
-                  )}
-                >
-                  {t.count}
-                </span>
-              )}
+              {sc.label}
+              <span
+                className={cn(
+                  'rounded-full px-1.5 text-xs',
+                  active ? 'bg-background/20 text-background' : 'bg-muted text-muted-foreground'
+                )}
+              >
+                {sc.count}
+              </span>
             </button>
           );
         })}
@@ -434,8 +445,7 @@ export default function ExpenseClaims() {
       {/* Toolbar */}
       {/* One scrolling row on a phone rather than several wrapped ones. */}
       <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-x-visible md:pb-0">
-        {tab === 'inbox' && (
-          <button
+        <button
             type="button"
             disabled={!hasSelection}
             onClick={() => setApproveOpen(true)}
@@ -446,24 +456,29 @@ export default function ExpenseClaims() {
           >
             <Send className="h-3.5 w-3.5" /> Submit for approval
           </button>
-        )}
         <button
           type="button"
-          disabled={!hasSelection}
-          onClick={() => doArchive(tab !== 'archive')}
+          disabled={!canArchive}
+          onClick={() => doArchive(true)}
           className={cn(
             'inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
-            hasSelection ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/50'
+            canArchive ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/50'
           )}
         >
-          {tab === 'archive' ? 'Unarchive' : 'Archive'}
+          Archive
         </button>
-        <ClaimsActions
-          disabled={!hasSelection}
-          tab={tab}
-          onArchive={() => doArchive(tab !== 'archive')}
-          onDelete={doDelete}
-        />
+        <button
+          type="button"
+          disabled={!canUnarchive}
+          onClick={() => doArchive(false)}
+          className={cn(
+            'inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
+            canUnarchive ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/50'
+          )}
+        >
+          Unarchive
+        </button>
+        <ClaimsActions disabled={!hasSelection} onDelete={doDelete} />
         {/* One button, both cases — the ticked claims when anything is ticked,
             otherwise everything the tab currently shows, filters and search
             included. Which is also what makes the filter useful: narrow the
@@ -549,7 +564,7 @@ export default function ExpenseClaims() {
         {rows.length === 0 && (
           <li className="rounded-lg border px-4 py-12 text-center text-sm text-muted-foreground">
             <Plus className="mx-auto mb-2 h-5 w-5" strokeWidth={1.5} />
-            Nothing in {TABS.find((t) => t.key === tab)?.label}.
+            Nothing in {scope === 'all' ? 'this book' : 'Unpublished'}.
           </li>
         )}
       </ul>
@@ -663,7 +678,7 @@ export default function ExpenseClaims() {
               <tr>
                 <td colSpan={8} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   <Plus className="mx-auto mb-2 h-5 w-5" strokeWidth={1.5} />
-                  Nothing in {TABS.find((t) => t.key === tab)?.label}.
+                  Nothing in {scope === 'all' ? 'this book' : 'Unpublished'}.
                 </td>
               </tr>
             )}

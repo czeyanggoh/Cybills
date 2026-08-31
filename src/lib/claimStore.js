@@ -251,6 +251,15 @@ export function inboxClaimsFor(claims, user, isAdmin = false) {
   return visible.filter((c) => !isClaimArchived(c));
 }
 
+// The working half — what the Expense claims page opens on. Publishing is what
+// settles a claim, so a claim archived by hand and never published is still in
+// here; it is work somebody may have to finish. Shared with the subnav badge so
+// the number beside the tab counts the list the tab actually opens.
+export function unpublishedClaimsFor(claims, user, isAdmin = false) {
+  const visible = isAdmin ? claims || [] : visibleClaimsFor(claims, user);
+  return visible.filter((c) => !c?.xeroInvoiceId);
+}
+
 export function visibleClaimsFor(claims, user) {
   const email = norm(user?.email);
   const name = norm(user?.name);
