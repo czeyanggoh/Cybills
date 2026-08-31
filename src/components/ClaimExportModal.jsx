@@ -5,6 +5,7 @@ import { generateClaimsPdf } from '@/lib/claimPdf';
 import { useAuth } from '@/lib/auth';
 import { useExportSettings } from '@/lib/exportSettings';
 import { getActiveOrganisationId } from '@/lib/organisations';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
 function Select({ value, onChange, options }) {
@@ -40,6 +41,13 @@ export default function ClaimExportModal({ open, onClose, claim, claims, onExpor
   const [busy, setBusy] = useState(false);
   const settings = useExportSettings();
   const { user, membership } = useAuth();
+  const navigate = useNavigate();
+  // Closing first, because the settings page renders behind this dialog and a
+  // modal left open over it traps the very click that got you there.
+  const goToExportSettings = () => {
+    onClose();
+    navigate('/settings?section=exports');
+  };
 
   // Called with one claim or with a list; a single claim keeps the path it
   // always had, so its file name and its Exports row are unchanged.
@@ -122,6 +130,21 @@ export default function ClaimExportModal({ open, onClose, claim, claims, onExpor
                   <span className="w-28 shrink-0 text-muted-foreground">CSV format</span>
                   <Select value={format} onChange={setFormat} options={[{ value: 'cybills', label: 'CYBills Default' }, { value: 'custom', label: 'Custom CSV (from Export settings)' }]} />
                 </label>
+              )}
+              {/* Custom names a column set chosen SOMEWHERE ELSE, so the option
+                  is only useful to somebody who knows where — and nothing here
+                  said. Shown only for Custom: on the default it would point at
+                  a setting that has no bearing on the file about to come out. */}
+              {!many && format === 'custom' && (
+                <p className="pl-[7.75rem] text-xs text-muted-foreground">
+                  <button
+                    type="button"
+                    onClick={goToExportSettings}
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    Choose your columns in Business settings &rarr; Exports
+                  </button>
+                </p>
               )}
               <label className="flex items-center gap-2 text-sm">
                 <input
