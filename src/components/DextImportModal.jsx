@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { X, Upload, FileText, AlertTriangle, Check } from 'lucide-react';
 import { parseDextExport, matchFiles, billPayload, patchPayload } from '@/lib/dextImport';
-import { addBill, updateBill, fetchDextImage, sha256Hex, billFileUrl, fetchBillFileMeta } from '@/lib/bills';
+import { addBill, updateBill, fetchDextImage, sha256Hex, billFileUrl, fetchBillFileMeta, deleteBill, notifyBillsChanged } from '@/lib/bills';
 import { useActiveOrganisation } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
@@ -47,6 +47,26 @@ function SkippedRow({ row, imported = false }) {
   const [dext, setDext] = useState(undefined); // undefined = not asked, null = no good
   const [mine, setMine] = useState(undefined);
   const [failed, setFailed] = useState(false);
+  // Which of the pair has been deleted from here, so the pane says so instead
+  // of going on offering a document that is no longer there.
+  const [gone, setGone] = useState({});
+
+  // Deleting is the point of looking: once the two are on screen and one of
+  // them is plainly a second copy, sending somebody to the inbox to find it by
+  // its id is asking them to do the hard part again. Same confirmation the
+  // inbox's own delete gives, because it is the same irreversible thing —
+  // the stored file goes too.
+  const remove = async (which, id, label) => {
+    if (!id) return;
+    if (!window.confirm(`Permanently delete ${label}?\n\nThis removes it everywhere and deletes the file from storage — it can't be undone.`)) return;
+    try {
+      await deleteBill(id);
+      setGone((g) => ({ ...g, [which]: true }));
+      notifyBillsChanged();
+    } catch {
+      // Left as it is: the pane still shows the document, which is the truth.
+    }
+  };
 
   const show = async () => {
     const next = !open;
@@ -101,12 +121,28 @@ function SkippedRow({ row, imported = false }) {
       </div>
       {open && (
         <div className="mt-2 grid grid-cols-2 gap-2">
-          <DocPane label="From Dext" src={dext?.url} type={dext?.type} pending={dext === undefined} failed={failed} />
+          {/* Left: the row that was just imported. Its picture comes from Dext,
+              but the document it made is the one a delete removes. */}
+          <DocPane
+            label={`This one${row.mineId ? ` · ${row.mineId}` : ''}`}
+            src={dext?.url}
+            type={dext?.type}
+            pending={dext === undefined}
+            failed={failed}
+            gone={gone.mine}
+            onDelete={imported && row.mineBillId
+              ? () => remove('mine', row.mineBillId, `the document just imported as ${row.mineId}`)
+              : null}
+          />
           <DocPane
             label={`${row.fromThisImport ? 'The other row' : 'Already in this book'}${row.matched ? ` · ${row.matched}` : ''}`}
             src={mine?.url}
             type={mine?.type}
             pending={mine === undefined && Boolean(row.matchedBillId)}
+            gone={gone.twin}
+            onDelete={row.matchedBillId
+              ? () => remove('twin', row.matchedBillId, `${row.matched || 'the other document'}`)
+              : null}
           />
         </div>
       )}
@@ -116,26 +152,39 @@ function SkippedRow({ row, imported = false }) {
 
 // A document, however it is stored. A PDF needs a frame and an image needs an
 // img; guessing wrong shows a broken icon over a perfectly good receipt.
-function DocPane({ label, src, type = '', pending = false, failed = false }) {
+function DocPane({ label, src, type = '', pending = false, failed = false, gone = false, onDelete = null }) {
   const isPdf = /pdf/i.test(type) || /\.pdf($|\?)/i.test(String(src || ''));
   return (
     <div className="min-w-0">
       <p className="mb-1 truncate text-[11px] text-muted-foreground">{label}</p>
-      <div className="flex h-44 items-center justify-center overflow-hidden rounded border bg-muted/30">
-        {pending && <span className="text-[11px] text-muted-foreground">Loading…</span>}
-        {!pending && !src && (
+      <div className="flex h-64 items-center justify-center overflow-hidden rounded border bg-muted/30">
+        {/* Said out loud rather than left as an empty frame: a pane that simply
+            goes blank reads as something having broken, not as the delete
+            having worked. */}
+        {gone && <span className="text-[11px] text-muted-foreground">Deleted</span>}
+        {!gone && pending && <span className="text-[11px] text-muted-foreground">Loading…</span>}
+        {!gone && !pending && !src && (
           <span className="px-2 text-center text-[11px] text-muted-foreground">
             {failed ? 'Could not be fetched' : 'No document'}
           </span>
         )}
-        {!pending && src && (isPdf
+        {!gone && !pending && src && (isPdf
           ? <iframe title={label} src={src} className="h-full w-full" />
           : <img alt={label} src={src} className="max-h-full max-w-full object-contain" />)}
       </div>
-      {src && (
-        <a href={src} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] underline underline-offset-2 hover:opacity-70">
-          Open full size
-        </a>
+      {!gone && (src || onDelete) && (
+        <div className="mt-1 flex items-center gap-3">
+          {src && (
+            <a href={src} target="_blank" rel="noreferrer" className="text-[11px] underline underline-offset-2 hover:opacity-70">
+              Open full size
+            </a>
+          )}
+          {onDelete && (
+            <button type="button" onClick={onDelete} className="text-[11px] text-destructive underline underline-offset-2 hover:opacity-70">
+              Delete this one
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -249,6 +298,7 @@ export default function DextImportModal({ open, onClose, onImported }) {
               .join(' · '),
             same: res.duplicate.type === 'exact_file',
             mineId: res.bill.displayId || '',
+            mineBillId: res.bill.id || '',
             // When the twin came out of this same file, name it by its DEXT id:
             // that is the number in the CSV in front of her, and a CYBills item
             // id for a document created four seconds ago means nothing yet.
