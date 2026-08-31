@@ -3,6 +3,7 @@ import { Check, Link2, RotateCcw, Info } from 'lucide-react';
 import { RECON_ACCOUNTS, useBankFeed, reconcile, reconcileAll } from '@/lib/bankRecon';
 import { formatDate } from '@/lib/date';
 import { cn } from '@/lib/utils';
+import { COSTS_LABEL } from '@/lib/workspaceNames';
 
 // Bank reconciliation: match each bank-feed transaction to the cost it pays.
 export default function BankReconcile() {
@@ -27,7 +28,7 @@ export default function BankReconcile() {
         <p>
           <span className="font-medium text-foreground">Where these lines come from.</span>{' '}
           This isn&apos;t a live bank feed — bank feeds aren&apos;t available through Xero&apos;s API.
-          To demonstrate reconciliation, the feed is built from your Costs (each shown as a card
+          To demonstrate reconciliation, the feed is built from your {COSTS_LABEL} (each shown as a card
           payment) plus a few sample bank-only lines (account fee, interest, payroll transfer).
           Connecting a bank-aggregation integration would replace it with your real transactions.
         </p>
@@ -131,7 +132,7 @@ export default function BankReconcile() {
       </div>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        Matched against your Costs. Reconciling ties a bank line to the cost it pays; bank-only lines
+        Matched against your {COSTS_LABEL}. Reconciling ties a bank line to the cost it pays; bank-only lines
         (fees, interest, transfers) can be marked done.
       </p>
     </>

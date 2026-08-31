@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ChevronDown, Flag, FileText, Sparkles, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import { COSTS_LABEL } from '@/lib/workspaceNames';
+import { useSalesEnabled } from '@/lib/workspaceSettings';
 import VaultSubnav from '@/components/VaultSubnav';
 import ManageAccessModal from '@/components/ManageAccessModal';
 import { useAuth } from '@/lib/auth';
@@ -94,6 +96,7 @@ export default function VaultDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { visionEnabled } = useAuth();
+  const salesEnabled = useSalesEnabled();
   const readerName = useReaderName();
   const users = useUsers();
   const folders = useVaultFolders();
@@ -210,7 +213,7 @@ export default function VaultDetail() {
       const result = await addBill(payload, { force: true });
       if (result?.ok || result?.bill) {
         notifyBillsChanged();
-        setCopied(kind === 'sales' ? 'Copied to Sales inbox' : 'Copied to Costs inbox');
+        setCopied(kind === 'sales' ? 'Copied to Sales inbox' : `Copied to ${COSTS_LABEL} inbox`);
       } else {
         setCopied('Could not copy this file.');
       }
@@ -247,11 +250,16 @@ export default function VaultDetail() {
           <Flag className={cn('h-4 w-4', file.flagged ? 'fill-foreground text-foreground' : 'text-muted-foreground')} />
         </button>
         <TopButton disabled={!!copying} onClick={() => copyTo('cost')}>
-          {copying === 'cost' ? 'Copying…' : 'Copy to Costs'}
+          {copying === 'cost' ? 'Copying…' : `Copy to ${COSTS_LABEL}`}
         </TopButton>
-        <TopButton disabled={!!copying} onClick={() => copyTo('sales')}>
-          {copying === 'sales' ? 'Copying…' : 'Copy to Sales'}
-        </TopButton>
+        {/* Same rule the Cost page's "Move to" follows: a copy into a workspace
+            this entity has hidden would leave the document somewhere nobody
+            here can open. */}
+        {salesEnabled && (
+          <TopButton disabled={!!copying} onClick={() => copyTo('sales')}>
+            {copying === 'sales' ? 'Copying…' : 'Copy to Sales'}
+          </TopButton>
+        )}
         <TopButton onClick={() => setAccessOpen(true)}>Manage access</TopButton>
         <TopButton danger onClick={del}>Delete</TopButton>
         <div className="ml-auto flex items-center gap-3 text-sm">

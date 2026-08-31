@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ChevronDown, Flag, Sparkles, Upload, FileText } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import { COSTS_LABEL } from '@/lib/workspaceNames';
 import SalesSubnav from '@/components/SalesSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
 import CustomerRulesModal from '@/components/CustomerRulesModal';
@@ -351,7 +352,7 @@ export default function SalesDetail() {
   };
 
   const MOVE_DESTS = [
-    { label: 'Costs', to: '/costs' },
+    { label: COSTS_LABEL, to: '/costs' },
     { label: 'Supplier statements', to: '/supplier-statements' },
     { label: 'Vault', to: '/vault' },
   ];

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
+import { COSTS_LABEL } from '@/lib/workspaceNames';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import DocsExportModal from '@/components/DocsExportModal';
 import FlagMenu from '@/components/FlagMenu';
@@ -78,7 +79,7 @@ function CategorySelect({ value, onChange, options }) {
 // Tabs whose badge shows a live count of their rows. Processing/Approvals have
 // no count badge (they render their own panels).
 const TABS = [
-  { key: 'all', label: 'Costs', counted: true },
+  { key: 'all', label: COSTS_LABEL, counted: true },
   { key: 'processing', label: 'Processing', counted: true },
   { key: 'review', label: 'To review', counted: true },
   { key: 'ready', label: 'Ready', counted: true },
@@ -97,12 +98,12 @@ const TABS = [
 // is why it is drawn only here.
 const SCOPES = [
   { key: 'unpublished', label: 'Unpublished' },
-  { key: 'all', label: 'All costs' },
+  { key: 'all', label: `All ${COSTS_LABEL}` },
 ];
 
 function ScopeToggle({ scope, setScope, counts }) {
   return (
-    <div className="mb-3 inline-flex rounded-md border p-0.5" role="group" aria-label="Which costs to show">
+    <div className="mb-3 inline-flex rounded-md border p-0.5" role="group" aria-label={`Which ${COSTS_LABEL} to show`}>
       {SCOPES.map((s) => {
         const active = scope === s.key;
         return (
@@ -1281,7 +1282,7 @@ export default function Costs() {
     <AppShell subnav={<CostsSubnav />}>
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold tracking-tight">Costs inbox</h1>
+        <h1 className="text-xl font-semibold tracking-tight">{COSTS_LABEL} inbox</h1>
         <AddDocumentsButton />
       </div>
 

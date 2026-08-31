@@ -5,8 +5,16 @@ import AppShell from '@/components/AppShell';
 import HistoryModal from '@/components/HistoryModal';
 import { fetchBills, billToDoc, itemNumber, costPath, billFileUrl, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { cn } from '@/lib/utils';
+import { COSTS_LABEL } from '@/lib/workspaceNames';
+import { useSalesEnabled } from '@/lib/workspaceSettings';
 
-const TABS = ['Costs and sales', 'Supplier statements'];
+// The first tab covers both document workspaces, so it names whichever of them
+// this entity actually runs — an entity with Sales hidden has no sales
+// submissions to see, and naming a section that isn't there only raises the
+// question of where it is. The label is the key here (there are two of them,
+// and only "Supplier statements" is ever compared).
+const STATEMENTS_TAB = 'Supplier statements';
+const docsTabLabel = (sales) => (sales ? `${COSTS_LABEL} and sales` : COSTS_LABEL);
 
 // Real documents, newest first, mapped to the history-table shape. Excludes
 // mid-upload ('processing') and deleted docs — everything else has been
@@ -88,14 +96,19 @@ function RowActions({ doc, onHistory }) {
 
 export default function SubmissionHistory() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState('Costs and sales');
+  const salesEnabled = useSalesEnabled();
+  const TABS = [docsTabLabel(salesEnabled), STATEMENTS_TAB];
+  // The label carries the entity's answer, so a tab that was open when Sales
+  // was switched off follows the rename rather than pointing at nothing.
+  const [tab, setTab] = useState(TABS[0]);
+  const active = tab === STATEMENTS_TAB ? STATEMENTS_TAB : TABS[0];
   const [query, setQuery] = useState('');
   const [historyItem, setHistoryItem] = useState(null);
   const docs = useSubmittedDocs();
 
   // Costs and sales share one tab; supplier statements have their own.
   const forTab = docs.filter((d) =>
-    tab === 'Supplier statements' ? d.kind === 'supplier_statement' : d.kind === 'cost' || d.kind === 'sales'
+    active === STATEMENTS_TAB ? d.kind === 'supplier_statement' : d.kind === 'cost' || d.kind === 'sales'
   );
   const q = query.trim().toLowerCase();
   // Newest submission on top, always — don't rely on the store's order.
@@ -120,7 +133,7 @@ export default function SubmissionHistory() {
     supplier: d.supplier,
     customer: d.customer || '—',
     total: d.total,
-    workspace: d.kind === 'sales' ? 'Sales' : d.kind === 'supplier_statement' ? 'Supplier statements' : 'Costs',
+    workspace: d.kind === 'sales' ? 'Sales' : d.kind === 'supplier_statement' ? 'Supplier statements' : COSTS_LABEL,
   }));
 
   const showDoc = (d) => navigate(d.kind === 'sales' ? `/sales/${d.id}` : costPath(d.id));
@@ -137,7 +150,7 @@ export default function SubmissionHistory() {
             onClick={() => setTab(t)}
             className={cn(
               '-mb-px border-b-2 pb-3 pt-1 text-sm transition-colors',
-              tab === t ? 'border-foreground font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+              active === t ? 'border-foreground font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
           >
             {t}
@@ -211,7 +224,7 @@ export default function SubmissionHistory() {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={13} className="px-4 py-16 text-center text-sm text-muted-foreground">
-                  {q ? `No submissions match “${query}”.` : `No submissions in ${tab} yet.`}
+                  {q ? `No submissions match “${query}”.` : `No submissions in ${active} yet.`}
                 </td>
               </tr>
             )}

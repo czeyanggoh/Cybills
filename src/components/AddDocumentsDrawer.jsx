@@ -4,6 +4,7 @@ import { X, FileText, Loader2, CheckCircle2, AlertTriangle, ExternalLink } from 
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
+import { COSTS_LABEL } from '@/lib/workspaceNames';
 import { useReaderName } from '@/lib/readerProvider';
 import {
   sha256Hex,
@@ -36,7 +37,10 @@ import { PDFDocument } from 'pdf-lib';
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
 // Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
 // extract) → duplicate check → persist. Supplier statements stays UI-only.
+// The tab keys stay as they were — `kind` is derived from them, and a stored
+// document says 'cost' — so only what is DRAWN carries the workspace's name.
 const TABS = ['Costs', 'Sales', 'Supplier statements'];
+const tabLabel = (t) => (t === 'Costs' ? COSTS_LABEL : t);
 
 let uid = 0;
 
@@ -752,7 +756,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               )}
             >
-              {t}
+              {tabLabel(t)}
             </button>
           ))}
         </div>

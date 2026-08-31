@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Check, Plug, ArrowRight } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
+import { COSTS_LABEL } from '@/lib/workspaceNames';
 import { FETCH_SUPPLIERS, useSupplierConnections, toggleSupplier, fetchBillsFrom } from '@/lib/supplierFetch';
 import { cn } from '@/lib/utils';
 
@@ -24,7 +25,7 @@ export default function SupplierFetch() {
       const { added, skipped } = await fetchBillsFrom(connected);
       setNote(
         added
-          ? `Fetched ${added} bill${added === 1 ? '' : 's'} into the Costs inbox${skipped ? ` · ${skipped} already fetched this month` : ''}.`
+          ? `Fetched ${added} bill${added === 1 ? '' : 's'} into the ${COSTS_LABEL} inbox${skipped ? ` · ${skipped} already fetched this month` : ''}.`
           : `Nothing new — all ${skipped} connected supplier bill${skipped === 1 ? '' : 's'} already fetched this month.`
       );
     } catch {
@@ -50,7 +51,7 @@ export default function SupplierFetch() {
       </div>
 
       <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
-        Connect your online suppliers and CYBills pulls each new invoice straight into your Costs
+        Connect your online suppliers and CYBills pulls each new invoice straight into your {COSTS_LABEL}
         inbox — no uploading. It fetches one bill per connected supplier per month.
       </p>
 

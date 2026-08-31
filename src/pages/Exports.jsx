@@ -8,10 +8,11 @@ import { downloadExportBlob } from '@/lib/docsExport';
 import { useOrganisations } from '@/lib/organisations';
 import { useAuth } from '@/lib/auth';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
+import { COSTS_LABEL } from '@/lib/workspaceNames';
 import { cn } from '@/lib/utils';
 
 const TABS = [
-  { key: 'costs', label: 'Costs' },
+  { key: 'costs', label: COSTS_LABEL },
   { key: 'sales', label: 'Sales' },
   { key: 'claims', label: 'Expense claims' },
   { key: 'bank', label: 'Bank' },

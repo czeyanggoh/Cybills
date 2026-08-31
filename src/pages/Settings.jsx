@@ -46,6 +46,7 @@ import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
 import { useSalesEnabled, getWorkspaceSettings, saveWorkspaceSettings } from '@/lib/workspaceSettings';
+import { COSTS_LABEL } from '@/lib/workspaceNames';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import { READER_PROVIDERS, readerLabel, effectiveProvider } from '@/lib/readerProvider';
 
@@ -410,7 +411,7 @@ function BusinessProfile() {
       <Card title="Workspaces">
         <Row
           label="Sales"
-          hint="Show the Sales tab, its Customers list and its exports. Off hides the section everywhere — the rail, the Add documents panel and the Costs page's “Move to”. Sales documents already captured are kept."
+          hint={`Show the Sales tab, its Customers list and its exports. Off hides the section everywhere — the rail, the Add documents panel and the ${COSTS_LABEL} page's “Move to”. Sales documents already captured are kept.`}
         >
           <Toggle on={sales} onChange={setSales} />
         </Row>
@@ -680,7 +681,7 @@ function ExtractByWhatsappCard() {
       const out = await sendTestDelivery();
       setTestNote({
         ok: true,
-        text: `Delivered to ${out.group} — filed as ${out.itemId || 'a new document'}. It is in the Costs inbox; delete it when you have seen it.`,
+        text: `Delivered to ${out.group} — filed as ${out.itemId || 'a new document'}. It is in the ${COSTS_LABEL} inbox; delete it when you have seen it.`,
       });
     } catch (err) {
       setTestNote({ ok: false, text: err.message });
@@ -799,7 +800,7 @@ function Extraction() {
       <ExtractByWhatsappCard />
 
       <Card title="Inbox tabs">
-        <Row label="Show To review and Ready tabs" hint="Show these tabs in the costs and sales inboxes.">
+        <Row label="Show To review and Ready tabs" hint={`Show these tabs in the ${COSTS_LABEL} and Sales inboxes.`}>
           <Toggle on={form.showReviewReadyTabs} onChange={(v) => set('showReviewReadyTabs', v)} />
         </Row>
       </Card>
@@ -814,7 +815,7 @@ function Extraction() {
       </Card>
 
       <Card title="Tax">
-        <Row label="Extract tax" hint="Extract the tax value from new costs and sales documents.">
+        <Row label="Extract tax" hint="Extract the tax value from new bills, receipts and sales documents.">
           <Toggle on={form.extractTax} onChange={(v) => set('extractTax', v)} />
         </Row>
         {/* A bridge entity's costs never post on their own: it has no Xero, and
@@ -835,7 +836,7 @@ function Extraction() {
             still extracted above — that is what the paper says. */}
         {!bridge && (
           <>
-            <Row label="Default tax rate for costs">
+            <Row label={`Default tax rate for ${COSTS_LABEL}`}>
               <SelectBox value={form.defaultTaxRateCosts || '— None —'} onChange={(v) => set('defaultTaxRateCosts', v === '— None —' ? '' : v)} options={taxRateOptions} />
             </Row>
             {/* A default for a workspace this entity has hidden is a setting
@@ -850,10 +851,10 @@ function Extraction() {
       </Card>
 
       <Card title="Due dates">
-        <Row label="Due date for costs invoices">
+        <Row label={`Due date for ${COSTS_LABEL}`}>
           <SelectBox value={form.dueCostsMode} onChange={(v) => set('dueCostsMode', v)} options={DUE_MODES} />
         </Row>
-        <Row label="How many days (costs)">
+        <Row label={`How many days (${COSTS_LABEL})`}>
           <SelectBox value={form.dueCostsDays} onChange={(v) => set('dueCostsDays', v)} options={DUE_DAYS} />
         </Row>
         {salesEnabled && (
@@ -875,9 +876,9 @@ function Extraction() {
             answer), and it doesn't beat a supplier's own rule. Said here rather
             than left to be worked out from a document that won't change. */}
         <p className="text-sm text-muted-foreground">
-          How a costs document arrives, by its type. This is the starting point for documents added from now
+          How a bill or receipt arrives, by its type. This is the starting point for documents added from now
           on — it doesn&rsquo;t change ones already in the inbox, and a supplier whose rules set Paid wins over it.
-          To change documents already here, tick them in the Costs inbox and use{' '}
+          To change documents already here, tick them in the {COSTS_LABEL} inbox and use{' '}
           <span className="font-medium text-foreground">Bulk edit → Paid</span>.
         </p>
         <Row label="Receipts"><SelectBox value={form.payReceipts} onChange={(v) => set('payReceipts', v)} options={PAID_OPTIONS} /></Row>
@@ -902,21 +903,21 @@ function Automation() {
   return (
     <div className="space-y-6">
       <Card title="Categorisation">
-        <p className="text-sm text-muted-foreground">Specify how categories are applied to your costs items.</p>
+        <p className="text-sm text-muted-foreground">Specify how categories are applied to your bills and receipts.</p>
         <Row label="Auto-categorisation" hint="Automatically apply categories to new documents.">
           <SelectBox defaultValue="Always" options={['Always', 'When confident', 'Never']} />
         </Row>
         <Row label="Default category" hint="Applied when there’s no supplier rule and no better match.">
           <SelectBox defaultValue="— None —" options={['— None —', 'Transport - Taxi', 'Meals & Entertainment', 'Others']} />
         </Row>
-        <Row label="Category display" hint="How categories appear in the Costs dropdowns.">
+        <Row label="Category display" hint={`How categories appear in the ${COSTS_LABEL} dropdowns.`}>
           <SelectBox
             value={CAT_MODE_TO_LABEL[catMode] || 'Code and name'}
             onChange={(v) => setCategoryDisplayMode(CAT_LABEL_TO_MODE[v] || 'codeName')}
             options={CAT_DISPLAY_OPTIONS}
           />
         </Row>
-        <Row label="Category sort" hint="Order of the categories in the Costs dropdowns.">
+        <Row label="Category sort" hint={`Order of the categories in the ${COSTS_LABEL} dropdowns.`}>
           <SelectBox
             value={catSort === 'name' ? 'Name' : 'Code'}
             onChange={(v) => setCategorySortMode(v === 'Name' ? 'name' : 'code')}
@@ -980,7 +981,7 @@ function Exports() {
       </Card>
 
       <Card title="CSV Custom Exports">
-        <p className="text-sm text-muted-foreground">Choose how the data in Custom CSV file exports gets formatted. Applied when you pick <span className="font-medium">Custom CSV</span> when exporting costs, sales, or an expense claim.</p>
+        <p className="text-sm text-muted-foreground">Choose how the data in Custom CSV file exports gets formatted. Applied when you pick <span className="font-medium">Custom CSV</span> when exporting bills and receipts, sales, or an expense claim.</p>
         <Row label="Decimal separator" hint="Comma switches the CSV field delimiter to “;” so numbers stay unambiguous."><SelectBox value={form.decimalSeparator} onChange={(v) => set('decimalSeparator', v)} options={['Dot (.)', 'Comma (,)']} /></Row>
         <Row label="Date format">
           <SelectBox value={form.dateFormat} onChange={(v) => set('dateFormat', v)} options={['DD-Mon-YYYY (e.g. 20-Sep-2025)', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY']} />
@@ -1210,7 +1211,7 @@ function WhatsappCollectionCard() {
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
               CYBot opens a WhatsApp group with the people who hold this entity&rsquo;s invoices. Anything they
-              send into it is read, and the supplier bills among them arrive in the Costs inbox. Receipts,
+              send into it is read, and the supplier bills among them arrive in the {COSTS_LABEL} inbox. Receipts,
               sales invoices and everything else are left where they are.
             </p>
           </div>
