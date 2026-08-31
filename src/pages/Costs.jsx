@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { COSTS_LABEL } from '@/lib/workspaceNames';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import DocsExportModal from '@/components/DocsExportModal';
 import FlagMenu from '@/components/FlagMenu';
@@ -54,6 +53,7 @@ import ExtractionProgress from '@/components/ExtractionProgress';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
+import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 import SortTh from '@/components/SortTh';
@@ -79,7 +79,7 @@ function CategorySelect({ value, onChange, options }) {
 // Tabs whose badge shows a live count of their rows. Processing/Approvals have
 // no count badge (they render their own panels).
 const TABS = [
-  { key: 'all', label: COSTS_LABEL, counted: true },
+  { key: 'all', label: 'Costs', counted: true },
   { key: 'processing', label: 'Processing', counted: true },
   { key: 'review', label: 'To review', counted: true },
   { key: 'ready', label: 'Ready', counted: true },
@@ -98,12 +98,12 @@ const TABS = [
 // is why it is drawn only here.
 const SCOPES = [
   { key: 'unpublished', label: 'Unpublished' },
-  { key: 'all', label: `All ${COSTS_LABEL}` },
+  { key: 'all', label: 'All costs' },
 ];
 
 function ScopeToggle({ scope, setScope, counts }) {
   return (
-    <div className="mb-3 inline-flex rounded-md border p-0.5" role="group" aria-label={`Which ${COSTS_LABEL} to show`}>
+    <div className="mb-3 inline-flex rounded-md border p-0.5" role="group" aria-label="Which costs to show">
       {SCOPES.map((s) => {
         const active = scope === s.key;
         return (
@@ -554,6 +554,7 @@ export default function Costs() {
   // Read before the column list is built below — shownColumns evaluates
   // immediately, so these have to exist by then.
   const tablePrefs = useTablePrefs('costs');
+  const projectLabels = useProjectLabels();
   const bridge = useBridgeEntity(); // decides whether the Tax rate column exists
   const densityClass = DENSITY_CLASS[tablePrefs.density] || DENSITY_CLASS.Medium;
   // Documents under side-by-side duplicate review — held as ids and paired with
@@ -725,7 +726,7 @@ export default function Costs() {
         ),
     },
   };
-  const shownColumns = COST_COLUMNS
+  const shownColumns = withProjectLabels(COST_COLUMNS, projectLabels)
     // A bridge entity has no tax position of its own — its claims post with No
     // Tax at the full amount — so a tax code can never reach the ledger from
     // here, and the column could only ever read "Not set".
@@ -1282,7 +1283,7 @@ export default function Costs() {
     <AppShell subnav={<CostsSubnav />}>
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold tracking-tight">{COSTS_LABEL} inbox</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Costs inbox</h1>
         <AddDocumentsButton />
       </div>
 

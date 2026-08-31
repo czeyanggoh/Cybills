@@ -8,12 +8,15 @@ import {
   saveTablePrefs,
   useTablePrefs,
 } from '@/lib/tablePrefs';
+import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 
 // The gear beside the search box: which columns the table shows, and how
 // tightly it packs the rows. Choices apply as you make them and save
 // themselves, like everything else — Reset puts the defaults back.
 export default function TableSettingsMenu({ table = 'costs', columns = COST_COLUMNS }) {
+  // The tick that switches a column on says what the header will say.
+  const cols = withProjectLabels(columns, useProjectLabels());
   const [open, setOpen] = useState(false);
   const buttonRef = useRef(null);
   const [pos, setPos] = useState(null);
@@ -40,7 +43,7 @@ export default function TableSettingsMenu({ table = 'costs', columns = COST_COLU
     };
   }, [open]);
   const prefs = useTablePrefs(table);
-  const optional = columns.filter((c) => !c.fixed);
+  const optional = cols.filter((c) => !c.fixed);
   const primary = optional.filter((c) => c.primary);
   const additional = optional.filter((c) => !c.primary);
   const hiddenCount = optional.filter((c) => !prefs.columns[c.key]).length;

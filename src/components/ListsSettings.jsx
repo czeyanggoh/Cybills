@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
-import { addToList, removeFromList, setListVisible, setMetaField, useHiddenSet, useList, useMeta } from '@/lib/listsStore';
+import { addToList, removeFromList, renameInList, setListVisible, setMetaField, useHiddenSet, useList, useMeta } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, useTargetAccounts, updateXeroCategoryDescription, getActiveOrganisationId, isStandaloneOrg, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useCategoryAccounts, setCategoryAccount } from '@/lib/categoryAccounts';
 import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
 import { COSTS_LABEL } from '@/lib/workspaceNames';
+import { useProjectLabels, setProjectLabels, DEFAULT_PROJECT_LABELS, singular } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import { useAutoSave } from '@/lib/useAutoSave';
 import SaveStatus from '@/components/SaveStatus';
@@ -498,6 +499,185 @@ function TaxRatesList() {
   );
 }
 
+// Which of the two a project tab shows, and the control that renames it.
+// An entity with Xero reads its tracking categories from there and can't invent
+// options here; a bridge entity keeps the list itself. Either way the LABEL is
+// the entity's, because the word is about what the list is FOR, not where it
+// comes from.
+function ProjectsTab({ index, bridge, label }) {
+  return (
+    <div>
+      <ListNameField index={index} label={label} />
+      {bridge ? <ProjectsFromList index={index} label={label} /> : <ProjectsFromXero index={index} />}
+    </div>
+  );
+}
+
+// Rename the list itself. "Projects" is Xero's word for a tracking category and
+// is right for an entity that has one; Red Alpha's holds secondment PO numbers,
+// and a column called Projects sent people looking for something that is not
+// there. Only the word changes — the field stays `project` on the document, in
+// the API, in the CSV headers and in the Xero tracking category it posts to.
+function ListNameField({ index, label }) {
+  const key = index === 0 ? 'project' : 'project2';
+  const fallback = index === 0 ? DEFAULT_PROJECT_LABELS.project : DEFAULT_PROJECT_LABELS.project2;
+  const [value, setValue] = useState(label);
+  const ref = useRef(null);
+  useEffect(() => { setValue(label); }, [label]);
+  const commit = () => {
+    const next = value.trim() || fallback;
+    setValue(next);
+    if (next !== label) setProjectLabels({ [key]: next });
+  };
+  return (
+    <label className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+      <span className="text-muted-foreground">What this entity calls this list</span>
+      <input
+        ref={ref}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          // Commit outright rather than leaning on blur to do it: Enter is how
+          // most people finish a field, and a rename that needs a click
+          // somewhere else to take is a rename that looks like it didn't.
+          if (e.key === 'Enter') { e.preventDefault(); commit(); ref.current?.blur(); }
+          if (e.key === 'Escape') { setValue(label); ref.current?.blur(); }
+        }}
+        placeholder={fallback}
+        aria-label="List name"
+        className="h-9 w-56 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <span className="text-xs text-muted-foreground">
+        Shown wherever this list appears. Blank goes back to &ldquo;{fallback}&rdquo;.
+      </span>
+    </label>
+  );
+}
+
+// Projects for an entity with no Xero — the bridge case. There are no tracking
+// categories to read, so the list is the entity's own: added, renamed, hidden
+// and deleted here, the way its Categories already are.
+//
+// It exists because the tab could only ever say "Could not load tracking
+// categories from Xero" for these entities, which is true and useless: there is
+// no Xero to load them from and never will be. Red Alpha's projects are
+// secondment PO numbers its own admins keep.
+//
+// The LABEL is the entity's too (see projectLabels.js) — the stored field stays
+// `project` / `project2`, only the word on screen changes.
+function ProjectsFromList({ index, label }) {
+  const kind = index === 0 ? 'projects' : 'projects2';
+  const rows = useList(kind);
+  const [query, setQuery] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const { selected, toggle, clear } = useSelection();
+  const meta = useMeta(kind);
+
+  const q = query.trim().toLowerCase();
+  const filtered = rows
+    .filter((r) => !q || r.name.toLowerCase().includes(q))
+    .map((r) => ({ ...r, rules: meta[r.name]?.rules || '' }));
+  const allShown = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
+  const one = singular(label);
+
+  return (
+    <div>
+      <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
+        This entity has no accounting connection, so {label} is a list it keeps itself — add, rename
+        or hide them here and they become the options on every document.
+        {index === 0 && (
+          <>
+            {' '}CYBills allocates a document to the one it plainly belongs to — by name, or by a{' '}
+            <span className="font-medium text-foreground">When to use</span> rule you write for the
+            cases a name can&rsquo;t settle.
+          </>
+        )}
+      </p>
+      <Toolbar
+        hasSelection={selected.size > 0}
+        onDelete={() => { removeFromList(kind, [...selected]); clear(); }}
+        query={query}
+        setQuery={setQuery}
+      >
+        <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Add {one.toLowerCase()}</button>
+      </Toolbar>
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead className="border-b bg-muted/40 text-left text-muted-foreground">
+            <tr>
+              <th className="w-10 px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  aria-label={`Select all ${label}`}
+                  checked={allShown}
+                  onChange={() => (allShown ? clear() : filtered.forEach((r) => { if (!selected.has(r.id)) toggle(r.id); }))}
+                  className="h-4 w-4 accent-black"
+                />
+              </th>
+              <th className="w-64 whitespace-nowrap px-3 py-2.5 font-medium">Name</th>
+              <th className="w-full px-3 py-2.5 font-medium">When to use?</th>
+              <th className="whitespace-nowrap px-3 py-2.5 font-medium">Visible</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((r) => (
+              <tr key={r.id} className="border-b align-middle last:border-0 hover:bg-muted/40">
+                <td className="px-3 py-3"><input type="checkbox" checked={selected.has(r.id)} onChange={() => toggle(r.id)} className="h-4 w-4 accent-black" /></td>
+                <td className="px-3 py-2"><NameCell row={r} kind={kind} /></td>
+                <td className="px-3 py-2">
+                  <RulesCell row={r} kind={kind} placeholder={`When should this ${one.toLowerCase()} be used?`} />
+                </td>
+                <td className="px-3 py-3"><VisibleToggle on={r.visible} onToggle={() => setListVisible(kind, r.id, !r.visible)} /></td>
+              </tr>
+            ))}
+            {filtered.length === 0 && (
+              <tr><td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">No {label.toLowerCase()}{q ? ' match your search' : ' yet — add the first one'}.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">Showing {filtered.length} of {rows.length} items</p>
+      <AddDialog
+        open={addOpen}
+        title={`Add ${one.toLowerCase()}`}
+        fields={[{ key: 'name', label: 'Name', placeholder: 'e.g. ASTP 01' }]}
+        required={['name']}
+        onClose={() => setAddOpen(false)}
+        onAdd={(f) => addToList(kind, { name: f.name.trim() })}
+      />
+    </div>
+  );
+}
+
+// An editable name, saved when it loses focus or on Enter. Dext edits these in
+// place rather than behind a dialog, and so does the Categories tab's own
+// "Posts to" — a rename is a correction, not a decision worth a modal.
+function NameCell({ row, kind }) {
+  const [value, setValue] = useState(row.name);
+  const ref = useRef(null);
+  useEffect(() => { setValue(row.name); }, [row.name]);
+  const commit = () => {
+    const next = value.trim();
+    if (!next) { setValue(row.name); return; }
+    if (next !== row.name) renameInList(kind, row.id, next);
+  };
+  return (
+    <input
+      ref={ref}
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); ref.current?.blur(); }
+        if (e.key === 'Escape') { setValue(row.name); ref.current?.blur(); }
+      }}
+      aria-label="Name"
+      className="h-9 w-full min-w-[11rem] rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    />
+  );
+}
+
 // Projects = a Xero tracking category. `index` 0 → the first tracking category
 // (Projects), 1 → the second (Projects 2). The rows are that category's tracking
 // options, pulled live from the ACTIVE organisation's Xero — so each org shows
@@ -711,7 +891,11 @@ export default function ListsSettings() {
   // A bridge entity has no tax codes of its own — its claims post with No Tax at
   // the full amount — so a list of them is a list of somebody else's rates.
   const subnav = SUBNAV.filter((s) => !(bridge && s.key === 'taxRates'));
-  const TITLES = Object.fromEntries(SUBNAV.map((s) => [s.key, s.label]));
+  // The two project lists are named by the entity, so the nav and the heading
+  // say what it calls them rather than Xero's word for a tracking category.
+  const labels = useProjectLabels();
+  const nameFor = (key) => (key === 'projects' ? labels.project : key === 'projects2' ? labels.project2 : null);
+  const TITLES = Object.fromEntries(SUBNAV.map((s) => [s.key, nameFor(s.key) || s.label]));
 
   return (
     <div className="flex gap-6">
@@ -725,14 +909,14 @@ export default function ListsSettings() {
               onClick={() => setTab(s.key)}
               className={cn('rounded-md px-3 py-2 text-left transition-colors', tab === s.key ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
             >
-              {s.label}
+              {nameFor(s.key) || s.label}
             </button>
           ))}
         </div>
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="mb-4 text-lg font-semibold tracking-tight">{TITLES[tab]}</h2>
-        {tab === 'categories' ? <Categories /> : tab === 'review' ? <ReviewInstructions /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsFromXero index={0} /> : tab === 'projects2' ? <ProjectsFromXero index={1} /> : tab === 'flags' ? <FlagsList /> : tab === 'payment' ? <PaymentMethodsFromXero /> : <Placeholder label={TITLES[tab]} />}
+        {tab === 'categories' ? <Categories /> : tab === 'review' ? <ReviewInstructions /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsTab index={0} bridge={bridge} label={labels.project} /> : tab === 'projects2' ? <ProjectsTab index={1} bridge={bridge} label={labels.project2} /> : tab === 'flags' ? <FlagsList /> : tab === 'payment' ? <PaymentMethodsFromXero /> : <Placeholder label={TITLES[tab]} />}
       </div>
     </div>
   );

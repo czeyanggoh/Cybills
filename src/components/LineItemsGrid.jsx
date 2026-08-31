@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Loader2, Maximize2, Plus, Search, Sparkles, Trash2, Undo2, X } from 'lucide-react';
 import ComboSelect from '@/components/ComboSelect';
 import { formatCategory } from '@/lib/categoryDisplay';
+import { useProjectLabels, singular } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 
 // A document's per-line breakdown. One grid, rendered in two places: inline in
@@ -47,6 +48,8 @@ export function LineItemsGrid({
   visible = null,
   expanded = false,
 }) {
+  // Before the early return: a hook may not sit behind a condition.
+  const projectLabels = useProjectLabels();
   if (!rows.length) return null;
   const lineTotal = rows.reduce((s, li) => s + num(li.total), 0);
   const outBy = num(total) - lineTotal;
@@ -60,8 +63,8 @@ export function LineItemsGrid({
           <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
             <th className="bg-muted/40 px-2 py-2 font-medium">Description</th>
             <th className="bg-muted/40 px-2 py-2 font-medium">Category</th>
-            {lineProjects.length > 0 && <th className="bg-muted/40 px-2 py-2 font-medium">Project</th>}
-            {project2Options.length > 0 && <th className="bg-muted/40 px-2 py-2 font-medium">Project 2</th>}
+            {lineProjects.length > 0 && <th className="bg-muted/40 px-2 py-2 font-medium">{singular(projectLabels.project)}</th>}
+            {project2Options.length > 0 && <th className="bg-muted/40 px-2 py-2 font-medium">{singular(projectLabels.project2)}</th>}
             <th className="bg-muted/40 px-2 py-2 text-right font-medium">Net</th>
             <th className="bg-muted/40 px-2 py-2 text-right font-medium">Tax</th>
             <th className="bg-muted/40 px-2 py-2 text-right font-medium">Total</th>

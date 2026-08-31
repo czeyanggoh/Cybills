@@ -10,6 +10,7 @@ import {
   useXeroProjectOptions,
 } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
+import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 
 // "Bulk edit" — set one value across every selected document (Dext's bulk edit).
@@ -30,6 +31,7 @@ const FIELDS = [
   { key: 'description', label: 'Description', kind: 'text' },
   { key: 'paymentMethod', label: 'Payment method', kind: 'combo', source: 'paymentMethods' },
   { key: 'paid', label: 'Paid', kind: 'bool' },
+  // Labelled at render, not here: what this entity calls the list is its own.
   { key: 'project', label: 'Project', kind: 'combo', source: 'projects' },
   { key: 'customer', label: 'Customer', kind: 'combo', source: 'customers' },
   { key: 'currency', label: 'Currency', kind: 'text' },
@@ -47,6 +49,7 @@ export default function BulkEditModal({
   taxRateOptions = [],
 }) {
   const bridge = useBridgeEntity();
+  const projectLabels = useProjectLabels();
   const [on, setOn] = useState({}); // which fields this edit actually touches
   const [values, setValues] = useState({});
   const [busy, setBusy] = useState(false);
@@ -96,7 +99,7 @@ export default function BulkEditModal({
 
   if (!open) return null;
 
-  const fields = FIELDS.filter((f) => !(f.xeroOnly && bridge));
+  const fields = withProjectLabels(FIELDS, projectLabels).filter((f) => !(f.xeroOnly && bridge));
   const picked = fields.filter((f) => on[f.key]);
   const editable = count - publishedCount;
 

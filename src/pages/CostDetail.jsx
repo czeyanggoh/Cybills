@@ -29,6 +29,7 @@ import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
 import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
+import { useProjectLabels, singular } from '@/lib/projectLabels';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
@@ -255,6 +256,8 @@ export default function CostDetail() {
   ]);
   const xeroProjects = useXeroProjectOptions();
   const seedProjects = useProjectOptions();
+  // What this entity calls its project lists — a bridge entity's are PO numbers.
+  const projectLabels = useProjectLabels();
   const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;
   // Per-line tracking, one column per Xero tracking category the linked org
   // actually has (Xero allows two; the second is its "Projects 2"). Deliberately
@@ -1714,7 +1717,7 @@ export default function CostDetail() {
                   </div>
                 </Field>
               )}
-              <Field label="Project">
+              <Field label={singular(projectLabels.project)}>
                 <ComboSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} />
                 {teach?.field === 'project' && (
                   <TeachRule field="project" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />

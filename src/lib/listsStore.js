@@ -96,6 +96,30 @@ export function addToList(kind, row) {
   write({ ...state, added });
 }
 
+// Rename one row in place. A SEED row has no stored entry to edit, so it is
+// hidden and re-added under the new name — which is what "layered over the
+// seed" already means everywhere else here, and keeps the seed list itself
+// untouched for every other entity.
+export function renameInList(kind, id, name) {
+  const next = String(name ?? '').trim();
+  if (!next) return;
+  const state = read();
+  const added = { ...(state.added || {}) };
+  const rows = Array.isArray(added[kind]) ? added[kind] : [];
+  const mine = rows.find((r) => r.id === id);
+  if (mine) {
+    added[kind] = rows.map((r) => (r.id === id ? { ...r, name: next } : r));
+    write({ ...state, added });
+    return;
+  }
+  const seed = (SEEDS[kind] || []).find((row) => (row.id || seedId(kind, row)) === id);
+  if (!seed) return;
+  const hidden = { ...(state.hidden || {}) };
+  hidden[kind] = [...new Set([...hiddenIds(hidden, kind), id])];
+  added[kind] = [...rows, { ...seed, name: next, id: genId(kind) }];
+  write({ ...state, added, hidden });
+}
+
 export function removeFromList(kind, ids) {
   const state = read();
   const set = new Set(ids);
