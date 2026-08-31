@@ -1,5 +1,5 @@
 import { Router, type Request } from 'express';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { env, whatsappEnabled, r2Enabled, googleEnabled } from './env.js';
 import { workspaceId } from './workspace.js';
@@ -33,6 +33,7 @@ import {
   patchChannel,
 } from './waChannels.js';
 import { renameChannelsForUser } from './waRename.js';
+import { inboundKey, keyMatches } from './inboundKey.js';
 
 // Bill collection over WhatsApp, in partnership with CYWorkspace (CYWS).
 //
@@ -338,28 +339,8 @@ const publicChannel = (c: WaChannel) => ({
 });
 
 // --- The key CYWS sends BACK -------------------------------------------------
-// Prefer an env override; otherwise generate one on first use and keep it, so a
-// practice admin can read it out of the app and hand it to the CYWS operator
-// without anybody having shell access to the VPS. Same arrangement as the
-// inbound-email secret, and for the same reason.
-type InboundKeyRow = { id: string; key: string };
-export function inboundKey(): string {
-  const fromEnv = (process.env.WHATSAPP_INBOUND_KEY || '').trim();
-  if (fromEnv) return fromEnv;
-  const items = loadCollection<InboundKeyRow>('whatsapp-inbound-key');
-  const existing = items.find((x) => x.id === 'default');
-  if (existing?.key) return existing.key;
-  const key = randomBytes(24).toString('hex');
-  saveCollection('whatsapp-inbound-key', [{ id: 'default', key }]);
-  return key;
-}
-
-// Constant-time compare, so the key can't be recovered a byte at a time.
-function keyMatches(given: string): boolean {
-  const a = Buffer.from(String(given ?? ''));
-  const b = Buffer.from(inboundKey());
-  return a.length === b.length && timingSafeEqual(a, b);
-}
+// Lives in its own leaf now (inboundKey.ts), because the payables hand-off has
+// to check the same key and cannot import this router — it would import back.
 
 // --- Getting the file ---------------------------------------------------------
 // PREFERRED: read the object straight out of the shared bucket. Both systems

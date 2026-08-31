@@ -20,6 +20,7 @@ import { settingsRouter, adoptLegacySettings } from './settings.js';
 import { boardRouter } from './board.js';
 import { xeroWebhookRouter } from './xeroWebhook.js';
 import { whatsappRouter } from './whatsapp.js';
+import { paymentsRouter } from './payments.js';
 import { scrubFillerText } from './store.js';
 import { verifyShareToken } from './shareLinks.js';
 
@@ -88,6 +89,13 @@ app.use((req, res, next) => {
   // minted here, the group is not made at all. Same key, and the only write of
   // the three.
   if (p === '/api/whatsapp/channels/attach') return next();
+  // The payables hand-off, all of it: CYWS asks what is waiting to be paid,
+  // reads the paper to pull the payee's bank details off it, and asks for the
+  // publish that lets the bill be paid. Same key again, and each route makes the
+  // caller name the Xero tenant it is working in (payments.ts) — the key opens
+  // every client's book, and a payment run naming the wrong one would post into
+  // somebody else's ledger.
+  if (p.startsWith('/api/payments/')) return next();
   // An image link in an exported CSV, or an Item ID in an emailed claim PDF, is
   // opened by somebody with no session here — an accountant, an approver. It
   // carries a signed, expiring token naming the one document it opens instead
@@ -167,6 +175,12 @@ app.use('/api/inbound', inboundRouter);
 // a group per submission, and receiving the supplier bills its classifier
 // picks out of that group. 503s until CYWORKSPACE_API_KEY is set.
 app.use('/api/whatsapp', whatsappRouter);
+
+// The payables hand-off to CYWorkspace's payment run: what is waiting to be
+// paid, the paper the payee's bank details are read off, and the publish that
+// puts a document in the ledger so it can be paid. Machine-to-machine, on the
+// same shared key.
+app.use('/api/payments', paymentsRouter);
 
 // The practice (CYBM) itself: its colleagues, their client access, and the
 // connected-client list with what each has cost in Claude API usage.

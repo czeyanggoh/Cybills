@@ -1116,6 +1116,70 @@ Still to do: privilege enforcement inside the entity is `docs/roles-enforcement.
 which is deliberately untouched here: until it lands, everyone in a bridge
 entity sees every document in it. Fine for testing, not for real ST Eng staff.
 
+## Paying a bill from CYWorkspace
+
+CYBills collects the paper and codes it; CYWS runs the payment — it holds the
+supplier's bank details, builds the bank upload file, and emails the run out.
+The two met only in Xero, and CYWS's Bills Listing is built from AUTHORISED
+ACCPAY invoices, so **a document CYBills had read and marked Ready but not yet
+published did not exist as far as a payment run was concerned**. Three
+machine-to-machine routes are the seam (`server/src/payments.ts`, contract in
+`deploy/PAYABLES.md`): what is waiting to be paid, the paper the payee's bank
+details are read off, and the publish that puts a document in the ledger so it
+can be paid. Same `X-API-Key` CYWS already proves itself with on the WhatsApp
+routes, now in its own leaf (`inboundKey.ts`) because the payables router cannot
+import the WhatsApp one — it would import back.
+
+**The contact is made FIRST, and the bill names it by ID.** Xero matches a
+contact by NAME when given one and CREATES one when the name is new — which is
+right for a publish from this app, where the supplier is whatever the paper says,
+and quietly wrong here: CYWS creates the contact and saves the payee's bank
+details on it before asking us to publish, so a bill posted as "A1 Consultancy
+Pte Ltd" against a contact CYWS made as "A1 Consultancy" would land on a SECOND,
+bank-detail-less contact and the payment file would have nowhere to send the
+money. `buildBillInvoice` takes a `contactId` and the payables route requires
+one; there is no name fallback on that road.
+
+**AUTHORISED, because Xero will not accept a payment against a DRAFT or
+SUBMITTED bill.** Publishing at either would produce a bank file for a bill the
+ledger refuses to settle. Ticking a document into a run only selects it — the
+contact and the publish happen when the run is COMMITTED, so unticking leaves
+nothing in the ledger for somebody to void.
+
+**One publish path, not two.** `postBillToXero` (`xero.ts`) is the whole of
+publishing minus the request: the button in this app and the payables hand-off
+post into the same live ledger, so they cannot hold different standards about
+what may be posted, and the drift between two copies would be a wrong figure in
+somebody's accounts rather than a wrong pixel. The account code and tax code a
+machine caller cannot compute are worked out server-side by `postingCodesFor` /
+`postingCodesFrom`, in the same three steps the browser has always used
+(`autoPublish.js`): the category's own code, LIVE in this org's chart; the org's
+rate matching the document's tax rate by name; else the account's default. Never
+guessed — a bill posted under an invented tax code puts a figure in somebody's
+GST return that nobody chose.
+
+**What is offered is narrow, and every exclusion is a way of paying money twice
+or paying it for nothing.** A cost document (not a sales one), still in the
+INBOX (archived is somebody setting it aside, a claimed one reaches the ledger as
+a line of the claim's bill, a merged one is another document's money), not
+already in Xero, complete, and **not marked paid** — that last one matters most,
+because much of what CYBills collects is receipts, money already handed over at
+the merchant, and a receipt in a payment run pays the supplier a second time.
+Each row also carries `postable` + `blocked_reason`, decided against the org's
+live chart, because a row that looks payable and only refuses AFTER a contact has
+been created for it in Xero is worse than one that never offered itself.
+
+**The caller names the ledger it is posting into.** One key opens every client's
+book, so publish refuses a document whose entity is on a different tenant
+(`tenant_mismatch`) — without it a mis-set tenant in a payment run would post one
+client's bill into another client's accounts, and both sides would look fine.
+Publishing is idempotent for the same reason a run is re-pressed after a failure
+half way through: a document already in Xero answers with the invoice it has
+rather than posting a second copy. Covered by `npm test` in `server/`
+(`test/payables.test.mts`), driven over real HTTP against the real server —
+mounting the router directly would never meet the session guard, which is where
+the allowlist that lets these through lives.
+
 ## Xero via the cyworkspace relay
 
 CYBills never holds Xero credentials. All Xero traffic goes through

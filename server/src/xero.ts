@@ -971,7 +971,7 @@ async function buildBillInvoice(
   req: any,
   organisation: { id: string; tenantId: string },
   bill: Bill,
-  opts: { accountCode: string; taxType: string; dueDate?: unknown; description?: unknown }
+  opts: { accountCode: string; taxType: string; dueDate?: unknown; description?: unknown; contactId?: string }
 ): Promise<
   | { ok: true; payload: Record<string, unknown>; lines: number; perLine: boolean }
   | { ok: false; status: number; body: any }
@@ -1038,9 +1038,17 @@ async function buildBillInvoice(
   }
   const lineItems = built.kind === 'lines' ? built.lines : [line];
 
+  // Named by ID when the caller has one, by NAME otherwise. Xero matches a
+  // contact given only a name, and CREATES one when the name is new — which is
+  // right for a publish from this app (the supplier is whatever the paper says)
+  // and quietly wrong for the payables hand-off: CYWS creates the contact and
+  // saves the payee's bank details on it FIRST, so a name that differs by a
+  // "Pte Ltd" would leave the bill against a second, bank-detail-less contact
+  // and the payment file with nowhere to send the money.
+  const contactId = String(opts.contactId ?? '').trim();
   const payload: Record<string, unknown> = {
     Type: 'ACCPAY',
-    Contact: { Name: bill.supplier || 'Unknown supplier' },
+    Contact: contactId ? { ContactID: contactId } : { Name: bill.supplier || 'Unknown supplier' },
     Date: date,
     DueDate: dueDate,
     LineAmountTypes: 'Exclusive',
@@ -1083,6 +1091,208 @@ function missingForPublish(bill: Bill): string[] {
   return out;
 }
 
+// The account code and tax code a document posts under, worked out from the
+// document itself.
+//
+// The browser has always done this (src/lib/autoPublish.js): it holds the org's
+// chart and its tax rates already, so the publish dialog can hand the server a
+// code and a tax type. A caller with no browser — CYWorkspace asking us to post
+// a bill it is about to pay — cannot, so the same three steps are made here, in
+// the same order:
+//
+//   1. the account is the head of the document's own category label ("493 -
+//      Travel - National" -> "493"), and it must be a LIVE account in this org's
+//      chart. A code that is no longer there is refused rather than posted to.
+//   2. the tax code is the org's own rate matching the document's tax rate BY
+//      NAME — the name is what the app stores and what a reviewer chose.
+//   3. failing that, the account's own default tax code, which is what Xero's
+//      UI would apply.
+//
+// Never guessed. A document that reaches none of the three is refused and told
+// which step it fell at, because a bill posted under an invented tax code puts a
+// figure in somebody's GST return that nobody chose.
+export async function postingCodesFor(
+  ws: string,
+  orgId: string,
+  bill: Bill
+): Promise<PostingCodes> {
+  const [accounts, rates] = await Promise.all([accountsForOrg(ws, orgId), taxRatesForOrg(ws, orgId)]);
+  return postingCodesFrom(bill, accounts, rates);
+}
+
+export type PostingCodes =
+  | { ok: true; accountCode: string; taxType: string }
+  | { ok: false; error: string; message: string };
+
+// The decision itself, over lists the caller already holds. Split out because a
+// LISTING of payable documents asks it of every row, and fetching one org's
+// chart and tax rates once beats fetching them forty times.
+export function postingCodesFrom(
+  bill: Bill,
+  accounts: XeroAccountRef[],
+  rates: Array<{ name: string; code: string; rate: number }>
+): PostingCodes {
+  const accountCode = codeFromCategory(bill.category);
+  if (!accountCode) {
+    return { ok: false, error: 'no_account_code', message:
+      `\u201C${String(bill.category ?? '') || 'Uncategorised'}\u201D isn\u2019t a Xero account code, so there is nothing to post this to.` };
+  }
+  const account = accounts.find((a) => a.code === accountCode);
+  if (!account) {
+    return { ok: false, error: 'account_not_in_chart', message:
+      `Account ${accountCode} isn\u2019t an active account in this Xero organisation\u2019s chart.` };
+  }
+  const named = String(bill.taxRate ?? '').trim();
+  const taxType = (named && rates.find((r) => r.name === named)?.code) || account.taxType || '';
+  if (!taxType) {
+    return { ok: false, error: 'no_tax_code', message: named
+      ? `This document\u2019s tax rate \u201C${named}\u201D isn\u2019t one of this organisation\u2019s, and account ${accountCode} has no default.`
+      : `This document has no tax rate and account ${accountCode} has no default, so there is no tax code to post under.` };
+  }
+  return { ok: true, accountCode, taxType };
+}
+
+// The whole of publishing, minus the request. Both the button in this app and
+// the payables hand-off from CYWorkspace post a document as an ACCPAY bill, and
+// they post it into the SAME live ledger — so they cannot hold different
+// standards about what may be posted, nor differ in how the bill is built. Two
+// copies would drift, and the drift would be a wrong figure in somebody's
+// accounts rather than a wrong pixel.
+//
+// Returns the status + body its caller should answer with, so the guards read
+// the same either way: an incomplete document is refused in the words the inbox
+// uses, and one already in Xero is 409 carrying the id it already has.
+export async function postBillToXero(
+  req: any,
+  organisation: { id: string; tenantId: string; tenantName?: string; name?: string },
+  workspace: string,
+  bill: Bill,
+  opts: {
+    accountCode: string;
+    taxType: string;
+    status: string;
+    dueDate?: unknown;
+    description?: unknown;
+    // The Xero contact this bill belongs to, when the caller has already made one.
+    contactId?: string;
+    force?: boolean;
+  }
+): Promise<{ status: number; body: any }> {
+  if (bill.xeroInvoiceId && opts.force !== true) {
+    return { status: 409, body: {
+      error: 'already_posted',
+      message: `Already posted to ${bill.xeroTenantName || 'Xero'} on ${bill.xeroPostedAt ?? ''}.`,
+      xeroInvoiceId: bill.xeroInvoiceId,
+    } };
+  }
+  // On an expense claim, this cost reaches Xero as a line of that claim's bill.
+  // Publishing it separately would post it twice, so the two are mutually
+  // exclusive: take it off the claim first, or let the claim carry it.
+  const onClaim = claimForBill(workspace, bill.id);
+  if (onClaim) {
+    return { status: 409, body: {
+      error: 'in_expense_claim',
+      message: `This document is on the expense claim “${onClaim.name}”, so it can’t also be published as a bill. Remove it from the claim first, or publish the claim.`,
+      claimId: onClaim.id,
+    } };
+  }
+
+  // The same completeness bulk publish requires. Publishing one document and
+  // publishing forty are the same act on the same ledger, so they cannot hold
+  // different standards: bulk SKIPS an incomplete document, and this used to
+  // post it. `costComplete` is the one definition (supplier, date, category,
+  // total > 0) — the same one that decides Ready vs To review, so a document the
+  // inbox is already flagging is never quietly acceptable here.
+  const missing = missingForPublish(bill);
+  if (missing.length) {
+    return { status: 400, body: {
+      error: 'incomplete',
+      missing,
+      message: `This document still needs ${missing.join(', ')}. A bill is posted into a live ledger, so it has to be complete first.`,
+    } };
+  }
+  const prepared = await buildBillInvoice(req, organisation, bill, {
+    accountCode: opts.accountCode,
+    taxType: opts.taxType,
+    dueDate: opts.dueDate,
+    description: opts.description,
+    contactId: opts.contactId,
+  });
+  if (!prepared.ok) return { status: prepared.status, body: prepared.body };
+  const payload = { ...prepared.payload, Status: opts.status };
+
+  // PUT = create-only (POST would upsert); summarizeErrors=false makes Xero
+  // return per-record ValidationErrors with a 200 instead of a bare 400.
+  const result = await relay('Invoices', {
+    method: 'PUT',
+    tenantId: organisation.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { Invoices: [payload] },
+  });
+
+  if (!result.ok) {
+    console.error('[xero] publish failed', result.status, result.message);
+    return { status: result.status >= 500 ? 502 : result.status, body: {
+      error: result.error,
+      message: result.message,
+    } };
+  }
+
+  const invoice = result.data?.Invoices?.[0];
+  const validationErrors: string[] = (invoice?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+  if (!invoice || invoice.HasErrors || validationErrors.length > 0) {
+    return { status: 422, body: {
+      error: 'xero_validation_failed',
+      messages: validationErrors.length ? validationErrors : ['Xero rejected the bill.'],
+    } };
+  }
+
+  const updated = markBillPosted(workspace, bill.id, {
+    xeroInvoiceId: String(invoice.InvoiceID ?? ''),
+    xeroTenantId: organisation.tenantId,
+    xeroTenantName: organisation.tenantName || organisation.name || '',
+  });
+
+  // Send the original document up as an attachment, so the paper sits on the
+  // bill in Xero rather than only here. Best-effort: the bill stays posted even
+  // if the upload fails, and /attach-file can retry it.
+  const attachment = await attachBillFile(
+    organisation.tenantId,
+    String(invoice.InvoiceID ?? ''),
+    updated ?? bill
+  );
+
+  // A cost incurred on a client's behalf: mark its lines billable to them, so
+  // Xero offers them up when that client's next invoice is raised. Needs the
+  // customer to be a Xero contact — without an id there is nobody to bill.
+  let rebilled: { ok: boolean; linked: number; error?: string } | null = null;
+  if (bill.rebillable && bill.customer) {
+    const customerId = await customerContactId(organisation.tenantId, String(bill.customer));
+    rebilled = customerId
+      ? await linkBillableExpenses(organisation.tenantId, invoice, customerId)
+      : { ok: false, linked: 0, error: `"${bill.customer}" isn't a contact in ${organisation.tenantName || 'Xero'}.` };
+  }
+
+  return { status: 200, body: {
+    ok: true,
+    invoice: {
+      invoiceId: String(invoice.InvoiceID ?? ''),
+      invoiceNumber: String(invoice.InvoiceNumber ?? ''),
+      status: String(invoice.Status ?? opts.status),
+      amountDue: Number(invoice.AmountDue ?? 0),
+      total: Number(invoice.Total ?? 0),
+      currency: String(invoice.CurrencyCode ?? ''),
+      contactId: String(invoice.Contact?.ContactID ?? ''),
+    },
+    // How it went up: the document's own lines, or one summary line.
+    lines: prepared.lines,
+    perLine: prepared.perLine,
+    attachment,
+    rebilled,
+    bill: updated,
+  } };
+}
+
 xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
@@ -1103,115 +1313,16 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   const workspace = bookFor(req);
   const bill = getBillById(workspace, billId);
   if (!bill) return res.status(404).json({ error: 'bill_not_found' });
-  if (bill.xeroInvoiceId && b.force !== true) {
-    return res.status(409).json({
-      error: 'already_posted',
-      message: `Already posted to ${bill.xeroTenantName || 'Xero'} on ${bill.xeroPostedAt ?? ''}.`,
-      xeroInvoiceId: bill.xeroInvoiceId,
-    });
-  }
-  // On an expense claim, this cost reaches Xero as a line of that claim's bill.
-  // Publishing it separately would post it twice, so the two are mutually
-  // exclusive: take it off the claim first, or let the claim carry it.
-  const onClaim = claimForBill(workspace, bill.id);
-  if (onClaim) {
-    return res.status(409).json({
-      error: 'in_expense_claim',
-      message: `This document is on the expense claim “${onClaim.name}”, so it can’t also be published as a bill. Remove it from the claim first, or publish the claim.`,
-      claimId: onClaim.id,
-    });
-  }
 
-  // The same completeness bulk publish requires. Publishing one document and
-  // publishing forty are the same act on the same ledger, so they cannot hold
-  // different standards: bulk SKIPS an incomplete document, and this used to
-  // post it. `costComplete` is the one definition (supplier, date, category,
-  // total > 0) — the same one that decides Ready vs To review, so a document the
-  // inbox is already flagging is never quietly acceptable here.
-  const missing = missingForPublish(bill);
-  if (missing.length) {
-    return res.status(400).json({
-      error: 'incomplete',
-      missing,
-      message: `This document still needs ${missing.join(', ')}. A bill is posted into a live ledger, so it has to be complete first.`,
-    });
-  }
-  const prepared = await buildBillInvoice(req, organisation, bill, {
+  const out = await postBillToXero(req, organisation, workspace, bill, {
     accountCode,
     taxType,
+    status,
     dueDate: b.dueDate,
     description: b.description,
+    force: b.force === true,
   });
-  if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
-  const payload = { ...prepared.payload, Status: status };
-
-
-  // PUT = create-only (POST would upsert); summarizeErrors=false makes Xero
-  // return per-record ValidationErrors with a 200 instead of a bare 400.
-  const result = await relay('Invoices', {
-    method: 'PUT',
-    tenantId: organisation.tenantId,
-    query: { summarizeErrors: 'false' },
-    body: { Invoices: [payload] },
-  });
-
-  if (!result.ok) {
-    console.error('[xero] publish failed', result.status, result.message);
-    return res.status(result.status >= 500 ? 502 : result.status).json({
-      error: result.error,
-      message: result.message,
-    });
-  }
-
-  const invoice = result.data?.Invoices?.[0];
-  const validationErrors: string[] = (invoice?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
-  if (!invoice || invoice.HasErrors || validationErrors.length > 0) {
-    return res.status(422).json({
-      error: 'xero_validation_failed',
-      messages: validationErrors.length ? validationErrors : ['Xero rejected the bill.'],
-    });
-  }
-
-  const updated = markBillPosted(workspace, bill.id, {
-    xeroInvoiceId: String(invoice.InvoiceID ?? ''),
-    xeroTenantId: organisation.tenantId,
-    xeroTenantName: organisation.tenantName || organisation.name,
-  });
-
-  // Send the original document up as an attachment, so the paper sits on the
-  // bill in Xero rather than only here. Best-effort: the bill stays posted even
-  // if the upload fails, and /attach-file can retry it.
-  const attachment = await attachBillFile(
-    organisation.tenantId,
-    String(invoice.InvoiceID ?? ''),
-    updated ?? bill
-  );
-
-  // A cost incurred on a client's behalf: mark its lines billable to them, so
-  // Xero offers them up when that client's next invoice is raised. Needs the
-  // customer to be a Xero contact — without an id there is nobody to bill.
-  let rebilled: { ok: boolean; linked: number; error?: string } | null = null;
-  if (bill.rebillable && bill.customer) {
-    const contactId = await customerContactId(organisation.tenantId, String(bill.customer));
-    rebilled = contactId
-      ? await linkBillableExpenses(organisation.tenantId, invoice, contactId)
-      : { ok: false, linked: 0, error: `"${bill.customer}" isn't a contact in ${organisation.tenantName || 'Xero'}.` };
-  }
-
-  res.json({
-    ok: true,
-    invoice: {
-      invoiceId: String(invoice.InvoiceID ?? ''),
-      invoiceNumber: String(invoice.InvoiceNumber ?? ''),
-      status: String(invoice.Status ?? status),
-    },
-    // How it went up: the document's own lines, or one summary line.
-    lines: prepared.lines,
-    perLine: prepared.perLine,
-    attachment,
-    rebilled,
-    bill: updated,
-  });
+  return res.status(out.status).json(out.body);
 });
 
 // POST /api/xero/organisations/:id/sync-payments — ask Xero about every bill
