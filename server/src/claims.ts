@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, canAccessOrg, canonicalPersonName } from './users.js';
+import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, canAccessOrg, canonicalPersonName, personNameForEmail } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
-import { getBillById, billOrgId, markBillsClaimed, unmarkBillsClaimed, deleteBillsHard, parseAmount } from './store.js';
+import { getBillById, getBillByIdAny, billOrgId, markBillsClaimed, unmarkBillsClaimed, deleteBillsHard, parseAmount } from './store.js';
 import { deleteBillFile } from './storage.js';
 import { listOrganisations } from './organisations.js';
 
@@ -182,6 +182,37 @@ function load(): Claim[] {
 // It costs nothing once the two agree, which after the first pass is every
 // time: names are resolved once each rather than once per claim, and a name
 // matching a live roster row answers itself without looking further.
+// Who a claim is for, read off its own paperwork, for the case where its name
+// resolves to nobody at all. The trail a FOLD leaves — the losing row, still
+// there, soft-removed, holding the old name — is what canonicalPersonName reads;
+// a row DELETED outright leaves none, so a claim raised under that name has
+// nothing on the roster left to match and would keep saying it forever.
+//
+// A document is stored against an ADDRESS, which is the one thing that never
+// goes stale, so the items on a claim still know whose they are. That is
+// evidence, not a guess — but it is only allowed to speak when it speaks with
+// one voice: every item owned by the SAME address, that address belonging to
+// one live person who is not the entity's General account. A claim with no
+// items, or with items belonging to different people, is left exactly as it is.
+//
+// Only ever reached for a name that resolves to nobody — which is a claim that
+// is already broken, since its claimant's address is looked up FROM that name
+// and an approval has nowhere to go. Naming the person its receipts belong to
+// can only improve that.
+function fromOwnItems(c: Claim): string {
+  const txns = c.transactions || [];
+  if (!txns.length) return '';
+  let owner = '';
+  for (const t of txns) {
+    const at = String(getBillByIdAny(String(t.itemId))?.owner || '').trim().toLowerCase();
+    if (!at) return '';
+    if (!owner) owner = at;
+    else if (owner !== at) return '';
+  }
+  const name = personNameForEmail(c.workspaceId || WORKSPACE_ID, c.orgId || WORKSPACE_ID, owner);
+  return name && name !== c.claimFor ? name : '';
+}
+
 function repairClaimNames(items: Claim[]): boolean {
   const resolved = new Map<string, string>();
   let changed = false;
@@ -197,7 +228,7 @@ function repairClaimNames(items: Claim[]): boolean {
       return now && now !== was ? now : '';
     };
     if (c.claimFor) {
-      const now = canonical(c.claimFor);
+      const now = canonical(c.claimFor) || fromOwnItems(c);
       if (now) {
         console.log(`[claims] claim ${c.id} was made out to "${c.claimFor}" — now "${now}"`);
         c.claimFor = now;

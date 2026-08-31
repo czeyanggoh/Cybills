@@ -239,7 +239,14 @@ const SEED: Array<Partial<User>> = [
   { id: 'yuyu', name: 'Yu Yu', email: 'yuyu@cy-bm.sg', login: 'Yes', role: 'Standard' },
 ];
 
-const norm = (s: string) => String(s ?? '').trim().toLowerCase();
+// Two names that differ only in their spacing are one name. Written as
+// trim().toLowerCase() this collapsed neither the double space somebody typed
+// nor the one a "first last" join leaves behind when half of it is blank — so
+// "astrid  astrid" and "astrid astrid" compared as different people, and a
+// claim made out to the first could not be matched to the roster row holding
+// the second. Harmless for the addresses this also normalises: an email has no
+// internal whitespace to collapse.
+const norm = (s: string) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 // The intended one-email-per-teammate identity, from the seed (each person's
 // real address that both their login and CYHR use).
 const SEED_EMAIL_BY_NAME = new Map(SEED.map((s) => [norm(String(s.name)), norm(String(s.email))]));
@@ -1190,6 +1197,21 @@ export function canonicalPersonName(ws: string, name: string): string {
   if (!folded) return '';
   const heir = memberByEmail(ws, norm(folded.email));
   return heir && !heir.removed && norm(heir.name) !== want ? heir.name : '';
+}
+
+// The person at an address, by their current name — '' when the address belongs
+// to nobody on the roster, or to the entity's General account, which is not a
+// person. The counterpart to canonicalPersonName for the case where the trail a
+// fold leaves is gone: a row DELETED outright takes the old name with it, so
+// there is nothing left to match a stale name against, and the only evidence of
+// who somebody is comes from the addresses on their own paperwork.
+export function personNameForEmail(ws: string, org: string, email: string): string {
+  const at = norm(email);
+  if (!at) return '';
+  const row = memberByEmail(ws, at);
+  if (!row || row.removed || row.general) return '';
+  if (isGeneralPerson(ws, org, row.name || row.email)) return '';
+  return row.name || '';
 }
 
 export function memberForSession(req: Request): User | null {
