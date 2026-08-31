@@ -563,3 +563,25 @@ export const DUPLICATE_REASON = {
   same_invoice: 'The same supplier and document reference, for the same amount, is already on file.',
   likely_duplicate: 'The same supplier, amount and date is already on file.',
 };
+
+// Fetch one document from a Dext export's Image link, through the server.
+//
+// Those links carry no CORS headers, so the browser is refused the bytes even
+// though the URL is right there in the CSV — the server has no such
+// restriction. It only follows Dext's own image host; anything else is refused
+// there rather than here. Returns null when it can't be had, so a migration
+// carries on and reports which documents arrived without their file.
+export async function fetchDextImage(url) {
+  try {
+    const res = await fetch('/api/costs/import/fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.base64 ? { base64: data.base64, contentType: data.contentType || '' } : null;
+  } catch {
+    return null;
+  }
+}

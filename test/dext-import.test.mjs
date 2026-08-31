@@ -5,7 +5,7 @@
 // into the tax column, a date a year out, or a receipt attached to the wrong
 // row. So the rules that decide those are pinned here.
 import {
-  parseCsv, isoDate, amount, parseDextExport, matchFiles, billPayload, patchPayload,
+  parseCsv, isoDate, amount, parseDextExport, matchFiles, billPayload, patchPayload, cleanCategory,
 } from '../src/lib/dextImport.js';
 
 let failures = 0;
@@ -61,14 +61,19 @@ check('the fields Dext already decided come across', rows[0], {
   date: '2026-08-20',
   dueDate: '',
   category: 'Transport - Taxi',
+  taxRate: '',
+  documentType: 'Expense claim',
   customer: '',
   project: 'ASTP 01',
   paymentMethod: 'Visa',
   currency: 'SGD',
   total: '39.2',
   tax: '0',
+  baseTotal: '39.2',
+  baseTax: '0',
   note: 'note here',
   description: 'MHA NPPK to ST Jurong',
+  image: 'https://rbnk.me/i/x',
   owner: 'Fan Liang Bonny Cheow',
 });
 
@@ -108,7 +113,7 @@ check('and is reported as spare, so it can be found', wrongName.spare.length, 1)
 // --- What gets sent ----------------------------------------------------------
 check('the create body carries the coding as it stands', billPayload(rows[0]), {
   kind: 'cost',
-  documentType: 'Receipt',
+  documentType: 'Expense claim',
   supplier: 'Grab',
   invoiceNumber: 'INV-1',
   date: '2026-08-20',
@@ -126,6 +131,36 @@ check('the rest follows in one patch', patchPayload(rows[0]), {
   paymentMethod: 'Visa', project: 'ASTP 01', note: 'note here',
 });
 check('and a plain receipt needs no patch at all', patchPayload(rows[1]), {});
+
+// --- What a REAL export turned out to contain ---------------------------------
+// Taken from an Arc3 Nobel export: extra Tax columns Dext adds, a rate
+// annotation on the category, and a foreign-currency invoice.
+const REAL = [
+  'Receipt ID,Type,Date,Due Date,Invoice Number,Supplier,Category,Customer,Project,Payment Method,Bank Account,Tax,Tax Name,Tax Code,Tax Percentage,Total,Currency,Tax (SGD),Total (SGD),Status,Owner,Note,Description,Image',
+  '21134108980,Invoice,09-Jun-2026,09-Jun-2026,008-IND-05-2026,JA FEAST HUB PRIVATE LIMITED,310 - Manpower Cost (0%),,,"","",0.00,No Tax,NONE,0.00,14600.00,SGD,0.00,14600.00,processed,,,Supply of Manpower,https://rbnk.me/i/wIcFkASFWY0',
+  '20909316790,Invoice,18-Jun-2026,18-Jun-2026,BTM-104609,Cititex,"",,,"","",0.00,,,,1872500.00,IDR,0.00,135.26,processed,Arc3 Nobel Finance,,,https://rbnk.me/i/pQ9Qj-p2mKs',
+].join('\r\n');
+const real = parseDextExport(REAL);
+check('the extra Tax columns do not shift anything', real.rows[0].total, '14600');
+
+// Dext writes the account's rate onto the label. The chart says "310 - Manpower
+// Cost", so a category imported with the suffix matches nothing and publishes
+// nowhere.
+check('the rate annotation comes off the category', real.rows[0].category, '310 - Manpower Cost');
+check('a name that really ends in brackets keeps them', cleanCategory('Meal Weekday (after 9pm)'), 'Meal Weekday (after 9pm)');
+check('the tax code Dext used comes across', billPayload(real.rows[0]).taxRate, 'NONE');
+check("and so does Dext's word for what the document is", billPayload(real.rows[0]).documentType, 'Invoice');
+
+// A foreign-currency document says twice what it is worth. Both halves are
+// kept, and the restatement is only sent when it says something.
+const idr = billPayload(real.rows[1]);
+check('a foreign document keeps its own total', [idr.total, idr.currency], ['1872500', 'IDR']);
+check('and what it is worth here', [idr.baseCurrency, idr.baseTotal], ['SGD', '135.26']);
+check('an SGD document is not restated against itself', 'baseCurrency' in billPayload(real.rows[0]), false);
+
+// The link in the Image column is where the document itself comes from when
+// there is no downloaded file to match.
+check('the image link is carried for fetching', real.rows[1].image, 'https://rbnk.me/i/pQ9Qj-p2mKs');
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

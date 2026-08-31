@@ -22,6 +22,15 @@ export const DEXT_HEADERS = [
   'Description', 'Image',
 ];
 
+// Dext's category labels carry the account's tax rate on the end — "310 -
+// Manpower Cost (0%)". That is an annotation, not part of the name: the chart
+// says "310 - Manpower Cost", so a category imported with the suffix matches
+// nothing and publishes nowhere. Only a trailing percentage is taken off, so a
+// name that genuinely ends in brackets keeps them.
+export function cleanCategory(raw) {
+  return String(raw ?? '').replace(/\s*\(\d+(?:\.\d+)?%\)\s*$/, '').trim();
+}
+
 // A CSV reader that understands quotes, doubled quotes inside them, and both
 // line endings. Small enough to own: a dependency here would have to be trusted
 // with the one file somebody is migrating years of paperwork out of.
@@ -121,15 +130,24 @@ export function parseDextExport(text) {
     invoiceNumber: cell(r, 'Invoice Number'),
     date: isoDate(cell(r, 'Date')),
     dueDate: isoDate(cell(r, 'Due Date')),
-    category: cell(r, 'Category'),
+    category: cleanCategory(cell(r, 'Category')),
+    // Dext prints the code it used ("NONE"), which is what CYBills stores.
+    taxRate: cell(r, 'Tax Code'),
+    documentType: cell(r, 'Type'),
     customer: cell(r, 'Customer'),
     project: cell(r, 'Project'),
     paymentMethod: cell(r, 'Payment Method'),
     currency: cell(r, 'Currency'),
     total: amount(cell(r, 'Total')),
     tax: amount(cell(r, 'Tax')),
+    // A foreign-currency document says twice what it is worth: once in its own
+    // currency and once restated. Both are kept — a total without the currency
+    // it is in is not half an answer but a wrong one.
+    baseTotal: amount(cell(r, 'Total (SGD)')),
+    baseTax: amount(cell(r, 'Tax (SGD)')),
     note: cell(r, 'Note'),
     description: cell(r, 'Description'),
+    image: cell(r, 'Image'),
     // A NAME in Dext's export. The server resolves it to the one address that
     // person is on the roster under, and falls back to whoever is importing —
     // it is never stored as a name (see ownerForOrg).
@@ -181,7 +199,10 @@ export function matchFiles(rows, files) {
 // to migrate rather than re-upload — and nothing is invented for a blank cell.
 export function billPayload(row) {
   const put = (o, k, v) => { if (v) o[k] = v; };
-  const body = { kind: 'cost', documentType: 'Receipt' };
+  // Dext's own word for what the document is ("Receipt", "Invoice",
+  // "Statement/remittance advice"), kept rather than flattened: it is a fact
+  // somebody established about the paperwork.
+  const body = { kind: 'cost', documentType: row.documentType || 'Receipt' };
   put(body, 'supplier', row.supplier);
   put(body, 'invoiceNumber', row.invoiceNumber);
   put(body, 'date', row.date);
@@ -190,7 +211,15 @@ export function billPayload(row) {
   put(body, 'total', row.total);
   put(body, 'tax', row.tax);
   put(body, 'description', row.description);
+  put(body, 'taxRate', row.taxRate);
   put(body, 'owner', row.owner);
+  // Only when the document is in another currency: the restatement is the pair
+  // (what it is worth here, in what), and on an SGD document it says nothing.
+  if (row.baseTotal && row.currency && row.currency.toUpperCase() !== 'SGD') {
+    body.baseCurrency = 'SGD';
+    body.baseTotal = row.baseTotal;
+    if (row.baseTax) body.baseTax = row.baseTax;
+  }
   return body;
 }
 

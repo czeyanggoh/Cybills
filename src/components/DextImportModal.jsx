@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { X, Upload, FileText, AlertTriangle, Check } from 'lucide-react';
 import { parseDextExport, matchFiles, billPayload, patchPayload } from '@/lib/dextImport';
-import { addBill, updateBill } from '@/lib/bills';
+import { addBill, updateBill, fetchDextImage } from '@/lib/bills';
 import { useActiveOrganisation } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
@@ -80,6 +80,17 @@ export default function DextImportModal({ open, onClose, onImported }) {
           body.fileBase64 = await readAsBase64(file);
           body.mediaType = file.type || 'application/octet-stream';
           body.fileName = file.name;
+        } else if (row.image) {
+          // No downloaded file, but the export named where the document lives.
+          // Fetched through the server, because those links send no CORS
+          // headers and the browser is refused them.
+          // eslint-disable-next-line no-await-in-loop
+          const got = await fetchDextImage(row.image);
+          if (got) {
+            body.fileBase64 = got.base64;
+            body.mediaType = got.contentType || 'application/octet-stream';
+            body.fileName = `${row.receiptId || 'document'}`;
+          }
         }
         // Straight to the inbox, not 'processing': there is nothing to read.
         // eslint-disable-next-line no-await-in-loop
@@ -88,7 +99,7 @@ export default function DextImportModal({ open, onClose, onImported }) {
           outcome.duplicates += 1;
         } else if (res?.bill?.id) {
           outcome.created += 1;
-          if (file) outcome.withFile += 1;
+          if (body.fileBase64) outcome.withFile += 1;
           const patch = patchPayload(row);
           // eslint-disable-next-line no-await-in-loop
           if (Object.keys(patch).length) await updateBill(res.bill.id, patch).catch(() => {});
@@ -138,9 +149,10 @@ export default function DextImportModal({ open, onClose, onImported }) {
           ) : (
             <>
               <Row>
-                Export the client&rsquo;s Costs list from Dext as CSV, and download its documents.
-                The CSV carries the coding already done there — supplier, date, category, tax — so
-                nothing is read again and nothing is charged for reading it.
+                Export the client&rsquo;s Costs list from Dext as CSV. It carries the coding already
+                done there — supplier, date, category, tax — so nothing is read again and nothing is
+                charged for reading it, and its Image column is where each document itself is
+                fetched from.
               </Row>
 
               {/* Step 1 — the CSV */}
@@ -160,11 +172,17 @@ export default function DextImportModal({ open, onClose, onImported }) {
 
               {/* Step 2 — the files */}
               <div className={cn('rounded-lg border p-4', !parsed && 'opacity-50')}>
-                <p className="mb-2 text-sm font-medium">2. The documents (optional)</p>
+                <p className="mb-2 text-sm font-medium">2. Downloaded documents (only if you have them)</p>
                 <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => setFiles([...(e.target.files || [])])} />
                 <button type="button" disabled={!parsed} onClick={() => fileInput.current?.click()} className="inline-flex h-8 items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground/50">
                   <Upload className="h-4 w-4" /> {files.length ? `${files.length} file${files.length === 1 ? '' : 's'}` : 'Choose files'}
                 </button>
+                {parsed && files.length === 0 && (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {parsed.rows.filter((r) => r.image).length} of {parsed.rows.length} will be
+                    fetched from the links in the CSV. Add files here only to override that.
+                  </p>
+                )}
                 {match && files.length > 0 && (
                   <div className="mt-2 space-y-1 text-sm text-muted-foreground">
                     <p>{match.matched} of {parsed.rows.length} matched to a document, by the Receipt ID in the filename.</p>

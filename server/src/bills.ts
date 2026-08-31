@@ -659,6 +659,50 @@ billsRouter.post('/bills/:id/finalize', (req, res) => {
 //         documentType, currency, total, tax, date, category, force }. On a
 // detected duplicate returns 409 { error:'duplicate', duplicate } unless
 // `force:true` overrides it. The original bytes go to R2 when configured.
+// The hosts a Dext export's Image links live on. A migration hands the server a
+// URL and asks it to go and get the file, which is a request to make outbound
+// calls on somebody else's say-so — so it is answered only for Dext's own image
+// host. Whoever can reach this endpoint could otherwise point it at anything the
+// server can see, which is the same rule the WhatsApp file_url fallback holds.
+const DEXT_IMAGE_HOSTS = new Set(['rbnk.me', 'www.rbnk.me']);
+// A receipt is a photo or a short PDF. The cap is generous for that and small
+// enough that a mistyped link cannot pull something enormous into memory.
+const IMPORT_MAX_BYTES = 15 * 1024 * 1024;
+
+// POST /api/costs/import/fetch — fetch one document from a Dext export link.
+//
+// It exists because those links carry no CORS headers, so the browser cannot
+// read them from the CYBills page: the import screen can see the URL in the CSV
+// and is refused the bytes. The server has no such restriction, so it fetches
+// and hands them back, and the ordinary create path does the rest — same
+// duplicate check, same storage, no second way to write a document.
+billsRouter.post('/import/fetch', async (req, res) => {
+  const raw = String((req.body ?? {}).url ?? '').trim();
+  let target: URL;
+  try {
+    target = new URL(raw);
+  } catch {
+    return res.status(400).json({ error: 'bad_url' });
+  }
+  if (target.protocol !== 'https:' || !DEXT_IMAGE_HOSTS.has(target.host)) {
+    return res.status(400).json({ error: 'host_not_allowed', host: target.host });
+  }
+  try {
+    const upstream = await fetch(target.toString(), { redirect: 'follow' });
+    if (!upstream.ok) return res.status(502).json({ error: 'fetch_failed', status: upstream.status });
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    if (!buf.length) return res.status(502).json({ error: 'empty' });
+    if (buf.length > IMPORT_MAX_BYTES) return res.status(413).json({ error: 'too_large', bytes: buf.length });
+    return res.json({
+      base64: buf.toString('base64'),
+      contentType: upstream.headers.get('content-type') || 'application/octet-stream',
+      bytes: buf.length,
+    });
+  } catch {
+    return res.status(502).json({ error: 'unreachable' });
+  }
+});
+
 billsRouter.post('/bills', async (req, res) => {
   const b = req.body ?? {};
   const orgId = orgIdFor(req);
