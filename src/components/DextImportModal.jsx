@@ -80,11 +80,12 @@ function SkippedRow({ row, imported = false }) {
           <span className="font-medium text-foreground">{row.id}</span>
           {row.what ? ` — ${row.what}` : ''}
           {row.same
-            ? ' · the very same file'
-            : row.matched
-              ? ` · looks like ${row.matched}`
-              : ' · looks like one already here'}
-          {imported && row.mine ? ` · imported as ${row.mine}` : ''}
+            ? ' · the very same file as'
+            : ' · looks like'}
+          {row.matched
+            ? ` ${row.matched}${row.fromThisImport ? ' in this same export' : ' already in this book'}`
+            : ' another document'}
+          {imported && row.mineId ? ` · imported as ${row.mineId}` : ''}
         </p>
         {/* Nothing to compare when the two are byte-identical: they are the
             same picture, and offering to show it twice is a waste of a click. */}
@@ -102,7 +103,7 @@ function SkippedRow({ row, imported = false }) {
         <div className="mt-2 grid grid-cols-2 gap-2">
           <DocPane label="From Dext" src={dext?.url} type={dext?.type} pending={dext === undefined} failed={failed} />
           <DocPane
-            label={`Already here${row.matched ? ` · ${row.matched}` : ''}`}
+            label={`${row.fromThisImport ? 'The other row' : 'Already in this book'}${row.matched ? ` · ${row.matched}` : ''}`}
             src={mine?.url}
             type={mine?.type}
             pending={mine === undefined && Boolean(row.matchedBillId)}
@@ -192,6 +193,11 @@ export default function DextImportModal({ open, onClose, onImported }) {
     setBusy(true);
     setError('');
     const outcome = { created: 0, withFile: 0, skipped: [], flagged: [], failed: [] };
+    // Every document this run has created, so a match against one of them can
+    // be told from a match against something that was here before. Into an
+    // empty book they are all the former, and calling that "already here" is
+    // just wrong — it is the export resembling itself.
+    const mine = new Map(); // bill id -> the Dext row that made it
     setProgress({ at: 0, of: match.pairs.length });
     for (let i = 0; i < match.pairs.length; i += 1) {
       const { row, file } = match.pairs[i];
@@ -235,14 +241,19 @@ export default function DextImportModal({ open, onClose, onImported }) {
           // Imported anyway, and told apart from the rest by its OWN item id —
           // without that the report names a document to go and look at and no
           // way to find it.
+          const twin = mine.get(res.duplicate.bill?.id || '');
           outcome.flagged.push({
             id: row.receiptId || `line ${row.line}`,
             what: [row.supplier, row.date, row.total && `${row.currency || ''} ${row.total}`.trim()]
               .filter(Boolean)
               .join(' · '),
             same: res.duplicate.type === 'exact_file',
-            mine: res.bill.displayId || '',
-            matched: res.duplicate.bill?.displayId || '',
+            mineId: res.bill.displayId || '',
+            // When the twin came out of this same file, name it by its DEXT id:
+            // that is the number in the CSV in front of her, and a CYBills item
+            // id for a document created four seconds ago means nothing yet.
+            fromThisImport: Boolean(twin),
+            matched: twin ? twin.receiptId : res.duplicate.bill?.displayId || '',
             image: row.image || '',
             matchedBillId: res.duplicate.bill?.id || '',
           });
@@ -263,6 +274,7 @@ export default function DextImportModal({ open, onClose, onImported }) {
           });
         } else if (res?.bill?.id) {
           outcome.created += 1;
+          mine.set(res.bill.id, { receiptId: row.receiptId || `line ${row.line}`, displayId: res.bill.displayId || '' });
           if (body.fileBase64) outcome.withFile += 1;
           const patch = patchPayload(row);
           // eslint-disable-next-line no-await-in-loop
@@ -311,12 +323,15 @@ export default function DextImportModal({ open, onClose, onImported }) {
                 <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
                   <p className="flex items-start gap-1.5 text-sm font-medium">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    {done.flagged.length} look like documents already here.
+                    {done.flagged.length} resemble another document.
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    All of them were imported — nothing was left behind. Compare each pair and
-                    delete whichever copy you don&rsquo;t want. Often they are not copies at all:
-                    one supplier, one amount, a day apart is an ordinary week.
+                    {done.flagged.every((d) => d.fromThisImport)
+                      ? 'Each one resembles ANOTHER ROW OF THIS SAME EXPORT — nothing that was here before.'
+                      : 'Some resemble another row of this same export; others a document already in this book.'}{' '}
+                    All were imported, so nothing was left behind. Compare each pair and delete a
+                    copy only if it really is one — one supplier, one amount, a day apart is an
+                    ordinary week, not a mistake.
                   </p>
                   <ul className="mt-2 max-h-[22rem] space-y-2 overflow-y-auto">
                     {done.flagged.map((d) => <SkippedRow key={d.id} row={d} imported />)}
