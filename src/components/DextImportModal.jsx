@@ -42,7 +42,7 @@ const readAsBase64 = (file) =>
 // one already here are shown together — the Dext side fetched through the
 // server, since those links send no CORS headers and the browser is refused
 // them.
-function SkippedRow({ row }) {
+function SkippedRow({ row, imported = false }) {
   const [open, setOpen] = useState(false);
   const [dext, setDext] = useState(undefined); // undefined = not asked, null = no good
   const [mine, setMine] = useState(undefined);
@@ -84,10 +84,11 @@ function SkippedRow({ row }) {
             : row.matched
               ? ` · looks like ${row.matched}`
               : ' · looks like one already here'}
+          {imported && row.mine ? ` · imported as ${row.mine}` : ''}
         </p>
         {/* Nothing to compare when the two are byte-identical: they are the
             same picture, and offering to show it twice is a waste of a click. */}
-        {!row.same && (row.image || row.matchedBillId) && (
+        {(imported || !row.same) && (row.image || row.matchedBillId) && (
           <button
             type="button"
             onClick={show}
@@ -148,6 +149,12 @@ export default function DextImportModal({ open, onClose, onImported }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   const [progress, setProgress] = useState({ at: 0, of: 0 });
+  // A migration is moving a book, and CYBills' duplicate rule is not Dext's:
+  // same supplier, same total, a day apart is a work permit APPLIED for and the
+  // same permit ISSUED. Within one export those rows match each other, so
+  // skipping loses real paperwork — hence everything comes across by default,
+  // flagged rather than dropped. Unticking gets the cautious behaviour back.
+  const [importAll, setImportAll] = useState(true);
   const csvInput = useRef(null);
   const fileInput = useRef(null);
 
@@ -184,7 +191,7 @@ export default function DextImportModal({ open, onClose, onImported }) {
     if (!match || busy) return;
     setBusy(true);
     setError('');
-    const outcome = { created: 0, withFile: 0, skipped: [], failed: [] };
+    const outcome = { created: 0, withFile: 0, skipped: [], flagged: [], failed: [] };
     setProgress({ at: 0, of: match.pairs.length });
     for (let i = 0; i < match.pairs.length; i += 1) {
       const { row, file } = match.pairs[i];
@@ -223,7 +230,23 @@ export default function DextImportModal({ open, onClose, onImported }) {
         // imported" without saying which three is a puzzle rather than a
         // report.
         // eslint-disable-next-line no-await-in-loop
-        const res = await addBill(body);
+        const res = await addBill(body, { force: importAll });
+        if (res?.bill?.id && res?.duplicate) {
+          // Imported anyway, and told apart from the rest by its OWN item id —
+          // without that the report names a document to go and look at and no
+          // way to find it.
+          outcome.flagged.push({
+            id: row.receiptId || `line ${row.line}`,
+            what: [row.supplier, row.date, row.total && `${row.currency || ''} ${row.total}`.trim()]
+              .filter(Boolean)
+              .join(' · '),
+            same: res.duplicate.type === 'exact_file',
+            mine: res.bill.displayId || '',
+            matched: res.duplicate.bill?.displayId || '',
+            image: row.image || '',
+            matchedBillId: res.duplicate.bill?.id || '',
+          });
+        }
         if (res?.duplicate && !res?.bill) {
           outcome.skipped.push({
             id: row.receiptId || `line ${row.line}`,
@@ -284,6 +307,22 @@ export default function DextImportModal({ open, onClose, onImported }) {
                 <Check className="h-4 w-4" /> Imported {done.created} document{done.created === 1 ? '' : 's'} into {org?.name || 'this entity'}.
               </p>
               <Row>{done.withFile} of them came with their original file.</Row>
+              {done.flagged.length > 0 && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
+                  <p className="flex items-start gap-1.5 text-sm font-medium">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    {done.flagged.length} look like documents already here.
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    All of them were imported — nothing was left behind. Compare each pair and
+                    delete whichever copy you don&rsquo;t want. Often they are not copies at all:
+                    one supplier, one amount, a day apart is an ordinary week.
+                  </p>
+                  <ul className="mt-2 max-h-[22rem] space-y-2 overflow-y-auto">
+                    {done.flagged.map((d) => <SkippedRow key={d.id} row={d} imported />)}
+                  </ul>
+                </div>
+              )}
               {done.skipped.length > 0 && (
                 <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
                   <p className="flex items-start gap-1.5 text-sm font-medium">
@@ -359,6 +398,23 @@ export default function DextImportModal({ open, onClose, onImported }) {
                   </div>
                 )}
               </div>
+
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={importAll}
+                  onChange={(e) => setImportAll(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-black"
+                />
+                <span>
+                  Import everything, even where it looks like a duplicate
+                  <span className="block text-xs text-muted-foreground">
+                    On, nothing in the export is left behind and lookalikes are flagged to compare.
+                    Off, a document CYBills already has is skipped — safe to re-run, but a genuine
+                    second receipt from the same supplier on the same day is dropped.
+                  </span>
+                </span>
+              </label>
 
               {error && <p className="text-sm text-destructive">{error}</p>}
               {busy && <Row>Importing {progress.at} of {progress.of}…</Row>}
