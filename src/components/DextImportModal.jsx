@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { X, Upload, FileText, AlertTriangle, Check } from 'lucide-react';
 import { parseDextExport, matchFiles, billPayload, patchPayload } from '@/lib/dextImport';
-import { addBill, updateBill, fetchDextImage, sha256Hex } from '@/lib/bills';
+import { addBill, updateBill, fetchDextImage, sha256Hex, billFileUrl, fetchBillFileMeta } from '@/lib/bills';
 import { useActiveOrganisation } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
@@ -32,6 +32,112 @@ const readAsBase64 = (file) =>
     r.onload = () => resolve(String(r.result).split(',')[1] || '');
     r.readAsDataURL(file);
   });
+
+
+// One skipped row, with both documents put side by side on request.
+//
+// Naming a skip is not enough to act on it: "Anthropic · 2026-08-29 · SGD 300"
+// describes the pair equally well whether they are one receipt or two, and the
+// only thing that settles it is looking at them. So the Dext document and the
+// one already here are shown together — the Dext side fetched through the
+// server, since those links send no CORS headers and the browser is refused
+// them.
+function SkippedRow({ row }) {
+  const [open, setOpen] = useState(false);
+  const [dext, setDext] = useState(undefined); // undefined = not asked, null = no good
+  const [mine, setMine] = useState(undefined);
+  const [failed, setFailed] = useState(false);
+
+  const show = async () => {
+    const next = !open;
+    setOpen(next);
+    if (!next) return;
+    if (dext === undefined && row.image) {
+      const got = await fetchDextImage(row.image);
+      if (got) {
+        const bytes = bytesOf(got.base64);
+        setDext({
+          url: URL.createObjectURL(new Blob([bytes], { type: got.contentType || 'application/octet-stream' })),
+          type: got.contentType || '',
+        });
+      } else {
+        setDext(null);
+        setFailed(true);
+      }
+    }
+    // Its content type, not a guess from the URL: the file route names no
+    // extension, so a stored PDF would render into an <img> and show broken.
+    if (mine === undefined && row.matchedBillId) {
+      const meta = await fetchBillFileMeta(row.matchedBillId);
+      setMine(meta?.hasFile ? { url: billFileUrl(row.matchedBillId), type: meta.contentType || '' } : null);
+    }
+  };
+
+  return (
+    <li className="rounded-md border bg-background/60 p-2">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{row.id}</span>
+          {row.what ? ` — ${row.what}` : ''}
+          {row.same
+            ? ' · the very same file'
+            : row.matched
+              ? ` · looks like ${row.matched}`
+              : ' · looks like one already here'}
+        </p>
+        {/* Nothing to compare when the two are byte-identical: they are the
+            same picture, and offering to show it twice is a waste of a click. */}
+        {!row.same && (row.image || row.matchedBillId) && (
+          <button
+            type="button"
+            onClick={show}
+            className="shrink-0 text-xs font-medium underline underline-offset-2 hover:opacity-70"
+          >
+            {open ? 'Hide' : 'Compare'}
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <DocPane label="From Dext" src={dext?.url} type={dext?.type} pending={dext === undefined} failed={failed} />
+          <DocPane
+            label={`Already here${row.matched ? ` · ${row.matched}` : ''}`}
+            src={mine?.url}
+            type={mine?.type}
+            pending={mine === undefined && Boolean(row.matchedBillId)}
+          />
+        </div>
+      )}
+    </li>
+  );
+}
+
+// A document, however it is stored. A PDF needs a frame and an image needs an
+// img; guessing wrong shows a broken icon over a perfectly good receipt.
+function DocPane({ label, src, type = '', pending = false, failed = false }) {
+  const isPdf = /pdf/i.test(type) || /\.pdf($|\?)/i.test(String(src || ''));
+  return (
+    <div className="min-w-0">
+      <p className="mb-1 truncate text-[11px] text-muted-foreground">{label}</p>
+      <div className="flex h-44 items-center justify-center overflow-hidden rounded border bg-muted/30">
+        {pending && <span className="text-[11px] text-muted-foreground">Loading…</span>}
+        {!pending && !src && (
+          <span className="px-2 text-center text-[11px] text-muted-foreground">
+            {failed ? 'Could not be fetched' : 'No document'}
+          </span>
+        )}
+        {!pending && src && (isPdf
+          ? <iframe title={label} src={src} className="h-full w-full" />
+          : <img alt={label} src={src} className="max-h-full max-w-full object-contain" />)}
+      </div>
+      {src && (
+        <a href={src} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] underline underline-offset-2 hover:opacity-70">
+          Open full size
+        </a>
+      )}
+    </div>
+  );
+}
 
 export default function DextImportModal({ open, onClose, onImported }) {
   const org = useActiveOrganisation();
@@ -127,6 +233,10 @@ export default function DextImportModal({ open, onClose, onImported }) {
             // 'exact_file' is the same bytes; anything else is a resemblance.
             same: res.duplicate.type === 'exact_file',
             matched: res.duplicate.bill?.displayId || '',
+            // Both sides of the comparison, so the pair can be LOOKED at rather
+            // than reasoned about from a supplier and a total.
+            image: row.image || '',
+            matchedBillId: res.duplicate.bill?.id || '',
           });
         } else if (res?.bill?.id) {
           outcome.created += 1;
@@ -152,7 +262,14 @@ export default function DextImportModal({ open, onClose, onImported }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-foreground/20" onClick={close} aria-hidden="true" />
-      <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-lg bg-background shadow-xl">
+      {/* Wider once there is a pair to compare: two documents at 240px each are
+          a thumbnail, and the whole point is being able to tell them apart. */}
+      <div
+        className={cn(
+          'relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-lg bg-background shadow-xl',
+          done?.skipped?.length ? 'max-w-3xl' : 'max-w-lg'
+        )}
+      >
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h2 className="text-base font-semibold tracking-tight">Import from Dext</h2>
           <button type="button" onClick={close} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
@@ -178,18 +295,8 @@ export default function DextImportModal({ open, onClose, onImported }) {
                     it really is a separate document. Running this import again will skip them the
                     same way rather than making a second copy.
                   </p>
-                  <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
-                    {done.skipped.map((d) => (
-                      <li key={d.id}>
-                        <span className="font-medium text-foreground">{d.id}</span>
-                        {d.what ? ` — ${d.what}` : ''}
-                        {d.same
-                          ? ' · the very same file'
-                          : d.matched
-                            ? ` · looks like ${d.matched}`
-                            : ' · looks like one already here'}
-                      </li>
-                    ))}
+                  <ul className="mt-2 max-h-[22rem] space-y-2 overflow-y-auto">
+                    {done.skipped.map((d) => <SkippedRow key={d.id} row={d} />)}
                   </ul>
                 </div>
               )}
