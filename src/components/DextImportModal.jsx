@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { X, Upload, FileText, AlertTriangle, Check } from 'lucide-react';
 import { parseDextExport, matchFiles, billPayload, patchPayload } from '@/lib/dextImport';
-import { addBill, updateBill, fetchDextImage } from '@/lib/bills';
+import { addBill, updateBill, fetchDextImage, sha256Hex } from '@/lib/bills';
 import { useActiveOrganisation } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
@@ -15,6 +15,15 @@ import { cn } from '@/lib/utils';
 //
 // It imports into WHICHEVER ENTITY IS OPEN, which is the one thing worth being
 // careful about, so the entity is named on the button and again in the result.
+
+// base64 back to bytes, so a document fetched from a link is hashed exactly as
+// an uploaded one is — the two paths must agree about what "the same file" is.
+const bytesOf = (b64) => {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+};
 
 const readAsBase64 = (file) =>
   new Promise((resolve, reject) => {
@@ -69,7 +78,7 @@ export default function DextImportModal({ open, onClose, onImported }) {
     if (!match || busy) return;
     setBusy(true);
     setError('');
-    const outcome = { created: 0, withFile: 0, duplicates: 0, failed: [] };
+    const outcome = { created: 0, withFile: 0, duplicates: [], reruns: [], failed: [] };
     setProgress({ at: 0, of: match.pairs.length });
     for (let i = 0; i < match.pairs.length; i += 1) {
       const { row, file } = match.pairs[i];
@@ -80,6 +89,11 @@ export default function DextImportModal({ open, onClose, onImported }) {
           body.fileBase64 = await readAsBase64(file);
           body.mediaType = file.type || 'application/octet-stream';
           body.fileName = file.name;
+          // The exact-file key. Without it the server can only ever compare a
+          // document by supplier, date and total — so importing the very same
+          // file twice reads as a coincidence rather than as a re-run.
+          // eslint-disable-next-line no-await-in-loop
+          body.fileHash = await sha256Hex(file);
         } else if (row.image) {
           // No downloaded file, but the export named where the document lives.
           // Fetched through the server, because those links send no CORS
@@ -90,16 +104,32 @@ export default function DextImportModal({ open, onClose, onImported }) {
             body.fileBase64 = got.base64;
             body.mediaType = got.contentType || 'application/octet-stream';
             body.fileName = `${row.receiptId || 'document'}`;
+            // eslint-disable-next-line no-await-in-loop
+            body.fileHash = await sha256Hex(new Blob([bytesOf(got.base64)]));
           }
         }
         // Straight to the inbox, not 'processing': there is nothing to read.
+        //
+        // force: EVERYTHING in the export comes across. A migration is moving a
+        // book, not adding a document, and a row silently left behind is the
+        // one nobody finds until it is missing from a return — Dext's own
+        // duplicate rules are not these, and two receipts from one supplier on
+        // one day for one amount is an ordinary Tuesday. The server still says
+        // which ones it matched, so they are named here and flagged for review
+        // rather than dropped.
         // eslint-disable-next-line no-await-in-loop
-        const res = await addBill(body);
-        if (res?.duplicate && !res?.bill) {
-          outcome.duplicates += 1;
-        } else if (res?.bill?.id) {
+        const res = await addBill(body, { force: true });
+        if (res?.bill?.id) {
           outcome.created += 1;
           if (body.fileBase64) outcome.withFile += 1;
+          // Two different things wear the word "duplicate" here, and only one
+          // of them is interesting. A byte-identical file already in this book
+          // is not a coincidence — it is this import having been run before —
+          // so it is reported apart from a document that merely shares a
+          // supplier, a date and a total with another.
+          const id = row.receiptId || `line ${row.line}`;
+          if (res.duplicate?.type === 'exact_file') outcome.reruns.push(id);
+          else if (res.duplicate) outcome.duplicates.push(id);
           const patch = patchPayload(row);
           // eslint-disable-next-line no-await-in-loop
           if (Object.keys(patch).length) await updateBill(res.bill.id, patch).catch(() => {});
@@ -136,8 +166,34 @@ export default function DextImportModal({ open, onClose, onImported }) {
                 <Check className="h-4 w-4" /> Imported {done.created} document{done.created === 1 ? '' : 's'} into {org?.name || 'this entity'}.
               </p>
               <Row>{done.withFile} of them came with their original file.</Row>
-              {done.duplicates > 0 && (
-                <Row>{done.duplicates} were skipped as duplicates — CYBills already had them.</Row>
+              {done.reruns.length > 0 && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
+                  <p className="flex items-start gap-1.5 text-sm font-medium">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    {done.reruns.length} were the very same file as a document already here.
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    That usually means this export has been imported before, and these are now
+                    second copies. They were imported as asked — delete them if this was a re-run.
+                  </p>
+                  <p className="mt-1 break-words text-xs text-muted-foreground">{done.reruns.join(', ')}</p>
+                </div>
+              )}
+              {done.duplicates.length > 0 && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
+                  <p className="flex items-start gap-1.5 text-sm font-medium">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    {done.duplicates.length} look like documents already here.
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    All of them were imported — nothing was left behind. Check them under{' '}
+                    <span className="font-medium text-foreground">Review duplicates</span> in the
+                    inbox and delete whichever copy you don&rsquo;t want.
+                  </p>
+                  <p className="mt-1 break-words text-xs text-muted-foreground">
+                    {done.duplicates.join(', ')}
+                  </p>
+                </div>
               )}
               {done.failed.length > 0 && (
                 <p className="text-sm text-destructive">
