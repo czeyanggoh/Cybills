@@ -31,6 +31,20 @@ for the WhatsApp routes (`CYBILLS_API_KEY` at the CYWS end,
 `WHATSAPP_INBOUND_KEY` here). They are allowlisted past the session guard and
 carry that key instead of a session.
 
+## Set `APP_ORIGIN`
+
+Xero validates an invoice's `Url` — the "Go to CYBills" button — and **refuses
+the whole invoice** when it does not like it: no custom port, no IP host, a
+publicly addressable domain. The origin is normally taken from the request, and
+a browser's request carries the public host, so publishing from the app was
+always fine. CYWS calls this server-to-server, often across the VPS on
+`http://127.0.0.1:3004`, which breaks all three rules at once.
+
+CYBills drops a link Xero would refuse rather than losing the bill over it, so
+publishing works either way — but without `APP_ORIGIN=https://cybills.cy-bm.sg`
+in `server/.env`, every bill published through this route reaches Xero with no
+link back.
+
 ## Two things that are easy to get wrong
 
 **The contact must exist before the bill is posted, and the bill must name it by

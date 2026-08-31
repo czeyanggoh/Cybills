@@ -1147,6 +1147,18 @@ Each row also carries `postable` + `blocked_reason`, decided against the org's
 live chart, because a row that looks payable and only refuses AFTER a contact has
 been created for it in Xero is worse than one that never offered itself.
 
+**A link Xero refuses costs the whole bill, so it is checked rather than
+assumed.** Xero validates an invoice's `Url` — no custom port, no IP host, a
+publicly addressable domain — and rejects the INVOICE when it doesn't like it.
+The origin comes from the request (`appOrigin`), and a browser's request carries
+the public host, so publishing from the app had always been fine; the first bill
+published by MACHINE was the first one Xero refused, because CYWS calls across
+the VPS on `http://127.0.0.1:3004` and that breaks all three rules at once.
+`xeroInvoiceUrl` drops a link that would be refused rather than risking the bill
+for a button, on both the bill and the claim road. `APP_ORIGIN` is how a deploy
+gets the button back on the machine road — it is the only thing that CAN know
+the public host when the request itself arrived on a loopback address.
+
 **The caller names the ledger it is posting into.** One key opens every client's
 book, so publish refuses a document whose entity is on a different tenant
 (`tenant_mismatch`) — without it a mis-set tenant in a payment run would post one

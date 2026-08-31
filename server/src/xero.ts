@@ -957,6 +957,43 @@ export async function perLineItems(
   return { kind: 'lines', lines };
 }
 
+// A link Xero will actually accept on an invoice, or ''.
+//
+// Xero validates an invoice's `Url` and refuses the WHOLE invoice when it does
+// not like it — "Custom ports are not allowed in invoice url / Url host cannot
+// be an IP address, and must be a publicly addressable top level domain". So an
+// unusable link does not degrade the "Go to CYBills" button, it stops a real
+// bill reaching a real ledger.
+//
+// Which is what happened the first time a bill was published by MACHINE. The
+// origin comes from the request (appOrigin), and a browser's request carries the
+// public host, so publishing from the app had always been fine. CYWorkspace
+// calls us server-to-server across the VPS — `http://127.0.0.1:3004` — and every
+// one of Xero's three complaints is true of that at once.
+//
+// So the link is checked rather than assumed, and dropped rather than risked:
+// no port, no IP host, a real dotted domain, http(s) only. `APP_ORIGIN` is how
+// a deploy gets the button back on the machine road — appOrigin prefers it over
+// the request, and it is the only thing that CAN know the public host when the
+// request itself arrived on a loopback address.
+export function xeroInvoiceUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    if (u.port) return '';
+    const host = u.hostname;
+    // Xero's own words: not an IP address. v4 by shape, v6 by the brackets a
+    // URL always puts round one.
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) return '';
+    // "a publicly addressable top level domain" — a dotted name ending in
+    // letters. Rules out `localhost` and any other single-label host.
+    if (!/^(?=.{4,253}$)([a-z0-9](-*[a-z0-9])*\.)+[a-z]{2,}$/i.test(host)) return '';
+    return u.toString();
+  } catch {
+    return '';
+  }
+}
+
 // The Xero bill a stored document becomes. Shared, because a document is turned
 // into an ACCPAY invoice twice now — once when it is first published, and again
 // whenever a correction is sent to the bill that publish created. Two copies of
@@ -1057,7 +1094,8 @@ async function buildBillInvoice(
   if (bill.invoiceNumber) payload.InvoiceNumber = bill.invoiceNumber;
   // "Go to CYBills" on the bill in Xero — straight back to the document this
   // was published from, and the original paper attached to it.
-  payload.Url = `${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`;
+  const backLink = xeroInvoiceUrl(`${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`);
+  if (backLink) payload.Url = backLink;
   if (bill.currency) payload.CurrencyCode = bill.currency;
   // At the rate the document itself printed, so the ledger's GST report shows
   // the SGD tax the invoice states rather than Xero's day-rate conversion of it.
@@ -1783,15 +1821,16 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     // "ST Eng Exp Claim 20-Aug-2026 21324972410", the way the practice has
     // always identified these. The name alone repeats every month.
     InvoiceNumber: await referenceFor(claim),
-    // Xero renders this as a "Go to CYBills" button on the bill — the way Dext's
-    // bills carry "Go to Dext". Somebody reviewing the ledger can open the claim
-    // this came from, with its items, its approvals and the receipts behind
-    // them, instead of hunting for it.
-    // The entity rides along: the app remembers whichever one you last had open,
-    // so a link into a claim that lives in the bridge entity landed in CYBM and
-    // reported the claim missing. Naming it makes the link self-contained.
-    Url: `${appOrigin(req)}/expense-claims/${encodeURIComponent(claim.id)}?org=${encodeURIComponent(organisation.id)}`,
   };
+  // Xero renders this as a "Go to CYBills" button on the bill — the way Dext's
+  // bills carry "Go to Dext". Somebody reviewing the ledger can open the claim
+  // this came from, with its items, its approvals and the receipts behind
+  // them, instead of hunting for it.
+  // The entity rides along: the app remembers whichever one you last had open,
+  // so a link into a claim that lives in the bridge entity landed in CYBM and
+  // reported the claim missing. Naming it makes the link self-contained.
+  const claimLink = xeroInvoiceUrl(`${appOrigin(req)}/expense-claims/${encodeURIComponent(claim.id)}?org=${encodeURIComponent(organisation.id)}`);
+  if (claimLink) payload.Url = claimLink;
   if (claim.currency) payload.CurrencyCode = claim.currency;
 
   const result = await relay('Invoices', {

@@ -201,6 +201,14 @@ check('a document with no account in the chart is refused', [r.status, r.body.er
 
 r = await publish(waiting.id, { tenant_id: 'tenant-1', contact_id: 'contact-9' });
 check('published', r.status, 200);
+// Xero validates an invoice's Url and refuses the WHOLE invoice over it —
+// "Custom ports are not allowed in invoice url / Url host cannot be an IP
+// address". This test reaches the server on 127.0.0.1:4644, which breaks both
+// rules at once, and that is not a contrivance: it is what a call from
+// CYWorkspace across the VPS looks like. Publishing from a browser had always
+// carried the public host, so the first bill published by MACHINE was the first
+// one Xero refused. A link it won't take is not sent.
+check('no link is sent when the origin is one Xero would refuse', 'Url' in r.posted, false);
 // The whole reason publish takes a contact id: Xero matches a contact by NAME
 // when given one and CREATES one when the name is new, so a bill posted as
 // "A1 Consultancy" against a contact CYWS made as "A1" would land on a second,
@@ -233,6 +241,21 @@ check('a published document leaves the payables list', (r.body.bills ?? []).map(
   r = await publish(alsoWaiting.id, { tenant_id: 'tenant-1', contact_id: 'contact-9' });
   check('a document marked paid since the list was read is refused', [r.status, r.body.error], [409, 'not_payable']);
   check('and nothing reached Xero', r.posted, null);
+}
+
+// --- what Xero will and won't take as an invoice Url --------------------------
+// Both directions, because a guard that drops everything would "pass" the check
+// above while quietly costing every published bill its "Go to CYBills" button.
+{
+  const { xeroInvoiceUrl } = await import('../src/xero.ts');
+  const takes = (u: string) => xeroInvoiceUrl(u) !== '';
+  check('a public https origin is kept', xeroInvoiceUrl('https://cybills.cy-bm.sg/costs/2608?org=org-1'), 'https://cybills.cy-bm.sg/costs/2608?org=org-1');
+  check('a loopback address is not', takes('http://127.0.0.1:3004/costs/2608'), false);
+  check('nor a public host on a custom port', takes('https://cybills.cy-bm.sg:8443/costs/2608'), false);
+  check('nor localhost', takes('http://localhost/costs/2608'), false);
+  check('nor a bare hostname with no domain', takes('https://cybills/costs/2608'), false);
+  check('nor an IPv6 address', takes('http://[::1]/costs/2608'), false);
+  check('nor something that is not a URL at all', takes('/costs/2608'), false);
 }
 
 stub.close();

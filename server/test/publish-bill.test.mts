@@ -11,6 +11,11 @@ import { join } from 'node:path';
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-test-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
 process.env.CYWORKSPACE_API_KEY = 'test-key';
+// What a real deploy sets, and what the "Go to CYBills" button needs: Xero
+// refuses an invoice whose Url has a port or an IP host, and every test here
+// reaches the server on 127.0.0.1. Without this the link is dropped (as it
+// should be) and there is nothing to assert.
+process.env.APP_ORIGIN = 'https://cybills.example.com';
 
 // The linked client entity, as the organisations store holds it.
 writeFileSync(
