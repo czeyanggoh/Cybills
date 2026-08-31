@@ -4,6 +4,8 @@ import { recordEvent } from '@/lib/salesEvents';
 import { recordExport } from '@/lib/exportsStore';
 import { makeZip } from '@/lib/zip';
 import { getExportSettings, EXPORT_COLUMNS } from '@/lib/exportSettings';
+import { getBusinessProfile, baseCurrencyCode } from '@/lib/businessProfile';
+import { docsExportName } from '@/lib/exportFormat';
 
 // Client-side Costs/Sales export — CSV (exact Dext column layout), PDF (items +
 // a submission-history page), or ZIP (CSV + PDF). Every export is recorded so it
@@ -28,11 +30,6 @@ function fmtDate(d) {
   if (!Number.isNaN(dt.getTime())) return `${pad(dt.getDate())}-${MON[dt.getMonth()]}-${dt.getFullYear()}`;
   return s;
 }
-function isoDate() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 const esc = (v) => {
   const s = String(v ?? '');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -55,17 +52,41 @@ function imageUrlFor(d, links = {}) {
   return '';
 }
 
+// --- The entity's own currency ----------------------------------------------
+// Dext prints each row twice: once as the supplier billed it, once in the
+// entity's own currency, because the second pair is what goes in the ledger and
+// the return. They are the same figures for a domestic document and different
+// ones for a USD invoice, so the SGD columns can't simply repeat the billing
+// amounts — under an "(SGD)" heading that is a wrong number in a file somebody
+// reconciles against a bank statement.
+//
+// A foreign document that RESTATED itself carries the supplier's own SGD pair
+// (baseTotal/baseTax — see the restatement notes in CLAUDE.md), which is the
+// figure to print. One that didn't leaves the columns BLANK: CYBills holds no
+// exchange rate of its own, so there is nothing true to put there, and the
+// Currency column beside it says what the amount actually is.
+function baseAmountsFor(d, baseCode) {
+  const billed = String(d.currency || baseCode || '').trim().toUpperCase();
+  if (!billed || billed === baseCode) return { tax: n2(d.tax), total: n2(d.total) };
+  const restated = String(d.baseCurrency || '').trim().toUpperCase();
+  if (restated === baseCode && num(d.baseTotal) > 0) return { tax: n2(d.baseTax), total: n2(d.baseTotal) };
+  return { tax: '', total: '' };
+}
+
 // --- CSV --------------------------------------------------------------------
-const SALES_COLS = ['Item ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Customer', 'Category', 'Project', 'Tax', 'Total', 'Currency', 'Tax (SGD)', 'Total (SGD)', 'Note', 'Description', 'Image'];
-function buildSalesCsv(rows, showNet = false, links = {}) {
-  const cols = showNet ? [...SALES_COLS, 'Net (SGD)'] : SALES_COLS;
+const SALES_COLS = ['Item ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Customer', 'Category', 'Project', 'Tax', 'Total', 'Currency'];
+const SALES_TAIL = ['Note', 'Description', 'Image'];
+function buildSalesCsv(rows, showNet = false, links = {}, baseCode = 'SGD') {
+  const cols = [...SALES_COLS, `Tax (${baseCode})`, `Total (${baseCode})`, ...SALES_TAIL];
+  if (showNet) cols.push(`Net (${baseCode})`);
   const body = rows.map((d) => {
+    const b = baseAmountsFor(d, baseCode);
     const r = [
       idOf(d), d.type || 'Sales invoice', fmtDate(d.date), fmtDate(d.dueDate), d.ref || d.invoiceNumber || '',
-      d.customer || '', d.category || '', d.project || '', n2(d.tax), n2(d.total), d.currency || 'SGD',
-      n2(d.tax), n2(d.total), d.note || '', d.description || '', imageUrlFor(d, links),
+      d.customer || '', d.category || '', d.project || '', n2(d.tax), n2(d.total), d.currency || baseCode,
+      b.tax, b.total, d.note || '', d.description || '', imageUrlFor(d, links),
     ];
-    if (showNet) r.push(n2(num(d.total) - num(d.tax)));
+    if (showNet) r.push(b.total === '' ? '' : n2(num(b.total) - num(b.tax)));
     return r;
   });
   return csvLines([cols, ...body]);
@@ -73,17 +94,20 @@ function buildSalesCsv(rows, showNet = false, links = {}) {
 
 const netOf = (d) => num(d.total) - num(d.tax);
 
-const COST_COLS = ['Receipt ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Supplier', 'Category', 'Customer', 'Project', 'Payment Method', 'Bank Account', 'Tax', 'Total', 'Currency', 'Tax (SGD)', 'Total (SGD)', 'Status', 'Owner', 'Note', 'Description', 'Image'];
-function buildCostCsv(rows, showNet = false, links = {}) {
-  const cols = showNet ? [...COST_COLS, 'Net (SGD)'] : COST_COLS;
+const COST_COLS = ['Receipt ID', 'Type', 'Date', 'Due Date', 'Invoice Number', 'Supplier', 'Category', 'Customer', 'Project', 'Payment Method', 'Bank Account', 'Tax', 'Total', 'Currency'];
+const COST_TAIL = ['Status', 'Owner', 'Note', 'Description', 'Image'];
+function buildCostCsv(rows, showNet = false, links = {}, baseCode = 'SGD') {
+  const cols = [...COST_COLS, `Tax (${baseCode})`, `Total (${baseCode})`, ...COST_TAIL];
+  if (showNet) cols.push(`Net (${baseCode})`);
   const body = rows.map((d) => {
+    const b = baseAmountsFor(d, baseCode);
     const r = [
       idOf(d), d.type || 'Receipt', fmtDate(d.date), fmtDate(d.dueDate), d.invoiceNumber || '',
       d.supplier || '', d.category || '', d.customer || '', d.project || '', d.paymentMethod || '', d.bankAccount || '',
-      n2(d.tax), n2(d.total), d.currency || 'SGD', n2(d.tax), n2(d.total),
+      n2(d.tax), n2(d.total), d.currency || baseCode, b.tax, b.total,
       d.status === 'ready' ? 'processed' : d.status || 'processed', d.user || d.owner || '', d.note || '', d.description || '', imageUrlFor(d, links),
     ];
-    if (showNet) r.push(n2(netOf(d)));
+    if (showNet) r.push(b.total === '' ? '' : n2(num(b.total) - num(b.tax)));
     return r;
   });
   return csvLines([cols, ...body]);
@@ -142,14 +166,16 @@ const DOC_COLUMN_VALUE = {
   'Net with currency': (d, f) => `${d.currency || 'SGD'} ${numDec(netOf(d), f.decimalSeparator)}`,
   'Tax with currency': (d, f) => `${d.currency || 'SGD'} ${numDec(d.tax, f.decimalSeparator)}`,
   'Total with currency': (d, f) => `${d.currency || 'SGD'} ${numDec(d.total, f.decimalSeparator)}`,
-  'Base net amount': (d, f) => numDec(netOf(d), f.decimalSeparator),
-  'Base total amount': (d, f) => numDec(d.total, f.decimalSeparator),
+  // "Base" is the entity's own currency, so these are the restated pair — not
+  // the billing figures under another name, which is what they used to be.
+  'Base net amount': (d, f, links, base) => (base.total === '' ? '' : numDec(num(base.total) - num(base.tax), f.decimalSeparator)),
+  'Base total amount': (d, f, links, base) => (base.total === '' ? '' : numDec(base.total, f.decimalSeparator)),
   Note: (d) => d.note || '',
   Image: (d, f, links) => imageUrlFor(d, links),
   'Project 2': () => '',
 };
 
-function buildCustomCsv(rows, settings, links = {}) {
+function buildCustomCsv(rows, settings, links = {}, baseCode = 'SGD') {
   const selected = EXPORT_COLUMNS.filter((c) => (settings.columns || []).includes(c));
   const cols = selected.length ? selected : ['Receipt ID', 'Description', 'Net amount', 'Tax amount', 'Total amount'];
   // Comma-decimal switches the field delimiter to ';' so numbers stay unambiguous.
@@ -161,7 +187,10 @@ function buildCustomCsv(rows, settings, links = {}) {
   };
   const line = (arr) => arr.map(escD).join(delimiter);
   const header = line(cols);
-  const body = rows.map((d) => line(cols.map((c) => (DOC_COLUMN_VALUE[c] ? DOC_COLUMN_VALUE[c](d, settings, links) : ''))));
+  const body = rows.map((d) => {
+    const base = baseAmountsFor(d, baseCode);
+    return line(cols.map((c) => (DOC_COLUMN_VALUE[c] ? DOC_COLUMN_VALUE[c](d, settings, links, base) : '')));
+  });
   return [header, ...body].join('\n');
 }
 
@@ -366,41 +395,50 @@ export function downloadExportBlob(rec) {
 
 // Main entry: generate the chosen format, download it, log an export event on
 // sales items, and record it in the Exports tab. `kind` is 'costs' | 'sales'.
-export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = '' } = {}) {
+export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvFormat = '', exportedBy = '', orgName = '' } = {}) {
   const wKind = kind === 'sales' ? 'sales' : 'costs';
-  const base = `cybills-${wKind}-${isoDate()}`;
+  // Named for the entity and dated, the way Dext names it and the way the claim
+  // exports now do — the file is read outside the app, where a stem naming only
+  // the app says nothing about whose costs these are.
+  const ext = format === 'csv' ? 'csv' : format === 'pdf' ? 'pdf' : 'zip';
+  const filename = docsExportName(orgName, wKind, ext);
+  const base = filename.replace(/\.[^.]+$/, '');
   // Honour Business settings → Exports: "Custom CSV" uses the chosen columns +
   // date/decimal formats; otherwise the fixed template, plus a Net column when
   // "Show net amount" is on.
   const settings = getExportSettings();
+  // The entity's own currency: what the "(SGD)" pair of columns is really about.
+  const baseCode = baseCurrencyCode(getBusinessProfile());
   // The Image column links to each document's file. Those links leave the app,
   // so they're minted per export and signed (Business settings -> Exports ->
   // Image sharing). Off: none are asked for and the column comes out blank.
   const links = settings.imageSharing ? await fetchShareLinks(rows.map((d) => d.id ?? d.itemId)) : {};
   const isCustom = /custom/i.test(csvFormat || '');
   const csvText = isCustom
-    ? buildCustomCsv(rows, settings, links)
+    ? buildCustomCsv(rows, settings, links, baseCode)
     : wKind === 'sales'
-      ? buildSalesCsv(rows, settings.showNet, links)
-      : buildCostCsv(rows, settings.showNet, links);
+      ? buildSalesCsv(rows, settings.showNet, links, baseCode)
+      : buildCostCsv(rows, settings.showNet, links, baseCode);
 
   let blob;
-  let filename;
   let fmtLabel;
+  // How many documents actually reached the file. A CSV carries every row; a
+  // PDF and a ZIP carry only the ones with a stored file, and the caller says
+  // so out loud rather than handing over a thinner file than was asked for.
+  let added = rows.length;
   if (format === 'csv') {
     blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
-    filename = `${base}.csv`;
     fmtLabel = 'CSV';
   } else if (format === 'pdf') {
-    const { bytes } = await buildReceiptsPdf(rows, { itemHeaders: settings.pdfItemHeaders, order: settings.pdfOrder });
-    blob = new Blob([/** @type {any} */ (bytes)], { type: 'application/pdf' });
-    filename = `${base}.pdf`;
+    const res = await buildReceiptsPdf(rows, { itemHeaders: settings.pdfItemHeaders, order: settings.pdfOrder });
+    blob = new Blob([/** @type {any} */ (res.bytes)], { type: 'application/pdf' });
     fmtLabel = 'PDF';
+    added = res.added;
   } else {
     const res = await buildReceiptsZip(rows, { csvText, base });
     blob = res.blob;
-    filename = `${base}.zip`;
     fmtLabel = 'ZIP';
+    added = res.added;
   }
 
   triggerDownload(blob, filename);
@@ -430,4 +468,8 @@ export async function exportDocs(rows, { kind = 'costs', format = 'csv', csvForm
     exportedBy,
     blob,
   });
+
+  // What the file actually turned out to be, for a caller that would rather say
+  // it than let somebody find out by opening it.
+  return { filename, format: fmtLabel, added, total: rows.length };
 }

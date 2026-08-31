@@ -3,6 +3,7 @@ import { X, ChevronDown } from 'lucide-react';
 import { exportDocs } from '@/lib/docsExport';
 import { useAuth } from '@/lib/auth';
 import { useExportSettings } from '@/lib/exportSettings';
+import { useActiveOrganisation } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 // Export dialog for Costs/Sales — CSV / PDF / ZIP. Runs fully client-side and
@@ -11,6 +12,7 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
   const defaultLabel = kind === 'sales' ? 'CYBills sales default' : 'CYBills default';
   const { user, membership } = useAuth();
   const settings = useExportSettings();
+  const org = useActiveOrganisation();
   const [tab, setTab] = useState('csv');
   // Opens on the format this entity chose in Business settings → Exports, which
   // is what "choose how the data in CSV exports gets formatted" has to mean —
@@ -22,7 +24,20 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
   );
   const [archiveAfter, setArchiveAfter] = useState(false);
   const [busy, setBusy] = useState(false);
+  // What the finished file turned out to hold, kept only when it holds less
+  // than was asked for (see doExport).
+  const [result, setResult] = useState(null);
   if (!open) return null;
+
+  // A CSV describes every row. A PDF and a ZIP are made of the documents
+  // THEMSELVES, so a row with no stored file — typed in by hand, or captured
+  // before its image was kept — has nothing to contribute and simply isn't
+  // there. Said here, before the export, because the alternative is finding out
+  // by opening a PDF that is one page saying nothing.
+  const needsFiles = tab === 'pdf' || tab === 'zip';
+  const withFile = rows.filter((d) => d.hasFile).length;
+  const noFiles = needsFiles && withFile === 0 && rows.length > 0;
+  const someMissing = needsFiles && withFile > 0 && withFile < rows.length;
 
   const doExport = async () => {
     // Record the export under the signed-in user's name (not the generic "You"),
@@ -33,12 +48,26 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
     const exportedBy = membership?.user?.name || user?.name || user?.email || '';
     setBusy(true);
     try {
-      await exportDocs(rows, { kind, format: tab, csvFormat, exportedBy });
+      const res = await exportDocs(rows, { kind, format: tab, csvFormat, exportedBy, orgName: org?.name || '' });
       if (archiveAfter) onArchive?.();
+      // The file is downloaded either way. The dialog stays open only when the
+      // result came out short of what was promised above — a stored file that
+      // would not fetch or would not parse. A shortfall already named in the
+      // notice needs no second telling, and repeating it would read as a new
+      // problem rather than the one already accounted for.
+      if (res && res.added < withFile) {
+        setResult(res);
+        return;
+      }
+      onClose();
     } finally {
       setBusy(false);
-      onClose();
     }
+  };
+
+  const close = () => {
+    setResult(null);
+    onClose();
   };
 
   const TABS = [{ key: 'csv', label: 'CSV' }, { key: 'pdf', label: 'PDF' }, { key: 'zip', label: 'ZIP' }];
@@ -46,11 +75,11 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-foreground/20" onClick={close} aria-hidden="true" />
       <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h2 className="text-base font-semibold tracking-tight">Export {rows.length} item{rows.length === 1 ? '' : 's'}</h2>
-          <button type="button" onClick={onClose} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
+          <button type="button" onClick={close} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -61,7 +90,7 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
               <button
                 key={t.key}
                 type="button"
-                onClick={() => setTab(t.key)}
+                onClick={() => { setTab(t.key); setResult(null); }}
                 className={cn('rounded py-1.5 font-medium transition-colors', tab === t.key ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}
               >
                 {t.label}
@@ -70,6 +99,25 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
           </div>
 
           <p className="mb-4 text-sm text-muted-foreground">{blurb[tab]}</p>
+
+          {noFiles && (
+            <p className="mb-4 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              {rows.length === 1 ? 'This document has no stored file' : `None of these ${rows.length} documents has a stored file`},
+              so there is nothing for the {tab === 'pdf' ? 'PDF' : 'ZIP'} to contain. Export as CSV instead.
+            </p>
+          )}
+          {someMissing && (
+            <p className="mb-4 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+              {withFile} of {rows.length} have a stored file. The other {rows.length - withFile}{' '}
+              {rows.length - withFile === 1 ? 'was entered without one and won’t appear' : 'were entered without one and won’t appear'}.
+            </p>
+          )}
+          {result && (
+            <p className="mb-4 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              {result.filename} was downloaded with {result.added} of {result.total} document
+              {result.total === 1 ? '' : 's'}. The rest had no file that could be read.
+            </p>
+          )}
 
           {tab === 'csv' && (
             <label className="mb-4 flex items-center gap-3 text-sm">
@@ -94,10 +142,14 @@ export default function DocsExportModal({ open, kind, rows, onClose, onArchive =
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t px-6 py-4">
-          <button type="button" onClick={onClose} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">Cancel</button>
-          <button type="button" onClick={doExport} disabled={busy || rows.length === 0} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">
-            {busy ? 'Exporting…' : 'Export'}
+          <button type="button" onClick={close} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">
+            {result ? 'Done' : 'Cancel'}
           </button>
+          {!result && (
+            <button type="button" onClick={doExport} disabled={busy || rows.length === 0 || noFiles} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">
+              {busy ? 'Exporting…' : 'Export'}
+            </button>
+          )}
         </div>
       </div>
     </div>

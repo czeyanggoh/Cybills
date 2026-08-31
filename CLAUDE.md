@@ -548,6 +548,38 @@ than guesses (already published, on an expense claim, incomplete, or a category
 that isn't in the org's chart), asks first because it writes to a live ledger,
 and the server enforces the same gates again.
 
+## What a Costs export is a file OF
+
+CSV, PDF and ZIP are three different things over the same selection, and only
+the first describes rows. The PDF is the DOCUMENTS — one page per receipt image,
+a multi-page PDF receipt keeping its own pages — and the ZIP is those files
+individually, so a row entered by hand has nothing to contribute to either and
+simply isn't there. The dialog says so before it runs: how many of the selection
+have a stored file, and, where none does, that there is nothing for the PDF to
+contain (Export is refused rather than handing over one page saying so). It stays
+open afterwards ONLY when the result fell short of that promise — a stored file
+that would not fetch or would not parse — since repeating a shortfall already
+named would read as a second, new problem. `exportDocs` returns
+`{ filename, added, total }` for exactly that.
+
+**The file is named for the ENTITY and dated**, `red-alpha-cybersecurity-st-eng-
+2026-08-31.csv`, which is how Dext names it and how the claim exports name
+theirs (one rule, `docsExportName` beside them in `exportFormat.js`). It is read
+outside the app — in Excel, in somebody's mail — where `cybills-costs-…` says
+nothing about whose costs these are, and two entities exported on one day
+produced two files with one name.
+
+**The "(SGD)" pair is the entity's OWN currency**, not the billing amount under
+another heading. Dext prints both pairs because for a USD invoice they differ,
+and the second is what reaches the ledger and the GST return. So the columns
+carry the document's own restatement (`baseTotal` / `baseTax` — see the
+foreign-currency notes above) when it has one, the billing figures when the
+document IS in the entity's currency, and BLANK when neither: CYBills holds no
+exchange rate of its own, so there is nothing true to put there, and the
+Currency column beside it says what the amount actually is. The heading takes
+the entity's own code, so a non-SGD entity is not labelled SGD. Same rule for
+Custom CSV's "Base net/total amount", which had the same fault.
+
 ## Links that leave the app
 
 An exported CSV's Image column, and the Item IDs in a claim PDF, are opened

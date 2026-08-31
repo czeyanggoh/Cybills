@@ -52,3 +52,13 @@ export function claimExportName(claim, ext) {
 export function claimsExportName(orgName, ext) {
   return `${slug(orgName) || 'expense-claims'}-${today()}.${ext}`;
 }
+
+// A Costs or Sales export is named the same way and for the same reason: the
+// file is read OUTSIDE the app — in Excel, in somebody's mail — where
+// "cybills-costs-2026-08-31.csv" says nothing about whose costs they are, and
+// two entities exported on one day produce two files with one name. Falls back
+// to the old stem only where the entity has no name to use.
+export function docsExportName(orgName, kind, ext) {
+  const named = String(orgName || '').trim();
+  return `${named ? slug(named) : `cybills-${kind}`}-${today()}.${ext}`;
+}
