@@ -55,7 +55,7 @@ async function activeOrganisationRow() {
   }
 }
 
-// An inbound link that names the entity it belongs to (`?org=`).
+// An inbound link that names the entity it belongs to (`?org=`, or `?tenant=`).
 //
 // A link from OUTSIDE the app — the "Go to CYBills" button on a Xero bill, a
 // URL pasted into chat — lands in whichever entity this browser last had open.
@@ -68,24 +68,35 @@ async function activeOrganisationRow() {
 // query and header in flight is scoped to the OLD entity, and half-switching is
 // how a page ends up showing one entity's data under another's name.
 //
+// `?tenant=` is the same instruction said the other way round: it names the
+// XERO tenant, which is what a link from cyworkspace can say — that app knows
+// the Xero organisation it has open and nothing about this one's entity ids.
+// Resolved here against the entities on offer, so a tenant nobody has linked
+// (or that this person can't open) is simply ignored, like an unknown `?org=`.
+//
 // Ignored when it names an entity this person can't open (the page then says
 // what it would have said anyway) or the one already open.
 export function adoptOrgFromUrl(organisations) {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
-  const wanted = url.searchParams.get('org');
-  if (!wanted) return;
-  const known = (organisations || []).some((o) => o.id === wanted);
-  const already = getActiveOrganisationId() === wanted;
+  const wantedOrg = url.searchParams.get('org');
+  const wantedTenant = url.searchParams.get('tenant');
+  if (!wantedOrg && !wantedTenant) return;
+  const list = organisations || [];
+  const match = wantedOrg
+    ? list.find((o) => o.id === wantedOrg)
+    : list.find((o) => o.tenantId && o.tenantId === wantedTenant);
+  const already = match ? getActiveOrganisationId() === match.id : false;
   url.searchParams.delete('org');
+  url.searchParams.delete('tenant');
   const clean = `${url.pathname}${url.search}${url.hash}`;
-  if (!known || already) {
+  if (!match || already) {
     // Nothing to switch, but the parameter should not survive: a later manual
     // switch would be undone by a refresh.
     window.history.replaceState(null, '', clean);
     return;
   }
-  setActiveOrganisationId(wanted);
+  setActiveOrganisationId(match.id);
   window.location.replace(clean);
 }
 

@@ -7,6 +7,7 @@ import {
   Plus,
   HelpCircle,
   ChevronDown,
+  CreditCard,
   Users,
   User,
   History,
@@ -67,7 +68,19 @@ const TOP_TABS = [
 // practice), 'practice' (the colleagues who run it) — or, on the primary rail,
 // 'sales', which is the entity's own decision about whether it uses that
 // workspace at all. Unset = everyone.
+// cyworkspace is a separate app on its own host, but it is the step AFTER this
+// one: a bill read and coded here is paid there, and its Bills Listing already
+// shows this app's unpublished payables. So it sits in the rail like any other
+// destination — an `href` rather than a `to`, which is the only difference the
+// row makes to the person reading it.
+//
+// Offered to the practice's own team only. cyworkspace is CYBM's tool — it
+// holds the Xero connection and runs the payments — and a client's employee has
+// no account there, so for them the link is a sign-in page they cannot pass.
+const CYWORKSPACE_URL = 'https://cyworkspace.cy-bm.sg/payflow/bills';
+
 const BOTTOM = [
+  { label: 'CYWorkspace', icon: CreditCard, href: CYWORKSPACE_URL, requires: 'practiceTeam' },
   { label: 'Clients', icon: Briefcase, to: '/clients', requires: 'practiceTeam' },
   { label: 'Colleagues', icon: UserCog, to: '/colleagues', requires: 'practice' },
   { label: 'Users', icon: Users, to: '/users', requires: 'users' },
@@ -448,21 +461,29 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
             )}
             {!settingsCol && (
             <div className={cn('flex flex-col gap-1 border-t', showLabels ? 'p-3' : 'px-2 py-3', !(showLabels && subnav) && 'mt-auto')}>
-              {bottomNav.map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={item.to ? () => navigate(item.to) : undefined}
-                  title={showLabels ? undefined : item.label}
-                  className={cn(
-                    'flex w-full items-center gap-3 rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
-                    showLabels ? 'px-3' : 'justify-center px-0',
-                  )}
-                >
-                  <item.icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-                  {showLabels && item.label}
-                </button>
-              ))}
+              {bottomNav.map((item) => {
+                // An `href` item leaves for another app on another host
+                // (cyworkspace, above), so it is an anchor — same row, but the
+                // browser can open it in a tab of its own.
+                const Row = item.href ? 'a' : 'button';
+                const rowProps = item.href
+                  ? { href: item.href }
+                  : { type: 'button', onClick: item.to ? () => navigate(item.to) : undefined };
+                return (
+                  <Row
+                    key={item.label}
+                    {...rowProps}
+                    title={showLabels ? undefined : item.label}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+                      showLabels ? 'px-3' : 'justify-center px-0',
+                    )}
+                  >
+                    <item.icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                    {showLabels && item.label}
+                  </Row>
+                );
+              })}
               {user && (
                 <button
                   type="button"
@@ -632,16 +653,21 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                     <HelpCircle className="h-4 w-4" strokeWidth={1.75} /> {label}
                   </NavLink>
                 ))}
-                {bottomNav.map((item) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() => { setMobileNav(false); if (item.to) navigate(item.to); }}
-                    className="flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    <item.icon className="h-4 w-4" strokeWidth={1.75} /> {item.label}
-                  </button>
-                ))}
+                {bottomNav.map((item) => {
+                  const Row = item.href ? 'a' : 'button';
+                  const rowProps = item.href
+                    ? { href: item.href, onClick: () => setMobileNav(false) }
+                    : { type: 'button', onClick: () => { setMobileNav(false); if (item.to) navigate(item.to); } };
+                  return (
+                    <Row
+                      key={item.label}
+                      {...rowProps}
+                      className="flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <item.icon className="h-4 w-4" strokeWidth={1.75} /> {item.label}
+                    </Row>
+                  );
+                })}
                 {user && (
                   <button
                     type="button"
