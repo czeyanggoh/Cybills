@@ -99,19 +99,20 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
             <label className="flex items-center gap-3 text-sm">
               <span className="w-28 shrink-0 text-muted-foreground">Expense claim</span>
               <div className="relative flex-1">
-                {/* Type to find it, rather than scroll a list. A month of
+                {/* A search box, not a dropdown you can type into. A month of
                     claims is dozens of lines that mostly read "Expense claim",
-                    and picking the right one out of a native dropdown means
-                    reading every entry. Each is labelled with the person, the
-                    date and the total, and all of that is searchable — so
-                    "cze aug" or "41.60" reaches it directly. */}
+                    so being handed all of them on a click was never the useful
+                    half — each is labelled with the person, the date and the
+                    total, and all of that is searchable, so "cze aug" or
+                    "41.60" reaches one directly. Nothing is listed until
+                    something is typed. */}
                 <ComboSelect
+                  variant="search"
                   value={claim}
                   onChange={setClaim}
                   options={claims.map((c) => c.id)}
                   format={(id) => labelFor(byId.get(id))}
-                  placeholder={claims.length ? 'Type a name, person or amount…' : 'No open claims — make a new one'}
-                  emptyLabel={claims.length ? 'Select a claim' : 'No open claims — make a new one'}
+                  placeholder={claims.length ? 'Search claims by name, person or amount' : 'No open claims — make a new one'}
                   aria-label="Expense claim"
                   disabled={!claims.length}
                 />

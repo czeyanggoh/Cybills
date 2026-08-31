@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Type-to-find dropdown. Same contract as the native <select> it replaces —
@@ -42,6 +42,12 @@ export default function ComboSelect({
   allowCustom = false,
   disabled = false,
   size = 'md',
+  // 'select' is a dropdown you can type into: a chevron, and clicking it drops
+  // the whole list. 'search' is a search box — a magnifier, and nothing appears
+  // until you type something. The difference matters where the list is long
+  // enough that reading all of it was never the point, and where being handed
+  // every row on click is the thing somebody asked to be rid of.
+  variant = 'select',
   className = '',
   'aria-label': ariaLabel,
 }) {
@@ -82,6 +88,11 @@ export default function ComboSelect({
       : '';
   const shown = useMemo(() => (custom ? [...listed, custom] : listed), [listed, custom]);
 
+  const searching = variant === 'search';
+  // A search box with nothing typed in it has nothing to show. Dropping every
+  // row on a click is precisely the dropdown this variant exists to stop being.
+  const listing = open && (!searching || Boolean(query.trim()));
+
   const place = useCallback(() => {
     const r = inputRef.current?.getBoundingClientRect();
     if (!r) return;
@@ -97,7 +108,7 @@ export default function ComboSelect({
   }, []);
 
   useLayoutEffect(() => {
-    if (!open) return undefined;
+    if (!listing) return undefined;
     place();
     // `true` — capture, so scrolling any ancestor keeps the menu on the field.
     window.addEventListener('scroll', place, true);
@@ -106,12 +117,12 @@ export default function ComboSelect({
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
-  }, [open, place]);
+  }, [listing, place]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!listing) return;
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
-  }, [open, active, shown.length]);
+  }, [listing, active, shown.length]);
 
   const start = () => {
     if (disabled) return;
@@ -119,7 +130,6 @@ export default function ComboSelect({
     setActive(Math.max(0, all.indexOf(value)));
     setOpen(true);
   };
-
   const close = () => {
     setOpen(false);
     setQuery('');
@@ -163,6 +173,15 @@ export default function ComboSelect({
     sm: 'h-8 min-w-[9rem] rounded px-2 pr-7',
     xs: 'h-[30px] px-2 pr-7 text-xs',
   }[size] || 'h-9 px-3 pr-8';
+  // The magnifier sits where the chevron would, on the left, and takes the
+  // padding with it: a search box with a chevron on it still reads as a
+  // dropdown however it behaves.
+  const searchBox = {
+    lg: 'h-10 pl-9 pr-3',
+    md: 'h-9 pl-9 pr-3',
+    sm: 'h-8 min-w-[9rem] rounded pl-8 pr-2',
+    xs: 'h-[30px] pl-7 pr-2 text-xs',
+  }[size] || 'h-9 pl-9 pr-3';
 
   return (
     <div className={cn('relative', className)}>
@@ -176,7 +195,7 @@ export default function ComboSelect({
         disabled={disabled}
         // Closed, this reads as the field's value; open, it's the search box.
         value={open ? query : format(value)}
-        placeholder={open ? placeholder : emptyLabel}
+        placeholder={open || searching ? placeholder : emptyLabel}
         onChange={(e) => {
           if (!open) start();
           setQuery(e.target.value);
@@ -188,16 +207,25 @@ export default function ComboSelect({
         onKeyDown={onKeyDown}
         className={cn(
           'w-full cursor-text rounded-md border bg-background text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground',
-          box
+          searching ? searchBox : box
         )}
       />
-      <ChevronDown
-        className={cn(
-          'pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground',
-          size === 'md' || size === 'lg' ? 'right-3' : 'right-2'
-        )}
-      />
-      {open && rect && createPortal(
+      {searching ? (
+        <Search
+          className={cn(
+            'pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground',
+            size === 'md' || size === 'lg' ? 'left-3' : 'left-2'
+          )}
+        />
+      ) : (
+        <ChevronDown
+          className={cn(
+            'pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground',
+            size === 'md' || size === 'lg' ? 'right-3' : 'right-2'
+          )}
+        />
+      )}
+      {listing && rect && createPortal(
         <ul
           ref={listRef}
           role="listbox"
