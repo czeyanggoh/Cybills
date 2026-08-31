@@ -14,6 +14,7 @@ import { canManageBusiness, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 import { exportClaimsList } from '@/lib/claimCsv';
 import { useExportSettings } from '@/lib/exportSettings';
+import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 
 // Status pill for a claim's approval state (Not submitted / Waiting / Approved / Rejected).
 function ClaimStatusBadge({ status, label }) {
@@ -247,6 +248,8 @@ export default function ExpenseClaims() {
   };
   const { user, googleEnabled, membership } = useAuth();
   const exportSettings = useExportSettings();
+  const { data: organisations = [] } = useOrganisations();
+  const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
   const roster = useUsers();
   const meName = user?.name || user?.email || '';
   // Claim-for options: the real roster, with the current user always available.
@@ -342,6 +345,11 @@ export default function ExpenseClaims() {
       // Never "You": the file is read by whoever opens it, and that word means
       // a different person to each of them.
       exportedBy: membership?.user?.name || user?.name || user?.email || '',
+      // The file is named for the entity and each row links back into it, so a
+      // claim opens in the book it actually lives in rather than whichever one
+      // that browser last had.
+      orgId: activeOrg?.id || '',
+      orgName: activeOrg?.name || '',
     });
   };
 

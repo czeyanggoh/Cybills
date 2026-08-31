@@ -50,6 +50,19 @@ const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
 // A signed link to the document behind a claim line, or '' when there is none
 // to give — the entity has Image sharing off, or the line has no stored file.
 // An empty cell is honest; a filename is not, because nobody can open it.
+// Dext's last column on an expense-claim row is a link to the CLAIM REPORT, not
+// to any one receipt — the row IS the claim, so there is no single image for it
+// to point at. It carries the entity, because the app opens whichever one that
+// browser last had and a claim in another book would be reported missing
+// (adoptOrgFromUrl); that is the same link the approval email and Xero's
+// "Go to CYBills" button already use.
+function claimUrlFor(claim, orgId = '') {
+  const id = String(claim?.id ?? '');
+  if (!id) return '';
+  const org = String(orgId || '');
+  return `${ORIGIN}/expense-claims/${encodeURIComponent(id)}${org ? `?org=${encodeURIComponent(org)}` : ''}`;
+}
+
 function imageUrlFor(t, links = {}) {
   const shared = links[String(t?.itemId ?? t?.id ?? '')];
   return shared ? `${ORIGIN}${shared}` : '';
@@ -172,7 +185,7 @@ function dextRow(claim, t, links) {
 
 // One row for the whole claim, in Dext's column format (Type "Expense claim").
 // Mirrors Dext's expense-claim export: the claim as a single payable row.
-function claimRow(claim) {
+function claimRow(claim, orgId = '') {
   const cur = claim.currency || 'SGD';
   // The claim's own date if set, else the most recent line-item date, so the
   // summary row is never dateless.
@@ -199,7 +212,7 @@ function claimRow(claim) {
     claim.claimFor || '', // Owner
     '', // Note
     '', // Description
-    '', // Image
+    claimUrlFor(claim, orgId), // Image
   ];
 }
 
@@ -208,7 +221,7 @@ function claimRow(claim) {
 // separator, date format) — required for the 'custom' format.
 // Build the CSV text (and its filename) for a claim without touching the DOM,
 // so it can be downloaded OR emailed as an attachment. Pure.
-export function buildClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null, links = {} } = {}) {
+export function buildClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null, links = {}, orgId = '' } = {}) {
   const f = settings || {};
   // Comma decimals need a non-comma field delimiter, so switch to ';'.
   const delimiter = f.decimalSeparator === 'Comma (,)' ? ';' : ',';
@@ -233,14 +246,14 @@ export function buildClaimCsv(claim, { detailLevel = 'summary', format = 'cybill
     // document fields) rather than the sparse claim-level row.
     rows.push(DEXT_COLUMNS);
     const txns = claim.transactions || [];
-    rows.push(txns.length === 1 ? dextRow(claim, txns[0], links) : claimRow(claim));
+    rows.push(txns.length === 1 ? dextRow(claim, txns[0], links) : claimRow(claim, orgId));
   }
   const name = claimExportName(claim, 'csv');
   const text = rows.map((r) => r.map(esc).join(delimiter)).join('\n');
   return { name, text };
 }
 
-export async function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null, exportedBy = '' } = {}) {
+export async function generateClaimCsv(claim, { detailLevel = 'summary', format = 'cybills', settings = null, exportedBy = '', orgId = '' } = {}) {
   // Pull each item's live document fields in before building the rows.
   const enriched = await enrichClaimForExport(claim);
   // One signed link per document, minted here rather than written into the file
@@ -248,7 +261,7 @@ export async function generateClaimCsv(claim, { detailLevel = 'summary', format 
   // and the entity may have Image sharing switched off, in which case the column
   // stays empty and every link already handed out stops working.
   const links = await fetchShareLinks((enriched.transactions || []).map((t) => t.itemId));
-  const { name, text } = buildClaimCsv(enriched, { detailLevel, format, settings, links });
+  const { name, text } = buildClaimCsv(enriched, { detailLevel, format, settings, links, orgId });
   download(name, text);
   // Record it so it appears under Exports → Expense claims.
   void recordExport({
@@ -267,64 +280,44 @@ export async function generateClaimCsv(claim, { detailLevel = 'summary', format 
 }
 
 // --- The LIST, exported ------------------------------------------------------
-// One row per claim, the columns the Expense claims table shows. A different
-// question from exporting ONE claim (which lists its receipts): this answers
-// "what claims are there, whose are they, where did each get to" — which is what
-// somebody reconciling a month, or chasing approvals, actually needs.
+// One row per claim, in DEXT'S OWN COLUMNS — the same twenty-one headers a
+// single claim exports under, and the same row `claimRow` already builds for
+// one. Accountants import against those headers, so a claims export in a set of
+// columns nobody else uses is a file somebody has to re-map by hand; the first
+// version of this invented its own (Claim ID / Approval status / Approver / …)
+// and was rejected for exactly that.
+//
+// A claim is one payable row here, not a list of its receipts: Type is
+// "Expense claim", Supplier and Owner are the claimant, and the last column
+// links to the claim report rather than to any one image, because the row is
+// the whole claim.
 //
 // Takes whatever the caller passes, so it exports exactly what is on screen:
 // the ticked rows when anything is ticked, otherwise the filtered list. Nothing
 // here re-filters, because the toolbar has already said what is wanted.
-const LIST_COLUMNS = [
-  'Claim ID',
-  'Claim name',
-  'Claim for',
-  'Type',
-  'Approval status',
-  'Approver',
-  'Approved on',
-  'Reimbursement',
-  'Reimbursed on',
-  'End date',
-  'Currency',
-  'Tax',
-  'Total',
-  'Items',
-];
-
-const LIST_STATUS = { approved: 'Approved', rejected: 'Rejected', awaiting: 'Waiting for approval' };
-
-export function buildClaimsListCsv(claims, { settings = null } = {}) {
+export function buildClaimsListCsv(claims, { settings = null, orgId = '', orgName = '' } = {}) {
   const f = settings || {};
   const sep = f.decimalSeparator === 'Comma (,)' ? ';' : ',';
   const esc = escFor(sep);
-  const rows = (Array.isArray(claims) ? claims : []).map((c) => [
-    claimRef(c),
-    c.name || '',
-    c.claimFor || '',
-    c.type || '',
-    LIST_STATUS[c.approvalStatus] || 'Not submitted',
-    // Before a decision, the person it waits on; after, whoever made it.
-    c.decidedBy || c.approver || '',
-    // Only for an approved claim: `decidedAt` is stamped by a rejection too,
-    // and a date under "Approved on" beside a rejected claim reads as the
-    // opposite of what happened.
-    c.approvalStatus === 'approved' && c.decidedAt ? fmtDate(c.decidedAt, f.dateFormat) : '',
-    c.xeroStatus || '',
-    c.xeroPaidDate ? fmtDate(c.xeroPaidDate, f.dateFormat) : '',
-    c.endDate ? fmtDate(c.endDate, f.dateFormat) : '',
-    c.currency || 'SGD',
-    num(c.tax, f.decimalSeparator),
-    num(c.total, f.decimalSeparator),
-    Array.isArray(c.transactions) ? c.transactions.length : 0,
-  ]);
-  const text = [LIST_COLUMNS, ...rows].map((r) => r.map(esc).join(sep)).join('\r\n');
+  const rows = (Array.isArray(claims) ? claims : []).map((c) => claimRow(c, orgId));
+  const text = [DEXT_COLUMNS, ...rows].map((r) => r.map(esc).join(sep)).join('\r\n');
+  // Named for the ENTITY the claims came out of, the way Dext names it — one
+  // file of one book's claims, dated. A person's name would be wrong here: the
+  // list is everybody's.
   const stamp = new Date().toISOString().slice(0, 10);
-  return { name: `expense-claims-${stamp}.csv`, text };
+  return { name: `${slugName(orgName) || 'expense-claims'}-${stamp}.csv`, text };
 }
 
-export async function exportClaimsList(claims, { settings = null, exportedBy = '' } = {}) {
-  const { name, text } = buildClaimsListCsv(claims, { settings });
+// "Red Alpha Cybersecurity - ST Eng" -> "red-alpha-cybersecurity-st-eng"
+function slugName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export async function exportClaimsList(claims, { settings = null, exportedBy = '', orgId = '', orgName = '' } = {}) {
+  const { name, text } = buildClaimsListCsv(claims, { settings, orgId, orgName });
   download(name, text);
   void recordExport({
     kind: 'claims',

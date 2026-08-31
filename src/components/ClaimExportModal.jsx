@@ -4,6 +4,7 @@ import { generateClaimCsv } from '@/lib/claimCsv';
 import { generateClaimPdf } from '@/lib/claimPdf';
 import { useAuth } from '@/lib/auth';
 import { useExportSettings } from '@/lib/exportSettings';
+import { getActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 function Select({ value, onChange, options }) {
@@ -45,7 +46,7 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
       // enrichment fetches the live docs, so this is async too.
       setBusy(true);
       try {
-        await generateClaimCsv(claim, { detailLevel: detail, format, settings, exportedBy });
+        await generateClaimCsv(claim, { detailLevel: detail, format, settings, exportedBy, orgId: getActiveOrganisationId() });
       } finally {
         setBusy(false);
       }
