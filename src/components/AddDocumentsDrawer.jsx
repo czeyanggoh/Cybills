@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { X, FileText, Loader2, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react';
+import DextImportModal from '@/components/DextImportModal';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
@@ -330,6 +331,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   // 'file' = one document per uploaded file; 'split' = split each PDF into one
   // document per page before running the pipeline.
   const [mode, setMode] = useState('file');
+  const [dextOpen, setDextOpen] = useState(false);
   const [splitting, setSplitting] = useState(false);
   const ownerTouched = useRef(false);
   const generalName = useGeneralOwnerName();
@@ -765,6 +767,24 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               'Use this panel to upload your supplier statements. PDF, JPG and PNG, one document per file.'}
           </p>
 
+          {/* Moving a client off Dext is a different job from adding a document:
+              those documents are already coded, so they come in through the CSV
+              rather than being uploaded and read again. Offered on Costs only —
+              a Dext Costs export is what it takes. */}
+          {tab === 'Costs' && (
+            <p className="-mt-3 text-sm text-muted-foreground">
+              Moving a client from Dext?{' '}
+              <button
+                type="button"
+                onClick={() => setDextOpen(true)}
+                className="font-medium text-foreground underline underline-offset-2 hover:opacity-70"
+              >
+                Import from a Dext export
+              </button>{' '}
+              instead — it keeps the coding already done there.
+            </p>
+          )}
+
           <div>
             <h3 className="mb-3 text-sm font-medium">Upload from computer</h3>
 
@@ -849,6 +869,15 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           </div>
         </div>
       </div>
+      {/* Outside the panel so it is not clipped by the drawer's own scroll box,
+          and so closing it leaves the drawer where it was. */}
+      <DextImportModal
+        open={dextOpen}
+        onClose={() => setDextOpen(false)}
+        // Refresh the list behind, but leave both open: the summary says what
+        // was imported and what could not be, which is the point of running it.
+        onImported={notifyBillsChanged}
+      />
     </div>
   );
 }
