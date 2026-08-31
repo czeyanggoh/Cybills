@@ -78,7 +78,7 @@ export default function DextImportModal({ open, onClose, onImported }) {
     if (!match || busy) return;
     setBusy(true);
     setError('');
-    const outcome = { created: 0, withFile: 0, duplicates: [], reruns: [], failed: [] };
+    const outcome = { created: 0, withFile: 0, skipped: [], failed: [] };
     setProgress({ at: 0, of: match.pairs.length });
     for (let i = 0; i < match.pairs.length; i += 1) {
       const { row, file } = match.pairs[i];
@@ -110,26 +110,27 @@ export default function DextImportModal({ open, onClose, onImported }) {
         }
         // Straight to the inbox, not 'processing': there is nothing to read.
         //
-        // force: EVERYTHING in the export comes across. A migration is moving a
-        // book, not adding a document, and a row silently left behind is the
-        // one nobody finds until it is missing from a return — Dext's own
-        // duplicate rules are not these, and two receipts from one supplier on
-        // one day for one amount is an ordinary Tuesday. The server still says
-        // which ones it matched, so they are named here and flagged for review
-        // rather than dropped.
+        // A document the server already has is NOT imported again — which is
+        // what keeps a run repeatable, so a migration can be topped up without
+        // making a second copy of everything. But a skip is never silent: every
+        // one is named, with what it is and what it matched, because "67 of 70
+        // imported" without saying which three is a puzzle rather than a
+        // report.
         // eslint-disable-next-line no-await-in-loop
-        const res = await addBill(body, { force: true });
-        if (res?.bill?.id) {
+        const res = await addBill(body);
+        if (res?.duplicate && !res?.bill) {
+          outcome.skipped.push({
+            id: row.receiptId || `line ${row.line}`,
+            what: [row.supplier, row.date, row.total && `${row.currency || ''} ${row.total}`.trim()]
+              .filter(Boolean)
+              .join(' · '),
+            // 'exact_file' is the same bytes; anything else is a resemblance.
+            same: res.duplicate.type === 'exact_file',
+            matched: res.duplicate.bill?.displayId || '',
+          });
+        } else if (res?.bill?.id) {
           outcome.created += 1;
           if (body.fileBase64) outcome.withFile += 1;
-          // Two different things wear the word "duplicate" here, and only one
-          // of them is interesting. A byte-identical file already in this book
-          // is not a coincidence — it is this import having been run before —
-          // so it is reported apart from a document that merely shares a
-          // supplier, a date and a total with another.
-          const id = row.receiptId || `line ${row.line}`;
-          if (res.duplicate?.type === 'exact_file') outcome.reruns.push(id);
-          else if (res.duplicate) outcome.duplicates.push(id);
           const patch = patchPayload(row);
           // eslint-disable-next-line no-await-in-loop
           if (Object.keys(patch).length) await updateBill(res.bill.id, patch).catch(() => {});
@@ -166,33 +167,30 @@ export default function DextImportModal({ open, onClose, onImported }) {
                 <Check className="h-4 w-4" /> Imported {done.created} document{done.created === 1 ? '' : 's'} into {org?.name || 'this entity'}.
               </p>
               <Row>{done.withFile} of them came with their original file.</Row>
-              {done.reruns.length > 0 && (
-                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
-                  <p className="flex items-start gap-1.5 text-sm font-medium">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    {done.reruns.length} were the very same file as a document already here.
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    That usually means this export has been imported before, and these are now
-                    second copies. They were imported as asked — delete them if this was a re-run.
-                  </p>
-                  <p className="mt-1 break-words text-xs text-muted-foreground">{done.reruns.join(', ')}</p>
-                </div>
-              )}
-              {done.duplicates.length > 0 && (
+              {done.skipped.length > 0 && (
                 <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
                   <p className="flex items-start gap-1.5 text-sm font-medium">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    {done.duplicates.length} look like documents already here.
+                    {done.skipped.length} skipped — CYBills already has them.
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    All of them were imported — nothing was left behind. Check them under{' '}
-                    <span className="font-medium text-foreground">Review duplicates</span> in the
-                    inbox and delete whichever copy you don&rsquo;t want.
+                    Each is listed with what it is, so you can check it in Dext and add it by hand if
+                    it really is a separate document. Running this import again will skip them the
+                    same way rather than making a second copy.
                   </p>
-                  <p className="mt-1 break-words text-xs text-muted-foreground">
-                    {done.duplicates.join(', ')}
-                  </p>
+                  <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
+                    {done.skipped.map((d) => (
+                      <li key={d.id}>
+                        <span className="font-medium text-foreground">{d.id}</span>
+                        {d.what ? ` — ${d.what}` : ''}
+                        {d.same
+                          ? ' · the very same file'
+                          : d.matched
+                            ? ` · looks like ${d.matched}`
+                            : ' · looks like one already here'}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
               {done.failed.length > 0 && (
