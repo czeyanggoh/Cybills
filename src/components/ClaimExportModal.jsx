@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
-import { generateClaimCsv } from '@/lib/claimCsv';
-import { generateClaimPdf } from '@/lib/claimPdf';
+import { generateClaimCsv, generateClaimsCsv } from '@/lib/claimCsv';
+import { generateClaimsPdf } from '@/lib/claimPdf';
 import { useAuth } from '@/lib/auth';
 import { useExportSettings } from '@/lib/exportSettings';
 import { getActiveOrganisationId } from '@/lib/organisations';
@@ -24,9 +24,14 @@ function Select({ value, onChange, options }) {
   );
 }
 
-// Export dialog for an expense claim — CSV (with detail level / format) or PDF.
+// Export dialog for expense claims — CSV (with detail level / format) or PDF.
 // Both run fully client-side; there is no server round-trip.
-export default function ClaimExportModal({ open, onClose, claim, onExported }) {
+//
+// One dialog for one claim and for a list of them, because they are the same
+// question: which format, and how much detail. The claims list used to skip it
+// and just drop a CSV, so the PDF the claim page offers was unreachable from
+// the one screen where you can see a month of claims at once.
+export default function ClaimExportModal({ open, onClose, claim, claims, onExported, orgId = '', orgName = '' }) {
   const [tab, setTab] = useState('csv');
   const [detail, setDetail] = useState('summary');
   const [pdfDetail, setPdfDetail] = useState('with_receipts');
@@ -36,28 +41,30 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
   const settings = useExportSettings();
   const { user, membership } = useAuth();
 
-  if (!open) return null;
+  // Called with one claim or with a list; a single claim keeps the path it
+  // always had, so its file name and its Exports row are unchanged.
+  const list = Array.isArray(claims) ? claims : claim ? [claim] : [];
+  const many = list.length > 1;
+
+  if (!open || !list.length) return null;
 
   const doExport = async () => {
     if (busy) return;
     // Never "You" — see DocsExportModal. Blank beats a word that names nobody.
     const exportedBy = membership?.user?.name || user?.name || user?.email || '';
-    if (tab === 'csv') {
-      // enrichment fetches the live docs, so this is async too.
-      setBusy(true);
-      try {
-        await generateClaimCsv(claim, { detailLevel: detail, format, settings, exportedBy, orgId: getActiveOrganisationId() });
-      } finally {
-        setBusy(false);
+    const org = orgId || getActiveOrganisationId();
+    setBusy(true);
+    try {
+      if (tab === 'csv') {
+        // enrichment fetches the live docs, so this is async too.
+        if (many) await generateClaimsCsv(list, { detailLevel: detail, settings, exportedBy, orgId: org, orgName });
+        else await generateClaimCsv(list[0], { detailLevel: detail, format, settings, exportedBy, orgId: org });
+      } else {
+        // Building "with receipts" fetches each receipt document, so it's async.
+        await generateClaimsPdf(list, { exportedBy, detailLevel: pdfDetail, orgName });
       }
-    } else {
-      // Building "with receipts" fetches each receipt document, so it's async.
-      setBusy(true);
-      try {
-        await generateClaimPdf(claim, { exportedBy, detailLevel: pdfDetail });
-      } finally {
-        setBusy(false);
-      }
+    } finally {
+      setBusy(false);
     }
     onClose();
     if (archiveAfter) onExported?.();
@@ -68,7 +75,9 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
       <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
       <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
-          <h2 className="text-base font-semibold tracking-tight">Export 1 item</h2>
+          <h2 className="text-base font-semibold tracking-tight">
+            Export {list.length} {list.length === 1 ? 'item' : 'claims'}
+          </h2>
           <button type="button" onClick={onClose} className="text-muted-foreground transition-colors hover:text-foreground" aria-label="Close">
             <X className="h-5 w-5" />
           </button>
@@ -103,15 +112,17 @@ export default function ClaimExportModal({ open, onClose, claim, onExported }) {
                   value={detail}
                   onChange={setDetail}
                   options={[
-                    { value: 'summary', label: 'Report summary' },
+                    { value: 'summary', label: many ? 'One row per claim' : 'Report summary' },
                     { value: 'items', label: 'Itemised line items' },
                   ]}
                 />
               </label>
-              <label className="flex items-center gap-3 text-sm">
-                <span className="w-28 shrink-0 text-muted-foreground">CSV format</span>
-                <Select value={format} onChange={setFormat} options={[{ value: 'cybills', label: 'CYBills Default' }, { value: 'custom', label: 'Custom CSV (from Export settings)' }]} />
-              </label>
+              {!many && (
+                <label className="flex items-center gap-3 text-sm">
+                  <span className="w-28 shrink-0 text-muted-foreground">CSV format</span>
+                  <Select value={format} onChange={setFormat} options={[{ value: 'cybills', label: 'CYBills Default' }, { value: 'custom', label: 'Custom CSV (from Export settings)' }]} />
+                </label>
+              )}
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"

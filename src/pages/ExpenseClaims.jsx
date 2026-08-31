@@ -6,13 +6,13 @@ import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
 import AutoClaimsModal from '@/components/AutoClaimsModal';
+import ClaimExportModal from '@/components/ClaimExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate, isClaimArchived } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
-import { exportClaimsList } from '@/lib/claimCsv';
 import { useExportSettings } from '@/lib/exportSettings';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 
@@ -233,6 +233,7 @@ export default function ExpenseClaims() {
   const [filters, setFilters] = useState({ status: '', reimbursement: '', type: '' });
   const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', claimFor: '', month: '', approver: '' });
   const [approveOpen, setApproveOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
 
   // "2026-07-27" → "27 Jul 2026" to match the rest of the list.
@@ -337,21 +338,9 @@ export default function ExpenseClaims() {
     archiveClaims([...selected], on);
     clear();
   };
-  const doExport = () => {
-    const picked = hasSelection ? rows.filter((c) => selected.has(c.id)) : rows;
-    if (!picked.length) return;
-    exportClaimsList(picked, {
-      settings: exportSettings,
-      // Never "You": the file is read by whoever opens it, and that word means
-      // a different person to each of them.
-      exportedBy: membership?.user?.name || user?.name || user?.email || '',
-      // The file is named for the entity and each row links back into it, so a
-      // claim opens in the book it actually lives in rather than whichever one
-      // that browser last had.
-      orgId: activeOrg?.id || '',
-      orgName: activeOrg?.name || '',
-    });
-  };
+  // What Export acts on: the ticked claims when anything is ticked, otherwise
+  // everything the tab is showing, filters and search included.
+  const toExport = hasSelection ? rows.filter((c) => selected.has(c.id)) : rows;
 
   const doDelete = () => {
     // The receipts go too, so the list's own delete says so as plainly as the
@@ -481,7 +470,7 @@ export default function ExpenseClaims() {
             list, then export what you narrowed it to. */}
         <button
           type="button"
-          onClick={doExport}
+          onClick={() => setExportOpen(true)}
           disabled={!rows.length}
           className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground/50"
         >
@@ -747,6 +736,15 @@ export default function ExpenseClaims() {
       )}
 
       <AutoClaimsModal open={autoOpen} onClose={() => setAutoOpen(false)} />
+      {/* The same dialog the claim page opens, so CSV and PDF are offered in
+          both places and mean the same thing in each. */}
+      <ClaimExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        claims={toExport}
+        orgId={activeOrg?.id || ''}
+        orgName={activeOrg?.name || ''}
+      />
 
       <ClaimApprovalModal
         open={approveOpen}

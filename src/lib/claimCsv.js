@@ -2,7 +2,7 @@
 // backend). "summary" rolls up by category; "items" emits one Dext-format row
 // per line item.
 
-import { csvDate, claimRef, claimExportName } from '@/lib/exportFormat';
+import { csvDate, claimRef, claimExportName, claimsExportName } from '@/lib/exportFormat';
 import { EXPORT_COLUMNS } from '@/lib/exportSettings';
 import { recordExport } from '@/lib/exportsStore';
 import { fetchBills, billToDoc, fetchShareLinks } from '@/lib/bills';
@@ -304,16 +304,7 @@ export function buildClaimsListCsv(claims, { settings = null, orgId = '', orgNam
   // Named for the ENTITY the claims came out of, the way Dext names it — one
   // file of one book's claims, dated. A person's name would be wrong here: the
   // list is everybody's.
-  const stamp = new Date().toISOString().slice(0, 10);
-  return { name: `${slugName(orgName) || 'expense-claims'}-${stamp}.csv`, text };
-}
-
-// "Red Alpha Cybersecurity - ST Eng" -> "red-alpha-cybersecurity-st-eng"
-function slugName(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  return { name: claimsExportName(orgName, 'csv'), text };
 }
 
 export async function exportClaimsList(claims, { settings = null, exportedBy = '', orgId = '', orgName = '' } = {}) {
@@ -329,4 +320,44 @@ export async function exportClaimsList(claims, { settings = null, exportedBy = '
     exportedBy,
     blob: new Blob([text], { type: 'text/csv;charset=utf-8;' }),
   });
+}
+
+// Several claims as ONE csv, at either detail level — the same two the single
+// claim offers, so the button means the same thing wherever it is pressed.
+//
+//   'summary' — one row per claim (the list export above, Dext's own columns)
+//   'items'   — every receipt on every claim, one row each, so a month of
+//               claims reconciles line by line rather than claim by claim
+export async function generateClaimsCsv(claims, { detailLevel = 'summary', settings = null, exportedBy = '', orgId = '', orgName = '' } = {}) {
+  const list = Array.isArray(claims) ? claims : [];
+  if (!list.length) return 0;
+  let name;
+  let text;
+  if (detailLevel === 'items') {
+    // The live document fields, and one signed link per receipt, across every
+    // claim at once — a request per claim would be dozens of round trips for a
+    // month's worth.
+    const enriched = await Promise.all(list.map(enrichClaimForExport));
+    const links = await fetchShareLinks(enriched.flatMap((c) => (c.transactions || []).map((t) => t.itemId)));
+    const f = settings || {};
+    const sep = f.decimalSeparator === 'Comma (,)' ? ';' : ',';
+    const esc = escFor(sep);
+    const rows = enriched.flatMap((c) => (c.transactions || []).map((t) => dextRow(c, t, links)));
+    text = [DEXT_COLUMNS, ...rows].map((r) => r.map(esc).join(sep)).join('\r\n');
+    name = claimsExportName(orgName, 'csv');
+  } else {
+    ({ name, text } = buildClaimsListCsv(list, { settings, orgId, orgName }));
+  }
+  download(name, text);
+  void recordExport({
+    kind: 'claims',
+    name: `Expense claims (${list.length})`,
+    filename: name,
+    format: 'CSV',
+    csvFormat: 'CYBills default',
+    count: list.length,
+    exportedBy,
+    blob: new Blob([text], { type: 'text/csv;charset=utf-8;' }),
+  });
+  return list.length;
 }

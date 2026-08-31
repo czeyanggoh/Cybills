@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { PDFDocument } from 'pdf-lib';
-import { pdfDate, claimRef, claimExportName, cleanHistoryText } from '@/lib/exportFormat';
+import { pdfDate, claimRef, claimExportName, claimsExportName, cleanHistoryText } from '@/lib/exportFormat';
 import { claimDateFor } from '@/lib/claimReference';
 import { approvalHistory } from '@/lib/approvalHistory';
 import { costPath, fetchShareLinks } from '@/lib/bills';
@@ -373,6 +373,17 @@ async function addReportPages(out, claim, links) {
 // file is never empty.
 export async function assembleClaimPdf(claim, { detailLevel = 'with_receipts' } = {}) {
   const out = await PDFDocument.create();
+  await addClaimTo(out, claim, detailLevel);
+  const bytes = await out.save();
+  return new Blob([bytes], { type: 'application/pdf' });
+}
+
+// One claim's pages, added to a document that may already hold others. Split
+// out of assembleClaimPdf so exporting a LIST of claims produces the same pages
+// in the same order as exporting each one singly — two builders would drift,
+// and the drift would show up as one claim's report looking unlike the next.
+async function addClaimTo(out, claim, detailLevel) {
+  const before = out.getPageCount();
   const links = await claimShareLinks(claim);
   if (detailLevel !== 'receipts') await addReportPages(out, claim, links);
   if (detailLevel !== 'summary') {
@@ -381,7 +392,21 @@ export async function assembleClaimPdf(claim, { detailLevel = 'with_receipts' } 
       await appendReceipt(out, t.itemId);
     }
   }
-  if (out.getPageCount() === 0) await addReportPages(out, claim, links);
+  // Never nothing: a claim whose receipts all failed to resolve still gets its
+  // report, so it cannot vanish silently out of a combined file.
+  if (out.getPageCount() === before) await addReportPages(out, claim, links);
+}
+
+// Several claims in ONE document, each starting on its own page, in the order
+// given — which is the order on screen, since the list hands over what it is
+// showing. A file per claim would be a folder of downloads to reassemble by
+// hand; the point of exporting a month is reading it in one go.
+export async function assembleClaimsPdf(claims, { detailLevel = 'with_receipts' } = {}) {
+  const out = await PDFDocument.create();
+  for (const claim of claims || []) {
+    // eslint-disable-next-line no-await-in-loop
+    await addClaimTo(out, claim, detailLevel);
+  }
   const bytes = await out.save();
   return new Blob([bytes], { type: 'application/pdf' });
 }
@@ -417,4 +442,42 @@ export async function generateClaimPdf(claim, { exportedBy = '', detailLevel = '
     blob,
   });
   return claim.id;
+}
+
+// The same thing for a LIST of claims: one file, opened the same way, recorded
+// the same way. Named for the entity and dated, as the CSV is — a person's name
+// would be wrong for a file that is everybody's.
+export async function generateClaimsPdf(claims, { exportedBy = '', detailLevel = 'with_receipts', orgName = '' } = {}) {
+  const list = Array.isArray(claims) ? claims : [];
+  if (!list.length) return 0;
+  // One claim is one claim, however it was reached — so it keeps its own name
+  // and its own Exports row rather than being filed under the entity.
+  if (list.length === 1) {
+    await generateClaimPdf(list[0], { exportedBy, detailLevel });
+    return 1;
+  }
+  const blob = await assembleClaimsPdf(list, { detailLevel });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  const name = claimsExportName(orgName, 'pdf');
+  if (!win) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  void recordExport({
+    kind: 'claims',
+    name: `Expense claims (${list.length})`,
+    filename: name,
+    format: 'PDF',
+    csvFormat: '-',
+    count: list.length,
+    exportedBy,
+    blob,
+  });
+  return list.length;
 }

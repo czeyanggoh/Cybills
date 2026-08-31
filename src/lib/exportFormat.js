@@ -45,3 +45,10 @@ function today() {
 export function claimExportName(claim, ext) {
   return `${slug(claim?.claimFor || claim?.name)}-${today()}.${ext}`;
 }
+
+// Several claims at once are named for the ENTITY they came out of, which is
+// exactly how Dext names it ("red-alpha-cybersecurity-st-eng-2026-08-31.csv").
+// A person's name would be wrong for a file that is everybody's claims.
+export function claimsExportName(orgName, ext) {
+  return `${slug(orgName) || 'expense-claims'}-${today()}.${ext}`;
+}
