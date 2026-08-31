@@ -153,14 +153,6 @@ export async function moveItemsToClaim(fromClaimId, toClaimId, txns) {
   notifyClaimsChanged();
 }
 
-// Record that an approved claim's payable was sent to CYHR (re-callable — CYHR
-// updates the same payable by claimId). `revision` is the monotonic counter sent
-// on the link so CYHR can reject a stale re-send.
-export async function markClaimSentToHr(claimId, amount, revision) {
-  await post(`/${claimId}/mark-hr-sent`, { amount, revision });
-  notifyClaimsChanged();
-}
-
 // Submit a claim for approval. The approver is derived server-side from the
 // claimant's direct manager (set in Users) — nothing to pick. Throws with code
 // 'no_manager' when the claimant has no direct manager assigned.

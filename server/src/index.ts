@@ -10,7 +10,6 @@ import { billsRouter } from './bills.js';
 import { inboundRouter } from './inbound.js';
 import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
-import { cyhrRouter } from './cyhr.js';
 import { claimsRouter } from './claims.js';
 import { autoClaimsRouter } from './autoClaims.js';
 import { usersRouter, memberForSession, canAccessOrg } from './users.js';
@@ -155,10 +154,6 @@ app.use('/api/organisations', organisationsRouter);
 
 // Xero, spoken through cyworkspace's relay. 503s until CYWORKSPACE_API_KEY set.
 app.use('/api/xero', xeroRouter);
-
-// CYHR handoff: signed deep links that prefill a claim in CYHR. 503s until
-// CYHR_BASE_URL + CYHR_SIGNING_SECRET are set.
-app.use('/api/cyhr', cyhrRouter);
 
 // Expense claims — server-backed + shared across the workspace.
 app.use('/api/claims', claimsRouter);

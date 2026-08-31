@@ -60,13 +60,6 @@ type Claim = {
   deleted: boolean;
   createdBy: string;
   createdAt: string;
-  // CYHR handoff (Model B): when the approved payable was last sent to CYHR, the
-  // amount sent, and by whom. Re-sending updates the same CYHR payable by claimId.
-  // hrRevision is the monotonic counter CYHR uses to reject stale re-sends.
-  hrSentAt: string;
-  hrSentAmount: string;
-  hrSentBy: string;
-  hrRevision: number;
   // Auto expense claims: set on a claim the schedule created (Manage Auto
   // Expense claims), with the period end it was filed for. Only an OPEN auto
   // claim for that exact period is topped up again, so re-running is idempotent.
@@ -322,10 +315,6 @@ export function fileAutoClaim(
       deleted: false,
       createdBy: '',
       createdAt: nowIso(),
-      hrSentAt: '',
-      hrSentAmount: '',
-      hrSentBy: '',
-      hrRevision: 0,
       auto: true,
       autoPeriodEnd: f.periodEnd,
     };
@@ -451,10 +440,6 @@ claimsRouter.post('/', (req, res) => {
     deleted: false,
     createdBy: me.email,
     createdAt: nowIso(),
-    hrSentAt: '',
-    hrSentAmount: '',
-    hrSentBy: '',
-    hrRevision: 0,
   };
   const items = load();
   items.push(claim);
@@ -475,7 +460,7 @@ function mutate(req: Request, res: Response, fn: (claim: Claim, me: { email: str
 }
 
 // A claim is locked from item edits once APPROVED — its total must not drift
-// after the handoff to CYHR for payment. While it's merely awaiting approval it
+// after it has been approved and is on its way to being paid. While it's merely awaiting approval it
 // stays editable: items can be added, removed or recategorised, and the
 // approver is told the total changed and re-reviews. (Adding always worked this
 // way; removing and recategorising now match it, so a claimant who submitted a
@@ -535,7 +520,7 @@ function noteChangeAfterSubmit(req: Request, claim: Claim, by: string, what: str
 // POST /api/claims/:id/items — attach cost items (idempotent per itemId).
 // Allowed until the claim is APPROVED — you can still add to a claim that's
 // awaiting approval (the total changes, so the approver re-reviews). Only an
-// approved claim is locked, to keep its total stable for the CYHR payment.
+// approved claim is locked, to keep its total stable for payment.
 claimsRouter.post('/:id/items', (req, res) =>
   mutate(req, res, (claim, me) => {
     if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
@@ -818,10 +803,6 @@ claimsRouter.post('/:id/reject', (req, res) =>
   })
 );
 
-// POST /api/claims/:id/mark-hr-sent  { amount } — record that the approved
-// payable was handed to CYHR. Re-callable: CYHR upserts by claimId, so
-// re-sending updates the existing payable (and its amount) rather than
-// creating a duplicate. Only meaningful once the claim is approved.
 // POST /api/claims/:id/email — email a copy of the claim, with the CSV + PDF
 // attached, to any recipient. The client generates the files (reusing the same
 // export code as the download button), so the server just composes the message,
@@ -873,24 +854,6 @@ claimsRouter.post('/:id/email', async (req, res) => {
   }
   return res.json({ sent: true });
 });
-
-claimsRouter.post('/:id/mark-hr-sent', (req, res) =>
-  mutate(req, res, (claim, me) => {
-    const wasSent = Boolean(claim.hrSentAt);
-    claim.hrSentAt = nowIso();
-    claim.hrSentAmount = String(req.body?.amount ?? '');
-    claim.hrSentBy = me.name;
-    // Monotonic revision so CYHR can reject a stale/replayed re-send.
-    const revision = Number(req.body?.revision);
-    claim.hrRevision = Number.isFinite(revision) && revision > claim.hrRevision ? revision : claim.hrRevision + 1;
-    const amt = claim.hrSentAmount ? ` (${claim.currency} ${claim.hrSentAmount})` : '';
-    claim.history.unshift({
-      text: `Payable ${wasSent ? 're-sent' : 'sent'} to HR for payment${amt}`,
-      by: me.name,
-      at: nowIso(),
-    });
-  })
-);
 
 // POST /api/claims/:id/archive  { archived }
 claimsRouter.post('/:id/archive', (req, res) =>

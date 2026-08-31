@@ -154,21 +154,6 @@ export const env = {
   R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY ?? '',
   R2_BUCKET: process.env.R2_BUCKET ?? '',
 
-  // --- CYHR handoff (signed deep links) -------------------------------------
-  // CYBills captures the receipt + Xero category, then deep-links the employee
-  // into CYHR where the claim lands prefilled for them to submit and the admin
-  // to approve. The link is HMAC-SHA256 signed with a secret shared with CYHR
-  // (same value on both sides) so the params can't be altered en route. The
-  // secret is used ONLY on the server to compute the signature — it never
-  // reaches the browser. Both must be set for the handoff to switch on (see
-  // `cyhrEnabled`); until then the "Submit to CYHR" action is disabled.
-  // CYHR_BASE_URL is the full claim-form URL; defaults to CYHR's confirmed
-  // expenses form so only the secret has to be set on the VPS to switch on.
-  CYHR_BASE_URL: process.env.CYHR_BASE_URL ?? 'https://hr.cy-bm.sg/claims/expenses/new',
-  CYHR_SIGNING_SECRET: process.env.CYHR_SIGNING_SECRET ?? '',
-  // Model B: where an APPROVED claim's payable is routed to CYHR for payment.
-  // Path unconfirmed until CYHR builds the payment-intake page; override here.
-  CYHR_PAYMENT_URL: process.env.CYHR_PAYMENT_URL ?? 'https://hr.cy-bm.sg/payments/new',
 
   // --- Outbound email (Microsoft Graph, DELEGATED) --------------------------
   // Account emails (invitations, password resets/changes) are sent through
@@ -267,10 +252,6 @@ export const r2Enabled = Boolean(
   env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY && env.R2_BUCKET
 );
 
-// The CYHR handoff switches on once the target URL AND the shared signing
-// secret are configured. Until then /api/cyhr/claim-link returns 503 and the
-// client disables the "Submit to CYHR" action.
-export const cyhrEnabled = Boolean(env.CYHR_BASE_URL && env.CYHR_SIGNING_SECRET);
 
 // Whether a mailbox CAN be connected — i.e. the Azure app registration is
 // configured. Sending additionally needs an admin to have connected a mailbox

@@ -30,7 +30,6 @@ import {
   removeItemsFromClaim,
   updateClaimItems,
   moveItemsToClaim,
-  markClaimSentToHr,
   notifyClaimsChanged,
   updateClaim,
   archiveClaims,
@@ -39,7 +38,6 @@ import {
   toIsoClaimDate,
 } from '@/lib/claimStore';
 import { costPath } from '@/lib/bills';
-import { useCyhrEnabled, sendClaimToCyhr } from '@/lib/cyhr';
 import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId, switchOrganisationTo, publishClaimToXero } from '@/lib/organisations';
@@ -57,17 +55,6 @@ import { cn } from '@/lib/utils';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import ComboSelect from '@/components/ComboSelect';
 import SortTh, { sortRows } from '@/components/SortTh';
-
-// The GL/account code CYHR should book the payable against — the leading number
-// on the category (e.g. "412 - Consulting" → "412"). Only returned when every
-// line shares the same account; otherwise '' (mixed claim → let CYHR default).
-function glCodeForClaim(transactions) {
-  const codes = (transactions || [])
-    .map((t) => (String(t.category || '').match(/^\s*(\d{2,})/) || [])[1])
-    .filter(Boolean);
-  if (!codes.length) return '';
-  return codes.every((c) => c === codes[0]) ? codes[0] : '';
-}
 
 function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false, disabled = false, title = '' }) {
   return (
@@ -185,7 +172,6 @@ export default function ExpenseClaimDetail() {
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
-  const cyhrEnabled = useCyhrEnabled();
   const users = useUsers();
   const { data: organisations = [] } = useOrganisations();
   // The same people the New-claim dialog offers: an entity's own staff, plus the
@@ -211,36 +197,6 @@ export default function ExpenseClaimDetail() {
       return next.size === prev.size ? prev : next;
     });
   }, [txnKey]);
-
-  const sendToHr = async () => {
-    if (!cyhrEnabled) {
-      setPayNote('CYHR is not connected yet — set CYHR_SIGNING_SECRET on the server to route payments.');
-      return;
-    }
-    setPayNote('');
-    // Route the payable to the claim person's own employee email (CYHR matches
-    // the record by email); the server falls back to a default if unknown.
-    const who = (claim.claimFor || '').trim().toLowerCase();
-    const employee = users.find((u) => u.name.trim().toLowerCase() === who)?.email || '';
-    // Monotonic revision so CYHR ignores a stale re-send; a reason for their
-    // audit trail; and the GL code when every line shares one account.
-    const revision = (claim.hrRevision || 0) + 1;
-    const reason = claim.hrSentAt ? 'Amount corrected in CYBills' : 'Payable created in CYBills';
-    const glCode = glCodeForClaim(claim.transactions);
-    try {
-      await sendClaimToCyhr(claim, employee, { revision, reason, glCode });
-      // Stamp the handoff so the button flips to "Re-send" and history records it.
-      // CYHR keys the payable on claimId, so a re-send updates it in place.
-      await markClaimSentToHr(claim.id, claim.total, revision).catch(() => {});
-      setPayNote(
-        claim.hrSentAt
-          ? `Re-sent to CYHR (${claim.currency} ${claim.total}). CYHR updates the existing payable by claim ID.`
-          : `Sent to CYHR for payment (${claim.currency} ${claim.total}). Re-send anytime to update it.`
-      );
-    } catch {
-      setPayNote('Could not create the CYHR payment link. Check the server logs.');
-    }
-  };
 
   // Post the approved claim to Xero as a DRAFT ACCPAY bill payable to the
   // employee. Draft = reviewable in Xero before it's finalised.
@@ -325,7 +281,7 @@ export default function ExpenseClaimDetail() {
   }
 
   // Only an APPROVED claim is locked from item edits — its total must not drift
-  // after it's been approved and handed to CYHR for payment. A claim merely
+  // once it has been approved and is on its way to being paid. A claim merely
   // awaiting approval stays editable: that's exactly when a wrongly-added
   // receipt gets spotted, and taking it back out beats deleting the whole claim.
   // The approver is told the total changed and re-reviews.
@@ -529,11 +485,6 @@ export default function ExpenseClaimDetail() {
           <button type="button" onClick={() => setPayNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
         </div>
       )}
-      {claim.hrSentAt && (
-        <div className="mb-3 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          Sent to HR for payment{claim.hrSentAmount ? ` · ${claim.currency} ${claim.hrSentAmount}` : ''}. Re-sending updates the same payable in CYHR by claim ID.
-        </div>
-      )}
       {claim.approvalStatus === 'rejected' && (
         <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           This claim was rejected{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}.
@@ -572,7 +523,6 @@ export default function ExpenseClaimDetail() {
             <span className="inline-flex h-8 items-center gap-1 rounded-md bg-foreground px-3 text-sm font-medium text-background">
               Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
             </span>
-            <TopButton onClick={sendToHr}>{claim.hrSentAt ? 'Re-send to HR (update)' : 'Send to HR for payment'}</TopButton>
           </>
         ) : claim.approvalStatus === 'rejected' ? (
           <>
