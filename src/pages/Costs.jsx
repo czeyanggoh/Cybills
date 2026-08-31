@@ -1455,7 +1455,7 @@ export default function Costs() {
                 {rows.map((d) => (
                   <tr
                     key={d.id}
-                    onClick={() => navigate(costPath(d.id))}
+                    onClick={() => navigate(costPath(d))}
                     className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
                   >
                     <td className={cn('sticky left-0 z-10 bg-background', densityClass)} onClick={(e) => e.stopPropagation()}>

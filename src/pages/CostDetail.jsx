@@ -31,7 +31,7 @@ import { useProjectOptions } from '@/lib/listsStore';
 import { useProjectLabels, singular } from '@/lib/projectLabels';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -398,7 +398,10 @@ export default function CostDetail() {
     // another org's book.
     fetchBills()
       .then(async (bills) => {
-        const match = bills.find((b) => isItemKey(b.id, routeId));
+        // The ROWS, not their ids: a row carries the assigned number, and
+        // matching on the id alone can only derive one — which another document
+        // uploaded in the same second derives too, and answered to first.
+        const match = findByItemKey(bills, routeId);
         return match || (await fetchBillById(routeId));
       })
       .then((match) => {
@@ -695,7 +698,7 @@ export default function CostDetail() {
 
   const go = (delta) => {
     const next = DOCS[index + delta];
-    if (next) navigate(costPath(next.id));
+    if (next) navigate(costPath(next));
   };
 
   // After an action that finishes with this document (Add to expense claim,
@@ -703,10 +706,10 @@ export default function CostDetail() {
   // reviewer can keep working without going Back each time. Falls back to the
   // previous item, then to the inbox list when nothing else is left.
   const goToNextInbox = () => {
-    const ids = rowsFor(inboxAllDocs, 'inbox').map((d) => String(d.id));
-    const i = ids.indexOf(String(id));
-    const nextId = i !== -1 ? (ids[i + 1] ?? ids[i - 1]) : ids[0];
-    navigate(nextId && nextId !== String(id) ? costPath(nextId) : '/costs');
+    const rows = rowsFor(inboxAllDocs, 'inbox');
+    const i = rows.findIndex((d) => String(d.id) === String(id));
+    const next = i !== -1 ? (rows[i + 1] ?? rows[i - 1]) : rows[0];
+    navigate(next && String(next.id) !== String(id) ? costPath(next) : '/costs');
   };
 
   // Activity timeline for the History tab — a vertical, dotted feed (newest

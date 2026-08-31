@@ -397,16 +397,54 @@ export function itemNumber(docOrId) {
   return doc.displayId || displayItemId(doc.id ?? doc.itemId);
 }
 
+// The key to ADDRESS a document by, given only an id.
+//
+// A number passes through. An internal id stays an internal id: deriving a
+// number from it invents the twelve digits of its SECOND, and two documents
+// uploaded in the same second derive the same twelve — so the link would name
+// them both, and open whichever the reader happened to find first. The internal
+// id names exactly one document, and the detail page swaps the address bar for
+// that document's assigned number once it has read it.
+function addressKeyFor(id) {
+  const s = String(id ?? '');
+  if (/^\d+$/.test(s)) return s;
+  if (/^bill_/.test(s)) return s;
+  return displayItemId(s);
+}
+
 // The address of a cost document: the path carries the NUMBER the page itself
 // shows (/costs/260822123051), not the internal storage key, so a URL copied out
 // of the address bar is the number you can search the list for.
 //
-// Pass the document where you have it — its assigned number is the one that is
-// unique. A bare id still works (a claim line item holds only that) and derives
-// the number, which the server also resolves.
+// Pass the DOCUMENT wherever you have it — its assigned number is the one that
+// is unique, and passing `doc.id` instead throws that away and derives an
+// ambiguous one. A bare id still works (a claim line item holds only that).
 export function costPath(docOrId) {
   const doc = docOrId && typeof docOrId === 'object' ? docOrId : null;
-  return `/costs/${doc ? doc.displayId || displayItemId(doc.id) : displayItemId(docOrId)}`;
+  const key = doc
+    ? doc.displayId || addressKeyFor(doc.id ?? doc.itemId)
+    : addressKeyFor(docOrId);
+  return `/costs/${key}`;
+}
+
+// Which document a URL key names, out of a list of them.
+//
+// Answering per-document is not enough: the ASSIGNED number is unique but the
+// DERIVED one is not, so a scan that accepts the first document to answer by
+// either rule hands back a document that merely shares a second with the one
+// whose number was asked for. Two passes, so an exact answer always beats a
+// derived one no matter what order the list is in. Mirrors `byItemId` in the
+// server's store.ts, which is the authority — where two derive the same number
+// the oldest wins there too.
+export function findByItemKey(list, key) {
+  const k = String(key ?? '');
+  if (!k) return null;
+  const rows = Array.isArray(list) ? list : [];
+  const exact = rows.find((r) => String(r?.displayId || '') === k || String(r?.id ?? '') === k);
+  if (exact) return exact;
+  return rows
+    .filter((r) => displayItemId(r?.id) === k)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)))[0] ?? null;
 }
 
 // Does a document answer to this URL key? Links now carry the item id, but the

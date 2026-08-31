@@ -123,7 +123,7 @@ export default function SubmissionHistory() {
     workspace: d.kind === 'sales' ? 'Sales' : d.kind === 'supplier_statement' ? 'Supplier statements' : 'Costs',
   }));
 
-  const showDoc = (d) => navigate(d.kind === 'sales' ? `/sales/${d.id}` : costPath(d.id));
+  const showDoc = (d) => navigate(d.kind === 'sales' ? `/sales/${d.id}` : costPath(d));
 
   return (
     <AppShell>
