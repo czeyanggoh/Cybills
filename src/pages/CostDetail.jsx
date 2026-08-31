@@ -47,6 +47,7 @@ import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { readDecisions } from '@/lib/reRead';
 import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
+import { useSalesEnabled } from '@/lib/workspaceSettings';
 import { useAutoSave } from '@/lib/useAutoSave';
 import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
 import { xeroBillUrl } from '@/lib/autoPublish';
@@ -275,6 +276,7 @@ export default function CostDetail() {
   // Not GST-registered → every document codes to No Tax and no GST is split out,
   // and the picker offers nothing else.
   const gstRegistered = useGstRegistered();
+  const salesEnabled = useSalesEnabled();
   // The entity's own currency, and whether this document was billed in another.
   const baseCurrency = useBaseCurrency();
   const noTaxName = noTaxRateName(taxRateSource);
@@ -844,8 +846,11 @@ export default function CostDetail() {
 
   // "Move to" another workspace — takes the item out of the Costs inbox and
   // lands on that workspace. Persist an archived status so it leaves the list.
+  // Sales is offered only where the entity uses it: moving a document to a
+  // workspace nobody here can open would archive it out of the inbox and leave
+  // it nowhere.
   const MOVE_DESTS = [
-    { label: 'Sales', to: '/sales' },
+    ...(salesEnabled ? [{ label: 'Sales', to: '/sales' }] : []),
     { label: 'Supplier statements', to: '/supplier-statements' },
   ];
   const moveTo = (dest) => {

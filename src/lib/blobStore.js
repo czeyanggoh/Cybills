@@ -35,6 +35,11 @@ function activeOrg() {
 
 export function blobStore(key, fallback, onHydrate = () => {}, { perOrg = false, inheritLegacy = true } = {}) {
   const cache = new Map(); // org id ('' when workspace-wide) -> value
+  // Orgs the server has been ASKED about and has answered for, however it
+  // answered — an org with no saved value settles on the fallback and is just
+  // as settled as one with a value. Kept apart from `cache`, which only ever
+  // holds values, so "nothing saved" and "not asked yet" can be told apart.
+  const settled = new Set();
   let org = perOrg ? activeOrg() : '';
   const url = (o) => `/api/settings/${encodeURIComponent(perOrg ? `${key}::${o || 'default'}` : key)}`;
 
@@ -53,9 +58,14 @@ export function blobStore(key, fallback, onHydrate = () => {}, { perOrg = false,
       }
       if (value == null) return;
       cache.set(o, value);
-      if (o === org) onHydrate();
     } catch {
       // Server unreachable — keep the fallback; writes will retry the PUT.
+    } finally {
+      // Settled either way, including on a refusal or an unreachable server:
+      // a reader waiting for the answer has to be told there isn't going to be
+      // a better one, or it waits for ever.
+      settled.add(o);
+      if (o === org) onHydrate();
     }
   };
   hydrate(org);
@@ -66,14 +76,20 @@ export function blobStore(key, fallback, onHydrate = () => {}, { perOrg = false,
       if (next === org) return;
       org = next;
       onHydrate(); // re-render now on what we hold (cached value or fallback)
-      if (!cache.has(org)) hydrate(org); // …then again once the server answers
+      if (!settled.has(org)) hydrate(org); // …then again once the server answers
     });
   }
 
   return {
     get: () => (cache.has(org) ? cache.get(org) : fallback),
+    // Has the server answered for this org yet? Every reader is happy with the
+    // fallback in the meantime — except one that would ACT on it. A route that
+    // redirects when a feature is off must not redirect merely because the
+    // answer hasn't arrived, so it waits on this instead.
+    ready: () => settled.has(org),
     set: (next) => {
       cache.set(org, next);
+      settled.add(org); // our own write is the answer, whatever the PUT does
       fetch(url(org), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

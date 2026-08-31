@@ -1,6 +1,7 @@
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth';
+import { useSalesWorkspace } from '@/lib/workspaceSettings';
 import RequireAuth, { RequireSignedIn, RequireAdmin, RequireBusinessAdmin, RequirePracticeTeam, RequirePracticeAdmin, HomeRedirect, RedirectIfSignedIn } from '@/components/RequireAuth';
 import Login from './pages/Login';
 import SetPassword from './pages/SetPassword';
@@ -36,6 +37,19 @@ function Protected({ children }) {
   return <RequireAuth>{children}</RequireAuth>;
 }
 
+// The Sales workspace, which an entity says whether it uses at all (Business
+// settings -> Business profile -> Workspaces). Hidden means hidden everywhere
+// rather than merely off the rail: a bookmark, a browser's history or an old
+// link lands on Costs instead of on a section this entity has said it does not
+// run. It waits for the entity's own answer before redirecting — the setting
+// arrives from the server a moment after the page mounts, and acting on the
+// default in the meantime would throw somebody off their own Sales page.
+function SalesRoute({ children }) {
+  const { on, settled } = useSalesWorkspace();
+  if (!settled) return null;
+  return <Protected>{on ? children : <Navigate to="/costs" replace />}</Protected>;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -50,15 +64,17 @@ function App() {
             <Route path="/costs" element={<Protected><Costs /></Protected>} />
             <Route path="/costs/exports" element={<Protected><Exports workspace="costs" /></Protected>} />
             <Route path="/costs/:id" element={<Protected><CostDetail /></Protected>} />
-            <Route path="/sales" element={<Protected><Sales /></Protected>} />
-            <Route path="/sales/exports" element={<Protected><Exports workspace="sales" /></Protected>} />
-            <Route path="/sales/:id" element={<Protected><SalesDetail /></Protected>} />
+            <Route path="/sales" element={<SalesRoute><Sales /></SalesRoute>} />
+            <Route path="/sales/exports" element={<SalesRoute><Exports workspace="sales" /></SalesRoute>} />
+            <Route path="/sales/:id" element={<SalesRoute><SalesDetail /></SalesRoute>} />
             {/* Everybody's documents AND everybody's messages in the entity,
                 so the same bar as the Costs inbox it sits beside: a Business
                 Admin, which a colleague is inside every client they are given. */}
             <Route path="/whatsapp" element={<RequireBusinessAdmin><Whatsapp /></RequireBusinessAdmin>} />
             <Route path="/whatsapp/:submissionId" element={<RequireBusinessAdmin><Whatsapp /></RequireBusinessAdmin>} />
-            <Route path="/customers" element={<Protected><Customers /></Protected>} />
+            {/* Customers is reached only from the Sales sub-nav, and is the
+                list of who those invoices go to — it goes with the section. */}
+            <Route path="/customers" element={<SalesRoute><Customers /></SalesRoute>} />
             <Route path="/bank" element={<Protected><Bank view="transactions" /></Protected>} />
             <Route path="/bank/statements" element={<Protected><Bank view="statements" /></Protected>} />
             <Route path="/bank/accounts" element={<Protected><Bank view="accounts" /></Protected>} />

@@ -45,6 +45,7 @@ import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig, sendTest
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
+import { useSalesEnabled, getWorkspaceSettings, saveWorkspaceSettings } from '@/lib/workspaceSettings';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import { READER_PROVIDERS, readerLabel, effectiveProvider } from '@/lib/readerProvider';
 
@@ -265,6 +266,11 @@ const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
 // --- Sections ---------------------------------------------------------------
 function BusinessProfile() {
   const stored = useBusinessProfile();
+  // Its own blob rather than a profile field: the profile is who the company
+  // IS, and this is how it works here. Saved on the flip — one toggle has
+  // nothing to debounce — so the rail redraws as the switch moves.
+  const sales = useSalesEnabled();
+  const setSales = (on) => saveWorkspaceSettings({ ...getWorkspaceSettings(), sales: on });
   const { data: organisations = [] } = useOrganisations();
   const [form, setForm] = useState(stored);
   const [dirty, setDirty] = useState(false);
@@ -393,6 +399,21 @@ function BusinessProfile() {
         <Row label="City/town"><TextInput value={form.address.city} onChange={(v) => setAddr('city', v)} /></Row>
         <Row label="Postal/zip code"><TextInput value={form.address.postalCode} onChange={(v) => setAddr('postalCode', v)} /></Row>
         <Row label="Country"><TextInput value={form.address.country} onChange={(v) => setAddr('country', v)} /></Row>
+      </Card>
+
+      {/* Which sections of the app this entity actually runs. Sales is the one
+          most clients never use — they raise their invoices in Xero — and an
+          always-empty workspace is a thing to explain rather than to use. It is
+          the entity's own answer, not the deploy's, so a client that does send
+          sales documents in switches it back on here. Nothing is deleted: the
+          documents stay in the book and the tab comes back with them. */}
+      <Card title="Workspaces">
+        <Row
+          label="Sales"
+          hint="Show the Sales tab, its Customers list and its exports. Off hides the section everywhere — the rail, the Add documents panel and the Costs page's “Move to”. Sales documents already captured are kept."
+        >
+          <Toggle on={sales} onChange={setSales} />
+        </Row>
       </Card>
 
       <Card title="Item messaging">
@@ -757,6 +778,7 @@ function ExtractByWhatsappCard() {
 
 function Extraction() {
   const bridge = useBridgeEntity();
+  const salesEnabled = useSalesEnabled();
   const stored = useExtractionSettings();
   const [form, setForm] = useState(stored);
   const [dirty, setDirty] = useState(false);
@@ -816,9 +838,13 @@ function Extraction() {
             <Row label="Default tax rate for costs">
               <SelectBox value={form.defaultTaxRateCosts || '— None —'} onChange={(v) => set('defaultTaxRateCosts', v === '— None —' ? '' : v)} options={taxRateOptions} />
             </Row>
-            <Row label="Default tax rate for sales">
-              <SelectBox value={form.defaultTaxRateSales || '— None —'} onChange={(v) => set('defaultTaxRateSales', v === '— None —' ? '' : v)} options={taxRateOptions} />
-            </Row>
+            {/* A default for a workspace this entity has hidden is a setting
+                with nothing to apply to. */}
+            {salesEnabled && (
+              <Row label="Default tax rate for sales">
+                <SelectBox value={form.defaultTaxRateSales || '— None —'} onChange={(v) => set('defaultTaxRateSales', v === '— None —' ? '' : v)} options={taxRateOptions} />
+              </Row>
+            )}
           </>
         )}
       </Card>
@@ -830,12 +856,16 @@ function Extraction() {
         <Row label="How many days (costs)">
           <SelectBox value={form.dueCostsDays} onChange={(v) => set('dueCostsDays', v)} options={DUE_DAYS} />
         </Row>
-        <Row label="Due date for sales invoices">
-          <SelectBox value={form.dueSalesMode} onChange={(v) => set('dueSalesMode', v)} options={DUE_MODES} />
-        </Row>
-        <Row label="How many days (sales)">
-          <SelectBox value={form.dueSalesDays} onChange={(v) => set('dueSalesDays', v)} options={DUE_DAYS} />
-        </Row>
+        {salesEnabled && (
+          <>
+            <Row label="Due date for sales invoices">
+              <SelectBox value={form.dueSalesMode} onChange={(v) => set('dueSalesMode', v)} options={DUE_MODES} />
+            </Row>
+            <Row label="How many days (sales)">
+              <SelectBox value={form.dueSalesDays} onChange={(v) => set('dueSalesDays', v)} options={DUE_DAYS} />
+            </Row>
+          </>
+        )}
       </Card>
 
       <Card title="Payment status">
@@ -916,6 +946,7 @@ function Automation() {
 
 function Exports() {
   const stored = useExportSettings();
+  const salesEnabled = useSalesEnabled();
   const [form, setForm] = useState(stored);
   const [dirty, setDirty] = useState(false);
 
@@ -941,7 +972,9 @@ function Exports() {
             with no consequence, which is worse than no choice. */}
         <Row label="Receipts and invoices"><SelectBox value={form.receiptsFormat} onChange={(v) => set('receiptsFormat', v)} options={RECEIPT_FORMATS} /></Row>
         <Row label="Bank statements"><SelectBox value={form.bankFormat} onChange={(v) => set('bankFormat', v)} options={['CYBills Excel', 'Custom']} /></Row>
-        <Row label="Sales documents"><SelectBox value={form.salesFormat} onChange={(v) => set('salesFormat', v)} options={['CYBills Sales Default', 'Custom']} /></Row>
+        {salesEnabled && (
+          <Row label="Sales documents"><SelectBox value={form.salesFormat} onChange={(v) => set('salesFormat', v)} options={['CYBills Sales Default', 'Custom']} /></Row>
+        )}
         <Row label="Expense reports"><SelectBox value={form.expenseFormat} onChange={(v) => set('expenseFormat', v)} options={['CYBills Default', 'Custom']} /></Row>
         <Row label="Show net amount" hint="Include the net value field in CSV exports."><Toggle on={form.showNet} onChange={(v) => set('showNet', v)} /></Row>
       </Card>

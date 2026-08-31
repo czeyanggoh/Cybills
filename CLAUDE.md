@@ -416,6 +416,36 @@ names the rate, what IS visible at it, and points at Business settings → Lists
 Tax rates. A blank field with no explanation is
 indistinguishable from a bug, which is exactly how one was reported.
 
+## A workspace an entity doesn't use is not a tab
+
+Most CYBM clients raise their own invoices in Xero and never file a sales
+document here, so **Sales** was a whole section of the app — a rail tab, a
+Customers list, its own exports, an uploader tab, a "Move to" destination and
+four settings rows — pointing at paper that never arrives. It is now the
+entity's own answer, `cybills.workspaces.v1` (`src/lib/workspaceSettings.js`,
+per entity like the profile it sits under), set in Business settings ->
+Business profile -> **Workspaces**. **Off by default**: the practice asked for
+the section to be gone, and a client that does send sales documents in switches
+it back on.
+
+**Hidden means hidden everywhere, not merely off the rail.** A tab removed with
+its routes left open is a bookmark, a browser history entry and a `Move to`
+button that all still reach it. So one hook (`useSalesEnabled`) gates the rail
+item, the `/sales*` and `/customers` routes, the Add-documents drawer's Sales
+tab, the Exports tabs, the Cost page's "Move to", and the settings rows that
+only configure Sales (its default tax rate, its due dates, its CSV format) —
+a setting for a workspace that isn't there is a control with nothing to apply
+to. Nothing is deleted: sales documents stay in the book and in Submission
+history, and switching it back on returns the tab with its contents.
+
+**The route waits for the answer; nothing else does.** A blob arrives from the
+server a moment after the page mounts, and every other reader is happy with the
+default in the meantime — but a route that REDIRECTS on it would throw somebody
+off their own Sales page for as long as the fetch takes. `blobStore` therefore
+says whether the server has answered at all (`ready()`, settled on a refusal or
+an unreachable server too, or the guard waits for ever) — distinct from holding
+a value, since an entity that has never saved one settles on the fallback.
+
 ## The Costs inbox's bulk actions
 
 Every bulk action is a **button**. The "Move to" and "Actions" dropdowns this

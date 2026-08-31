@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { X, FileText, Loader2, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { useSalesEnabled } from '@/lib/workspaceSettings';
 import { useReaderName } from '@/lib/readerProvider';
 import {
   sha256Hex,
@@ -309,6 +310,12 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const allTaxRates = useManagedTaxRates();
   const gstRegistered = useGstRegistered();
   const [tab, setTab] = useState('Costs');
+  // An entity that has hidden the Sales workspace has nowhere to put a sales
+  // document, so it is not offered one to upload — the drawer is the only way
+  // in, and a document filed as `kind: 'sales'` would land in a tab nobody can
+  // open.
+  const salesEnabled = useSalesEnabled();
+  const tabs = TABS.filter((t) => t !== 'Sales' || salesEnabled);
   const [items, setItems] = useState([]);
   // Who the uploaded documents are attributed to. Stored as the display name
   // (not an email) so attribution shows correctly regardless of the roster's
@@ -353,8 +360,10 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   // Default the tab to the workspace the drawer was opened from (Sales page →
   // Sales tab, etc.) each time it opens.
   useEffect(() => {
-    if (open) setTab(tabForPath(pathname));
-  }, [open, pathname]);
+    if (!open) return;
+    const from = tabForPath(pathname);
+    setTab(from === 'Sales' && !salesEnabled ? 'Costs' : from);
+  }, [open, pathname, salesEnabled]);
 
   if (!open) return null;
 
@@ -731,7 +740,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
         </div>
 
         <div className="flex shrink-0 gap-5 border-b px-6">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t}
               type="button"

@@ -33,6 +33,7 @@ import {
 } from '@/lib/organisations';
 import { canManageBusiness, canManageUsers } from '@/lib/userStore';
 import { isPracticeTeam, canManagePractice } from '@/lib/practiceStore';
+import { useSalesEnabled } from '@/lib/workspaceSettings';
 import AddDocumentsDrawer from './AddDocumentsDrawer';
 import AddOrganisationModal from './AddOrganisationModal';
 import RemoveOrganisationModal from './RemoveOrganisationModal';
@@ -42,7 +43,11 @@ import JoinRequestBanner from './JoinRequestBanner';
 // Primary workspaces (matches Dext's left rail: Costs / Sales / Bank / Vault).
 const NAV = [
   { to: '/costs', label: 'Costs', icon: ShoppingCart },
-  { to: '/sales', label: 'Sales', icon: Tag },
+  // Offered only where the entity says it uses Sales (Business settings ->
+  // Business profile -> Workspaces). A practice whose clients raise their own
+  // invoices in Xero never files a sales document here, and a tab that is
+  // always empty is a section of the app to explain rather than to use.
+  { to: '/sales', label: 'Sales', icon: Tag, requires: 'sales' },
   // The collection groups themselves. Costs shows what was picked OUT of a
   // group; this is the group — every message in it, so a document the reader
   // called a holiday photo can still be found and filed. Shows everybody's
@@ -57,9 +62,11 @@ const TOP_TABS = [
   { to: '/support', label: 'Support Desk' },
 ];
 
-// `requires` names the access each item needs: 'users' (either admin tier),
-// 'business' (Business Admin only), 'practiceTeam' (any colleague of the
-// practice) or 'practice' (the colleagues who run it). Unset = everyone.
+// `requires` names what each item needs: an access tier — 'users' (either admin
+// tier), 'business' (Business Admin only), 'practiceTeam' (any colleague of the
+// practice), 'practice' (the colleagues who run it) — or, on the primary rail,
+// 'sales', which is the entity's own decision about whether it uses that
+// workspace at all. Unset = everyone.
 const BOTTOM = [
   { label: 'Clients', icon: Briefcase, to: '/clients', requires: 'practiceTeam' },
   { label: 'Colleagues', icon: UserCog, to: '/colleagues', requires: 'practice' },
@@ -352,6 +359,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
   // is Business Admin only, Users is either admin tier. A signed-in user's real
   // role decides this; mock mode (no real auth) shows everything so the demo
   // works.
+  const sales = useSalesEnabled();
   const canBusiness = canManageBusiness(membership, googleEnabled);
   const canUsers = canManageUsers(membership, googleEnabled);
   // The practice surfaces belong to CYBM's own team: Clients to any colleague,
@@ -362,6 +370,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
     users: canUsers,
     practiceTeam: isPracticeTeam(membership, googleEnabled),
     practice: canManagePractice(membership, googleEnabled),
+    sales,
   };
   const bottomNav = BOTTOM.filter((item) => !item.requires || allowed[item.requires]);
   // The primary rail is gated the same way. WhatsApp shows everybody's

@@ -7,6 +7,7 @@ import { useExports, getExportBlob, deleteExport, repairExportedBy, adoptLegacyE
 import { downloadExportBlob } from '@/lib/docsExport';
 import { useOrganisations } from '@/lib/organisations';
 import { useAuth } from '@/lib/auth';
+import { useSalesEnabled } from '@/lib/workspaceSettings';
 import { cn } from '@/lib/utils';
 
 const TABS = [
@@ -86,12 +87,16 @@ export default function Exports({ workspace = 'costs' }) {
   // Standalone top-level Exports page (workspace="all") shows no Costs/Sales
   // subnav — it's its own destination, like Dext's Exports.
   const subnav = workspace === 'all' ? undefined : workspace === 'sales' ? <SalesSubnav /> : <CostsSubnav />;
+  // The Sales tab goes with the Sales workspace. Its files are not deleted —
+  // switching the workspace back on brings the tab and its history back.
+  const salesEnabled = useSalesEnabled();
+  const tabs = TABS.filter((t) => t.key !== 'sales' || salesEnabled);
 
   return (
     <AppShell subnav={subnav}>
       <h1 className="mb-4 text-xl font-semibold tracking-tight">Exports</h1>
       <div className="mb-4 flex items-center gap-6 overflow-x-auto border-b">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
