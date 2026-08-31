@@ -44,7 +44,7 @@ import MergeModal from '@/components/MergeModal';
 import BulkEditModal from '@/components/BulkEditModal';
 import DocCardList from '@/components/DocCardList';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
-import { useCostsDocs, rowsFor, isInInbox, isComplete, needsReview, missingFields } from '@/lib/costsData';
+import { useCostsDocs, rowsFor, isInInbox, isComplete, isArchived, needsReview, missingFields } from '@/lib/costsData';
 import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
@@ -83,6 +83,13 @@ const TABS = [
   { key: 'processing', label: 'Processing', counted: true },
   { key: 'review', label: 'To review', counted: true },
   { key: 'ready', label: 'Ready', counted: true },
+  // Archived earns a tab because without one the numbers do not add up: every
+  // document in the list is either waiting on somebody (To review), finished
+  // and waiting to be published (Ready), or settled — and the settled ones were
+  // in the list, wearing an "Archived" badge, but counted by no tab. So the
+  // first badge said 15 while the rest said 8, and the seven had nowhere to be
+  // looked at on their own.
+  { key: 'archived', label: 'Archived', counted: true },
 ];
 
 // Inbox and Archive were two tabs over one pile of paper, and the split was
@@ -787,6 +794,11 @@ export default function Costs() {
     all: rowsFor(allDocs, scope),
     review: rowsFor(allDocs, 'review'),
     ready: rowsFor(allDocs, 'ready'),
+    // The settled half of whatever the scope is showing. Scoped, so the four
+    // add up in either half: under Unpublished it is the documents archived by
+    // hand and never published; under All costs it also holds the published,
+    // the claimed and the merged.
+    archived: rowsFor(allDocs, scope).filter(isArchived),
   };
   // Both sides of the toggle, so each option can carry its own count.
   const scopeCounts = {
@@ -1323,8 +1335,10 @@ export default function Costs() {
         })}
       </div>
 
-      {/* Which half of the combined list — only the tab that holds both. */}
-      {tab === 'all' && (
+      {/* Which half of the combined list — on the tabs that are scoped by it.
+          To review and Ready are inbox-only, and an inbox document is always
+          unpublished, so the toggle would say nothing there. */}
+      {(tab === 'all' || tab === 'archived') && (
         <ScopeToggle
           scope={scope}
           setScope={(next) => {
