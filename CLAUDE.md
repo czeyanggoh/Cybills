@@ -303,6 +303,20 @@ money). Both are still there under All costs. `rowsFor` keeps `'inbox'` and
 for them — merge detection leaves settled documents alone, and the document
 page's "next item" walks the inbox.
 
+**But the Costs tab is the WORK, and the settled documents have their own tab.**
+Folding the two piles together put archived rows in the working list, which is
+what made the first badge say 15 while the three beside it added up to 8 —
+Processing 0, To review 0, Ready 8, and seven settled documents sitting in the
+list wearing a badge that said they were finished. So Costs is now exactly
+`inCostsTab` = processing + inbox, the sum of the three tabs after it, and
+**Archived** is where the settled work is looked at. The Unpublished / All costs
+toggle moved with them: it is drawn only on Archived now, because everything in
+the working list is unpublished by definition (publishing is what archives a
+document), so there it had nothing to say. On Archived it still does the thing it
+exists for — Unpublished is the documents archived by hand and never published,
+All costs adds the published, the claimed and the merged. `inCostsList` stays as
+that wider reach.
+
 **Archive and Unarchive share the row, and each moves only its own half.**
 Written across the whole selection they would each do real damage: Archive would
 strip `expenseclaim` off a document sitting on a live claim, Unarchive would

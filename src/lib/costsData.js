@@ -3,7 +3,7 @@ import { useClaims, unpublishedClaimsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { USERS_EVENT, canManageBusiness } from '@/lib/userStore';
-import { isInInbox, isComplete, isReady, needsReview, inCostsList, isUnpublished } from '@/lib/readiness';
+import { isInInbox, isComplete, isReady, needsReview, inCostsTab, inCostsList, isUnpublished } from '@/lib/readiness';
 
 // Readiness and its opposite live in one pure module, so `npm test` can hold
 // them to account and the pages can't drift from the server's own rule.
@@ -17,6 +17,8 @@ export {
   needsReview,
   ARCHIVE_STATUSES,
   isArchived,
+  isProcessing,
+  inCostsTab,
   inCostsList,
   isUnpublished,
 } from '@/lib/readiness';
@@ -38,6 +40,10 @@ export function rowsFor(docs, key) {
   // things that genuinely mean one or the other still ask for them — merge
   // detection leaves settled documents alone, and the document page's
   // "next item" walks the inbox.
+  // The Costs tab: the work still in front of somebody, which is exactly the
+  // three tabs beside it added together. An archived document is settled and
+  // has its own tab, so it is not also a row here.
+  if (key === 'costs') return docs.filter(inCostsTab);
   if (key === 'all') return docs.filter(inCostsList);
   if (key === 'unpublished') return docs.filter(isUnpublished);
   return [];
@@ -119,8 +125,8 @@ export function useCostsCounts() {
   const isAdmin = canManageBusiness(membership, googleEnabled);
   return {
     inbox: rowsFor(allDocs, 'inbox').length,
-    // What the Costs tab shows by default, so the subnav badge matches the list
-    // it opens on rather than a tab that no longer exists.
+    // What the Costs tab shows, so the subnav badge matches the list it opens.
+    costs: rowsFor(allDocs, 'costs').length,
     unpublished: rowsFor(allDocs, 'unpublished').length,
     all: rowsFor(allDocs, 'all').length,
     review: rowsFor(allDocs, 'review').length,

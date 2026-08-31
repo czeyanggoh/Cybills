@@ -11,6 +11,8 @@ import {
   needsReview,
   isInInbox,
   isArchived,
+  isProcessing,
+  inCostsTab,
   inCostsList,
   isUnpublished,
   READY_FIELDS,
@@ -113,6 +115,32 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
     all.filter(isUnpublished).every(inCostsList), true);
   check('and the list is the wider of the two',
     [all.filter(inCostsList).length, all.filter(isUnpublished).length], [5, 2]);
+}
+
+// The Costs tab is the work still in front of somebody, and it is exactly the
+// sum of the three tabs beside it. An archived document is settled: it has a
+// tab of its own and is not also a row in the working list.
+{
+  const stillReading = doc({ status: 'processing' });
+  const review = doc({ status: 'new', category: 'Uncategorised' });
+  const ready = doc({ status: 'ready' });
+  const archivedNeverPublished = doc({ status: 'archived' });
+  const published = doc({ status: 'archived', xeroInvoiceId: 'inv-1' });
+  const onClaim = doc({ status: 'expenseclaim' });
+  const merged = doc({ status: 'merged' });
+  const all = [stillReading, review, ready, archivedNeverPublished, published, onClaim, merged];
+
+  check('a document being read is processing', [isProcessing(stillReading), isProcessing(ready)], [true, false]);
+  check('the Costs tab holds the work in flight',
+    [inCostsTab(stillReading), inCostsTab(review), inCostsTab(ready)], [true, true, true]);
+  check('and holds nothing settled — archived, claimed or merged away',
+    [inCostsTab(archivedNeverPublished), inCostsTab(published), inCostsTab(onClaim), inCostsTab(merged)],
+    [false, false, false, false]);
+  check('so the tab is its three tabs added up, and the badges agree',
+    all.filter(inCostsTab).length,
+    all.filter(isProcessing).length + all.filter(needsReview).length + all.filter(isReady).length);
+  check('an archived document is still reachable — through the Archived tab',
+    [inCostsList(archivedNeverPublished), inCostsTab(archivedNeverPublished)], [true, false]);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');

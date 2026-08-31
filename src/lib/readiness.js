@@ -65,9 +65,22 @@ export function needsReview(d) {
 export const ARCHIVE_STATUSES = ['expenseclaim', 'archived', 'merged'];
 export const isArchived = (d) => ARCHIVE_STATUSES.includes(d?.status);
 
-// Every document the Costs list holds — inbox and archive together. The only
-// thing left out is a document still being read, which isn't work anybody can
-// do yet.
+// A document still being read. Not in the inbox yet — the reader hasn't
+// finished with it — but it IS work in flight, so it belongs to the Costs tab.
+export const isProcessing = (d) => d?.status === 'processing';
+
+// What the Costs tab holds: the work still in front of somebody. Processing, To
+// review and Ready are its three tabs and this is exactly their sum, which is
+// the point — an ARCHIVED document is settled, it has a tab of its own, and
+// counting it here made the first badge say 15 while the three beside it added
+// up to 8. Archived rows are reached through their own tab (and, with the
+// published ones, through its "All costs" scope), never by sitting in the
+// working list wearing a badge that says they are finished.
+export const inCostsTab = (d) => isProcessing(d) || isInInbox(d);
+
+// Every document the book holds that somebody could still act on — inbox and
+// archive together. This is the ARCHIVED tab's "All costs" reach rather than
+// the Costs tab's; the only thing left out is a document still being read.
 export const inCostsList = (d) => isInInbox(d) || isArchived(d);
 
 // The working half of that list: nothing has carried this document's figures

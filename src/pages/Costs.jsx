@@ -79,16 +79,17 @@ function CategorySelect({ value, onChange, options }) {
 // Tabs whose badge shows a live count of their rows. Processing/Approvals have
 // no count badge (they render their own panels).
 const TABS = [
+  // Costs is the work still in front of somebody, and it is the sum of the
+  // three tabs after it: Processing + To review + Ready. It used to hold the
+  // ARCHIVED documents too, which is what made the first badge say 15 while the
+  // three beside it added up to 8 — a settled document sitting in the working
+  // list, wearing a badge saying it was finished.
   { key: 'all', label: 'Costs', counted: true },
   { key: 'processing', label: 'Processing', counted: true },
   { key: 'review', label: 'To review', counted: true },
   { key: 'ready', label: 'Ready', counted: true },
-  // Archived earns a tab because without one the numbers do not add up: every
-  // document in the list is either waiting on somebody (To review), finished
-  // and waiting to be published (Ready), or settled — and the settled ones were
-  // in the list, wearing an "Archived" badge, but counted by no tab. So the
-  // first badge said 15 while the rest said 8, and the seven had nowhere to be
-  // looked at on their own.
+  // Archived is where the settled work is looked at, on its own, with the
+  // Unpublished / All costs toggle deciding how far back it reaches.
   { key: 'archived', label: 'Archived', counted: true },
 ];
 
@@ -154,6 +155,7 @@ function StatusBadge({ status, published = false }) {
     );
   }
   const map = {
+    processing: 'bg-muted text-muted-foreground',
     new: 'border border-foreground font-medium text-foreground',
     viewed: 'bg-muted text-muted-foreground',
     ready: 'bg-foreground text-background',
@@ -163,6 +165,7 @@ function StatusBadge({ status, published = false }) {
     merged: 'bg-muted text-muted-foreground',
   };
   const label = {
+    processing: 'Processing',
     new: 'New',
     viewed: 'Viewed',
     ready: 'Ready',
@@ -788,22 +791,23 @@ export default function Costs() {
   // Every tab's rows, so its badge count ties to what the tab actually shows.
   const rowsByTab = {
     processing: rowsFor(allDocs, 'processing'),
-    // The combined Inbox + Archive list, seen through whichever scope is
-    // selected — so the tab's own badge counts what the tab is actually
-    // showing, the way every other badge here does.
-    all: rowsFor(allDocs, scope),
+    // The working list: processing, to review and ready together, which is
+    // what the three tabs after it count. Unscoped, because there is nothing
+    // for a scope to say here — publishing archives a document, so everything
+    // in this list is unpublished by definition.
+    all: rowsFor(allDocs, 'costs'),
     review: rowsFor(allDocs, 'review'),
     ready: rowsFor(allDocs, 'ready'),
-    // The settled half of whatever the scope is showing. Scoped, so the four
-    // add up in either half: under Unpublished it is the documents archived by
-    // hand and never published; under All costs it also holds the published,
-    // the claimed and the merged.
+    // The settled work, seen through whichever scope is selected: under
+    // Unpublished it is the documents archived by hand and never published;
+    // under All costs it also holds the published, the claimed and the merged.
     archived: rowsFor(allDocs, scope).filter(isArchived),
   };
-  // Both sides of the toggle, so each option can carry its own count.
+  // Both sides of the toggle, counting the tab it is actually drawn on — the
+  // archived rows each scope reaches, not the whole book.
   const scopeCounts = {
-    unpublished: rowsFor(allDocs, 'unpublished').length,
-    all: rowsFor(allDocs, 'all').length,
+    unpublished: rowsFor(allDocs, 'unpublished').filter(isArchived).length,
+    all: rowsFor(allDocs, 'all').filter(isArchived).length,
   };
   const allRows = rowsByTab[tab] ?? [];
   // Everything flagged, whichever tab it's in — a flag raised on an inbox
@@ -1335,10 +1339,10 @@ export default function Costs() {
         })}
       </div>
 
-      {/* Which half of the combined list — on the tabs that are scoped by it.
-          To review and Ready are inbox-only, and an inbox document is always
-          unpublished, so the toggle would say nothing there. */}
-      {(tab === 'all' || tab === 'archived') && (
+      {/* How far back the Archived tab reaches. It is drawn only there: every
+          other tab is working documents, and a working document is always
+          unpublished, so the toggle would have nothing to say. */}
+      {tab === 'archived' && (
         <ScopeToggle
           scope={scope}
           setScope={(next) => {
