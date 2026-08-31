@@ -146,35 +146,77 @@ const save = (items: Claim[]) => saveCollection(COLLECTION, items);
 let migrated = false;
 function load(): Claim[] {
   const items = loadCollection<Claim>(COLLECTION);
-  if (migrated) return items;
-  migrated = true;
   let changed = false;
-  for (const c of items) {
-    if (c.orgId) continue;
-    const fromItems = c.transactions.map((t) => billOrgId(String(t.itemId))).filter(Boolean);
-    c.orgId = fromItems[0] || WORKSPACE_ID;
-    changed = true;
+  if (!migrated) {
+    migrated = true;
+    for (const c of items) {
+      if (c.orgId) continue;
+      const fromItems = c.transactions.map((t) => billOrgId(String(t.itemId))).filter(Boolean);
+      c.orgId = fromItems[0] || WORKSPACE_ID;
+      changed = true;
+    }
   }
-  // A claim is made out to a NAME, written when it was raised, so it goes on
-  // saying whatever the roster said that day — including a name that has since
-  // been folded into the one person it always was. That is not only cosmetic:
-  // the claimant's own address is resolved back FROM this name, so a claim
-  // naming nobody on the roster has nowhere to send its approval.
-  //
-  // Only ever renamed to the SAME human: the old name resolves to the row that
-  // was folded away, its address to the row that absorbed it. A name that
-  // resolves to nobody is left exactly as it is.
-  for (const c of items) {
-    if (!c.claimFor) continue;
-    const now = canonicalPersonName(c.workspaceId || WORKSPACE_ID, c.claimFor);
-    if (!now || now === c.claimFor) continue;
-    console.log(`[claims] claim ${c.id} was made out to "${c.claimFor}" — now "${now}"`);
-    c.claimFor = now;
-    changed = true;
-  }
+  if (repairClaimNames(items)) changed = true;
   if (changed) save(items);
   return items;
 }
+
+// A claim is made out to a NAME, written when it was raised, so it goes on
+// saying whatever the roster said that day — including a name that has since
+// been folded into the one person it always was. That is not only cosmetic:
+// the claimant's own address is resolved back FROM this name, so a claim naming
+// nobody on the roster has nowhere to send its approval.
+//
+// Only ever renamed to the SAME human: the old name resolves to the row that
+// was folded away, its address to the row that absorbed it. A name that
+// resolves to nobody is left exactly as it is.
+//
+// On EVERY read, which is the whole point. This began life inside the one-shot
+// orgId backfill above, so it got a single attempt per server boot — and it
+// spent that attempt on the first claims read after the process started, which
+// is before anybody has folded a duplicate away. Every read afterwards was
+// skipped, so a claim went on naming somebody who had been merged away hours
+// earlier, and the only thing that ever looked again was a deploy. Reported as
+// the name "coming back": it had never actually been repaired.
+//
+// It costs nothing once the two agree, which after the first pass is every
+// time: names are resolved once each rather than once per claim, and a name
+// matching a live roster row answers itself without looking further.
+function repairClaimNames(items: Claim[]): boolean {
+  const resolved = new Map<string, string>();
+  let changed = false;
+  for (const c of items) {
+    const ws = c.workspaceId || WORKSPACE_ID;
+    const canonical = (was: string) => {
+      const key = `${ws}\u0000${was}`;
+      let now = resolved.get(key);
+      if (now === undefined) {
+        now = canonicalPersonName(ws, was);
+        resolved.set(key, now);
+      }
+      return now && now !== was ? now : '';
+    };
+    if (c.claimFor) {
+      const now = canonical(c.claimFor);
+      if (now) {
+        console.log(`[claims] claim ${c.id} was made out to "${c.claimFor}" — now "${now}"`);
+        c.claimFor = now;
+        changed = true;
+      }
+    }
+    // The approver is a name on the claim too, and goes stale the same way — it
+    // is who the Approver column names and who the claim says it is waiting on.
+    if (c.approver) {
+      const now = canonical(c.approver);
+      if (now) {
+        c.approver = now;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 const nowIso = () => new Date().toISOString();
 
 // The claim (if any) carrying this cost document. A document on a claim can't
