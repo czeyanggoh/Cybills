@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { COSTS_LABEL } from '@/lib/workspaceNames';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
@@ -707,7 +706,7 @@ export default function ExpenseClaimDetail() {
             <button
               type="button"
               onClick={() => navigate('/costs')}
-              title={`Open the ${COSTS_LABEL} inbox, then use “Add to expense claim” on the items you want`}
+              title="Open the Costs inbox, then use “Add to expense claim” on the items you want"
               className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               <Plus className="h-3.5 w-3.5" /> Add items
@@ -780,7 +779,7 @@ export default function ExpenseClaimDetail() {
                   : {
                       icon: X,
                       label: 'Remove from claim',
-                      title: `Remove from this claim — the document goes back to your ${COSTS_LABEL} inbox`,
+                      title: 'Remove from this claim — the document goes back to your Costs inbox',
                       onClick: (d) => removeItem(displayRows.find((t) => t.itemId === d.id)),
                     }
               }
@@ -862,7 +861,7 @@ export default function ExpenseClaimDetail() {
                         <button
                           type="button"
                           onClick={() => removeItem(t)}
-                          title={`Remove from this claim — the document goes back to your ${COSTS_LABEL} inbox`}
+                          title="Remove from this claim — the document goes back to your Costs inbox"
                           aria-label="Remove from claim"
                           className="text-muted-foreground transition-colors hover:text-destructive"
                         >

@@ -34,7 +34,6 @@ import {
 import { canManageBusiness, canManageUsers } from '@/lib/userStore';
 import { isPracticeTeam, canManagePractice } from '@/lib/practiceStore';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
-import { COSTS_LABEL } from '@/lib/workspaceNames';
 import AddDocumentsDrawer from './AddDocumentsDrawer';
 import AddOrganisationModal from './AddOrganisationModal';
 import RemoveOrganisationModal from './RemoveOrganisationModal';
@@ -43,7 +42,7 @@ import JoinRequestBanner from './JoinRequestBanner';
 
 // Primary workspaces (matches Dext's left rail: Costs / Sales / Bank / Vault).
 const NAV = [
-  { to: '/costs', label: COSTS_LABEL, icon: ShoppingCart },
+  { to: '/costs', label: 'Costs', icon: ShoppingCart },
   // Offered only where the entity says it uses Sales (Business settings ->
   // Business profile -> Workspaces). A practice whose clients raise their own
   // invoices in Xero never files a sales document here, and a tab that is

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ChevronDown, Flag, FileText, Sparkles, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
-import { COSTS_LABEL } from '@/lib/workspaceNames';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
 import VaultSubnav from '@/components/VaultSubnav';
 import ManageAccessModal from '@/components/ManageAccessModal';
@@ -213,7 +212,7 @@ export default function VaultDetail() {
       const result = await addBill(payload, { force: true });
       if (result?.ok || result?.bill) {
         notifyBillsChanged();
-        setCopied(kind === 'sales' ? 'Copied to Sales inbox' : `Copied to ${COSTS_LABEL} inbox`);
+        setCopied(kind === 'sales' ? 'Copied to Sales inbox' : 'Copied to Costs inbox');
       } else {
         setCopied('Could not copy this file.');
       }
@@ -250,7 +249,7 @@ export default function VaultDetail() {
           <Flag className={cn('h-4 w-4', file.flagged ? 'fill-foreground text-foreground' : 'text-muted-foreground')} />
         </button>
         <TopButton disabled={!!copying} onClick={() => copyTo('cost')}>
-          {copying === 'cost' ? 'Copying…' : `Copy to ${COSTS_LABEL}`}
+          {copying === 'cost' ? 'Copying…' : 'Copy to Costs'}
         </TopButton>
         {/* Same rule the Cost page's "Move to" follows: a copy into a workspace
             this entity has hidden would leave the document somewhere nobody

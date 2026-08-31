@@ -11,28 +11,6 @@
 - Public host: `cybills.cy-bm.sg`; backend port `3004`
   (cyworkspace=3001, rejs=3003)
 
-## The costs workspace is CALLED "Bills & Receipts"
-
-The code says `costs` and goes on saying it — the route (`/costs`, and
-`/costs/<ItemID>`, which a published Xero bill's "Go to CYBills" button points
-at), the stored `kind`, the settings keys (`defaultTaxRateCosts`), the
-table-preference keys, the file names, and every "the Costs inbox" in these
-notes. Renaming any of that would break links already out in the world and rows
-that already say `costs`.
-
-What the SCREEN says is `COSTS_LABEL` in `src/lib/workspaceNames.js`, one
-constant read by the rail, the sub-nav heading, the page title, the inbox tab,
-the Unpublished/All toggle, the Add-documents tab, the Exports and Submission-
-history tabs, and the sentences in other workspaces that send you there ("Copy
-to Bills & Receipts", "Add to Bills & Receipts"). It is one constant because the
-name appears in about twenty places: typed out in each, they drift, and a
-section called two things is a section somebody has to be told about. The
-sub-nav item under it is just **Inbox** — the heading above already names the
-section, and spelling it out again wrapped onto two lines beside a count badge.
-
-So: `costs` when you are writing code, "Bills & Receipts" when you are writing
-what somebody reads.
-
 ## ALWAYS sync with origin before editing
 
 Before making ANY change (Edit / Write) to a file in this repo, run:

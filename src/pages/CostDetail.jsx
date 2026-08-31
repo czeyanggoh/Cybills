@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
-import { COSTS_LABEL } from '@/lib/workspaceNames';
 import SplitItemModal from '@/components/SplitItemModal';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import PublishToXeroModal from '@/components/PublishToXeroModal';
@@ -871,7 +870,7 @@ export default function CostDetail() {
   };
 
   const deleteDoc = () => {
-    if (!window.confirm(`Delete this document? This removes it from your ${COSTS_LABEL} inbox.`)) return;
+    if (!window.confirm('Delete this document? This removes it from your Costs inbox.')) return;
     saveWithStatus('archived');
   };
 
@@ -915,7 +914,7 @@ export default function CostDetail() {
   // comes back out of Archive and can be published again. Nothing is deleted in
   // Xero from here, so say so before doing it.
   const clearXeroLink = async () => {
-    if (!window.confirm(`Clear this document's Xero link?\n\nIt goes back to your ${COSTS_LABEL} inbox and can be published again. Nothing is deleted in ${doc.xeroTenantName || 'Xero'} — if the bill is still there, delete or void it in Xero first, or you'll end up with two.`)) return;
+    if (!window.confirm(`Clear this document's Xero link?\n\nIt goes back to your Costs inbox and can be published again. Nothing is deleted in ${doc.xeroTenantName || 'Xero'} — if the bill is still there, delete or void it in Xero first, or you'll end up with two.`)) return;
     setXeroBusy('clear');
     setXeroNote('');
     try {

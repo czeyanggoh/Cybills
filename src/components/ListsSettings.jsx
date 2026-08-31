@@ -6,7 +6,6 @@ import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, useTargetAccounts, updateXeroCategoryDescription, getActiveOrganisationId, isStandaloneOrg, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useCategoryAccounts, setCategoryAccount } from '@/lib/categoryAccounts';
 import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
-import { COSTS_LABEL } from '@/lib/workspaceNames';
 import { useProjectLabels, setProjectLabels, DEFAULT_PROJECT_LABELS, singular } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import { useAutoSave } from '@/lib/useAutoSave';
@@ -777,7 +776,7 @@ function FlagsList() {
   return (
     <div>
       <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
-        Use additional flags to help organise the {COSTS_LABEL} and Sales inbox. Rename a flag or hide the ones you don&apos;t use.
+        Use additional flags to help organise the Costs and Sales inbox. Rename a flag or hide the ones you don&apos;t use.
       </p>
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full min-w-[520px] text-sm">

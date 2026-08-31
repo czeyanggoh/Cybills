@@ -1,6 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useCostsCounts } from '@/lib/costsData';
-import { COSTS_LABEL } from '@/lib/workspaceNames';
 import { useClaims, pendingApprovalsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { isItemKey } from '@/lib/bills';
@@ -41,9 +40,7 @@ export default function CostsSubnav() {
   const SUBNAV = [
     // The Costs tab opens on the unpublished half of the list, so the badge
     // counts that rather than the Inbox tab it replaced.
-    // Just "Inbox": the heading above already names the section, and spelling
-    // it out again wrapped onto two lines beside a count badge.
-    { label: 'Inbox', count: counts.unpublished, to: '/costs' },
+    { label: 'Costs inbox', count: counts.unpublished, to: '/costs' },
     { label: 'Expense claims', count: counts.expenseClaims, pending: pendingApprovals, to: '/expense-claims' },
     { label: 'Supplier statements', to: '/supplier-statements' },
     { label: 'Exports', to: '/costs/exports' },
@@ -52,7 +49,7 @@ export default function CostsSubnav() {
   return (
     <div className="flex flex-col p-3 text-sm">
       <p className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {COSTS_LABEL}
+        Costs
       </p>
       {SUBNAV.map((item) => {
         const active = Boolean(item.to) && isActive(item);

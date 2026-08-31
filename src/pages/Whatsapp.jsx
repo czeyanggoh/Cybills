@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Download, FileText, Info, Loader2, MessageCircle, Search, Sparkles, Tag, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
-import { COSTS_LABEL } from '@/lib/workspaceNames';
 import { cn } from '@/lib/utils';
 import { useActiveOrganisation } from '@/lib/organisations';
 import {
@@ -391,7 +390,7 @@ function MessageBubble({ m, canManage, busy, onCorrect, onFile, onPreview }) {
                   className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-700 transition-colors hover:bg-gray-100 disabled:opacity-60"
                 >
                   {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-                  Add to {COSTS_LABEL}
+                  Add to Costs
                 </button>
               )
             )}
