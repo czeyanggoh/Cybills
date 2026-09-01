@@ -12,6 +12,8 @@ import {
 } from '@/lib/practiceStore';
 import { setUserActive, removeUser, setUserPassword, inviteUser, updateUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
+import { useOrganisations } from '@/lib/organisations';
+import { entityAddress } from '@/lib/inboundAddress';
 
 // Whether this colleague runs the practice's own business (the roster, client
 // access) — the "Manage practice's business" column.
@@ -183,6 +185,13 @@ export default function Colleagues() {
   // for somebody who can never open it.
   const managerOptions = colleagues.filter((m) => !m.deactivated && !m.pending);
   const deactivatedCount = colleagues.filter((c) => c.deactivated).length;
+  // The practice's own entity has a General account like every other — the row
+  // that owns paperwork nobody claimed — but this page is where its roster
+  // lives, and this page lists colleagues only. So the one thing anybody needs
+  // from that row, its address, is said here; the row itself is on the Users
+  // page, which a colleague opening the practice entity is redirected away from.
+  const { data: organisations = [] } = useOrganisations();
+  const practiceAddress = entityAddress(organisations.find((o) => o.isPrimary)?.emailSuffix);
 
   return (
     <AppShell>
@@ -200,6 +209,12 @@ export default function Colleagues() {
           <p className="mt-1 text-xs text-muted-foreground">
             The practice&apos;s own list — it doesn&apos;t change with the client entity you have open.
           </p>
+          {practiceAddress ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Bills emailed to <code>{practiceAddress}</code> — {practiceName}&apos;s own address, rather than any one
+              colleague&apos;s — file under its <strong>General</strong> account.
+            </p>
+          ) : null}
         </div>
         <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
           Add a colleague

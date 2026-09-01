@@ -1,7 +1,15 @@
 // An inbound address is two facts joined: the person's handle, and the short
 // form their entity chose. Mirrors server/src/users.ts, which is the authority
 // — this is what makes the address a page PREVIEWS the one that gets saved.
-import { cleanHandle, cleanSuffix, localPart, inboundAddress, addressTail, suffixForUser } from '../src/lib/inboundAddress.js';
+import {
+  cleanHandle,
+  cleanSuffix,
+  localPart,
+  inboundAddress,
+  entityAddress,
+  addressTail,
+  suffixForUser,
+} from '../src/lib/inboundAddress.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -29,6 +37,14 @@ check('person then entity', localPart('martin', 'redalpha'), 'martin.redalpha');
 check('no short form leaves the bare handle', localPart('martin', ''), 'martin');
 check('no handle is no address at all', inboundAddress('', 'redalpha'), '');
 check('the whole address', inboundAddress('martin', 'redalpha'), 'martin.redalpha@cybills.sg');
+
+// The short form standing alone is the ENTITY's address rather than anybody's,
+// and what arrives there files under the General account. An entity that has set
+// no short form simply has none — printing one made from its name would put an
+// address on the page that reaches nobody.
+check("an entity's own address is its short form alone", entityAddress('redalpha'), 'redalpha@cybills.sg');
+check('…and no short form is no address', entityAddress(''), '');
+check('…cleaned the same way the field cleans it', entityAddress('Red Alpha'), 'redalpha@cybills.sg');
 
 // The tail is the fixed half printed beside the editable handle, so it has to
 // carry the short form too — otherwise the field shows one address and the

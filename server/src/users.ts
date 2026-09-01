@@ -15,7 +15,13 @@ import {
 } from './totp.js';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, WORKSPACE_ID } from './workspace.js';
-import { getOrganisation, primaryOrgId, listOrganisations, dataScopeForOrg } from './organisations.js';
+import {
+  getOrganisation,
+  primaryOrgId,
+  listOrganisations,
+  dataScopeForOrg,
+  type Organisation,
+} from './organisations.js';
 import { setSession, readSession } from './auth.js';
 import { env, googleEnabled } from './env.js';
 import { sendMail, inviteEmail, passwordResetEmail, passwordChangedEmail } from './mailer.js';
@@ -385,6 +391,14 @@ function ensureEmailHandles(items: User[], ws: string): boolean {
   const taken = new Set(
     mine.filter((u) => u.emailHandle).map((u) => localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)))
   );
+  // An entity's short form standing alone is the ENTITY's own address, filing to
+  // its general account. Nobody chooses a handle here — it is made from a name —
+  // so a "Redalpha Pte Ltd" added to an entity with no short form of its own
+  // would quietly take Red Alpha's address off it.
+  for (const org of listOrganisations(ws)) {
+    const suffix = normaliseSuffix(org.emailSuffix || '');
+    if (suffix) taken.add(suffix);
+  }
   let changed = false;
   for (const u of mine) {
     if (u.removed || u.general || u.emailHandle) continue;
@@ -441,25 +455,64 @@ export function userByEmailHandle(handle: string): User | null {
   return plain.length === 1 ? plain[0] : null;
 }
 
-// Who else already answers to the address `handle` would give this person —
-// null when nobody does. Compared as ADDRESSES: two entities may each have a
-// `martin` once their suffixes differ, which is the point of having them, but
-// one address reaching two people means every bill forwarded to it files under
-// whichever row is found first, silently and for good.
-export function addressClash(target: User, handle: string): User | null {
+// The entity whose own short form IS this local part, or null. Compared as a
+// NORMALISED suffix on both sides, so anything that could not BE a short form —
+// `martin.redalpha`, which carries the dot that separates person from entity —
+// matches nothing rather than being folded into one.
+function orgWithSuffix(ws: string, want: string): Organisation | null {
+  const suffix = normaliseSuffix(want);
+  if (!suffix || suffix !== want) return null;
+  return listOrganisations(ws).find((o) => normaliseSuffix(o.emailSuffix || '') === suffix) ?? null;
+}
+
+// The account that mail to an ENTITY'S OWN address belongs to:
+// `redalpha@cybills.sg`, the short form standing where a person's handle would
+// be.
+//
+// A short form exists so that an address says which company files it, which
+// makes the short form on its own the address for that company's paperwork
+// rather than for any one person's — the address to put on a supplier's file, or
+// to point a shared mailbox at, where naming an employee would be wrong the day
+// they leave. It resolves to the entity's GENERAL account, the row that already
+// owns what nobody claimed, so a document arriving there is attributed exactly
+// as one a colleague adds without naming an owner.
+//
+// Consulted only after userByEmailHandle has found nobody, so a PERSON whose own
+// bare handle is that word keeps their mail; addressClash and the short-form
+// route are what stop the two ever meaning one address in the first place.
+export function generalUserByEmailSuffix(ws: string, handle: string): User | null {
+  const want = String(handle || '').split('+')[0].trim().toLowerCase();
+  const org = want ? orgWithSuffix(ws, want) : null;
+  return org ? generalUserFor(ws, org.id) : null;
+}
+
+// Who already answers to the address `handle` would give this person — '' when
+// nobody does, else the name to put in front of whoever asked. Compared as
+// ADDRESSES: two entities may each have a `martin` once their suffixes differ,
+// which is the point of having them, but one address reaching two people means
+// every bill forwarded to it would file under whichever row is found first,
+// silently and for good.
+//
+// An ENTITY answers to one address too — its short form standing alone, which
+// files to its general account — so that is checked here as well. Somebody given
+// the handle `redalpha` in an entity that has set no short form would take that
+// address without anything saying so, and because a person resolves FIRST, Red
+// Alpha's own address would simply stop arriving: exactly the silent failure
+// this check exists to prevent.
+export function addressClash(target: User, handle: string): string {
   const memo = new Map<string, string>();
   const want = localPart(normaliseHandle(handle), suffixForUser(target, memo));
-  if (!want) return null;
-  return (
-    load().find(
-      (u) =>
-        u.id !== target.id &&
-        !u.removed &&
-        !u.general &&
-        u.emailHandle &&
-        localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)) === want
-    ) || null
+  if (!want) return '';
+  const person = load().find(
+    (u) =>
+      u.id !== target.id &&
+      !u.removed &&
+      !u.general &&
+      u.emailHandle &&
+      localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)) === want
   );
+  if (person) return person.name || person.email;
+  return orgWithSuffix(target.workspaceId || WORKSPACE_ID, want)?.name || '';
 }
 
 // Store / clear the Gmail forwarding confirmation CYBills is holding for a user.
@@ -2153,13 +2206,13 @@ usersRouter.patch('/:id', (req, res) => {
     const handle = normaliseHandle(String(filtered.emailHandle ?? ''));
     if (!handle) return res.status(400).json({ error: 'invalid_handle' });
     const target = load().find((u) => u.id === req.params.id && !u.removed);
-    const owner = target ? addressClash(target, handle) : null;
-    if (owner) {
+    const takenBy = target ? addressClash(target, handle) : '';
+    if (takenBy) {
       return res.status(409).json({
         error: 'handle_taken',
         handle,
         address: addressForUser({ ...target!, emailHandle: handle }),
-        takenBy: owner.name || owner.email,
+        takenBy,
       });
     }
     filtered.emailHandle = handle;

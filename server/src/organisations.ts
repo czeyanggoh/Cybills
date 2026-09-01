@@ -356,6 +356,19 @@ organisationsRouter.put('/:id/email-suffix', (req, res) => {
   const takenElsewhere = new Map(
     others.map((u) => [localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)), u])
   );
+  // The short form standing alone is the ENTITY's own address — mail to it
+  // files to the general account — so it has to be free too. Somebody else's
+  // bare handle already answering to it means the entity would never receive
+  // anything there, and nothing on either page would say why.
+  const catchOwner = suffix ? takenElsewhere.get(suffix) : undefined;
+  if (catchOwner) {
+    return res.status(409).json({
+      error: 'address_taken',
+      address: `${suffix}@${INBOUND_MAIL_DOMAIN}`,
+      person: organisation.name,
+      takenBy: catchOwner.name || catchOwner.email,
+    });
+  }
   for (const u of mine) {
     const owner = takenElsewhere.get(localPart(String(u.emailHandle).toLowerCase(), suffix));
     if (owner) {

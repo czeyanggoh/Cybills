@@ -12,6 +12,7 @@ import { isPracticeTeam } from '@/lib/practiceStore';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 import { resetTotpFor } from '@/lib/totp';
+import { entityAddress } from '@/lib/inboundAddress';
 
 // Per-row "Manage" dropdown (Edit details / privileges, resend, reset,
 // (de)activate, remove).
@@ -374,7 +375,14 @@ export default function Users() {
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-3 text-muted-foreground">{u.email || '—'}</td>
+                {/* The general account has no mailbox — its stored address is
+                    an internal identity the server never prints. What it DOES
+                    answer to is the entity's short form standing alone, and a
+                    row labelled "Default owner" showing no address at all gives
+                    nobody a way to send anything to it. */}
+                <td className="px-3 py-3 text-muted-foreground">
+                  {u.email || (u.general && entityAddress(activeOrg?.emailSuffix)) || '—'}
+                </td>
                 <td className="px-3 py-3 text-muted-foreground">{u.companyName || workspaceCompany || '—'}</td>
                 <td className="px-3 py-3">{u.login}</td>
                 <td className="whitespace-nowrap px-3 py-3">{u.role}</td>

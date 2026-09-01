@@ -47,6 +47,16 @@ export function inboundAddress(handle, suffix, domain = INBOUND_DOMAIN) {
   return local ? `${local}@${domain}` : '';
 }
 
+// The ENTITY's own address: its short form standing alone, `redalpha@cybills.sg`.
+// Mail to it belongs to the company rather than to any one person, so it files
+// under the General account — the row that owns what nobody claimed. '' where no
+// short form is set: there is no such address until the entity has a name to
+// make one from.
+export function entityAddress(suffix, domain = INBOUND_DOMAIN) {
+  const s = cleanSuffix(suffix);
+  return s ? `${s}@${domain}` : '';
+}
+
 // The fixed tail shown beside the editable handle: ".redalpha@cybills.sg", or
 // just "@cybills.sg" where the entity has set no short form.
 export function addressTail(suffix, domain = INBOUND_DOMAIN) {

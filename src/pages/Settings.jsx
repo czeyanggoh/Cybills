@@ -40,7 +40,7 @@ import {
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 import { useInboundConfig } from '@/lib/inboundSettings';
-import { cleanSuffix, addressTail } from '@/lib/inboundAddress';
+import { cleanSuffix, addressTail, entityAddress } from '@/lib/inboundAddress';
 import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig, sendTestDelivery } from '@/lib/whatsapp';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
@@ -603,6 +603,19 @@ function ExtractByEmailCard() {
         details).
       </p>
       <EmailSuffixRow organisation={organisation} domain={config?.domain || 'cybills.sg'} />
+      {/* The short form on its own is an address too, and the only one here that
+          is the COMPANY's rather than a person's — what to put on a supplier's
+          file, or point a shared mailbox at, where naming an employee would be
+          wrong the day they leave. Said here because this is where the short
+          form is set, and nothing else on the page would ever mention it. */}
+      {entityAddress(organisation?.emailSuffix, config?.domain || 'cybills.sg') ? (
+        <p className="text-sm text-muted-foreground">
+          The short form on its own —{' '}
+          <code>{entityAddress(organisation?.emailSuffix, config?.domain || 'cybills.sg')}</code> — is this
+          entity&rsquo;s own address. Bills sent there belong to nobody in particular, so they file under the{' '}
+          <strong>General</strong> account on the Users page.
+        </p>
+      ) : null}
       {canSeeWorker ? (
         <>
           <div className="rounded-md border p-4">

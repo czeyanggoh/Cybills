@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import type { Request } from 'express';
-import { userByEmailHandle, setPendingForward, memberForSession } from './users.js';
+import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberForSession } from './users.js';
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
@@ -378,7 +378,13 @@ inboundRouter.post('/email', async (req, res) => {
 
   // Local-part of the recipient = the user handle (minus any +suffix).
   const local = (to.split('@')[0] || to).trim();
-  const user = userByEmailHandle(local);
+  // A person first, then the entity itself. An entity's short form standing
+  // alone — `redalpha@cybills.sg`, where a person's handle would normally be —
+  // is the company's own address rather than anybody's, so what arrives there
+  // belongs to its GENERAL account: the row that already owns the paperwork
+  // nobody claimed. Second, never first, so a person whose bare handle happens
+  // to be that word keeps their own mail.
+  const user = userByEmailHandle(local) || generalUserByEmailSuffix(workspaceId(req), local);
   if (!user) return res.status(404).json({ error: 'unknown_recipient', to });
 
   // A Gmail forwarding confirmation: hold the link for the user to click in the

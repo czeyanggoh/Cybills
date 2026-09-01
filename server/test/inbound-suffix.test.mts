@@ -38,7 +38,8 @@ writeFileSync(
 const express = (await import('express')).default;
 const { organisationsRouter } = await import('../src/organisations.ts');
 const users = await import('../src/users.ts');
-const { ensure, save, full, userByEmailHandle, addressForUser, addressClash, normaliseSuffix } = users;
+const { ensure, save, full, userByEmailHandle, generalUserByEmailSuffix, addressForUser, addressClash, normaliseSuffix } =
+  users;
 
 let failures = 0;
 const check = (name: string, got: unknown, want: unknown) => {
@@ -101,7 +102,7 @@ check('…including with a +tag on it', userByEmailHandle('martin.redalpha+xero'
 r = await setSuffix('org_ste00001', 'stengg');
 check('a second entity may set its own', r.status, 200);
 // This is the whole point: `martin` was spent, and now it is not.
-check('a name spent in another entity is free again', addressClash(martinSte, 'martin'), null);
+check('a name spent in another entity is free again', addressClash(martinSte, 'martin'), '');
 martinSte.emailHandle = 'martin';
 save(ensure('cybm').map((u) => (u.id === martinSte.id ? { ...u, emailHandle: 'martin' } : u)));
 check('two Martins, two addresses', addressForUser(martinSte), 'martin.stengg@cybills.sg');
@@ -163,6 +164,61 @@ check('the short form goes back on', r.status, 200);
   check('a handle is only numbered when the ADDRESS is taken', assigned?.emailHandle, 'martine');
   check('…and hers is her name and her entity', addressForUser(assigned!), 'martine.redalpha@cybills.sg');
   check('…while the Martine who had the bare one keeps it', userByEmailHandle('martine')?.id, cyMartin.id);
+}
+
+// --- The entity's own address ------------------------------------------------
+// The short form standing where a handle would be is the COMPANY's address, not
+// anybody's: what to put on a supplier's file, or to point a shared mailbox at,
+// where naming an employee would be wrong the day they leave. It resolves to the
+// general account — the row that already owns what nobody claimed.
+{
+  const general = generalUserByEmailSuffix('cybm', 'redalpha');
+  check("an entity's short form on its own reaches its general account", general?.organisationId, 'org_red00001');
+  check('…which is the general row, not a person', general?.general, true);
+  check('…and a +tag on it changes nothing', generalUserByEmailSuffix('cybm', 'redalpha+xero')?.id, general?.id);
+  // Only a local part that IS a short form. A person's address carries the dot
+  // that separates the two halves, so it can never be read as one.
+  check("a person's address is not an entity address", generalUserByEmailSuffix('cybm', 'martin.redalpha'), null);
+  check('a short form nobody holds reaches nobody', generalUserByEmailSuffix('cybm', 'acme'), null);
+  check("…and each entity that has one gets its own", generalUserByEmailSuffix('cybm', 'stengg')?.organisationId, 'org_ste00001');
+  // CY Business Management never set one, so it has no address of its own —
+  // inventing one from its name would print an address that reaches nobody.
+  check('an entity with no short form has no address', generalUserByEmailSuffix('cybm', 'cybm'), null);
+}
+
+// --- A person may not take the entity's address ------------------------------
+// Mail resolves a PERSON first, so a handle equal to a live short form would not
+// clash loudly — Red Alpha's own address would just stop arriving, with nothing
+// on either page to say why.
+{
+  // Martine Goh is in CY Business Management, which has set no short form, so
+  // `redalpha` would be her whole address.
+  check("a handle that is another entity's short form is refused", addressClash(cyMartin, 'redalpha'), 'Red Alpha');
+  // In an entity that HAS one her address would be `redalpha.redalpha`, which is
+  // nobody else's — the two only ever collide where there is no short form.
+  check('…while inside a suffixed entity it is free', addressClash(martinRed, 'redalpha'), '');
+  const roster = ensure('cybm');
+  roster.push(full({ firstName: 'Redalpha', name: 'Redalpha Ong', email: 'ro@cy-bm.sg', organisationId: 'org_cybm001', login: 'Yes' }, 'cybm'));
+  save(roster);
+  const assigned = ensure('cybm').find((u) => u.email === 'ro@cy-bm.sg');
+  // Nobody chooses an auto-assigned handle — it is made from a name — so the
+  // same rule has to hold on the road where no one is asked.
+  check('an auto-assigned handle steps over it too', assigned?.emailHandle, 'redalpha2');
+  check('…leaving the entity address where it was', generalUserByEmailSuffix('cybm', 'redalpha')?.organisationId, 'org_red00001');
+}
+
+// --- A short form may not take a person's address ----------------------------
+{
+  // `ro` is Martine's colleague's bare handle in a suffixless entity, so an
+  // entity taking `ro` as its short form would shadow a live address.
+  const roster = ensure('cybm');
+  const ro = roster.find((u) => u.email === 'ro@cy-bm.sg')!;
+  ro.emailHandle = 'ro';
+  save(roster);
+  r = await setSuffix('org_ste00001', 'ro');
+  check('a short form somebody already answers to is refused', [r.status, r.body.error], [409, 'address_taken']);
+  check('…naming the address it would have taken', r.body.address, 'ro@cybills.sg');
+  check('…and who already has it', r.body.takenBy, 'Redalpha Ong');
 }
 
 server.close();

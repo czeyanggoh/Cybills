@@ -733,6 +733,30 @@ checks can be made. The entity's own Business Admin sets it — it is this
 entity's name in an address, and the people who have to be told the address work
 here.
 
+**The short form standing ALONE is the entity's own address.** `dart@cybills.sg`
+— where a person's handle would normally be — is the company's address rather
+than anybody's: the one to put on a supplier's file, or to point a shared
+mailbox at, where naming an employee is wrong the day they leave. It resolves to
+the entity's GENERAL account (`generalUserByEmailSuffix`), the row that already
+owns the paperwork nobody claimed, so a bill arriving there is attributed
+exactly as one a colleague adds without naming an owner. A PERSON resolves
+first, always, so nobody's mail moves.
+
+One address must not mean two things, and the collision is silent in the
+direction that matters — a person wins the lookup, so the ENTITY would simply
+stop receiving, with nothing on either page to say why. All three roads are
+closed: `addressClash` refuses a hand-typed handle equal to a live short form,
+`ensureEmailHandles` seeds its taken set with them (nobody chooses an
+auto-assigned handle — it is made from a name), and `PUT /email-suffix` refuses
+a short form somebody's bare handle already answers to. Only an entity with NO
+short form can collide at all: inside one that has a suffix every person's
+address carries the dot that separates the two halves.
+
+The practice's own entity has one too, and it is the case that needed saying out
+loud: a colleague opening CYBM is redirected off the Users page to Colleagues,
+so the General row is there in the data and unreachable in the UI. Colleagues
+prints the address instead.
+
 The rules live in `server/src/users.ts` next to the rows they read
 (`normaliseSuffix`, `localPart`, `addressForUser`), mirrored for the browser in
 `src/lib/inboundAddress.js` so the address a page previews is the address that
