@@ -205,6 +205,10 @@ check('no rows: the document account', r.posted.LineItems[0].AccountCode, '429')
 
 // Xero shows this as a "Go to CYBills" button on the bill — back to the
 // document it was published from, with the original paper attached.
+// Xero's reply says what it MADE the bill, so the Paid status column can say it
+// straight away. Left to the webhook it showed a dash — which means "nothing has
+// been heard" — beside a bill that plainly was in Xero.
+check('the document records what Xero made of it', r.body.bill.xeroStatus, 'DRAFT');
 check('the bill links back to its document', /\/costs\/\d+\?org=org-1$/.test(String(r.posted.Url)), true);
 check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 'Projects', Option: 'ASTP 01' }]);
 

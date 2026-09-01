@@ -1325,11 +1325,23 @@ export async function postBillToXero(
     } };
   }
 
-  const updated = markBillPosted(workspace, bill.id, {
+  let updated = markBillPosted(workspace, bill.id, {
     xeroInvoiceId: String(invoice.InvoiceID ?? ''),
     xeroTenantId: organisation.tenantId,
     xeroTenantName: organisation.tenantName || organisation.name || '',
   });
+
+  // Xero's reply says what it MADE the bill — Draft, Awaiting approval,
+  // Awaiting payment — so the Paid status column can say it immediately. Left
+  // to the webhook, a bill published a moment ago showed a dash until somebody
+  // touched it in Xero, and a dash means "nothing has been heard", which read
+  // as the publish not having worked. The same two lines the update path has
+  // used all along, and through the same writer: xeroStatus is Xero's answer
+  // mirrored, never a field a person may edit.
+  const posted = paymentFromInvoice(invoice);
+  if (posted.xeroStatus && markBillXeroPayment(workspace, bill.id, posted)) {
+    updated = getBillById(workspace, bill.id) ?? updated;
+  }
 
   // Send the original document up as an attachment, so the paper sits on the
   // bill in Xero rather than only here. Best-effort: the bill stays posted even
@@ -1894,12 +1906,21 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     });
   }
 
-  const updated = saveClaimXero(org, claim.id, {
+  let updated = saveClaimXero(org, claim.id, {
     xeroInvoiceId: String(invoice.InvoiceID ?? ''),
     xeroTenantName: target.tenantName || target.name,
     xeroPostedAt: today,
     archived: true, // a published claim leaves the inbox for the Archive tab
   });
+
+  // What Xero made of it, recorded now rather than waited for. A claim posted
+  // as Approved is Awaiting payment from the moment it lands, which is the
+  // claimant's actual question; a dash beside a claim that plainly IS in Xero
+  // reads as the publish having failed.
+  const posted = paymentFromInvoice(invoice);
+  if (posted.xeroStatus && markClaimXeroPayment(claim.id, posted)) {
+    updated = getClaimForXero(org, claim.id) ?? updated;
+  }
 
   // Best-effort: attach the expense-claim PDF (rendered client-side and passed as
   // base64) to the new Xero bill, so the supporting document rides along — the

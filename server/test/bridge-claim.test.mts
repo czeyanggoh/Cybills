@@ -165,6 +165,11 @@ check('…the unit price being the whole figure', r.posted.LineItems.map((l: any
 check('…referenced by name, date and Claim ID', /^August claim 20-Aug-2026 \d+$/.test(String(r.posted.InvoiceNumber)), true);
 check('…in the field a bill actually shows', r.posted.Reference ?? null, null);
 check('the claim records the parent as where it went', r.body.claim.xeroTenantName, 'Red Alpha (SG)');
+// Xero's reply says what it MADE the bill, so the Paid status column can say it
+// straight away. Left to the webhook it showed a dash — which means "nothing has
+// been heard" — beside a claim that plainly was in Xero, and read as the publish
+// having failed.
+check('…and what Xero made of it', r.body.claim.xeroStatus, 'DRAFT');
 
 // 3) Publishing the same claim again is still refused.
 r = await publish('org-ste', 'claim-1');
