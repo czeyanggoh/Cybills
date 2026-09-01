@@ -167,6 +167,34 @@ export function ownsHere({ email, name } = {}) {
   return Boolean(row && !row.external);
 }
 
+// Where a bill EMAILED in files as this person's: their own inbound address,
+// or — for the general account — the entity's own, its short form standing
+// alone. '' when the directory has no address for them, which is the general
+// account of an entity that has set no short form, and anybody the directory
+// does not know at all.
+//
+// Looked up by NAME because that is what the owner pickers are made of; the
+// address comes from the server (peopleForOrg), never assembled here, so the
+// address a page offers is the one that actually files under that person.
+export function addressForOwnerName(name) {
+  const key = (v) => String(v || '').trim().toLowerCase();
+  const want = key(name);
+  if (!want) return '';
+  const row = directory.find((p) => key(p.name) === want || key(p.email) === want);
+  return row?.address || '';
+}
+
+export function useOwnerAddress(name) {
+  const [address, setAddress] = useState(() => addressForOwnerName(name));
+  useEffect(() => {
+    const sync = () => setAddress(addressForOwnerName(name));
+    sync();
+    window.addEventListener(USERS_EVENT, sync);
+    return () => window.removeEventListener(USERS_EVENT, sync);
+  }, [name]);
+  return address;
+}
+
 // The entity's general account — the owner an unassigned document falls to.
 // Created with the organisation, so it's there unless the directory hasn't
 // loaded yet.

@@ -676,13 +676,24 @@ export function ensureGeneralUser(ws: string, orgId: string): User | null {
 export function peopleForOrg(
   ws: string,
   org: string
-): Array<{ email: string; name: string; external: boolean; general: boolean; deactivated: boolean }> {
+): Array<{ email: string; name: string; address: string; external: boolean; general: boolean; deactivated: boolean }> {
+  const memo = new Map<string, string>();
+  // The general account has no handle and never gets one — nothing is sent to
+  // its stored address, which is an internal identity. What it DOES answer to is
+  // the entity's short form standing alone, which files exactly here.
+  const suffix = org ? normaliseSuffix(getOrganisation(ws, org)?.emailSuffix || '') : '';
   return ensure(ws)
     .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org))))
     .filter((u) => Boolean(u.email))
     .map((u) => ({
       email: u.email,
       name: u.name || u.email,
+      // Where a bill EMAILED in lands as this person's, so a page offering them
+      // as a document's owner can offer the address that does the same thing
+      // without the upload. '' where there is none to print — an entity that has
+      // set no short form has no address of its own, and inventing one from its
+      // name would send paperwork nowhere.
+      address: u.general ? (suffix ? `${suffix}@${INBOUND_MAIL_DOMAIN}` : '') : addressForUser(u, memo),
       // What each entry IS here, because the two questions differ: a colleague
       // from outside is never OFFERED as a document's owner (that's the general
       // account's job), but their name must still resolve on the documents they

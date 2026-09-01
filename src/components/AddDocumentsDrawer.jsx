@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { X, FileText, Loader2, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react';
+import { X, FileText, Loader2, CheckCircle2, AlertTriangle, ExternalLink, Copy, Check } from 'lucide-react';
 import DextImportModal from '@/components/DextImportModal';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -31,7 +31,7 @@ import {
 } from '@/lib/supplierRules';
 import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome, zeroTaxRate } from '@/lib/extractionSettings';
 import { foldTaxIntoCost } from '@/lib/lineItems';
-import { useUsers, useOwnerNames, useGeneralOwnerName, ownsHere } from '@/lib/userStore';
+import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
@@ -40,6 +40,35 @@ import { PDFDocument } from 'pdf-lib';
 const TABS = ['Costs', 'Sales', 'Supplier statements'];
 
 let uid = 0;
+
+// An inbound address is a thing to paste into a mail client or a forwarding
+// rule, never to retype — so it is printed with the button that does that, the
+// way Dext prints it. A browser that refuses the clipboard leaves the address on
+// screen to select by hand, which is why the failure is silent.
+function CopyAddress({ value }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <code className="rounded-md border bg-muted/40 px-2.5 py-1.5 text-sm">{value}</code>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(value);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          } catch {
+            /* nothing to say: the address is on screen either way */
+          }
+        }}
+        className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors hover:bg-muted"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+}
 
 // Split a multi-page PDF into one single-page PDF per page, client-side via
 // pdf-lib (already bundled). Non-PDFs and single-page PDFs pass through
@@ -360,6 +389,10 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
   // their own name on a client's document, which is what the general account is
   // there to absorb.
   const ownerNames = useOwnerNames();
+  // Emailing a bill in and uploading it here are the same act by two roads, and
+  // the road you take must not change who it files under — so the address shown
+  // is the SELECTED owner's, and it moves when the picker does.
+  const ownerAddress = useOwnerAddress(owner);
   const ownerOptions = Array.from(
     new Set([
       // The claimant, always — a claim can be made out to somebody the owner
@@ -897,6 +930,37 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
               </div>
             )}
           </div>
+
+          {/* The other way in, said where the choice is actually being made. It
+              is here rather than only in Business settings because the person
+              with the receipt is standing at this panel, and because the address
+              depends on the owner picked above — a fact no settings page can
+              show. Not on a claim: a bill emailed in lands in the Costs inbox,
+              not on the claim this drawer is pointed at. */}
+          {tab === 'Costs' && !claim && (
+            <div>
+              <h3 className="mb-1 text-sm font-medium">Extract by Email</h3>
+              {ownerAddress ? (
+                <>
+                  <p className="mb-3 text-sm text-muted-foreground">
+                    Email or forward bills to this address and they arrive as{' '}
+                    <span className="text-foreground">{owner}</span>&rsquo;s documents, read the same way. Change the
+                    owner above and the address changes with it.
+                  </p>
+                  <CopyAddress value={ownerAddress} />
+                </>
+              ) : owner && owner === generalName ? (
+                <p className="text-sm text-muted-foreground">
+                  This entity has no address of its own yet — Business settings → Extraction → Extract by Email gives
+                  it one, and bills sent there file under {generalName}.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No email address for {owner || 'this owner'} yet. Users → Manage → Edit user details sets one.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
       {/* Outside the panel so it is not clipped by the drawer's own scroll box,

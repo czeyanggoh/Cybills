@@ -556,6 +556,21 @@ attention landed there only if somebody had already noticed it and pressed the
 button. Rows in To review wear a **"Needs: …"** badge naming the missing fields
 (`missingFields`), except where "Nothing read" already says it better.
 
+**And a document being READ says so, on every road.** An emailed or WhatsApp'd
+document was created as `new` and read in the background, so for the ten to
+thirty seconds the read takes it sat in the inbox wearing "New" and a **Nothing
+read** badge — which is precisely what a document the reader could get nothing
+off looks like once it has FINISHED. The reviewer had no way to tell "wait" from
+"this one needs typing in". Both filing paths now create it as `processing`, and
+`autoRead` clears that in a `finally` (`settleProcessing` in `store.ts`) so no
+exit can skip it — a reader that is switched off returns at the first line, and a
+document saying "Processing" for ever is worse than one never marked at all.
+Deliberately NOT folded into `reconcileReadiness`, which must not demote
+`processing`: the browser sets that status on its own upload and clears it
+itself, so a PATCH arriving mid-read would end the state early.
+`sweepStuckProcessing` stays the backstop for the process dying mid-read, not
+for an ordinary return. Covered by `npm test` in `server/`.
+
 Two rules run through all of them:
 
 - **A tick is what makes a field part of a bulk edit.** An untouched field is not
@@ -756,6 +771,18 @@ The practice's own entity has one too, and it is the case that needed saying out
 loud: a colleague opening CYBM is redirected off the Users page to Colleagues,
 so the General row is there in the data and unreachable in the UI. Colleagues
 prints the address instead.
+
+**The address is offered where the OWNER is picked**, not only in Business
+settings. Emailing a bill in and uploading it are the same act by two roads, and
+which road it takes must not change who it files under — so the Add-documents
+drawer prints an **Extract by Email** block under the uploader carrying the
+SELECTED owner's own address, and it moves when the picker does. That is a fact
+no settings page can show, since the address depends on the owner. It comes from
+the server (`address` on `GET /api/users/directory`, `addressForOwnerName` in
+`userStore.js`), never assembled in the browser, so the address a page offers is
+the one that actually files under that person; the general account's is the
+entity's own. Not on a claim: a bill emailed in lands in the Costs inbox, not on
+the claim the drawer is pointed at.
 
 The rules live in `server/src/users.ts` next to the rows they read
 (`normaliseSuffix`, `localPart`, `addressForUser`), mirrored for the browser in
