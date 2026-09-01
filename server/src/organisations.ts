@@ -54,9 +54,30 @@ export type Organisation = {
   // bare `martin@cybills.sg` they have always had. See normaliseSuffix in
   // users.ts, which owns the rules — an address is a fact about the roster.
   emailSuffix?: string;
+  // Xero's own short code for this tenant ("!ab123"), which is the ONLY thing
+  // that makes a link into a deep link: go.xero.com resolves a bare
+  // /AccountsPayable/Edit.aspx against whichever organisation that browser last
+  // had open, so a link to one client's bill lands in another client's ledger
+  // saying the invoice cannot be found. Filled the first time this entity's Xero
+  // is talked to (shortCodeFor in xero.ts) rather than asked for, because it is
+  // fixed for the life of the tenant.
+  shortCode?: string;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
 };
+
+// Record Xero's short code for an entity. Written once, from the first Xero
+// call that happens to be made for it — a no-op when it is already right, so
+// the caller can fire it without checking.
+export function setOrganisationShortCode(ws: string, id: string, code: string): void {
+  const value = String(code || '').trim();
+  if (!value) return;
+  const organisations = load();
+  const organisation = organisations.find((o) => o.orgId === ws && o.id === id);
+  if (!organisation || organisation.shortCode === value) return;
+  organisation.shortCode = value;
+  persist(organisations);
+}
 
 export const isStandalone = (o: Organisation | null | undefined): boolean =>
   o?.kind === 'standalone';
@@ -204,6 +225,12 @@ organisationsRouter.get('/', (req, res) => {
       ...o,
       isPrimary: o.id === primary,
       parentName: o.parentOrgId ? all.find((p) => p.id === o.parentOrgId)?.name || '' : '',
+      // The short code of the entity whose Xero actually RECEIVES this one's
+      // postings — its own, or its parent's for a bridge entity, whose claims
+      // become bills in the parent's ledger. Resolved here rather than in the
+      // browser because a bridge entity's parent is very often one the caller
+      // cannot open, so its row is not in the list they were served.
+      xeroShortCode: publishTargetFor(ws, o)?.shortCode || '',
     }));
   res.json({ organisations });
 });

@@ -45,7 +45,13 @@ import {
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
-import { useOrganisations, getActiveOrganisationId, switchOrganisationTo, publishClaimToXero } from '@/lib/organisations';
+import {
+  useOrganisations,
+  getActiveOrganisationId,
+  switchOrganisationTo,
+  publishClaimToXero,
+  useXeroShortCode,
+} from '@/lib/organisations';
 import { useExtractionSettings, publishStatusLabel } from '@/lib/extractionSettings';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { CATEGORIES } from '@/data/categories';
@@ -211,6 +217,9 @@ export default function ExpenseClaimDetail() {
   // → Publishing). Approved by default: a claim reaching here has already been
   // approved HERE, and a bill has to be approved in Xero before it can be paid.
   const publishStatus = useExtractionSettings().publishStatus || 'AUTHORISED';
+  // A bridge entity's claim becomes a bill in the PARENT's ledger, so the code
+  // that opens it is resolved server-side rather than read off this entity.
+  const xeroShortCode = useXeroShortCode();
   const publishXero = async () => {
     setPayNote('');
     const active = getActiveOrganisationId();
@@ -317,7 +326,7 @@ export default function ExpenseClaimDetail() {
   // waiting to read, and the arrow says it opens elsewhere.
   const publishBtn = claim.xeroInvoiceId ? (
     <a
-      href={xeroBillUrl(claim.xeroInvoiceId)}
+      href={xeroBillUrl(claim.xeroInvoiceId, xeroShortCode)}
       target="_blank"
       rel="noreferrer"
       className={cn(

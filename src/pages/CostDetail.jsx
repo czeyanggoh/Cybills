@@ -51,6 +51,7 @@ import { useSalesEnabled } from '@/lib/workspaceSettings';
 import { useAutoSave } from '@/lib/useAutoSave';
 import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
 import { xeroBillUrl } from '@/lib/autoPublish';
+import { useXeroShortCode } from '@/lib/organisations';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { formatDate } from '@/lib/date';
 import SaveStatus from '@/components/SaveStatus';
@@ -247,6 +248,10 @@ export default function CostDetail() {
   // A bridge entity has no Xero to ask, so without the second half its Supplier
   // field offered nothing at all and every name had to be typed.
   const bridge = useBridgeEntity();
+  // Names the entity in the "Open in Xero" link, so a bill opens in the ledger
+  // it was actually posted to rather than in whichever organisation the
+  // browser last had open there.
+  const xeroShortCode = useXeroShortCode();
   const supplierOptions = mergeSupplierNames(useXeroSuppliers(), [
     ...useDocumentSuppliers(),
     ...addedSuppliers(),
@@ -1480,7 +1485,7 @@ export default function CostDetail() {
         {doc.persisted &&
           (doc.xeroInvoiceId ? (
             <a
-              href={xeroBillUrl(doc.xeroInvoiceId)}
+              href={xeroBillUrl(doc.xeroInvoiceId, xeroShortCode)}
               target="_blank"
               rel="noreferrer"
               title={`Open this bill in ${doc.xeroTenantName || 'Xero'}`}

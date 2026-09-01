@@ -1,6 +1,13 @@
 import { Router } from 'express';
 import { env, googleEnabled, xeroEnabled } from './env.js';
-import { dataScopeForOrg, getOrganisation, isStandalone, publishTargetFor } from './organisations.js';
+import {
+  dataScopeForOrg,
+  getOrganisation,
+  isStandalone,
+  publishTargetFor,
+  setOrganisationShortCode,
+  type Organisation,
+} from './organisations.js';
 import { workspaceId } from './workspace.js';
 import { readSetting } from './settings.js';
 import { referenceFor, dateFor } from './claimRef.js';
@@ -228,7 +235,34 @@ function requireOrganisation(req: any, res: any) {
     });
     return null;
   }
+  void ensureShortCode(workspaceId(req), organisation);
   return organisation;
+}
+
+// Xero's short code for a tenant ("!ab123"), recorded on the entity so a link to
+// one of its bills can be a DEEP link. Without it go.xero.com resolves
+// /AccountsPayable/Edit.aspx against whichever organisation that browser last
+// had open — so "Open in Xero" on a Red Alpha bill, clicked by somebody whose
+// Xero is sitting in CYBM, reports an invoice that cannot be found.
+//
+// Filled from the first per-entity Xero call that happens to be made rather than
+// asked for on its own: the Costs page reads a chart and a rate list constantly,
+// and the code is fixed for the life of the tenant. Cached per process AND
+// persisted, so it costs one relay call per tenant per restart at most, and a
+// tenant whose fetch fails is not retried until the next one — an entity linked
+// before this existed gets one the next time anybody opens its books.
+const shortCodes = new Set<string>();
+async function ensureShortCode(ws: string, organisation: Organisation): Promise<void> {
+  if (!organisation.tenantId || organisation.shortCode) return;
+  if (shortCodes.has(organisation.tenantId)) return;
+  shortCodes.add(organisation.tenantId);
+  try {
+    const result = await relay('Organisation', { tenantId: organisation.tenantId });
+    const code = result.ok ? String(result.data?.Organisations?.[0]?.ShortCode ?? '').trim() : '';
+    if (code) setOrganisationShortCode(ws, organisation.id, code);
+  } catch (err) {
+    console.error('[xero] could not read the organisation short code', err);
+  }
 }
 
 // Publishing is the one thing a standalone entity CAN do with Xero, because it
@@ -250,6 +284,12 @@ function requirePublishTarget(req: any, res: any) {
     });
     return null;
   }
+  // The TARGET's code, not this entity's: a bridge entity has no Xero of its
+  // own, so the bill its claim becomes lives in the parent's ledger and that is
+  // the organisation a deep link has to open. requireOrganisation never reaches
+  // a bridge entity (it refuses one outright), so without this the parent's code
+  // would only ever be filled by somebody opening the parent's own books.
+  void ensureShortCode(ws, target);
   return { organisation, target };
 }
 

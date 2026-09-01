@@ -28,6 +28,7 @@ import {
   fetchXeroTaxRates,
   publishBillToXero,
   useBridgeEntity,
+  useXeroShortCode,
 } from '@/lib/organisations';
 import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName, publishStatusLabel } from '@/lib/extractionSettings';
@@ -729,7 +730,7 @@ export default function Costs() {
       interactive: true,
       cell: (d) =>
         d.xeroInvoiceId ? (
-          <a href={xeroBillUrl(d.xeroInvoiceId)} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
+          <a href={xeroBillUrl(d.xeroInvoiceId, xeroShortCode)} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
             View
           </a>
         ) : (
@@ -754,6 +755,9 @@ export default function Costs() {
   // document page's dialog opens on, so pressing Publish in two places cannot
   // put two different statuses in one ledger.
   const publishStatus = settings.publishStatus || 'AUTHORISED';
+  // Names the entity in every "View in Xero" link on the page, so one client's
+  // bill can't open in another client's ledger.
+  const xeroShortCode = useXeroShortCode();
   // Business settings → Extraction can hide the To review + Ready tabs (their
   // docs still live under Inbox with their status tag).
   const visibleTabs = TABS.filter(

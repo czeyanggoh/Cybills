@@ -129,6 +129,18 @@ export function useActiveOrganisation() {
   return organisations.find((o) => o.id === active) ?? null;
 }
 
+// Xero's short code for the ledger the open entity's bills actually land in —
+// its own, or its PARENT's for a bridge entity, whose claims become bills over
+// there. Resolved server-side (see the organisations list route) because that
+// parent is very often an entity the caller cannot open, so its row is not in
+// the list they were served.
+//
+// '' until the first Xero call for that tenant has recorded it, which makes a
+// link fall back to its bare form rather than break.
+export function useXeroShortCode() {
+  return useActiveOrganisation()?.xeroShortCode || '';
+}
+
 // Whether the entity currently open is the practice's own — the primary one
 // (CY Business Management), which owns the account's legacy data and is where a
 // DEPLOYMENT-wide setting belongs.

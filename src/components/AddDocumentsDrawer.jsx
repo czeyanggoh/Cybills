@@ -19,7 +19,7 @@ import {
   VISION_MEDIA,
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
-import { getExtractionAccounts, useVisibleTaxRates, useManagedTaxRates } from '@/lib/organisations';
+import { getExtractionAccounts, useVisibleTaxRates, useManagedTaxRates, useXeroShortCode } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { autoPublishAfterRead, xeroBillUrl } from '@/lib/autoPublish';
 import { getCustomerRule } from '@/lib/customerRules';
@@ -205,6 +205,9 @@ function Dropzone({ hint = '6MB for images and PDFs, 100MB for ZIPs', onFiles, a
 
 // One row per uploaded file, reflecting its place in the pipeline.
 function UploadItem({ item, onForce, onSkip }) {
+  // Named so the link opens the bill in THIS entity's Xero rather than in
+  // whichever organisation the browser last had open there.
+  const xeroShortCode = useXeroShortCode();
   const readerName = useReaderName();
   const { status, file, error, duplicate, xeroInvoiceId, attachError } = item;
   return (
@@ -230,7 +233,7 @@ function UploadItem({ item, onForce, onSkip }) {
         )}
         {status === 'added' && xeroInvoiceId && (
           <a
-            href={xeroBillUrl(xeroInvoiceId)}
+            href={xeroBillUrl(xeroInvoiceId, xeroShortCode)}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-xs font-medium text-foreground underline underline-offset-2"

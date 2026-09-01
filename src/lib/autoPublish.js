@@ -18,9 +18,27 @@ import {
 // the edit a click further away. Xero falls back to the read-only view by
 // itself where the bill can no longer be edited (paid, voided), so the worse
 // case of asking for Edit is the page View would have given anyway.
-export function xeroBillUrl(invoiceId) {
+// `shortCode` is what makes it a DEEP link, and without it the link is a trap:
+// go.xero.com resolves a bare /AccountsPayable/Edit.aspx against whichever
+// organisation that browser last had open, so following a Red Alpha bill from
+// here with Xero sitting in CYBM lands in CYBM's ledger reporting an invoice
+// that cannot be found — which reads as the bill having gone missing rather than
+// as the wrong company being open. Xero's own deep-link form names the tenant
+// and then redirects, switching organisation on the way.
+//
+// The redirect target is left UNENCODED, which is how Xero documents it: the
+// path and its InvoiceID ride on the outer query string and Xero reassembles
+// them. Only the id itself is escaped. Falls back to the bare link where no
+// short code has been recorded yet — one call to that tenant fills it, and a
+// link that usually works beats no link at all.
+export function xeroBillUrl(invoiceId, shortCode = '') {
   const id = String(invoiceId || '').trim();
-  return id ? `https://go.xero.com/AccountsPayable/Edit.aspx?InvoiceID=${encodeURIComponent(id)}` : '';
+  if (!id) return '';
+  const target = `/AccountsPayable/Edit.aspx?InvoiceID=${encodeURIComponent(id)}`;
+  const code = String(shortCode || '').trim();
+  return code
+    ? `https://go.xero.com/organisationlogin/default.aspx?shortcode=${encodeURIComponent(code)}&redirecturl=${target}`
+    : `https://go.xero.com${target}`;
 }
 
 // Post a freshly-read bill to Xero as Awaiting Approval (Xero's SUBMITTED), so
