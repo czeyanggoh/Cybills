@@ -79,13 +79,19 @@ export function usePractice() {
   });
 }
 
-// The practice team. Refetches when any roster mutation fires, since colleagues
-// are edited through the shared user endpoints (invite, password, deactivate).
-export function useColleagues() {
+// The practice roster, as the server sends it: the team, and the practice's own
+// general account beside them. Refetches when any roster mutation fires, since
+// colleagues are edited through the shared user endpoints (invite, password,
+// deactivate).
+//
+// One query, read two ways — the two hooks below pick their half out of it, so a
+// page wanting both asks the server once.
+function useRoster(select) {
   const qc = useQueryClient();
   const query = useQuery({
     queryKey: ['colleagues'],
-    queryFn: async () => (await getJson('/api/practice/colleagues')).colleagues ?? [],
+    queryFn: () => getJson('/api/practice/colleagues'),
+    select,
     retry: false,
   });
   useEffect(() => {
@@ -94,6 +100,19 @@ export function useColleagues() {
     return () => window.removeEventListener(USERS_EVENT, reload);
   }, [qc]);
   return query;
+}
+
+// The practice team.
+export function useColleagues() {
+  return useRoster((body) => body.colleagues ?? []);
+}
+
+// The practice's own general account — the row that owns the paperwork nobody
+// claimed here, carrying the address it answers to. Null where no entity is
+// linked yet. It is not a colleague, which is why it is its own hook: nothing
+// that lists the team should have to remember to filter it out.
+export function useGeneralAccount() {
+  return useRoster((body) => body.general ?? null);
 }
 
 // Every connected client, with the colleagues on it and its AI API spend —

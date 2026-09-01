@@ -6,14 +6,14 @@ import ClientAccessModal from '@/components/ClientAccessModal';
 import EditUserModal from '@/components/EditUserModal';
 import {
   useColleagues,
+  useGeneralAccount,
   usePractice,
   addColleagues,
   clientAccessLabel,
 } from '@/lib/practiceStore';
 import { setUserActive, removeUser, setUserPassword, inviteUser, updateUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
-import { useOrganisations } from '@/lib/organisations';
-import { entityAddress } from '@/lib/inboundAddress';
+import GeneralAccountModal from '@/components/GeneralAccountModal';
 
 // Whether this colleague runs the practice's own business (the roster, client
 // access) — the "Manage practice's business" column.
@@ -136,8 +136,10 @@ export default function Colleagues() {
   const [addOpen, setAddOpen] = useState(false);
   const [edit, setEdit] = useState(null); // { colleague, mode }
   const [access, setAccess] = useState(null); // colleague
+  const [generalOpen, setGeneralOpen] = useState(false);
   const [toast, setToast] = useState('');
   const { data: colleagues = [], isLoading, error } = useColleagues();
+  const { data: general } = useGeneralAccount();
   const { data: practice } = usePractice();
   const practiceName = practice?.practice?.name || 'the practice';
 
@@ -186,12 +188,13 @@ export default function Colleagues() {
   const managerOptions = colleagues.filter((m) => !m.deactivated && !m.pending);
   const deactivatedCount = colleagues.filter((c) => c.deactivated).length;
   // The practice's own entity has a General account like every other — the row
-  // that owns paperwork nobody claimed — but this page is where its roster
-  // lives, and this page lists colleagues only. So the one thing anybody needs
-  // from that row, its address, is said here; the row itself is on the Users
-  // page, which a colleague opening the practice entity is redirected away from.
-  const { data: organisations = [] } = useOrganisations();
-  const practiceAddress = entityAddress(organisations.find((o) => o.isPrimary)?.emailSuffix);
+  // that owns the paperwork nobody claimed. Every client's is managed on its
+  // Users page; this one's could be managed nowhere at all, because a colleague
+  // opening the practice entity is redirected off Users to here. So it is a row
+  // on this page, at the foot of the team it isn't part of: its address is
+  // printed where a person's would be, and its own dialog is the two ways
+  // paperwork reaches it — the address, and a WhatsApp group of its own.
+  const showGeneral = Boolean(general) && tab === 'active';
 
   return (
     <AppShell>
@@ -209,12 +212,6 @@ export default function Colleagues() {
           <p className="mt-1 text-xs text-muted-foreground">
             The practice&apos;s own list — it doesn&apos;t change with the client entity you have open.
           </p>
-          {practiceAddress ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Bills emailed to <code>{practiceAddress}</code> — {practiceName}&apos;s own address, rather than any one
-              colleague&apos;s — file under its <strong>General</strong> account.
-            </p>
-          ) : null}
         </div>
         <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
           Add a colleague
@@ -316,9 +313,39 @@ export default function Colleagues() {
                 </td>
               </tr>
             ))}
+            {/* Not a colleague, and it does not pretend to be one: no practice
+                role, no client access, nobody to make somebody's approver. What
+                it has is the two columns that mean anything for it — the address
+                it answers to, and the way to open its group. */}
+            {showGeneral && (
+              <tr className="border-b bg-muted/20 last:border-0">
+                <td className="whitespace-nowrap px-3 py-3 font-medium">
+                  {general.name}
+                  <span
+                    className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                    title={`Created with ${practiceName} itself. Documents added without naming an owner belong to this account.`}
+                  >
+                    Default owner
+                  </span>
+                </td>
+                <td className="px-3 py-3 text-muted-foreground">{general.address || '—'}</td>
+                <td className="px-3 py-3 text-muted-foreground" colSpan={5}>
+                  Owns the paperwork nobody claimed — it can&apos;t sign in or approve anything.
+                </td>
+                <td className="px-3 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setGeneralOpen(true)}
+                    className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted"
+                  >
+                    Manage
+                  </button>
+                </td>
+              </tr>
+            )}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={8} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {error
                     ? 'Only the practice team can see colleagues.'
                     : isLoading
@@ -347,6 +374,13 @@ export default function Colleagues() {
         colleague={access}
         onClose={() => setAccess(null)}
         onSaved={(label) => showToast(`Client access updated for ${access?.name} — ${label}.`)}
+      />
+      <GeneralAccountModal
+        key={general ? `general-${general.id}-${generalOpen}` : 'general-closed'}
+        open={generalOpen && Boolean(general)}
+        account={general}
+        entityName={practiceName}
+        onClose={() => setGeneralOpen(false)}
       />
       <EditUserModal
         key={edit ? `${edit.colleague.id}-${edit.mode}` : 'closed'}

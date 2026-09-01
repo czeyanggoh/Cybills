@@ -349,8 +349,18 @@ export function localPart(handle: string, suffix: string): string {
 }
 
 // This person's inbound address, exactly as it should be printed for them.
+//
+// The GENERAL account is the one row that is not a person, and it never gets a
+// handle: its stored address is an internal identity nothing is ever sent to.
+// What it DOES answer to is the entity's short form standing ALONE —
+// `cybm@cybills.sg`, the company's own address rather than anybody's — so that
+// is its address, here as everywhere else. '' until the entity has set one: an
+// entity with no short form has no address of its own, and inventing one from
+// its name would send paperwork nowhere.
 export function addressForUser(u: User, memo?: Map<string, string>): string {
-  const local = localPart(u.emailHandle || '', suffixForUser(u, memo));
+  const suffix = suffixForUser(u, memo);
+  if (u.general) return suffix ? `${suffix}@${INBOUND_MAIL_DOMAIN}` : '';
+  const local = localPart(u.emailHandle || '', suffix);
   return local ? `${local}@${INBOUND_MAIL_DOMAIN}` : '';
 }
 
@@ -365,8 +375,13 @@ export function addressForUser(u: User, memo?: Map<string, string>): string {
 //
 // A person with no address yet falls back to their name: it is the group's real
 // name in WhatsApp, and an empty one is not a thing to put in front of anybody.
+//
+// The general account falls back to the ENTITY's name instead of its own, which
+// is "General" in every entity there is: a group sitting in a client's chat list
+// called "CYBills - General" says nothing about whose books it feeds, and two of
+// them would be indistinguishable.
 export function groupSubjectFor(u: User, orgName: string): string {
-  return addressForUser(u) || `CYBills - ${u.name || orgName}`;
+  return addressForUser(u) || `CYBills - ${(u.general ? orgName : u.name) || orgName}`;
 }
 
 // A friendly, unique-per-workspace handle base from the person's name (falling
@@ -678,10 +693,6 @@ export function peopleForOrg(
   org: string
 ): Array<{ email: string; name: string; address: string; external: boolean; general: boolean; deactivated: boolean }> {
   const memo = new Map<string, string>();
-  // The general account has no handle and never gets one — nothing is sent to
-  // its stored address, which is an internal identity. What it DOES answer to is
-  // the entity's short form standing alone, which files exactly here.
-  const suffix = org ? normaliseSuffix(getOrganisation(ws, org)?.emailSuffix || '') : '';
   return ensure(ws)
     .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org))))
     .filter((u) => Boolean(u.email))
@@ -690,10 +701,10 @@ export function peopleForOrg(
       name: u.name || u.email,
       // Where a bill EMAILED in lands as this person's, so a page offering them
       // as a document's owner can offer the address that does the same thing
-      // without the upload. '' where there is none to print — an entity that has
-      // set no short form has no address of its own, and inventing one from its
-      // name would send paperwork nowhere.
-      address: u.general ? (suffix ? `${suffix}@${INBOUND_MAIL_DOMAIN}` : '') : addressForUser(u, memo),
+      // without the upload. The general account's is the ENTITY's own address,
+      // which `addressForUser` knows — one definition, so the address offered
+      // here and the one a group is named after cannot drift.
+      address: addressForUser(u, memo),
       // What each entry IS here, because the two questions differ: a colleague
       // from outside is never OFFERED as a document's owner (that's the general
       // account's job), but their name must still resolve on the documents they

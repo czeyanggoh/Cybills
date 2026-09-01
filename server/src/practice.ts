@@ -12,6 +12,8 @@ import {
   memberForSession,
   canManagePractice,
   canAccessOrg,
+  generalUserFor,
+  addressForUser,
   PRACTICE_ROLES,
   type User,
 } from './users.js';
@@ -69,12 +71,22 @@ practiceRouter.get('/', (req, res) => {
 
 // GET /api/practice/colleagues — the practice team, A→Z, with the client
 // entities each one can open resolved to names for the roster table.
+//
+// And the practice's own GENERAL account beside them. Every entity has one — the
+// row that owns the paperwork nobody claimed — and every entity's is managed on
+// its Users page, except this one: a colleague opening the practice entity is
+// redirected off Users to here, so the practice's own General row existed in the
+// data and was reachable from nowhere at all. It is returned on its own key
+// rather than in the list, because it is not a colleague: no practice role, no
+// client access, nobody to invite or make somebody's approver.
 practiceRouter.get('/colleagues', (req, res) => {
   const { ok } = practiceMember(req, res);
   if (!ok) return;
   const ws = workspaceId(req);
   const organisations = listOrganisations(ws);
   const nameFor = new Map(organisations.map((o) => [o.id, o.name]));
+  const home = primaryOrgId();
+  const generalRow = generalUserFor(ws, home);
   const list = colleagues(ws)
     .map((u) => ({
       ...publicUser(u),
@@ -85,7 +97,23 @@ practiceRouter.get('/colleagues', (req, res) => {
         .map((id) => ({ id, name: nameFor.get(id) as string })),
     }))
     .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
-  res.json({ practice: { name: env.PRACTICE_NAME }, colleagues: list, roles: PRACTICE_ROLES });
+  res.json({
+    practice: { name: env.PRACTICE_NAME },
+    colleagues: list,
+    // The address it answers to travels with it: `publicUser` reports the row as
+    // having no email (its stored one is an internal identity), and what people
+    // actually send bills to is the entity's short form standing alone. Null
+    // before any organisation is linked, and the address is '' until a short
+    // form is set.
+    general: generalRow
+      ? {
+          ...publicUser(generalRow),
+          address: addressForUser(generalRow),
+          organisationName: nameFor.get(home) || env.PRACTICE_NAME,
+        }
+      : null,
+    roles: PRACTICE_ROLES,
+  });
 });
 
 // POST /api/practice/colleagues — add one or many colleagues. Body: a colleague

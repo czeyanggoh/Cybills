@@ -836,8 +836,15 @@ address carries the dot that separates the two halves.
 
 The practice's own entity has one too, and it is the case that needed saying out
 loud: a colleague opening CYBM is redirected off the Users page to Colleagues,
-so the General row is there in the data and unreachable in the UI. Colleagues
-prints the address instead.
+so the General row sat in the data reachable from nowhere at all. It is a ROW on
+**Colleagues** now, at the foot of the team it is not part of — carried on its
+own key of `GET /api/practice/colleagues` rather than in the list, since it holds
+no practice role, no client access and nobody it could be made the approver of —
+printing the address it answers to, and opening a dialog of its own
+(`GeneralAccountModal`): that address, and a WhatsApp group. Deliberately NOT the
+Edit-details dialog a person gets, which has nothing here that applies — no first
+and last name to correct, no login to grant, no handle to choose, the address
+being the entity's and set once in Business settings.
 
 **The address is offered where the OWNER is picked**, not only in Business
 settings. Emailing a bill in and uploading it are the same act by two roads, and
@@ -888,6 +895,27 @@ waiting on Save — unstored, everything they send lands on the entity's General
 account. A colleague's group is filed under their own organisation, else the
 practice's primary one: the same rule an emailed document of theirs follows. The
 entity-wide group under Connections is the same thing with more people in it.
+
+**An entity's own paperwork can have a group too.** The GENERAL account collects
+exactly as a person does — `/channels/user` takes its row like any other — and
+what arrives is filed under it whoever sent it, because ownership is settled by
+the GROUP (`ownerFor`) rather than from the sender field. Which is the difference
+from the entity-wide group under Connections: that one has several people in it,
+so there the sender's number is matched against the roster and the general
+account is the fallback; this one is the entity's own address in group form, the
+counterpart of a bill emailed to `cybm@cybills.sg`.
+
+Its name is that same address — the short form standing ALONE, which is what
+`addressForUser` answers for a general row, so the address the owner picker
+offers, the one Colleagues prints and the one the group is called cannot be
+three different strings. Where the entity has set no short form it falls back to
+the ENTITY's name rather than the row's: every entity's general account is called
+"General", so "CYBills - General" would name the row instead of whose books it
+feeds, and two of them would be indistinguishable in a chat list. A short form
+set later renames its group along with everybody's — the sweep in
+`organisations.ts` had been narrowed to the handle-bearing rows its clash checks
+are about, which left out the one row whose address IS that short form. Covered
+by `npm test` in `server/` (`test/general-account.test.mts`).
 
 **The number and the group are two different things.** Saving a new number
 changes who a bill is MATCHED to from then on; it cannot change the group,

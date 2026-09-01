@@ -411,13 +411,21 @@ organisationsRouter.put('/:id/email-suffix', (req, res) => {
   organisation.emailSuffix = suffix;
   persist(organisations);
   // Every WhatsApp collection group in the entity is NAMED after the address of
-  // the person it was opened for, so the addresses moving means those names are
+  // the row it was opened for, so the addresses moving means those names are
   // now last week's. Renamed here, from the same `groupSubjectFor` they were
   // opened with, and read AFTER the write so each one gets the address it has
   // now. Not awaited: this is CYWS's business and a page is waiting on ours.
+  //
+  // Its own list rather than `mine`, which is narrowed to the handle-bearing
+  // rows the clash checks above are about: the GENERAL account has no handle and
+  // never gets one, yet the short form standing alone is precisely its address —
+  // so a group opened for it is the one whose name this change moves most.
+  const collecting = ensureUsers(ws).filter(
+    (u) => !u.removed && orgIdForUser(u) === organisation.id && (u.emailHandle || u.general)
+  );
   void renameChannelsForUsers(
     ws,
-    mine.map((u) => ({ id: u.id, subject: groupSubjectFor(u, organisation.name) }))
+    collecting.map((u) => ({ id: u.id, subject: groupSubjectFor(u, organisation.name) }))
   );
   // How many people it just repointed, so the page can say so rather than
   // leaving somebody to open a roster and count.
