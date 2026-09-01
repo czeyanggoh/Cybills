@@ -1066,7 +1066,7 @@ export default function Costs() {
         setSelected(new Set());
         await reload();
         setMergeNote(
-          `Merged ${res.count} documents into one. The originals moved to Archive (Merged) — open the new document to Unmerge.`
+          `Merged ${res.count} documents into one — the combined document is the cost now, and the originals have left the list. Open it and press Unmerge to put them back.`
         );
       } else {
         setMergeNote('Could not merge those documents. Please try again.');

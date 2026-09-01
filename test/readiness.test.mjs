@@ -17,6 +17,7 @@ import {
   inCostsAll,
   isPublished,
   isSetAside,
+  isMergedAway,
   isUnpublished,
   READY_FIELDS,
 } from '../src/lib/readiness.js';
@@ -183,7 +184,10 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
   check('a claimed document is a real cost that happened, so it is in it',
     inCostsAll(onClaim), true);
   check('a merged-away one has ceased to be a document — the combined one is the cost',
-    inCostsAll(merged), false);
+    [inCostsAll(merged), isMergedAway(merged)], [false, true]);
+  check('and nothing else is merged away — the row survives for Unmerge, it is only hidden',
+    [isMergedAway(published), isMergedAway(setAside), isMergedAway(ready)],
+    [false, false, false]);
   check('the set-aside pile is left out too — it has its own tab',
     inCostsAll(setAside), false);
   check('so All costs is the whole book bar those two',

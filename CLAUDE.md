@@ -331,7 +331,11 @@ road — and a MERGED-away one is not: merging says two uploads were always one
 document, so the combined document is the cost and its sources have ceased to be
 documents. Left in, they sat beside the document that replaced them, three rows
 at 31.99 for one 31.99 spent, which is the very miscount a supplier filter is
-being used to find. The toggle's counts are per tab (what each scope reaches
+being used to find. They are gone from EVERY list, Archived included —
+`rowsFor` drops them whatever key it is asked for — but the rows survive in the
+book, because a merge is a judgement about two uploads and a wrong one has to be
+undoable: the row is what the combined document points at (`mergedFrom`) and
+what Unmerge puts back. Hidden, not deleted. The toggle's counts are per tab (what each scope reaches
 HERE, never the whole book), and the tab badge follows the list the way
 Archived's always has.
 

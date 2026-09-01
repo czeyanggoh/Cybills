@@ -3,7 +3,7 @@ import { useClaims, unpublishedClaimsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { USERS_EVENT, canManageBusiness } from '@/lib/userStore';
-import { isInInbox, isComplete, isReady, needsReview, inCostsTab, inCostsList, inCostsAll, isUnpublished } from '@/lib/readiness';
+import { isInInbox, isComplete, isReady, needsReview, inCostsTab, inCostsList, inCostsAll, isMergedAway, isUnpublished } from '@/lib/readiness';
 
 // Readiness and its opposite live in one pure module, so `npm test` can hold
 // them to account and the pages can't drift from the server's own rule.
@@ -23,10 +23,19 @@ export {
   inCostsAll,
   isPublished,
   isSetAside,
+  isMergedAway,
   isUnpublished,
 } from '@/lib/readiness';
 
+// A merged-away upload is not a document any more, so no list here shows one —
+// not the Costs tab, not Archived, not the counts beside either. The row is
+// still in the book: it is what the combined document points at and what
+// Unmerge restores, which is why this hides rather than deletes.
 export function rowsFor(docs, key) {
+  return listFor(docs, key).filter((d) => !isMergedAway(d));
+}
+
+function listFor(docs, key) {
   if (key === 'processing') return docs.filter((d) => d.status === 'processing');
   // Dext-style: the Inbox is the master list of everything not archived, and
   // Ready and To review are FILTERS within it rather than separate buckets — a

@@ -83,6 +83,13 @@ export const inCostsTab = (d) => isProcessing(d) || isInInbox(d);
 // the Costs tab's; the only thing left out is a document still being read.
 export const inCostsList = (d) => isInInbox(d) || isArchived(d);
 
+// Merged away into another document. The combined document is the cost now, so
+// this is not a document any more and no list shows it — but the ROW survives,
+// because it is what the combined document points at (`mergedFrom`) and what
+// Unmerge puts back. Hidden rather than deleted: a merge is a judgement about
+// two uploads, and a wrong one has to be undoable.
+export const isMergedAway = (d) => d?.status === 'merged';
+
 // Xero has this document's money. It is what takes a document out of the
 // working list, and — because publishing is what archives one — it is also what
 // tells a published archived document apart from one somebody archived by hand.
@@ -110,7 +117,7 @@ export const isSetAside = (d) => d?.status === 'archived' && !isPublished(d);
 // find. They are still reachable as the merged document's own provenance
 // (`mergedFrom`, and Unmerge restores them).
 export const inCostsAll = (d) =>
-  inCostsTab(d) || (isArchived(d) && !isSetAside(d) && d?.status !== 'merged');
+  inCostsTab(d) || (isArchived(d) && !isSetAside(d) && !isMergedAway(d));
 
 // The working half of that list: nothing has carried this document's figures
 // into Xero yet, so somebody still has to.
