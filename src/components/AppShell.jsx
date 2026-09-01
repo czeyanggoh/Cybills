@@ -506,8 +506,9 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
         {/* Everything right of the primary sidebar */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Global top bar: workspace switcher + help + user */}
-          {/* White like the rail and the cards — the chrome is a surface, and
-              only the working canvas between them carries the page tint. */}
+          {/* bg-card like the rail: the chrome is a surface. Invisible in light
+              mode (card and ground are both white), it keeps the chrome lifted
+              off the ink in dark. */}
           <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-card px-3 md:gap-3 md:px-6">
             {/* Phone (<md): the sidebar is hidden, so this is the only way to
                 navigate. Opens a full nav drawer. */}

@@ -4,21 +4,22 @@
 
 /* The palette is the CYWorkspace mark's own, read out of its logo.svg rather
    than invented: #2563EB (the tile's top stop) is --primary, #1E3A8A its mid
-   stop, #0B1224 its ink — which is --foreground here and the ground in dark
-   mode — and #38BDF8, the sky Y, is the focus ring. The neutrals are biased
-   toward the same blue so they read as chosen rather than inherited; what
-   shipped before was stock shadcn, pure grey with a near-black --primary.
+   stop, and #0B1224 its ink — --foreground here and the ground in dark mode.
+   The neutrals are biased toward the same blue so they read as chosen rather
+   than inherited; what shipped before was stock shadcn, pure grey with a
+   near-black --primary.
 
-   The ground is tinted and --card stays pure white, so a table, a modal or a
-   drawer separates from the page by being lighter than it rather than by a
-   heavier border.
+   Surfaces stay white, deliberately. A tinted ground with white cards was
+   tried and retired — the whole page read as a blue wash — so colour appears
+   only where the app is already asking for a decision: the primary button,
+   the active nav pill, the selected row, the focus ring.
 
    Semantic colour is deliberately NOT here: Ready, To review, warnings and
    Delete are amber/emerald/red literals in the components, and status colour
    is not brand colour. --destructive is left as it was for the same reason. */
 @layer base {
   :root {
-    --background: 220 82% 98%;
+    --background: 0 0% 100%;
     --foreground: 223 53% 9%;
     --card: 0 0% 100%;
     --card-foreground: 223 53% 9%;
@@ -26,22 +27,21 @@
     --popover-foreground: 223 53% 9%;
     --primary: 221 83% 53%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 219 58% 95%;
+    --secondary: 218 40% 96%;
     --secondary-foreground: 224 64% 33%;
-    --muted: 219 58% 95%;
-    --muted-foreground: 220 22% 45%;
-    --accent: 213 88% 94%;
-    --accent-foreground: 215 86% 33%;
+    --muted: 218 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 219 91% 96%;
+    --accent-foreground: 224 64% 33%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
-    --border: 218 52% 91%;
-    --input: 218 52% 91%;
-    /* Sky-600, not the mark's sky-400. Every focus ring in the app is
-       `focus-visible:ring-2 ring-ring` at full opacity, and #38BDF8 on a white
-       card is 2.1:1 — under the 3:1 a focus indicator has to meet. This is the
-       same hue two stops down, at 4.1:1. Dark mode below keeps the mark's own
-       value, which has all the contrast it needs against the ink. */
-    --ring: 200 98% 39%;
+    --border: 216 33% 91%;
+    --input: 216 33% 91%;
+    /* The brand blue itself, 5.2:1 on white — comfortably past the 3:1 a
+       focus indicator needs, so the ring and the primary button are one
+       colour. Dark mode below uses the mark's sky instead, which is what
+       carries against the ink. */
+    --ring: 221 83% 53%;
     --chart-1: 12 76% 61%;
     --chart-2: 173 58% 39%;
     --chart-3: 197 37% 24%;
@@ -56,24 +56,24 @@
      with. --primary lifts to blue-500, which has the contrast blue-600 loses
      against a dark ground. */
   .dark {
-    --background: 222 56% 7%;
+    --background: 223 53% 9%;
     --foreground: 220 48% 94%;
-    --card: 221 52% 13%;
+    --card: 223 49% 13%;
     --card-foreground: 220 48% 94%;
-    --popover: 221 52% 13%;
+    --popover: 223 49% 13%;
     --popover-foreground: 220 48% 94%;
     --primary: 217 91% 60%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 222 45% 17%;
+    --secondary: 225 43% 16%;
     --secondary-foreground: 220 48% 94%;
-    --muted: 222 45% 17%;
+    --muted: 225 43% 16%;
     --muted-foreground: 215 20% 65%;
-    --accent: 211 64% 20%;
+    --accent: 224 45% 19%;
     --accent-foreground: 199 96% 74%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 221 41% 19%;
-    --input: 221 41% 19%;
+    --border: 223 41% 20%;
+    --input: 223 41% 20%;
     --ring: 198 93% 60%;
     --chart-1: 220 70% 50%;
     --chart-2: 160 60% 45%;
@@ -96,11 +96,10 @@
 @layer components {
   /* A bordered, rounded div IS this app's card — every table wrapper, settings
      section and empty-state box is written `rounded-lg border` with no
-     background of its own. That was invisible while the ground was pure white;
-     on the tinted ground it meant the tint showed through every surface and the
-     whole page read as one flat wash. The palette's figure/ground — white
-     cards LIFTING off a tinted page — is stated here once, for the idiom,
-     rather than pasted into sixty class strings.
+     background of its own, and this states the surface once, for the idiom,
+     rather than pasting it into sixty class strings. In light mode it is
+     invisible (card and ground are both white); in dark mode it is what keeps
+     a card the lighter surface on the ink instead of a hole in it.
 
      Components layer, so any element that declares its own bg- utility still
      wins: the WhatsApp canvas keeps its wallpaper, a bg-muted placeholder stays
