@@ -93,6 +93,26 @@
   }
 }
 
+@layer components {
+  /* A bordered, rounded div IS this app's card — every table wrapper, settings
+     section and empty-state box is written `rounded-lg border` with no
+     background of its own. That was invisible while the ground was pure white;
+     on the tinted ground it meant the tint showed through every surface and the
+     whole page read as one flat wash. The palette's figure/ground — white
+     cards LIFTING off a tinted page — is stated here once, for the idiom,
+     rather than pasted into sixty class strings.
+
+     Components layer, so any element that declares its own bg- utility still
+     wins: the WhatsApp canvas keeps its wallpaper, a bg-muted placeholder stays
+     muted, and floating surfaces (modals, dropdowns) keep the bg-background
+     they name explicitly. Scoped to div so buttons and inputs are untouched. */
+  div.rounded-lg.border,
+  div.rounded-xl.border,
+  div.overflow-x-auto.rounded-md.border {
+    background-color: hsl(var(--card));
+  }
+}
+
 @layer base {
   /* A screen-reader-only label is absolutely positioned at its static spot. In
      a table that scrolls sideways that spot is a thousand pixels out, and

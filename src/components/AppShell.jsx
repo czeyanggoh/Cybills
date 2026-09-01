@@ -414,7 +414,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
           onMouseEnter={() => setRailHover(true)}
           onMouseLeave={() => setRailHover(false)}
           className={cn(
-            'relative hidden shrink-0 flex-col border-r bg-background transition-[width] duration-150',
+            'relative hidden shrink-0 flex-col border-r bg-card transition-[width] duration-150',
             tight && !settingsCol ? 'w-14' : 'w-56',
             hideSidebar && !subnav ? 'hidden' : 'md:flex',
           )}
@@ -425,7 +425,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
           <div
             className={cn(
               'flex h-full flex-col',
-              flyout && 'absolute inset-y-0 left-0 z-40 w-56 border-r bg-background shadow-xl',
+              flyout && 'absolute inset-y-0 left-0 z-40 w-56 border-r bg-card shadow-xl',
             )}
           >
             <div className={cn('flex h-14 shrink-0 items-center gap-2 border-b', showLabels ? 'px-4' : 'justify-center px-0')}>
@@ -506,7 +506,9 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
         {/* Everything right of the primary sidebar */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Global top bar: workspace switcher + help + user */}
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 md:gap-3 md:px-6">
+          {/* White like the rail and the cards — the chrome is a surface, and
+              only the working canvas between them carries the page tint. */}
+          <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-card px-3 md:gap-3 md:px-6">
             {/* Phone (<md): the sidebar is hidden, so this is the only way to
                 navigate. Opens a full nav drawer. */}
             <button
@@ -609,7 +611,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
       {mobileNav && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div className="absolute inset-0 bg-foreground/30" onClick={() => setMobileNav(false)} aria-hidden="true" />
-          <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col overflow-y-auto bg-background shadow-xl">
+          <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col overflow-y-auto bg-card shadow-xl">
             <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
               <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
                 <Receipt className="h-5 w-5" /> CYBills
