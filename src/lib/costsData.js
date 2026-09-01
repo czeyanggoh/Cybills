@@ -3,7 +3,7 @@ import { useClaims, unpublishedClaimsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { USERS_EVENT, canManageBusiness } from '@/lib/userStore';
-import { isInInbox, isComplete, isReady, needsReview, inCostsTab, inCostsList, isUnpublished } from '@/lib/readiness';
+import { isInInbox, isComplete, isReady, needsReview, inCostsTab, inCostsList, inCostsAll, isUnpublished } from '@/lib/readiness';
 
 // Readiness and its opposite live in one pure module, so `npm test` can hold
 // them to account and the pages can't drift from the server's own rule.
@@ -20,6 +20,9 @@ export {
   isProcessing,
   inCostsTab,
   inCostsList,
+  inCostsAll,
+  isPublished,
+  isSetAside,
   isUnpublished,
 } from '@/lib/readiness';
 
@@ -44,6 +47,11 @@ export function rowsFor(docs, key) {
   // three tabs beside it added together. An archived document is settled and
   // has its own tab, so it is not also a row here.
   if (key === 'costs') return docs.filter(inCostsTab);
+  // The Costs tab's far scope: the whole book with the published, claimed and
+  // merged documents left in, so a supplier can be filtered across the history
+  // rather than only across the work outstanding. The set-aside pile (Archived)
+  // stays out — see inCostsAll.
+  if (key === 'costs-all') return docs.filter(inCostsAll);
   if (key === 'all') return docs.filter(inCostsList);
   if (key === 'unpublished') return docs.filter(isUnpublished);
   return [];
@@ -127,6 +135,7 @@ export function useCostsCounts() {
     inbox: rowsFor(allDocs, 'inbox').length,
     // What the Costs tab shows, so the subnav badge matches the list it opens.
     costs: rowsFor(allDocs, 'costs').length,
+    costsAll: rowsFor(allDocs, 'costs-all').length,
     unpublished: rowsFor(allDocs, 'unpublished').length,
     all: rowsFor(allDocs, 'all').length,
     review: rowsFor(allDocs, 'review').length,

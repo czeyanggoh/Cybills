@@ -14,6 +14,9 @@ import {
   isProcessing,
   inCostsTab,
   inCostsList,
+  inCostsAll,
+  isPublished,
+  isSetAside,
   isUnpublished,
   READY_FIELDS,
 } from '../src/lib/readiness.js';
@@ -141,6 +144,48 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
     all.filter(isProcessing).length + all.filter(needsReview).length + all.filter(isReady).length);
   check('an archived document is still reachable — through the Archived tab',
     [inCostsList(archivedNeverPublished), inCostsTab(archivedNeverPublished)], [true, false]);
+}
+
+// Archive is the pile somebody kept just in case — a duplicate invoice, a
+// screenshot of a bank screen. Publishing archives a document too, so the two
+// live under one status and are told apart by whether Xero has the money.
+{
+  const setAside = doc({ status: 'archived' });
+  const published = doc({ status: 'archived', xeroInvoiceId: 'inv-1' });
+  const inbox = doc({ status: 'ready' });
+
+  check('a published document is published wherever it sits',
+    [isPublished(published), isPublished(inbox)], [true, false]);
+  check('and archived-by-hand is the set-aside pile, published is not',
+    [isSetAside(setAside), isSetAside(published)], [true, false]);
+  check('nor is a claimed or merged document set aside — neither was archived by hand',
+    [isSetAside(doc({ status: 'expenseclaim' })), isSetAside(doc({ status: 'merged' }))],
+    [false, false]);
+}
+
+// The Costs tab's two scopes. Unpublished is the work outstanding; All costs
+// adds the history a supplier is filtered across to find the month that never
+// arrived — and leaves out only the set-aside pile, which has its own tab.
+{
+  const stillReading = doc({ status: 'processing' });
+  const review = doc({ status: 'new', category: 'Uncategorised' });
+  const ready = doc({ status: 'ready' });
+  const setAside = doc({ status: 'archived' });
+  const published = doc({ status: 'archived', xeroInvoiceId: 'inv-1' });
+  const onClaim = doc({ status: 'expenseclaim' });
+  const merged = doc({ status: 'merged' });
+  const all = [stillReading, review, ready, setAside, published, onClaim, merged];
+
+  check('All costs holds everything the working list holds',
+    all.filter(inCostsTab).every(inCostsAll), true);
+  check('and the published history the working list does not',
+    [inCostsAll(published), inCostsTab(published)], [true, false]);
+  check('a claimed or merged document is a real cost that happened, so it is in it',
+    [inCostsAll(onClaim), inCostsAll(merged)], [true, true]);
+  check('the set-aside pile is the one thing left out — it has its own tab',
+    inCostsAll(setAside), false);
+  check('so All costs is the whole book bar that pile',
+    [all.filter(inCostsAll).length, all.length], [6, 7]);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');

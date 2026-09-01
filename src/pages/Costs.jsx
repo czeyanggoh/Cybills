@@ -93,17 +93,16 @@ const TABS = [
   { key: 'archived', label: 'Archived', counted: true },
 ];
 
-// Inbox and Archive were two tabs over one pile of paper, and the split was
-// never where the work is: a document archived by hand and never published sat
-// behind the tab labelled "done". So they are one list, and this is the control
-// that says how much of it to look at.
+// How much of the book a tab is looking at. "Unpublished" is the work still to
+// do and is the default, because it is the question the page exists to answer;
+// "All costs" is the same list with the finished documents left in.
 //
-// "Unpublished" is the working half — every document whose figures have not
-// reached Xero, wherever it sits — and it is the default, because it is the
-// question the page exists to answer. "All costs" is the same list with the
-// finished work left in. Publishing is what archives a document, so an inbox
-// document is always unpublished: the toggle only ever changes this tab, which
-// is why it is drawn only here.
+// It is drawn on Costs and on Archived, and it means the same thing on both
+// while reaching different documents, because the two tabs hold different
+// piles. On COSTS it is what answers a question the working list cannot:
+// "which month of this subscription is missing?" — filter the supplier across
+// All costs and the published invoices are there to count. On ARCHIVED it is
+// how far back the set-aside pile reaches.
 const SCOPES = [
   { key: 'unpublished', label: 'Unpublished' },
   { key: 'all', label: 'All costs' },
@@ -793,11 +792,11 @@ export default function Costs() {
   // Every tab's rows, so its badge count ties to what the tab actually shows.
   const rowsByTab = {
     processing: rowsFor(allDocs, 'processing'),
-    // The working list: processing, to review and ready together, which is
-    // what the three tabs after it count. Unscoped, because there is nothing
-    // for a scope to say here — publishing archives a document, so everything
-    // in this list is unpublished by definition.
-    all: rowsFor(allDocs, 'costs'),
+    // The working list under Unpublished: processing, to review and ready
+    // together, which is what the three tabs after it count. Under All costs it
+    // is the whole book bar the set-aside pile, which is a different question
+    // being asked of the same tab — history rather than what is outstanding.
+    all: rowsFor(allDocs, scope === 'all' ? 'costs-all' : 'costs'),
     review: rowsFor(allDocs, 'review'),
     ready: rowsFor(allDocs, 'ready'),
     // The settled work, seen through whichever scope is selected: under
@@ -805,12 +804,18 @@ export default function Costs() {
     // under All costs it also holds the published, the claimed and the merged.
     archived: rowsFor(allDocs, scope).filter(isArchived),
   };
-  // Both sides of the toggle, counting the tab it is actually drawn on — the
-  // archived rows each scope reaches, not the whole book.
-  const scopeCounts = {
-    unpublished: rowsFor(allDocs, 'unpublished').filter(isArchived).length,
-    all: rowsFor(allDocs, 'all').filter(isArchived).length,
-  };
+  // Both sides of the toggle, counting the tab it is actually drawn on: what
+  // each scope reaches HERE, never the whole book. A count that answered for
+  // the other tab would be a number the list beside it contradicts.
+  const scopeCounts = tab === 'archived'
+    ? {
+        unpublished: rowsFor(allDocs, 'unpublished').filter(isArchived).length,
+        all: rowsFor(allDocs, 'all').filter(isArchived).length,
+      }
+    : {
+        unpublished: rowsFor(allDocs, 'costs').length,
+        all: rowsFor(allDocs, 'costs-all').length,
+      };
   const allRows = rowsByTab[tab] ?? [];
   // Everything flagged, whichever tab it's in — a flag raised on an inbox
   // document often points at one that's since been archived, and reviewing it
@@ -1355,10 +1360,12 @@ export default function Costs() {
         </span>
       </div>
 
-      {/* How far back the Archived tab reaches. It is drawn only there: every
-          other tab is working documents, and a working document is always
-          unpublished, so the toggle would have nothing to say. */}
-      {tab === 'archived' && (
+      {/* Drawn on the two tabs that hold more than one kind of document: Costs,
+          where All costs adds the published history a supplier is filtered
+          across, and Archived, where it says how far back the set-aside pile
+          reaches. Not on Processing / To review / Ready — each of those is one
+          kind of working document, so the toggle would have nothing to say. */}
+      {(tab === 'all' || tab === 'archived') && (
         <ScopeToggle
           scope={scope}
           setScope={(next) => {

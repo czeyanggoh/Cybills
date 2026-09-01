@@ -309,13 +309,27 @@ what made the first badge say 15 while the three beside it added up to 8 —
 Processing 0, To review 0, Ready 8, and seven settled documents sitting in the
 list wearing a badge that said they were finished. So Costs is now exactly
 `inCostsTab` = processing + inbox, the sum of the three tabs after it, and
-**Archived** is where the settled work is looked at. The Unpublished / All costs
-toggle moved with them: it is drawn only on Archived now, because everything in
-the working list is unpublished by definition (publishing is what archives a
-document), so there it had nothing to say. On Archived it still does the thing it
-exists for — Unpublished is the documents archived by hand and never published,
-All costs adds the published, the claimed and the merged. `inCostsList` stays as
-that wider reach.
+**Archived** is where the settled work is looked at. `inCostsList` stays as the
+wider reach behind Archived's own scope — Unpublished is the documents archived
+by hand and never published, All costs adds the published, the claimed and the
+merged.
+
+**Archive is the pile kept just in case, and history is a SCOPE of the working
+tab.** A duplicate invoice, a screenshot of a bank screen, the document that is
+not a cost but is worth not throwing away — that is what somebody archives by
+hand, and it is not the same pile as the documents Xero already has. So the
+Unpublished / All costs toggle is drawn on **Costs** as well, and on that tab
+All costs is the whole book bar the set-aside pile: the published invoices are
+in the list, which is the only way the page can answer "which month of this
+subscription is missing?" — toggle, filter the supplier, count the months.
+`inCostsAll` (`readiness.js`, pure, `npm test`) is that reach, and the two are
+told apart by the money rather than by a new status, since publishing archives a
+document too: `isPublished` is `xeroInvoiceId`, `isSetAside` is an archived
+document without one, so nothing had to be migrated. Claimed and merged
+documents are IN All costs — both are real costs that happened, they simply
+reached the ledger by another road. The toggle's counts are per tab (what each
+scope reaches HERE, never the whole book), and the tab badge follows the list
+the way Archived's always has.
 
 **Archive and Unarchive share the row, and each moves only its own half.**
 Written across the whole selection they would each do real damage: Archive would

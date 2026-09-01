@@ -83,6 +83,26 @@ export const inCostsTab = (d) => isProcessing(d) || isInInbox(d);
 // the Costs tab's; the only thing left out is a document still being read.
 export const inCostsList = (d) => isInInbox(d) || isArchived(d);
 
+// Xero has this document's money. It is what takes a document out of the
+// working list, and — because publishing is what archives one — it is also what
+// tells a published archived document apart from one somebody archived by hand.
+export const isPublished = (d) => Boolean(d?.xeroInvoiceId);
+
+// A document somebody deliberately kept just in case: the duplicate invoice
+// that turned up twice, the screenshot of a bank screen, the thing that is not
+// a cost but is worth not throwing away. Archived BY HAND — it never reached
+// Xero, so it is not history, and it is the one thing the Costs tab's "All
+// costs" leaves out, because a filtered supplier search is looking for the real
+// documents and the set-aside pile is where the near-misses were put.
+export const isSetAside = (d) => d?.status === 'archived' && !isPublished(d);
+
+// The Costs tab's "All costs": the whole book minus that pile. It exists for a
+// question the working list cannot answer — "which month of this subscription
+// is missing?" — which needs the PUBLISHED documents in the list to filter a
+// supplier across. A claimed or merged-away document is in it too: both are
+// real costs that happened, they simply reached the ledger by another road.
+export const inCostsAll = (d) => inCostsTab(d) || (isArchived(d) && !isSetAside(d));
+
 // The working half of that list: nothing has carried this document's figures
 // into Xero yet, so somebody still has to.
 //
