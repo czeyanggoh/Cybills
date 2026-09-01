@@ -465,7 +465,7 @@ export default function SalesDetail() {
                 {extracting
                   ? 'Reading document…'
                   : visionEnabled
-                    ? `Upload document & auto-fill with ${readerName}`
+                    ? 'Upload document & auto-fill'
                     : 'Upload document'}
               </button>
               {aiError && (

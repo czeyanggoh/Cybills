@@ -22,7 +22,6 @@ import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
-import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
 import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
 import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
@@ -227,7 +226,6 @@ export default function CostDetail() {
   const { id: routeId } = useParams();
   const navigate = useNavigate();
   const { visionEnabled, user } = useAuth();
-  const readerName = useReaderName();
   const teamUsers = useUsers();
   // Who this document can belong to: the client's own people plus its general
   // account, which is where anything a practice colleague added sits. A
@@ -1647,11 +1645,15 @@ export default function CostDetail() {
                 className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
               >
                 {visionEnabled ? <Sparkles className="h-4 w-4" strokeWidth={2} /> : <Upload className="h-4 w-4" strokeWidth={2} />}
+                {/* The button says what it DOES, not who does it. Which engine
+                    reads the document is a setting somebody made in Business
+                    settings once, and naming it here made the control read as a
+                    choice between two of them. */}
                 {extracting
                   ? 'Reading receipt…'
                   : imageUrl
-                    ? visionEnabled ? `Re-read with ${readerName}` : 'Replace file'
-                    : visionEnabled ? `Upload receipt & auto-fill with ${readerName}` : 'Upload receipt'}
+                    ? visionEnabled ? 'Re-read receipt' : 'Replace file'
+                    : visionEnabled ? 'Upload receipt & auto-fill' : 'Upload receipt'}
               </button>
               {imageUrl && visionEnabled ? (
                 <p className="mb-2 text-center text-xs text-muted-foreground">
