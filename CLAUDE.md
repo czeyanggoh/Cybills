@@ -325,11 +325,15 @@ subscription is missing?" — toggle, filter the supplier, count the months.
 `inCostsAll` (`readiness.js`, pure, `npm test`) is that reach, and the two are
 told apart by the money rather than by a new status, since publishing archives a
 document too: `isPublished` is `xeroInvoiceId`, `isSetAside` is an archived
-document without one, so nothing had to be migrated. Claimed and merged
-documents are IN All costs — both are real costs that happened, they simply
-reached the ledger by another road. The toggle's counts are per tab (what each
-scope reaches HERE, never the whole book), and the tab badge follows the list
-the way Archived's always has.
+document without one, so nothing had to be migrated. A CLAIMED document is in
+All costs — a real cost that happened, which only reached the ledger by another
+road — and a MERGED-away one is not: merging says two uploads were always one
+document, so the combined document is the cost and its sources have ceased to be
+documents. Left in, they sat beside the document that replaced them, three rows
+at 31.99 for one 31.99 spent, which is the very miscount a supplier filter is
+being used to find. The toggle's counts are per tab (what each scope reaches
+HERE, never the whole book), and the tab badge follows the list the way
+Archived's always has.
 
 **Archive and Unarchive share the row, and each moves only its own half.**
 Written across the whole selection they would each do real damage: Archive would

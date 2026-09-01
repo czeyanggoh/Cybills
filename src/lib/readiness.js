@@ -99,9 +99,18 @@ export const isSetAside = (d) => d?.status === 'archived' && !isPublished(d);
 // The Costs tab's "All costs": the whole book minus that pile. It exists for a
 // question the working list cannot answer — "which month of this subscription
 // is missing?" — which needs the PUBLISHED documents in the list to filter a
-// supplier across. A claimed or merged-away document is in it too: both are
-// real costs that happened, they simply reached the ledger by another road.
-export const inCostsAll = (d) => inCostsTab(d) || (isArchived(d) && !isSetAside(d));
+// supplier across. A CLAIMED document is in it, because it is a real cost that
+// happened and only reached the ledger by another road.
+//
+// A MERGED-away one is not, and that is the difference between them: merging
+// says these two uploads were always one document, so the combined document is
+// the cost and its sources have ceased to be one. Left in, a merged pair sat in
+// the list beside the document that replaced them — three rows at 31.99 for one
+// 31.99 spent, which is exactly the miscount a supplier filter is being used to
+// find. They are still reachable as the merged document's own provenance
+// (`mergedFrom`, and Unmerge restores them).
+export const inCostsAll = (d) =>
+  inCostsTab(d) || (isArchived(d) && !isSetAside(d) && d?.status !== 'merged');
 
 // The working half of that list: nothing has carried this document's figures
 // into Xero yet, so somebody still has to.

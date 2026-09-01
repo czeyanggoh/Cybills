@@ -180,12 +180,14 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
     all.filter(inCostsTab).every(inCostsAll), true);
   check('and the published history the working list does not',
     [inCostsAll(published), inCostsTab(published)], [true, false]);
-  check('a claimed or merged document is a real cost that happened, so it is in it',
-    [inCostsAll(onClaim), inCostsAll(merged)], [true, true]);
-  check('the set-aside pile is the one thing left out — it has its own tab',
+  check('a claimed document is a real cost that happened, so it is in it',
+    inCostsAll(onClaim), true);
+  check('a merged-away one has ceased to be a document — the combined one is the cost',
+    inCostsAll(merged), false);
+  check('the set-aside pile is left out too — it has its own tab',
     inCostsAll(setAside), false);
-  check('so All costs is the whole book bar that pile',
-    [all.filter(inCostsAll).length, all.length], [6, 7]);
+  check('so All costs is the whole book bar those two',
+    [all.filter(inCostsAll).length, all.length], [5, 7]);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
