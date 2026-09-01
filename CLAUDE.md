@@ -1245,7 +1245,24 @@ column on Expense claims and as the claim page's own chip, which reads
 "Reimbursed 25 Aug 2026" once Xero says so rather than staying on "Published to
 Xero" forever. A claim carries no tenant of its own — a bridge entity's claims
 post into the PARENT's Xero — so the sweep asks `publishTargetFor`, never the
-claim.
+claim; and where a bill's Payments are left out of a `?IDs=` answer the claim's
+invoice is fetched by name for its reference, exactly as a bill's is, out of the
+same read budget — "Salary run 25 Aug" is what tells a claimant which run paid
+them.
+
+**And it is the claim's own Paid answer, because a claim has no other.** The
+claim details panel carried a **Paid** toggle reading "No" and a Payment method
+select, neither wired to anything: a claim reimbursed a fortnight ago still said
+No, and a payment method typed there was thrown away on the next load. They are
+now **Paid status / Paid date / Payment reference**, read-only, the same trio
+the document page's "In Xero" block shows. A cost document legitimately has two
+answers — the reviewer's capture-time flag ("already settled when it was
+captured") and the ledger's — but a reimbursement owed to a person is never
+already settled when it is captured, so there is one answer and Xero has it.
+The claims list also refreshes itself on a slow timer while the tab is being
+looked at, as the Costs list does: nothing local fires when a webhook records a
+payment, so a claim page left open used to say "Awaiting payment" long after the
+money had gone.
 
 **The webhook can only hear the future**, so there is a backfill for the past:
 Business settings → Connections → **Payment status** → "Check now"

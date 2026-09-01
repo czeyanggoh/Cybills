@@ -1457,7 +1457,16 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
         missing += 1;
         continue;
       }
-      const payment = paymentFromInvoice(invoice);
+      let payment = paymentFromInvoice(invoice);
+      // The same second read a bill gets, for the same reason: a list response
+      // can leave Payments out, and "Salary run 25 Aug" is what tells a
+      // claimant which run reimbursed them. Shares the run's read budget so a
+      // book of bills and a book of claims can't each spend it.
+      if (payment.xeroStatus === 'PAID' && !payment.xeroPaymentRef && !Array.isArray(invoice.Payments) && extraReads < 200) {
+        extraReads += 1;
+        const full = await fetchXeroInvoice(claimTenant, String(claim.xeroInvoiceId));
+        if (full) payment = paymentFromInvoice(full);
+      }
       if (!payment.xeroStatus) continue;
       if (payment.xeroStatus === 'PAID') paid += 1;
       if (markClaimXeroPayment(claim.id, payment)) updated += 1;

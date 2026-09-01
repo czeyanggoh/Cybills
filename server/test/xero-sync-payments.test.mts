@@ -24,6 +24,32 @@ writeFileSync(
   })
 );
 
+// A published expense claim is a bill in Xero too, so the sweep asks about it
+// in the same run — the claimant is waiting on the same three fields, under the
+// question "have I been reimbursed".
+writeFileSync(
+  join(DATA_DIR, 'claims.json'),
+  JSON.stringify({
+    items: [
+      {
+        id: 'claim-1', workspaceId: 'cybm', orgId: 'cybm', claimFor: 'Astrid Yang', type: 'Expense claim',
+        name: 'August travel', claimDate: '2026-08-20', endDate: '2026-08-20', currency: 'SGD',
+        transactions: [], history: [], approvalStatus: 'approved', approver: '', approverEmail: '',
+        decidedBy: '', decidedAt: '', archived: true, deleted: false, createdBy: '', createdAt: new Date(0).toISOString(),
+        xeroInvoiceId: 'inv-claim-paid', xeroTenantName: 'CYBM', xeroPostedAt: new Date(0).toISOString(),
+      },
+      // Another entity's claim: it must not be swept by this one's run.
+      {
+        id: 'claim-2', workspaceId: 'cybm', orgId: 'org-red', claimFor: 'Martin Tan', type: 'Expense claim',
+        name: 'August travel', claimDate: '2026-08-20', endDate: '2026-08-20', currency: 'SGD',
+        transactions: [], history: [], approvalStatus: 'approved', approver: '', approverEmail: '',
+        decidedBy: '', decidedAt: '', archived: true, deleted: false, createdBy: '', createdAt: new Date(0).toISOString(),
+        xeroInvoiceId: 'inv-paid', xeroTenantName: 'Red Alpha', xeroPostedAt: new Date(0).toISOString(),
+      },
+    ],
+  })
+);
+
 // A stubbed Xero that answers ?IDs= the way the real one does, and records how
 // it was asked so the batching can be checked rather than assumed.
 const batchCalls: string[][] = [];
@@ -39,9 +65,13 @@ const INVOICES: Record<string, Record<string, unknown>> = {
   // Paid, but the list response left Payments out — the reference has to be
   // fetched by name or the column stays empty for exactly the rows it matters on.
   'inv-paid-noref': { InvoiceID: 'inv-paid-noref', Status: 'PAID', FullyPaidOnDate: '2026-08-01T00:00:00' },
+  // The claim's bill, reimbursed — and, like the bill above, listed without its
+  // Payments, so the reference has to be fetched by name.
+  'inv-claim-paid': { InvoiceID: 'inv-claim-paid', Status: 'PAID', FullyPaidOnDate: '2026-08-25T00:00:00' },
 };
 const FULL: Record<string, Record<string, unknown>> = {
   'inv-paid-noref': { ...INVOICES['inv-paid-noref'], Payments: [{ Reference: 'cheque 00219' }] },
+  'inv-claim-paid': { ...INVOICES['inv-claim-paid'], Payments: [{ Reference: 'Salary run 25 Aug' }] },
 };
 
 const stub = http.createServer((req, res) => {
@@ -68,6 +98,7 @@ process.env.CYWORKSPACE_RELAY_URL = 'http://127.0.0.1:4620';
 const express = (await import('express')).default;
 const { xeroRouter } = await import('../src/xero.ts');
 const { insertBill, markBillPosted, getBillById } = await import('../src/store.ts');
+const { claimsByXeroInvoiceId } = await import('../src/claims.ts');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -106,14 +137,14 @@ const sync = async (orgPath: string) => {
 
 const r = await sync('org-cybm');
 check('the sweep runs', r.status, 200);
-check('it checked only this book\'s published bills', r.body.checked, 4);
+check('it checked only this book\'s published bills', r.body.checked - r.body.claims, 4);
 check('...counting the one Xero no longer has', r.body.missing, 1);
 check('...and nothing is left over', r.body.remaining, 0);
 
 // One call for the lot, not one per bill — this is what makes it affordable
 // against 60 calls a minute.
-check('the published bills were asked for in ONE batch', batchCalls.length, 1);
-check('...naming every one of them', batchCalls[0]?.length, 4);
+check('the published bills were asked for in ONE batch', batchCalls[0]?.length, 4);
+check('...and the claims in one more', batchCalls.length, 2);
 
 check('a paid bill records its status', getBillById('cybm', paidBill.id)?.xeroStatus, 'PAID');
 check('...the day out of Xero\'s /Date(…)/ shape', getBillById('cybm', paidBill.id)?.xeroPaidDate, '2026-08-26');
@@ -122,7 +153,7 @@ check('an unpaid bill records that instead', getBillById('cybm', owedBill.id)?.x
 check('...with no invented paid date', getBillById('cybm', owedBill.id)?.xeroPaidDate, '');
 
 // The one case worth a second call, and only that case.
-check('a paid bill with no Payments in the batch is fetched by name', singleCalls, ['inv-paid-noref']);
+check('a paid bill with no Payments in the batch is fetched by name', singleCalls, ['inv-paid-noref', 'inv-claim-paid']);
 check('...which is where its reference comes from', getBillById('cybm', noRefBill.id)?.xeroPaymentRef, 'cheque 00219');
 check('...and its ISO paid date still reads', getBillById('cybm', noRefBill.id)?.xeroPaidDate, '2026-08-01');
 
@@ -132,16 +163,30 @@ check('an unpublished document is never asked about', getBillById('cybm', neverP
 check('another entity\'s book is untouched', getBillById('org-red', otherEntity.id)?.xeroStatus, undefined);
 check('the reviewer\'s Paid toggle is never written', getBillById('cybm', paidBill.id)?.paid, undefined);
 
+// --- the claim's own reimbursement -----------------------------------------
+// A claim reaches Xero as ONE bill payable to the claimant, so the ledger's
+// word on that bill is the ledger's word on the claim. Until it was swept the
+// only claims that could ever say "Reimbursed" were the ones whose webhook
+// happened to fire while somebody was listening.
+const claim = () => claimsByXeroInvoiceId('inv-claim-paid')[0];
+check('the claim was counted in the same run', r.body.claims, 1);
+check('...and included in what was checked', r.body.checked, 5);
+check('a reimbursed claim records the status', claim()?.xeroStatus, 'PAID');
+check('...the day it was reimbursed', claim()?.xeroPaidDate, '2026-08-25');
+check('...and the run that paid it', claim()?.xeroPaymentRef, 'Salary run 25 Aug');
+check('another entity\'s claim is untouched', claimsByXeroInvoiceId('inv-paid')[0]?.xeroStatus, undefined);
+
 // Re-running is the repair for a dropped delivery, so it must be safe: same
 // answers, nothing counted as newly updated.
 const again = await sync('org-cybm');
 check('a second run changes nothing', again.body.updated, 0);
-check('...but still reports what it checked', again.body.checked, 4);
+check('...but still reports what it checked', again.body.checked, 5);
 
-// Each entity sweeps its own book against its own tenant.
+// Each entity sweeps its own book against its own tenant — its claims with it.
 const red = await sync('org-red');
-check('the second entity sweeps its own book', red.body.checked, 1);
+check('the second entity sweeps its own book', red.body.checked, 2);
 check('...and its bill picks up the status', getBillById('org-red', otherEntity.id)?.xeroStatus, 'PAID');
+check('...as does the claim this entity published', claimsByXeroInvoiceId('inv-paid')[0]?.xeroStatus, 'PAID');
 
 server.close();
 stub.close();

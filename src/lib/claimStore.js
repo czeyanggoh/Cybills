@@ -299,6 +299,33 @@ export function useClaimsState() {
       window.removeEventListener(ORGANISATION_EVENT, reload);
     };
   }, [reload]);
+
+  // A claim changes without this browser doing anything: a colleague approves
+  // it, or Xero tells the server the reimbursement has been paid (its invoice
+  // webhook, or the payment sweep). Nothing local fires then — CLAIMS_EVENT is
+  // dispatched by whoever did the acting — so a claim page left open sat there
+  // saying "Awaiting payment" long after the money had left, and the only way
+  // to find out was to reload by hand.
+  //
+  // Slow on purpose, and only while the tab is actually being looked at: this
+  // is a background refresh of a page somebody is reading, not a live feed. The
+  // same arrangement the Costs list uses (useCostsDocs).
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === 'visible') reload();
+    };
+    const t = setInterval(tick, 30000);
+    // …and immediately on coming back to the tab, which is when somebody is
+    // most likely to be waiting on an answer from somewhere else.
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [reload]);
+
   return { claims, loaded };
 }
 

@@ -932,24 +932,50 @@ export default function ExpenseClaimDetail() {
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
                 />
               </DetailField>
-              <DetailField label="Paid">
-                <div className="flex items-center gap-2 pt-1">
-                  <span className="flex h-5 w-9 items-center rounded-full border p-0.5">
-                    <span className="h-4 w-4 rounded-full bg-muted-foreground/50" />
-                  </span>
-                  <span className="text-sm text-muted-foreground">No</span>
-                </div>
+              {/* Whether the claimant has been reimbursed — Xero's answer, the
+                  same three fields a cost document keeps (see the "In Xero"
+                  block on the document page). A claim is published as ONE bill
+                  payable to the claimant, so the ledger's word on that bill is
+                  the ledger's word on the claim.
+
+                  It used to be a Paid toggle reading "No" and a Payment method
+                  select, neither of which was wired to anything: a claim
+                  reimbursed a fortnight ago still said No, and a payment method
+                  typed in here was thrown away on the next load. A claim has no
+                  capture-time Paid flag of its own to keep — a cost document's
+                  toggle says "this was already settled when it was captured",
+                  which a reimbursement owed to a person never is — so there is
+                  one answer to show, and it comes from Xero. */}
+              <DetailField label="Paid status">
+                {!claim.xeroInvoiceId ? (
+                  <p className="pt-2 text-sm text-muted-foreground">
+                    Not published to Xero yet — a claim is reimbursed as the bill it posts as.
+                  </p>
+                ) : !claimPaid ? (
+                  <p className="pt-2 text-sm text-muted-foreground">
+                    Nothing heard yet — Xero reports this when the bill is approved, paid or changed.
+                  </p>
+                ) : (
+                  <p className="pt-2 text-sm">
+                    <span
+                      className={cn(
+                        claimPaid.tone === 'paid' && 'font-medium text-green-700',
+                        claimPaid.tone === 'void' && 'text-muted-foreground line-through',
+                        claimPaid.tone === 'awaiting' && 'text-muted-foreground'
+                      )}
+                    >
+                      {claimPaid.tone === 'paid' ? 'Reimbursed' : claimPaid.label}
+                    </span>
+                  </p>
+                )}
               </DetailField>
-              <DetailField label="Payment method">
-                <div className="relative">
-                  <select className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    <option value="">—</option>
-                    <option>Cash</option>
-                    <option>Company card</option>
-                    <option>Bank transfer</option>
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                </div>
+              <DetailField label="Paid date">
+                <p className="pt-2 text-sm text-muted-foreground">
+                  {claim.xeroPaidDate ? formatClaimDate(claim.xeroPaidDate) : '—'}
+                </p>
+              </DetailField>
+              <DetailField label="Payment reference">
+                <p className="pt-2 text-sm text-muted-foreground">{claim.xeroPaymentRef || '—'}</p>
               </DetailField>
               <DetailField label="Internal note">
                 <textarea rows={2} className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />

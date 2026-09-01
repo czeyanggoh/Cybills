@@ -1068,9 +1068,10 @@ function PaymentStatusCard({ organisation }) {
       <div className="rounded-lg border p-5">
         <p className="font-medium">Check published bills against Xero</p>
         <p className="mt-1 text-sm text-muted-foreground">
-          Xero tells CYBills when a published bill is paid, so the Paid status column keeps itself up to
-          date. It can only report what happens from now on, though — run this once to catch up the bills
-          that were already settled before it was switched on.
+          Xero tells CYBills when a published bill is paid, so the Paid status column — and an expense
+          claim&rsquo;s Reimbursement — keep themselves up to date. It can only report what happens from now
+          on, though: run this once to catch up the bills and claims that were already settled before it
+          was switched on.
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
@@ -1083,8 +1084,9 @@ function PaymentStatusCard({ organisation }) {
           </button>
           {result && (
             <p className="text-sm text-muted-foreground">
-              Checked {result.checked} published {result.checked === 1 ? 'bill' : 'bills'} — {result.updated} updated,{' '}
-              {result.paid} paid in Xero
+              Checked {result.checked} published {result.checked === 1 ? 'bill' : 'bills'}
+              {result.claims ? ` (${result.claims} of them expense ${result.claims === 1 ? 'claim' : 'claims'})` : ''} —{' '}
+              {result.updated} updated, {result.paid} paid in Xero
               {result.missing ? `, ${result.missing} no longer in Xero` : ''}
               {result.remaining ? `. ${result.remaining} still to check — run it again.` : '.'}
             </p>
