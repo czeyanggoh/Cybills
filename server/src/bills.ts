@@ -22,7 +22,7 @@ import {
   type Candidate,
 } from './store.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
-import { dataScopeForOrg, primaryOrgId } from './organisations.js';
+import { dataScopeForOrg, listOrganisations, primaryOrgId } from './organisations.js';
 import { workspaceId, WORKSPACE_ID } from './workspace.js';
 import { canAccessOrg, emailForPerson, memberForSession, orgScope, ownerForOrg } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
@@ -295,10 +295,16 @@ function contentDisposition(name: string): string {
 function canReadBill(req: Request, bill: { orgId?: string }): boolean {
   const me = memberForSession(req);
   if (!me) return true; // sessionless mock/dev, as everywhere else
+  return canAccessOrg(me, entityIdForBill(bill));
+}
+
+// Which ENTITY a document belongs to. Its `orgId` is a data SCOPE, and the
+// primary entity's scope is the legacy WORKSPACE_ID — so a scope has to be
+// folded back to an entity id before it is compared to one a person may open,
+// or handed to the client as somewhere to switch to.
+function entityIdForBill(bill: { orgId?: string }): string {
   const scope = String(bill.orgId ?? '');
-  // A bill's orgId is a data SCOPE: the primary entity folds to WORKSPACE_ID.
-  const orgId = !scope || scope === WORKSPACE_ID ? primaryOrgId() : scope;
-  return canAccessOrg(me, orgId);
+  return !scope || scope === WORKSPACE_ID ? primaryOrgId() : scope;
 }
 
 // Line items as they are stored: every cell a string, nothing else carried over
@@ -430,10 +436,42 @@ billsRouter.get('/bills/:id/file-meta', (req, res) => {
 // GET /api/costs/bills/:id — one bill by id, org-first then a global fallback,
 // so opening a claim's line item resolves its document even if it sits in a
 // different org's book (or the active org isn't the one it was created under).
+//
+// The fallback crosses entity books, so it is guarded like the two routes above
+// it: this returned the supplier, the amounts and the description of ANY
+// document in ANY client's book to anyone with a session, and a numeric Item ID
+// is a timestamp — countable, not unguessable. `/file` and `/file-meta` were
+// closed for exactly that reason; the record itself was left open.
 billsRouter.get('/bills/:id', (req, res) => {
   const bill = getBillById(orgIdFor(req), req.params.id) || getBillByIdAny(req.params.id);
-  if (!bill) return res.status(404).json({ error: 'not_found' });
-  res.json({ bill: { ...bill, hasFile: Boolean(bill.storageKey) } });
+  if (!bill || !canReadBill(req, bill)) return res.status(404).json({ error: 'not_found' });
+  res.json({ bill: { ...bill, hasFile: Boolean(bill.storageKey) }, orgId: entityIdForBill(bill) });
+});
+
+// GET /api/costs/bills/:id/where — which entity a document belongs to.
+//
+// The Costs list is scoped to the entity you are standing in, so a document
+// addressed from outside it — a link from cyworkspace, a claim's line item, a
+// bookmark — isn't in the list the detail page reads. It used to render anyway,
+// off the global by-id fallback, which put one client's document under another
+// client's name in the header: the worst way to be shown a document, because
+// nothing on the page says it isn't this client's.
+//
+// So the page asks here instead and offers to switch. Mirrors
+// GET /api/claims/:id/where, including the refusal: an entity the caller may not
+// open answers 404, the same answer an id that doesn't exist gets, so this can't
+// be used to probe another client's books.
+billsRouter.get('/bills/:id/where', (req, res) => {
+  const bill = getBillByIdAny(req.params.id);
+  if (!bill || !canReadBill(req, bill)) return res.status(404).json({ error: 'not_found' });
+  const orgId = entityIdForBill(bill);
+  const org = listOrganisations(workspaceId(req)).find((o) => o.id === orgId);
+  res.json({
+    orgId,
+    orgName: org?.name || '',
+    supplier: bill.supplier || '',
+    itemId: bill.displayId || bill.id,
+  });
 });
 
 // POST /api/costs/bills/:id/file — attach/replace the original file on an

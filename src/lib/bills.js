@@ -531,6 +531,21 @@ export async function fetchBillFileMeta(id) {
 
 // One bill by id, with a global fallback so claim line items resolve regardless
 // of which org's book the document lives in. Returns null when truly absent.
+// Which entity a document belongs to, for the case where it isn't in the list
+// this entity shows. Mirrors whereIsClaim: null both when there is no such
+// document and when it is in a book this person may not open — the server
+// refuses those alike, so neither can be told apart from here, which is the
+// point.
+export async function whereIsBill(id) {
+  try {
+    const res = await fetch(`/api/costs/bills/${encodeURIComponent(id)}/where`, { headers: orgHeaders() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchBillById(id) {
   try {
     const res = await fetch(`/api/costs/bills/${id}`, { headers: orgHeaders() });

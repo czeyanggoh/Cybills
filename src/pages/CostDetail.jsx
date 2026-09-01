@@ -25,13 +25,13 @@ import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 import { DOCS, getDoc } from '@/data/docs';
 import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
-import { attachBillFileToXero, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
+import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useProjectLabels, singular } from '@/lib/projectLabels';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -299,6 +299,9 @@ export default function CostDetail() {
   const mockDoc = rawMock ? { ...rawMock, ...(getDocOverrides()[routeId] || {}) } : null;
   const [tab, setTab] = useState('details');
   const [persisted, setPersisted] = useState(null);
+  // Set when the document addressed by the URL lives in ANOTHER entity's book:
+  // null = it doesn't (or nothing has asked yet), else where it lives.
+  const [elsewhere, setElsewhere] = useState(null);
   const [loading, setLoading] = useState(!mockDoc);
   const [data, setData] = useState(() => initialData(mockDoc ?? {}));
   const [imageUrl, setImageUrl] = useState('');
@@ -396,17 +399,33 @@ export default function CostDetail() {
     // Prefer the active org's list (drives prev/next); fall back to a global
     // by-id fetch so a claim's line item resolves even if its document sits in
     // another org's book.
+    setElsewhere(null);
     fetchBills()
       .then(async (bills) => {
         // The ROWS, not their ids: a row carries the assigned number, and
         // matching on the id alone can only derive one — which another document
         // uploaded in the same second derives too, and answered to first.
         const match = findByItemKey(bills, routeId);
-        return match || (await fetchBillById(routeId));
+        if (match) return { bill: match };
+        // Not in this entity's list. It may still be this entity's document —
+        // the by-id fetch below is what resolves those — but it may equally
+        // live in another client's book, and rendering THAT here would put one
+        // client's supplier and amounts under another client's name in the
+        // header, with nothing on the page to say so. Ask where it lives first.
+        const where = await whereIsBill(routeId);
+        const active = getActiveOrganisationId();
+        if (where?.orgId && active && where.orgId !== active) return { where };
+        return { bill: await fetchBillById(routeId) };
       })
-      .then((match) => {
+      .then(({ bill, where }) => {
         if (!alive) return;
-        const pd = match ? billToDoc(match) : null;
+        if (where) {
+          setElsewhere(where);
+          setPersisted(null);
+          setLoading(false);
+          return;
+        }
+        const pd = bill ? billToDoc(bill) : null;
         setPersisted(pd);
         if (pd) {
           // Opened by internal id (an old bookmark, or a claim line item): swap
@@ -500,6 +519,44 @@ export default function CostDetail() {
   );
 
   if (!doc) {
+    // A document URL is the kind of thing that gets pasted into chat, linked
+    // from cyworkspace or held by a claim's line item, so arriving at one from
+    // the wrong entity is ordinary. Say where it is and offer to go there —
+    // never show it here, where the header names a different client.
+    if (elsewhere) {
+      return (
+        <AppShell subnav={<CostsSubnav />}>
+          <div className="max-w-lg rounded-lg border p-5">
+            <h1 className="text-base font-semibold tracking-tight">
+              This document belongs to {elsewhere.orgName || 'another client entity'}
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {elsewhere.supplier ? `${elsewhere.supplier}’s document is` : 'It is'} in a different
+              entity&rsquo;s book, so it isn&rsquo;t in the list you are looking at. Switch to open it.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                // Reload into the new entity rather than re-render: the header,
+                // the subnav counts and every request in flight are scoped to
+                // the entity being left behind.
+                onClick={() => switchOrganisationTo(elsewhere.orgId, costPath(elsewhere.itemId))}
+                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Switch to {elsewhere.orgName || 'that entity'}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/costs')}
+                className="inline-flex h-9 items-center rounded-md border px-4 text-sm transition-colors hover:bg-muted"
+              >
+                Back to Costs
+              </button>
+            </div>
+          </div>
+        </AppShell>
+      );
+    }
     return (
       <AppShell subnav={<CostsSubnav />}>
         <p className="text-sm text-muted-foreground">
