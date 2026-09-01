@@ -24,7 +24,7 @@ writeFileSync(
 const express = (await import('express')).default;
 const { inboundRouter } = await import('../src/inbound.ts');
 const { ensure, save } = await import('../src/users.ts');
-const { listBills } = await import('../src/store.ts');
+const { listBills, insertBill, settleProcessing } = await import('../src/store.ts');
 
 // One person with a known handle: the local-part an emailed document is filed by.
 const users = ensure('cybm');
@@ -153,6 +153,45 @@ const grabRule = { category: '493 - Travel - National', project: 'Ops' };
   overlaySupplierRule(patch, { ...grabRule, taxRate: 'No Tax' }, { supplier: 'Grab', noteFollowed: 'recharge to CY-Biz' });
   check('the total is untouched', patch.total, 12.7);
   check('…and the tax code still follows the rule', patch.taxRate, 'No Tax');
+}
+
+// --- A document being read SAYS it is being read -----------------------------
+// A read takes ten to thirty seconds and nobody is watching this road, so an
+// emailed document is created as 'processing'. Left as 'new' for the whole read
+// it sat in the inbox wearing "New" and "Nothing read" — which is exactly what a
+// document the reader could get nothing off looks like once it has FINISHED, so
+// the reviewer had no way to tell "wait" from "this one needs typing in".
+//
+// It leaves that state when the read ENDS, however it ended: a reader that is
+// switched off returns at the first line, and a document saying "Processing" for
+// ever is worse than one that was never marked at all.
+{
+  const base = {
+    orgId: 'cybm',
+    fileHash: '',
+    fileName: 'x.pdf',
+    invoiceNumber: '',
+    documentType: '',
+    date: '',
+    tax: 0,
+    createdBy: '',
+    owner: '',
+    storageKey: '',
+    contentType: '',
+    status: 'processing',
+    kind: 'cost',
+  } as Parameters<typeof insertBill>[0];
+
+  const blank = insertBill({ ...base, supplier: '', currency: '', total: 0, category: '' });
+  check('a document is created as being read', blank.status, 'processing');
+  check('…and a read that got nothing leaves it in the inbox', settleProcessing('cybm', blank.id)?.status, 'new');
+
+  // The same act decides Ready, because readiness is derived from the document
+  // rather than from which road it came in on.
+  const read = insertBill({ ...base, supplier: 'Grab', currency: 'SGD', total: 23.4, category: '493 - Travel', date: '2026-08-13' });
+  check('…while a read that got everything lands in Ready', settleProcessing('cybm', read.id)?.status, 'ready');
+  // Nothing else moves: settling is about the read ending, not about the row.
+  check('a document nobody is reading is untouched', settleProcessing('cybm', read.id)?.status, 'ready');
 }
 
 server.close();

@@ -1297,7 +1297,9 @@ async function fileWhatsappDocument(
     whatsapp: message,
     storageKey: file.storageKey,
     contentType: file.contentType,
-    status: 'new',
+    // Being read — `finishRead` below starts it and autoRead clears the status
+    // when it settles, the same as an emailed document.
+    status: 'processing',
     kind: 'cost',
   });
 

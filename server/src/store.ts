@@ -713,6 +713,28 @@ export function reconcileReadiness(orgId: string, id: string): Bill | null {
   return bill;
 }
 
+// A background read has ENDED — successfully, emptily, or not at all — so the
+// document is no longer being processed and says so. Moves it out of
+// 'processing' and then applies the ordinary auto-ready, which is what decides
+// between Ready and To review from what the read left behind.
+//
+// Deliberately not folded into reconcileReadiness, which must NOT demote
+// 'processing': the browser sets that status on its own upload and clears it
+// itself, so a PATCH arriving mid-read would end the state early and put a
+// half-read document back in the inbox.
+export function settleProcessing(orgId: string, id: string): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  let changed = false;
+  if (bill.status === 'processing') {
+    bill.status = 'new';
+    changed = true;
+  }
+  if (applyAutoReady(bill) || changed) persist(bills);
+  return bill;
+}
+
 // Rescue documents stuck in "Processing" — the client advances a doc to the
 // inbox right after Vision reads it, but that step is lost if the tab closes
 // mid-read. After a grace period, any still-processing cost is moved to the

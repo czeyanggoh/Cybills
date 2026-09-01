@@ -7,7 +7,7 @@ import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberF
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
-import { insertBill, updateBill, reconcileReadiness } from './store.js';
+import { insertBill, updateBill, settleProcessing } from './store.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
 import { runExtraction, emailInstruction } from './extract.js';
@@ -149,7 +149,7 @@ export function overlaySupplierRule(
 // (whatsapp.ts). Both file a document and then have it read with the covering
 // note it came with, and running two copies of that would be running two sets
 // of coding rules.
-export async function autoRead(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: { from?: string; subject?: string; text?: string; via?: string } | null = null) {
+async function readIntoBill(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: { from?: string; subject?: string; text?: string; via?: string } | null = null) {
   if (!visionEnabled) return;
   const ws = workspaceId(req);
   let inputs: Awaited<ReturnType<typeof extractionInputsFor>>;
@@ -259,12 +259,39 @@ export async function autoRead(req: Request, scope: string, realOrgId: string, p
       via: envelope?.via,
     });
     updateBill(scope, billId, patch);
-    reconcileReadiness(scope, billId);
     return; // success
   }
   // Every provider failed — leave a breadcrumb the reviewer (and we) can see,
   // since a background read has nowhere else to report to.
   updateBill(scope, billId, { categoryReason: `Auto-read didn't complete (${lastNote}). Use Re-read.` });
+}
+
+// The document is marked as being read BEFORE this is called and stops being
+// marked when it returns, so "Processing" means what it says on the road where
+// nobody is watching. A read takes ten to thirty seconds and the browser is not
+// involved in either of these, so without it an emailed bill sat in the inbox
+// wearing "New" and "Nothing read" for the whole read — which is what a document
+// the reader could get nothing off looks like when it is finished.
+//
+// In a finally, and never skipped: a reader that is switched off returns at the
+// first line, and a document left saying "Processing" for ever is worse than one
+// that was never marked at all. (sweepStuckProcessing is the backstop for the
+// process dying mid-read, not for an ordinary return.)
+export async function autoRead(
+  req: Request,
+  scope: string,
+  realOrgId: string,
+  preferred: Provider,
+  billId: string,
+  fileBase64: string,
+  mediaType: string,
+  envelope: { from?: string; subject?: string; text?: string; via?: string } | null = null
+): Promise<void> {
+  try {
+    await readIntoBill(req, scope, realOrgId, preferred, billId, fileBase64, mediaType, envelope);
+  } finally {
+    settleProcessing(scope, billId);
+  }
 }
 
 // The shared secret the Cloudflare Worker signs its POSTs with. Prefer an env
@@ -453,7 +480,10 @@ inboundRouter.post('/email', async (req, res) => {
       email: envelope,
       storageKey,
       contentType: storedType,
-      status: 'new',
+      // Being read, and saying so. The reply to the Worker goes out before the
+      // read starts (a model call takes far longer than the delivery may), so
+      // the document is visible in the inbox for the whole of it.
+      status: 'processing',
       kind: 'cost',
     });
     madeBills.push({ id: bill.id, base64, mediaType: storedType || contentType });
