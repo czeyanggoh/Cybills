@@ -82,7 +82,7 @@ function ClaimsActions({ disabled, onDelete }) {
 // improvement on two.
 function ClaimsToolbar({
   query, setQuery, filters, setFilters, adv, setAdv, narrowed,
-  statusOptions, reimbursementOptions, typeOptions, claimForOptions,
+  statusOptions, paidStatusOptions, typeOptions, claimForOptions,
   monthOptions, approverOptions,
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
@@ -196,8 +196,8 @@ function ClaimsToolbar({
                   <Select value={filters.status} onChange={(v) => set('status', v)} options={statusOptions} anyLabel="Any" />
                 </div>
                 <div>
-                  <span className={label}>Reimbursement</span>
-                  <Select value={filters.reimbursement} onChange={(v) => set('reimbursement', v)} options={reimbursementOptions} anyLabel="Any" />
+                  <span className={label}>Paid status</span>
+                  <Select value={filters.paidStatus} onChange={(v) => set('paidStatus', v)} options={paidStatusOptions} anyLabel="Any" />
                 </div>
                 {typeOptions.length > 1 && (
                   <div>
@@ -208,7 +208,7 @@ function ClaimsToolbar({
               </div>
               <button
                 type="button"
-                onClick={() => setFilters({ status: '', reimbursement: '', type: '' })}
+                onClick={() => setFilters({ status: '', paidStatus: '', type: '' })}
                 className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
               >
                 Clear
@@ -238,7 +238,7 @@ export default function ExpenseClaims() {
   // Two narrowings beside the search box, which used to be a funnel and an
   // "Advanced" that did nothing at all — the buttons were there, the handlers
   // never were, and Cze quite reasonably reported them as broken.
-  const [filters, setFilters] = useState({ status: '', reimbursement: '', type: '' });
+  const [filters, setFilters] = useState({ status: '', paidStatus: '', type: '' });
   const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', claimFor: '', month: '', approver: '' });
   const [approveOpen, setApproveOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -298,11 +298,11 @@ export default function ExpenseClaims() {
     // type, so typing the one person a claim is WAITING on found nothing.
     if (q && ![c.claimFor, c.name, c.type, c.approver, c.decidedBy].some((v) => String(v || '').toLowerCase().includes(q))) return false;
     if (filters.status && statusOf(c) !== filters.status) return false;
-    // Reimbursement is what Xero says about the bill the claim posted as, so a
-    // claim that was never published has none — which is its own answer.
-    if (filters.reimbursement) {
+    // The paid status is what Xero says about the bill the claim posted as, so
+    // a claim that was never published has none — which is its own answer.
+    if (filters.paidStatus) {
       const paid = xeroPaidStatus(c)?.label || 'Not published';
-      if (paid !== filters.reimbursement) return false;
+      if (paid !== filters.paidStatus) return false;
     }
     if (filters.type && String(c.type || '') !== filters.type) return false;
     if (adv.claimFor && String(c.claimFor || '') !== adv.claimFor) return false;
@@ -320,7 +320,7 @@ export default function ExpenseClaims() {
   // What the two popovers can offer, taken from the claims actually here — a
   // filter listing a status nothing has is a dead end with a count of zero.
   const statusOptions = [...new Set(base.map(statusOf))].sort();
-  const reimbursementOptions = [...new Set(base.map((c) => xeroPaidStatus(c)?.label || 'Not published'))].sort();
+  const paidStatusOptions = [...new Set(base.map((c) => xeroPaidStatus(c)?.label || 'Not published'))].sort();
   const typeOptions = [...new Set(base.map((c) => String(c.type || '')).filter(Boolean))].sort();
   // Who actually has a claim in this tab — not the whole roster, which already
   // has its own list for CREATING one. Filtering by somebody with no claims is
@@ -501,7 +501,7 @@ export default function ExpenseClaims() {
           setAdv={setAdv}
           narrowed={narrowed}
           statusOptions={statusOptions}
-          reimbursementOptions={reimbursementOptions}
+          paidStatusOptions={paidStatusOptions}
           typeOptions={typeOptions}
           claimForOptions={claimantsPresent}
           monthOptions={monthOptions}
@@ -589,10 +589,18 @@ export default function ExpenseClaims() {
                   different one when somebody else stepped in. */}
               <th className="px-3 py-2.5 font-medium">Approver</th>
               <th className="px-3 py-2.5 font-medium">Approved</th>
-              {/* Approval is the company saying it owes the money; this is the
-                  bank saying it left. A claimant's question is the second one,
-                  and until now nothing here answered it. */}
-              <th className="px-3 py-2.5 font-medium">Reimbursement</th>
+              {/* Approval is the company saying it owes the money; these two are
+                  the bank saying it left. A claimant's question is the second
+                  one, and until now nothing here answered it.
+
+                  Split, and named exactly as the Costs list names them, because
+                  a claim's bill and a cost's bill are the same kind of thing in
+                  the same ledger — one column reading "Reimbursed · 25 Aug 2026"
+                  where the other list has "Paid status" and "Paid date" makes
+                  them look like different facts, and it cannot be sorted by
+                  when the money actually left. */}
+              <th className="px-3 py-2.5 font-medium">Paid status</th>
+              <th className="px-3 py-2.5 font-medium">Paid date</th>
               <th className="px-3 py-2.5 font-medium">Claim for</th>
               <th className="px-3 py-2.5 font-medium">Type</th>
               <th className="px-3 py-2.5 font-medium">Name</th>
@@ -649,10 +657,15 @@ export default function ExpenseClaims() {
                         }
                       >
                         {paid.label}
-                        {c.xeroPaidDate ? ` · ${formatClaimDate(c.xeroPaidDate)}` : ''}
                       </span>
                     );
                   })()}
+                </td>
+                {/* Its own column now, so the list sorts and reads the way the
+                    Costs list does. A dash for the same reason the status is
+                    one: nothing has been heard, rather than nothing happened. */}
+                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">
+                  {c.xeroPaidDate ? formatClaimDate(c.xeroPaidDate) : '—'}
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 font-medium">{c.claimFor}</td>
                 <td className="px-3 py-3 text-muted-foreground">{c.type}</td>
@@ -676,7 +689,7 @@ export default function ExpenseClaims() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={12} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   <Plus className="mx-auto mb-2 h-5 w-5" strokeWidth={1.5} />
                   Nothing in {scope === 'all' ? 'this book' : 'Unpublished'}.
                 </td>
