@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
+import { useAuth } from '@/lib/auth';
+import { canManageBusiness } from '@/lib/userStore';
 import { getMeta, setMetaField } from '@/lib/listsStore';
 import { matchSupplierRule, setSupplierRule } from '@/lib/supplierRules';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
@@ -26,7 +28,19 @@ import {
 // chart of accounts, so editing it here writes to Xero exactly as the Lists page
 // does. That difference is why this used to be a sentence pointing at Business
 // settings for categories; it needn't be, so it isn't.
+//
+// Both rules it offers are BUSINESS settings — a supplier rule is a standing
+// policy for everyone's documents, and a category's wording is the client's own
+// chart of accounts in Xero — so it is offered on exactly the terms Business
+// settings is: `canManageBusiness`, which is Business Admin, and a practice
+// colleague, who is a Business Admin inside every entity they hold access to. A
+// Standard user (and a User Admin, who runs the roster rather than the business)
+// still corrects the document in front of them; they are simply not asked to
+// turn that correction into a rule they could not go and edit afterwards. Shown
+// to them it would be a button that fails, or worse, one that quietly rewrites
+// the chart of accounts from a document page.
 export default function TeachRule({ field, value, supplier, onClose }) {
+  const { membership, googleEnabled } = useAuth();
   const [mode, setMode] = useState('');
   const [rule, setRule] = useState('');
   const [done, setDone] = useState('');
@@ -47,6 +61,7 @@ export default function TeachRule({ field, value, supplier, onClose }) {
   }, [isCategory, value]);
 
   if (!value) return null;
+  if (!canManageBusiness(membership, googleEnabled)) return null;
   const vendor = String(supplier || '').trim();
   const already = vendor ? matchSupplierRule(vendor)[field] : '';
 
