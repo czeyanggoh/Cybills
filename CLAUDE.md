@@ -732,6 +732,14 @@ passed through in its own words. The reply names the bill's state, so the
 document's Xero fields are refreshed from it rather than waiting for a webhook.
 Covered by `npm test` in `server/`.
 
+**And the paperwork links forward.** A claim's "Published to Xero" chip was a
+dead label: it stated that a bill EXISTS and left somebody to go and find it,
+while the cost page beside it had carried "Open in Xero" all along. It is the
+same chip with the same wording — the status stays the label, because
+"Reimbursed 25 Aug" is what the claimant is waiting to read — wrapped in a link
+to `xeroBillUrl(claim.xeroInvoiceId)` with the arrow that says it opens
+elsewhere.
+
 **A published bill links back.** Xero renders an invoice's `Url` as a
 **"Go to CYBills"** button — the way a Dext-published bill carries "Go to Dext".
 A document's bill points at `/costs/<ItemID>`, a claim's at

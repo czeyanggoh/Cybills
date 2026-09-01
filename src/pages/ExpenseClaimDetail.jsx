@@ -11,6 +11,7 @@ import {
   Lock,
   Info,
   CheckCircle2,
+  ExternalLink,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -46,6 +47,7 @@ import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId, switchOrganisationTo, publishClaimToXero } from '@/lib/organisations';
 import { useExtractionSettings, publishStatusLabel } from '@/lib/extractionSettings';
+import { xeroBillUrl } from '@/lib/autoPublish';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
 import { claimDateFor } from '@/lib/claimReference';
@@ -307,18 +309,27 @@ export default function ExpenseClaimDetail() {
   // Xero's own answer as soon as there is one, and falls back to "Published to
   // Xero" while the ledger has said nothing yet.
   const claimPaid = xeroPaidStatus(claim);
+  // Once it is in Xero the chip states a fact about a bill that EXISTS, and the
+  // next thing anybody wants is that bill — the cost page has carried "Open in
+  // Xero" all along, while the claim's twin was a dead label somebody had to go
+  // and find the bill for by hand. Same chip, same wording, now a link: the
+  // status stays the label because "Reimbursed 25 Aug" is what the claimant is
+  // waiting to read, and the arrow says it opens elsewhere.
   const publishBtn = claim.xeroInvoiceId ? (
-    <span
+    <a
+      href={xeroBillUrl(claim.xeroInvoiceId)}
+      target="_blank"
+      rel="noreferrer"
       className={cn(
-        'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm font-medium',
+        'inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors',
         claimPaid?.tone === 'paid'
-          ? 'border-green-600/40 bg-green-600/10 text-green-700'
-          : 'border-foreground/40 text-foreground'
+          ? 'border-green-600/40 bg-green-600/10 text-green-700 hover:bg-green-600/20'
+          : 'border-foreground/40 text-foreground hover:bg-muted'
       )}
       title={
         claimPaid?.tone === 'paid'
-          ? `Paid in Xero${claim.xeroPaidDate ? ` on ${formatClaimDate(claim.xeroPaidDate)}` : ''}${claim.xeroPaymentRef ? ` · ${claim.xeroPaymentRef}` : ''}`
-          : `Xero bill ${claim.xeroInvoiceId}`
+          ? `Paid in ${claim.xeroTenantName || 'Xero'}${claim.xeroPaidDate ? ` on ${formatClaimDate(claim.xeroPaidDate)}` : ''}${claim.xeroPaymentRef ? ` · ${claim.xeroPaymentRef}` : ''} — open the bill`
+          : `Open this claim's bill in ${claim.xeroTenantName || 'Xero'}`
       }
     >
       <CheckCircle2 className="h-4 w-4" />
@@ -327,7 +338,8 @@ export default function ExpenseClaimDetail() {
         : claimPaid && claimPaid.tone !== 'awaiting'
           ? claimPaid.label
           : 'Published to Xero'}
-    </span>
+      <ExternalLink className="h-3.5 w-3.5" />
+    </a>
   ) : (
     <TopButton
       disabled={!locked || publishing}
