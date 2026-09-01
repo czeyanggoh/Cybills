@@ -300,16 +300,20 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   const claimBtn = (
     <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
   );
-  // Archive and its undo now sit in the same row, because the two kinds of
-  // document sit in the same list. Each is offered only against a selection it
-  // can actually act on — ticking three archived rows and pressing Archive
-  // would be a button that does nothing and says nothing — and each moves only
-  // its own half of a mixed selection.
+  // Archive and its undo are ONE button, because the tab already says which of
+  // them is meant: a working tab holds nothing archived and the Archived tab
+  // holds nothing else, so the other of the pair was always the greyed-out one
+  // sitting beside it. It still acts only on the half of the selection it can
+  // move — a selection carried over from another tab can hold rows this move
+  // must leave alone — and goes disabled when that half is empty.
+  const undo = tab === 'archived';
   const archiveBtn = (
-    <ToolbarButton disabled={!a.canArchive} onClick={a.archive}>Archive</ToolbarButton>
-  );
-  const unarchiveBtn = (
-    <ToolbarButton disabled={!a.canUnarchive} onClick={a.unarchive}>Unarchive</ToolbarButton>
+    <ToolbarButton
+      disabled={undo ? !a.canUnarchive : !a.canArchive}
+      onClick={undo ? a.unarchive : a.archive}
+    >
+      {undo ? 'Unarchive' : 'Archive'}
+    </ToolbarButton>
   );
 
   if (tab === 'processing') {
@@ -328,8 +332,6 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {scanBtn}
       {reviewDupBtn}
       {archiveBtn}
-      {unarchiveBtn}
-      <ToolbarButton onClick={() => a.navigate('/submission-history')}>See submission history</ToolbarButton>
       {deleteBtn}
     </>
   );
@@ -1281,7 +1283,6 @@ export default function Costs() {
     unarchive: () => moveSelected('new', unarchivableIds),
     canArchive: archivableIds.length > 0,
     canUnarchive: unarchivableIds.length > 0,
-    navigate,
   };
 
 
