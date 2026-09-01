@@ -19,6 +19,7 @@ import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
+import AddDocumentsDrawer from '@/components/AddDocumentsDrawer';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
 import {
   useClaimsState,
@@ -28,6 +29,8 @@ import {
   rejectClaim,
   createClaim,
   removeItemsFromClaim,
+  addItemToClaim,
+  docToClaimTxn,
   updateClaimItems,
   moveItemsToClaim,
   notifyClaimsChanged,
@@ -38,7 +41,7 @@ import {
   formatClaimStamp,
   toIsoClaimDate,
 } from '@/lib/claimStore';
-import { costPath } from '@/lib/bills';
+import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId, switchOrganisationTo, publishClaimToXero } from '@/lib/organisations';
@@ -180,6 +183,7 @@ export default function ExpenseClaimDetail() {
   const activeOrgForClaim = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
   const claimantOptions = useClaimantNames({ ownEntity: Boolean(activeOrgForClaim?.isPrimary) });
   const [payNote, setPayNote] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   // Which columns this table shows and how tightly it packs them — the gear
   // beside the search box, the same preference store as the Costs table.
@@ -478,6 +482,33 @@ export default function ExpenseClaimDetail() {
     }
   };
 
+  // A document uploaded from this page goes onto THIS claim rather than into the
+  // Costs inbox for somebody to find and add — which is what "Add items" used to
+  // mean, and the round trip was the whole of the complaint. The drawer hands
+  // each document over the moment its read finishes, so the rows appear one by
+  // one while the rest are still being read.
+  //
+  // Two writes, in this order: the claim line first, the document's status
+  // second. The other way round, a failure would leave a document marked as
+  // claimed with no claim carrying it — invisible in the inbox, invisible here,
+  // which is the exact state removing an item from a claim used to leave behind.
+  const addUploadedToClaim = async (bill) => {
+    if (!bill?.id || !claim?.id) return;
+    const doc = billToDoc(bill);
+    try {
+      await addItemToClaim(claim.id, docToClaimTxn(doc, doc, user?.name || user?.email || 'You'));
+    } catch (err) {
+      setPayNote(
+        err?.code === 'claim_locked'
+          ? 'That claim is already approved, so the document was left in the Costs inbox.'
+          : `Could not add ${doc.supplier || 'the document'} to this claim — it is in the Costs inbox.`
+      );
+      return;
+    }
+    await updateBill(bill.id, { status: 'expenseclaim' }).catch(() => {});
+    notifyBillsChanged();
+  };
+
   return (
     <AppShell subnav={<CostsSubnav />}>
       {payNote && (
@@ -656,8 +687,8 @@ export default function ExpenseClaimDetail() {
             {!locked && (
             <button
               type="button"
-              onClick={() => navigate('/costs')}
-              title="Open the Costs inbox, then use “Add to expense claim” on the items you want"
+              onClick={() => setAddOpen(true)}
+              title="Upload receipts straight onto this claim"
               className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               <Plus className="h-3.5 w-3.5" /> Add items
@@ -1101,6 +1132,16 @@ export default function ExpenseClaimDetail() {
           </div>
         </div>
       )}
+
+      {/* The Costs drawer, pointed at this claim: same uploader, same reader,
+          but every document it finishes lands on the claim instead of in the
+          inbox. */}
+      <AddDocumentsDrawer
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        claim={claim}
+        onAdded={addUploadedToClaim}
+      />
     </AppShell>
   );
 }

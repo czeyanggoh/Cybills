@@ -494,6 +494,22 @@ Beyond archive/claim/merge, the toolbar carries **Bulk edit**
 covers both cases: the ticked rows when anything is ticked, otherwise everything
 the tab shows.
 
+**A claim's "Add items" uploads onto the claim.** It used to navigate to the
+Costs inbox and leave the reviewer to find what they had just uploaded and press
+"Add to expense claim" — a round trip through another page to do the thing the
+button names. It now opens the same Add-documents drawer, pointed at the claim
+(`claim` + `onAdded` on `AddDocumentsDrawer`), and each document is handed back
+the moment its read finishes, so lines appear one by one while the rest are
+still being read. Two things change while that prop is set, and both follow from
+a claimed cost reaching Xero as a LINE OF THE CLAIM'S BILL rather than as a bill
+of its own: **auto-publish is skipped** (a published document cannot also be
+claimed — it is the one thing the inbox's own "Add to expense claim" refuses),
+and only the Costs tab is offered. The claimant is the default document owner,
+and is always in the picker: a claim can be made out to somebody the owner list
+would not otherwise offer. The claim line is written BEFORE the document's
+status, so a failure leaves the document in the inbox rather than marked as
+claimed by a claim that never took it — which is invisible in both places.
+
 **Removing an ITEM from a claim archives it; DELETING the claim destroys it.**
 Two different acts, and the difference is deliberate. Taking one line off says
 "this doesn't belong on this claim", so the document goes to Archive — kept, out

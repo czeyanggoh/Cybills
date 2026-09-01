@@ -300,7 +300,15 @@ function tabForPath(pathname) {
   return key ? TAB_FOR_PATH[key] : 'Costs';
 }
 
-export default function AddDocumentsDrawer({ open, onClose }) {
+// `claim` turns the drawer into the claim's own uploader: it is the claim being
+// added to, and every document that finishes reading is handed back through
+// `onAdded` so the caller can put it on the claim. Two things change while it is
+// set, and both follow from a claimed cost reaching the ledger as a LINE OF THE
+// CLAIM'S BILL rather than as a bill of its own — auto-publish is skipped (a
+// published document can't also be claimed, which is the rule the Costs inbox
+// enforces when it refuses to add one), and the panel says where the documents
+// are going, because it looks identical to the one that files into the inbox.
+export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdded = null }) {
   const { visionEnabled, user } = useAuth();
   const readerName = useReaderName();
   const { pathname } = useLocation();
@@ -316,7 +324,11 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   // in, and a document filed as `kind: 'sales'` would land in a tab nobody can
   // open.
   const salesEnabled = useSalesEnabled();
-  const tabs = TABS.filter((t) => t !== 'Sales' || salesEnabled);
+  // A claim is a claim for COSTS. Uploading a sales invoice or a supplier
+  // statement onto one is not a thing, so those tabs are not offered.
+  const tabs = claim
+    ? ['Costs']
+    : TABS.filter((t) => t !== 'Sales' || salesEnabled);
   const [items, setItems] = useState([]);
   // Who the uploaded documents are attributed to. Stored as the display name
   // (not an email) so attribution shows correctly regardless of the roster's
@@ -338,7 +350,9 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   // Recomputed on every roster change, since useGeneralOwnerName re-renders on
   // the same event that refills the directory this reads.
   const meIsClientUser = ownsHere(user || {});
-  const defaultOwner = meIsClientUser ? meName : generalName || meName;
+  // On a claim the documents are the CLAIMANT's, whoever is uploading them: the
+  // claim is made out in their name and the receipts are their own spending.
+  const defaultOwner = claim?.claimFor || (meIsClientUser ? meName : generalName || meName);
   useEffect(() => {
     if (!ownerTouched.current && defaultOwner) setOwner(defaultOwner);
   }, [defaultOwner]);
@@ -348,6 +362,11 @@ export default function AddDocumentsDrawer({ open, onClose }) {
   const ownerNames = useOwnerNames();
   const ownerOptions = Array.from(
     new Set([
+      // The claimant, always — a claim can be made out to somebody the owner
+      // list would not otherwise offer (a colleague, or a name that reaches the
+      // roster a tick later), and a default that isn't in the list renders as a
+      // blank picker over a value that is actually set.
+      ...(claim?.claimFor ? [claim.claimFor] : []),
       ...(meIsClientUser ? [meName] : []),
       ...ownerNames,
       // Not someone who has been deactivated: a document being uploaded now
@@ -654,8 +673,12 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             // Reading is done: send it to Xero as Awaiting Approval. Declines
             // quietly (and leaves the document alone) when it isn't complete
             // enough to post — see autoPublishAfterRead.
-            const posted = await autoPublishAfterRead(withDefaults);
+            // Never on a claim: a claimed cost reaches Xero as a line of the
+            // claim's bill, so publishing it here as a bill of its own would
+            // both double it and make it unclaimable a moment later.
+            const posted = claim ? null : await autoPublishAfterRead(withDefaults);
             notifyBillsChanged();
+            onAdded?.(posted?.bill ?? withDefaults);
             patch(it.id, {
               status: 'added',
               bill: posted?.bill ?? withDefaults,
@@ -670,6 +693,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             const advanced = await updateBill(bill.id, { status: 'new' }).then((r) => r?.bill).catch(() => null);
             const withDefaults = await applyExtractionDefaults(bill.id, advanced ?? bill, null, { base64: fileBase64, mediaType });
             notifyBillsChanged();
+            onAdded?.(withDefaults);
             patch(it.id, { status: 'added', bill: withDefaults });
           }
         } catch {
@@ -712,6 +736,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
       // duplicate is expected — ignore it (the user chose "Add anyway").
       const fin = await finalizeBill(bill.id, fields).catch(() => null);
       notifyBillsChanged();
+      onAdded?.(fin?.bill ?? bill);
       patch(id, { status: 'added', bill: fin?.bill ?? bill });
     } catch {
       patch(id, { status: 'error', error: 'Upload failed' });
@@ -741,6 +766,8 @@ export default function AddDocumentsDrawer({ open, onClose }) {
           </button>
         </div>
 
+        {/* One tab is not a choice — on a claim the panel is only ever Costs. */}
+        {tabs.length > 1 && (
         <div className="flex shrink-0 gap-5 border-b px-6">
           {tabs.map((t) => (
             <button
@@ -758,10 +785,13 @@ export default function AddDocumentsDrawer({ open, onClose }) {
             </button>
           ))}
         </div>
+        )}
 
         <div className="flex-1 space-y-6 overflow-auto p-6">
           <p className="text-sm text-muted-foreground">
-            {tab === 'Costs' && 'Use this panel to add your bills, receipts and purchase invoices.'}
+            {tab === 'Costs' && (claim
+              ? `Receipts added here go straight onto ${claim.name || 'this claim'} — they are not filed in the Costs inbox for somebody to pick up.`
+              : 'Use this panel to add your bills, receipts and purchase invoices.')}
             {tab === 'Sales' && 'Use this panel to add your sales invoices.'}
             {tab === 'Supplier statements' &&
               'Use this panel to upload your supplier statements. PDF, JPG and PNG, one document per file.'}
@@ -771,7 +801,7 @@ export default function AddDocumentsDrawer({ open, onClose }) {
               those documents are already coded, so they come in through the CSV
               rather than being uploaded and read again. Offered on Costs only —
               a Dext Costs export is what it takes. */}
-          {tab === 'Costs' && (
+          {tab === 'Costs' && !claim && (
             <p className="-mt-3 text-sm text-muted-foreground">
               Moving a client from Dext?{' '}
               <button
