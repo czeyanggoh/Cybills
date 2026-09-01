@@ -53,6 +53,7 @@ import TableSettingsMenu from '@/components/TableSettingsMenu';
 import ExtractionProgress from '@/components/ExtractionProgress';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
+import { useListView } from '@/lib/listView';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
@@ -746,10 +747,13 @@ export default function Costs() {
     .filter((c) => c.fixed || tablePrefs.columns[c.key])
     .map((c) => ({ ...c, ...CELLS[c.key] }))
     .filter((c) => typeof c.cell === 'function');
-  const [tab, setTab] = useState('all');
+  // The tab, the scope and the narrowing all survive a trip to a document and
+  // back — see listView.js. Reviewing is a loop of narrow, open, come back, and
+  // landing on an unfiltered Unpublished each time meant redoing it per row.
+  const [tab, setTab] = useListView('costs', 'tab', 'all');
   // Which half of the combined list the Costs tab is showing. Defaults to the
   // work still to do — see SCOPES.
-  const [scope, setScope] = useState('unpublished');
+  const [scope, setScope] = useListView('costs', 'scope', 'unpublished');
   const settings = useExtractionSettings();
   // What a publish posts as, this entity's own answer — the same one the
   // document page's dialog opens on, so pressing Publish in two places cannot
@@ -767,12 +771,12 @@ export default function Costs() {
     if (!settings.showReviewReadyTabs && (tab === 'review' || tab === 'ready')) setTab('all');
   }, [settings.showReviewReadyTabs, tab]);
   const [selected, setSelected] = useState(() => new Set());
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useListView('costs', 'query', '');
   const [claimOpen, setClaimOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [sort, setSort] = useState({ key: '', dir: 'asc' });
-  const [filters, setFilters] = useState(emptyFilters); // Filter popover: id -> chosen chip
-  const [adv, setAdv] = useState(emptyAdv); // Advanced search: amount / date / supplier / user
+  const [filters, setFilters] = useListView('costs', 'filters', emptyFilters); // Filter popover: id -> chosen chip
+  const [adv, setAdv] = useListView('costs', 'adv', emptyAdv); // Advanced search: amount / date / supplier / user
   const [mergeModalDocs, setMergeModalDocs] = useState(null); // docs under review in the merge modal
   const [mergeNote, setMergeNote] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);

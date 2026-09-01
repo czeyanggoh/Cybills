@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
+import { useListView } from '@/lib/listView';
 import { useNavigate } from 'react-router-dom';
 import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock, Download } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -230,16 +231,19 @@ export default function ExpenseClaims() {
   // including one archived by hand and never published, which is precisely what
   // folding the two tabs is for. "All claims" is the same list with the finished
   // work left in.
-  const [scope, setScope] = useState('unpublished');
+  // Remembered for the trip to a claim and back: you narrow the list to find
+  // something, open it, and come back for the next one. Reset to Unpublished
+  // every time, the narrowing had to be redone per row.
+  const [scope, setScope] = useListView('claims', 'scope', 'unpublished');
   const [selected, setSelected] = useState(() => new Set());
   const [showCreate, setShowCreate] = useState(false);
   const [newClaim, setNewClaim] = useState({ claimFor: '', endDate: '', name: '' });
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useListView('claims', 'query', '');
   // Two narrowings beside the search box, which used to be a funnel and an
   // "Advanced" that did nothing at all — the buttons were there, the handlers
   // never were, and Cze quite reasonably reported them as broken.
-  const [filters, setFilters] = useState({ status: '', paidStatus: '', type: '' });
-  const [adv, setAdv] = useState({ min: '', max: '', from: '', to: '', claimFor: '', month: '', approver: '' });
+  const [filters, setFilters] = useListView('claims', 'filters', { status: '', paidStatus: '', type: '' });
+  const [adv, setAdv] = useListView('claims', 'adv', { min: '', max: '', from: '', to: '', claimFor: '', month: '', approver: '' });
   const [approveOpen, setApproveOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);

@@ -356,6 +356,21 @@ what Unmerge puts back. Hidden, not deleted. The toggle's counts are per tab (wh
 HERE, never the whole book), and the tab badge follows the list the way
 Archived's always has.
 
+**Coming BACK to a list lands where you left it.** Reviewing is a loop —
+narrow the list down, open what you found, come back for the next one — and the
+scope, the tab and the narrowing all lived in component state that died with the
+page, so "Back" landed on an unfiltered Unpublished every time and the filter had
+to be redone per row. Worst exactly where the list is longest.
+`useListView` (`src/lib/listView.js`) is useState with the same signature,
+remembered in sessionStorage: a stretch of work, not a saved preference, so a new
+tab is its own and tomorrow starts clean. Used by Costs and Expense claims for
+scope, tab, search and both filter sets. Deliberately not the URL — a claim
+page's own Previous/Next walks the list, so history back does not mean "the list"
+there. What is restored is trusted only as far as its SHAPE (`restoreView`, pure,
+`npm test`): an object is merged OVER the fallback so a field added since has a
+value, and anything of the wrong type falls back whole, because a filter object
+from an older release would otherwise show an empty list nobody could explain.
+
 **Archive and Unarchive share the row, and each moves only its own half.**
 Written across the whole selection they would each do real damage: Archive would
 strip `expenseclaim` off a document sitting on a live claim, Unarchive would
