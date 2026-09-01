@@ -188,7 +188,7 @@ function ToolbarButton({ children, disabled = false, dropdown = false, danger = 
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
+        'inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2.5 text-xs transition-colors',
         disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted',
         // Deleting reclaims the stored file too — it can't be undone, so it
         // shouldn't read as just another grey button in the row.
@@ -1337,6 +1337,21 @@ export default function Costs() {
             </button>
           );
         })}
+        {/* How the tabs fill themselves. This was a banner above the table —
+            explanatory, not essential, and it cost every visit a row of the
+            screen to say the same sentence. The sentence now waits on the
+            glyph for whoever wants it. */}
+        <span
+          className="flex shrink-0 cursor-help items-center pb-3 pt-1 text-muted-foreground"
+          title="A document moves to Ready automatically once it has a Supplier, Date, Category, and a Total above 0. While any of those is missing — an account code the reader could not decide, most often — it waits in To review for you to supply it. Both tabs fill themselves; there is nothing to move by hand."
+        >
+          <Info className="h-3.5 w-3.5" strokeWidth={1.75} />
+          <span className="sr-only">
+            A document moves to Ready automatically once it has a Supplier, Date, Category, and a Total above 0.
+            While any of those is missing it waits in To review for you to supply it. Both tabs fill themselves;
+            there is nothing to move by hand.
+          </span>
+        </span>
       </div>
 
       {/* How far back the Archived tab reaches. It is drawn only there: every
@@ -1385,24 +1400,6 @@ export default function Costs() {
             <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-foreground">
               <span>{mergeNote}</span>
               <button type="button" onClick={() => setMergeNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
-            </div>
-          )}
-
-          {(tab === 'all' || tab === 'review' || tab === 'ready') && (
-            // Explanatory, not essential — on a phone it cost a screenful
-            // before the first document, so it waits for the room to say it.
-            <div className="mb-3 hidden items-start gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground md:flex">
-              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
-              <span>
-                A document moves to <span className="font-medium text-foreground">Ready</span> automatically once it has a{' '}
-                <span className="font-medium text-foreground">Supplier</span>,{' '}
-                <span className="font-medium text-foreground">Date</span>,{' '}
-                <span className="font-medium text-foreground">Category</span>, and a{' '}
-                <span className="font-medium text-foreground">Total</span> above 0. While any of those is missing — an
-                account code the reader could not decide, most often — it waits in{' '}
-                <span className="font-medium text-foreground">To review</span> for you to supply it. Both tabs fill
-                themselves; there is nothing to move by hand.
-              </span>
             </div>
           )}
 
