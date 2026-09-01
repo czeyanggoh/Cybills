@@ -542,16 +542,32 @@ would not otherwise offer. The claim line is written BEFORE the document's
 status, so a failure leaves the document in the inbox rather than marked as
 claimed by a claim that never took it — which is invisible in both places.
 
-**Removing an ITEM from a claim archives it; DELETING the claim destroys it.**
-Two different acts, and the difference is deliberate. Taking one line off says
-"this doesn't belong on this claim", so the document goes to Archive — kept, out
-of the way, never back at the top of the inbox where it reads as new work
-somebody has to clear again. Deleting the whole claim is the practice's call
-(Cze's, asked and answered): the receipts on it are permanently deleted, stored
-files included, because they were captured to be claimed and there is nothing
-left for them to be. Both confirmations say which is which, and the claim itself
-is still only soft-deleted, so the record of what was claimed outlives the
-paperwork. Removing an item previously did nothing at all to the document: it
+**Removing an ITEM from a claim archives it; DELETING the claim hands its
+documents back to the Costs tab.** Two different acts, and the difference is
+deliberate. Taking one line off says "this doesn't belong on this claim", so the
+document goes to Archive — kept, out of the way, never back at the top of the
+inbox where it reads as new work somebody has to clear again. Losing the whole
+claim says the opposite: the work has to be done again, and work to be done lives
+in the inbox, so those documents come back READY (readiness is derived, so a
+complete one is not presented as something to type in again).
+
+This REVERSES the original decision, which was to delete them permanently, files
+included, because they were captured to be claimed and had nothing left to be.
+That was wrong about what they ARE: the spending happened whether or not the
+claim survived, and the ordinary reason a claim is deleted is that it was raised
+WRONGLY — the wrong person, the wrong period, the wrong items — every one of
+which ends with those receipts needing to go on a DIFFERENT claim. Throwing away
+a client's paperwork over a badly raised claim is not recoverable.
+
+Except where the claim reached XERO: its documents are already accounted for, as
+lines of the claim's own bill, so they are ARCHIVED rather than returned. In the
+inbox they would look like unpublished work, and publishing them pays the same
+spending a second time — the same rule that keeps a merged-away document out of
+every list. `returnBillsToInbox` is the writer, beside `unmarkBillsClaimed`
+(which stays as it was, for the single-item case). Both confirmations say which
+of the three will happen, and the claim itself is still only soft-deleted, so the
+record of what was claimed outlives it either way. Covered by `npm test` in
+`server/` (`test/claim-delete.test.mts`). Removing an item previously did nothing at all to the document: it
 kept `expenseclaim` with no claim to belong to, which made it invisible in the
 inbox, in Archive, and to anybody else's claim. `deleteBillsHard` splices the
 CACHED list in place — persisting a copy would leave every later read serving

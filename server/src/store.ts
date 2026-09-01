@@ -913,6 +913,34 @@ export function markBillsClaimed(ids: string[]): number {
 //
 // Never deleted: the claim is not a bin, and the document may well be somebody
 // else's to claim, or belong on a different claim next month.
+// Put a claim's documents back in the Costs tab. Used when the CLAIM goes away
+// entirely, where the documents on it are real costs that still have to be
+// accounted for — they were never the claim's property, only its evidence.
+//
+// The inbox rather than Archive, and that is the difference from
+// unmarkBillsClaimed: taking ONE item off a claim says "this doesn't belong
+// here", so it is set aside; losing the whole claim says the work has to be done
+// again, and work to be done lives in the inbox. Readiness re-derives itself, so
+// a complete document lands straight in Ready rather than as new work to type in.
+//
+// Only a document the claim was actually holding. A published one is left where
+// it is by the caller — its money is already in the ledger through the claim's
+// own bill, and offering it as unpublished work is how a cost gets paid twice.
+export function returnBillsToInbox(ids: string[]): number {
+  const wanted = new Set(ids.map(String));
+  if (!wanted.size) return 0;
+  const bills = load();
+  let n = 0;
+  for (const bill of bills) {
+    if (!wanted.has(bill.id) || bill.status !== 'expenseclaim') continue;
+    bill.status = 'new';
+    applyAutoReady(bill);
+    n += 1;
+  }
+  if (n) persist(bills);
+  return n;
+}
+
 export function unmarkBillsClaimed(ids: string[]): number {
   const wanted = new Set(ids.map(String));
   if (!wanted.size) return 0;

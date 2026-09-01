@@ -627,7 +627,9 @@ export default function ExpenseClaimDetail() {
           const n = (claim.transactions || []).length;
           if (
             !window.confirm(
-              `Delete this expense claim?\n\nThe ${n} receipt${n === 1 ? '' : 's'} on it will be permanently deleted, including the stored file${n === 1 ? '' : 's'}. This cannot be undone.\n\nTo keep a receipt, remove it from the claim first — that sends it to Archive.`
+              claim.xeroInvoiceId
+                ? `Delete this expense claim?\n\nThe ${n} receipt${n === 1 ? '' : 's'} on it ${n === 1 ? 'goes' : 'go'} to Archive. The claim was published, so ${n === 1 ? 'its' : 'their'} money is already in Xero as the claim's bill — putting ${n === 1 ? 'it' : 'them'} back in the Costs tab would offer the same spending to be published twice.\n\nThe bill in Xero is not touched.`
+                : `Delete this expense claim?\n\nThe ${n} receipt${n === 1 ? '' : 's'} on it ${n === 1 ? 'goes' : 'go'} back to the Costs tab, ready to be claimed again or published. Nothing is deleted.`
             )
           )
             return;

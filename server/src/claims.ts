@@ -5,8 +5,15 @@ import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
 import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, canAccessOrg, canonicalPersonName, personNameForEmail } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
-import { getBillById, getBillByIdAny, billOrgId, markBillsClaimed, unmarkBillsClaimed, deleteBillsHard, parseAmount } from './store.js';
-import { deleteBillFile } from './storage.js';
+import {
+  getBillById,
+  getBillByIdAny,
+  billOrgId,
+  markBillsClaimed,
+  unmarkBillsClaimed,
+  returnBillsToInbox,
+  parseAmount,
+} from './store.js';
 import { listOrganisations } from './organisations.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
@@ -862,28 +869,38 @@ claimsRouter.post('/:id/archive', (req, res) =>
   })
 );
 
-// DELETE /api/claims/:id — soft delete the claim, and PERMANENTLY remove the
-// receipts that were on it.
+// DELETE /api/claims/:id — soft delete the claim, and hand its documents back
+// to the Costs tab.
 //
-// The practice's call, and the destructive one: a claim thrown away takes its
-// paperwork with it, files included, rather than seeding the inbox with work
-// somebody has to clear again. The reasoning is that these documents exist here
-// to be claimed — captured for that claim — so there is nothing left for them to
-// be once it is gone.
+// This used to delete them permanently, files included, on the reasoning that
+// they were captured to be claimed and had nothing left to be. That is wrong
+// about what they ARE: a receipt is evidence of money somebody spent, and the
+// spending happened whether or not the claim survived. Throwing away a client's
+// paperwork because a claim was raised badly is not recoverable, and the ordinary
+// reason a claim is deleted is that it was raised WRONGLY — the wrong person, the
+// wrong period, the wrong items — every one of which ends with those receipts
+// needing to go on a different claim.
 //
-// Removing a single ITEM is a different act and stays non-destructive: that says
-// "this doesn't belong on this claim", and the document goes to Archive.
+// The inbox rather than Archive, which is where removing a single ITEM sends
+// one: taking one line off says "this doesn't belong on this claim", so it is set
+// aside; losing the whole claim says the work has to be done again, and work to
+// be done lives in the inbox.
+//
+// Except where the claim reached XERO. Then its documents are already accounted
+// for — as lines of the claim's own bill — and putting them back in the inbox
+// offers somebody the chance to publish the same money a second time. Those are
+// archived instead: kept, findable, not presented as work.
 //
 // The claim itself is only soft-deleted, so the record of what was claimed, by
-// whom and for how much outlives the receipts.
+// whom and for how much outlives it either way.
 claimsRouter.delete('/:id', (req, res) =>
   mutate(req, res, (claim) => {
     claim.deleted = true;
     const ids = claim.transactions.map((t) => String(t.itemId));
-    const { removed, freedKeys } = deleteBillsHard(ids);
-    if (removed) console.log(`[claims] claim ${claim.id} deleted — ${removed} receipt(s) went with it`);
-    // Files last, and best-effort: the records are already gone, and a storage
-    // hiccup must not turn a finished delete into an error.
-    for (const key of freedKeys) void deleteBillFile(key);
+    const freed = claim.xeroInvoiceId ? unmarkBillsClaimed(ids) : returnBillsToInbox(ids);
+    if (freed) {
+      const where = claim.xeroInvoiceId ? 'Archive (the claim was published)' : 'the Costs tab';
+      console.log(`[claims] claim ${claim.id} deleted — ${freed} document(s) went back to ${where}`);
+    }
   })
 );

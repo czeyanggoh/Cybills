@@ -368,7 +368,7 @@ export default function ExpenseClaims() {
     if (
       selected.size &&
       window.confirm(
-        `Delete ${selected.size} claim${selected.size === 1 ? '' : 's'}?\n\nThe receipts on ${selected.size === 1 ? 'it' : 'them'} will be permanently deleted, including the stored files. This cannot be undone.`
+        `Delete ${selected.size} claim${selected.size === 1 ? '' : 's'}?\n\nThe receipts on ${selected.size === 1 ? 'it' : 'them'} go back to the Costs tab, ready to be claimed again or published — nothing is deleted. A claim already published to Xero sends its receipts to Archive instead, since that money is in the ledger already.`
       )
     ) {
       deleteClaims([...selected]);
