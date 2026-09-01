@@ -10,6 +10,7 @@ import {
 } from '@/lib/organisations';
 import { lineItemsPostable } from '@/lib/bills';
 import { useGstRegistered } from '@/lib/businessProfile';
+import { useExtractionSettings, PUBLISH_STATUSES } from '@/lib/extractionSettings';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import ComboSelect from '@/components/ComboSelect';
 
@@ -31,7 +32,11 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
   const [taxRates, setTaxRates] = useState(null);
   const [accountCode, setAccountCode] = useState('');
   const [taxType, setTaxType] = useState('');
-  const [status, setStatus] = useState('DRAFT');
+  // The entity's own answer to "post as what?" — see publishStatus in
+  // extractionSettings.js. Read live rather than captured, so a change to the
+  // setting reaches the next dialog that opens.
+  const publishStatus = useExtractionSettings().publishStatus || 'AUTHORISED';
+  const [status, setStatus] = useState(publishStatus);
   const [dueDate, setDueDate] = useState('');
   const [error, setError] = useState('');
   const [publishing, setPublishing] = useState(false);
@@ -58,7 +63,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
     // Updating starts at "leave it alone": the bill already has a status, and
     // somebody fixing an account code has not asked to move it through the
     // approval workflow as a side effect.
-    setStatus(mode === 'update' ? '' : 'DRAFT');
+    setStatus(mode === 'update' ? '' : publishStatus);
     // Shows the invoice date, because that is what will post: the due date
     // follows the date actually sent to Xero, so a date shifted for a locked
     // period can't leave the due date sitting before the bill. Change it here to
@@ -383,9 +388,9 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
                     <div className="relative flex-1">
                       <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectClass}>
                         {updating && <option value="">Leave as it is</option>}
-                        <option value="DRAFT">Draft</option>
-                        <option value="SUBMITTED">Awaiting approval</option>
-                        <option value="AUTHORISED">Approved (awaiting payment)</option>
+                        {PUBLISH_STATUSES.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
                       </select>
                       <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     </div>

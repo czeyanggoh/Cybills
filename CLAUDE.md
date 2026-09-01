@@ -277,6 +277,23 @@ reviewer. Detection runs continuously over the inbox in `Costs.jsx`
 (`mergeGroups`), so a row wears a badge instead of the reviewer having to press
 a button; nothing is combined until the merge review modal is confirmed.
 
+**The strongest tier merges on its own; the guesses still ask.** The three
+passes were always graded and the grade was thrown away in the return, so a
+caller could not act on the strong ones without also acting on the weak ones.
+`findMergeCandidates` now returns `confidence` — `'firm'` for pass 1 (tied by a
+shared reference, a shared total, or the same supplier uploaded together, plus
+the pages this app itself cut from one PDF, which are a RECORD rather than
+evidence) and `'provisional'` for the other two. Business settings -> Extraction
+-> **Merge suggestions** decides what that buys: Automatic combines a firm group
+without asking, Review manually keeps every merge behind the modal, Off stops
+suggesting at all. Only `kind: 'pages'` and only `'firm'` is ever taken
+automatically, one group at a time, and a preview carrying ANY warning is left
+alone — the loudest of those is "these look like the same document", where the
+right act is to archive the copy, and doing it backwards turns two real costs
+into one. Nothing is announced, which is what Automatic means; nothing is lost
+either, because the combined document points at its sources and Unmerge puts
+them back. A group that fails is attempted once and then left in the toolbar.
+
 **Neither scan is a button any more.** Merge detection already ran on every
 change; the whole-book duplicate check now does too — `autoScanDuplicates` in
 `bills.ts`, off the listing endpoint, guarded by `bookRevision()` so an
@@ -630,6 +647,17 @@ Publishing in bulk is as conservative as the automatic publish: it skips rather
 than guesses (already published, on an expense claim, incomplete, or a category
 that isn't in the org's chart), asks first because it writes to a live ledger,
 and the server enforces the same gates again.
+
+**A bill is published as Approved, because that is the state it has to reach.**
+Xero will not take a payment against a DRAFT or SUBMITTED bill, so a book of
+drafts is a second queue somebody works through in Xero after working through
+this one. `publishStatus` (Business settings -> Extraction -> **Publishing**)
+is the entity's answer, and all three places a PERSON presses Publish read it —
+the document page's dialog opens on it, and the inbox's bulk publish and a
+claim's send it — so pressing Publish in two places cannot put two different
+statuses in one ledger. The automatic publish-after-reading is deliberately NOT
+covered: nobody looked at that document, so it posts as SUBMITTED into an
+approval queue rather than straight into the payable ledger.
 
 ## What a Costs export is a file OF
 

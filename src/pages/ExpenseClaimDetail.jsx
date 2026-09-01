@@ -45,6 +45,7 @@ import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills
 import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId, switchOrganisationTo, publishClaimToXero } from '@/lib/organisations';
+import { useExtractionSettings, publishStatusLabel } from '@/lib/extractionSettings';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
 import { claimDateFor } from '@/lib/claimReference';
@@ -203,8 +204,11 @@ export default function ExpenseClaimDetail() {
     });
   }, [txnKey]);
 
-  // Post the approved claim to Xero as a DRAFT ACCPAY bill payable to the
-  // employee. Draft = reviewable in Xero before it's finalised.
+  // Post the approved claim to Xero as an ACCPAY bill payable to the employee,
+  // at whatever status this entity publishes at (Business settings → Extraction
+  // → Publishing). Approved by default: a claim reaching here has already been
+  // approved HERE, and a bill has to be approved in Xero before it can be paid.
+  const publishStatus = useExtractionSettings().publishStatus || 'AUTHORISED';
   const publishXero = async () => {
     setPayNote('');
     const active = getActiveOrganisationId();
@@ -219,13 +223,13 @@ export default function ExpenseClaimDetail() {
       const pdfBase64 = await buildClaimPdfBase64(claim);
       const r = await publishClaimToXero(orgId, {
         claimId: claim.id,
-        status: 'DRAFT',
+        status: publishStatus,
         pdfBase64,
         pdfName: claimExportName(claim, 'pdf'),
       });
       notifyClaimsChanged(); // refresh so the button flips to "Published to Xero"
       const attachNote = r.attachment && r.attachment.ok === false ? ' (PDF attachment couldn’t be sent — see Xero)' : '';
-      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as a DRAFT bill${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} — review and approve it in Xero.${attachNote}`);
+      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as a ${publishStatusLabel(publishStatus).toLowerCase()} bill${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''}.${attachNote}`);
     } catch (err) {
       setPayNote(err?.message || 'Could not publish the claim to Xero.');
     } finally {

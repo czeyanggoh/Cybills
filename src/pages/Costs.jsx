@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -30,7 +30,7 @@ import {
   useBridgeEntity,
 } from '@/lib/organisations';
 import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
-import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
+import { useExtractionSettings, noTaxRateName, publishStatusLabel } from '@/lib/extractionSettings';
 import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument } from '@/lib/reRead';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
@@ -38,7 +38,7 @@ import { useAuth } from '@/lib/auth';
 import { updateBill, deleteBill, notifyBillsChanged, itemNumber, costPath } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
-import { commitMerge } from '@/lib/mergeDocs';
+import { buildMergePreview, commitMerge } from '@/lib/mergeDocs';
 import { findMergeCandidates, docFacts, statesNothing } from '@/lib/mergeDetect';
 import MergeModal from '@/components/MergeModal';
 import BulkEditModal from '@/components/BulkEditModal';
@@ -750,6 +750,10 @@ export default function Costs() {
   // work still to do — see SCOPES.
   const [scope, setScope] = useState('unpublished');
   const settings = useExtractionSettings();
+  // What a publish posts as, this entity's own answer — the same one the
+  // document page's dialog opens on, so pressing Publish in two places cannot
+  // put two different statuses in one ledger.
+  const publishStatus = settings.publishStatus || 'AUTHORISED';
   // Business settings → Extraction can hide the To review + Ready tabs (their
   // docs still live under Inbox with their status tag).
   const visibleTabs = TABS.filter(
@@ -830,10 +834,61 @@ export default function Costs() {
 
   // Merge detection, run over the whole inbox whenever the documents change —
   // the reviewer is TOLD which uploads are really one document rather than
-  // having to suspect it and go looking. Nothing is combined here: a suggestion
-  // is a badge on the row and an entry in the toolbar, and every merge still
-  // goes through the review modal.
-  const mergeGroups = useMemo(() => findMergeCandidates(rowsFor(allDocs, 'inbox')), [allDocs]);
+  // having to suspect it and go looking. A suggestion is a badge on the row and
+  // an entry in the toolbar; Off says not to look at all, since an entity that
+  // never merges anything does not want a badge about it.
+  const mergeMode = settings.mergeMode || 'Automatic';
+  const mergeGroups = useMemo(
+    () => (mergeMode === 'Off' ? [] : findMergeCandidates(rowsFor(allDocs, 'inbox'))),
+    [allDocs, mergeMode]
+  );
+  // Automatic: the STRONGEST tier is combined without asking. A firm group is
+  // tied by a shared fact — the same reference, the same total, or the same
+  // supplier uploaded in one go — or was cut from one PDF by this app, which is
+  // a record rather than a guess. The provisional pairs (nothing read off one
+  // half, held together only by arriving together) and the receipt/card-slip
+  // pairs stay suggestions: those are judgements, and a wrong one makes one
+  // document out of two real costs.
+  //
+  // Nothing is announced — that is the point of Automatic — but nothing is lost
+  // either: the combined document points at its sources (`mergedFrom`), they
+  // survive hidden, and Unmerge puts them back.
+  //
+  // One at a time, and a group is attempted once: a failure leaves the
+  // suggestion in the toolbar to be done by hand rather than being retried on
+  // every render.
+  const autoMerging = useRef(false);
+  const autoMergeTried = useRef(new Set());
+  useEffect(() => {
+    if (mergeMode !== 'Automatic' || autoMerging.current) return;
+    const keyOf = (g) => g.docs.map((d) => d.id).sort().join('|');
+    const group = mergeGroups.find(
+      (g) => g.confidence === 'firm' && g.kind === 'pages' && !autoMergeTried.current.has(keyOf(g))
+    );
+    if (!group) return;
+    autoMerging.current = true;
+    autoMergeTried.current.add(keyOf(group));
+    (async () => {
+      let merged = false;
+      try {
+        const preview = await buildMergePreview(group.docs);
+        // A preview with something to say is not a silent merge. The loudest of
+        // those is "these look like the same document": a duplicate is kept and
+        // the copy archived, never combined, and getting that backwards turns
+        // two real costs into one.
+        if (preview?.sources?.length >= 2 && !preview.warnings.length) {
+          const res = await commitMerge(preview.sources, preview.base64, preview.fields);
+          merged = Boolean(res?.ok);
+        }
+      } catch {
+        // Best-effort, like the automatic publish: the suggestion is still there.
+      } finally {
+        autoMerging.current = false;
+      }
+      if (merged) await reload();
+    })();
+  }, [mergeGroups, mergeMode]);
+
   // Row id -> the suggestion it belongs to, so a row can offer its own merge.
   const mergeGroupFor = useMemo(() => {
     const m = new Map();
@@ -1215,7 +1270,7 @@ export default function Costs() {
     }
     if (
       !window.confirm(
-        `Publish ${targets.length} document(s) to Xero as draft bills?\n\n` +
+        `Publish ${targets.length} document(s) to Xero as ${publishStatusLabel(publishStatus).toLowerCase()} bills?\n\n` +
           'This writes to the live ledger and finishes each document — it archives, and can no longer go on an expense claim.'
       )
     )
@@ -1243,7 +1298,7 @@ export default function Costs() {
         continue;
       }
       try {
-        await publishBillToXero(orgId, { billId: d.id, accountCode, taxType, status: 'DRAFT' });
+        await publishBillToXero(orgId, { billId: d.id, accountCode, taxType, status: publishStatus });
         done += 1;
       } catch {
         failed.push(d.supplier || 'Unknown supplier');

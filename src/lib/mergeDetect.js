@@ -163,7 +163,11 @@ function forcedPairs(edges, claimed) {
   return out;
 }
 
-// Every set of inbox documents worth combining. Returns [{ docs, kind, why }].
+// Every set of inbox documents worth combining. Returns
+// [{ docs, kind, why, confidence }], where confidence is 'firm' for the first
+// pass and 'provisional' for the other two — the three kinds of evidence were
+// always graded, but the grade was thrown away in the return, so a caller could
+// not act on the strong ones without also acting on the guesses.
 //
 // Three passes, because the three kinds of evidence are not equally strong and
 // must not be allowed to chain into each other:
@@ -231,6 +235,10 @@ export function findMergeCandidates(docs) {
       docs: orderForMerge(members.map((m) => m.d), 'pages'),
       kind: 'pages',
       why: members.map((m) => why.get(m.i)).find(Boolean) || 'the same document',
+      // Tied by a shared FACT — a reference, a total, a supplier uploaded in one
+      // go — or cut from one PDF by the app itself. This is the only tier strong
+      // enough to act on without asking.
+      confidence: 'firm',
     });
   }
 
@@ -239,7 +247,9 @@ export function findMergeCandidates(docs) {
     forcedPairs(edges, claimed).forEach((e) => {
       claimed.add(e.i);
       claimed.add(e.j);
-      groups.push({ docs: orderForMerge([pool[e.i], pool[e.j]], kind), kind, why: e.why });
+      // Provenance, or a shared total across two different suppliers. Real
+      // evidence, but not the kind to act on silently: offered, never taken.
+      groups.push({ docs: orderForMerge([pool[e.i], pool[e.j]], kind), kind, why: e.why, confidence: 'provisional' });
     });
   emit(provisional, 'pages');
   emit(payments, 'payment');

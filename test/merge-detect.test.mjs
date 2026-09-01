@@ -165,6 +165,26 @@ check('the scan finds both kinds and leaves the rest alone', found.map((g) => [g
 ]);
 check('the scan says why it paired them', found[0].why, 'the same total');
 
+// --- how strong each pairing is ----------------------------------------------
+// The three passes were always graded — pages tied by a shared FACT, then pages
+// tied only by having arrived together, then a receipt with its card slip — but
+// the grade was thrown away in the return, so a caller could not act on the
+// strong ones without also acting on the guesses. Only 'firm' is safe to
+// combine without asking.
+check('a pair tied by a shared fact is firm', found[0].confidence, 'firm');
+check('a receipt and its card slip is not', found[1].confidence, 'provisional');
+{
+  const blankPair = findMergeCandidates([blankHalf, page2]);
+  check('a pair held together only by arriving together is not either', blankPair[0]?.confidence, 'provisional');
+  // Split pages are a RECORD of what this app did, not evidence weighed about
+  // two uploads, so they are at least as firm as a shared reference.
+  const cut = findMergeCandidates([
+    doc({ id: 'a', supplier: '', splitGroup: 'g1', splitPage: 1, splitPages: 2 }),
+    doc({ id: 'b', supplier: '', splitGroup: 'g1', splitPage: 2, splitPages: 2 }),
+  ]);
+  check('pages this app cut from one PDF are firm', cut[0]?.confidence, 'firm');
+}
+
 // Three documents at one total is an ambiguity, not a pairing: which slip paid
 // which receipt is not knowable from the total alone, so nothing is offered.
 const secondSlip = doc({ id: 'slip2', supplier: 'UOB', date: '2026-08-12', total: '61.63' });

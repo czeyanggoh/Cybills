@@ -43,7 +43,16 @@ import { useInboundConfig } from '@/lib/inboundSettings';
 import { cleanSuffix, addressTail, entityAddress } from '@/lib/inboundAddress';
 import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig, sendTestDelivery } from '@/lib/whatsapp';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
-import { useExtractionSettings, saveExtractionSettings, DUE_MODES, DUE_DAYS, DUP_MODES, PAID_OPTIONS } from '@/lib/extractionSettings';
+import {
+  useExtractionSettings,
+  saveExtractionSettings,
+  DUE_MODES,
+  DUE_DAYS,
+  DUP_MODES,
+  MERGE_MODES,
+  PAID_OPTIONS,
+  PUBLISH_STATUSES,
+} from '@/lib/extractionSettings';
 import { useAuth } from '@/lib/auth';
 import { useSalesEnabled, getWorkspaceSettings, saveWorkspaceSettings } from '@/lib/workspaceSettings';
 import { isPracticeTeam } from '@/lib/practiceStore';
@@ -823,6 +832,25 @@ function Extraction() {
           hint="Every document is checked against the ones already submitted: the identical file, the same supplier + reference + amount, or the same supplier + amount + date. Automatic holds a match back for review; Review manually lets it in carrying a “Possible duplicate” flag; Off skips the check. An identical file is always refused."
         >
           <SelectBox value={form.duplicateMode} onChange={(v) => set('duplicateMode', v)} options={DUP_MODES} />
+        </Row>
+        <Row
+          label="Merge suggestions"
+          hint="Two uploads that are one document — page 1 and page 2 of a forwarded order, or a receipt with the card slip that paid for it. Automatic combines the strongest kind on its own: documents tied by the same reference, the same total, or the same supplier uploaded together. Anything weaker is still only suggested. Review manually combines nothing until you confirm it; Off stops suggesting. A merge is always undoable — open the combined document and press Unmerge."
+        >
+          <SelectBox value={form.mergeMode} onChange={(v) => set('mergeMode', v)} options={MERGE_MODES} />
+        </Row>
+      </Card>
+
+      <Card title="Publishing">
+        <Row
+          label="Post bills to Xero as"
+          hint="What Publish to Xero posts a bill as, wherever somebody presses it — the dialog opens on it, and the inbox's bulk publish and a claim's use it too. Only an Approved bill can take a payment in Xero, so that is what a bill has to reach before the money can leave. Publishing automatically after reading is separate: nobody looked at that document, so it always posts as Awaiting approval."
+        >
+          <SelectBox
+            value={PUBLISH_STATUSES.find((o) => o.value === form.publishStatus)?.label || PUBLISH_STATUSES[0].label}
+            onChange={(label) => set('publishStatus', PUBLISH_STATUSES.find((o) => o.label === label)?.value || 'DRAFT')}
+            options={PUBLISH_STATUSES.map((o) => o.label)}
+          />
         </Row>
       </Card>
 

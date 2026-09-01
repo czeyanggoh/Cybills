@@ -17,6 +17,29 @@ export const DUE_MODES = [
 ];
 export const DUE_DAYS = ['7', '14', '30', '60'];
 export const DUP_MODES = ['Automatic', 'Review manually', 'Off'];
+
+// What a bill is posted AS when somebody publishes it, in Xero's own words. The
+// three are not shades of one thing: a DRAFT is not in the ledger's numbers at
+// all, SUBMITTED is sitting in somebody's approval queue, and only an AUTHORISED
+// bill can take a payment — which is why the payment run publishes at that
+// status and nothing else would let the money leave.
+export const PUBLISH_STATUSES = [
+  { value: 'DRAFT', label: 'Draft' },
+  { value: 'SUBMITTED', label: 'Awaiting approval' },
+  { value: 'AUTHORISED', label: 'Approved (awaiting payment)' },
+];
+export const publishStatusLabel = (value) =>
+  PUBLISH_STATUSES.find((o) => o.value === value)?.label || PUBLISH_STATUSES[0].label;
+// What a merge SUGGESTION does. Detection runs continuously either way; this
+// says whether the strongest tier acts on its own.
+//
+//   Automatic      — a group tied by a shared fact (same reference, same total,
+//                    or the same supplier uploaded together) is combined without
+//                    asking. Everything weaker is still only suggested.
+//   Review manually — nothing is combined until somebody confirms the modal.
+//   Off            — no suggestions at all; select two rows and press Merge.
+export const MERGE_MODES = ['Automatic', 'Review manually', 'Off'];
+
 export const PAID_OPTIONS = ['Not paid', 'Paid'];
 
 export const DEFAULT_EXTRACTION_SETTINGS = {
@@ -27,6 +50,21 @@ export const DEFAULT_EXTRACTION_SETTINGS = {
   // its own default (LLM_PROVIDER) carries every untouched org with it.
   readerProvider: '',
   duplicateMode: 'Automatic',
+  // Two uploads that are one document — page 1 and page 2 of a forwarded order,
+  // or a receipt with the card slip that paid for it. Only the FIRM tier is ever
+  // taken automatically, and a merge is undoable: the sources survive, hidden,
+  // and Unmerge puts them back.
+  mergeMode: 'Automatic',
+  // What "Publish to Xero" posts a bill as, wherever a PERSON presses it: the
+  // dialog's own default, the inbox's bulk publish, and a claim's. Approved,
+  // because that is the state a bill has to reach before it can be paid, and
+  // publishing from here is the last step of coding it — a book of drafts is a
+  // second queue somebody has to work through in Xero.
+  //
+  // NOT the automatic publish-after-reading, which posts as SUBMITTED on
+  // purpose: nobody looked at that document, so it goes into an approval queue
+  // rather than straight into the payable ledger.
+  publishStatus: 'AUTHORISED',
   extractTax: true,
   // Post a document to Xero as Awaiting Approval as soon as it's been read —
   // see autoPublish.js for the conditions it insists on first. OFF by default:
