@@ -10,9 +10,12 @@ import AutoClaimsModal from '@/components/AutoClaimsModal';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate } from '@/lib/claimStore';
+import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate, isMyClaim } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, useUsers } from '@/lib/userStore';
+import SegmentedToggle from '@/components/SegmentedToggle';
+import { usePersonScope } from '@/lib/personScope';
+import { PERSON_SCOPES } from '@/lib/costFilters';
 import { cn } from '@/lib/utils';
 import { useExportSettings } from '@/lib/exportSettings';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
@@ -273,6 +276,15 @@ export default function ExpenseClaims() {
   // claim); a User Admin runs the roster, not other people's documents.
   const isAdmin = canManageBusiness(membership, googleEnabled);
   const claims = isAdmin ? allClaims : visibleClaimsFor(allClaims, user);
+  // …and within what they may see, whose claims to look at. The same control,
+  // reading the same remembered answer, as the Costs list's own — asking for
+  // your own items on one page and being shown everybody's on the next is the
+  // sort of thing that makes two pages feel like two apps.
+  const [person, setPerson] = usePersonScope();
+  const canScopeToMe = Boolean(user?.email || user?.name);
+  const personScope = canScopeToMe ? person : 'everyone';
+  const myClaims = claims.filter((c) => isMyClaim(c, user));
+  const scopedClaims = personScope === 'mine' ? myClaims : claims;
 
   // Each row shows its own Approval status, so there is no separate Approvals
   // tab and no draft/awaiting split — one list, sorted newest first (createdAt
@@ -281,8 +293,8 @@ export default function ExpenseClaims() {
   // Publishing is what settles a claim, so that — not the archive flag — is what
   // the working half is measured by. A claim archived by hand and never
   // published is still work somebody may have to finish, and it stays here.
-  const unpublished = claims.filter((c) => !c.xeroInvoiceId).sort(byNewest);
-  const everything = [...claims].sort(byNewest);
+  const unpublished = scopedClaims.filter((c) => !c.xeroInvoiceId).sort(byNewest);
+  const everything = [...scopedClaims].sort(byNewest);
 
   // Per-claim approval status shown in its column (Dext wording).
   const STATUS_LABEL = { awaiting_approval: 'Waiting', approved: 'Approved', rejected: 'Rejected' };
@@ -292,6 +304,14 @@ export default function ExpenseClaims() {
     { key: 'unpublished', label: 'Unpublished', count: unpublished.length },
     { key: 'all', label: 'All claims', count: everything.length },
   ];
+  // Both sides of the My items toggle, counted inside the scope it is drawn
+  // beside — the same rule the scope counts follow, so neither control claims
+  // rows the other has already taken out.
+  const inScope = (list) => (scope === 'all' ? list : list.filter((c) => !c.xeroInvoiceId));
+  const personCounts = {
+    mine: inScope(myClaims).length,
+    everyone: inScope(claims).length,
+  };
 
   const base = scope === 'all' ? everything : unpublished;
   const q = query.trim().toLowerCase();
@@ -417,33 +437,26 @@ export default function ExpenseClaims() {
       </div>
 
       {/* One list, two ways of looking at it — the same control the Costs side
-          uses, so the two pages are read the same way. */}
-      <div className="mb-4 inline-flex rounded-md border p-0.5" role="group" aria-label="Which claims to show">
-        {SCOPES.map((sc) => {
-          const active = scope === sc.key;
-          return (
-            <button
-              key={sc.key}
-              type="button"
-              aria-pressed={active}
-              onClick={() => { setScope(sc.key); setSelected(new Set()); }}
-              className={cn(
-                'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded px-3 text-sm transition-colors',
-                active ? 'bg-foreground font-medium text-background' : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              {sc.label}
-              <span
-                className={cn(
-                  'rounded-full px-1.5 text-xs',
-                  active ? 'bg-background/20 text-background' : 'bg-muted text-muted-foreground'
-                )}
-              >
-                {sc.count}
-              </span>
-            </button>
-          );
-        })}
+          uses (and the same component, so the two pages cannot drift apart
+          again). */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <SegmentedToggle
+          label="Which claims to show"
+          options={SCOPES}
+          value={scope}
+          onChange={(next) => { setScope(next); setSelected(new Set()); }}
+        />
+        {/* Not offered to a viewer no claim can name: "My items" would be a
+            promise of an empty list. */}
+        {canScopeToMe && (
+          <SegmentedToggle
+            label="Whose claims to show"
+            options={PERSON_SCOPES}
+            value={personScope}
+            onChange={(next) => { setPerson(next); setSelected(new Set()); }}
+            counts={personCounts}
+          />
+        )}
       </div>
 
       {/* Toolbar */}

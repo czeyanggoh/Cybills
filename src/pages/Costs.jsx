@@ -46,7 +46,9 @@ import BulkEditModal from '@/components/BulkEditModal';
 import DocCardList from '@/components/DocCardList';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { useCostsDocs, rowsFor, isInInbox, isComplete, isArchived, needsReview, missingFields } from '@/lib/costsData';
-import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
+import { usePersonScope } from '@/lib/personScope';
+import SegmentedToggle from '@/components/SegmentedToggle';
+import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf, PERSON_SCOPES, applyPersonScope, meIdentities } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
 import TableSettingsMenu from '@/components/TableSettingsMenu';
@@ -109,40 +111,6 @@ const SCOPES = [
   { key: 'unpublished', label: 'Unpublished' },
   { key: 'all', label: 'All costs' },
 ];
-
-function ScopeToggle({ scope, setScope, counts }) {
-  return (
-    <div className="mb-3 inline-flex rounded-md border p-0.5" role="group" aria-label="Which costs to show">
-      {SCOPES.map((s) => {
-        const active = scope === s.key;
-        return (
-          <button
-            key={s.key}
-            type="button"
-            aria-pressed={active}
-            onClick={() => setScope(s.key)}
-            className={cn(
-              'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded px-3 text-sm transition-colors',
-              active
-                ? 'bg-foreground font-medium text-background'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
-          >
-            {s.label}
-            <span
-              className={cn(
-                'rounded-full px-1.5 text-xs',
-                active ? 'bg-background/20 text-background' : 'bg-muted text-muted-foreground'
-              )}
-            >
-              {counts[s.key] ?? 0}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 // `published` distinguishes the two ways a document leaves the inbox for
 // Archive: published to Xero, or carried by an expense claim. Both are finished
@@ -754,6 +722,10 @@ export default function Costs() {
   // Which half of the combined list the Costs tab is showing. Defaults to the
   // work still to do — see SCOPES.
   const [scope, setScope] = useListView('costs', 'scope', 'unpublished');
+  // Whose documents: this person's own, or everybody's in this client entity.
+  // Shared with the rail's badge rather than held here, so the number beside
+  // "Costs inbox" counts the list this toggle decides — see personScope.js.
+  const [person, setPerson] = usePersonScope();
   const settings = useExtractionSettings();
   // What a publish posts as, this entity's own answer — the same one the
   // document page's dialog opens on, so pressing Publish in two places cannot
@@ -801,32 +773,56 @@ export default function Costs() {
   const noTaxName = noTaxRateName(taxRates);
   const taxRateOptions = gstRegistered ? taxRates.map((t) => t.name) : [noTaxName].filter(Boolean);
 
-  // Every tab's rows, so its badge count ties to what the tab actually shows.
-  const rowsByTab = {
-    processing: rowsFor(allDocs, 'processing'),
+  // Who the viewer is, as a document could name them. A signed-out viewer owns
+  // nothing, so My items is not offered at all rather than offered empty.
+  const me = useMemo(() => ({ email: user?.email, name: user?.name }), [user?.email, user?.name]);
+  const canScopeToMe = meIdentities(me).length > 0;
+  const mineDocs = useMemo(() => applyPersonScope(allDocs, 'mine', me), [allDocs, me]);
+  const personScope = canScopeToMe ? person : 'everyone';
+  const scopedDocs = personScope === 'mine' ? mineDocs : allDocs;
+
+  // Every tab's rows out of a given set of documents, so the one rule can be
+  // asked of the whole book and of this person's half of it — and both sides of
+  // the My items toggle are counted by the list they would actually produce
+  // rather than by a second rule beside it.
+  const rowsByTabFor = (docs) => ({
+    processing: rowsFor(docs, 'processing'),
     // The working list under Unpublished: processing, to review and ready
     // together, which is what the three tabs after it count. Under All costs it
     // is the whole book bar the set-aside pile, which is a different question
     // being asked of the same tab — history rather than what is outstanding.
-    all: rowsFor(allDocs, scope === 'all' ? 'costs-all' : 'costs'),
-    review: rowsFor(allDocs, 'review'),
-    ready: rowsFor(allDocs, 'ready'),
+    all: rowsFor(docs, scope === 'all' ? 'costs-all' : 'costs'),
+    review: rowsFor(docs, 'review'),
+    ready: rowsFor(docs, 'ready'),
     // The settled work, seen through whichever scope is selected: under
     // Unpublished it is the documents archived by hand and never published;
     // under All costs it also holds the published, the claimed and the merged.
-    archived: rowsFor(allDocs, scope).filter(isArchived),
+    archived: rowsFor(docs, scope).filter(isArchived),
+  });
+  // Every tab's rows, so its badge count ties to what the tab actually shows.
+  const rowsByTabAll = rowsByTabFor(allDocs);
+  const rowsByTabMine = rowsByTabFor(mineDocs);
+  const rowsByTab = personScope === 'mine' ? rowsByTabMine : rowsByTabAll;
+  // Both sides of that toggle, counting the tab it is drawn on — the same rule
+  // the scope counts below follow, for the same reason: a count that answered
+  // for another tab is a number the list beside it contradicts.
+  const personCounts = {
+    mine: (rowsByTabMine[tab] ?? []).length,
+    everyone: (rowsByTabAll[tab] ?? []).length,
   };
   // Both sides of the toggle, counting the tab it is actually drawn on: what
   // each scope reaches HERE, never the whole book. A count that answered for
-  // the other tab would be a number the list beside it contradicts.
+  // the other tab would be a number the list beside it contradicts. Counted
+  // within the person scope too — the two toggles narrow the same list, so
+  // neither may claim rows the other has already taken out.
   const scopeCounts = tab === 'archived'
     ? {
-        unpublished: rowsFor(allDocs, 'unpublished').filter(isArchived).length,
-        all: rowsFor(allDocs, 'all').filter(isArchived).length,
+        unpublished: rowsFor(scopedDocs, 'unpublished').filter(isArchived).length,
+        all: rowsFor(scopedDocs, 'all').filter(isArchived).length,
       }
     : {
-        unpublished: rowsFor(allDocs, 'costs').length,
-        all: rowsFor(allDocs, 'costs-all').length,
+        unpublished: rowsFor(scopedDocs, 'costs').length,
+        all: rowsFor(scopedDocs, 'costs-all').length,
       };
   const allRows = rowsByTab[tab] ?? [];
   // Everything flagged, whichever tab it's in — a flag raised on an inbox
@@ -846,6 +842,11 @@ export default function Costs() {
   // an entry in the toolbar; Off says not to look at all, since an entity that
   // never merges anything does not want a badge about it.
   const mergeMode = settings.mergeMode || 'Automatic';
+  // Over the whole inbox, never the person scope: whether two uploads are one
+  // document is a fact about the paper, not about who is looking, and
+  // Automatic combines them without asking — a merge that happened or didn't
+  // depending on whose items the last person had selected would be the worst
+  // kind of intermittent.
   const mergeGroups = useMemo(
     () => (mergeMode === 'Off' ? [] : findMergeCandidates(rowsFor(allDocs, 'inbox'))),
     [allDocs, mergeMode]
@@ -1423,23 +1424,46 @@ export default function Costs() {
         </span>
       </div>
 
-      {/* Drawn on the two tabs that hold more than one kind of document: Costs,
-          where All costs adds the published history a supplier is filtered
-          across, and Archived, where it says how far back the set-aside pile
-          reaches. Not on Processing / To review / Ready — each of those is one
-          kind of working document, so the toggle would have nothing to say. */}
-      {(tab === 'all' || tab === 'archived') && (
-        <ScopeToggle
-          scope={scope}
-          setScope={(next) => {
-            setScope(next);
-            // Narrowing the list would otherwise leave rows ticked that are no
-            // longer on screen, and the next bulk action would act on them.
-            setSelected(new Set());
-          }}
-          counts={scopeCounts}
-        />
-      )}
+      {/* The two questions asked of the same list, side by side: how much of the
+          book, and whose. */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {/* How much: drawn on the two tabs that hold more than one kind of
+            document — Costs, where All costs adds the published history a
+            supplier is filtered across, and Archived, where it says how far
+            back the set-aside pile reaches. Not on Processing / To review /
+            Ready: each of those is one kind of working document, so the toggle
+            would have nothing to say. */}
+        {(tab === 'all' || tab === 'archived') && (
+          <SegmentedToggle
+            label="How much of the book to show"
+            options={SCOPES}
+            value={scope}
+            onChange={(next) => {
+              setScope(next);
+              // Narrowing the list would otherwise leave rows ticked that are
+              // no longer on screen, and the next bulk action would act on them.
+              setSelected(new Set());
+            }}
+            counts={scopeCounts}
+          />
+        )}
+        {/* Whose: on every tab, because "what of mine is still to do?" is asked
+            of the work as often as of the history. Only where the viewer is
+            somebody a document can name — signed out, My items is a promise of
+            an empty list. */}
+        {canScopeToMe && (
+          <SegmentedToggle
+            label="Whose documents to show"
+            options={PERSON_SCOPES}
+            value={personScope}
+            onChange={(next) => {
+              setPerson(next);
+              setSelected(new Set());
+            }}
+            counts={personCounts}
+          />
+        )}
+      </div>
 
       {tab === 'processing' ? (
         <CostProcessingView
@@ -1565,9 +1589,15 @@ export default function Costs() {
                   <tr>
                     <td colSpan={shownColumns.length + 2} className="px-4 py-16 text-center text-sm text-muted-foreground">
                       <Plus className="mx-auto mb-2 h-5 w-5" strokeWidth={1.5} />
-                      {tab === 'processing'
-                        ? 'Nothing processing right now.'
-                        : `Nothing in ${TABS.find((t) => t.key === tab)?.label} — add documents to get started.`}
+                      {/* "Add documents to get started" is the wrong thing to
+                          say when the documents are there and simply belong to
+                          somebody else — the answer is the toggle above, so
+                          the empty list says so and counts them. */}
+                      {personScope === 'mine' && personCounts.everyone > 0
+                        ? `Nothing here is yours — ${personCounts.everyone} ${personCounts.everyone === 1 ? 'document belongs' : 'documents belong'} to other people. Switch to All items to see ${personCounts.everyone === 1 ? 'it' : 'them'}.`
+                        : tab === 'processing'
+                          ? 'Nothing processing right now.'
+                          : `Nothing in ${TABS.find((t) => t.key === tab)?.label} — add documents to get started.`}
                     </td>
                   </tr>
                 )}

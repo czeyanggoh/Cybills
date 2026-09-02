@@ -2,7 +2,7 @@
 // come back, and a wrong predicate silently hides a document the reviewer is
 // looking for — so each one is tested against a row that should survive it and
 // a row that shouldn't.
-import { COST_FILTERS, FILTER_IDS, applyCostFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '../src/lib/costFilters.js';
+import { COST_FILTERS, FILTER_IDS, applyCostFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf, isMine, applyPersonScope, PERSON_SCOPES } from '../src/lib/costFilters.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -157,6 +157,41 @@ check('count is what is chosen', filterCount({ tax: 'yes', paid: '', flag: 'no' 
     ownersOf([...all, doc({ id: 'again', user: 'Astrid Yang' })]),
     ['Astrid Yang', 'Cze Yang Goh', UNASSIGNED]);
   check('no unassigned documents, no Unassigned option', ownersOf([mine, uploaded]), ['Astrid Yang', 'Cze Yang Goh']);
+}
+
+// --- My items / All items -----------------------------------------------------
+// The toggle promises "the documents that are mine". Getting it wrong hides a
+// person's own paperwork from them, or shows them somebody else's — so the two
+// ways a row can name a person, and the one way it can stop naming them, are
+// each held to it.
+{
+  const me = { email: 'czeyang.goh@cy-bm.sg', name: 'Cze Yang Goh' };
+  const rows = [
+    // Owned by me, by address.
+    doc({ id: 'byEmail', user: 'Cze Yang Goh', ownerEmail: 'CZEYANG.GOH@cy-bm.sg', createdByEmail: 'czeyang.goh@cy-bm.sg' }),
+    // Nobody set an owner, so the uploader stands in — and that is me.
+    doc({ id: 'byUpload', user: 'Cze Yang Goh', ownerEmail: '', createdByEmail: 'czeyang.goh@cy-bm.sg' }),
+    // I uploaded it and handed it over: it is Astrid's now, not mine.
+    doc({ id: 'reassigned', user: 'Astrid Yang', ownerEmail: 'astridy2004@gmail.com', createdByEmail: 'czeyang.goh@cy-bm.sg' }),
+    // Somebody else's outright.
+    doc({ id: 'theirs', user: 'Astrid Yang', ownerEmail: 'astridy2004@gmail.com', createdByEmail: 'astridy2004@gmail.com' }),
+    // Recorded nobody at all.
+    doc({ id: 'nobody', user: '', ownerEmail: '', createdByEmail: '' }),
+  ];
+  const mine = (who) => rows.filter((d) => isMine(d, who)).map((d) => d.id);
+
+  check('mine by address, in any spelling', mine(me), ['byEmail', 'byUpload']);
+  check('a name alone still finds them', mine({ name: 'Cze Yang Goh' }), ['byEmail', 'byUpload']);
+  check('reassigning the owner takes it out of My items', mine(me).includes('reassigned'), false);
+  check('a document recording nobody is nobody\'s', mine(me).includes('nobody'), false);
+  // Signed out, nothing is yours — which is why the toggle isn't offered.
+  check('no identity, nothing is mine', mine({}), []);
+
+  check('the scope narrows', ids(applyPersonScope(rows, 'mine', me)), ['byEmail', 'byUpload']);
+  check('…and All items is the whole entity', ids(applyPersonScope(rows, 'everyone', me)).length, rows.length);
+  check('an unknown scope shows everything rather than nothing',
+    ids(applyPersonScope(rows, 'whatever', me)).length, rows.length);
+  check('two scopes, mine first', PERSON_SCOPES.map((s) => s.key), ['mine', 'everyone']);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');

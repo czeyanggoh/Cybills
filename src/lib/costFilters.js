@@ -125,3 +125,46 @@ export function ownersOf(docs) {
   );
   return list.some(isUnassigned) ? [...named, UNASSIGNED] : named;
 }
+
+// --- Mine, or the whole entity's ---------------------------------------------
+// The Costs list is one client entity's whole book — one Xero tenant's paper —
+// and most of the time the question asked of it is narrower than that: "what of
+// MINE is still to do?". Advanced search's User picker could already answer it,
+// but only by picking your own name out of a list of colleagues, which is a
+// filter somebody sets up rather than a way of looking at the page.
+//
+// So it is its own control, and it reads IDENTITY rather than a name: a person
+// is their address as much as their display name, and a row records whichever
+// of the two the path that wrote it had. Either matching counts.
+export const PERSON_SCOPES = [
+  { key: 'mine', label: 'My items' },
+  { key: 'everyone', label: 'All items' },
+];
+
+// Who a row belongs TO — deliberately narrower than isOwnedBy above, which
+// answers "does this document identify that person at all". A document's owner
+// is its own field, and reassigning it is exactly somebody saying "this is not
+// mine, it is theirs" — so a receipt I uploaded and handed over is no longer in
+// My items, even though my address is still on it as the uploader. Where no
+// owner was ever set the uploader stands in, which is the same rule the User
+// column follows (`user` is already owner-else-uploader — see bills.js).
+const belongsTo = (d) => [d.user, text(d.ownerEmail) || d.createdByEmail].filter((v) => text(v) !== '');
+
+// The viewer as a row could name them: their address and their display name.
+// Empty for a signed-out viewer — nothing is theirs then, which is why the
+// toggle isn't offered at all rather than showing an empty list.
+export const meIdentities = (me) =>
+  [me?.email, me?.name].map((v) => text(v).toLowerCase()).filter(Boolean);
+
+export function isMine(d, me) {
+  const who = meIdentities(me);
+  if (!who.length) return false;
+  return belongsTo(d).some((v) => who.includes(text(v).toLowerCase()));
+}
+
+// 'mine' narrows to this person's own documents; anything else is the entity's
+// whole book, so an unknown scope shows everything rather than nothing.
+export function applyPersonScope(rows, scope, me) {
+  const list = rows || [];
+  return scope === 'mine' ? list.filter((d) => isMine(d, me)) : list;
+}

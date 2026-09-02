@@ -356,6 +356,51 @@ what Unmerge puts back. Hidden, not deleted. The toggle's counts are per tab (wh
 HERE, never the whole book), and the tab badge follows the list the way
 Archived's always has.
 
+**A list answers two questions: how much of the book, and whose.** The Costs
+list is one client entity's whole book — one Xero tenant's paper — and most of
+the time the question asked of it is narrower: "what of MINE is still to do?".
+Advanced search's User picker could already answer it, but only by picking your
+own name out of a list of colleagues, which is a filter somebody sets up rather
+than a way of looking at the page. So **My items / All items** is its own
+control, beside Unpublished / All costs, on Costs and on Expense claims.
+
+It reads IDENTITY, not a name (`isMine` / `applyPersonScope` in
+`costFilters.js`, `isMyClaim` in `claimStore.js`, pure, `npm test`): a person is
+their address as much as their display name, and a row records whichever the
+path that wrote it had. Deliberately narrower than `isOwnedBy`, which answers
+"does this document name that person at all" — a document's OWNER is its own
+field, and reassigning it is somebody saying "this is not mine, it is theirs",
+so a receipt uploaded and handed over leaves My items even though the uploader's
+address is still on it. Where no owner was ever set the uploader stands in,
+which is the rule the User column already follows. A claim is "mine" when it is
+made out to me or I raised it — not one I merely APPROVE: those are my work, but
+somebody asking for their own items is asking what they are owed.
+
+**Every count follows it, the rail's included.** The tab badges, both sides of
+the Unpublished toggle and the "Costs inbox" badge in the rail are all counted
+inside the person scope — the "badge says 15 while the tabs add up to 8" fault
+this app has already been bitten by once. That is why the choice lives in
+`personScope.js`, a store with an event, rather than in `useListView`: the page
+draws the toggle and the RAIL counts it, and useListView reads its store once on
+mount, so the badge would sit on whatever was chosen the last time the rail
+happened to render. Remembered in sessionStorage all the same — a stretch of
+work, not a saved preference — and shared by both list pages, since asking for
+your own items on one page and being handed everybody's on the next is what
+makes two pages feel like two apps. Merge and duplicate detection are pointedly
+NOT scoped: whether two uploads are one document is a fact about the paper, and
+Automatic merges without asking — a merge that happened or didn't depending on
+whose items the last person had selected would be the worst kind of
+intermittent. Nothing here is an access rule; it is a way of looking (privilege
+enforcement is still `docs/roles-enforcement.md`).
+
+**One toggle, one size.** `src/components/SegmentedToggle.jsx` is the control
+both pages draw — they were copies, and copies drift: the two already disagreed
+about the margin under it. It is sized to the toolbar it sits above, `h-8`
+OUTSIDE, the height of every toolbar button on these pages, so a row of controls
+lines up rather than stepping (it used to be `h-7` inside a bordered, padded
+wrapper: 34px against 32px buttons). The segments take the height that leaves
+them, so no second height has to be kept in step with the first.
+
 **Coming BACK to a list lands where you left it.** Reviewing is a loop —
 narrow the list down, open what you found, come back for the next one — and the
 scope, the tab and the narrowing all lived in component state that died with the

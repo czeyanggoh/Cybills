@@ -235,6 +235,19 @@ export function unpublishedClaimsFor(claims, user, isAdmin = false) {
   return visible.filter((c) => !c?.xeroInvoiceId);
 }
 
+// "My items" on the claims list: a claim MADE OUT to this person, or one they
+// raised. Deliberately narrower than visibleClaimsFor below, which also hands
+// somebody the claims they APPROVE — those are their work, but they are not
+// their claims, and somebody asking for their own items is asking what they are
+// owed. A claim names its claimant by NAME and its author by address, so both
+// spellings of a person count (see CLAUDE.md — a claim has to be renamed).
+export function isMyClaim(c, user) {
+  const email = norm(user?.email);
+  const name = norm(user?.name);
+  if (!email && !name) return false;
+  return Boolean((name && norm(c?.claimFor) === name) || (email && norm(c?.createdBy) === email));
+}
+
 export function visibleClaimsFor(claims, user) {
   const email = norm(user?.email);
   const name = norm(user?.name);

@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useClaims, unpublishedClaimsFor } from '@/lib/claimStore';
+import { useClaims, unpublishedClaimsFor, isMyClaim } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { USERS_EVENT, canManageBusiness } from '@/lib/userStore';
+import { applyPersonScope } from '@/lib/costFilters';
+import { usePersonScope } from '@/lib/personScope';
 import { isInInbox, isComplete, isReady, needsReview, inCostsTab, inCostsList, inCostsAll, isMergedAway, isUnpublished } from '@/lib/readiness';
 
 // Readiness and its opposite live in one pure module, so `npm test` can hold
@@ -132,14 +134,20 @@ export function useCostsDocs() {
 
 // Live counts for every Costs tab + the subnav badges, derived from real rows.
 export function useCostsCounts() {
-  const { allDocs } = useCostsDocs();
+  const { allDocs: everyDoc } = useCostsDocs();
   const claims = useClaims();
+  // The rail's badge counts the list the tab actually opens on, so it follows
+  // the Costs page's My items / All items toggle rather than always answering
+  // for the whole entity — a badge saying 15 above a list of 3 is the fault
+  // this app has already been bitten by once.
+  const [person] = usePersonScope();
   // The Expense claims badge counts what that page OPENS on — its unpublished
   // half — rather than every claim ever made, and a non-admin only counts the
   // claims they're allowed to see. Same rule the Costs badge follows, so a
   // number beside a tab always describes the list behind it.
   const { user, googleEnabled, membership } = useAuth();
   const isAdmin = canManageBusiness(membership, googleEnabled);
+  const allDocs = applyPersonScope(everyDoc, person, { email: user?.email, name: user?.name });
   return {
     inbox: rowsFor(allDocs, 'inbox').length,
     // What the Costs tab shows, so the subnav badge matches the list it opens.
@@ -150,6 +158,10 @@ export function useCostsCounts() {
     review: rowsFor(allDocs, 'review').length,
     ready: rowsFor(allDocs, 'ready').length,
     archive: rowsFor(allDocs, 'archive').length,
-    expenseClaims: unpublishedClaimsFor(claims, user, isAdmin).length,
+    // Claims follow the same toggle: under My items the badge counts the
+    // claimant's own, which is the list the page then opens on.
+    expenseClaims: unpublishedClaimsFor(claims, user, isAdmin).filter(
+      (c) => person !== 'mine' || isMyClaim(c, user)
+    ).length,
   };
 }
