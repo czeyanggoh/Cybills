@@ -16,6 +16,7 @@ import {
   getBillById,
   getBillByIdAny,
   deleteBillHard,
+  moveBillToScope,
   storageKeyInUse,
   parseAmount,
   type Bill,
@@ -29,6 +30,7 @@ import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
 import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from './taxRules.js';
 import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
+import { makeEntityCheck } from './entityCheck.js';
 import { syncWhatsappReaction } from './waReactions.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
@@ -248,7 +250,7 @@ async function repairZeroTaxAmounts(scope: string): Promise<void> {
   }
 }
 
-billsRouter.get('/bills', (req, res) => {
+billsRouter.get('/bills', async (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
   backfillOwners(workspaceId(req), orgScope(req), orgId);
@@ -270,9 +272,25 @@ billsRouter.get('/bills', (req, res) => {
   } catch (err) {
     console.error('[autoClaims] sweep failed', err);
   }
-  const bills = listBills(orgId).map((b) => ({ ...b, hasFile: Boolean(b.storageKey) }));
+  // Is each document in the right client's book? Computed here rather than
+  // stored (see entityCheck.ts), and attached to the row rather than left to the
+  // document page — a document nobody opens is exactly the one that gets
+  // published into the wrong ledger, so the list has to be able to say so.
+  const check = await entityCheckFor(req);
+  const bills = listBills(orgId).map((b) => ({
+    ...b,
+    hasFile: Boolean(b.storageKey),
+    entityCheck: check(b, entityIdForBill(b)),
+  }));
   res.json({ bills });
 });
+
+// The entity check as this caller sees it: only entities they can already open
+// are offered as somewhere a misfiled document could be moved to.
+async function entityCheckFor(req: Request) {
+  const me = memberForSession(req);
+  return makeEntityCheck(workspaceId(req), (id) => !me || canAccessOrg(me, id));
+}
 
 // Content-Disposition for a stored file. Node rejects any header value outside
 // latin1 (ERR_INVALID_CHAR) and throws mid-response, which the browser sees as
@@ -442,10 +460,14 @@ billsRouter.get('/bills/:id/file-meta', (req, res) => {
 // document in ANY client's book to anyone with a session, and a numeric Item ID
 // is a timestamp — countable, not unguessable. `/file` and `/file-meta` were
 // closed for exactly that reason; the record itself was left open.
-billsRouter.get('/bills/:id', (req, res) => {
+billsRouter.get('/bills/:id', async (req, res) => {
   const bill = getBillById(orgIdFor(req), req.params.id) || getBillByIdAny(req.params.id);
   if (!bill || !canReadBill(req, bill)) return res.status(404).json({ error: 'not_found' });
-  res.json({ bill: { ...bill, hasFile: Boolean(bill.storageKey) }, orgId: entityIdForBill(bill) });
+  const check = await entityCheckFor(req);
+  res.json({
+    bill: { ...bill, hasFile: Boolean(bill.storageKey), entityCheck: check(bill, entityIdForBill(bill)) },
+    orgId: entityIdForBill(bill),
+  });
 });
 
 // GET /api/costs/bills/:id/where — which entity a document belongs to.
@@ -530,7 +552,7 @@ function restatementPatch(b: Record<string, unknown>, into: Record<string, unkno
 billsRouter.patch('/bills/:id', async (req, res) => {
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   // Reassigning the owner never rewrites createdBy: who uploaded a document is
@@ -564,6 +586,12 @@ billsRouter.patch('/bills/:id', async (req, res) => {
     patch.duplicateOfId = '';
     patch.duplicateType = '';
   }
+  // "This entity is right" — the reviewer's verdict on a document whose paper
+  // names somebody else. Legitimate often enough (an intercompany recharge, a
+  // trading name, a group company paying for a subsidiary) that it has to be
+  // possible to settle, and it survives every later re-check the way "Not a
+  // duplicate" does.
+  if (b.entityCheckDismissed === true) patch.entityCheckDismissed = true;
   if (Array.isArray(b.lineItems)) patch.lineItems = normaliseLineItems(b.lineItems);
   // Recharged to a client: Xero's billable expense. Only meaningful alongside a
   // customer, and cleared with one — a rebillable cost with nobody to bill is a
@@ -607,7 +635,11 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   // (The other is the read itself, on arrival.) Cheap and silent when there is
   // nothing to say, which is every document that did not come in that way.
   void syncWhatsappReaction(orgId, req.params.id);
-  res.json({ ok: true, bill: { ...updated, hasFile: Boolean(updated.storageKey) } });
+  const check = await entityCheckFor(req);
+  res.json({
+    ok: true,
+    bill: { ...updated, hasFile: Boolean(updated.storageKey), entityCheck: check(updated, entityIdForBill(updated)) },
+  });
 });
 
 // DELETE /api/costs/bills/:id — PERMANENT delete. Drops the record for good AND
@@ -645,6 +677,76 @@ billsRouter.post('/bills/:id/unpublish', (req, res) => {
 // `kind` picks the book to walk (default Costs) — Costs, Sales and Supplier
 // statements are checked separately, so the count always matches the list the
 // scan was launched from.
+// POST /api/costs/bills/:id/move-entity — { orgId } — put a misfiled document
+// in the client's book it actually belongs to.
+//
+// Which entity a document lands in is decided by provenance, and provenance is
+// wrong often enough to need a repair: uploaded with the wrong entity open,
+// emailed to the wrong address, sent into the wrong group. Without this the only
+// way out is to delete a real cost and ask somebody to upload it again — so the
+// mistake gets left instead, and the bill is published into the wrong ledger.
+//
+// The four refusals are each a way of accounting for one payment twice. A
+// document already in Xero has its money in THAT ledger and moving the paperwork
+// would not move the bill; one sitting on an expense claim reaches the ledger as
+// a line of the claim's own bill, and the claim stays where it is; one merged
+// away is another document's money. Every one of them is a state the reviewer
+// can undo first — unpublish, take it off the claim, unmerge — and then move.
+billsRouter.post('/bills/:id/move-entity', async (req, res) => {
+  const bill = getBillById(orgIdFor(req), req.params.id);
+  if (!bill || !canReadBill(req, bill)) return res.status(404).json({ error: 'not_found' });
+
+  const ws = workspaceId(req);
+  const me = memberForSession(req);
+  const target = listOrganisations(ws).find((o) => o.id === String(req.body?.orgId ?? '').trim());
+  // The same refusal an unknown id gets: which entities exist is not something
+  // somebody who cannot open them is entitled to learn.
+  if (!target || (me && !canAccessOrg(me, target.id))) {
+    return res.status(404).json({ error: 'organisation_not_found', message: 'That entity isn’t one you can open.' });
+  }
+  const toScope = dataScopeForOrg(target.id);
+  if (toScope === bill.orgId) {
+    return res.status(400).json({ error: 'same_entity', message: 'This document is already in that entity’s book.' });
+  }
+  if (bill.xeroInvoiceId) {
+    return res.status(409).json({
+      error: 'published',
+      message: 'This document is already published to Xero. Undo the publish (and void the bill in Xero) before moving it.',
+    });
+  }
+  if (bill.status === 'expenseclaim') {
+    return res.status(409).json({
+      error: 'on_claim',
+      message: 'This document is on an expense claim, which reaches Xero as the claim’s own bill. Take it off the claim first.',
+    });
+  }
+  if (bill.status === 'merged') {
+    return res.status(409).json({
+      error: 'merged',
+      message: 'This document was merged into another one, which now carries its money. Unmerge it first.',
+    });
+  }
+  if (bill.status === 'deleted') return res.status(404).json({ error: 'not_found' });
+
+  const fromId = entityIdForBill(bill);
+  const fromName = listOrganisations(ws).find((o) => o.id === fromId)?.name || '';
+  const moved = moveBillToScope(bill.orgId, bill.id, toScope, {
+    orgId: fromId,
+    orgName: fromName,
+    by: readSession(req)?.email ?? '',
+  });
+  if (!moved) return res.status(404).json({ error: 'not_found' });
+  res.json({
+    ok: true,
+    bill: { ...moved, hasFile: Boolean(moved.storageKey) },
+    orgId: target.id,
+    orgName: target.name,
+    // Said out loud because it is the surprising half: an account code and a tax
+    // code are names in the chart of the entity the document has just left.
+    cleared: ['category', 'taxRate', 'customer', 'project'],
+  });
+});
+
 billsRouter.post('/bills/scan-duplicates', (req, res) => {
   const orgId = orgIdFor(req);
   res.json({ ok: true, ...scanDuplicates(orgId, String(req.query.kind ?? req.body?.kind ?? 'cost')) });
@@ -659,7 +761,7 @@ billsRouter.post('/bills/:id/finalize', (req, res) => {
   const orgId = orgIdFor(req);
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'description', 'cardLast4', 'project', 'projectReason']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'description', 'cardLast4', 'project', 'projectReason', 'billedTo', 'billedToRegNo']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   if (b.total != null) patch.total = parseAmount(b.total);
@@ -803,6 +905,10 @@ billsRouter.post('/bills', async (req, res) => {
     taxRate: String(b.taxRate ?? ''),
     taxRateReason: String(b.taxRateReason ?? ''),
     description: String(b.description ?? ''),
+    // Who the paper says it is for, so the row can be checked against the entity
+    // it is being filed into from the moment it lands.
+    billedTo: String(b.billedTo ?? ''),
+    billedToRegNo: String(b.billedToRegNo ?? ''),
     // createdBy is who UPLOADED it and nothing else. The drawer's "Document
     // owner" is a separate field, resolved to an email so one person can't end
     // up stored two ways (a display name here, their address there).

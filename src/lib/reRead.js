@@ -131,6 +131,15 @@ export function readDecisions(
     // is indistinguishable from a bug.
     patch.taxRateReason = ex.taxRateReason || rate.reason || '';
   }
+  // Who the paper says it is for. A re-read decides the document again, so it is
+  // allowed to decide there is no addressee at all — otherwise a name misread the
+  // first time could never be taken off, and the wrong-entity warning it raised
+  // would stand for ever. Skipped only when the read came back with nothing at
+  // all, where every field is unreliable rather than absent.
+  if (ex.supplier || Number(ex.total) > 0) {
+    patch.billedTo = ex.billedTo || '';
+    patch.billedToRegNo = ex.billedToRegNo || '';
+  }
   if (descr) patch.description = descr;
   if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
   if (ex.project) {

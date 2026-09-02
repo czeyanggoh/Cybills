@@ -9,7 +9,7 @@
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",
-    "test": "node test/merge-detect.test.mjs && node test/extraction-jobs.test.mjs && node test/tax-rate-rules.test.mjs && node test/cost-filters.test.mjs && node test/readiness.test.mjs && node test/approval-history.test.mjs && node test/supplier-merge.test.mjs && node test/supplier-duplicates.test.mjs && node test/line-items.test.mjs && node test/category-list.test.mjs && node test/xero-paid-status.test.mjs && node test/covering-note.test.mjs && node test/inbound-address.test.mjs && node test/usage-range.test.mjs && node test/dext-import.test.mjs && node test/claim-date.test.mjs && node test/list-view.test.mjs",
+    "test": "node test/merge-detect.test.mjs && node test/extraction-jobs.test.mjs && node test/tax-rate-rules.test.mjs && node test/cost-filters.test.mjs && node test/readiness.test.mjs && node test/approval-history.test.mjs && node test/supplier-merge.test.mjs && node test/supplier-duplicates.test.mjs && node test/line-items.test.mjs && node test/category-list.test.mjs && node test/xero-paid-status.test.mjs && node test/covering-note.test.mjs && node test/inbound-address.test.mjs && node test/usage-range.test.mjs && node test/dext-import.test.mjs && node test/claim-date.test.mjs && node test/list-view.test.mjs && node test/billed-to.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

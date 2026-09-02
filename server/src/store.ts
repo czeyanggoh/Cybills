@@ -127,6 +127,24 @@ export type Bill = {
   duplicateOfId?: string;
   duplicateType?: string; // exact_file | same_invoice | likely_duplicate
   duplicateDismissed?: boolean;
+  // Who the document is billed TO, as the reader found it on the paper. Read
+  // for ONE purpose: checking the document against the entity it was filed
+  // under. Which book a document lands in is decided by provenance — who
+  // uploaded it, which address it was emailed to, which WhatsApp group it came
+  // through — and nothing had ever read the paper, so an invoice made out to
+  // one client and filed under another published into the wrong ledger looking
+  // entirely correct. Never used to code anything (see src/lib/billedTo.js).
+  billedTo?: string;
+  billedToRegNo?: string;
+  // The reviewer saying the entity is right after all — an intercompany
+  // recharge, a trading name, a group company paying for a subsidiary. Same
+  // shape and the same reason as `duplicateDismissed`: a warning nobody can
+  // silence is one everybody learns to scroll past.
+  entityCheckDismissed?: boolean;
+  // Where this document was before somebody moved it to another entity. One
+  // field rather than a log: it exists so the History tab can say the move
+  // happened and who did it, which is the whole record a move needs.
+  movedFrom?: { orgId: string; orgName: string; at: string; by: string };
   // Set on a merged document: the ids of the originals it combined. Their own
   // status becomes 'merged' (out of the active inbox); Unmerge restores them.
   mergedFrom?: string[];
@@ -798,6 +816,12 @@ const EDITABLE: (keyof Bill)[] = [
   'duplicateDismissed',
   'duplicateOfId',
   'duplicateType',
+  // Evidence off the paper, written by the read and re-written by a re-read —
+  // not typed by anybody, but they travel the same PATCH the rest of a read's
+  // answer does.
+  'billedTo',
+  'billedToRegNo',
+  'entityCheckDismissed',
 ];
 
 // Attach (or replace) the stored file on an existing bill. Returns null if not
@@ -972,6 +996,68 @@ export function clearBillPosted(orgId: string, id: string): Bill | null {
   // but only if there was a publish to undo. A document parked in Archive by
   // hand stays there, and one sitting on an expense claim stays on it.
   if (wasPublished && bill.status === 'archived') bill.status = 'new';
+  persist(bills);
+  return bill;
+}
+
+// Move one document from one entity's book into another's.
+//
+// The document was filed in the wrong client's book — uploaded while the wrong
+// entity was open, emailed to the wrong address, sent into the wrong group —
+// and the paper itself says so (see src/lib/billedTo.js). Moving it is the
+// repair; the alternative is deleting a real cost and asking somebody to upload
+// it again somewhere else.
+//
+// What travels and what does NOT is the whole of it. The supplier, the date,
+// the money, the file, the number and the owner are facts about the document,
+// so they come. Everything CODED against the old entity is dropped: an account
+// code, a tax code and a tracking option are names in THAT chart, and carried
+// across they would post this bill to an account of the same number meaning
+// something else entirely. The duplicate verdict goes too — it points at a
+// document in a book this one has left.
+//
+// The stored file needs nothing done to it: a bill records the whole storage
+// key it was written with, and every read routes by that key alone, so the
+// bytes stay where they are under the old entity's prefix and keep resolving.
+//
+// Returns the moved bill, or null when it isn't there.
+export function moveBillToScope(
+  fromScope: string,
+  id: string,
+  toScope: string,
+  from: { orgId: string; orgName: string; by: string }
+): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === fromScope && b.id === id);
+  if (!bill) return null;
+  bill.orgId = toScope;
+  bill.movedFrom = { orgId: from.orgId, orgName: from.orgName, at: new Date().toISOString(), by: from.by };
+  bill.category = '';
+  bill.categoryReason = '';
+  bill.taxRate = '';
+  bill.taxRateReason = '';
+  bill.taxRateEdited = false;
+  bill.taxRateCleared = false;
+  bill.customer = '';
+  bill.rebillable = false;
+  bill.project = '';
+  bill.projectReason = '';
+  bill.ruleFields = [];
+  if (Array.isArray(bill.lineItems)) {
+    // The rows themselves are the document's own — what was bought, and for how
+    // much. Only their coding belongs to the entity they were coded in.
+    bill.lineItems = bill.lineItems.map((li) => ({ ...li, category: '', project: '', project2: '' }));
+  }
+  bill.duplicateOfId = undefined;
+  bill.duplicateType = undefined;
+  bill.duplicateDismissed = undefined;
+  // The reviewer's "this entity is right" was about the entity it has just
+  // left, so it cannot go on standing for the one it arrives in.
+  bill.entityCheckDismissed = undefined;
+  // It arrives as work to be done: it has lost its category, so it is not ready
+  // for anything, and the inbox is where a document waiting on somebody lives.
+  if (bill.status !== 'deleted') bill.status = 'new';
+  applyAutoReady(bill);
   persist(bills);
   return bill;
 }

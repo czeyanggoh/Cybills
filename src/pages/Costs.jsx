@@ -590,6 +590,20 @@ export default function Costs() {
       cell: (d) => (
         <div className="flex flex-col items-start gap-1">
           <StatusBadge status={d.status} published={Boolean(d.xeroInvoiceId)} />
+          {/* Billed to somebody who isn't this entity. On the ROW because a
+              document nobody opens is exactly the one that gets published into
+              the wrong client's ledger — and the badge is the only thing that
+              would make anybody open it. The verdict comes from the server with
+              the listing (server/src/entityCheck.ts). */}
+          {d.entityCheck?.status === 'mismatch' && (
+            <span
+              title={`${d.entityCheck.reason} Open it to move it to the right entity, or to confirm it belongs here.`}
+              className="inline-flex items-start gap-1 rounded border border-amber-600/50 bg-amber-500/15 px-1.5 py-0.5 text-left text-[11px] font-medium leading-tight text-amber-800"
+            >
+              <AlertTriangle className="mt-px h-3 w-3 shrink-0" strokeWidth={2} /> Billed to{' '}
+              {d.entityCheck.billedTo || 'another company'}
+            </span>
+          )}
           {isInInbox(d) && d.duplicateOfId && !d.duplicateDismissed && (
             <button
               type="button"
@@ -1276,10 +1290,22 @@ export default function Costs() {
       );
       return;
     }
+    // Named in the confirmation rather than skipped: a document billed to
+    // another company is often perfectly correct (an intercompany recharge, a
+    // trading name, a group company paying for a subsidiary), so it is not ours
+    // to refuse — but publishing it here claims THIS client's input tax on
+    // somebody else's supply, and nothing else in this dialog would say so.
+    const misfiled = targets.filter((d) => d.entityCheck?.status === 'mismatch');
     if (
       !window.confirm(
         `Publish ${targets.length} document(s) to Xero as ${publishStatusLabel(publishStatus).toLowerCase()} bills?\n\n` +
-          'This writes to the live ledger and finishes each document — it archives, and can no longer go on an expense claim.'
+          'This writes to the live ledger and finishes each document — it archives, and can no longer go on an expense claim.' +
+          (misfiled.length
+            ? `\n\n${misfiled.length} of them ${misfiled.length === 1 ? 'is' : 'are'} billed to another company` +
+              ` (${misfiled.slice(0, 3).map((d) => d.entityCheck.billedTo).join(', ')}).` +
+              ` Open ${misfiled.length === 1 ? 'it' : 'them'} first if` +
+              ` ${misfiled.length === 1 ? 'it belongs' : 'they belong'} to a different client.`
+            : '')
       )
     )
       return;

@@ -314,6 +314,15 @@ export function billToDoc(b) {
     baseTax: Number(b.baseTax) || 0,
     exchangeRate: Number(b.exchangeRate) || 0,
     invoiceNumber: b.invoiceNumber || '',
+    // Who the document is billed TO, and the server's verdict on whether that
+    // is this entity at all. The verdict is computed per request rather than
+    // stored (server/src/entityCheck.ts), so it is absent on a document read
+    // from anywhere that doesn't compute it — which reads as "nothing to say".
+    billedTo: b.billedTo || '',
+    billedToRegNo: b.billedToRegNo || '',
+    entityCheck: b.entityCheck || null,
+    entityCheckDismissed: Boolean(b.entityCheckDismissed),
+    movedFrom: b.movedFrom || null,
     taxRate: b.taxRate || '',
     // Whether a PERSON settled the code (or the blank). What a re-read reads to
     // know whose answer it is about to revise.
@@ -579,6 +588,22 @@ export async function updateBill(id, patch) {
   });
   if (!res.ok) throw new Error('update_failed');
   return res.json();
+}
+
+// Put a misfiled document in the entity it is actually addressed to. Returns
+// { ok, orgName } on success, or { ok: false, message } carrying the server's
+// own words — every refusal is a state the reviewer has to undo first
+// (published, on a claim, merged), so the message is the instruction.
+export async function moveBillToEntity(id, orgId) {
+  const res = await fetch(`/api/costs/bills/${id}/move-entity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ orgId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, message: body.message || 'This document could not be moved.' };
+  notifyBillsChanged();
+  return { ok: true, orgName: body.orgName || '', orgId: body.orgId || orgId };
 }
 
 // Permanently delete a bill: removes the record AND reclaims its stored file

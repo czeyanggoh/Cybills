@@ -284,6 +284,17 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
                 {bill?.total ? ` · ${bill.currency || ''} ${bill.total}` : ''}
                 {updating ? ' to the bill it already created in Xero, replacing what is there.' : ' as a supplier bill.'}
               </p>
+              {/* The paper names somebody else. Said again HERE because this is
+                  the irreversible half: a bill published into the wrong client's
+                  ledger claims that client's input tax on a supply made to
+                  another company, and the fix afterwards is a void. */}
+              {bill?.entityCheck?.status === 'mismatch' && (
+                <p className="rounded-md border border-amber-600/40 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  This document is billed to{' '}
+                  <span className="font-medium">{bill.entityCheck.billedTo || 'another company'}</span>, not to this
+                  entity. Check it is filed under the right client before it goes into this ledger.
+                </p>
+              )}
               {updating && (
                 <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   Xero decides what may still change: a bill that has been paid or voided refuses an

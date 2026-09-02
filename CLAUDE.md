@@ -241,6 +241,76 @@ follows the rule. Never the money: a note cannot restate a total, and the tax
 code follows the account either way. The Reason field names which of the two was
 followed.
 
+## Is this document in the right client's book?
+
+Which entity a document belongs to was decided entirely by **provenance** — who
+uploaded it and which entity they had open, which inbound address it was emailed
+to, which WhatsApp group it arrived through. Nothing read the paper, and the
+reader was told twice not to (`billedTo` was for the PROJECT rule: "IGNORE who
+the document is billed TO"). So a United Engineers invoice made out to Dart
+Consulting, sitting in Red Alpha's book, looked exactly like a correct one: it
+would publish into Red Alpha's ledger, coded against Red Alpha's chart, claiming
+Red Alpha's input tax on a supply made to somebody else. The only entity-vs-Xero
+check that existed was `tenant_mismatch` in `payments.ts`, which compares the
+CALLER's named tenant against the document's own record and can never see this.
+
+The reader now reads the addressee — `billedTo` plus `billedToRegNo`, the mirror
+of `supplierGstRegNo` — and `src/lib/billedTo.js` says what it means (pure,
+`npm test` at the root, loaded server-side by `server/src/entityCheck.ts` the way
+`taxRateRules.js` and `categoryList.js` are, so the badge on a row and the button
+on the page can't disagree). **The registration number decides where there is
+one**: it is the only identifier that cannot be a trading name, an abbreviation
+or a misread, and it is checked against the entity's own CRN and GST number off
+its Business profile. Otherwise the NAME, with legal forms stripped, so
+"DART CONSULTING AND TRAINING PRIVATE LIMITED" and "Dart Consulting and Training
+Pte Ltd" are one company.
+
+**It is a warning, never a refusal.** An intercompany recharge, a trading name, a
+group company paying for its subsidiaries and a landlord billing the tenant a
+client sublets from all look exactly like this and are all correct — so the worst
+it does is ask, and **This is right** (`entityCheckDismissed`, the same shape and
+the same reason `duplicateDismissed` has) settles it for good. Three cases are
+never asked about at all: a SALES invoice, which is billed to the customer
+because that is what a sales invoice is; a BRIDGE entity, which holds other
+people's paperwork by design; and a document naming no customer, which is most
+till receipts.
+
+**The verdict is computed, not stored.** It compares two things that both change
+— the document's bill-to party and the entity's own registered details — so a
+stored answer would go stale the moment somebody fills in the Business profile it
+reads. It rides on the listing (once per request, not once per row) so the badge
+is on the ROW: a document nobody opens is exactly the one that gets published
+into the wrong ledger, and the badge is the only thing that would make anybody
+open it. Said again in the publish dialog and in the bulk publish confirmation,
+because that is the irreversible half.
+
+**And a misfiled document can be MOVED**, which is the other half of saying so:
+without it the only way out is to delete a real cost and ask somebody to upload
+it again somewhere else, so the mistake gets left instead.
+`POST /api/costs/bills/:id/move-entity` offers only entities the caller can
+already open, and only where the paper agrees in a registration number or in two
+words of the name — this answer becomes a button that moves a client's paperwork
+into another client's book, so a near-miss must produce nothing rather than a
+plausible wrong destination.
+
+What travels and what does not is the whole of it. The supplier, the date, the
+money, the file, the document number and the owner are facts about the document,
+so they come; the CODING does not, because an account code, a tax code and a
+tracking option are names in the chart of the entity it has just left, and
+carried across they would post the bill to an account of the same number meaning
+something else entirely. The duplicate verdict goes too — it pointed at a
+document in a book this one has left — and the document lands in the inbox with
+`movedFrom` on it, which is what the History tab reads to say why its category is
+blank. The stored file needs nothing done to it: a bill records the whole storage
+key it was written with and every read routes by that key alone.
+
+Four refusals, each a way of accounting for one payment twice: a bill already in
+Xero (its money is in THAT ledger), one on an expense claim (it reaches the
+ledger as a line of the claim's own bill), one merged away (another document's
+money), and one already there. Every one of them is a state the reviewer can undo
+first, so the message is the instruction. Covered by `npm test` at the root and
+in `server/` (`test/entity-check.test.mts`).
+
 ## Merge detection: which uploads are really one document
 
 Two separate uploads are often one cost, and the two ways that happens do not

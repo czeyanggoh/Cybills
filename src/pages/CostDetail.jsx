@@ -30,7 +30,7 @@ import { useProjectOptions } from '@/lib/listsStore';
 import { useProjectLabels, singular } from '@/lib/projectLabels';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -345,6 +345,8 @@ export default function CostDetail() {
   const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
   const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
   const [compareOpen, setCompareOpen] = useState(false); // side-by-side duplicate review
+  const [moving, setMoving] = useState(false); // moving this document to another entity
+  const [moveError, setMoveError] = useState('');
   const [xeroBusy, setXeroBusy] = useState(''); // '' | 'attach' | 'clear'
   const [xeroNote, setXeroNote] = useState('');
   const [teach, setTeach] = useState(null); // { field, value } after a manual correction
@@ -801,6 +803,16 @@ export default function CostDetail() {
     if (doc.status === 'expenseclaim') {
       events.push({ text: 'This document was added to an expense claim', by: owner, at: '' });
     }
+    // Which client's book it used to be in. A document that changes entity has
+    // lost its category and its tax code on the way (they were names in the
+    // other entity's chart), so the trail has to say why they are blank.
+    if (doc.movedFrom?.at) {
+      events.push({
+        text: `This document was moved here from ${doc.movedFrom.orgName || 'another entity'}`,
+        by: doc.movedFrom.by || 'a user',
+        at: fmtStamp(doc.movedFrom.at),
+      });
+    }
     events.push({ text: 'This document was viewed', by: user?.name || user?.email || 'you', at: '' });
     return events.reverse(); // newest first
   })();
@@ -820,6 +832,39 @@ export default function CostDetail() {
       setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
       notifyBillsChanged();
     }
+  };
+
+  // The document is billed to somebody who isn't this entity (server/src/
+  // entityCheck.ts). A warning, never a refusal: an intercompany recharge, a
+  // trading name and a group company paying for a subsidiary all look like this
+  // and are all perfectly correct — so the two answers are "it is right" and
+  // "put it where it belongs", and both are one click.
+  const entityCheck = doc?.entityCheck;
+  const wrongEntity = entityCheck?.status === 'mismatch';
+  const moveTargets = wrongEntity ? entityCheck.candidates || [] : [];
+
+  const confirmEntity = async () => {
+    const r = await updateBill(doc.id, { entityCheckDismissed: true }).catch(() => null);
+    if (r?.bill) {
+      setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+      notifyBillsChanged();
+    }
+  };
+
+  const moveToEntity = async (target) => {
+    if (moving) return;
+    setMoving(true);
+    setMoveError('');
+    const r = await moveBillToEntity(doc.id, target.id).catch(() => null);
+    if (!r?.ok) {
+      setMoving(false);
+      setMoveError(r?.message || 'This document could not be moved.');
+      return;
+    }
+    // Follow the document. A re-render would leave the header, the subnav counts
+    // and every request in flight scoped to the entity it has just left — the
+    // same reason opening a document that lives elsewhere reloads.
+    switchOrganisationTo(target.id, costPath(doc));
   };
 
   // billToDoc shows an empty date as the placeholder '—'; never persist that
@@ -1401,6 +1446,43 @@ export default function CostDetail() {
             {readyError.length === 1 ? 'it' : 'them'} in, then Move to ready.
           </span>
           <button type="button" onClick={() => setReadyError([])} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
+        </div>
+      )}
+      {/* Billed to somebody who isn't this entity. It sits above the duplicate
+          warning because it is the bigger question: a duplicate is one cost
+          counted twice in the right book, this is a cost in the wrong client's
+          book altogether — published, it puts one client's money and one
+          client's input tax in another client's ledger. */}
+      {wrongEntity && (
+        <div className="mb-3 flex flex-wrap items-start gap-2 rounded-md border border-amber-600/40 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-[16rem] flex-1">
+            {entityCheck.reason}{' '}
+            {moveTargets.length
+              ? 'CYBills holds a book for them.'
+              : 'Check it was filed under the right client before publishing it.'}
+            {moveError && <span className="mt-1 block font-medium">{moveError}</span>}
+          </span>
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            {moveTargets.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                disabled={moving}
+                onClick={() => moveToEntity(t)}
+                className="inline-flex h-7 items-center rounded-md border border-amber-700/40 bg-amber-100 px-2.5 text-xs font-medium transition-colors hover:bg-amber-200 disabled:opacity-60"
+              >
+                {moving ? 'Moving…' : `Move to ${t.name}`}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={confirmEntity}
+              className="whitespace-nowrap text-xs text-amber-900/70 underline underline-offset-2 hover:text-amber-900"
+            >
+              This is right
+            </button>
+          </span>
         </div>
       )}
       {isInInbox(doc) && doc.duplicateOfId && !doc.duplicateDismissed && (
@@ -2210,7 +2292,7 @@ export default function CostDetail() {
       <PublishToXeroModal
         open={publishOpen}
         onClose={() => setPublishOpen(false)}
-        bill={{ id: doc.id, supplier: data.supplier, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems }}
+        bill={{ id: doc.id, supplier: data.supplier, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck }}
         onPublished={onPublished}
         mode={publishMode}
       />

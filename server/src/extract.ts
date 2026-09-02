@@ -175,6 +175,21 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           "The SUPPLIER's GST / tax registration number exactly as printed, e.g. \"GST Reg No: 201614382R\" → \"201614382R\", \"GST Registration No. M90370287L\" → \"M90370287L\", \"ABN 51 824 753 556\" → \"51 824 753 556\". Empty string when the document shows none. NEVER the BUYER's number — the bill-to party's registration, printed near its address, belongs to the customer, not the supplier. A company/UEN number not labelled as a tax or GST registration is not one either.",
       },
+      // Who the document was issued TO. Never used to code the document — it is
+      // read so CYBills can check the paper against the entity it was filed
+      // under, which until now nothing could do: which book a document lands in
+      // is decided by who uploaded it, and a receipt for one client uploaded
+      // into another's book publishes into the wrong ledger looking correct.
+      billedTo: {
+        type: 'string',
+        description:
+          'The ORGANISATION the document is issued TO — the "Bill To" / "Sold To" / "Customer" / "Invoice To" party, or the company in the addressee block under the letterhead. Copy the company name as printed, WITHOUT the "Attn:" person, the address or the account number: "DART CONSULTING AND TRAINING PTE LTD" from a block reading "DART CONSULTING AND TRAINING PTE LTD / 83 Clemenceau Avenue / Attention: Mr Gefen Dean Daniel". Empty string when the document names no customer at all, which is most till receipts and card slips — a walk-in receipt naming nobody must NOT be given a name from anywhere else on it. Never the supplier, and never a person on their own.',
+      },
+      billedToRegNo: {
+        type: 'string',
+        description:
+          "The BUYER's own company or GST registration number, when the document prints one beside the bill-to party — the mirror of `supplierGstRegNo`, which is the seller's. Empty string when only the supplier's is shown, which is the common case. Never repeat the supplier's number here.",
+      },
       taxLabel: {
         type: 'string',
         description:
@@ -221,6 +236,8 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'exchangeRate',
       'supplierGstRegNo',
       'taxLabel',
+      'billedTo',
+      'billedToRegNo',
       'cardLast4',
       'lineItems',
       ...(taxRateNames.length ? ['taxRate', 'taxRateReason'] : []),
@@ -253,6 +270,8 @@ const ReceiptSchema = z.object({
   exchangeRate: z.number().optional().default(0),
   supplierGstRegNo: z.string().optional().default(''),
   taxLabel: z.string().optional().default(''),
+  billedTo: z.string().optional().default(''),
+  billedToRegNo: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
   taxRateReason: z.string().optional().default(''),
   project: z.string().optional().default(''),
@@ -565,6 +584,9 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'Read `supplierGstRegNo` and `taxLabel` from the document exactly as printed. They decide whether the tax charged is Singapore GST a business may claim, ' +
     'or a foreign tax it may not — a Thai invoice at 7% VAT and a Singapore one at 7% GST look identical in the numbers alone, and only the registration number and the wording tell them apart. ' +
     'The registration number must be the SUPPLIER\'s, never the buyer\'s. ' +
+    'Read `billedTo` (and `billedToRegNo` where one is printed) from the party the document is issued TO — the bill-to block, not the letterhead. ' +
+    'It is used for one thing only: checking the document is filed under the right company. It never decides the category, the project or anything else, ' +
+    'and where no customer is named at all — a till receipt, a card slip — it must be an empty string rather than a guess taken from elsewhere on the page. ' +
     'Where the document restates its own totals in a SECOND currency for tax purposes — a Singapore GST-registered supplier billing in foreign currency has to show what the supply is worth in SGD — read `baseCurrency`, `baseTotal`, `baseTax` and `exchangeRate` off that block exactly as printed. ' +
     '`total` and `tax` stay in the BILLING currency: the block is the same money said again for the tax authority, never a second charge, so never add the two together. ' +
     'If a field is not present, use an empty string or 0. ' +
@@ -654,6 +676,10 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       dueDate,
       supplierGstRegNo: notFiller(parsed.data.supplierGstRegNo),
       taxLabel: notFiller(parsed.data.taxLabel),
+      // Who the paper says it is FOR. Nothing codes off it — it is what lets
+      // CYBills ask whether the document is in the right client's book at all.
+      billedTo: notFiller(parsed.data.billedTo),
+      billedToRegNo: notFiller(parsed.data.billedToRegNo),
       lineItems: parsed.data.lineItems.map((li) => ({ ...li, description: notFiller(li.description) })),
     };
     return { ok: true, data, outcome };
