@@ -1009,12 +1009,13 @@ export function clearBillPosted(orgId: string, id: string): Bill | null {
 // it again somewhere else.
 //
 // What travels and what does NOT is the whole of it. The supplier, the date,
-// the money, the file, the number and the owner are facts about the document,
-// so they come. Everything CODED against the old entity is dropped: an account
-// code, a tax code and a tracking option are names in THAT chart, and carried
-// across they would post this bill to an account of the same number meaning
-// something else entirely. The duplicate verdict goes too — it points at a
-// document in a book this one has left.
+// the money, the file and the number are facts about the document, so they come.
+// Everything CODED against the old entity is dropped: an account code, a tax
+// code and a tracking option are names in THAT chart, and carried across they
+// would post this bill to an account of the same number meaning something else
+// entirely. The duplicate verdict goes too — it points at a document in a book
+// this one has left. And the OWNER is re-resolved by the caller, because an
+// address is a person on one entity's roster, not a fact about the paper.
 //
 // The stored file needs nothing done to it: a bill records the whole storage
 // key it was written with, and every read routes by that key alone, so the
@@ -1025,12 +1026,20 @@ export function moveBillToScope(
   fromScope: string,
   id: string,
   toScope: string,
-  from: { orgId: string; orgName: string; by: string }
+  from: { orgId: string; orgName: string; by: string; owner: string }
 ): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === fromScope && b.id === id);
   if (!bill) return null;
   bill.orgId = toScope;
+  // Who owns it in the entity it is arriving in, decided by the caller (which
+  // is where the roster lives). The address it was carrying belongs to the
+  // entity it has left — usually that entity's own general account, an internal
+  // identity naming an organisation this book knows nothing about.
+  //
+  // `createdBy` is deliberately untouched: who UPLOADED a document is a fact
+  // about the past, and it does not stop being true because the document moved.
+  bill.owner = from.owner;
   bill.movedFrom = { orgId: from.orgId, orgName: from.orgName, at: new Date().toISOString(), by: from.by };
   bill.category = '';
   bill.categoryReason = '';

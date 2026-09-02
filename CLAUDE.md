@@ -306,8 +306,20 @@ so they come; the CODING does not, because an account code, a tax code and a
 tracking option are names in the chart of the entity it has just left, and
 carried across they would post the bill to an account of the same number meaning
 something else entirely. The duplicate verdict goes too — it pointed at a
-document in a book this one has left — and the document lands in the inbox with
-`movedFrom` on it, which is what the History tab reads to say why its category is
+document in a book this one has left — and so does the OWNER, because an address
+is a person on one entity's roster, not a fact about the paper: most documents
+belong to their entity's own **general account**, whose identity is INTERNAL
+(`org_….general@cybills.local`) and names the organisation it was minted in. Sent
+across as it stood, it resolved to nobody and the destination's owner picker
+offered the raw string above the real people, looking like a person somebody had
+added. So the owner is re-resolved against the entity it arrives in
+(`ownerHere`), and anybody that entity cannot place becomes its own general
+account — the row that already owns the paperwork nobody claimed. `createdBy` is
+untouched: who UPLOADED a document does not stop being true because it moved. The
+same rule repairs the documents moved before it existed, off the listing beside
+`backfillOwners`, and only for an INTERNAL address — a real external one is
+somebody we simply don't know here, which is the existing rule and not a mistake.
+The document lands in the inbox with `movedFrom` on it, which is what the History tab reads to say why its category is
 blank. The stored file needs nothing done to it: a bill records the whole storage
 key it was written with and every read routes by that key alone.
 

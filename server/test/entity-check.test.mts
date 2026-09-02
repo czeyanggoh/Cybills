@@ -46,6 +46,10 @@ writeFileSync(
 const express = (await import('express')).default;
 const { billsRouter } = await import('../src/bills.ts');
 const { insertBill, updateBill, getBillByIdAny } = await import('../src/store.ts');
+const { generalUserFor, ensure } = await import('../src/users.ts');
+
+ensure('cybm'); // every linked entity gets its general account on load
+const generalOf = (org: string) => generalUserFor('cybm', org)!.email;
 
 // Red Alpha is not the primary entity, so its book is its own scope.
 const RED = 'org-red';
@@ -57,6 +61,10 @@ const bill = (over: Record<string, unknown> = {}) =>
     supplier: 'UNITED ENGINEERS LIMITED', invoiceNumber: '2612-00221', total: '37060', tax: '3060',
     date: '2026-09-01', category: '4014 - Rent - Office', taxRate: 'Standard-Rated Purchases',
     description: 'Office rent', billedTo: 'DART CONSULTING AND TRAINING PTE LTD',
+    // Uploaded by a colleague working on Red Alpha, so it belongs to Red Alpha's
+    // own general account — which is the ordinary case, and the one whose
+    // internal address means nothing in anybody else's book.
+    owner: generalUserFor('cybm', RED)!.email,
     ...over,
   } as any);
 
@@ -131,6 +139,16 @@ check('…nor the tax code', row.taxRate, '');
 check('it arrives as work to do', row.status, 'new');
 check('and it says where it came from', row.movedFrom.orgName, 'Red Alpha Cybersecurity Pte. Ltd.');
 
+// An owner is a person on one entity's roster, not a fact about the paper. Red
+// Alpha's general account is an INTERNAL identity naming an organisation this
+// book has never heard of — carried across, it turned up in the owner picker as
+// a raw `org_….general@cybills.local` above the real people, looking like a
+// person somebody had added.
+check('the owner becomes the entity it arrived in', row.owner, generalOf(DART));
+check('…and not the one it came from', row.owner === generalOf(RED), false);
+// Who UPLOADED it is a fact about the past and does not stop being true.
+check('the uploader is untouched', row.createdBy, misfiled.createdBy);
+
 // --- 4) The refusals --------------------------------------------------------
 //
 // Each one is a way of accounting for one payment twice, and each is a state the
@@ -169,7 +187,19 @@ check('a sales invoice is left alone', (await listed(sale.id, RED)).entityCheck.
 const onBridge = bill({ orgId: 'org-ste', billedTo: 'ST Engineering Land Systems Ltd' });
 check('the bridge entity flags nothing', (await listed(onBridge.id, 'org-ste')).entityCheck.status, 'unknown');
 
-// --- 7) A re-read may take the addressee off again --------------------------
+// --- 7) The documents moved before any of that ------------------------------
+//
+// They are sitting in their new book still owned by the old one's general
+// account, so the listing repairs them the way it repairs owners and stale
+// claim names — narrowly: an INTERNAL address this entity cannot place, never a
+// real external one, which is somebody we simply don't know here.
+const stranded = bill({ orgId: DART, owner: generalOf(RED), billedTo: '' });
+const outsider = bill({ orgId: DART, owner: 'someone@another-company.com', billedTo: '' });
+await call('GET', '/api/costs/bills', DART);
+check('a foreign general account is repaired', getBillByIdAny(stranded.id)!.owner, generalOf(DART));
+check('a real address is left alone', getBillByIdAny(outsider.id)!.owner, 'someone@another-company.com');
+
+// --- 8) A re-read may take the addressee off again --------------------------
 //
 // The write path has to accept a blank, or a name misread once could never be
 // corrected and the warning it raised would stand for ever.

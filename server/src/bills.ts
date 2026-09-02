@@ -25,7 +25,7 @@ import {
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { dataScopeForOrg, listOrganisations, primaryOrgId } from './organisations.js';
 import { workspaceId, WORKSPACE_ID } from './workspace.js';
-import { canAccessOrg, emailForPerson, memberForSession, orgScope, ownerForOrg } from './users.js';
+import { canAccessOrg, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
 import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from './taxRules.js';
@@ -96,6 +96,52 @@ function backfillOwners(ws: string, org: string, scope: string): void {
     if (b.owner || !b.createdBy || b.createdBy.includes('@')) continue;
     const email = emailForPerson(ws, org, b.createdBy);
     if (email) updateBill(scope, b.id, { owner: email, createdBy: email });
+  }
+  repairForeignOwners(ws, org, scope);
+}
+
+// Who a document in THIS entity belongs to, when the address it carries is one
+// this entity has never heard of.
+//
+// An INTERNAL address is an identity CYBills minted for somebody with no
+// mailbox, and it names the entity it was minted in: `org_….general@
+// cybills.local` is one entity's general account, and a roster person without an
+// email carries the same kind of thing. In another entity's book it resolves to
+// nobody, so the owner picker offered the raw string as though it were a person
+// — which is what a moved document looked like before the move learned to
+// re-resolve its owner. The general account is what it should have been: the row
+// that already owns the paperwork nobody here claimed.
+//
+// A real EXTERNAL address is left exactly as it is. That is somebody we simply
+// don't know here, which is the existing rule and not a mistake to repair.
+function ownerHere(ws: string, org: string, owner: string): string {
+  const want = String(owner || '').trim().toLowerCase();
+  const general = generalUserFor(ws, org)?.email || '';
+  if (!want) return general;
+  const here = peopleForOrg(ws, org).find((p) => p.email.toLowerCase() === want);
+  // A colleague resolves in every entity they can open, but a colleague never
+  // OWNS a client's paperwork — the same rule ownerForOrg applies to an upload:
+  // they do the client's books, the paperwork is still the client's.
+  if (here && !here.external) return here.email;
+  if (here) return general;
+  return isInternalAddress(want) ? general : owner;
+}
+
+// The repair for the documents moved before the move re-resolved their owner.
+// Same shape as the other listing sweeps, and it has to be as cheap: most of a
+// book is owned by the general account, which is itself an internal address, so
+// the roster is read ONCE and the common row is settled by a set lookup rather
+// than by resolving every document against the directory.
+function repairForeignOwners(ws: string, org: string, scope: string): void {
+  const candidates = listBills(scope).filter((b) => b.owner && isInternalAddress(b.owner));
+  if (!candidates.length) return;
+  const general = generalUserFor(ws, org)?.email || '';
+  if (!general) return;
+  const here = new Set(peopleForOrg(ws, org).filter((p) => !p.external).map((p) => p.email.toLowerCase()));
+  for (const b of candidates) {
+    const owner = String(b.owner);
+    if (here.has(owner.toLowerCase())) continue; // somebody this entity knows
+    updateBill(scope, b.id, { owner: general });
   }
 }
 
@@ -734,6 +780,12 @@ billsRouter.post('/bills/:id/move-entity', async (req, res) => {
     orgId: fromId,
     orgName: fromName,
     by: readSession(req)?.email ?? '',
+    // Who owns it THERE. The address it carries belongs to the entity it is
+    // leaving — most often that entity's own general account, whose internal
+    // identity means nothing here and turned up in the destination's owner
+    // picker as a raw `org_….general@cybills.local` sitting above the real
+    // people, looking like a person somebody had added.
+    owner: ownerHere(workspaceId(req), target.id, bill.owner || ''),
   });
   if (!moved) return res.status(404).json({ error: 'not_found' });
   res.json({
