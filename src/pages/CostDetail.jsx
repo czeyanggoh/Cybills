@@ -30,7 +30,7 @@ import { useProjectOptions } from '@/lib/listsStore';
 import { useProjectLabels, singular } from '@/lib/projectLabels';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -364,6 +364,17 @@ export default function CostDetail() {
   persistedIdRef.current = persisted?.id ?? null;
   const handledJob = useRef(null);
   const mounted = useRef(true);
+  // A document that has just been MOVED here has never been coded against this
+  // entity's chart: its category, tax code and tracking options were left behind
+  // on purpose, because they were names in the chart it came from. So it reads
+  // itself again on arrival, against THIS entity's accounts, tax rules, projects
+  // and supplier rules — otherwise moving a document CYBills has already read
+  // hands somebody three empty fields to type in.
+  //
+  // Started here rather than at the moment of the move, because moving reloads
+  // the app into the new entity and a reload aborts a read in progress.
+  const [readOnArrival, setReadOnArrival] = useState(false);
+  const reReadRef = useRef(null);
   useEffect(() => () => { mounted.current = false; }, []);
   const extracting = job?.kind === 'read';
   const extractingLines = job?.kind === 'lines';
@@ -522,6 +533,25 @@ export default function CostDetail() {
     },
     { delay: 900, enabled: Boolean(doc) },
   );
+
+  // Arriving from a move: take the note the move left (once — taking it is what
+  // stops a refresh from re-reading, and paying for, the same document again).
+  useEffect(() => {
+    if (!persisted?.id || !takeReadAfterMove(persisted.id)) return;
+    // Unless there is nothing to read: a document typed in by hand has no file,
+    // and the read would only put "No receipt attached" on a page nobody asked
+    // to read anything on.
+    if (persisted.hasFile) setReadOnArrival(true);
+  }, [persisted?.id, persisted?.hasFile]);
+
+  // …and run the same read the button runs. The ref is how a hook that must sit
+  // above the early return reaches a handler defined below it; effects run after
+  // the render that assigns it, so it is always there by the time this fires.
+  useEffect(() => {
+    if (!readOnArrival || !reReadRef.current) return;
+    setReadOnArrival(false);
+    void reReadRef.current();
+  }, [readOnArrival]);
 
   if (!doc) {
     // A document URL is the kind of thing that gets pasted into chat, linked
@@ -1366,6 +1396,9 @@ export default function CostDetail() {
     if (!rec) { setAiError('No receipt attached to re-read. Upload one first.'); return; }
     await extractAndApply(rec.base64, rec.mediaType);
   };
+  // What the arrival effect above calls. Assigned every render so it closes over
+  // the current document rather than the one that was on screen at mount.
+  reReadRef.current = reReadExisting;
 
   const onFile = async (e) => {
     const file = e.target.files?.[0];

@@ -594,6 +594,27 @@ export async function updateBill(id, patch) {
 // { ok, orgName } on success, or { ok: false, message } carrying the server's
 // own words — every refusal is a state the reviewer has to undo first
 // (published, on a claim, merged), so the message is the instruction.
+// A document that has just been moved has never been coded against the entity it
+// has arrived in: its category, tax code and tracking options were left behind
+// on purpose, because they were names in the chart it has left. So it is read
+// again on arrival — and the note has to survive a page LOAD, because moving
+// reloads the app into the new entity (every store and request in flight is
+// scoped to the old one) and a reload aborts a read in progress. sessionStorage,
+// not the job store, for exactly that reason.
+const READ_AFTER_MOVE = 'cybills.read-after-move.v1';
+
+// Does this document owe itself a read? Answers once — taking the note is what
+// stops a refresh from re-reading, and paying for, the same document again.
+export function takeReadAfterMove(id) {
+  try {
+    if (sessionStorage.getItem(READ_AFTER_MOVE) !== String(id)) return false;
+    sessionStorage.removeItem(READ_AFTER_MOVE);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function moveBillToEntity(id, orgId) {
   const res = await fetch(`/api/costs/bills/${id}/move-entity`, {
     method: 'POST',
@@ -602,6 +623,12 @@ export async function moveBillToEntity(id, orgId) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, message: body.message || 'This document could not be moved.' };
+  try {
+    sessionStorage.setItem(READ_AFTER_MOVE, String(id));
+  } catch {
+    // No sessionStorage (a locked-down browser): the move still stands, and the
+    // reviewer codes it by hand or presses Re-read. Never a reason to refuse.
+  }
   notifyBillsChanged();
   return { ok: true, orgName: body.orgName || '', orgId: body.orgId || orgId };
 }

@@ -205,6 +205,12 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       cardLast4: d.cardLast4,
       supplierGstRegNo: d.supplierGstRegNo,
       taxLabel: d.taxLabel,
+      // Who the paper says it is FOR, so a document that arrived by email or
+      // WhatsApp is checked against the entity it landed in like any other. It
+      // was only ever written by the browser's own read paths, which is every
+      // road except the two where nobody is watching.
+      billedTo: d.billedTo,
+      billedToRegNo: d.billedToRegNo,
       // Only when the reader picked one from the org's own list — an empty
       // string here would blank a customer somebody had set by hand.
       ...(d.customer ? { customer: d.customer, rebillable: Boolean(d.rebillable) } : {}),

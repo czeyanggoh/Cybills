@@ -199,7 +199,20 @@ await call('GET', '/api/costs/bills', DART);
 check('a foreign general account is repaired', getBillByIdAny(stranded.id)!.owner, generalOf(DART));
 check('a real address is left alone', getBillByIdAny(outsider.id)!.owner, 'someone@another-company.com');
 
-// --- 8) A re-read may take the addressee off again --------------------------
+// --- 8) The background reads can store it at all -----------------------------
+//
+// An emailed or WhatsApp'd document is read where nobody is watching, and that
+// road writes the addressee through the same patch that carries
+// `supplierGstRegNo` — which is silently dropped, because it is not a field a
+// person may edit. A field stored beside it would vanish exactly as quietly.
+updateBill(RED, anonymous.id, {
+  billedTo: 'DART CONSULTING AND TRAINING PTE LTD',
+  billedToRegNo: '199912345K',
+} as any);
+check('a background read can store the addressee', getBillByIdAny(anonymous.id)!.billedTo, 'DART CONSULTING AND TRAINING PTE LTD');
+check('…and the buyer’s own number with it', getBillByIdAny(anonymous.id)!.billedToRegNo, '199912345K');
+
+// --- 9) A re-read may take the addressee off again --------------------------
 //
 // The write path has to accept a blank, or a name misread once could never be
 // corrected and the warning it raised would stand for ever.

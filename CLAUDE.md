@@ -254,8 +254,11 @@ Red Alpha's input tax on a supply made to somebody else. The only entity-vs-Xero
 check that existed was `tenant_mismatch` in `payments.ts`, which compares the
 CALLER's named tenant against the document's own record and can never see this.
 
-The reader now reads the addressee — `billedTo` plus `billedToRegNo`, the mirror
-of `supplierGstRegNo` — and `src/lib/billedTo.js` says what it means (pure,
+The reader now reads the addressee on every road a document arrives by — an
+upload, a re-read, and the background reads an emailed or WhatsApp'd document
+gets (`readIntoBill`, where the field has to be in `EDITABLE` to be stored at
+all: `supplierGstRegNo` sits in the same patch and is silently dropped). It is
+`billedTo` plus `billedToRegNo`, the mirror of `supplierGstRegNo`, and and `src/lib/billedTo.js` says what it means (pure,
 `npm test` at the root, loaded server-side by `server/src/entityCheck.ts` the way
 `taxRateRules.js` and `categoryList.js` are, so the badge on a row and the button
 on the page can't disagree). **The registration number decides where there is
@@ -319,6 +322,19 @@ untouched: who UPLOADED a document does not stop being true because it moved. Th
 same rule repairs the documents moved before it existed, off the listing beside
 `backfillOwners`, and only for an INTERNAL address — a real external one is
 somebody we simply don't know here, which is the existing rule and not a mistake.
+**And it reads itself again on arrival.** It has never been coded against THIS
+chart — that is the whole reason the coding was dropped — so leaving it there
+hands somebody three empty fields to type in on a document CYBills has already
+read once. The read runs against the entity it has arrived in: its accounts, its
+categories, its tax rules, its projects and its own supplier rules. Started AFTER
+the switch rather than at the moment of the move, because moving reloads the app
+into the new entity (every store and request in flight is scoped to the old one)
+and a reload aborts a read in progress — so the move leaves a note in
+sessionStorage and the document page picks it up, taking it once so a refresh
+cannot pay for the same read twice. Not for a document with no file: there is
+nothing to read, and the attempt would only report an error on a page nobody
+asked to read anything on.
+
 The document lands in the inbox with `movedFrom` on it, which is what the History tab reads to say why its category is
 blank. The stored file needs nothing done to it: a bill records the whole storage
 key it was written with and every read routes by that key alone.
