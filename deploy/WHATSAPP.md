@@ -56,12 +56,14 @@ emailed one of theirs goes: their own organisation, else the practice's primary
 one.
 
 **Changing that number later** saves fine and takes effect for matching, but it
-cannot move the group — WhatsApp has no way to swap a number inside one. Either
-add the new number from inside the group, or use **Open a new group with this
-number**, which is the only thing that ever creates a second one. The old group
-is marked replaced rather than deleted: CYWS still files its messages under that
-submission id, so anything sent into it keeps arriving until it is deleted at
-the WhatsApp end.
+cannot move the group — WhatsApp has no way to swap a number inside one. It can
+hold both, though, so the card offers **Add this number to the group** first:
+same group, same submission id, same thread, one more person in it. **Open a new
+group with this number** is the fallback for when the group is pointed at the
+wrong person altogether, and is the only thing that ever creates a second one.
+The old group is then marked replaced rather than deleted: CYWS still files its
+messages under that submission id, so anything sent into it keeps arriving until
+it is deleted at the WhatsApp end.
 
 **A whole entity** — several people in one group — is set up under Connections
 instead:
@@ -308,6 +310,52 @@ POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/rename-group   (X-API-Key
   rather than believing the two already agree. An older CYWS answers 404 into the
   log. Nothing about filing depends on it: a bill sent into the group files under
   the person the CHANNEL names, never under its subject.
+
+## Adding a number to a group
+
+A person changes their phone and two things are true at once: they are reachable
+on the new number, and the group holds the old one. WhatsApp cannot swap a
+number inside a group — but it can hold both, and a group holding both is the
+right answer almost every time. The alternative CYBills used to force was a
+SECOND group: a second real conversation in front of a client, with the
+paperwork split across the two and nothing saying which is current.
+
+```
+POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/add-participants   (X-API-Key, same key)
+{ "submission_id": "CYB-org_red00001-a1b2c3d4", "participants": ["6592961171"] }
+```
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{data: {chat_id, participants_added}}` | Asked. `participants_added` is what WhatsApp acknowledged — **LIDs**, and legitimately EMPTY when it silently declined. |
+| 400 | `{error: "submission_id_required" \| "participant_required"}` | |
+| 401 | `{error: "invalid_api_key"}` | |
+| 404 | `{error: "unknown_submission"}` | No group at CYWS under that id. |
+| 502 | `{error: "add_participants_failed"}` | WhatsApp refused the request itself — only an admin of a group may add to it. |
+| 503 | `{error: "group_add_unavailable"}` | The CYBot number is not on WAHA. |
+
+- **Named by submission id**, like the reaction, the rename and the teardown, so
+  the group is resolved at CYWS's end from its own record.
+- **Empty `participants_added` is not an error, and is not success either.**
+  WhatsApp silently refuses to add somebody whose privacy settings disallow it
+  and answers as though nothing happened. CYBills records the number as REQUESTED
+  either way and reports the shortfall in the same words the group's own card
+  uses — somebody already in the group has to add them, since CYWS mints no
+  invite link.
+- **A 404 with no `error` of its own is read as an unimplemented route**, not as
+  an unknown group, and says so: an older CYWS answers that forever, and
+  reporting it as WhatsApp refusing would have somebody pressing the button all
+  afternoon. Everything else here still works against such a deploy.
+- **CYBills decides which groups may be added to**, and it is the same two
+  refusals the rename makes. An **adopted** conversation is the client's own,
+  merely pointed at CYBills; putting somebody into it from an accounting app is
+  the same species of act as taking it apart. A **closed or replaced**
+  collection is over, and adding a member to a group nothing reads any more
+  helps nobody.
+- **The number is stored as that person's**, exactly as connecting stores it and
+  for the same reason: it is what a bill arriving from it is matched back to,
+  and an unstored one lands everything they send on the entity's General
+  account.
 
 ## Closing a group down
 

@@ -133,6 +133,10 @@ const MESSAGES: Record<string, string> = {
   group_create_unavailable: 'The WhatsApp service on CYWS is not available. Tell the CYWS operator — retrying will not help.',
   webhook_not_configured: 'CYWS has not configured the CYBills webhook yet. Tell the CYWS operator.',
   relay_unreachable: 'Could not reach CYWorkspace.',
+  add_participants_failed: 'WhatsApp refused to add the number to the group. Try again in a moment.',
+  group_add_unavailable: 'The WhatsApp service on CYWS is not available. Tell the CYWS operator — retrying will not help.',
+  route_unavailable:
+    'This deployment’s CYWorkspace cannot add a number to an existing group yet. Tell the CYWS operator, or add it from inside the group.',
 };
 
 async function askForGroup(body: {
@@ -987,10 +991,11 @@ async function askToDeleteGroup(body: { submission_id: string; keep_group: boole
   };
 }
 
-/** The channel, and whether this caller may close it. A group opened for one
+/** The channel, and whether this caller may act on it. A group opened for one
  * person is administered by whoever administers THEM; an entity-wide one by an
- * admin of the entity it collects for. Same two rules that opened it. */
-function channelToClose(req: Request, submissionId: string): { channel: WaChannel; error?: undefined } | { channel?: undefined; error: { status: number; body: object } } {
+ * admin of the entity it collects for. Same two rules that opened it, and the
+ * same two for every act on it afterwards — closing it, or adding a number. */
+function channelForAdmin(req: Request, submissionId: string): { channel: WaChannel; error?: undefined } | { channel?: undefined; error: { status: number; body: object } } {
   const ws = workspaceId(req);
   const channel = channelById(submissionId);
   if (!channel || channel.workspaceId !== ws) return { error: { status: 404, body: { error: 'unknown_channel' } } };
@@ -1005,7 +1010,7 @@ function channelToClose(req: Request, submissionId: string): { channel: WaChanne
 // One route for both, because they are one decision with two answers and
 // splitting them would let the UI drift into offering a third.
 whatsappRouter.post('/channels/:submissionId/close', async (req, res) => {
-  const found = channelToClose(req, String(req.params.submissionId ?? ''));
+  const found = channelForAdmin(req, String(req.params.submissionId ?? ''));
   if (found.error) return res.status(found.error.status).json(found.error.body);
   const channel = found.channel;
 
@@ -1045,6 +1050,148 @@ whatsappRouter.post('/channels/:submissionId/close', async (req, res) => {
 
   const updated = patchChannel(channel.id, { status: 'disconnected', lastError: '' });
   res.json({ ok: true, channel: updated ? publicChannel(updated) : publicChannel(channel), removed: 0, left: false, deleted: false });
+});
+
+// --- Adding a number to a group that already exists ---------------------------
+// A number changed after the group was opened leaves two things true at once:
+// the person is reachable on the new one, and the group holds the old one.
+// WhatsApp cannot swap a number inside a group — but it can hold both, and a
+// group with both in it is the answer almost every time, because the second
+// group this used to force is a second real conversation in front of a client
+// with the paperwork split across the two.
+//
+// So this is the non-destructive half of "Open a new group with this number":
+// same group, same submission id, same thread, one more person in it.
+
+/** Ask CYWS to add numbers to a group it already holds. REPORTED, not
+ * best-effort: somebody pressed a button and is waiting to hear whether the
+ * number is in the group. */
+async function askToAddParticipants(body: { submission_id: string; participants: string[] }): Promise<
+  { ok: true; added: string[] } | { ok: false; status: number; error: string; message: string; retryable: boolean }
+> {
+  if (!env.CYWORKSPACE_RELAY_URL || !env.CYWORKSPACE_API_KEY) {
+    return { ok: false, status: 503, error: 'whatsapp_not_configured', message: 'CYWorkspace is not connected on this deployment.', retryable: false };
+  }
+  const url = `${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/add-participants`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-API-Key': env.CYWORKSPACE_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    console.error('[whatsapp] CYWS unreachable (add-participants)', err);
+    return { ok: false, status: 502, error: 'relay_unreachable', message: MESSAGES.relay_unreachable, retryable: true };
+  }
+  const payload = (await res.json().catch(() => null)) as
+    | { data?: { participants_added?: string[] }; error?: string; message?: string }
+    | null;
+  if (res.ok) return { ok: true, added: payload?.data?.participants_added ?? [] };
+  // A 404 with no error of its own is not "unknown submission" — it is a CYWS
+  // that has never heard of this route, which is a different person's problem
+  // and a different sentence. Told apart here rather than reported as WhatsApp
+  // refusing, which would have somebody pressing the button all afternoon.
+  const error = !payload?.error && res.status === 404 ? 'route_unavailable' : String(payload?.error ?? 'add_participants_failed');
+  return {
+    ok: false,
+    status: res.status,
+    error,
+    message: String(payload?.message ?? MESSAGES[error] ?? `CYWorkspace returned ${res.status}.`),
+    retryable: error === 'add_participants_failed' || error === 'relay_unreachable',
+  };
+}
+
+// POST /api/whatsapp/channels/:submissionId/participants — body { mobile }
+//
+// The number is SAVED as this person's, the same way connecting saves it and
+// for the same reason: pressing this is somebody asserting "this is their
+// WhatsApp number", and an unstored one means every bill they send lands on the
+// entity's General account instead. Only for a group opened for ONE person —
+// an entity-wide group has no single row to write, so it gains a member and
+// nothing else.
+whatsappRouter.post('/channels/:submissionId/participants', async (req, res) => {
+  if (!whatsappEnabled) return res.status(503).json({ error: 'whatsapp_not_configured' });
+  const found = channelForAdmin(req, String(req.params.submissionId ?? ''));
+  if (found.error) return res.status(found.error.status).json(found.error.body);
+  const channel = found.channel;
+
+  const asked = String(req.body?.mobile ?? '').trim();
+  const mobile = normaliseMobile(asked);
+  if (!mobile) {
+    return res.status(400).json({ error: 'participant_required', message: MESSAGES.participant_required, rejected: asked ? [asked] : [] });
+  }
+
+  // Nothing at the far end to add to. A pending or failed channel owns a
+  // submission id and no group; a closed or replaced one is a conversation
+  // CYBills has stopped collecting through, and putting somebody into it would
+  // add them to a group nothing here reads.
+  if (channel.status !== 'open' || !channel.chatId) {
+    return res.status(409).json({
+      error: 'channel_not_open',
+      message: 'There is no open group to add this number to — connect first, and the number goes in as the group is made.',
+    });
+  }
+  // An ADOPTED conversation is the client's own, merely pointed at CYBills.
+  // Putting a number into it from an accounting app is the same species of act
+  // as taking it apart, which the close path refuses to do unasked — and so
+  // does the rename, for the same reason.
+  if (channel.adopted) {
+    return res.status(409).json({
+      error: 'channel_adopted',
+      message: 'This is the client’s own group, pointed at CYBills rather than opened by CYBot. Add the number from inside it.',
+    });
+  }
+  // Already in it. Asking again would put a second "added" line in front of
+  // everybody in the group to change nothing.
+  if (channel.participantsRequested.some((p) => sameNumber(p, mobile))) {
+    return res.json({ ok: true, channel: publicChannel(channel), already: true, mobile, addedNow: 0 });
+  }
+
+  const out = await askToAddParticipants({ submission_id: channel.id, participants: [mobile] });
+  if (!out.ok) {
+    patchChannel(channel.id, { lastError: out.message });
+    return res.status(out.status).json({ error: out.error, message: out.message, retryable: out.retryable });
+  }
+
+  // Both lists are kept, as they are when the group is made: WhatsApp silently
+  // refuses to add somebody whose privacy settings disallow it, and answers as
+  // though nothing happened. `participantsKnown` is deliberately NOT raised
+  // here — a group whose membership we were never told stays unknown, and
+  // claiming otherwise on the strength of one added number would report
+  // everybody else in it as missing.
+  const row = channelById(channel.id) as WaChannel;
+  const merged = [...row.participantsAdded, ...out.added.filter((a) => !row.participantsAdded.includes(a))];
+  const updated = patchChannel(channel.id, {
+    participantsRequested: [...row.participantsRequested, mobile],
+    participantsAdded: merged,
+    lastError: '',
+  });
+
+  // Stored as theirs, so a bill arriving from it is matched back to them.
+  if (channel.userId) {
+    const ws = workspaceId(req);
+    const person = personFor(ws, channel.userId);
+    if (person && normaliseMobile(person.user.mobile) !== mobile) {
+      const items = ensureUsers(ws);
+      const target = items.find((u) => u.id === channel.userId);
+      if (target) {
+        target.mobile = asked;
+        saveUsers(items);
+      }
+    }
+  }
+
+  res.json({
+    ok: true,
+    channel: updated ? publicChannel(updated) : publicChannel(channel),
+    mobile,
+    // Whether this number demonstrably landed. WhatsApp hands back LIDs, so an
+    // EMPTY list is the only thing that can be read as a refusal — a non-empty
+    // one is somebody, and it is this call's only candidate.
+    addedNow: out.added.length,
+  });
 });
 
 // GET /api/whatsapp/config — what the CYWS operator needs: where to POST, and

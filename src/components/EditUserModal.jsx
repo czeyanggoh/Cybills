@@ -4,7 +4,7 @@ import { ROLES, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
 import { useOrganisations } from '@/lib/organisations';
 import { cleanHandle, inboundAddress, addressTail, suffixForUser } from '@/lib/inboundAddress';
-import { useWhatsappForUser, connectWhatsappForUser } from '@/lib/whatsapp';
+import { useWhatsappForUser, connectWhatsappForUser, addWhatsappParticipant } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 
@@ -120,22 +120,57 @@ function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
 // that number is matched back to, which is why one field does both.
 function ConnectWhatsapp({ user, mobile, setMobile }) {
   const [{ channel, alsoCollecting, enabled, canManage, loading }, reload] = useWhatsappForUser(user.id);
-  const [busy, setBusy] = useState(false);
+  // Which button is working, not merely that one is: three of them share this
+  // card and each has its own word for what it is doing.
+  const [busy, setBusy] = useState('');
   const [error, setError] = useState(null);
+  // What happened to the last add. It has to outlive the panel it was pressed
+  // in: a successful one puts the number in the group, which is exactly what
+  // makes the mismatch warning — and the button with it — disappear.
+  const [note, setNote] = useState(null);
 
   const connect = async (replace = false) => {
-    setBusy(true);
+    setBusy(replace ? 'replace' : 'connect');
     setError(null);
+    setNote(null);
     try {
       await connectWhatsappForUser({ userId: user.id, mobile, replace });
     } catch (err) {
       setError(err);
     } finally {
-      setBusy(false);
+      setBusy('');
       // Reload either way. A FAILED attempt still left a channel behind — that
       // is the point of it, since its submission id is what a retry reuses —
       // and the card has to say so, or the button keeps offering to "Connect"
       // something that is already half-made.
+      reload();
+    }
+  };
+
+  // Put this number in the group that already exists, rather than opening a
+  // second one. WhatsApp cannot swap a number inside a group, but it can hold
+  // both — and a group holding both keeps one conversation and one thread,
+  // which a second group does not.
+  const addToGroup = async () => {
+    setBusy('add');
+    setError(null);
+    setNote(null);
+    try {
+      const out = await addWhatsappParticipant({ submissionId: channel.submissionId, mobile });
+      setNote(
+        out.already
+          ? { ok: true, text: 'That number is already in the group.' }
+          : out.addedNow
+            ? { ok: true, text: `${out.mobile} is in the group, and bills from it are filed under ${user.name || 'them'}.` }
+            : {
+                ok: false,
+                text: `WhatsApp didn’t add ${out.mobile} — their privacy settings may not allow it. Somebody already in the group can add them; CYBills has stored the number either way.`,
+              }
+      );
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy('');
       reload();
     }
   };
@@ -147,9 +182,17 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
   // Compared against the number the group was OPENED with, not against what
   // WhatsApp echoed back: that comes back as a LID, an opaque per-user id, and
   // no phone number will ever match one.
-  const inGroup = channel?.participantsRequested?.[0] || '';
+  //
+  // Against ALL of them, not only the first: a group can hold several now (see
+  // "Add this number to the group"), and measuring against the one it was
+  // opened with would leave the warning up over a number that is demonstrably
+  // in there.
+  const numbers = channel?.participantsRequested ?? [];
+  const inGroup = numbers[0] || '';
+  const alsoInGroup = numbers.slice(1);
   const digits = String(mobile || '').replace(/\D+/g, '');
-  const drifted = open && inGroup && digits && !digits.endsWith(inGroup) && !inGroup.endsWith(digits);
+  const holds = (n) => Boolean(n) && (digits.endsWith(n) || n.endsWith(digits));
+  const drifted = open && inGroup && digits && !numbers.some(holds);
 
   return (
     <div className="space-y-3 rounded-lg border p-4">
@@ -176,10 +219,10 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           <button
             type="button"
             onClick={() => connect(false)}
-            disabled={busy || loading || !enabled || !canManage || !mobile.trim()}
+            disabled={Boolean(busy) || loading || !enabled || !canManage || !mobile.trim()}
             className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {busy ? 'Connecting…' : channel ? 'Try again' : 'Connect'}
+            {busy === 'connect' ? 'Connecting…' : channel ? 'Try again' : 'Connect'}
           </button>
         )}
       </div>
@@ -196,6 +239,13 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           {/* Which number the group actually holds. Without it, a mismatch below
               is an accusation with nothing to check it against. */}
           {inGroup ? <> · opened with <span className="font-mono">{inGroup}</span></> : null}
+          {/* Numbers put in afterwards. Named separately from the one it was
+              opened with, because that is the honest history of the group —
+              and because it is the pair of them together that says why the
+              mismatch warning is no longer up. */}
+          {alsoInGroup.length ? (
+            <> · also added <span className="font-mono">{alsoInGroup.join(', ')}</span></>
+          ) : null}
           {channel.received ? ` · ${channel.received} ${channel.received === 1 ? 'bill' : 'bills'} so far` : ''}
         </div>
       ) : !enabled && !loading ? (
@@ -208,6 +258,12 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           than making a second one.
         </p>
       ) : null}
+
+      {note && (
+        <p className={cn('text-xs', note.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400')}>
+          {note.text}
+        </p>
+      )}
 
       {/* The number and the group are two separate things, and the warning that
           used to sit here said so without giving anybody anywhere to go: it
@@ -224,22 +280,38 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
               <span className="font-medium">Save</span> stores this number, and bills sent from it are filed
               under {user.name || 'them'} from then on. It doesn&rsquo;t change the group, though — that one was
               opened with <span className="font-mono">{inGroup}</span> and WhatsApp has no way to swap a number
-              inside it.
+              inside a group. It can hold both, though.
             </span>
           </p>
-          <div className="flex flex-wrap items-center gap-3 pl-5">
+          {/* Two ways out, and they are not equals. Adding keeps ONE
+              conversation — same group, same thread, same submission id, one
+              more person in it — where a second group splits the paperwork
+              across two chats in front of a client and leaves somebody to
+              work out which is current. So the additive one leads, and the
+              other stays for the case it was written for: the group is
+              pointed at the wrong person altogether. */}
+          <div className="flex flex-wrap items-center gap-2 pl-5">
+            <button
+              type="button"
+              onClick={addToGroup}
+              disabled={Boolean(busy) || !enabled || !canManage}
+              className="inline-flex h-8 items-center rounded-md bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {busy === 'add' ? 'Adding…' : 'Add this number to the group'}
+            </button>
             <button
               type="button"
               onClick={() => connect(true)}
-              disabled={busy || !enabled || !canManage}
+              disabled={Boolean(busy) || !enabled || !canManage}
               className="inline-flex h-8 items-center rounded-md border border-amber-700/40 bg-background px-3 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
             >
-              {busy ? 'Opening…' : 'Open a new group with this number'}
+              {busy === 'replace' ? 'Opening…' : 'Open a new group with this number'}
             </button>
-            <span className="text-xs text-amber-800/80 dark:text-amber-200/70">
-              or add it from inside the existing group — the old one keeps working either way.
-            </span>
           </div>
+          <p className="pl-5 text-xs text-amber-800/80 dark:text-amber-200/70">
+            Adding keeps the group and everyone in it, and stores the number against {user.name || 'them'}. A
+            new group is a second conversation — the old one keeps collecting until it is closed.
+          </p>
         </div>
       )}
 

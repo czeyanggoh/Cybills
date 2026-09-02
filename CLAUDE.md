@@ -895,12 +895,31 @@ because WhatsApp has no way to swap a number inside one. Said as a bare warning
 with no action — which is what it was, since the Connect button hides once a
 group is open — it read as the number failing to save, and was reported as one.
 So the card says what Save does, prints the number the group was opened with
-beside it, and the group gets its own button: **Open a new group with this
-number** (`replace: true`, the only way a second group is ever made). The old
-channel is marked `replaced`, never deleted — CYWS still files that group's
-messages under its submission id, and they have to keep arriving until somebody
-deletes the group at the WhatsApp end. A replaced channel is also never RESUMED,
-or its submission id would hand back the very group being replaced.
+beside it, and the group gets buttons of its own.
+
+**WhatsApp cannot swap a number inside a group, but it can hold both.** So
+**Add this number to the group** leads (`POST /api/whatsapp/channels/:id/
+participants`, CYWS's `add-participants`): same group, same submission id, same
+thread, one more person in it. **Open a new group with this number**
+(`replace: true`, the only way a second group is ever made) is the fallback, for
+when the group is pointed at the wrong person altogether — a second group is a
+second conversation in front of a client with the paperwork split across the
+two, which is what the additive answer exists to avoid. The old channel is then
+marked `replaced`, never deleted — CYWS still files that group's messages under
+its submission id, and they have to keep arriving until somebody deletes the
+group at the WhatsApp end. A replaced channel is also never RESUMED, or its
+submission id would hand back the very group being replaced.
+
+Adding STORES the number as that person's, exactly as connecting does and for
+the same reason (unstored, everything they send lands on the General account),
+and it records it in `participantsRequested` — which is what makes the mismatch
+warning, and the buttons with it, go away. What WhatsApp acknowledged is kept
+separately, so an empty `participants_added` (its silent refusal for somebody
+whose privacy settings disallow being added) is reported as a shortfall rather
+than as either an error or a success. The two groups it refuses to touch are the
+rename's two: an ADOPTED conversation is the client's own, and a CLOSED one is
+over. Covered by `npm test` in `server/`
+(`test/whatsapp-add-participant.test.mts`).
 
 **A group that already exists is NAMED, not made.** Every button above creates a
 real group, which is wrong for a client who has been sending bills into one of

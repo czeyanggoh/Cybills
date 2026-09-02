@@ -146,6 +146,32 @@ export async function connectWhatsappForUser({ userId, mobile, replace = false }
   throw err;
 }
 
+// Add one more number to the group that already exists.
+//
+// The non-destructive half of "Open a new group with this number": WhatsApp
+// cannot swap a number inside a group, but it can hold both — and a group
+// holding both is the answer almost every time, since a second group is a
+// second conversation in front of a client with the paperwork split across the
+// two. Same group, same submission id, same thread, one more person in it.
+//
+// The server stores the number as theirs too, exactly as connecting does, so a
+// bill arriving from it is matched back to them rather than landing on the
+// entity's General account.
+export async function addWhatsappParticipant({ submissionId, mobile }) {
+  const res = await fetch(`/api/whatsapp/channels/${encodeURIComponent(submissionId)}/participants`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ mobile }),
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok) return data;
+  const err = new Error(data?.message || 'Could not add the number to the group.');
+  err.code = data?.error || '';
+  err.retryable = Boolean(data?.retryable);
+  err.rejected = data?.rejected ?? [];
+  throw err;
+}
+
 // Close a collection down. Two acts behind one call, because they are one
 // decision with two answers:
 //
