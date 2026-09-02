@@ -47,6 +47,22 @@ check('a substring is not a match', sameCompany('Dart', 'Dartmouth Holdings'), f
 check('one word can say a document is ours', sameCompany('Alpha', 'Alpha Trading'), true);
 check('…but not with two words demanded', sameCompany('Alpha', 'Alpha Trading', { minWords: 2 }), false);
 
+// The names two systems hold for one company differ in the MIDDLE as often as at
+// the end, and a client list carries labels the paper never does. This entity is
+// listed as "DART Consulting (SGD)" — one of its two ledgers — and pays an
+// invoice made out to "DART CONSULTING AND TRAINING PTE LTD".
+check(
+  'a ledger label and two extra words are still one company',
+  sameCompany('DART CONSULTING AND TRAINING PTE LTD', 'DART Consulting (SGD)', { minWords: 2 }),
+  true
+);
+// …but every naming word has to be shared, not merely one. These four pairs are
+// all real neighbours in one client list, and every one of them is two companies.
+check('sharing the last word is not enough', sameCompany('ARC3 Nobel Pte. Ltd.', 'ARCHER NOBEL PTE. LTD.', { minWords: 2 }), false);
+check('nor sharing the first', sameCompany('CY-Biz Pte. Ltd.', 'CY Business Management Pte. Ltd.'), false);
+check('nor a word as common as Consulting', sameCompany('Sunstream Consulting Services Pte Ltd', 'DART Consulting (SGD)'), false);
+check('nor Singapore', sameCompany('TYA Singapore Pte Ltd', 'TiffinLabs Singapore Pte. Ltd.'), false);
+
 // --- The verdict ------------------------------------------------------------
 
 const red = {
@@ -86,6 +102,14 @@ check(
   billedToVerdict({ billedTo: 'Some Trading Name', billedToRegNo: '201614382R' }, red, [dart]).status,
   'ok'
 );
+
+// The case as it actually appears: the entity is listed under a ledger label.
+const dartSgd = { id: 'org-dart', name: 'DART Consulting (SGD)', tenantName: 'DART Consulting (SGD)', profile: {} };
+v = billedToVerdict({ billedTo: 'DART CONSULTING AND TRAINING PTE LTD' }, red, [dartSgd]);
+check('the entity list label does not hide the destination', v.candidates, [
+  { id: 'org-dart', name: 'DART Consulting (SGD)' },
+]);
+check('…and in its own book it is fine', billedToVerdict({ billedTo: 'DART CONSULTING AND TRAINING PTE LTD' }, dartSgd, []).status, 'ok');
 
 // A near-miss must produce no destination rather than a plausible wrong one:
 // this answer becomes a button that moves a client's paperwork into another

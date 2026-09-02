@@ -261,9 +261,16 @@ of `supplierGstRegNo` — and `src/lib/billedTo.js` says what it means (pure,
 on the page can't disagree). **The registration number decides where there is
 one**: it is the only identifier that cannot be a trading name, an abbreviation
 or a misread, and it is checked against the entity's own CRN and GST number off
-its Business profile. Otherwise the NAME, with legal forms stripped, so
-"DART CONSULTING AND TRAINING PRIVATE LIMITED" and "Dart Consulting and Training
-Pte Ltd" are one company.
+its Business profile. Otherwise the NAME, and the two spellings differ in the
+MIDDLE as often as at the end: an entity is listed as "DART Consulting (SGD)" —
+a label somebody put on one of its two ledgers — and pays an invoice made out to
+"DART CONSULTING AND TRAINING PTE LTD". So neither containment nor a shared word
+will do it. What is compared is the words that NAME the company — no legal form,
+no ledger label — and the shorter name has to be entirely inside the longer one,
+anchored on the first word. Every one of those is load-bearing against a real
+client list: "ARC3 Nobel" and "ARCHER NOBEL" share their last word, "CY Business
+Management" and "CY-Biz" their first, and "Consulting", "Services" and
+"Singapore" are in half the list.
 
 **It is a warning, never a refusal.** An intercompany recharge, a trading name, a
 group company paying for its subsidiaries and a landlord billing the tenant a

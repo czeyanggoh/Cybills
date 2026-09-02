@@ -27,12 +27,19 @@ const FORM_WORDS = new Set([
   'gmbh', 'ag', 'bv', 'nv', 'sa', 'srl', 'sarl', 'pty',
 ]);
 
+// Bookkeeping labels an ENTITY's name carries that the paper never does. A
+// client with two ledgers is listed as "DART Consulting (SGD)"; the invoice it
+// pays says "DART CONSULTING AND TRAINING PTE LTD". The parenthesis is ours.
+const NOISE_WORDS = new Set(['sgd', 'usd', 'myr', 'gbp', 'eur', 'aud', 'sg', 'old', 'new']);
+
 // A company name reduced to the part that identifies it: lower case, no
 // punctuation, no trailing legal form. "&" is spelled out so "Tan & Sons" and
-// "Tan and Sons" agree.
+// "Tan and Sons" agree, and a parenthesised tail is dropped whole — it is a
+// label somebody put on a ledger, not part of anybody's registered name.
 export function normaliseCompanyName(value) {
   const words = String(value ?? '')
     .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
     .replace(/&/g, ' and ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
@@ -44,6 +51,18 @@ export function normaliseCompanyName(value) {
   return words.join(' ');
 }
 
+// The words that actually name the company: no legal form anywhere, no ledger
+// label. This is what two spellings of one company are compared on, because they
+// differ in the MIDDLE as often as at the end — "Dart Consulting" against "Dart
+// Consulting and Training" is the same company with two words inserted, and no
+// amount of containment will find it.
+export function significantWords(value) {
+  const words = normaliseCompanyName(value).split(' ').filter(Boolean);
+  const kept = words.filter((w) => !FORM_WORDS.has(w) && !NOISE_WORDS.has(w) && w !== 'and');
+  // A name made of nothing else keeps what it has rather than becoming nobody.
+  return kept.length ? kept : words;
+}
+
 // A registration number reduced to what it is: "M2-0000542-2" and "M20000542 2"
 // are the same number written two ways, and OCR spaces a UEN as it pleases.
 export function normaliseRegNo(value) {
@@ -52,22 +71,41 @@ export function normaliseRegNo(value) {
 
 // Are these two the same company by name?
 //
-// `minWords` is the whole judgement. Deciding a document is FINE costs nothing
-// if it is wrong — that is today's behaviour — so one shared word is allowed to
-// settle it. Proposing to move a document into another client's book on the
-// same evidence is not: "Red Alpha" and "Red Alpha Cybersecurity" are surely one
-// company, but "Alpha" and "Alpha Trading" are not, so the caller that offers
-// a MOVE asks for two.
+// `minWords` is how much of a name has to be there. Deciding a document is FINE
+// costs nothing if it is wrong — that is today's behaviour — so one naming word
+// is allowed to settle it. Proposing to move a document into another client's
+// book on the same evidence is not: "Alpha" and "Alpha Trading" are not one
+// company, so the caller that offers a MOVE asks for two.
 export function sameCompany(a, b, { minWords = 1 } = {}) {
   const x = normaliseCompanyName(a);
   const y = normaliseCompanyName(b);
   if (!x || !y) return false;
   if (x === y) return true;
   const [short, long] = x.length <= y.length ? [x, y] : [y, x];
-  if (short.split(' ').length < minWords) return false;
-  // Containment on a WORD boundary. Substring alone would read "Dart" out of
-  // "Dartmouth" and move a document to the wrong client on it.
-  return long.startsWith(`${short} `) || long.endsWith(` ${short}`) || long.includes(` ${short} `);
+  // Containment on a WORD boundary, for the names that are one inside the other.
+  // Substring alone would read "Dart" out of "Dartmouth" and move a document to
+  // the wrong client on it.
+  if (
+    short.split(' ').length >= minWords &&
+    (long.startsWith(`${short} `) || long.endsWith(` ${short}`) || long.includes(` ${short} `))
+  ) {
+    return true;
+  }
+  // Otherwise: is the shorter name entirely inside the longer one, word for
+  // word, in the words that actually NAME the company?
+  //
+  // Every word, not merely some — a list of clients is full of "Consulting",
+  // "Services" and "Singapore", and one word in common is nothing. "CY Business
+  // Management" and "CY-Biz" share only "cy", so they stay two companies, which
+  // is what makes a CY-Biz invoice sitting in CYBM's book something to ask
+  // about. And anchored on the FIRST word, which is where two near-misses in one
+  // client list differ: "ARC3 Nobel" and "ARCHER NOBEL" share "nobel".
+  const xs = significantWords(a);
+  const ys = significantWords(b);
+  if (!xs.length || !ys.length || xs[0] !== ys[0]) return false;
+  const [few, many] = xs.length <= ys.length ? [xs, ys] : [ys, xs];
+  if (!few.every((w) => many.includes(w))) return false;
+  return few.length >= Math.max(1, minWords);
 }
 
 // The names and numbers one entity answers to. Its CYBills name, the Xero
