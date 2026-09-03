@@ -364,6 +364,17 @@ cannot pay for the same read twice. Not for a document with no file: there is
 nothing to read, and the attempt would only report an error on a page nobody
 asked to read anything on.
 
+**The banner offers the computed answer; the menu offers every entity.** The
+banner's buttons are only for entities the PAPER agrees with, because that list
+is computed and a near-miss must produce nothing. That leaves out the ordinary
+case: a till receipt naming no customer, which is never asked about at all, that
+somebody KNOWS was uploaded with the wrong entity open. So the document page's
+**Move to** menu also lists, under "Another entity", every organisation the
+caller can open bar the current one — the same route, which already took any
+entity the caller may open; only the page was narrower than it. It confirms
+first, naming what is cleared, and says the four refusals BEFORE the click
+(published, on a claim, merged, unsaved) as the instruction for undoing them.
+
 The document lands in the inbox with `movedFrom` on it, which is what the History tab reads to say why its category is
 blank. The stored file needs nothing done to it: a bill records the whole storage
 key it was written with and every read routes by that key alone.

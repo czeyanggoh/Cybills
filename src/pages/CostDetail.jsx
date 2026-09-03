@@ -24,7 +24,7 @@ import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { DOCS, getDoc } from '@/data/docs';
 import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
-import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
+import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, useOrganisations, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useProjectLabels, singular } from '@/lib/projectLabels';
@@ -346,6 +346,7 @@ export default function CostDetail() {
   const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
   const [compareOpen, setCompareOpen] = useState(false); // side-by-side duplicate review
   const [moving, setMoving] = useState(false); // moving this document to another entity
+  const { data: organisations } = useOrganisations();
   const [moveError, setMoveError] = useState('');
   const [xeroBusy, setXeroBusy] = useState(''); // '' | 'attach' | 'clear'
   const [xeroNote, setXeroNote] = useState('');
@@ -999,6 +1000,35 @@ export default function CostDetail() {
     saveWithStatus('archived', dest.to);
   };
 
+  // Every entity the signed-in person can open, bar this one, as a destination
+  // in the same menu. The entity-check banner offers a move only where the
+  // paper AGREES with the destination — a registration number or two words of
+  // a name — because that answer is computed and a near-miss must produce
+  // nothing. This is the other road: a person who KNOWS the document is in the
+  // wrong book, on a receipt that names no customer at all (most till receipts)
+  // and so was never asked about. The server already takes any entity the
+  // caller may open; only the page was narrower than the route.
+  const activeOrgId = getActiveOrganisationId();
+  const entityDests = (organisations || []).filter((o) => o.id !== activeOrgId);
+  // The server's four refusals, said before the click rather than after it —
+  // each a way of counting one payment twice, and each a state the reviewer can
+  // undo first, so the reason is the instruction.
+  const entityMoveBlocked = doc.xeroInvoiceId
+    ? 'Already published to Xero — clear the Xero link (and void the bill in Xero) before moving it.'
+    : claimForItem || doc.status === 'expenseclaim'
+      ? 'On an expense claim, which posts this cost to Xero as its own bill. Take it off the claim first.'
+      : doc.status === 'merged'
+        ? 'Merged into another document, which now carries its money. Unmerge it first.'
+        : !doc.persisted
+          ? 'Save this document first.'
+          : '';
+  const moveToOrg = (org) => {
+    setMoveOpen(false);
+    if (entityMoveBlocked) return;
+    if (!window.confirm(`Move this document to ${org.name}? Its category, tax rate, customer and project are names in this entity’s chart, so they are cleared and the document is read again against ${org.name}’s own.`)) return;
+    moveToEntity(org);
+  };
+
   // Unmerge: split a merged document back into its original items (they return
   // to the inbox) and remove the combined document. Dext parity.
   const doUnmerge = async () => {
@@ -1523,6 +1553,15 @@ export default function CostDetail() {
           </span>
         </div>
       )}
+      {/* A move refused from the menu, where there is no banner to carry the
+          reason: the entity-check banner prints moveError itself. */}
+      {moveError && !wrongEntity && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{moveError}</span>
+          <button type="button" onClick={() => setMoveError('')} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
+        </div>
+      )}
       {isInInbox(doc) && doc.duplicateOfId && !doc.duplicateDismissed && (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1672,7 +1711,7 @@ export default function CostDetail() {
           {moveOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMoveOpen(false)} aria-hidden="true" />
-              <div className="absolute left-0 z-20 mt-1 w-48 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+              <div className="absolute left-0 z-20 mt-1 w-64 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
                 {MOVE_DESTS.map((dest) => (
                   <button
                     key={dest.label}
@@ -1683,6 +1722,28 @@ export default function CostDetail() {
                     {dest.label}
                   </button>
                 ))}
+                {entityDests.length > 0 && (
+                  <>
+                    <div className="mt-1 border-t px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Another entity
+                    </div>
+                    {entityMoveBlocked && (
+                      <div className="px-3 pb-1.5 text-xs text-muted-foreground">{entityMoveBlocked}</div>
+                    )}
+                    {entityDests.map((org) => (
+                      <button
+                        key={org.id}
+                        type="button"
+                        disabled={moving || Boolean(entityMoveBlocked)}
+                        title={entityMoveBlocked || `Move this document into ${org.name}’s book`}
+                        onClick={() => moveToOrg(org)}
+                        className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <span className="truncate">{moving ? 'Moving…' : org.name}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
               </div>
             </>
           )}
