@@ -1007,9 +1007,14 @@ export default function CostDetail() {
     navigate('/costs');
   };
 
-  const deleteDoc = () => {
+  // Deleting is finishing with this document, not finishing with the pile — the
+  // reviewer got here by walking the inbox and has more of it to walk. So it
+  // lands on the next item, the same as Publish and Add to expense claim, and
+  // only falls back to the list when there is nothing left to go to.
+  const deleteDoc = async () => {
     if (!window.confirm('Delete this document? This removes it from your Costs inbox.')) return;
-    saveWithStatus('archived');
+    await persistStatus('archived');
+    goToNextInbox();
   };
 
   // Publish to Xero (persisted bills only — the server posts the SAVED bill,
