@@ -120,7 +120,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       noteFollowed: {
         type: 'string',
         description:
-          'ONLY when a covering message was supplied above AND you took something from it: one short sentence naming what you took and which field it decided, e.g. "The sender asked to recharge this to CY-Biz — coded to the recharge account." EMPTY STRING when no message was supplied, or when it said nothing that bears on how this document is coded (a bare "here you go", a signature, a forwarded thread with no instruction). Never invent one to seem useful: an empty string here means the organisation\'s own standing rules decide, which is the safe answer.',
+          'ONLY when a covering MESSAGE was supplied above AND you took something from it: one short sentence naming what you took and which field it decided, e.g. "The sender asked to recharge this to CY-Biz — coded to the recharge account." EMPTY STRING when no message was supplied, or when it said nothing that bears on how this document is coded (a bare "here you go", a signature, a forwarded thread with no instruction). A FILE NAME is not a message — it is a label, not an instruction — so it can never fill this field, however useful it was. Never invent one to seem useful: an empty string here means the organisation\'s own standing rules decide, which is the safe answer.',
       },
       description: {
         type: 'string',
@@ -376,24 +376,68 @@ export type ExtractionInputs = {
   taxRates: TaxRateRef[];
   projects: NamedRule[];
   instructions: string;
+  // What the sender said about THIS document, whichever road it arrived by: an
+  // email's covering message, a WhatsApp caption, and on every road the name
+  // they gave the file. Passed as the envelope rather than pre-appended to
+  // `instructions` by each caller, because the read has to know whether a
+  // MESSAGE was supplied at all — `noteFollowed` is what lets a note beat a
+  // standing supplier rule, and a file name is not that kind of thing.
+  note?: CoveringNote | null;
 };
 
-// What the sender wrote when they forwarded the document, as guidance for the
-// read. "recharge this to CY-Biz" is the whole point of somebody emailing a
-// receipt in rather than uploading it: the covering line says what to DO with
-// it, and reading the attachment while ignoring the message throws that away.
+export type CoveringNote = {
+  from?: string;
+  subject?: string;
+  text?: string;
+  via?: string;
+  fileName?: string;
+};
+
+// Whether the sender actually WROTE something about this document. A file name
+// is not a message: it is a label, typed once so the file could be found again.
+const hasMessage = (note: CoveringNote | null | undefined) =>
+  Boolean(String(note?.text || '').trim() || String(note?.subject || '').trim());
+
+// What a file name is worth is decided in one place, with the rest of what a
+// covering note is (src/lib/coveringNote.js), and loaded here by path — the
+// same arrangement categories.ts and entityCheck.ts use. A second copy in
+// TypeScript would drift, and the drift would be an emailed document read with
+// a hint the browser's own re-read then withholds.
+type NoteRules = { fileNameHint: (name: string) => string };
+let noteRules: NoteRules | null = null;
+let noteRulesTried = false;
+
+async function loadNoteRules(): Promise<NoteRules | null> {
+  if (noteRulesTried) return noteRules;
+  noteRulesTried = true;
+  try {
+    const url = new URL('../../src/lib/coveringNote.js', import.meta.url).href;
+    const mod = (await import(url)) as Partial<NoteRules>;
+    noteRules = typeof mod?.fileNameHint === 'function' ? (mod as NoteRules) : null;
+  } catch (e) {
+    console.error('[extract] covering-note rules unavailable', e);
+    noteRules = null;
+  }
+  return noteRules;
+}
+
+// What the sender said about this document, as guidance for the read.
 //
-// Given as the sender's note, plainly labelled, and after the organisation's own
-// rules — so it can say which customer, project or category a document is for
-// without being able to override how the practice codes things. Capped, because
-// a forwarded thread runs to hundreds of lines and only the top of it is the
-// instruction.
-export function emailInstruction(
-  envelope: { from?: string; subject?: string; text?: string; via?: string } | null
-): string {
+// Two things, and they are not equal. The MESSAGE — "recharge this to CY-Biz" —
+// is the whole point of somebody emailing a receipt in rather than uploading it:
+// the covering line says what to DO with it, and reading the attachment while
+// ignoring the message throws that away. The FILE NAME is weaker: a label
+// somebody typed so they could find the file again. But it is on every road,
+// and on the commonest one of all — a file dropped into a WhatsApp group with
+// no caption — it is the only place the sender wrote anything down at all.
+//
+// Both go after the organisation's own rules, so they can say which customer,
+// project or category a document is for without being able to override how the
+// practice codes things. Capped, because a forwarded thread runs to hundreds of
+// lines and only the top of it is the instruction.
+export function emailInstruction(envelope: CoveringNote | null, fileHint = ''): string {
   const note = String(envelope?.text || '').trim().slice(0, 1500);
   const subject = String(envelope?.subject || '').trim().slice(0, 200);
-  if (!note && !subject) return '';
   const who = String(envelope?.from || '').trim();
   // How it arrived, in the sentence that introduces the note. A WhatsApp
   // caption and a covering email are the same KIND of thing — one person's
@@ -401,7 +445,27 @@ export function emailInstruction(
   // both; saying "emailed in" about a chat message would just be a lie the
   // reader has to reconcile.
   const arrived = envelope?.via === 'whatsapp' ? 'SENT IN OVER WHATSAPP' : 'EMAILED IN';
+
+  // The name the sender gave the file, offered as what it is: a label, never
+  // evidence. Without that line drawn, a reader takes the supplier off
+  // "Singtel tiffinlabs paid.pdf" and the date off "invoice Jan 2026.pdf" while
+  // the paper in front of it says something else — and a supplier read off a
+  // file name goes on to match a supplier rule, a duplicate, and a contact in
+  // somebody's ledger. Every FACT comes off the document; the name only helps
+  // decide what the document is FOR.
+  const named = fileHint
+    ? `\n\nThe person who sent this named the file "${fileHint}". That is their own label for it, not part of the ` +
+      'document, and it is often where they said what it is for — a client to recharge it to, a project, a month, ' +
+      'what was bought. Read it against the account descriptions above the same way you would a covering message.\n' +
+      'It is NEVER evidence about the document itself. Do not take the supplier, any date, any amount, a document ' +
+      'or reference number, or a registration number from the file name: those are facts, and they come off the ' +
+      'printed document or not at all. Where the name and the document disagree, the document is right, and a name ' +
+      'that says nothing useful is simply ignored.\n'
+    : '';
+
+  if (!note && !subject) return named;
   return (
+    named +
     `\n\nThis document was ${arrived}${who ? ` by ${who}` : ''}, and the covering message is below. ` +
     'Treat it as a note from that person about this document: it may say which customer, project, category or ' +
     'person the cost is for, and you should follow it where it plainly does.\n' +
@@ -502,7 +566,17 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
   // Organisation-level Review instructions (business overview + GST/coding
   // overrides). Prepended as context; may override the printed GST/tax and guide
   // the account choice + supplier identification.
-  const instructions = (inp.instructions || '').slice(0, 6000); // guard the prompt size
+  // The org's own rules, then what the sender said about this one document —
+  // in that order, so a note can say which customer or category a cost is for
+  // without being able to restate how the practice codes things. Appended here
+  // rather than by each caller: two callers concatenating their own meant the
+  // read could not tell a covering MESSAGE from a file name, and only the
+  // first of those is allowed to beat a standing rule.
+  const fileHint = inp.note?.fileName
+    ? ((await loadNoteRules())?.fileNameHint(String(inp.note.fileName)) ?? '')
+    : '';
+  const instructions =
+    (inp.instructions || '').slice(0, 6000) + emailInstruction(inp.note ?? null, fileHint); // guard the prompt size
   const contextBlock = instructions
     ? `Business context and coding rules for this organisation — apply these when extracting and classifying. They can override the printed GST/tax amount (e.g. substitute 0), guide which account code to choose, and say how to identify the supplier:\n${instructions}\n\n`
     : '';
@@ -666,7 +740,12 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
         notFiller(parsed.data.period)
       ),
       categoryReason: notFiller(parsed.data.categoryReason),
-      noteFollowed: notFiller(parsed.data.noteFollowed),
+      // Only a covering MESSAGE can fill this, and this is where that is
+      // enforced rather than asked for. It is the flag that lets a note beat a
+      // standing supplier rule, and every document now arrives carrying the
+      // name of its file — so left to the prompt alone, "Grab dec invoice.pdf"
+      // would quietly outrank the rule saying everything from Grab is travel.
+      noteFollowed: hasMessage(inp.note) ? notFiller(parsed.data.noteFollowed) : '',
       customer,
       rebillable,
       taxRate,
@@ -711,7 +790,7 @@ extractRouter.post('/extract', async (req, res) => {
   // A document that arrived by email carries the note it came with. Re-reading
   // it has to see that note too — read once WITH "recharge this to CY-Biz" and
   // again without it, and the second read quietly undoes the first.
-  const note = (req.body?.emailNote ?? null) as { from?: string; subject?: string; text?: string } | null;
+  const note = (req.body?.emailNote ?? null) as CoveringNote | null;
 
   const result = await runExtraction({
     // The org picks the reader in Business settings → Extraction and the client
@@ -727,7 +806,8 @@ extractRouter.post('/extract', async (req, res) => {
       : [],
     taxRates: parseTaxRates(req.body?.taxRates),
     projects: parseNamedRules(req.body?.projects),
-    instructions: `${rawInstructions}${emailInstruction(note)}`,
+    instructions: rawInstructions,
+    note,
   });
 
   // What this document cost to read. Recorded per call and attributed to the

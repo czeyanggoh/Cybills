@@ -22,6 +22,7 @@ import { getExtractionAccounts } from '@/lib/organisations';
 import { displayItemId, sha256Hex, fetchExtract, addBill, notifyBillsChanged } from '@/lib/bills';
 import { requestedProvider, useReaderName } from '@/lib/readerProvider';
 import { cn } from '@/lib/utils';
+import { coveringNote } from '@/lib/coveringNote';
 
 function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false, disabled = false }) {
   return (
@@ -202,7 +203,7 @@ export default function VaultDetail() {
       payload.mediaType = mediaType;
       if (visionEnabled) {
         try {
-          const ex = await fetchExtract(base64, mediaType, await getExtractionAccounts());
+          const ex = await fetchExtract(base64, mediaType, await getExtractionAccounts(), coveringNote({ fileName: file.name }));
           if (ex) Object.assign(payload, ex);
         } catch { /* best effort */ }
       }

@@ -59,7 +59,7 @@ export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif
 // lib/coveringNote.js, which reads either off the document into one shape). A
 // re-read has to see it too: read once WITH "recharge this to CY-Biz" and again
 // without it, and the second read quietly undoes the first.
-export async function fetchExtract(imageBase64, mediaType, accounts, emailNote = null) {
+export async function fetchExtract(imageBase64, mediaType, accounts, note = null) {
   // The active org's Review instructions (business context + GST/coding rules)
   // ride along so the model classifies with that context. Best-effort.
   const instructions = await fetchReviewInstructions(getActiveOrganisationId());
@@ -91,7 +91,7 @@ export async function fetchExtract(imageBase64, mediaType, accounts, emailNote =
       categories,
       customers,
       instructions,
-      ...(emailNote ? { emailNote } : {}),
+      ...(note ? { emailNote: note } : {}),
       taxRates,
       projects,
       // '' = no org preference; the server applies its own default.

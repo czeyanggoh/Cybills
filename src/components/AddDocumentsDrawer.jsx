@@ -33,6 +33,7 @@ import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome
 import { foldTaxIntoCost } from '@/lib/lineItems';
 import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
+import { coveringNote } from '@/lib/coveringNote';
 
 // Slide-over "Add documents" panel mirroring Dext's, rendered black & white.
 // Costs/Sales tabs are wired to the real upload pipeline: hash → (Vision
@@ -680,7 +681,11 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           if (!isStatement && visionEnabled && VISION_MEDIA.includes(mediaType)) {
             patch(it.id, { status: 'extracting', bill });
             try {
-              const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise);
+              // What the sender called the file. On an upload it is the only
+              // thing they said about the document, and it is the same kind of
+              // thing as an emailed covering line — so it travels in the same
+              // envelope. The server decides what a name is worth.
+              const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise, coveringNote({ fileName: it.file.name }));
               if (ex) {
                 fields = { ...ex };
                 if (tab === 'Sales') {
@@ -762,7 +767,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
       if (visionEnabled && payload.fileBase64 && VISION_MEDIA.includes(payload.mediaType)) {
         patch(id, { status: 'extracting', bill });
         try {
-          const ex = await fetchExtract(payload.fileBase64, payload.mediaType, await getExtractionAccounts());
+          const ex = await fetchExtract(payload.fileBase64, payload.mediaType, await getExtractionAccounts(), coveringNote({ fileName: payload.fileName }));
           if (ex) fields = { ...ex };
         } catch {
           // best-effort

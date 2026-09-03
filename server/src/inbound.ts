@@ -10,7 +10,8 @@ import { decideTaxRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { insertBill, updateBill, settleProcessing } from './store.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
-import { runExtraction, emailInstruction } from './extract.js';
+import { runExtraction } from './extract.js';
+import type { CoveringNote } from './extract.js';
 import { categoriesForOrg } from './categories.js';
 import { recordUsage } from './usage.js';
 import { readSetting } from './settings.js';
@@ -149,7 +150,7 @@ export function overlaySupplierRule(
 // (whatsapp.ts). Both file a document and then have it read with the covering
 // note it came with, and running two copies of that would be running two sets
 // of coding rules.
-async function readIntoBill(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: { from?: string; subject?: string; text?: string; via?: string } | null = null) {
+async function readIntoBill(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: CoveringNote | null = null) {
   if (!visionEnabled) return;
   const ws = workspaceId(req);
   let inputs: Awaited<ReturnType<typeof extractionInputsFor>>;
@@ -171,7 +172,10 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       customers: inputs.customers,
       taxRates: inputs.taxRates,
       projects: inputs.projects,
-      instructions: `${inputs.instructions}${emailInstruction(envelope)}`,
+      instructions: inputs.instructions,
+      // The envelope itself, not a paragraph made from it: runExtraction adds
+      // the note AND the file name, and has to be able to tell them apart.
+      note: envelope,
     });
     if (result.outcome) {
       recordUsage(req, { feature: 'inbound-extract', provider: result.outcome.provider, model: result.outcome.model, usage: result.outcome.usage });
@@ -291,7 +295,7 @@ export async function autoRead(
   billId: string,
   fileBase64: string,
   mediaType: string,
-  envelope: { from?: string; subject?: string; text?: string; via?: string } | null = null
+  envelope: CoveringNote | null = null
 ): Promise<void> {
   try {
     await readIntoBill(req, scope, realOrgId, preferred, billId, fileBase64, mediaType, envelope);
@@ -451,7 +455,7 @@ inboundRouter.post('/email', async (req, res) => {
     date: sentAt,
     text: String(text || '').trim().slice(0, 4000),
   };
-  const madeBills: Array<{ id: string; base64: string; mediaType: string }> = [];
+  const madeBills: Array<{ id: string; base64: string; mediaType: string; fileName: string }> = [];
   for (const a of atts) {
     const filename = String(a?.filename || 'document');
     const contentType = String(a?.contentType || '');
@@ -492,7 +496,7 @@ inboundRouter.post('/email', async (req, res) => {
       status: 'processing',
       kind: 'cost',
     });
-    madeBills.push({ id: bill.id, base64, mediaType: storedType || contentType });
+    madeBills.push({ id: bill.id, base64, mediaType: storedType || contentType, fileName: filename });
   }
 
   // Read with the org's chosen reader (Claude / OpenAI), the same one the manual
@@ -503,5 +507,14 @@ inboundRouter.post('/email', async (req, res) => {
   // Answer the Worker straight away, then read each document in the background —
   // a model call takes 10-30s and the Worker shouldn't wait on it.
   res.json({ ok: true, kind: 'documents', created: madeBills.length, user: user.id });
-  for (const b of madeBills) void autoRead(req, scope, realOrgId, provider, b.id, b.base64, b.mediaType, envelope);
+  // The covering message belongs to the EMAIL, the file name to the
+  // attachment — one forward can carry three invoices, and reading all three
+  // under the name of the first would tell the reader something untrue about
+  // two of them.
+  for (const b of madeBills) {
+    void autoRead(req, scope, realOrgId, provider, b.id, b.base64, b.mediaType, {
+      ...envelope,
+      fileName: b.fileName,
+    });
+  }
 });

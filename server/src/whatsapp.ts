@@ -1467,6 +1467,11 @@ async function fileWhatsappDocument(
       via: 'whatsapp',
       from: message.senderName || mobileOf(message.from),
       text: message.text,
+      // A file sent into a group with no caption is the ordinary case, and the
+      // name is then the only thing the sender wrote — "Singtel tiffinlabs
+      // paid.pdf". It is a label, never evidence: what it may decide, and what
+      // it may never touch, is settled in extract.ts.
+      fileName: message.fileName,
     })
       .then(() => syncWhatsappReaction(scope, bill.id))
       .catch((err) => console.error('[whatsapp] read/react failed', err));

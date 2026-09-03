@@ -205,6 +205,35 @@ amounts. The note is stored on the document (`email`) and sent again on a
 RE-READ — read once with it and again without, and the second read quietly
 undoes the first.
 
+**And with the name the sender gave it.** A covering message is the strong
+case, and it is also the rare one: most documents arrive with no message at all
+— a file dropped into a WhatsApp collection group, an upload — and the only
+thing the sender wrote anywhere is the FILE NAME. "Singtel tiffinlabs paid.pdf"
+says which client to recharge it to and that it is already settled, and all of
+that was being thrown away. So the name travels in the same envelope
+(`coveringNote`, `fileName` on every road: the upload, the re-read, each emailed
+attachment under its own name, and the WhatsApp caption's file), and
+`emailInstruction` writes it into the prompt.
+
+What it is NOT is the whole of the care. **A name is a label, not evidence**:
+the reader is told never to take the supplier, a date, an amount, a document
+number or a registration number from it, because those are facts and they come
+off the paper — and a supplier read off a file name goes on to match a supplier
+rule, a duplicate and a contact in somebody's ledger. **A name is not an
+instruction either**: `noteFollowed` is the flag that lets a note outrank a
+standing supplier rule, and since every document now carries a name, a name
+allowed to fill it would quietly overrule "everything from Grab is travel" on
+every document Grab ever sent. That is enforced in `runExtraction` (the read is
+handed the envelope rather than a paragraph made from it, so it can tell a
+MESSAGE from a name) rather than merely asked for in the prompt. And **most
+names say nothing**: `fileNameHint` offers one only where a word a PERSON chose
+survives, so `IMG_4821.pdf`, `Scan_0001.pdf` and `WhatsApp Image 2026-09-03 at
+11.19.00.jpeg` reach the reader as nothing at all — that last one is a
+date-shaped string in front of a reader whose job at that moment is to find the
+document's date. Covered by `npm test` at the root (`covering-note`) and in
+`server/` (`file-name-note`, driven over real HTTP so what is asserted is the
+prompt that actually goes out).
+
 **A cost can name the client it is recharged to.** `customer` is read like the
 category is: an enum of the org's own active Xero customer contacts
 (`customerOptionsForOrg`, capped at 300 — a long-lived Xero holds thousands and
