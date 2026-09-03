@@ -740,15 +740,26 @@ export function reconcileReadiness(orgId: string, id: string): Bill | null {
 // 'processing': the browser sets that status on its own upload and clears it
 // itself, so a PATCH arriving mid-read would end the state early and put a
 // half-read document back in the inbox.
-export function settleProcessing(orgId: string, id: string): Bill | null {
+//
+// Where it lands is the caller's to say, because only the caller knows what the
+// read RETURNED. A document the reader got nothing off is set aside rather than
+// filed (`landAs: 'archived'` — see blankRead.ts): there is nothing on it to
+// code, so in the inbox it is noise in the one list that is supposed to be the
+// work. Everything else, failures included, lands in the inbox as it always
+// did — a read that never completed means nobody has looked at this yet, which
+// is not the same thing at all.
+export function settleProcessing(orgId: string, id: string, landAs: 'new' | 'archived' = 'new'): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
   if (!bill) return null;
   let changed = false;
   if (bill.status === 'processing') {
-    bill.status = 'new';
+    bill.status = landAs;
     changed = true;
   }
+  // Never for a document that was set aside: applyAutoReady reads completeness,
+  // and a blank document is not complete, so this is only ever the ordinary
+  // new-vs-ready decision it has always been.
   if (applyAutoReady(bill) || changed) persist(bills);
   return bill;
 }

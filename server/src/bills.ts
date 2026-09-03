@@ -32,6 +32,7 @@ import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from
 import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 import { makeEntityCheck } from './entityCheck.js';
 import { syncWhatsappReaction } from './waReactions.js';
+import { readGotNothing } from './blankRead.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -809,7 +810,7 @@ billsRouter.post('/bills/scan-duplicates', (req, res) => {
 // check now that supplier/invoice/total/date are known (the create-time check
 // only had the file hash). Returns { bill, duplicate } — the client removes the
 // row and offers "Add anyway" when a duplicate is reported.
-billsRouter.post('/bills/:id/finalize', (req, res) => {
+billsRouter.post('/bills/:id/finalize', async (req, res) => {
   const orgId = orgIdFor(req);
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
@@ -837,9 +838,18 @@ billsRouter.post('/bills/:id/finalize', (req, res) => {
   // Advance out of Processing now that Vision has read it: a complete document
   // lands straight in Ready, an incomplete one in the inbox (New). (Reconcile on
   // its own only toggles new↔ready, never leaves 'processing'.)
+  //
+  // …except a document the reader got NOTHING off, which is set aside instead:
+  // no supplier, no total, no date, no reference and no rows is not work
+  // waiting to be coded but a file that has to be sent again, and in the inbox
+  // it is noise in the list that is supposed to be the work. Only ever asked
+  // here, where a read has just completed — a document that was never read
+  // (extraction switched off, the read threw) looks identical and means the
+  // opposite, and it lands in the inbox as it always did.
   let bill = updated;
   if (bill.status === 'processing') {
-    bill = updateBill(orgId, req.params.id, { status: costComplete(bill) ? 'ready' : 'new' }) || bill;
+    const status = costComplete(bill) ? 'ready' : (await readGotNothing(bill)) ? 'archived' : 'new';
+    bill = updateBill(orgId, req.params.id, { status }) || bill;
   } else {
     bill = reconcileReadiness(orgId, req.params.id) || bill;
   }

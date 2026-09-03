@@ -630,7 +630,13 @@ export default function Costs() {
               Needs: {missingFields(d).join(', ')}
             </span>
           )}
-          {isInInbox(d) && statesNothing(docFacts(d)) && (
+          {/* Wherever the row appears, not only in the inbox: a document the
+              reader got nothing off is now SET ASIDE rather than filed, and it
+              is in Archived that somebody needs to be told why it is there.
+              Still never while it is being read — blank is what a document
+              looks like for the ten to thirty seconds before its answer
+              lands. */}
+          {d.status !== 'processing' && statesNothing(docFacts(d)) && (
             <span
               title="The reader got nothing off this document — no supplier, total, date or reference. Open it to read it again by hand, or merge it with the document it is a page of."
               className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-muted-foreground/30 bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"

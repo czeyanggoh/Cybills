@@ -738,6 +738,39 @@ attention landed there only if somebody had already noticed it and pressed the
 button. Rows in To review wear a **"Needs: …"** badge naming the missing fields
 (`missingFields`), except where "Nothing read" already says it better.
 
+**A document the reader got NOTHING off never joins the work.** No supplier, no
+total, no date, no reference and no rows is not a document waiting to be coded —
+there is nothing on it to code, and nothing a reviewer can do at the keyboard
+except ask for it again. On the WhatsApp road a photo taken in a car park is an
+ordinary event, so ten of those beside two real ones is a working list that has
+stopped being one. It is now SET ASIDE instead (`archived`), which is the pile
+kept just in case: it is in Archived, it is in **Submission history**, and in
+both it wears the same **"Nothing read"** badge — derived from the same
+`statesNothing(docFacts(d))` the Costs row uses, so a document somebody has since
+filled in by hand simply stops saying it, and there was nothing to migrate.
+
+**Only a read that actually RAN may set a document aside.** A read that failed,
+was refused, or never happened — extraction switched off, no API key, the
+process dying mid-read — leaves a document that looks identical and means the
+opposite: nobody has looked at it yet. Set those aside and a deploy with no
+reader would empty its own inbox. So `readIntoBill` says how it ended
+(`'read' | 'blank' | 'failed'`) and `settleProcessing` is TOLD where to land the
+document rather than working it out from the row, which cannot tell the two
+apart. The browser's own upload road decides at the same moment, in
+`/bills/:id/finalize`, off the same `readGotNothing` (`blankRead.ts`, which
+loads `mergeDetect.js` by path — the badge and the filing rule disagreeing is
+the sort of thing nobody can see and everybody has to explain). A failed read
+still writes its breadcrumb and still lands in the inbox.
+
+Nothing else changes: the file is kept, the row is a submission, Unarchive puts
+it back, and on the WhatsApp road the sender's message is still left WITHOUT a
+tick — which is how they are asked for a clearer photo, and is decided by
+`reactionFor` from the document rather than from where it was filed. Note this
+does take blank rows out of `rowsFor('inbox')`, which is what merge detection's
+provisional blank-pair pass reads: half of a two-page upload that read blank is
+now in Archived, and is merged by hand from there. Covered by `npm test` in
+`server/` (`test/blank-read.test.mts`).
+
 **And a document being READ says so, on every road.** An emailed or WhatsApp'd
 document was created as `new` and read in the background, so for the ten to
 thirty seconds the read takes it sat in the inbox wearing "New" and a **Nothing

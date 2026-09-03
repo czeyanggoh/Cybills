@@ -11,6 +11,7 @@ import { insertBill, updateBill, settleProcessing } from './store.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
 import { runExtraction } from './extract.js';
+import { readGotNothing } from './blankRead.js';
 import type { CoveringNote } from './extract.js';
 import { categoriesForOrg } from './categories.js';
 import { recordUsage } from './usage.js';
@@ -150,8 +151,10 @@ export function overlaySupplierRule(
 // (whatsapp.ts). Both file a document and then have it read with the covering
 // note it came with, and running two copies of that would be running two sets
 // of coding rules.
-async function readIntoBill(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: CoveringNote | null = null) {
-  if (!visionEnabled) return;
+type ReadEnd = 'read' | 'blank' | 'failed';
+
+async function readIntoBill(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: CoveringNote | null = null): Promise<ReadEnd> {
+  if (!visionEnabled) return 'failed';
   const ws = workspaceId(req);
   let inputs: Awaited<ReturnType<typeof extractionInputsFor>>;
   try {
@@ -268,12 +271,19 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       noteFollowed: d.noteFollowed,
       via: envelope?.via,
     });
-    updateBill(scope, billId, patch);
-    return; // success
+    const saved = updateBill(scope, billId, patch);
+    // The read ran. Whether it came back with anything is what decides where
+    // the document lands, and it is asked of the SAVED document rather than of
+    // the patch — a supplier rule laid over the read a moment ago is part of
+    // what this document now says.
+    return (await readGotNothing(saved)) ? 'blank' : 'read';
   }
   // Every provider failed — leave a breadcrumb the reviewer (and we) can see,
-  // since a background read has nowhere else to report to.
+  // since a background read has nowhere else to report to. NOT 'blank': the
+  // reader never gave an answer, so this document has still to be looked at by
+  // somebody, and it belongs in the inbox where it will be.
   updateBill(scope, billId, { categoryReason: `Auto-read didn't complete (${lastNote}). Use Re-read.` });
+  return 'failed';
 }
 
 // The document is marked as being read BEFORE this is called and stops being
@@ -297,10 +307,18 @@ export async function autoRead(
   mediaType: string,
   envelope: CoveringNote | null = null
 ): Promise<void> {
+  let end: ReadEnd = 'failed';
   try {
-    await readIntoBill(req, scope, realOrgId, preferred, billId, fileBase64, mediaType, envelope);
+    end = await readIntoBill(req, scope, realOrgId, preferred, billId, fileBase64, mediaType, envelope);
   } finally {
-    settleProcessing(scope, billId);
+    // A document the reader got NOTHING off is set aside rather than filed into
+    // the inbox: no supplier, no total, no date, no reference and no rows is
+    // not work waiting to be coded, it is a file that has to be sent again. It
+    // is kept, in Archived and in Submission history, wearing the same "Nothing
+    // read" badge it would have worn in the inbox — and on the WhatsApp road
+    // its message is still left without a tick, which is how the sender is
+    // asked for a better photo.
+    settleProcessing(scope, billId, end === 'blank' ? 'archived' : 'new');
   }
 }
 

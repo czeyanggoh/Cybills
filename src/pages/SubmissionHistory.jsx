@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Image, Download, FileClock, Search, ChevronDown } from 'lucide-react';
+import { Image, Download, FileClock, Search, ChevronDown, AlertTriangle } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import HistoryModal from '@/components/HistoryModal';
 import { fetchBills, billToDoc, itemNumber, costPath, billFileUrl, BILLS_CHANGED_EVENT } from '@/lib/bills';
+import { docFacts, statesNothing } from '@/lib/mergeDetect';
 import { cn } from '@/lib/utils';
 
 const TABS = ['Costs and sales', 'Supplier statements'];
@@ -58,6 +59,25 @@ function StatusBadge({ status }) {
     new: 'Inbox',
   }[status] || 'Inbox';
   return <span className={cn('inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs', map[status] ?? map.new)}>{label}</span>;
+}
+
+// A document the reader got nothing off never reaches the Costs inbox — there
+// is nothing on it to code, and it would be noise in the list that is supposed
+// to be the work. This is where it is still ACCOUNTED for: the submission is
+// recorded, and it says out loud why it is not in the inbox, so "I sent that
+// last week" has an answer here rather than a silence. Derived, like the badge
+// on the Costs row, so a document somebody has since filled in by hand simply
+// stops saying it.
+function NothingReadBadge({ doc }) {
+  if (doc.status === 'processing' || !statesNothing(docFacts(doc))) return null;
+  return (
+    <span
+      title="Nothing could be read off this file — no supplier, total, date or reference. It was set aside rather than filed. Open it to read it again by hand, or ask for a clearer copy."
+      className="mt-1 inline-flex items-center gap-1 whitespace-nowrap rounded border border-muted-foreground/30 bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+    >
+      <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Nothing read
+    </span>
+  );
 }
 
 // Row action icons; the history (clock) icon opens the timeline modal.
@@ -184,7 +204,12 @@ export default function SubmissionHistory() {
             {rows.map((s) => (
               <tr key={s.doc.id} className="border-b last:border-0 transition-colors hover:bg-muted/40">
                 <td className="px-3 py-3"><RowActions doc={s.doc} onHistory={() => setHistoryItem(s)} /></td>
-                <td className="px-3 py-3"><StatusBadge status={s.status} /></td>
+                <td className="px-3 py-3">
+                  <div className="flex flex-col items-start">
+                    <StatusBadge status={s.status} />
+                    <NothingReadBadge doc={s.doc} />
+                  </div>
+                </td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums">{s.id}</td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{s.submittedAt}</td>
                 <td className="whitespace-nowrap px-3 py-3">{s.submittedBy}</td>
