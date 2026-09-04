@@ -157,7 +157,9 @@ instead, and a document that breaks tax down per row is left as printed.
 Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
 `claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5`),
 `OPENAI_REASONING_EFFORT` (default `low`), optional `OPENAI_BASE_URL` for an
-OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default.
+OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default
+(`openai` unless set — the practice reads with OpenAI, and only an entity
+that picks Claude in Business settings gets Claude).
 Either key alone switches extraction on; both means the toggle appears.
 
 **A bill's own lines can reach Xero.** Line items carry `project` + `project2`

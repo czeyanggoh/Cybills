@@ -33,7 +33,8 @@ export const env = {
   // Claude (Anthropic) and OpenAI. Configure either or both — whichever keys
   // are present is what the app offers (see `readerProviders` below), and
   // Business settings -> Extraction -> "Document reader" picks between them per
-  // client entity. LLM_PROVIDER is the fallback when a request doesn't name one.
+  // client entity. LLM_PROVIDER is the fallback when a request doesn't name one
+  // (OpenAI unless set).
   //
   // Set ANTHROPIC_API_KEY to switch on the Claude reader. Model defaults to
   // Opus 4.8; set ANTHROPIC_MODEL=claude-sonnet-5 for a cheaper/faster option.
@@ -61,10 +62,11 @@ export const env = {
   // Optional: point at an OpenAI-compatible gateway (Azure OpenAI's v1 surface,
   // a proxy, a self-hosted endpoint). Blank = api.openai.com.
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL ?? '',
-  // Which reader a request that doesn't name one gets: 'claude' or 'openai'.
-  // Falls back to whichever is actually configured, so this can't strand the
-  // feature by naming a provider with no key.
-  LLM_PROVIDER: (process.env.LLM_PROVIDER ?? 'claude').trim().toLowerCase(),
+  // Which reader a request that doesn't name one gets: 'openai' or 'claude'.
+  // The practice reads with OpenAI unless an entity picks otherwise, so that is
+  // the default; it falls back to whichever is actually configured, so this
+  // can't strand the feature by naming a provider with no key.
+  LLM_PROVIDER: (process.env.LLM_PROVIDER ?? 'openai').trim().toLowerCase(),
 
   // --- The practice (CYBM) --------------------------------------------------
   // CYBills is run BY an accounting practice FOR its clients. The practice's own
@@ -230,7 +232,7 @@ export const readerProviders: Array<'claude' | 'openai'> = [
 export const defaultReaderProvider: 'claude' | 'openai' =
   (env.LLM_PROVIDER === 'openai' && openaiEnabled) || (env.LLM_PROVIDER === 'claude' && claudeEnabled)
     ? (env.LLM_PROVIDER as 'claude' | 'openai')
-    : (readerProviders[0] ?? 'claude');
+    : (readerProviders[0] ?? 'openai');
 
 // Xero (via the cyworkspace relay) switches on once the shared webhook API key
 // is configured. Until then the Xero endpoints return 503 xero_not_configured.
