@@ -157,8 +157,12 @@ instead, and a document that breaks tax down per row is left as printed.
 Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
 `claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5`),
 `OPENAI_REASONING_EFFORT` (default `low`), optional `OPENAI_BASE_URL` for an
-OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default.
-Either key alone switches extraction on; both means the toggle appears.
+OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default —
+**`openai`** unless the env says otherwise, so an entity that has never touched
+the setting reads with GPT. That default can't strand the feature: a deploy
+carrying only an Anthropic key still reads, with Claude, because
+`defaultReaderProvider` falls back to a reader that actually has a key. Either
+key alone switches extraction on; both means the toggle appears.
 
 **A bill's own lines can reach Xero.** Line items carry `project` + `project2`
 — the org's two Xero tracking categories, per line, editable in the grid and

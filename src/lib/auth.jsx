@@ -14,7 +14,10 @@ export function AuthProvider({ children }) {
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [readerProviders, setReaderProviders] = useState([]);
-  const [defaultReaderProvider, setDefaultReaderProvider] = useState('claude');
+  // Matches the server's own default (env.ts, LLM_PROVIDER), so the settings
+  // card doesn't read "Server default (Claude)" for the tick before status
+  // arrives and then change its mind.
+  const [defaultReaderProvider, setDefaultReaderProvider] = useState('openai');
   const [mailEnabled, setMailEnabled] = useState(false);
   const [user, setUser] = useState(null);
   const [membership, setMembership] = useState({ status: 'anonymous', user: null });
@@ -31,7 +34,7 @@ export function AuthProvider({ children }) {
         setGoogleEnabled(Boolean(s.googleEnabled));
         setVisionEnabled(Boolean(s.visionEnabled));
         setReaderProviders(Array.isArray(s.readerProviders) ? s.readerProviders : []);
-        setDefaultReaderProvider(s.defaultReaderProvider || 'claude');
+        setDefaultReaderProvider(s.defaultReaderProvider || 'openai');
         setMailEnabled(Boolean(s.mailEnabled));
       }
       setUser(meRes.ok ? (await meRes.json()).user : null);

@@ -62,9 +62,12 @@ export const env = {
   // a proxy, a self-hosted endpoint). Blank = api.openai.com.
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL ?? '',
   // Which reader a request that doesn't name one gets: 'claude' or 'openai'.
-  // Falls back to whichever is actually configured, so this can't strand the
-  // feature by naming a provider with no key.
-  LLM_PROVIDER: (process.env.LLM_PROVIDER ?? 'claude').trim().toLowerCase(),
+  // OpenAI is the default this deployment settled on for reading receipts, so a
+  // client entity that has never touched the setting gets it. Falls back to
+  // whichever reader is actually configured, so this can't strand the feature by
+  // naming a provider with no key — a deploy with only an Anthropic key still
+  // reads its documents, it just reads them with Claude.
+  LLM_PROVIDER: (process.env.LLM_PROVIDER ?? 'openai').trim().toLowerCase(),
 
   // --- The practice (CYBM) --------------------------------------------------
   // CYBills is run BY an accounting practice FOR its clients. The practice's own
