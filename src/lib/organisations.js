@@ -764,6 +764,27 @@ export async function updateBillInXero(organisationId, payload) {
   return body;
 }
 
+// Send an approved claim's CURRENT items to the bill it already created in
+// Xero — the claim's twin of updateBillInXero. Throws 'not_published' where
+// there is no bill yet, 'not_approved' for a claim reopened and not yet
+// approved again.
+export async function updateClaimInXero(organisationId, payload) {
+  const res = await fetch(`/api/xero/organisations/${organisationId}/update-claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = /** @type {any} */ (new Error(
+      Array.isArray(body.messages) ? body.messages.join(' ') : body.message || 'Update failed.'
+    ));
+    err.code = body.error;
+    throw err;
+  }
+  return body;
+}
+
 // Ask Xero about every bill this entity has published, and record what it says
 // (status, paid date, payment reference). The webhook only hears about what
 // changes after it was configured, so this is what catches up the bills paid

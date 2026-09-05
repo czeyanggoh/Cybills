@@ -1688,44 +1688,20 @@ xeroRouter.get('/organisations/:id/target-accounts', async (req, res) => {
   res.json({ accounts, target: { id: resolved.target.id, name: resolved.target.name } });
 });
 
-// POST /api/xero/organisations/:id/publish-claim — post an APPROVED expense
-// claim as an ACCPAY bill payable to the employee. Each claim line becomes an
-// invoice line (account code from its category); Xero applies each account's
-// default tax rate. Defaults to DRAFT so it's reviewable in Xero, not finalised.
-// Re-publishing is refused (409) unless force.
-//
-// The claim's entity and the entity whose ledger receives it are deliberately
-// two different things: a bridge entity has no Xero of its own, so its claims
-// post into its parent's (`requirePublishTarget`). Everywhere else the target
-// IS the organisation, so nothing changes for a linked entity.
-xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
-  if (notConfigured(res)) return;
-  const resolved = requirePublishTarget(req, res);
-  if (!resolved) return;
-  const { organisation, target } = resolved;
-
-  const b = req.body ?? {};
-  const claimId = String(b.claimId ?? '');
-  const status = String(b.status ?? 'DRAFT').toUpperCase();
-  if (!claimId) return res.status(400).json({ error: 'missing_field', message: 'claimId is required.' });
-  if (!PUBLISH_STATUSES.has(status)) {
-    return res.status(400).json({ error: 'invalid_status', message: 'status must be DRAFT, SUBMITTED or AUTHORISED.' });
-  }
-
-  const org = bookFor(req);
-  const claim = getClaimForXero(org, claimId);
-  if (!claim) return res.status(404).json({ error: 'claim_not_found' });
-  if (claim.approvalStatus !== 'approved') {
-    return res.status(400).json({ error: 'not_approved', message: 'Only an approved claim can be published to Xero.' });
-  }
-  if (claim.xeroInvoiceId && b.force !== true) {
-    return res.status(409).json({
-      error: 'already_posted',
-      message: `Already posted to ${claim.xeroTenantName || 'Xero'} on ${claim.xeroPostedAt ?? ''}.`,
-      xeroInvoiceId: claim.xeroInvoiceId,
-    });
-  }
-
+// The bill an expense claim becomes, WITHOUT Status or InvoiceID — the two
+// fields that differ between posting it and correcting it — or the refusal the
+// caller should answer with. One builder for publish-claim and update-claim,
+// for the same reason publish-bill and update-bill share theirs: two copies
+// would drift, and the drift would restate a figure in a live ledger.
+async function buildClaimInvoice(
+  req: any,
+  organisation: any,
+  target: any,
+  claim: NonNullable<ReturnType<typeof getClaimForXero>>
+): Promise<
+  | { ok: true; payload: Record<string, unknown>; lines: number }
+  | { ok: false; status: number; body: any }
+> {
   // Account code for a claim line.
   //
   // A linked entity's categories ARE its chart, so the code is the label's own
@@ -1828,14 +1804,14 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     : 'give each item a coded category (e.g. "412 - Consulting & Accounting")';
 
   if (!postable.length) {
-    return res.status(400).json({
+    return { ok: false as const, status: 400, body: {
       error: 'no_lines',
       categories: unmappedCategories.slice(0, 20),
       message: `No claim line has an account code to post to — ${fixIt}.`,
-    });
+    } };
   }
   if (unpostable.length) {
-    return res.status(422).json({
+    return { ok: false as const, status: 422, body: {
       error: 'unpostable_lines',
       count: unpostable.length,
       lines: unpostable.map((l) => String(l.Description ?? '')).slice(0, 10),
@@ -1844,16 +1820,15 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
         `${unpostable.length} of the ${lineItems.length} items on this claim can't become a Xero line — ` +
         `${fixIt}, and each item needs an amount above 0. Publishing now would post a bill for less than the ` +
         'claim is worth, so fix those items first.',
-    });
+    } };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
   // The claim's own date, else the period it covers, else the latest date among
   // its items — every expense on it happened on or before that. Only a claim
   // with nothing dated at all falls back to today, which is what EVERY claim
   // used to do: August's expenses posted into whatever month somebody happened
   // to press the button in.
-  const date = (await dateFor(claim)) || today;
+  const date = (await dateFor(claim)) || new Date().toISOString().slice(0, 10);
 
   const payload: Record<string, unknown> = {
     Type: 'ACCPAY',
@@ -1862,7 +1837,6 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     DueDate: date,
     LineAmountTypes: 'Exclusive',
     LineItems: postable,
-    Status: status,
     // The box a bill shows as "Reference" in Xero is the API's InvoiceNumber.
     // `Reference` is a SALES-invoice field: on an ACCPAY Xero accepts it, drops
     // it, and the bill arrives with an empty reference — which is exactly what
@@ -1884,6 +1858,81 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
   const claimLink = xeroInvoiceUrl(`${appOrigin(req)}/expense-claims/${encodeURIComponent(claim.id)}?org=${encodeURIComponent(organisation.id)}`);
   if (claimLink) payload.Url = claimLink;
   if (claim.currency) payload.CurrencyCode = claim.currency;
+  return { ok: true, payload, lines: postable.length };
+}
+
+// Best-effort: attach the expense-claim PDF (rendered client-side and passed as
+// base64) to the Xero bill, so the supporting document rides along — the bill
+// stays posted even if the attachment fails. Posting the same file name again
+// replaces the copy Xero holds, which is what a corrected claim wants.
+async function attachClaimPdf(
+  invoiceId: string,
+  tenantId: string,
+  b: any,
+  invoiceNumber: string
+): Promise<{ ok: boolean; error?: string } | null> {
+  const pdfBase64 = typeof b?.pdfBase64 === 'string' ? b.pdfBase64 : '';
+  if (!invoiceId || !pdfBase64) return null;
+  try {
+    const bytes = Buffer.from(pdfBase64, 'base64');
+    const rawName = String(b.pdfName || `expense-claim-${invoiceNumber || invoiceId}.pdf`);
+    const fileName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/(\.pdf)?$/i, '.pdf');
+    const att = await relay(`Invoices/${invoiceId}/Attachments/${encodeURIComponent(fileName)}`, {
+      method: 'POST',
+      tenantId,
+      rawBody: bytes,
+      contentType: 'application/pdf',
+    });
+    if (!att.ok) console.error('[xero] claim PDF attach failed', att.status, att.message);
+    return att.ok ? { ok: true } : { ok: false, error: att.message };
+  } catch (err) {
+    console.error('[xero] claim PDF attach error', err);
+    return { ok: false, error: 'attach_failed' };
+  }
+}
+
+// POST /api/xero/organisations/:id/publish-claim — post an APPROVED expense
+// claim as an ACCPAY bill payable to the employee. Each claim line becomes an
+// invoice line (account code from its category); Xero applies each account's
+// default tax rate. Defaults to DRAFT so it's reviewable in Xero, not finalised.
+// Re-publishing is refused (409) unless force.
+//
+// The claim's entity and the entity whose ledger receives it are deliberately
+// two different things: a bridge entity has no Xero of its own, so its claims
+// post into its parent's (`requirePublishTarget`). Everywhere else the target
+// IS the organisation, so nothing changes for a linked entity.
+xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
+  if (notConfigured(res)) return;
+  const resolved = requirePublishTarget(req, res);
+  if (!resolved) return;
+  const { organisation, target } = resolved;
+
+  const b = req.body ?? {};
+  const claimId = String(b.claimId ?? '');
+  const status = String(b.status ?? 'DRAFT').toUpperCase();
+  if (!claimId) return res.status(400).json({ error: 'missing_field', message: 'claimId is required.' });
+  if (!PUBLISH_STATUSES.has(status)) {
+    return res.status(400).json({ error: 'invalid_status', message: 'status must be DRAFT, SUBMITTED or AUTHORISED.' });
+  }
+
+  const org = bookFor(req);
+  const claim = getClaimForXero(org, claimId);
+  if (!claim) return res.status(404).json({ error: 'claim_not_found' });
+  if (claim.approvalStatus !== 'approved') {
+    return res.status(400).json({ error: 'not_approved', message: 'Only an approved claim can be published to Xero.' });
+  }
+  if (claim.xeroInvoiceId && b.force !== true) {
+    return res.status(409).json({
+      error: 'already_posted',
+      message: `Already posted to ${claim.xeroTenantName || 'Xero'} on ${claim.xeroPostedAt ?? ''}.`,
+      xeroInvoiceId: claim.xeroInvoiceId,
+    });
+  }
+
+  const prepared = await buildClaimInvoice(req, organisation, target, claim);
+  if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
+  const today = new Date().toISOString().slice(0, 10);
+  const payload: Record<string, unknown> = { ...prepared.payload, Status: status };
 
   const result = await relay('Invoices', {
     method: 'PUT',
@@ -1922,30 +1971,8 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     updated = getClaimForXero(org, claim.id) ?? updated;
   }
 
-  // Best-effort: attach the expense-claim PDF (rendered client-side and passed as
-  // base64) to the new Xero bill, so the supporting document rides along — the
-  // invoice stays posted even if the attachment fails.
   const invoiceId = String(invoice.InvoiceID ?? '');
-  const pdfBase64 = typeof b.pdfBase64 === 'string' ? b.pdfBase64 : '';
-  let attachment: { ok: boolean; error?: string } | null = null;
-  if (invoiceId && pdfBase64) {
-    try {
-      const bytes = Buffer.from(pdfBase64, 'base64');
-      const rawName = String(b.pdfName || `expense-claim-${invoice.InvoiceNumber || invoiceId}.pdf`);
-      const fileName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/(\.pdf)?$/i, '.pdf');
-      const att = await relay(`Invoices/${invoiceId}/Attachments/${encodeURIComponent(fileName)}`, {
-        method: 'POST',
-        tenantId: target.tenantId,
-        rawBody: bytes,
-        contentType: 'application/pdf',
-      });
-      attachment = att.ok ? { ok: true } : { ok: false, error: att.message };
-      if (!att.ok) console.error('[xero] claim PDF attach failed', att.status, att.message);
-    } catch (err) {
-      attachment = { ok: false, error: 'attach_failed' };
-      console.error('[xero] claim PDF attach error', err);
-    }
-  }
+  const attachment = await attachClaimPdf(invoiceId, target.tenantId, b, String(invoice.InvoiceNumber ?? ''));
 
   res.json({
     ok: true,
@@ -1956,5 +1983,98 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
     },
     attachment,
     claim: updated,
+  });
+});
+
+// POST /api/xero/organisations/:id/update-claim — send an approved claim's
+// CURRENT items to the bill it already created in Xero.
+// Body: { claimId, status?, pdfBase64?, pdfName? }.
+//
+// The claim's twin of update-bill. A mistake found after publishing is fixed
+// by unapproving the claim, correcting the items, approving it again — and
+// then THIS, so the ledger is restated rather than left holding the first
+// answer while the claim here says something else. Same builder as publish,
+// plus the InvoiceID that makes Xero update rather than create; Status only
+// when the caller asks, so correcting an approved bill's lines cannot knock it
+// back to Draft and out of somebody's approval queue. Xero decides what may
+// still change — a PAID or VOIDED bill refuses in its own words.
+//
+// Approved, always: an update restates money in a live ledger, and the
+// approval is the thing that says the company owes THIS sum. A reopened claim
+// waits until it is approved again.
+xeroRouter.post('/organisations/:id/update-claim', async (req, res) => {
+  if (notConfigured(res)) return;
+  const resolved = requirePublishTarget(req, res);
+  if (!resolved) return;
+  const { organisation, target } = resolved;
+
+  const b = req.body ?? {};
+  const claimId = String(b.claimId ?? '');
+  if (!claimId) return res.status(400).json({ error: 'missing_field', message: 'claimId is required.' });
+  const status = String(b.status ?? '').toUpperCase();
+  if (status && !PUBLISH_STATUSES.has(status)) {
+    return res.status(400).json({ error: 'invalid_status', message: 'status must be DRAFT, SUBMITTED or AUTHORISED.' });
+  }
+
+  const org = bookFor(req);
+  const claim = getClaimForXero(org, claimId);
+  if (!claim) return res.status(404).json({ error: 'claim_not_found' });
+  if (!claim.xeroInvoiceId) {
+    return res.status(400).json({
+      error: 'not_published',
+      message: 'This claim has not been published to Xero yet, so there is no bill to update. Publish it instead.',
+    });
+  }
+  if (claim.approvalStatus !== 'approved') {
+    return res.status(400).json({
+      error: 'not_approved',
+      message: 'Only an approved claim can be sent to Xero. Approve the corrected claim first, then update the bill.',
+    });
+  }
+
+  const prepared = await buildClaimInvoice(req, organisation, target, claim);
+  if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
+
+  const payload: Record<string, unknown> = { ...prepared.payload, InvoiceID: claim.xeroInvoiceId };
+  if (status) payload.Status = status;
+
+  // POST (not PUT) is Xero's update.
+  const result = await relay('Invoices', {
+    method: 'POST',
+    tenantId: target.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { Invoices: [payload] },
+  });
+  if (!result.ok) {
+    console.error('[xero] update-claim failed', result.status, result.message);
+    return res.status(result.status >= 500 ? 502 : result.status).json({ error: result.error, message: result.message });
+  }
+
+  const invoice = result.data?.Invoices?.[0];
+  const validationErrors: string[] = (invoice?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+  if (!invoice || invoice.HasErrors || validationErrors.length > 0) {
+    return res.status(422).json({
+      error: 'xero_validation_failed',
+      messages: validationErrors.length ? validationErrors : ['Xero rejected the update.'],
+    });
+  }
+
+  // What the bill is NOW, recorded from the reply rather than waited for.
+  const posted = paymentFromInvoice(invoice);
+  if (posted.xeroStatus) markClaimXeroPayment(claim.id, posted);
+
+  const invoiceId = String(invoice.InvoiceID ?? claim.xeroInvoiceId);
+  const attachment = await attachClaimPdf(invoiceId, target.tenantId, b, String(invoice.InvoiceNumber ?? ''));
+
+  res.json({
+    ok: true,
+    invoice: {
+      invoiceId,
+      invoiceNumber: String(invoice.InvoiceNumber ?? ''),
+      status: String(invoice.Status ?? ''),
+    },
+    lines: prepared.lines,
+    attachment,
+    claim: getClaimForXero(org, claim.id),
   });
 });

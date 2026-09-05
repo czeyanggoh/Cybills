@@ -139,9 +139,12 @@ check('a bystander cannot unapprove', r.status, 403);
 r = await post('/astrid-approved/reopen', as('astrid@redalpha.example', 'Astrid Test'));
 check('nor the claimant', r.status, 403);
 
+// A published claim reopens too, like a published cost document edits: the
+// bill in Xero is restated by Update in Xero once the claim is approved again.
 r = await post('/astrid-published/reopen', as('martin@redalpha.example', 'Martin Lim'));
-check('a published claim is refused even to the approver', r.status, 409);
-check('and says why', r.body.error, 'claim_published');
+check('a published claim may be reopened by its approver', r.status, 200);
+check('keeping its bill', r.body.claim?.xeroInvoiceId, 'inv-1');
+check('and back to awaiting approval', r.body.claim?.approvalStatus, 'awaiting_approval');
 
 r = await post('/kai-own/reopen', as('martin@redalpha.example', 'Martin Lim'));
 check('a claim that is not approved has nothing to reopen', r.status, 409);

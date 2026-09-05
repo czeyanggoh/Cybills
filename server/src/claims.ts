@@ -847,15 +847,15 @@ claimsRouter.post('/:id/reject', (req, res) =>
 // the only way to correct one: the items are fixed and it is approved again,
 // by the same approver, without being re-submitted.
 //
-// Never a published one. Its bill is in the ledger, and reopening the claim
-// here would let the two disagree silently — the exact thing the lock exists to
-// prevent. That is corrected in Xero, and a fresh claim raised if need be.
-// Decided by the same people who may approve: the named approver, or the
-// practice on their behalf. The claimant is told, because they were told it was
-// approved and would otherwise be waiting on money that has stopped moving.
+// A PUBLISHED claim may be reopened too, the way a published cost document
+// may be edited: the bill in Xero keeps the first answer until the corrected
+// claim is approved again and **Update in Xero** restates it — the page says
+// so while the two disagree. Decided by the same people who may approve: the
+// named approver, or the practice on their behalf. The claimant is told,
+// because they were told it was approved and would otherwise be waiting on
+// money that has stopped moving.
 claimsRouter.post('/:id/reopen', (req, res) =>
   mutate(req, res, (claim, me) => {
-    if (claim.xeroInvoiceId) return res.status(409).json({ error: 'claim_published' });
     if (claim.approvalStatus !== 'approved') return res.status(409).json({ error: 'not_approved', status: claim.approvalStatus });
     const blocked = ensureApprover(req, claim, me, res);
     if (blocked) return blocked;

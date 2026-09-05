@@ -746,12 +746,25 @@ by deleting the claim and raising it again. **Unapprove** (claim page, beside
 the Approved chip; `POST /api/claims/:id/reopen`) puts it back to
 `awaiting_approval` under the SAME approver, clears the decision, and writes
 who reopened it and why to the history, so the items are corrected and it is
-approved again without being re-submitted. Same people as Approve. Never a
-PUBLISHED claim (409 `claim_published`): its bill is in the ledger, and
-reopening the claim here would let the two disagree silently, which is the
-exact thing the lock exists to prevent — that is corrected in Xero. The
+approved again without being re-submitted. Same people as Approve. The
 claimant is emailed, because they were told it was approved and would otherwise
 be waiting on money that has stopped moving. Covered by the same test.
+
+**And a published claim is corrected the way a published cost is.** A claim
+whose bill is already in Xero may be unapproved too; the page then says the
+bill still shows the items it was published with, and once the corrected claim
+is approved again, **Update in Xero** (beside the Approved chip;
+`POST /api/xero/organisations/:id/update-claim`) restates it — the claim's
+twin of update-bill. Both claim routes assemble the bill through ONE builder
+(`buildClaimInvoice` in `xero.ts`), for the reason publish-bill and
+update-bill share theirs: two copies would drift, and the drift would restate
+a figure in a live ledger. The update names the bill by `InvoiceID`, into the
+same publish target (a bridge entity's parent), sends a `Status` only when
+asked so an approved bill is not knocked back to Draft, refuses a claim with no
+bill (`not_published`) or one not yet approved again (`not_approved`), and
+sends the claim PDF again under the same name so Xero's copy is replaced. Xero
+has the last word on a PAID or VOIDED bill, in its own words. Covered by
+`npm test` in `server/` (`test/bridge-claim.test.mts`).
 
 **A claim's dates are of two kinds, and only one of them was ever a date.** An
 end date is TYPED, in whatever shape somebody types it — ISO, DD/MM/YYYY,

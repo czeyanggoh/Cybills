@@ -65,6 +65,7 @@ writeFileSync(
 // --- stub relay --------------------------------------------------------------
 let posted: any = null;
 let postedTenant = '';
+let postedMethod = '';
 const stub = http.createServer((req, res) => {
   const url = new URL(String(req.url), 'http://x');
   const path = decodeURIComponent(url.pathname);
@@ -79,6 +80,7 @@ const stub = http.createServer((req, res) => {
     req.on('end', () => {
       posted = JSON.parse(body || '{}').Invoices?.[0] ?? null;
       postedTenant = url.searchParams.get('tenant_id') || '';
+      postedMethod = String(req.method);
       res.end(JSON.stringify({ Invoices: [{ InvoiceID: 'inv-9', InvoiceNumber: 'BILL-9', Status: 'DRAFT', HasErrors: false }] }));
     });
     return;
@@ -209,6 +211,54 @@ check('…nothing reached Xero', r.posted, null);
 // else's money into the wrong company's ledger.
 r = await publish('org-red', 'claim-1'); // claim-1 belongs to the bridge, not to Red Alpha
 check("another entity's claim is not found", [r.status, r.body.error], [404, 'claim_not_found']);
+check('…and nothing reached Xero', r.posted, null);
+
+// 7) A published claim can be RESTATED. Unapprove, fix the items, approve
+//    again, Update in Xero: the same builder, plus the InvoiceID that makes
+//    Xero update the bill it already holds rather than create a second one.
+const update = async (orgId: string, claimId: string, extra: Record<string, unknown> = {}) => {
+  posted = null;
+  postedTenant = '';
+  postedMethod = '';
+  const res = await fetch(`http://127.0.0.1:4613/api/xero/organisations/${orgId}/update-claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ claimId, ...extra }),
+  });
+  return { status: res.status, body: await res.json(), posted, postedTenant, postedMethod };
+};
+{
+  const items = loadCollection<any>('claims');
+  const c = items.find((x) => x.id === 'claim-1');
+  c.transactions[0].total = '14';
+  c.transactions[0].net = '14';
+  // And one never published, to be refused.
+  items.push(claim('claim-4'));
+  saveCollection('claims', items);
+}
+r = await update('org-ste', 'claim-1');
+check('a published claim updates', r.status, 200);
+check("…by Xero's update verb", r.postedMethod, 'POST');
+check('…naming the bill it already made', r.posted.InvoiceID, 'inv-9');
+check("…into the PARENT's tenant", r.postedTenant, 't-red');
+check('…with the corrected figures', r.posted.LineItems.map((l: any) => l.UnitAmount), [14, 12, 6]);
+check('…and no Status unless asked, so an approved bill stays approved', r.posted.Status ?? null, null);
+check('…the claim still pointing at that bill', r.body.claim.xeroInvoiceId, 'inv-9');
+
+r = await update('org-ste', 'claim-1', { status: 'AUTHORISED' });
+check('a status is sent only when asked for', r.posted.Status, 'AUTHORISED');
+
+r = await update('org-ste', 'claim-4');
+check('a claim with no bill has nothing to update', [r.status, r.body.error], [400, 'not_published']);
+check('…and nothing reached Xero', r.posted, null);
+
+{
+  const items = loadCollection<any>('claims');
+  items.find((x) => x.id === 'claim-1').approvalStatus = 'awaiting_approval';
+  saveCollection('claims', items);
+}
+r = await update('org-ste', 'claim-1');
+check('a reopened claim waits to be approved again', [r.status, r.body.error], [400, 'not_approved']);
 check('…and nothing reached Xero', r.posted, null);
 
 server.close();

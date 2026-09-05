@@ -52,6 +52,7 @@ import {
   getActiveOrganisationId,
   switchOrganisationTo,
   publishClaimToXero,
+  updateClaimInXero,
   useXeroShortCode,
 } from '@/lib/organisations';
 import { useExtractionSettings, publishStatusLabel } from '@/lib/extractionSettings';
@@ -247,6 +248,28 @@ export default function ExpenseClaimDetail() {
       setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as a ${publishStatusLabel(publishStatus).toLowerCase()} bill${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''}.${attachNote}`);
     } catch (err) {
       setPayNote(err?.message || 'Could not publish the claim to Xero.');
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  // The claim's twin of the cost page's Update in Xero: after Unapprove, fix,
+  // approve again, this restates the bill Xero already holds. The PDF goes
+  // again too, replacing the one attached at publish — it prints the items.
+  const updateXero = async () => {
+    setPayNote('');
+    const active = getActiveOrganisationId();
+    const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
+    if (!orgId) return;
+    setPublishing(true);
+    try {
+      const pdfBase64 = await buildClaimPdfBase64(claim);
+      const r = await updateClaimInXero(orgId, { claimId: claim.id, pdfBase64, pdfName: claimExportName(claim, 'pdf') });
+      notifyClaimsChanged();
+      const attachNote = r.attachment && r.attachment.ok === false ? ' (PDF attachment couldn’t be sent — see Xero)' : '';
+      setPayNote(`Updated the bill in ${claim.xeroTenantName || 'Xero'}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} with this claim’s current items.${attachNote}`);
+    } catch (err) {
+      setPayNote(err?.message || 'Could not update the bill in Xero.');
     } finally {
       setPublishing(false);
     }
@@ -513,9 +536,7 @@ export default function ExpenseClaimDetail() {
       setPayNote(
         e.code === 'not_approver'
           ? `Only ${claim.approver || 'the assigned approver'} can approve this claim.`
-          : e.code === 'claim_published'
-            ? 'This claim is already published to Xero, so it cannot be reopened here. Correct the bill in Xero, or raise a fresh claim.'
-            : 'Could not update the claim.'
+          : 'Could not update the claim.'
       );
     }
   };
@@ -553,6 +574,14 @@ export default function ExpenseClaimDetail() {
         <div className="mb-3 flex items-center gap-2 rounded-md border bg-muted px-3 py-2 text-sm text-foreground">
           {payNote}
           <button type="button" onClick={() => setPayNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
+        </div>
+      )}
+      {/* Reopened after publishing: the bill in Xero holds the figures it was
+          published with until the corrected claim is approved and sent again. */}
+      {claim.xeroInvoiceId && claim.approvalStatus !== 'approved' && (
+        <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm text-foreground">
+          This claim is already in {claim.xeroTenantName || 'Xero'} as a bill, which still shows the items it was published with.
+          {' '}Once the corrected claim is approved again, press <span className="font-medium">Update in Xero</span> so the bill matches.
         </div>
       )}
       {claim.approvalStatus === 'rejected' && (
@@ -595,10 +624,15 @@ export default function ExpenseClaimDetail() {
               Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}{claim.decidedFor ? ` for ${claim.decidedFor}` : ''}
             </span>
             {/* A mistake found after approval: back to awaiting approval, fixed,
-                approved again. Not once the bill is in Xero — the ledger has
-                the money, and that is corrected there. Same people as Approve. */}
-            {iAmApprover && !claim.xeroInvoiceId && (
+                approved again — and, where the bill is already in Xero, sent
+                again so the ledger matches. Same people as Approve. */}
+            {iAmApprover && (
               <TopButton onClick={() => { setReopenReason(''); setReopenOpen(true); }}>Unapprove</TopButton>
+            )}
+            {claim.xeroInvoiceId && (
+              <TopButton onClick={updateXero} disabled={publishing} title="Send this claim's current items to the bill it created in Xero">
+                {publishing ? 'Updating…' : 'Update in Xero'}
+              </TopButton>
             )}
           </>
         ) : claim.approvalStatus === 'rejected' ? (
@@ -1137,6 +1171,7 @@ export default function ExpenseClaimDetail() {
             <p className="mt-1 text-sm text-muted-foreground">
               It goes back to awaiting approval{claim.approver ? ` by ${claim.approver}` : ''}, so the items can be corrected and it approved again.
               {' '}{claim.claimFor || 'The claimant'} will be told.
+              {claim.xeroInvoiceId ? ' The bill already in Xero is left as it is until you press Update in Xero after re-approving.' : ''}
             </p>
             <textarea
               rows={3}
