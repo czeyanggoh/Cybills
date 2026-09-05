@@ -146,6 +146,13 @@ export async function rejectClaim(claimId, reason = '') {
   await post(`/${claimId}/reject`, { reason });
   notifyClaimsChanged();
 }
+// Take an approved claim back to awaiting approval so a mistake can be fixed
+// and it approved again. Same people as approve. Throws 'claim_published' for
+// a claim whose bill is already in Xero — that one is corrected in Xero.
+export async function reopenClaim(claimId, reason = '') {
+  await post(`/${claimId}/reopen`, { reason });
+  notifyClaimsChanged();
+}
 
 // Email a copy of the claim (CSV + PDF attached) to a recipient. `payload` is
 // { fromName, toName, toEmail, message, total, attachments:[{filename,content,contentType}] }.

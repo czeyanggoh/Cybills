@@ -67,6 +67,9 @@ writeFileSync(
       claimRow('astrid-3', 'Astrid Test'),
       // A colleague's own claim in the same entity, routed to Martin.
       claimRow('kai-own', 'Kai Tan'),
+      // Approved already, and one of those published: its bill is in Xero.
+      { ...claimRow('astrid-approved', 'Astrid Test'), approvalStatus: 'approved', decidedBy: 'Martin Lim', decidedAt: new Date(2).toISOString() },
+      { ...claimRow('astrid-published', 'Astrid Test'), approvalStatus: 'approved', decidedBy: 'Martin Lim', decidedAt: new Date(2).toISOString(), xeroInvoiceId: 'inv-1' },
     ],
   })
 );
@@ -128,6 +131,31 @@ r = await post('/astrid-3/approve', as('martin@redalpha.example', 'Martin Lim'))
 check('the named approver still approves', r.status, 200);
 check('with nobody standing in', r.body.claim?.decidedFor, '');
 check('and the plain trail', r.body.claim?.history?.[0]?.text, 'This claim was approved by Martin Lim');
+
+// --- Unapprove: back to awaiting approval -------------------------------------
+r = await post('/astrid-approved/reopen', as('other@redalpha.example', 'Other Person'));
+check('a bystander cannot unapprove', r.status, 403);
+
+r = await post('/astrid-approved/reopen', as('astrid@redalpha.example', 'Astrid Test'));
+check('nor the claimant', r.status, 403);
+
+r = await post('/astrid-published/reopen', as('martin@redalpha.example', 'Martin Lim'));
+check('a published claim is refused even to the approver', r.status, 409);
+check('and says why', r.body.error, 'claim_published');
+
+r = await post('/kai-own/reopen', as('martin@redalpha.example', 'Martin Lim'));
+check('a claim that is not approved has nothing to reopen', r.status, 409);
+check('and says so', r.body.error, 'not_approved');
+
+r = await post('/astrid-approved/reopen', as('kai@cy-bm.sg', 'Kai Tan'), { reason: 'Taxi was 14.71, not 104.71' });
+check('a practice colleague may unapprove', r.status, 200);
+check('back to awaiting approval', r.body.claim?.approvalStatus, 'awaiting_approval');
+check('with the same approver', r.body.claim?.approver, 'Martin Lim');
+check('and no decision standing', [r.body.claim?.decidedBy, r.body.claim?.decidedFor, r.body.claim?.decidedAt], ['', '', '']);
+check('the trail says who and why', r.body.claim?.history?.[0]?.text, 'This claim was reopened for review by Kai Tan on behalf of Martin Lim: Taxi was 14.71, not 104.71');
+
+r = await post('/astrid-approved/approve', as('martin@redalpha.example', 'Martin Lim'));
+check('and it can be approved again', r.body.claim?.approvalStatus, 'approved');
 
 server.close();
 if (failures) {

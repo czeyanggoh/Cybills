@@ -735,6 +735,20 @@ the colleague, `decidedFor` the named approver, and the history line reads
 refused exactly as before. Covered by `npm test` in `server/`
 (`test/claim-approve-practice.test.mts`).
 
+**An approved claim can be UNAPPROVED, back to awaiting approval.** Approval
+locks a claim — its total must not drift once it is on its way to payment — and
+until now the lock had no key: a mistake found afterwards could only be fixed
+by deleting the claim and raising it again. **Unapprove** (claim page, beside
+the Approved chip; `POST /api/claims/:id/reopen`) puts it back to
+`awaiting_approval` under the SAME approver, clears the decision, and writes
+who reopened it and why to the history, so the items are corrected and it is
+approved again without being re-submitted. Same people as Approve. Never a
+PUBLISHED claim (409 `claim_published`): its bill is in the ledger, and
+reopening the claim here would let the two disagree silently, which is the
+exact thing the lock exists to prevent — that is corrected in Xero. The
+claimant is emailed, because they were told it was approved and would otherwise
+be waiting on money that has stopped moving. Covered by the same test.
+
 **A claim's dates are of two kinds, and only one of them was ever a date.** An
 end date is TYPED, in whatever shape somebody types it — ISO, DD/MM/YYYY,
 DDMMYYYY, "31 Jul 2026" — and `parseDateParts` has always folded those into one

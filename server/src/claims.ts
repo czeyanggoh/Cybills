@@ -501,7 +501,7 @@ function notifyApprover(req: Request, claim: Claim, updated: boolean): void {
 // when rejected). Best-effort — no-ops when mail isn't configured or no email is
 // on file. Resolves the claimant's address from their roster row (by claimFor
 // name), falling back to whoever created the claim.
-function notifyClaimant(req: Request, claim: Claim, decision: 'approved' | 'rejected'): void {
+function notifyClaimant(req: Request, claim: Claim, decision: 'approved' | 'rejected' | 'reopened', by = claim.decidedBy): void {
   const ws = claim.workspaceId;
   const email = emailForName(ws, claim.claimFor) || claim.createdBy || '';
   if (!email) return;
@@ -509,7 +509,7 @@ function notifyClaimant(req: Request, claim: Claim, decision: 'approved' | 'reje
     claimantName: claim.claimFor,
     claimName: claim.name,
     decision,
-    deciderName: claim.decidedBy,
+    deciderName: by,
     reason: claim.decisionReason,
     url: `${appOrigin(req)}/expense-claims/${claim.id}`,
   });
@@ -838,6 +838,40 @@ claimsRouter.post('/:id/reject', (req, res) =>
       at: nowIso(),
     });
     notifyClaimant(req, claim, 'rejected');
+  })
+);
+
+// POST /api/claims/:id/reopen — take an APPROVED claim back to awaiting
+// approval, because a mistake was found after the fact. Approval locks the
+// claim (its total must not drift once it is on its way to payment), so this is
+// the only way to correct one: the items are fixed and it is approved again,
+// by the same approver, without being re-submitted.
+//
+// Never a published one. Its bill is in the ledger, and reopening the claim
+// here would let the two disagree silently — the exact thing the lock exists to
+// prevent. That is corrected in Xero, and a fresh claim raised if need be.
+// Decided by the same people who may approve: the named approver, or the
+// practice on their behalf. The claimant is told, because they were told it was
+// approved and would otherwise be waiting on money that has stopped moving.
+claimsRouter.post('/:id/reopen', (req, res) =>
+  mutate(req, res, (claim, me) => {
+    if (claim.xeroInvoiceId) return res.status(409).json({ error: 'claim_published' });
+    if (claim.approvalStatus !== 'approved') return res.status(409).json({ error: 'not_approved', status: claim.approvalStatus });
+    const blocked = ensureApprover(req, claim, me, res);
+    if (blocked) return blocked;
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
+    const by = byLine(claim, me);
+    claim.approvalStatus = 'awaiting_approval';
+    claim.decidedBy = '';
+    claim.decidedFor = '';
+    claim.decidedAt = '';
+    claim.decisionReason = reason;
+    claim.history.unshift({
+      text: reason ? `This claim was reopened for review by ${by}: ${reason}` : `This claim was reopened for review by ${by}`,
+      by: me.name,
+      at: nowIso(),
+    });
+    notifyClaimant(req, claim, 'reopened', me.name);
   })
 );
 

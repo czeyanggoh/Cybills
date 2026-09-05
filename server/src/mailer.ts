@@ -343,21 +343,26 @@ export function approvalRequestEmail(o: {
 export function claimDecisionEmail(o: {
   claimantName: string;
   claimName: string;
-  decision: 'approved' | 'rejected';
+  decision: 'approved' | 'rejected' | 'reopened';
   deciderName: string;
   reason?: string;
   url: string;
 }) {
   const approved = o.decision === 'approved';
-  const label = approved ? 'approved' : 'rejected';
+  const label = o.decision;
   const claim = o.claimName ? ` &ldquo;${esc(o.claimName)}&rdquo;` : '';
   const reasonBlock =
     !approved && o.reason
       ? `<p style="margin:14px 0 0"><strong>Reason:</strong> ${esc(o.reason)}</p>`
       : '';
+  // A reopened claim is back with its approver: nothing was rejected, and
+  // nothing is asked of the claimant — but they were told it was approved, and
+  // would otherwise be waiting on money that has stopped moving.
   const next = approved
     ? '<p style="margin:14px 0 0">No action needed — it moves on for payment.</p>'
-    : '<p style="margin:14px 0 0">You can edit the items and re-submit it for approval.</p>';
+    : o.decision === 'reopened'
+      ? '<p style="margin:14px 0 0">It is back awaiting approval while the items are corrected, and will be approved again once they are.</p>'
+      : '<p style="margin:14px 0 0">You can edit the items and re-submit it for approval.</p>';
   return {
     subject: `Expense claim ${label} — ${o.claimantName}`,
     html: layout({

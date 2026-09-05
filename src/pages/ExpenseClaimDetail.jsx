@@ -28,6 +28,7 @@ import {
   submitForApproval,
   approveClaim,
   rejectClaim,
+  reopenClaim,
   createClaim,
   removeItemsFromClaim,
   addItemToClaim,
@@ -186,6 +187,8 @@ export default function ExpenseClaimDetail() {
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
   const users = useUsers();
   const { data: organisations = [] } = useOrganisations();
   // The same people the New-claim dialog offers: an entity's own staff, plus the
@@ -510,7 +513,9 @@ export default function ExpenseClaimDetail() {
       setPayNote(
         e.code === 'not_approver'
           ? `Only ${claim.approver || 'the assigned approver'} can approve this claim.`
-          : 'Could not update the claim.'
+          : e.code === 'claim_published'
+            ? 'This claim is already published to Xero, so it cannot be reopened here. Correct the bill in Xero, or raise a fresh claim.'
+            : 'Could not update the claim.'
       );
     }
   };
@@ -589,6 +594,12 @@ export default function ExpenseClaimDetail() {
             <span className="inline-flex h-8 items-center gap-1 rounded-md bg-foreground px-3 text-sm font-medium text-background">
               Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}{claim.decidedFor ? ` for ${claim.decidedFor}` : ''}
             </span>
+            {/* A mistake found after approval: back to awaiting approval, fixed,
+                approved again. Not once the bill is in Xero — the ledger has
+                the money, and that is corrected there. Same people as Approve. */}
+            {iAmApprover && !claim.xeroInvoiceId && (
+              <TopButton onClick={() => { setReopenReason(''); setReopenOpen(true); }}>Unapprove</TopButton>
+            )}
           </>
         ) : claim.approvalStatus === 'rejected' ? (
           <>
@@ -1111,6 +1122,38 @@ export default function ExpenseClaimDetail() {
                 className="inline-flex h-9 items-center rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90"
               >
                 Reject claim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unapprove: back to awaiting approval with an optional note for the trail. */}
+      {reopenOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-foreground/20" onClick={() => setReopenOpen(false)} aria-hidden="true" />
+          <div className="relative w-full max-w-md rounded-lg bg-background p-6 shadow-xl">
+            <h2 className="text-base font-semibold tracking-tight">Unapprove this claim?</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              It goes back to awaiting approval{claim.approver ? ` by ${claim.approver}` : ''}, so the items can be corrected and it approved again.
+              {' '}{claim.claimFor || 'The claimant'} will be told.
+            </p>
+            <textarea
+              rows={3}
+              autoFocus
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+              placeholder="What needs fixing (optional)…"
+              className="mt-3 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setReopenOpen(false)} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted">Cancel</button>
+              <button
+                type="button"
+                onClick={() => { setReopenOpen(false); decide(() => reopenClaim(claim.id, reopenReason)); }}
+                className="inline-flex h-9 items-center rounded-md bg-foreground px-4 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              >
+                Unapprove
               </button>
             </div>
           </div>
