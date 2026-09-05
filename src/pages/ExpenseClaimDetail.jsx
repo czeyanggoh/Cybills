@@ -45,6 +45,7 @@ import {
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { useUsers, canManageUsers } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
+import { isPracticeTeam } from '@/lib/practiceStore';
 import {
   useOrganisations,
   getActiveOrganisationId,
@@ -482,18 +483,25 @@ export default function ExpenseClaimDetail() {
 
   const otherClaims = claims.filter((c) => c.id !== claim.id && !c.archived && !c.deleted);
 
-  // Only the assigned approver may approve/reject (enforced server-side too).
-  // When no specific approver is set, the decision falls to a Business/User
-  // Admin — but never the claimant approving their own claim (mirrors the
-  // server's ensureApprover rule).
+  // Only the assigned approver may approve/reject (enforced server-side too) —
+  // or a practice colleague on their behalf. The practice runs the book the
+  // claim posts into, so a CYBM colleague may decide a client's claim when the
+  // named approver is away or never signs in here; the decision is recorded as
+  // made on that person's behalf. When no specific approver is set, the decision
+  // falls to a Business/User Admin. Never the claimant approving their own claim,
+  // whoever they are (mirrors the server's ensureApprover rule).
   const meEmail = (user?.email || '').toLowerCase();
   const meName = (user?.name || '').toLowerCase();
   const iAmClaimant = Boolean(meName && claim.claimFor && claim.claimFor.toLowerCase() === meName);
   const iAmAdmin = canManageUsers(membership, googleEnabled);
-  const iAmApprover =
+  const iAmNamedApprover =
     (claim.approverEmail && meEmail && claim.approverEmail.toLowerCase() === meEmail) ||
-    (claim.approver && meName && claim.approver.toLowerCase() === meName) ||
+    (claim.approver && meName && claim.approver.toLowerCase() === meName);
+  const iAmApprover =
+    iAmNamedApprover ||
+    (!iAmClaimant && isPracticeTeam(membership, googleEnabled)) ||
     (!claim.approverEmail && !claim.approver && iAmAdmin && !iAmClaimant);
+  const decidingFor = iAmApprover && !iAmNamedApprover && claim.approver ? claim.approver : '';
   const decide = async (fn) => {
     setPayNote('');
     try {
@@ -570,6 +578,7 @@ export default function ExpenseClaimDetail() {
               <>
                 <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>
                 <TopButton danger onClick={() => { setRejectReason(''); setRejectOpen(true); }}>Reject</TopButton>
+                {decidingFor && <span className="whitespace-nowrap text-sm text-muted-foreground">on behalf of {decidingFor}</span>}
               </>
             ) : (
               <span className="text-sm text-muted-foreground">Only {claim.approver || 'the approver'} can approve</span>
@@ -578,7 +587,7 @@ export default function ExpenseClaimDetail() {
         ) : claim.approvalStatus === 'approved' ? (
           <>
             <span className="inline-flex h-8 items-center gap-1 rounded-md bg-foreground px-3 text-sm font-medium text-background">
-              Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
+              Approved{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}{claim.decidedFor ? ` for ${claim.decidedFor}` : ''}
             </span>
           </>
         ) : claim.approvalStatus === 'rejected' ? (
@@ -587,7 +596,7 @@ export default function ExpenseClaimDetail() {
               className="inline-flex h-8 items-center rounded-md border border-destructive px-3 text-sm text-destructive"
               title={claim.decisionReason ? `Reason: ${claim.decisionReason}` : undefined}
             >
-              Rejected{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}
+              Rejected{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}{claim.decidedFor ? ` for ${claim.decidedFor}` : ''}
             </span>
             <TopButton onClick={() => setApprovalOpen(true)}>Re-submit for approval</TopButton>
           </>

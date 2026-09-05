@@ -718,6 +718,23 @@ inbox, in Archive, and to anybody else's claim. `deleteBillsHard` splices the
 CACHED list in place — persisting a copy would leave every later read serving
 rows that were just deleted, and the next write would put them back.
 
+**The practice may decide a claim on the named approver's behalf.** A claim is
+routed to ONE person — the claimant's manager — and only that person could
+approve or reject it, so a claim in a client's book waited on a manager who was
+away, or who is a client's own person and never signs in here, while the
+colleague running that client's book looked at "Only Martin Lim can approve".
+The practice runs the book the claim posts into and its colleagues are a
+Business Admin inside every entity they can open, so `ensureApprover`
+(`claims.ts`) now lets an ACTIVE practice colleague decide too, mirrored by
+`isPracticeTeam` on the claim page. Entity access is the X-Org-Id guard's, as
+everywhere. Two things do not move: nobody approves their OWN claim by any road
+(the rule the open-claim branch already held, and a proxy must not be a way
+round it), and the trail says who actually pressed the button — `decidedBy` is
+the colleague, `decidedFor` the named approver, and the history line reads
+"approved by Kai Tan on behalf of Martin Lim". A client's other employees are
+refused exactly as before. Covered by `npm test` in `server/`
+(`test/claim-approve-practice.test.mts`).
+
 **A claim's dates are of two kinds, and only one of them was ever a date.** An
 end date is TYPED, in whatever shape somebody types it — ISO, DD/MM/YYYY,
 DDMMYYYY, "31 Jul 2026" — and `parseDateParts` has always folded those into one

@@ -61,6 +61,10 @@ type Claim = {
   approverEmail: string;
   decidedBy: string;
   decidedAt: string;
+  // Set when the decision was made by somebody OTHER than the named approver —
+  // a practice colleague deciding on that person's behalf. `decidedBy` is
+  // always the person who actually pressed the button.
+  decidedFor?: string;
   description?: string; // the claimant's own note about what this claim is for
   decisionReason?: string; // the manager's reason when a claim is rejected
   archived: boolean;
@@ -738,24 +742,41 @@ claimsRouter.post('/:id/submit', (req, res) =>
     claim.approverEmail = manager.email;
     claim.decidedBy = '';
     claim.decidedAt = '';
+    claim.decidedFor = '';
     claim.history.unshift({ text: `This claim was submitted for approval to ${manager.name}`, by: me.name, at: nowIso() });
     notifyApprover(req, claim, false);
   })
 );
 
-// Only the assigned approver may decide. Match on email OR name (mirroring the
-// client's own check): the approver is picked from the team roster, and a
-// person's roster email can differ from their login email (e.g. a gmail login
-// vs a work address) — matching only on email would then lock out the real
-// approver. Permissive when no approver is assigned, or in a session-less
-// mock/dev context.
+// Only the assigned approver may decide — or the practice, on their behalf.
+//
+// Match on email OR name (mirroring the client's own check): the approver is
+// picked from the team roster, and a person's roster email can differ from
+// their login email (e.g. a gmail login vs a work address) — matching only on
+// email would then lock out the real approver. Permissive when no approver is
+// assigned, or in a session-less mock/dev context.
+//
+// The practice runs the book this claim posts into, and its people are a
+// Business Admin inside every client entity they can open — so a CYBM colleague
+// may decide a client's claim when the named approver is away, or when the
+// approver is a client manager who never signs in here. The one thing a
+// colleague may never do is approve their OWN claim, named approver or not:
+// that is the rule the open-claim branch already holds, and a proxy must not
+// be a way round it. The decision is recorded as made ON BEHALF OF the named
+// approver (`decidedFor`), so the trail says who actually pressed the button.
+const norm = (s: string) => s.trim().toLowerCase();
+const isNamedApprover = (claim: Claim, me: { email: string; name: string }): boolean =>
+  Boolean(me.email && claim.approverEmail && norm(me.email) === norm(claim.approverEmail)) ||
+  Boolean(me.name && claim.approver && norm(me.name) === norm(claim.approver));
+const isClaimantOf = (claim: Claim, me: { email: string; name: string }): boolean =>
+  Boolean(me.name && claim.claimFor && norm(me.name) === norm(claim.claimFor));
+
 function ensureApprover(
   req: Request,
   claim: Claim,
   me: { email: string; name: string },
   res: Response
 ): Response | void {
-  const norm = (s: string) => s.trim().toLowerCase();
   // Open claim (no assigned approver — e.g. a legacy claim, or the claimant has
   // no direct manager). Only a non-claimant ADMIN may decide it: never the
   // claimant on their own claim, never a random Standard user. A session-less
@@ -763,15 +784,23 @@ function ensureApprover(
   if (!claim.approverEmail && !claim.approver) {
     const member = memberForSession(req);
     if (!member) return; // mock/dev — no real auth to gate on
-    const isClaimant = Boolean(me.name && claim.claimFor && norm(me.name) === norm(claim.claimFor));
-    if (isAdminRole(member.role) && !isClaimant) return;
+    if (isAdminRole(member.role) && !isClaimantOf(claim, me)) return;
     return res.status(403).json({ error: 'not_approver', approver: claim.approver });
   }
-  const emailMatch = Boolean(me.email && claim.approverEmail && norm(me.email) === norm(claim.approverEmail));
-  const nameMatch = Boolean(me.name && claim.approver && norm(me.name) === norm(claim.approver));
-  if (emailMatch || nameMatch) return;
+  if (isNamedApprover(claim, me)) return;
+  // The practice, on the approver's behalf. Entity access was already checked
+  // by the X-Org-Id guard, so being on the team is the whole of the question.
+  const member = memberForSession(req);
+  if (member && member.practice && !member.deactivated && !isClaimantOf(claim, me)) return;
   return res.status(403).json({ error: 'not_approver', approver: claim.approver });
 }
+
+// Who the decision was made for, when the person deciding is not the approver
+// the claim names — empty when they are, or when nobody is named.
+const decidedFor = (claim: Claim, me: { email: string; name: string }): string =>
+  claim.approver && !isNamedApprover(claim, me) ? claim.approver : '';
+const byLine = (claim: Claim, me: { email: string; name: string }): string =>
+  decidedFor(claim, me) ? `${me.name} on behalf of ${decidedFor(claim, me)}` : me.name;
 
 claimsRouter.post('/:id/approve', (req, res) =>
   mutate(req, res, (claim, me) => {
@@ -785,9 +814,10 @@ claimsRouter.post('/:id/approve', (req, res) =>
     claim.transactions = liveTxns(claim);
     claim.approvalStatus = 'approved';
     claim.decidedBy = me.name;
+    claim.decidedFor = decidedFor(claim, me);
     claim.decidedAt = nowIso();
     claim.decisionReason = '';
-    claim.history.unshift({ text: `This claim was approved by ${me.name}`, by: me.name, at: nowIso() });
+    claim.history.unshift({ text: `This claim was approved by ${byLine(claim, me)}`, by: me.name, at: nowIso() });
     notifyClaimant(req, claim, 'approved');
   })
 );
@@ -799,10 +829,11 @@ claimsRouter.post('/:id/reject', (req, res) =>
     const reason = String(req.body?.reason || '').trim().slice(0, 500);
     claim.approvalStatus = 'rejected';
     claim.decidedBy = me.name;
+    claim.decidedFor = decidedFor(claim, me);
     claim.decidedAt = nowIso();
     claim.decisionReason = reason;
     claim.history.unshift({
-      text: reason ? `This claim was rejected by ${me.name}: ${reason}` : `This claim was rejected by ${me.name}`,
+      text: reason ? `This claim was rejected by ${byLine(claim, me)}: ${reason}` : `This claim was rejected by ${byLine(claim, me)}`,
       by: me.name,
       at: nowIso(),
     });
