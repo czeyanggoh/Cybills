@@ -68,7 +68,7 @@ function CategorySelect({ value, onChange, options }) {
   return (
     <ComboSelect
       size="xs"
-      className="w-44"
+      className="w-40"
       aria-label="Category"
       value={value}
       options={options}

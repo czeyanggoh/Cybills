@@ -37,9 +37,23 @@ export const COST_COLUMNS = [
   { key: 'date', label: 'Date', primary: true, width: 'w-[110px]' },
   // The widest of them, and the one that was starved: a supplier's registered
   // name runs to five or six words and is what the reviewer reads the row by.
-  { key: 'supplier', label: 'Supplier', primary: true, width: 'w-[220px]' },
-  // The dropdown inside is w-44 (176px) + the cell's own px-3 either side.
-  { key: 'category', label: 'Category', primary: true, width: 'w-[200px]' },
+  //
+  // `w-` alone was not enough for it. Once the primary set grew past the
+  // window — Paid status and Paid date joined it — the sum of the columns'
+  // MINIMUM widths exceeded the container, and at that point a preference
+  // decides nothing: every other column's minimum is its full nowrap text,
+  // while Supplier's is its longest single WORD. So it collapsed to a column
+  // of one-word lines ("Amazon / Web / Services / Singapore / Private /
+  // Limited") beside columns holding their full width. The min-w is the floor
+  // that makes it shrink last rather than first; the table scrolls sideways,
+  // which it already did.
+  { key: 'supplier', label: 'Supplier', primary: true, width: 'w-[220px] min-w-[200px]' },
+  // The dropdown inside is w-40 (160px) + the cell's own px-3 either side. It
+  // is deliberately the narrowest thing that still reads: a code and its name
+  // ("485 - Subscriptions") fit, a longer name clips in the closed field and is
+  // read in full from the list, which is where you pick it from anyway. Space
+  // spent here is space taken from Supplier, which cannot clip — it wraps.
+  { key: 'category', label: 'Category', primary: true, width: 'w-[184px]' },
   { key: 'total', label: 'Total', primary: true, width: 'w-[110px]' },
   { key: 'tax', label: 'Tax', primary: true, width: 'w-[80px]' },
   // …and this one is w-36 (144px) + px-3 either side.
