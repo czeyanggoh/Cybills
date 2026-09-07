@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { displayItemId, updateBill, notifyBillsChanged } from '@/lib/bills';
+import { displayItemId, updateBill, notifyBillsChanged, fileToBase64 } from '@/lib/bills';
 import { getActiveOrganisationId, ORGANISATION_EVENT } from '@/lib/organisations';
 import { cleanHistoryText } from '@/lib/exportFormat';
 import { toIsoClaimDate } from '@/lib/claimDate';
@@ -93,6 +93,58 @@ export async function updateClaim(claimId, patch) {
   notifyClaimsChanged();
   return shape(claim);
 }
+
+// --- Supporting documents ------------------------------------------------------
+// A claim's own paperwork beside its receipts — the internal approval email
+// chain, a quote, an HR form — kept on the claim and printed at the back of its
+// PDF after the approval history (claimPdf.js). Only what the PDF can carry.
+export const CLAIM_ATTACHMENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+export const CLAIM_ATTACHMENT_ACCEPT = '.pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg';
+
+// A browser File's type, with the extension deciding where the browser said
+// nothing (a .pdf dragged from some mail clients arrives as '').
+export function claimAttachmentType(file) {
+  const t = String(file?.type || '').toLowerCase();
+  if (CLAIM_ATTACHMENT_TYPES.includes(t)) return t;
+  const ext = String(file?.name || '').toLowerCase().split('.').pop();
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  return '';
+}
+
+export async function addClaimAttachment(claimId, file) {
+  const mediaType = claimAttachmentType(file);
+  if (!mediaType) {
+    const err = /** @type {any} */ (new Error('Only a PDF, PNG or JPG can be attached — save an email chain as PDF first.'));
+    err.code = 'unsupported_type';
+    throw err;
+  }
+  const fileBase64 = await fileToBase64(file);
+  const { claim } = await post(`/${claimId}/attachments`, { fileName: file.name, fileBase64, mediaType });
+  notifyClaimsChanged();
+  return shape(claim);
+}
+
+export async function removeClaimAttachment(claimId, attachmentId) {
+  const res = await fetch(`/api/claims/${claimId}/attachments/${encodeURIComponent(attachmentId)}`, {
+    method: 'DELETE',
+    headers: orgHeaders(),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    const err = /** @type {any} */ (new Error(b.message || b.error || `Request failed (${res.status})`));
+    err.code = b.error;
+    throw err;
+  }
+  notifyClaimsChanged();
+  return res.json();
+}
+
+// Where an attachment's bytes are served from — opened by the page, and fetched
+// by the PDF assembler when it appends the document to the claim PDF.
+export const claimAttachmentUrl = (claimId, attachmentId) =>
+  `/api/claims/${encodeURIComponent(claimId)}/attachments/${encodeURIComponent(attachmentId)}/file`;
 
 // Attach a cost item (transaction shape) to a claim. Idempotent per itemId.
 export async function addItemToClaim(claimId, txn) {

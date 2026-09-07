@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { claimAttachmentUrl, formatClaimStamp } from '@/lib/claimStore';
 import { pdfDate, claimRef, claimExportName, claimsExportName, cleanHistoryText } from '@/lib/exportFormat';
 import { claimDateFor } from '@/lib/claimReference';
 import { approvalHistory } from '@/lib/approvalHistory';
@@ -311,12 +312,21 @@ async function claimShareLinks(claim) {
 }
 
 // The claim PDF as a base64 string (no data: prefix) — attached to the Xero
-// bill when publishing, and to the claim email. Returns '' if rendering fails.
+// bill when publishing, and to the claim email. The report with its supporting
+// documents behind it, and no receipts: those are on the bill's own lines. The
+// supporting documents DO travel, because they are the whole reason somebody
+// attached them — the approval email chain is what the approver reading the
+// emailed PDF wants beside the figures. Returns '' if rendering fails.
 export async function buildClaimPdfBase64(claim) {
   try {
-    const doc = buildClaimDoc(claim, await claimShareLinks(claim));
-    const uri = doc.output('datauristring'); // "data:application/pdf;base64,…"
-    return String(uri).split(',')[1] || '';
+    const out = await PDFDocument.create();
+    await addReportPages(out, claim, await claimShareLinks(claim));
+    await appendAttachments(out, claim);
+    const bytes = await out.save();
+    let bin = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    return btoa(bin);
   } catch {
     return '';
   }
@@ -331,13 +341,14 @@ const RECEIPT_W = H;
 const RECEIPT_H = W;
 const A4 = [RECEIPT_W, RECEIPT_H];
 
-// Fetch a transaction's original receipt document and append it to `out` (a
-// pdf-lib doc). PDFs are copied page-for-page; images are placed one per page,
-// scaled to fit. Best-effort: demo docs and missing files are silently skipped.
-// Returns true if at least one page was appended.
-async function appendReceipt(out, itemId) {
+// Fetch a stored document and append it to `out` (a pdf-lib doc). PDFs are
+// copied page-for-page; images are placed one per page, scaled to fit.
+// Best-effort: missing files are silently skipped. Returns true if at least one
+// page was appended. Shared by a receipt and a claim's own supporting document
+// — the same kinds of file, placed the same way.
+async function appendFile(out, url) {
   try {
-    const res = await fetch(`/api/costs/bills/${encodeURIComponent(itemId)}/file`);
+    const res = await fetch(url);
     if (!res.ok) return false;
     const type = (res.headers.get('Content-Type') || '').toLowerCase();
     const buf = await res.arrayBuffer();
@@ -360,6 +371,48 @@ async function appendReceipt(out, itemId) {
   } catch {
     return false;
   }
+}
+
+// A transaction's original receipt.
+const appendReceipt = (out, itemId) => appendFile(out, `/api/costs/bills/${encodeURIComponent(itemId)}/file`);
+
+// The claim's own supporting documents — the internal approval email chain, a
+// quote, an HR form — at the back of the report, after the approval history and
+// before the receipts. A divider page lists them first (what each is, who
+// attached it, when), because a PDF of an email thread dropped straight after
+// the approval timeline reads as part of the approval rather than as evidence
+// the claimant supplied. Nothing is drawn when the claim has none.
+async function appendAttachments(out, claim) {
+  const list = Array.isArray(claim?.attachments) ? claim.attachments : [];
+  if (!list.length) return false;
+  const font = await out.embedFont(StandardFonts.Helvetica);
+  const bold = await out.embedFont(StandardFonts.HelveticaBold);
+  const page = out.addPage([W, H]); // landscape, like the report it follows
+  let y = H - M - 10;
+  page.drawText('SUPPORTING DOCUMENTS', { x: M, y, size: 11, font: bold, color: rgb(0.08, 0.08, 0.08) });
+  y -= 16;
+  page.drawText(
+    `${list.length} document${list.length === 1 ? '' : 's'} attached to this claim by the people raising it. Each follows on the pages after this one, in this order.`,
+    { x: M, y, size: 9, font, color: rgb(0.43, 0.43, 0.43) }
+  );
+  y -= 24;
+  list.forEach((a, i) => {
+    const name = String(a.fileName || 'document');
+    page.drawText(`${i + 1}.`, { x: M, y, size: 9.5, font: bold, color: rgb(0.08, 0.08, 0.08) });
+    page.drawText(name.length > 90 ? `${name.slice(0, 87)}…` : name, { x: M + 18, y, size: 9.5, font: bold, color: rgb(0.08, 0.08, 0.08) });
+    y -= 12;
+    const when = a.addedAt ? formatClaimStamp(a.addedAt) : '';
+    page.drawText(`Attached${a.addedBy ? ` by ${a.addedBy}` : ''}${when ? ` on ${when}` : ''}`, {
+      x: M + 18, y, size: 8.5, font, color: rgb(0.55, 0.55, 0.55),
+    });
+    y -= 18;
+  });
+  let added = false;
+  for (const a of list) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await appendFile(out, claimAttachmentUrl(claim.id, a.id))) added = true;
+  }
+  return added;
 }
 
 // Copy the CYBills report (jsPDF) pages into a pdf-lib doc.
@@ -390,7 +443,12 @@ export async function assembleClaimPdf(claim, { detailLevel = 'with_receipts' } 
 async function addClaimTo(out, claim, detailLevel) {
   const before = out.getPageCount();
   const links = await claimShareLinks(claim);
-  if (detailLevel !== 'receipts') await addReportPages(out, claim, links);
+  if (detailLevel !== 'receipts') {
+    await addReportPages(out, claim, links);
+    // The claim's own paperwork rides with the report, at every level that has
+    // one: it is what the approver reads beside the figures, not a receipt.
+    await appendAttachments(out, claim);
+  }
   if (detailLevel !== 'summary') {
     for (const t of claim.transactions || []) {
       // eslint-disable-next-line no-await-in-loop

@@ -12,6 +12,8 @@ import {
   Info,
   CheckCircle2,
   ExternalLink,
+  Paperclip,
+  Trash2,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -42,6 +44,10 @@ import {
   formatClaimDate,
   formatClaimStamp,
   toIsoClaimDate,
+  addClaimAttachment,
+  removeClaimAttachment,
+  claimAttachmentUrl,
+  CLAIM_ATTACHMENT_ACCEPT,
 } from '@/lib/claimStore';
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { useUsers, canManageUsers } from '@/lib/userStore';
@@ -98,6 +104,108 @@ function DetailField({ label, children }) {
     <div className="flex items-start gap-3 py-2">
       <div className="w-32 shrink-0 pt-2 text-sm text-muted-foreground">{label}</div>
       <div className="flex-1">{children}</div>
+    </div>
+  );
+}
+
+// The claim's own paperwork, beside its receipts: the internal approval email
+// chain the claimant got before spending, a quote, an HR form — what the
+// approver needs to decide and what an auditor asks for later. Attached HERE,
+// with the notes, and printed at the back of the claim PDF after the approval
+// history (claimPdf.js), so it travels with the claim wherever the PDF goes.
+// Locked with the rest of the claim once approved: the PDF that records a
+// decision must not grow afterwards.
+const fmtBytes = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+function SupportingDocuments({ claim, locked }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const list = Array.isArray(claim.attachments) ? claim.attachments : [];
+
+  const onPick = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+    setError('');
+    for (const f of files) {
+      setBusy(f.name);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await addClaimAttachment(claim.id, f);
+      } catch (err) {
+        setError(err?.message || `Could not attach ${f.name}.`);
+        break;
+      }
+    }
+    setBusy('');
+  };
+
+  const onRemove = async (a) => {
+    if (!window.confirm(`Remove "${a.fileName}" from this claim?`)) return;
+    setError('');
+    try {
+      await removeClaimAttachment(claim.id, a.id);
+    } catch (err) {
+      setError(err?.message || 'Could not remove that document.');
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {list.length > 0 && (
+        <ul className="divide-y rounded-md border">
+          {list.map((a) => (
+            <li key={a.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+              <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <a
+                  href={claimAttachmentUrl(claim.id, a.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block truncate font-medium hover:underline"
+                  title={a.fileName}
+                >
+                  {a.fileName}
+                </a>
+                <p className="truncate text-xs text-muted-foreground">
+                  {fmtBytes(Number(a.size) || 0)}
+                  {a.addedBy ? ` · ${a.addedBy}` : ''}
+                  {a.addedAt ? ` · ${formatClaimStamp(a.addedAt)}` : ''}
+                </p>
+              </div>
+              {!locked && (
+                <button
+                  type="button"
+                  onClick={() => onRemove(a)}
+                  className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label={`Remove ${a.fileName}`}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!locked && (
+        <label
+          className={cn(
+            'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-3 text-sm transition-colors hover:bg-muted',
+            busy && 'cursor-wait opacity-60'
+          )}
+        >
+          <Paperclip className="h-3.5 w-3.5" />
+          {busy ? `Attaching ${busy}…` : 'Attach a document'}
+          <input type="file" accept={CLAIM_ATTACHMENT_ACCEPT} multiple onChange={onPick} disabled={Boolean(busy)} className="hidden" />
+        </label>
+      )}
+      {locked && !list.length && <p className="text-sm text-muted-foreground">None.</p>}
+      <p className="text-xs text-muted-foreground">
+        The internal approval email chain, a quote, an HR form — anything the approver should see beside the
+        receipts. Printed at the back of the claim PDF after the approval history, so it goes wherever the
+        claim is sent. PDF, PNG or JPG, up to 10 MB each.
+      </p>
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }
@@ -1055,6 +1163,9 @@ export default function ExpenseClaimDetail() {
                   }}
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
                 />
+              </DetailField>
+              <DetailField label="Supporting documents">
+                <SupportingDocuments claim={claim} locked={locked} />
               </DetailField>
               <DetailField label="Paid">
                 <div className="flex items-center gap-2 pt-1">

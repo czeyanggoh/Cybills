@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
+import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
 import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, canAccessOrg, canonicalPersonName, personNameForEmail } from './users.js';
@@ -14,7 +15,7 @@ import {
   returnBillsToInbox,
   parseAmount,
 } from './store.js';
-import { listOrganisations } from './organisations.js';
+import { listOrganisations, primaryOrgId } from './organisations.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
 // X-Org-Id scoping as bills). Replaces the old per-browser localStorage claim
@@ -47,6 +48,20 @@ type Txn = {
   addedBy?: string;
 };
 type Event = { text: string; by: string; at: string };
+// A supporting document on the claim itself — the internal approval email
+// chain, a quote, an HR form — as opposed to a receipt, which belongs to a cost
+// document. Stored the way a receipt is (storage.ts) and printed at the back of
+// the claim PDF after the approval history, so an approver reading the PDF sees
+// it without coming here.
+type Attachment = {
+  id: string;
+  fileName: string;
+  contentType: string;
+  size: number;
+  storageKey: string;
+  addedBy: string;
+  addedAt: string;
+};
 type Claim = {
   id: string;
   workspaceId: string;
@@ -71,6 +86,7 @@ type Claim = {
   // always the person who actually pressed the button.
   decidedFor?: string;
   description?: string; // the claimant's own note about what this claim is for
+  attachments?: Attachment[]; // supporting documents, printed at the back of the PDF
   decisionReason?: string; // the manager's reason when a claim is rejected
   archived: boolean;
   deleted: boolean;
@@ -933,6 +949,118 @@ claimsRouter.post('/:id/email', async (req, res) => {
   }
   return res.json({ sent: true });
 });
+
+// --- Supporting documents ------------------------------------------------------
+// A claim's own paperwork, as opposed to its items' receipts: the internal
+// approval email chain the claimant got before spending, a quote, an HR form —
+// whatever the approver needs beside the receipts to decide. Kept on the CLAIM,
+// stored like a receipt, and printed at the back of the claim PDF after the
+// approval history (src/lib/claimPdf.js), so it travels with the claim wherever
+// the PDF goes: the approver's email, the Xero bill.
+//
+// Only what the PDF can carry is accepted. A .docx or .msg would sit on the
+// claim and silently not be in the document everyone actually reads — the
+// approver would be told there is an email chain and not see it. An email chain
+// is saved to PDF or screenshotted in one step, so the restriction costs little
+// and the PDF stays whole.
+const ATTACHMENT_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg']);
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const ATTACHMENTS_MAX = 10;
+
+// The entity a claim's scope belongs to — the same fold bills.ts applies to a
+// document: the primary entity's data scope is the legacy WORKSPACE_ID.
+const entityIdForClaim = (c: Claim): string => (!c.orgId || c.orgId === WORKSPACE_ID ? primaryOrgId() : c.orgId);
+
+// POST /api/claims/:id/attachments  { fileName, fileBase64, mediaType }
+// Allowed until the claim is APPROVED, like its items: an approved claim is a
+// decision about a specific set of paper, and the PDF that records it must not
+// grow afterwards.
+claimsRouter.post('/:id/attachments', async (req, res) => {
+  const org = orgIdFor(req);
+  const me = actor(req);
+  const items = load();
+  const claim = items.find((c) => c.id === req.params.id && c.orgId === org && !c.deleted);
+  if (!claim) return res.status(404).json({ error: 'not_found' });
+  if (isLocked(claim)) return res.status(409).json({ error: 'claim_locked' });
+  const b = req.body ?? {};
+  const mediaType = String(b.mediaType ?? '').trim().toLowerCase();
+  const fileName = String(b.fileName ?? '').trim().slice(0, 200) || 'document';
+  const base64 = typeof b.fileBase64 === 'string' ? b.fileBase64 : '';
+  if (!ATTACHMENT_TYPES.has(mediaType)) {
+    return res.status(415).json({
+      error: 'unsupported_type',
+      message: 'Only a PDF, PNG or JPG can be attached — those are what the claim PDF can carry. Save an email chain as PDF first.',
+    });
+  }
+  if (!base64) return res.status(400).json({ error: 'no_file' });
+  const bytes = Buffer.from(base64, 'base64');
+  if (!bytes.length) return res.status(400).json({ error: 'no_file' });
+  if (bytes.length > ATTACHMENT_MAX_BYTES) return res.status(413).json({ error: 'too_large', message: 'That file is over 10 MB.' });
+  const existing = Array.isArray(claim.attachments) ? claim.attachments : [];
+  if (existing.length >= ATTACHMENTS_MAX) {
+    return res.status(409).json({ error: 'too_many', message: `A claim carries at most ${ATTACHMENTS_MAX} supporting documents.` });
+  }
+  // Keyed by the CLAIM and the bytes, never by the bytes alone: a receipt's
+  // storage is content-addressed so identical uploads share one object, and
+  // removing this attachment reclaims its file — which must never be a file
+  // another claim is still pointing at.
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  const stored = await putBillFile(claim.orgId, `claim_${claim.id}_${hash.slice(0, 16)}`, mediaType, bytes);
+  const att: Attachment = {
+    id: randomUUID(),
+    fileName,
+    contentType: stored.contentType,
+    size: bytes.length,
+    storageKey: stored.storageKey,
+    addedBy: me.name,
+    addedAt: nowIso(),
+  };
+  claim.attachments = [...existing, att];
+  claim.history = claim.history || [];
+  // Phrased so it is NOT an approval event (approvalHistory.js): attaching
+  // paper is editing the claim, and belongs on the History tab, not on the
+  // signed approval page.
+  claim.history.unshift({ text: `Supporting document "${fileName}" was attached`, by: me.name, at: nowIso() });
+  save(items);
+  return res.json({ claim, attachment: att });
+});
+
+// GET /api/claims/:id/attachments/:attId/file — the bytes, for the page and for
+// the PDF assembler. Like a receipt's file route it carries no X-Org-Id (the
+// PDF assembler fetches it bare), so the claim is found by id across every
+// entity's claims and its entity is checked against the caller. 404 on a
+// refusal: whether the claim exists is not the caller's to learn.
+claimsRouter.get('/:id/attachments/:attId/file', async (req, res) => {
+  const claim = load().find((c) => c.id === req.params.id && !c.deleted);
+  const att = claim?.attachments?.find((a) => a.id === req.params.attId);
+  if (!claim || !att) return res.status(404).json({ error: 'no_file' });
+  const me = memberForSession(req);
+  if (me && !canAccessOrg(me, entityIdForClaim(claim))) return res.status(404).json({ error: 'no_file' });
+  const obj = await getBillFile(att.storageKey, att.contentType);
+  if (!obj) return res.status(502).json({ error: 'file_unavailable' });
+  const type = String(att.contentType || obj.contentType || 'application/octet-stream');
+  res.setHeader('Content-Type', /^[\x20-\x7e]+$/.test(type) ? type : 'application/octet-stream');
+  const safe = att.fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  res.setHeader('Content-Disposition', `inline; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(att.fileName)}`);
+  obj.body.on('error', () => res.destroy());
+  obj.body.pipe(res);
+});
+
+// DELETE /api/claims/:id/attachments/:attId — take a supporting document off
+// the claim. The file goes with it (it is this claim's alone — see the storage
+// key above); the history keeps the fact that it was there.
+claimsRouter.delete('/:id/attachments/:attId', (req, res) =>
+  mutate(req, res, (claim, me) => {
+    if (isLocked(claim)) return res.status(409).json({ error: 'claim_locked' });
+    const existing = Array.isArray(claim.attachments) ? claim.attachments : [];
+    const att = existing.find((a) => a.id === req.params.attId);
+    if (!att) return res.status(404).json({ error: 'not_found' });
+    claim.attachments = existing.filter((a) => a.id !== att.id);
+    claim.history = claim.history || [];
+    claim.history.unshift({ text: `Supporting document "${att.fileName}" was removed`, by: me.name, at: nowIso() });
+    void deleteBillFile(att.storageKey);
+  })
+);
 
 // POST /api/claims/:id/archive  { archived }
 claimsRouter.post('/:id/archive', (req, res) =>

@@ -804,6 +804,35 @@ sends the claim PDF again under the same name so Xero's copy is replaced. Xero
 has the last word on a PAID or VOIDED bill, in its own words. Covered by
 `npm test` in `server/` (`test/bridge-claim.test.mts`).
 
+**A claim carries its own paperwork, beside its receipts.** The internal
+approval email chain the claimant got before spending, a quote, an HR form —
+what the approver needs beside the figures to decide, and what an auditor asks
+for a year later. It had nowhere to go: a receipt belongs to a cost document,
+and these belong to the CLAIM. So a claim has **Supporting documents**
+(`attachments` on the claim record; `POST /api/claims/:id/attachments`,
+`GET …/attachments/:attId/file`, `DELETE …/attachments/:attId` in `claims.ts`),
+attached from the claim page under its description, stored through the same
+`storage.ts` a receipt is — keyed by the CLAIM and the bytes, never the bytes
+alone, since receipt storage is content-addressed and removing this attachment
+reclaims its file, which must not be a file another claim points at. The file
+route carries no `X-Org-Id` (the PDF assembler fetches it bare, like a receipt),
+so the claim is found by id across every entity and its entity checked against
+the caller, 404 on a refusal. **Printed at the back of the claim PDF, after the
+approval history and before the receipts** (`appendAttachments` in
+`claimPdf.js`), behind a divider page listing what each is, who attached it and
+when — a PDF of an email thread dropped straight after the approval timeline
+reads as part of the approval rather than as evidence the claimant supplied. It
+rides at every detail level that has a report, and in the PDF sent to Xero and
+by email (`buildClaimPdfBase64` now assembles through pdf-lib for that reason),
+because the whole point of attaching it is that it goes where the claim goes.
+**Only what the PDF can carry is accepted** — PDF, PNG, JPG, 10 MB, ten per
+claim: a .docx would sit on the claim and silently not be in the document
+everyone reads. Locked with the items once approved — the PDF that records a
+decision must not grow afterwards — and the history records each attach and
+remove in words `approvalHistory` does not count, so the signed page stays the
+approval trail. Covered by `npm test` in `server/`
+(`test/claim-attachments.test.mts`).
+
 **A claim's dates are of two kinds, and only one of them was ever a date.** An
 end date is TYPED, in whatever shape somebody types it — ISO, DD/MM/YYYY,
 DDMMYYYY, "31 Jul 2026" — and `parseDateParts` has always folded those into one
