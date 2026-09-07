@@ -33,6 +33,7 @@ import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 import { makeEntityCheck } from './entityCheck.js';
 import { syncWhatsappReaction } from './waReactions.js';
 import { readGotNothing } from './blankRead.js';
+import { keepMileageInStep } from './mileage.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -647,9 +648,16 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   if ('customer' in b && !String(b.customer ?? '').trim()) patch.rebillable = false;
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
+  // A mileage document's own two figures. Its total is not typed but derived
+  // from them (distance × rate per km), so whenever either — or the type
+  // itself — changes, the total is worked out again here rather than trusted
+  // from the body: the page shows it read-only for exactly that reason.
+  if (b.distanceKm != null) patch.distanceKm = parseAmount(b.distanceKm);
+  if (b.mileageRate != null) patch.mileageRate = parseAmount(b.mileageRate);
 
   const explicitStatus = typeof b.status === 'string';
   const orgId = orgIdFor(req);
+  await keepMileageInStep(workspaceId(req), orgScope(req), getBillById(orgId, req.params.id), patch);
   // A code that carries no tax means no tax recorded — the same invariant the
   // form applies when somebody picks the code, applied again here so no other
   // caller can store the pair. Reads the rate being SET, else the one the
@@ -820,6 +828,13 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
   restatementPatch(b, patch);
+  // The distance the reader took off a mileage record. The rate is the
+  // entity's own (Business settings → Extraction → Mileage), and the total
+  // follows from the two — so a map route screenshot lands in the inbox
+  // already priced, rather than as a document with a distance and no amount.
+  if (b.distanceKm != null) patch.distanceKm = parseAmount(b.distanceKm);
+  if (b.mileageRate != null) patch.mileageRate = parseAmount(b.mileageRate);
+  await keepMileageInStep(workspaceId(req), orgScope(req), getBillById(orgId, req.params.id), patch);
 
   const updated = updateBill(orgId, req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'not_found' });

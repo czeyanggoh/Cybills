@@ -35,6 +35,11 @@ type Txn = {
   displayId?: string; // numeric display id (Dext-style "#…")
   hasFile?: boolean; // the document has a stored receipt (the PDF links to it)
   project?: string;
+  // A mileage item's working — "13 km × 0.60/km" — so the claim, its PDF and
+  // its approver can see how the total was arrived at. The total itself is
+  // the document's, derived from these (src/lib/mileage.js).
+  distanceKm?: string;
+  mileageRate?: string;
   net: string;
   tax: string;
   total: string;
@@ -380,6 +385,8 @@ function liveTxns(c: Claim): Txn[] {
       category: bill.category ?? t.category,
       description: bill.description || t.description,
       project: bill.project ?? t.project,
+      distanceKm: bill.distanceKm != null ? String(bill.distanceKm) : t.distanceKm,
+      mileageRate: bill.mileageRate != null ? String(bill.mileageRate) : t.mileageRate,
       net: String(bill.total != null ? Number(bill.total) - Number(bill.tax || 0) : t.net),
       tax: String(bill.tax ?? t.tax),
       total: String(bill.total ?? t.total),

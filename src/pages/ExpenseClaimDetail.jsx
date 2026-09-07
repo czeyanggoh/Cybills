@@ -69,6 +69,7 @@ import { useClaimantNames } from '@/lib/userStore';
 import { missingFields } from '@/lib/readiness';
 import { cn } from '@/lib/utils';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
+import { mileageSummary } from '@/lib/mileage';
 import ComboSelect from '@/components/ComboSelect';
 import SortTh, { sortRows } from '@/components/SortTh';
 
@@ -450,10 +451,22 @@ export default function ExpenseClaimDetail() {
           <CategorySelect value={t.category} onChange={(v) => setRowCategory(t.itemId, v)} />
         ),
     },
+    // A mileage item shows its working beside the description — "13 km × SGD
+    // 0.60/km" — so an approver can see where the figure came from without
+    // opening the document.
     description: {
       cellClass: 'max-w-[16rem] truncate text-muted-foreground',
-      title: (t) => t.description || '',
-      cell: (t) => t.description || '—',
+      title: (t) => [t.description, mileageSummary(t.distanceKm, t.mileageRate, claim.currency)].filter(Boolean).join(' · '),
+      cell: (t) => {
+        const working = mileageSummary(t.distanceKm, t.mileageRate, claim.currency);
+        if (!t.description && !working) return '—';
+        return (
+          <>
+            {t.description}
+            {working && <span className={cn('tabular-nums', t.description && 'ml-1.5 text-xs')}>{t.description ? `· ${working}` : working}</span>}
+          </>
+        );
+      },
     },
     net: { head: `Net (${claim.currency})`, headClass: 'text-right', cellClass: money, cell: (t) => t.net },
     tax: { head: `Tax (${claim.currency})`, headClass: 'text-right', cellClass: money, cell: (t) => t.tax },

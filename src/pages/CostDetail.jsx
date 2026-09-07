@@ -49,6 +49,7 @@ import { readDecisions } from '@/lib/reRead';
 import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
 import { useAutoSave } from '@/lib/useAutoSave';
+import { isMileage, mileagePatch, mileageSummary } from '@/lib/mileage';
 import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { useXeroShortCode } from '@/lib/organisations';
@@ -210,6 +211,10 @@ function initialData(doc) {
     paymentMethod: doc.paymentMethod ?? '',
     paid: Boolean(doc.paid),
     cardLast4: doc.cardLast4 ?? '',
+    // A Mileage document's own two figures. Its total is derived from them
+    // (setMileage below), never typed.
+    distanceKm: doc.distanceKm ? String(doc.distanceKm) : '',
+    mileageRate: doc.mileageRate ? String(doc.mileageRate) : '',
     customer: doc.customer ?? '',
     project: doc.project ?? '',
     projectReason: doc.projectReason ?? '',
@@ -614,7 +619,7 @@ export default function CostDetail() {
     description: 'description', user: 'owner',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
     customer: 'customer', rebillable: 'rebillable', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
-    dueDate: 'dueDate',
+    dueDate: 'dueDate', distanceKm: 'distanceKm', mileageRate: 'mileageRate',
   };
   // Naming the supplier by hand applies that supplier's standing rule.
   //
@@ -766,6 +771,45 @@ export default function CostDetail() {
       baseTotal: t > 0 ? (t * rate).toFixed(2) : '',
       baseTax: x > 0 ? (x * rate).toFixed(2) : '',
     });
+  };
+
+  // --- Mileage -----------------------------------------------------------------
+  // A mileage claim is a cost with no receipt: a map route, an odometer photo, a
+  // log line. What it carries is a DISTANCE, and the money is distance × the
+  // rate per km — the entity's default (Business settings → Extraction →
+  // Mileage) unless this document says otherwise. So on a Mileage document the
+  // total is shown read-only and written here, from the two figures it comes
+  // from, and the tax is 0: there is no tax invoice behind a mileage allowance.
+  // The same arithmetic runs again on the server (keepMileageInStep), so the
+  // stored total can never disagree with the stored distance.
+  const mileage = isMileage(data.type);
+  // What the form holds for the rule to read — its strings, under the names the
+  // pure module knows.
+  const mileageDoc = () => ({ type: data.type, distanceKm: data.distanceKm, mileageRate: data.mileageRate });
+  // The rule's numbers, as this form's strings.
+  const mileageStrings = (p) => ({
+    ...(p.mileageRate != null ? { mileageRate: String(p.mileageRate) } : {}),
+    ...(p.total != null ? { total: Number(p.total).toFixed(2) } : {}),
+    ...(p.tax != null ? { tax: Number(p.tax).toFixed(2) } : {}),
+  });
+  const setMileage = (key, value) => {
+    const p = mileagePatch(mileageDoc(), { [key]: value }, extractionSettings.mileageRate);
+    setMany({ [key]: value, ...mileageStrings(p) });
+  };
+  // Switching a document's type INTO Mileage prices it from whatever distance it
+  // carries, at the entity's rate; switching out of it leaves the figures where
+  // they are — the total was real money either way.
+  const setType = (value) => {
+    if (!isMileage(value)) return set('type', value);
+    const p = mileagePatch(mileageDoc(), { type: value }, extractionSettings.mileageRate);
+    const patch = { type: value, ...mileageStrings(p) };
+    // No GST is claimed on a mileage allowance. Said with its reason, and only
+    // where nobody has chosen a code by hand — a person's decision is theirs.
+    if (noTaxName && !data.taxRateEdited && !data.taxRateCleared && data.taxRate !== noTaxName) {
+      patch.taxRate = noTaxName;
+      patch.taxRateReason = 'Mileage allowance — there is no tax invoice behind a journey, so no GST is claimed on it.';
+    }
+    setMany(patch);
   };
 
   // A rule saved from the Supplier field lands on this document straight away —
@@ -1257,6 +1301,7 @@ export default function CostDetail() {
         allTaxRates,
         defaultTaxRateCosts: extractionSettings.defaultTaxRateCosts,
         accounts,
+        mileageRate: extractionSettings.mileageRate,
       });
       setData((d) => ({
         ...d,
@@ -1268,7 +1313,14 @@ export default function CostDetail() {
         category: rule.category || ex.category || d.category,
         categoryReason: categoryReason || d.categoryReason,
         customer: rule.customer || d.customer,
-        total: ex.total != null ? String(ex.total) : d.total,
+        // A mileage record's total is not read but WORKED OUT — distance × the
+        // rate per km — and readDecisions has already done the sum into the
+        // patch. Every other document takes the total the reader found.
+        distanceKm: patch.distanceKm != null ? String(patch.distanceKm) : d.distanceKm,
+        mileageRate: patch.mileageRate != null ? String(patch.mileageRate) : d.mileageRate,
+        total: isMileage(ex.documentType || d.type) && patch.total != null
+          ? Number(patch.total).toFixed(2)
+          : ex.total != null ? String(ex.total) : d.total,
         // Exactly what was SAVED — 0 when the document's tax isn't Singapore
         // GST this business can claim — so the form and the stored bill can't
         // disagree. Untouched when the read didn't decide the tax at all.
@@ -1879,7 +1931,7 @@ export default function CostDetail() {
                   onChange={(v) => set('user', v)}
                 />
               </Field>
-              <Field label="Type"><ComboSelect value={data.type} options={DOC_TYPES} onChange={(v) => set('type', v)} /></Field>
+              <Field label="Type"><ComboSelect value={data.type} options={DOC_TYPES} onChange={setType} /></Field>
               <Field label="Date">
                 <input
                   type="date"
@@ -1990,13 +2042,48 @@ export default function CostDetail() {
 
               <SectionHeading>Amount</SectionHeading>
               <Field label="Currency"><Input value={data.currency} onChange={(v) => set('currency', v)} /></Field>
-              <Field label="Total amount"><Input value={data.total} onChange={(v) => setAmount('total', v)} /></Field>
+              {/* A mileage claim: the distance is the fact, the rate is the
+                  policy, and the total is the one times the other. So the two
+                  are typed and the total is shown, with its working, rather than
+                  the other way round — a total typed by hand on a mileage
+                  document is exactly the sum this exists to stop somebody doing
+                  on a calculator. */}
+              {mileage && (
+                <>
+                  <Field label="Distance (km)">
+                    <Input value={data.distanceKm} onChange={(v) => setMileage('distanceKm', v)} placeholder="e.g. 13" />
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      Read off the route or odometer by the reader; correct it here if it misread.
+                    </p>
+                  </Field>
+                  <Field label={`Rate per km (${String(data.currency || baseCurrency).trim().toUpperCase().slice(0, 3)})`}>
+                    <Input value={data.mileageRate} onChange={(v) => setMileage('mileageRate', v)} placeholder="e.g. 0.60" />
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      {num(extractionSettings.mileageRate) > 0
+                        ? `This company reimburses ${num(extractionSettings.mileageRate).toFixed(2)} per km (Business settings → Extraction → Mileage). Change it here for this claim only.`
+                        : 'This company has no default rate yet — set one under Business settings → Extraction → Mileage so new mileage documents are priced as they arrive.'}
+                    </p>
+                  </Field>
+                </>
+              )}
+              {mileage ? (
+                <Field label="Total amount">
+                  <Input value={data.total} readOnly />
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {mileageSummary(data.distanceKm, data.mileageRate, data.currency || baseCurrency)
+                      ? `${mileageSummary(data.distanceKm, data.mileageRate, data.currency || baseCurrency)}${num(data.total) > 0 ? ` = ${num(data.total).toFixed(2)}` : ' — enter the rate to price it'}.`
+                      : 'Worked out from the distance and the rate per km once both are filled in.'}
+                  </p>
+                </Field>
+              ) : (
+                <Field label="Total amount"><Input value={data.total} onChange={(v) => setAmount('total', v)} /></Field>
+              )}
               {/* A bridge entity has no tax position of its own: its claims post
                   with No Tax at the full amount (the tax the document records is
                   folded into the cost). A tax code chosen here could never reach
                   the ledger, so it isn't offered — the tax AMOUNT still is, since
                   that is what the paper says. */}
-              {!bridge && (
+              {!bridge && !mileage && (
                 <Field label="Tax rate">
                   <ComboSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
                   {!gstRegistered && (
@@ -2011,8 +2098,13 @@ export default function CostDetail() {
                 </Field>
               )}
               <Field label="Tax amount">
-                <Input value={data.tax} onChange={(v) => setAmount('tax', v)} />
-                {bridge && (
+                <Input value={data.tax} onChange={(v) => setAmount('tax', v)} readOnly={mileage} />
+                {mileage && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    No GST on a mileage allowance — there is no tax invoice behind a journey.
+                  </p>
+                )}
+                {bridge && !mileage && (
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     Claims raised here post with No Tax at the full amount, so this is recorded but not claimed.
                   </p>
@@ -2042,7 +2134,7 @@ export default function CostDetail() {
                   </Field>
                 </>
               )}
-              {num(data.total) > 0 && (
+              {num(data.total) > 0 && !mileage && (
                 <div className="flex items-start gap-4 py-2">
                   <div className="w-40 shrink-0" />
                   <div className="flex-1">

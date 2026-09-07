@@ -87,6 +87,13 @@ export const DEFAULT_EXTRACTION_SETTINGS = {
   payReceipts: 'Not paid',
   payInvoices: 'Not paid',
   payCreditNotes: 'Not paid',
+  // What a kilometre driven on company business is reimbursed at, in the
+  // entity's own currency. A Mileage document carries a distance rather than an
+  // amount, and its total is distance × this rate (src/lib/mileage.js) — the
+  // document can carry its own rate where one claim is at another. Blank until
+  // the entity sets it: there is no statutory figure to default to, and a rate
+  // invented here would price real claims.
+  mileageRate: '',
 };
 
 const emit = () => window.dispatchEvent(new Event(EXTRACTION_SETTINGS_EVENT));

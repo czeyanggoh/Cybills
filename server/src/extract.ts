@@ -89,7 +89,17 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'The document/transaction date as ISO YYYY-MM-DD. Printed dates are Singapore format DD/MM/YYYY (day first), e.g. "25/1/2026" and "25/01/26" both mean 2026-01-25. Expand a 2-digit year YY to 20YY (26 → 2026 — NEVER 2019 or 1926). Never invent a month; read it exactly. Empty string if no date is printed.',
       },
-      documentType: { type: 'string', enum: ['Receipt', 'Invoice', 'Other'] },
+      documentType: {
+        type: 'string',
+        enum: ['Receipt', 'Invoice', 'Mileage', 'Other'],
+        description:
+          '"Mileage" is a RECORD OF A JOURNEY rather than a purchase: a map route screenshot (Google Maps "16 min (13 km)", a Waze route, an Apple Maps trip), an odometer photo, a line off a mileage log. Nobody was paid and no amount is printed — the claimant is reimbursed per kilometre afterwards. A taxi, ride-hailing or fuel receipt is NOT mileage: those are purchases with a supplier and a total, so they are a Receipt.',
+      },
+      distanceKm: {
+        type: 'number',
+        description:
+          'ONLY for a Mileage document: the distance driven in kilometres, as the document states it — "16 min (13 km)" → 13, "12.5 km" → 12.5. Where a route shows several modes (drive, motorcycle, transit, walk) take the DRIVING distance. A distance printed in miles is converted (× 1.609). 0 when no distance is stated, and 0 for every other kind of document.',
+      },
       invoiceNumber: {
         type: 'string',
         description: 'Invoice / receipt number as printed; empty string if none shown',
@@ -221,6 +231,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'supplier',
       'date',
       'documentType',
+      'distanceKm',
       'invoiceNumber',
       'currency',
       'total',
@@ -250,7 +261,8 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
 const ReceiptSchema = z.object({
   supplier: z.string(),
   date: z.string(),
-  documentType: z.enum(['Receipt', 'Invoice', 'Other']),
+  documentType: z.enum(['Receipt', 'Invoice', 'Mileage', 'Other']),
+  distanceKm: z.number().optional().default(0),
   invoiceNumber: z.string(),
   currency: z.string(),
   total: z.number(),
@@ -663,6 +675,9 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'and where no customer is named at all — a till receipt, a card slip — it must be an empty string rather than a guess taken from elsewhere on the page. ' +
     'Where the document restates its own totals in a SECOND currency for tax purposes — a Singapore GST-registered supplier billing in foreign currency has to show what the supply is worth in SGD — read `baseCurrency`, `baseTotal`, `baseTax` and `exchangeRate` off that block exactly as printed. ' +
     '`total` and `tax` stay in the BILLING currency: the block is the same money said again for the tax authority, never a second charge, so never add the two together. ' +
+    'A MILEAGE record — a map route screenshot, an odometer photo, a mileage log — is a journey, not a purchase: set `documentType` to "Mileage", read `distanceKm` off it, ' +
+    'leave `supplier` empty unless a name is actually printed, leave `total` and `tax` at 0 unless an amount is printed, and describe the journey in `description` (origin → destination, e.g. "Drive: Work (ST Engineering Jurong East) → MacRitchie Reservoir Park, 13 km"). ' +
+    'The amount is worked out afterwards from the distance at the company\'s rate per km — never invent one. ' +
     'If a field is not present, use an empty string or 0. ' +
     'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
     accountsGuide +
@@ -731,6 +746,14 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       ...restated,
       tax,
       category,
+      // A distance is a fact about a JOURNEY, so it is kept only on a document
+      // that is one. A "13" read off a receipt's item count or a queue number
+      // would otherwise price the receipt as thirteen kilometres of driving the
+      // moment somebody switched its type.
+      distanceKm:
+        parsed.data.documentType === 'Mileage' && Number.isFinite(parsed.data.distanceKm) && parsed.data.distanceKm > 0
+          ? parsed.data.distanceKm
+          : 0,
       // Nothing usable from the reader (it declined, or wrote filler) — compose
       // one from the fields we did read rather than leave the field blank. It's
       // derived from the document, not invented: supplier and the category it

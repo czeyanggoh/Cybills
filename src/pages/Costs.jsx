@@ -34,6 +34,7 @@ import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName, publishStatusLabel } from '@/lib/extractionSettings';
 import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument } from '@/lib/reRead';
+import { formatKm } from '@/lib/mileage';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
 import { updateBill, deleteBill, notifyBillsChanged, itemNumber, costPath } from '@/lib/bills';
@@ -743,6 +744,7 @@ export default function Costs() {
     customer: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.customer || '—' },
     project: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.project || '—' },
     cardLast4: { sortable: false, cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => (d.cardLast4 ? `•••• ${d.cardLast4}` : '—') },
+    distanceKm: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => formatKm(d.distanceKm) || '—' },
     note: { sortable: false, cellClass: 'max-w-[200px] truncate text-muted-foreground', cell: (d) => d.note || '—' },
     uploadDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.createdAt ? formatDate(d.createdAt.slice(0, 10)) : '—') },
     publishDate: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => (d.xeroPostedAt ? formatDate(d.xeroPostedAt.slice(0, 10)) : '—') },
@@ -1252,6 +1254,7 @@ export default function Costs() {
       taxRates,
       allTaxRates,
       defaultTaxRateCosts: settings.defaultTaxRateCosts,
+      mileageRate: settings.mileageRate,
     };
     const tally = { ok: 0, blank: 0, nofile: 0, failed: 0 };
     for (let i = 0; i < picked.length; i += 1) {

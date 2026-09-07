@@ -21,7 +21,7 @@ import AppShell from '@/components/AppShell';
 import ListsSettings from '@/components/ListsSettings';
 import { cn } from '@/lib/utils';
 import { useCategoryDisplayMode, setCategoryDisplayMode, useCategorySortMode, setCategorySortMode } from '@/lib/categoryDisplay';
-import { useBusinessProfile, saveBusinessProfile, mergeXeroProfile } from '@/lib/businessProfile';
+import { useBusinessProfile, saveBusinessProfile, mergeXeroProfile, useBaseCurrency } from '@/lib/businessProfile';
 import { useExportSettings, saveExportSettings, EXPORT_COLUMNS, RECEIPT_FORMATS } from '@/lib/exportSettings';
 import { useAutoSave } from '@/lib/useAutoSave';
 import SaveStatus from '@/components/SaveStatus';
@@ -801,6 +801,7 @@ function ExtractByWhatsappCard() {
 function Extraction() {
   const bridge = useBridgeEntity();
   const salesEnabled = useSalesEnabled();
+  const baseCurrency = useBaseCurrency();
   const stored = useExtractionSettings();
   const [form, setForm] = useState(stored);
   const [dirty, setDirty] = useState(false);
@@ -851,6 +852,20 @@ function Extraction() {
             onChange={(label) => set('publishStatus', PUBLISH_STATUSES.find((o) => o.label === label)?.value || 'DRAFT')}
             options={PUBLISH_STATUSES.map((o) => o.label)}
           />
+        </Row>
+      </Card>
+
+      {/* A mileage claim is a cost with no receipt behind it: a map route, an
+          odometer photo, a log line. What it carries is a DISTANCE, and the
+          money is distance × this rate — worked out on the document (and by the
+          reader on arrival), never typed. There is no statutory figure in
+          Singapore to default to, so it is blank until the entity sets it. */}
+      <Card title="Mileage">
+        <Row
+          label={`Rate per km (${baseCurrency})`}
+          hint="What a kilometre driven on company business is reimbursed at. A Mileage document — a Google Maps route, an odometer photo, a mileage log — carries a distance rather than an amount, and its total is worked out as distance × this rate the moment it is read. The rate can be changed on the document itself where one claim is at another rate. Blank means the total waits until a rate is entered on the document."
+        >
+          <TextInput value={String(form.mileageRate ?? '')} onChange={(v) => set('mileageRate', v)} placeholder="e.g. 0.60" />
         </Row>
       </Card>
 

@@ -91,6 +91,12 @@ export type Bill = {
   customer?: string; // Xero customer contact the cost is allocated to
   project?: string; // Xero tracking option (project) the cost is allocated to
   cardLast4?: string; // last 4 digits of the payment card (a merge-match signal)
+  // A Mileage document's own two figures: the distance driven, read off the
+  // map route / odometer / log it is a record of, and the rate per km it is
+  // reimbursed at (the entity's default unless changed on the document). Its
+  // total is DERIVED from them — see src/lib/mileage.js — never typed.
+  distanceKm?: number;
+  mileageRate?: number;
   note?: string; // free-text note the reviewer adds on the document (Note tab)
   dueDate?: string; // ISO YYYY-MM-DD payment due date (from Extraction settings)
   // Per-line breakdown of the document (Dext-style). Stored as strings so they
@@ -822,6 +828,8 @@ const EDITABLE: (keyof Bill)[] = [
   'rebillable',
   'project',
   'cardLast4',
+  'distanceKm',
+  'mileageRate',
   'note',
   'dueDate',
   'duplicateDismissed',

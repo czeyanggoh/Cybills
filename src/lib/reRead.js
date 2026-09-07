@@ -17,6 +17,7 @@ import {
 } from '@/lib/supplierRules';
 import { taxRateOutcome } from '@/lib/extractionSettings';
 import { coveringNote } from '@/lib/coveringNote';
+import { mileagePatch } from '@/lib/mileage';
 
 // What a re-read decided, given the document as it stands (`current`) and what
 // the reader returned (`ex`). `patch` is what to save; the rest is the working
@@ -33,7 +34,7 @@ import { coveringNote } from '@/lib/coveringNote';
 export function readDecisions(
   current,
   ex,
-  { gstRegistered = true, taxRates = [], allTaxRates = null, defaultTaxRateCosts = '', accounts = [] } = {}
+  { gstRegistered = true, taxRates = [], allTaxRates = null, defaultTaxRateCosts = '', accounts = [], mileageRate = '' } = {}
 ) {
   const descr =
     ex.description ||
@@ -176,6 +177,21 @@ export function readDecisions(
   // …except the due date, where the document's own beats the rule's terms.
   if (ex.dueDate) patch.dueDate = ex.dueDate;
   if (ruleLines.length && !current.lineItems?.length) patch.lineItems = ruleLines;
+  // A mileage record's distance, and the total that follows from it at the
+  // entity's rate per km. Decided last, because it overrules the money above:
+  // the reader is told never to invent an amount for a journey, so `ex.total`
+  // is 0 here, and the real total is distance × rate. The rule holds again on
+  // the server (keepMileageInStep), so a caller that skips this cannot store a
+  // mileage document whose total disagrees with its own distance.
+  if (Number(ex.distanceKm) > 0) patch.distanceKm = Number(ex.distanceKm);
+  Object.assign(
+    patch,
+    mileagePatch(
+      { documentType: current.type ?? current.documentType, distanceKm: current.distanceKm, mileageRate: current.mileageRate },
+      patch,
+      mileageRate
+    )
+  );
 
   return {
     patch, rule, descr, inferredRate, rateReason: rate.reason, exTaxOut,

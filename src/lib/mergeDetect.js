@@ -56,6 +56,10 @@ export function docFacts(d) {
     ref: norm(d?.invoiceNumber),
     lines: Array.isArray(d?.lineItems) ? d.lineItems.length : 0,
     card: (String(d?.cardLast4 ?? '').match(/\d{4}/) || [''])[0],
+    // A mileage record's one fact. A map route screenshot names no supplier and
+    // prints no amount, so without this it read as a blank row — and was set
+    // aside as "Nothing read" the moment the reader had read it correctly.
+    distance: amount(d?.distanceKm),
     by: norm(d?.createdByEmail),
     at: Date.parse(d?.createdAt || '') || 0,
     file: String(d?.fileName || ''),
@@ -93,7 +97,9 @@ export function complementary(a, b) {
 // whenever the reader cannot make sense of one of the halves, which is exactly
 // when the reviewer most needs the two put back together.
 export function statesNothing(f) {
-  return !f.supplier && f.total == null && !f.date && !f.ref && f.lines === 0 && f.tax == null;
+  return (
+    !f.supplier && f.total == null && !f.date && !f.ref && f.lines === 0 && f.tax == null && f.distance == null
+  );
 }
 
 function arrivedTogether(a, b) {

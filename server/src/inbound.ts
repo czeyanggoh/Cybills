@@ -7,7 +7,8 @@ import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberF
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
-import { insertBill, updateBill, settleProcessing } from './store.js';
+import { insertBill, updateBill, settleProcessing, getBillById } from './store.js';
+import { keepMileageInStep } from './mileage.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
 import { runExtraction } from './extract.js';
@@ -210,6 +211,9 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       dueDate: d.dueDate,
       period: d.period,
       cardLast4: d.cardLast4,
+      // The distance off a mileage record. Priced below, at the entity's own
+      // rate per km, the same way the browser's finalize prices an upload.
+      distanceKm: d.distanceKm,
       supplierGstRegNo: d.supplierGstRegNo,
       taxLabel: d.taxLabel,
       // Who the paper says it is FOR, so a document that arrived by email or
@@ -271,6 +275,9 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       noteFollowed: d.noteFollowed,
       via: envelope?.via,
     });
+    // A mileage record is priced at the entity's rate per km — its total is
+    // distance × rate, never a figure the reader found on the paper.
+    await keepMileageInStep(ws, realOrgId, getBillById(scope, billId), patch);
     const saved = updateBill(scope, billId, patch);
     // The read ran. Whether it came back with anything is what decides where
     // the document lands, and it is asked of the SAVED document rather than of

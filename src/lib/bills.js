@@ -334,6 +334,10 @@ export function billToDoc(b) {
     customer: b.customer || '',
     project: b.project || '',
     cardLast4: b.cardLast4 || '',
+    // A Mileage document's own two figures; its total is derived from them
+    // (src/lib/mileage.js). Zero on every ordinary document.
+    distanceKm: Number(b.distanceKm) || 0,
+    mileageRate: Number(b.mileageRate) || 0,
     note: b.note || '',
     // The message this document arrived in, when it came by email. Null for an
     // upload, which is what the Email tab reads to know it has nothing to show.

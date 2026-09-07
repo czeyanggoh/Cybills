@@ -614,6 +614,44 @@ money is unchanged and only the split moves. Covered by `npm test` at the root
 (`test/tax-rate-rules.test.mjs`) and in `server/` (`restatement`,
 `publish-bill`).
 
+**A mileage claim is a cost with no receipt behind it, so its money is WORKED
+OUT rather than read.** Somebody drives their own car on company business and
+hands in a record of the JOURNEY — a Google Maps route screenshot ("16 min (13
+km)"), an odometer photo, a line off a mileage log. Nobody was paid and no
+amount is printed anywhere; they are reimbursed per kilometre afterwards. The
+Type dropdown offered "Mileage" and then treated the document exactly like a
+receipt, leaving somebody to do that sum on a calculator and type the answer
+into Total. So a Mileage document carries two figures of its own: `distanceKm`,
+read off the paper by the reader (the enum gained `Mileage`, the schema
+`distanceKm`, and the prompt is told a journey is not a purchase — a taxi or
+fuel receipt stays a Receipt), and `mileageRate`, the $ per km, defaulted per
+entity (Business settings -> Extraction -> **Mileage**, blank until set: there
+is no statutory Singapore figure to invent) and changeable on the document for
+the one claim at another rate. The total is distance × rate, to the cent, and
+the tax is 0 — there is no tax invoice behind a journey, so the page also codes
+it No Tax with that reason, unless a person has chosen a code by hand.
+
+`src/lib/mileage.js` is the whole of the arithmetic (pure, `npm test` at the
+root), loaded by path server-side (`server/src/mileage.ts`) the way
+`categories.ts` loads its list, so the page's read-only Total and the stored
+one cannot disagree. `keepMileageInStep` runs on every write that touches what
+the total depends on — the page's PATCH, the upload's finalize, an emailed or
+WhatsApp'd document's background read — and only those, so an ordinary edit
+costs nothing. A total typed straight onto a mileage document gives way to its
+own figures; a cleared distance takes the total with it, because a total beside
+an empty distance is a figure nobody can account for; a distance with no rate
+anywhere prices to nothing rather than to a guess. A distance the reader finds
+on a RECEIPT is discarded — a fact about a journey belongs to one, and kept it
+would price the receipt as kilometres the moment somebody switched its type.
+And `docFacts` now counts the distance as a fact, or a correctly read map route
+(no supplier, no total, no date) was set aside as "Nothing read" the moment the
+reader got it right. The working travels onto the claim line (`distanceKm` /
+`mileageRate` on a `Txn`, refreshed from the live document like the money) and
+prints beside the description on the claim page and its PDF, "13 km × SGD
+0.60/km", so an approver can see where the figure came from. Covered by
+`npm test` in `server/` (`test/mileage.test.mts`, over real HTTP with a stubbed
+reader).
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

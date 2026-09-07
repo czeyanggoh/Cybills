@@ -77,6 +77,8 @@ export const COST_COLUMNS = [
   { key: 'customer', label: 'Customer', width: 'w-[170px]' },
   { key: 'project', label: 'Project', width: 'w-[150px]' },
   { key: 'cardLast4', label: 'Card', width: 'w-[100px]' },
+  // A mileage record's distance — the fact its total is worked out from.
+  { key: 'distanceKm', label: 'Distance', width: 'w-[100px]' },
   { key: 'note', label: 'Note', width: 'w-[200px]' },
   { key: 'uploadDate', label: 'Upload date', width: 'w-[120px]' },
   { key: 'publishDate', label: 'Publish date', width: 'w-[120px]' },

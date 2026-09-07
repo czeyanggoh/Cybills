@@ -6,6 +6,7 @@ import { approvalHistory } from '@/lib/approvalHistory';
 import { costPath, fetchShareLinks } from '@/lib/bills';
 import { getExportSettings } from '@/lib/exportSettings';
 import { recordExport } from '@/lib/exportsStore';
+import { mileageSummary } from '@/lib/mileage';
 
 // A4 LANDSCAPE in points, with a comfortable margin.
 //
@@ -217,11 +218,15 @@ export function buildClaimDoc(claim, links = {}) {
     doc.text(n2(t.total), tc.total, top, { align: 'right' });
     y = top + rowLines * 11 + 5;
     // Item description on its own wrapped line beneath the row (matches Dext).
-    if (t.description) {
+    // A mileage item's working goes with it — "13 km × SGD 0.60/km" — since the
+    // approver reading this PDF has no other way of seeing how the total was
+    // arrived at.
+    const note = [t.description, mileageSummary(t.distanceKm, t.mileageRate, claim.currency)].filter(Boolean).join(' — ');
+    if (note) {
       doc.setFont('helvetica', 'italic');
       doc.setFontSize(8);
       doc.setTextColor(120);
-      const lines = doc.splitTextToSize(String(t.description), textRight - tc.supplier);
+      const lines = doc.splitTextToSize(String(note), textRight - tc.supplier);
       for (const ln of lines) {
         ensure(11);
         doc.text(ln, tc.supplier, y);

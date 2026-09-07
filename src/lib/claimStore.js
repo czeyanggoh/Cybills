@@ -194,6 +194,10 @@ export function docToClaimTxn(doc, data, actor) {
     // bill line reads like Dext: "<Supplier> #<ItemID> - <Description>".
     description: data.description || doc.description || '',
     project: '',
+    // A mileage item's working — the distance and the rate its total came from
+    // — so the claim and its PDF can show how the figure was arrived at.
+    distanceKm: data.distanceKm ? String(data.distanceKm) : '',
+    mileageRate: data.mileageRate ? String(data.mileageRate) : '',
     net: (total - tax).toFixed(2),
     tax: tax.toFixed(2),
     total: total.toFixed(2),
