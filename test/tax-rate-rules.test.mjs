@@ -346,6 +346,14 @@ check('noTaxRateName', [noTaxRateName(SG), noTaxRateName([]), noTaxRateName(hidd
 
   // No tax at all is No Tax whatever the label prints.
   check('a printed rate with no tax charged is still no tax', ask({ total: 100, tax: 0, taxLabel: 'GST 9%' }).name, 'No Tax');
+
+  // The reader reports the printed rate in a field of its own, which is the
+  // reliable road: a reader that copied the label as "GST" still says 9 there.
+  r = ask({ ...RC, taxLabel: 'GST', printedRate: 9 });
+  check('the reported number decides on its own', [r.name, r.claimsTax], ['Standard-Rated Purchases', true]);
+  check('the number beats a label that disagrees', ask({ total: 108, tax: 8, taxLabel: 'GST 9%', printedRate: 8 }).name, '2023 Standard-Rated Purchases');
+  check('a nonsense number falls back to the label', ask({ ...RC, taxLabel: '9% GST', printedRate: 900 }).name, 'Standard-Rated Purchases');
+  check('and to the arithmetic when the label has none', ask({ ...RC, taxLabel: 'GST', printedRate: 0 }).name, '');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

@@ -205,6 +205,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'What the document CALLS the tax on the line that carries the tax AMOUNT, copied as printed — "GST", "GST 9%", "9% GST", "GST charged at 9%", "VAT", "Sales Tax", "SST", "Consumption Tax", "TVA". Empty string when it charges no tax. Copy the words; do not translate "VAT" into "GST" — but do not translate "GST" into "VAT" either: where a template says "Total Charges (excluding VAT)" one line above "Total GST", the tax charged is GST, and that is the line to copy. KEEP the percentage when the line prints one: it is the supplier\'s own statement of the rate charged, and it decides the tax code when the amounts alone cannot — a discount taken off the tax-inclusive bill leaves the tax looking like 13% of the net paid on a document that plainly says 9%.',
       },
+      taxRatePrinted: {
+        type: 'number',
+        description:
+          'The percentage the document PRINTS beside its tax, as a number — 9 for "9% GST", "GST 9%" or "GST charged at 9%"; 7 for "VAT 7%". 0 when no percentage is printed anywhere near the tax line. Never work it out from the amounts: this is what the supplier wrote, and it decides the tax code when the amounts cannot (a discount taken off the tax-inclusive bill leaves the tax looking like 13% of the net paid on a receipt that plainly says 9%).',
+      },
       lineItems: {
         type: 'array',
         description:
@@ -247,6 +252,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'exchangeRate',
       'supplierGstRegNo',
       'taxLabel',
+      'taxRatePrinted',
       'billedTo',
       'billedToRegNo',
       'cardLast4',
@@ -282,6 +288,7 @@ const ReceiptSchema = z.object({
   exchangeRate: z.number().optional().default(0),
   supplierGstRegNo: z.string().optional().default(''),
   taxLabel: z.string().optional().default(''),
+  taxRatePrinted: z.number().optional().default(0),
   billedTo: z.string().optional().default(''),
   billedToRegNo: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
@@ -778,6 +785,12 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       dueDate,
       supplierGstRegNo: notFiller(parsed.data.supplierGstRegNo),
       taxLabel: notFiller(parsed.data.taxLabel),
+      // The rate the supplier printed, as a number; 0 when none. A percentage,
+      // so anything outside (0, 100) is a misread rather than a rate.
+      taxRatePrinted:
+        Number.isFinite(parsed.data.taxRatePrinted) && parsed.data.taxRatePrinted > 0 && parsed.data.taxRatePrinted < 100
+          ? parsed.data.taxRatePrinted
+          : 0,
       // Who the paper says it is FOR. Nothing codes off it — it is what lets
       // CYBills ask whether the document is in the right client's book at all.
       billedTo: notFiller(parsed.data.billedTo),

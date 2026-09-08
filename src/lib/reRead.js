@@ -70,6 +70,9 @@ export function readDecisions(
     // Only Singapore GST from a registered supplier is input tax to claim.
     gstRegNo: ex.supplierGstRegNo || '',
     taxLabel: ex.taxLabel || '',
+    // The rate the supplier printed beats the one the money implies — see
+    // printedTaxRate in taxRateRules.js.
+    printedRate: ex.taxRatePrinted || 0,
   });
   const inferredRate = rate.name;
   // Tax is RECORDED only when it is Singapore GST this business can claim:
@@ -127,9 +130,16 @@ export function readDecisions(
     patch.taxRate = inferredRate;
     // Why it was coded that way, written with the code so the two can't drift.
     patch.taxRateReason = ex.taxRateReason || rate.reason || '';
-  } else if (!personDecided && !current.taxRate) {
-    // Nothing could be chosen. Say why, rather than leaving a blank field that
-    // is indistinguishable from a bug.
+  } else if (!personDecided) {
+    // Nothing could be chosen THIS time. Say why, rather than leaving a blank
+    // field that is indistinguishable from a bug — and say it over whatever the
+    // LAST read said, because a reason left standing from an earlier read
+    // describes a decision that has just been re-made and reached a different
+    // answer. The code CYBills itself chose last time goes with it: a re-read is
+    // the instruction to decide again, and "No Tax" under a sentence beginning
+    // "Left blank" is two answers on one field. A supplier rule's code is put
+    // back below, since the rule has the last word on everything it sets.
+    patch.taxRate = '';
     patch.taxRateReason = ex.taxRateReason || rate.reason || '';
   }
   // Who the paper says it is for. A re-read decides the document again, so it is

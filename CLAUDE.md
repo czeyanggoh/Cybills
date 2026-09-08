@@ -959,14 +959,28 @@ service charge, then takes 60.43 of Accor Plus discount off the gross, so the
 17.82 on the 137.57 actually paid reads as 13%, a rate no chart has, and the
 document was left blank with a sentence about import GST. The reader already
 copies the tax line as printed (`taxLabel`, "9% GST"), and the rule only ever
-used it to tell GST from VAT; `printedTaxRate` now reads the percentage out of
-it and that number decides (`taxRateOutcome`, ahead of the SGD restatement and
-the arithmetic). It decides the PERCENTAGE only: the evidence gate still comes
+used it to tell GST from VAT; the reader is now asked for the percentage as a
+NUMBER of its own (`taxRatePrinted`, 0 when none is printed — a label copied
+as "GST" with the figure dropped is exactly what a reader does), and
+`taxRateOutcome` takes that (`printedRate`), else the percentage
+`printedTaxRate` reads out of the label, ahead of the SGD restatement and the
+arithmetic. It decides the PERCENTAGE only: the evidence gate still comes
 first, so a printed 9% on an Australian invoice is still not Singapore GST, and
 a printed 10% is still declined for having no code. The disagreement is said
 in the Reason rather than absorbed — the printed rate, the worked-out one and
 why they differ — because a tax base that is not the net paid is also what a
 wrongly typed Tax amount looks like. Covered by `npm test` at the root.
+
+Two things sat between that fix and the page, and both were the REASON going
+stale while the code moved. A code a person picks (the page's picker, the inline
+cell) kept whatever sentence the last read wrote, so a hand-picked No Tax sat
+under "Left blank: this document is taxed at 13.0%" — and since a re-read keeps a
+person's code, pressing it changed nothing and read as the fix not working. The
+pick now writes its own sentence ("chosen by hand"), naming the rule that holds
+it. And a re-read that DECLINES wrote its reason only over a blank code, so a
+code CYBills chose on an earlier read kept that read's sentence too;
+`readDecisions` now blanks the code and writes the new reason whenever no person
+decided it, and the supplier rule is put back after, as it always was.
 
 **And a blank Reason is a bug wherever it appears.** Two paths through
 `taxRateOutcome` still returned one: a code the reader picked from the org's own

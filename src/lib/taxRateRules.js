@@ -225,6 +225,10 @@ export function taxRateOutcome({
   // registration number, and what the document calls the tax.
   gstRegNo = '',
   taxLabel = '',
+  // The percentage the document prints beside its tax, as the reader reports
+  // it in its own field; 0 when it printed none. The label's own percentage is
+  // the fallback, for a reader that copied "9% GST" but reported no number.
+  printedRate = 0,
 } = {}) {
   const list = Array.isArray(rates) ? rates : [];
   const everything = Array.isArray(allRates) && allRates.length ? allRates : list;
@@ -309,7 +313,8 @@ export function taxRateOutcome({
   // off after tax, a service charge or a deposit outside GST. See
   // printedTaxRate. The disagreement is said out loud rather than absorbed,
   // because it is also what a wrongly typed Tax amount looks like.
-  const printed = printedTaxRate(taxLabel);
+  const givenRate = num(printedRate);
+  const printed = givenRate > 0 && givenRate < 100 ? givenRate : printedTaxRate(taxLabel);
   const pct = printed || worked;
   const offBase = printed > 0 && Math.abs(printed - worked) > TOLERANCE;
   const baseNote = offBase

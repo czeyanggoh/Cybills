@@ -116,6 +116,7 @@ export async function decideTaxRate(
     taxRate?: unknown;
     supplierGstRegNo?: unknown;
     taxLabel?: unknown;
+    taxRatePrinted?: unknown;
   }
 ): Promise<TaxOutcome | null> {
   const rules = await loadTaxRules();
@@ -142,6 +143,8 @@ export async function decideTaxRate(
       accountLabel: category,
       gstRegNo: String(doc.supplierGstRegNo ?? ''),
       taxLabel: String(doc.taxLabel ?? ''),
+      // The rate the supplier printed, which beats the one the money implies.
+      printedRate: Number(doc.taxRatePrinted ?? 0) || 0,
     });
   } catch (e) {
     console.error('[taxRules] decision failed', e);

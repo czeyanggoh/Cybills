@@ -482,6 +482,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           // Only Singapore GST from a registered supplier is claimable.
           gstRegNo: extracted?.supplierGstRegNo || '',
           taxLabel: extracted?.taxLabel || '',
+          printedRate: extracted?.taxRatePrinted || 0,
         });
         claimsTax = outcome.claimsTax !== false;
         if (outcome.name) p.taxRate = outcome.name;

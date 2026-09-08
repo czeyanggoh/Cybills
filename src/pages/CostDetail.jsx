@@ -1221,6 +1221,17 @@ export default function CostDetail() {
     // this one. See changeTaxRate in Costs.jsx, which writes the same pair.
     set('taxRateCleared', !name);
     set('taxRateEdited', Boolean(name));
+    // The reason is rewritten with the code, because the two are one answer:
+    // left standing, the reader's sentence ("Left blank: this document is taxed
+    // at 13.0% …") sits under the code a person just chose, and the page reads
+    // as though nothing was decided — which is how a hand-picked code was
+    // reported as a re-read that "still shows 13%".
+    set(
+      'taxRateReason',
+      name
+        ? `${name} — chosen by hand. A re-read keeps a code a person picked; pick another to change it.`
+        : 'Left blank by hand. A re-read keeps that; pick a code to change it.'
+    );
     const r = rateFor(name);
     const total = num(data.total);
     const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
