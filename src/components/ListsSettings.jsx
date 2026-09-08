@@ -5,7 +5,6 @@ import { addToList, removeFromList, renameInList, setListVisible, setMetaField, 
 import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, useTargetAccounts, updateXeroCategoryDescription, getActiveOrganisationId, isStandaloneOrg, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useCategoryAccounts, setCategoryAccount } from '@/lib/categoryAccounts';
-import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
 import { useProjectLabels, setProjectLabels, DEFAULT_PROJECT_LABELS, singular } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import { useAutoSave } from '@/lib/useAutoSave';
@@ -15,7 +14,6 @@ import SaveStatus from '@/components/SaveStatus';
 const SUBNAV = [
   { key: 'visibility', label: 'List visibility' },
   { key: 'categories', label: 'Categories' },
-  { key: 'review', label: 'Review instructions' },
   { key: 'taxRates', label: 'Tax rates' },
   { key: 'projects', label: 'Projects' },
   { key: 'projects2', label: 'Projects 2' },
@@ -805,48 +803,6 @@ function FlagsList() {
   );
 }
 
-// Organisation-level context + GST/coding overrides for the extraction AI. A
-// business overview + rules, passed to the model alongside each document and the
-// Xero chart of accounts. Saved per organisation.
-function ReviewInstructions() {
-  const { data: organisations = [] } = useOrganisations();
-  const org = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
-  const orgId = org ? org.id : '';
-  const { text, setText, loading } = useReviewInstructions(orgId);
-  // Auto-saved like everything else. Held off until the org's text has loaded,
-  // so the empty box we show while loading is never written back over it.
-  const status = useAutoSave(text, (v) => saveReviewInstructions(orgId, v), {
-    delay: 1000,
-    enabled: !loading && Boolean(orgId),
-  });
-
-  if (!orgId) {
-    return (
-      <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-10 text-sm text-muted-foreground">
-        No organisation is linked yet — connect one under Connections first.
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <p className="mb-3 max-w-3xl text-sm text-muted-foreground">
-        A high-level overview of {org && org.name ? org.name : 'this organisation'}’s business, plus any GST and coding overrides. This is passed to the AI alongside each uploaded document and the Xero chart of accounts, so it picks the best account code and applies your GST rules. Saved per organisation.
-      </p>
-      <textarea
-        value={loading ? '' : text}
-        onChange={(e) => setText(e.target.value)}
-        rows={16}
-        placeholder={loading ? 'Loading…' : 'e.g. Excellence A.S runs a beauty facial and cosmetic retail business. The outlets are at Vivocity and CK Tangs. Vendor name should be the other identified party.\n\nGST overriding instructions — discard the GST amount and substitute "0" for: any activity involving a motor vehicle; medical treatment for employees; …'}
-        className="w-full rounded-lg border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
-      <div className="mt-3 flex items-center justify-end gap-3">
-        <SaveStatus status={status} />
-      </div>
-    </div>
-  );
-}
-
 // Read-only list of the payment methods derived from Xero (bank + payment-
 // enabled accounts). The document "Payment method" dropdown uses the same source.
 function PaymentMethodsFromXero() {
@@ -915,7 +871,7 @@ export default function ListsSettings() {
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="mb-4 text-lg font-semibold tracking-tight">{TITLES[tab]}</h2>
-        {tab === 'categories' ? <Categories /> : tab === 'review' ? <ReviewInstructions /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsTab index={0} bridge={bridge} label={labels.project} /> : tab === 'projects2' ? <ProjectsTab index={1} bridge={bridge} label={labels.project2} /> : tab === 'flags' ? <FlagsList /> : tab === 'payment' ? <PaymentMethodsFromXero /> : <Placeholder label={TITLES[tab]} />}
+        {tab === 'categories' ? <Categories /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsTab index={0} bridge={bridge} label={labels.project} /> : tab === 'projects2' ? <ProjectsTab index={1} bridge={bridge} label={labels.project2} /> : tab === 'flags' ? <FlagsList /> : tab === 'payment' ? <PaymentMethodsFromXero /> : <Placeholder label={TITLES[tab]} />}
       </div>
     </div>
   );

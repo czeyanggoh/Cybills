@@ -192,7 +192,7 @@ export default function TeachRule({ field, value, supplier, onClose }) {
               {isCategory && (
                 <p className="mt-2 text-xs text-muted-foreground">
                   For wording that spans several accounts, use your Review instructions under Business settings →
-                  Lists.
+                  Extraction.
                 </p>
               )}
             </div>

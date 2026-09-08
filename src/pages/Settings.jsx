@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { useCategoryDisplayMode, setCategoryDisplayMode, useCategorySortMode, setCategorySortMode } from '@/lib/categoryDisplay';
 import { useBusinessProfile, saveBusinessProfile, mergeXeroProfile, useBaseCurrency } from '@/lib/businessProfile';
 import { useExportSettings, saveExportSettings, EXPORT_COLUMNS, RECEIPT_FORMATS } from '@/lib/exportSettings';
+import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
 import { useAutoSave } from '@/lib/useAutoSave';
 import SaveStatus from '@/components/SaveStatus';
 import {
@@ -799,6 +800,50 @@ function ExtractByWhatsappCard() {
   );
 }
 
+// The organisation's own instructions to the reader: what this business does,
+// and the GST and coding rules it wants applied. It sat under Lists, among the
+// dropdowns a document is coded FROM — but it is not a list of anything. It is
+// the paragraph that goes into the prompt beside the chart of accounts on every
+// read, which is this tab, next to the reader it instructs.
+function ReviewInstructionsCard() {
+  const { data: organisations = [] } = useOrganisations();
+  const org = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
+  const orgId = org ? org.id : '';
+  const { text, setText, loading } = useReviewInstructions(orgId);
+  // Auto-saved like everything else here. Held off until the org's text has
+  // loaded, so the empty box shown while loading is never written back over it.
+  const status = useAutoSave(text, (v) => saveReviewInstructions(orgId, v), {
+    delay: 1000,
+    enabled: !loading && Boolean(orgId),
+  });
+
+  return (
+    <Card title="Review instructions">
+      {orgId ? (
+        <>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            A high-level overview of {org && org.name ? org.name : 'this organisation'}&rsquo;s business, plus any GST and coding overrides. This is passed to the reader alongside each uploaded document and the Xero chart of accounts, so it picks the best account code and applies your GST rules. Saved per organisation.
+          </p>
+          <textarea
+            value={loading ? '' : text}
+            onChange={(e) => setText(e.target.value)}
+            rows={16}
+            placeholder={loading ? 'Loading…' : 'e.g. Excellence A.S runs a beauty facial and cosmetic retail business. The outlets are at Vivocity and CK Tangs. Vendor name should be the other identified party.\n\nGST overriding instructions — discard the GST amount and substitute "0" for: any activity involving a motor vehicle; medical treatment for employees; …'}
+            className="w-full rounded-lg border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <div className="flex items-center justify-end gap-3">
+            <SaveStatus status={status} />
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No organisation is linked yet — connect one under Connections first.
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function Extraction() {
   const bridge = useBridgeEntity();
   const salesEnabled = useSalesEnabled();
@@ -817,6 +862,8 @@ function Extraction() {
   return (
     <div className="space-y-6">
       <DocumentReaderCard value={form.readerProvider} onChange={(v) => set('readerProvider', v)} />
+
+      <ReviewInstructionsCard />
 
       <ExtractByEmailCard />
 

@@ -293,6 +293,13 @@ document. Covered by `npm test` at the root and in `server/`
 (`test/attendees.test.mts`, driven over real HTTP so what is asserted is the
 prompt that goes out).
 
+**And the reader's instructions live beside the reader.** Review instructions —
+the business overview and the GST/coding overrides that go into the prompt with
+every document — was a row in Business settings -> Lists, among the dropdowns a
+document is coded FROM. It is not a list of anything, so it is now a card on the
+**Extraction** tab, under Document reader: what the reader is, then what it is
+told.
+
 **A note about one document beats a standing rule about every document.** A
 supplier rule ("everything from Grab is travel") is a policy; a covering note
 ("recharge this to CY-Biz") is a person's instruction about THIS receipt, so the
