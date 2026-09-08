@@ -7,6 +7,7 @@ import { cleanHandle, inboundAddress, addressTail, suffixForUser } from '@/lib/i
 import { useWhatsappForUser, connectWhatsappForUser, addWhatsappParticipant } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
+import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
 
 // "Extract by email" — the user's inbound address plus any Gmail forwarding
 // confirmation CYBills is holding for them to click.
@@ -247,6 +248,12 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
             <> · also added <span className="font-mono">{alsoInGroup.join(', ')}</span></>
           ) : null}
           {channel.received ? ` · ${channel.received} ${channel.received === 1 ? 'bill' : 'bills'} so far` : ''}
+          {/* Everyone CYBot puts in a group goes in as an admin now, so this is
+              here for the groups opened before that — and for the ordinary case
+              of somebody having been added from inside WhatsApp since. */}
+          <div className="mt-2">
+            <PromoteWhatsappAdmins channel={channel} canManage={canManage && enabled} onDone={reload} />
+          </div>
         </div>
       ) : !enabled && !loading ? (
         <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">

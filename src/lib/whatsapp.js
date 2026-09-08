@@ -172,6 +172,31 @@ export async function addWhatsappParticipant({ submissionId, mobile }) {
   throw err;
 }
 
+// Make everyone in the group an admin.
+//
+// A collection group has to work when CYBot is not looking at it: only an admin
+// can add somebody WhatsApp declined to add, rename the group or take a person
+// out of it — which is the instruction every shortfall this app reports ends
+// with. New groups ask for it as they are made; this is the same thing for the
+// ones opened before that, and for a group somebody has since added a member to
+// from inside WhatsApp.
+//
+// No list of numbers goes with it. Who is in the group is WhatsApp's answer
+// rather than ours, so CYWS promotes whoever it holds. Promoting an existing
+// admin changes nothing, which is what makes this safe to press twice.
+export async function promoteWhatsappAdmins({ submissionId }) {
+  const res = await fetch(`/api/whatsapp/channels/${encodeURIComponent(submissionId)}/admins`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok) return data;
+  const err = new Error(data?.message || 'Could not change who is an admin of the group.');
+  err.code = data?.error || '';
+  err.retryable = Boolean(data?.retryable);
+  throw err;
+}
+
 // Close a collection down. Two acts behind one call, because they are one
 // decision with two answers:
 //

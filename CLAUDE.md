@@ -1231,6 +1231,33 @@ rename's two: an ADOPTED conversation is the client's own, and a CLOSED one is
 over. Covered by `npm test` in `server/`
 (`test/whatsapp-add-participant.test.mts`).
 
+**Everyone in a collection group is an ADMIN of it.** A group has to keep
+working when CYBot is not looking at it, and only an admin of a WhatsApp group
+can add a member, rename it, or take somebody out — so with CYBot the only one,
+"somebody already in the group has to add them" (the instruction every shortfall
+here ends with, since CYWS mints no invite link) was something nobody in the
+group could carry out. So the ask travels with the act rather than being a step
+somebody remembers: `promote_participants: true` on create-group, `promote: true`
+on add-participants. For the groups opened before that — and for the ordinary
+case of a member added from inside WhatsApp, who comes in as an ordinary one —
+every group's card carries **Make everyone an admin**
+(`POST /api/whatsapp/channels/:id/admins`, CYWS's `promote-participants`).
+
+It names NOBODY: who is in the group is WhatsApp's answer rather than ours (it
+hands back LIDs, and an entity-wide group can hold somebody added inside WhatsApp
+whose number was never typed here), so CYWS promotes whoever the group holds, and
+promoting an existing admin changes nothing — which is what makes the button safe
+to press twice and why an empty answer reads as "they all are" rather than as a
+failure. `participantsPromoted` records only what WhatsApp acknowledged and is
+MERGED rather than replaced, or a second press would read as everybody losing it;
+it is shown as a count, never as names, for the same reason `participantsAdded`
+is. The two groups it refuses are the rename's two: an ADOPTED conversation is the
+client's own, and handing out admin in it from an accounting app is the same
+species of act as taking it apart; a CLOSED one is over. An older CYWS that has
+never heard of the route is told apart from one that cannot find the group, the
+same way the add road tells them apart. Covered by `npm test` in `server/`
+(`test/whatsapp-admins.test.mts`).
+
 **A group that already exists is NAMED, not made.** Every button above creates a
 real group, which is wrong for a client who has been sending bills into one of
 their own for months: it puts a second, empty group in front of them and leaves

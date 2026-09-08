@@ -43,6 +43,7 @@ import { useInboundConfig } from '@/lib/inboundSettings';
 import { cleanSuffix, addressTail, entityAddress } from '@/lib/inboundAddress';
 import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig, sendTestDelivery } from '@/lib/whatsapp';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
+import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
 import {
   useExtractionSettings,
   saveExtractionSettings,
@@ -1321,6 +1322,11 @@ function WhatsappCollectionCard() {
                   {/* Full width under the row rather than in the right-hand
                       column: expanded this is three sentences and two buttons,
                       and in a shrink-to-fit column it wraps to a word a line. */}
+                  {/* Offered on every group it can apply to, not only the ones
+                      that predate it: a member added from inside WhatsApp comes
+                      in as an ordinary one, and this is the only way to find out
+                      that everybody already is an admin. */}
+                  <PromoteWhatsappAdmins channel={g} canManage={canManage} onDone={reload} />
                   <CloseWhatsappGroup channel={g} canManage={canManage} onClosed={reload} />
                 </div>
               ))}

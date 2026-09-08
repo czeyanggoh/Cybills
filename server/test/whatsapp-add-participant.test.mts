@@ -32,7 +32,7 @@ writeFileSync(
 );
 
 // --- CYWS, stubbed -----------------------------------------------------------
-type AddCall = { submission_id: string; participants: string[] };
+type AddCall = { submission_id: string; participants: string[]; promote?: boolean };
 const addCalls: AddCall[] = [];
 const createCalls: unknown[] = [];
 // WhatsApp hands back LIDs — opaque per-user ids — not the numbers we sent, so
@@ -115,7 +115,10 @@ check('the group is opened with the old number', channelById(group)?.participant
 const groupsBefore = createCalls.length;
 r = await post(`channels/${group}/participants`, { mobile: '6592961171' }, ORG);
 check('adding succeeds', r.status, 200);
-check('CYWS is asked for THAT group, by submission id', addCalls.at(-1), { submission_id: group, participants: ['6592961171'] });
+// Asked for as an ADMIN, like everyone else CYBills puts in a collection group:
+// only an admin can add somebody WhatsApp declined to add, which is the
+// instruction every shortfall here ends with (test/whatsapp-admins.test.mts).
+check('CYWS is asked for THAT group, by submission id', addCalls.at(-1), { submission_id: group, participants: ['6592961171'], promote: true });
 check('and no second group is made', createCalls.length, groupsBefore);
 check('the group now holds both numbers', channelById(group)?.participantsRequested, ['6594247700', '6592961171']);
 check('the one it was opened with is still first', channelById(group)?.participantsRequested[0], '6594247700');

@@ -112,6 +112,11 @@ type CreateGroupOk = {
   submission_id: string;
   participants_added: string[];
   participants_requested: string[];
+  // Who WhatsApp made an admin, when CYWS is new enough to have been asked.
+  // Optional on purpose: an older CYWS ignores `promote_participants`, answers
+  // without it, and everything else about the group still works — the button on
+  // the group's own card is what fixes it afterwards.
+  participants_promoted?: string[];
   already_existed: boolean;
 };
 
@@ -137,12 +142,17 @@ const MESSAGES: Record<string, string> = {
   group_add_unavailable: 'The WhatsApp service on CYWS is not available. Tell the CYWS operator — retrying will not help.',
   route_unavailable:
     'This deployment’s CYWorkspace cannot add a number to an existing group yet. Tell the CYWS operator, or add it from inside the group.',
+  promote_failed: 'WhatsApp refused to make them admins. Try again in a moment.',
+  group_promote_unavailable: 'The WhatsApp service on CYWS is not available. Tell the CYWS operator — retrying will not help.',
+  promote_route_unavailable:
+    'This deployment’s CYWorkspace cannot change who is an admin of a group yet. Tell the CYWS operator, or promote them from inside the group.',
 };
 
 async function askForGroup(body: {
   submission_id: string;
   participants: string[];
   subject: string;
+  promote_participants: boolean;
 }): Promise<CreateResult> {
   const url = `${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/create-group`;
   let res: Response;
@@ -246,6 +256,13 @@ export async function createChannel(
     submission_id: channel.id,
     participants: opts.participants,
     subject: opts.subject,
+    // Everyone CYBills puts into a collection group goes in as an ADMIN. Only
+    // an admin can add somebody WhatsApp declined to add, rename the group, or
+    // take a person out of it — so with CYBot the only one, every shortfall
+    // this app reports ends in an instruction nobody in the group can carry
+    // out. Asked for as part of making the group rather than as a step
+    // afterwards, because a step afterwards is one somebody has to remember.
+    promote_participants: true,
   });
 
   if (!res.ok) {
@@ -263,11 +280,17 @@ export async function createChannel(
   // what was recorded the first time is left alone.
   const adopted = res.data.already_existed;
   const added = adopted ? channel.participantsAdded : res.data.participants_added ?? [];
+  // Only what WhatsApp acknowledged, like everything else here. An older CYWS
+  // sends nothing back at all, which reads as "nobody was promoted" rather than
+  // as an error — the group is open and collecting either way, and the card's
+  // own button is how somebody asks again.
+  const promoted = adopted ? channel.participantsPromoted ?? [] : res.data.participants_promoted ?? [];
   const updated = patchChannel(channel.id, {
     chatId: res.data.chat_id,
     subject: res.data.subject || channel.subject,
     status: 'open',
     participantsAdded: added,
+    participantsPromoted: promoted,
     participantsKnown: channel.participantsKnown || !adopted,
     openedAt: channel.openedAt || new Date().toISOString(),
     lastError: '',
@@ -332,6 +355,9 @@ const publicChannel = (c: WaChannel) => ({
   // numbers we asked with are the ones a person recognises, and those are
   // already above.
   participantsAddedCount: c.participantsAdded.length,
+  // A count, for the same reason as the one above it: WhatsApp answers with
+  // LIDs, so who is an admin can be totalled and not named.
+  participantsPromotedCount: (c.participantsPromoted ?? []).length,
   participantsMissing: participantsMissing(c),
   addedShortfall: addedShortfall(c),
   participantsKnown: c.participantsKnown,
@@ -1066,8 +1092,8 @@ whatsappRouter.post('/channels/:submissionId/close', async (req, res) => {
 /** Ask CYWS to add numbers to a group it already holds. REPORTED, not
  * best-effort: somebody pressed a button and is waiting to hear whether the
  * number is in the group. */
-async function askToAddParticipants(body: { submission_id: string; participants: string[] }): Promise<
-  { ok: true; added: string[] } | { ok: false; status: number; error: string; message: string; retryable: boolean }
+async function askToAddParticipants(body: { submission_id: string; participants: string[]; promote: boolean }): Promise<
+  { ok: true; added: string[]; promoted: string[] } | { ok: false; status: number; error: string; message: string; retryable: boolean }
 > {
   if (!env.CYWORKSPACE_RELAY_URL || !env.CYWORKSPACE_API_KEY) {
     return { ok: false, status: 503, error: 'whatsapp_not_configured', message: 'CYWorkspace is not connected on this deployment.', retryable: false };
@@ -1086,9 +1112,15 @@ async function askToAddParticipants(body: { submission_id: string; participants:
     return { ok: false, status: 502, error: 'relay_unreachable', message: MESSAGES.relay_unreachable, retryable: true };
   }
   const payload = (await res.json().catch(() => null)) as
-    | { data?: { participants_added?: string[] }; error?: string; message?: string }
+    | { data?: { participants_added?: string[]; participants_promoted?: string[] }; error?: string; message?: string }
     | null;
-  if (res.ok) return { ok: true, added: payload?.data?.participants_added ?? [] };
+  if (res.ok) {
+    return {
+      ok: true,
+      added: payload?.data?.participants_added ?? [],
+      promoted: payload?.data?.participants_promoted ?? [],
+    };
+  }
   // A 404 with no error of its own is not "unknown submission" — it is a CYWS
   // that has never heard of this route, which is a different person's problem
   // and a different sentence. Told apart here rather than reported as WhatsApp
@@ -1149,7 +1181,11 @@ whatsappRouter.post('/channels/:submissionId/participants', async (req, res) => 
     return res.json({ ok: true, channel: publicChannel(channel), already: true, mobile, addedNow: 0 });
   }
 
-  const out = await askToAddParticipants({ submission_id: channel.id, participants: [mobile] });
+  // Added AS AN ADMIN, exactly as the group's first members were: a person put
+  // into a collection group is somebody who holds the client's paperwork, and
+  // the next thing anybody asks of them is to add a colleague WhatsApp would
+  // not add for us — which an ordinary member cannot do.
+  const out = await askToAddParticipants({ submission_id: channel.id, participants: [mobile], promote: true });
   if (!out.ok) {
     patchChannel(channel.id, { lastError: out.message });
     return res.status(out.status).json({ error: out.error, message: out.message, retryable: out.retryable });
@@ -1163,9 +1199,12 @@ whatsappRouter.post('/channels/:submissionId/participants', async (req, res) => 
   // everybody else in it as missing.
   const row = channelById(channel.id) as WaChannel;
   const merged = [...row.participantsAdded, ...out.added.filter((a) => !row.participantsAdded.includes(a))];
+  const admins = row.participantsPromoted ?? [];
+  const mergedAdmins = [...admins, ...out.promoted.filter((a) => !admins.includes(a))];
   const updated = patchChannel(channel.id, {
     participantsRequested: [...row.participantsRequested, mobile],
     participantsAdded: merged,
+    participantsPromoted: mergedAdmins,
     lastError: '',
   });
 
@@ -1191,6 +1230,112 @@ whatsappRouter.post('/channels/:submissionId/participants', async (req, res) => 
     // EMPTY list is the only thing that can be read as a refusal — a non-empty
     // one is somebody, and it is this call's only candidate.
     addedNow: out.added.length,
+    // And whether it went in as an admin. Nothing here fails over it — the
+    // number is in the group, which is what was asked for — but an older CYWS
+    // that cannot promote says nothing, and a card that claimed otherwise would
+    // be inventing it.
+    promotedNow: out.promoted.length,
+  });
+});
+
+// --- Making the people in a group admins --------------------------------------
+// The group has to work when CYBot is not looking at it. Only an admin can add
+// somebody WhatsApp declined to add, rename the group, or take a person out of
+// it — and every shortfall this app reports ends in exactly that instruction
+// ("somebody already in the group has to add them"), which an ordinary member
+// cannot follow. New groups now ask for it as they are made; this is the same
+// thing for the groups that already exist, which were opened before it and hold
+// members WhatsApp will not let each other manage.
+//
+// Deliberately NOT a list of numbers. Who is in a group is WhatsApp's answer,
+// not ours — it hands back LIDs, and an entity-wide group can hold somebody
+// added from inside WhatsApp whose number was never typed here — so CYWS is
+// asked to promote whoever the group holds rather than being told who that is.
+// Promoting an existing admin changes nothing, which is what makes the button
+// safe to press twice.
+async function askToPromote(body: { submission_id: string }): Promise<
+  { ok: true; promoted: string[] } | { ok: false; status: number; error: string; message: string; retryable: boolean }
+> {
+  if (!env.CYWORKSPACE_RELAY_URL || !env.CYWORKSPACE_API_KEY) {
+    return { ok: false, status: 503, error: 'whatsapp_not_configured', message: 'CYWorkspace is not connected on this deployment.', retryable: false };
+  }
+  const url = `${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/promote-participants`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-API-Key': env.CYWORKSPACE_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    console.error('[whatsapp] CYWS unreachable (promote-participants)', err);
+    return { ok: false, status: 502, error: 'relay_unreachable', message: MESSAGES.relay_unreachable, retryable: true };
+  }
+  const payload = (await res.json().catch(() => null)) as
+    | { data?: { participants_promoted?: string[] }; error?: string; message?: string }
+    | null;
+  if (res.ok) return { ok: true, promoted: payload?.data?.participants_promoted ?? [] };
+  // A bare 404 is a CYWS that has never heard of the route, not a group it
+  // cannot find — told apart here for the same reason the add path tells them
+  // apart, because they need different people to fix them.
+  const error = !payload?.error && res.status === 404 ? 'promote_route_unavailable' : String(payload?.error ?? 'promote_failed');
+  return {
+    ok: false,
+    status: res.status,
+    error,
+    message: String(payload?.message ?? MESSAGES[error] ?? `CYWorkspace returned ${res.status}.`),
+    retryable: error === 'promote_failed' || error === 'relay_unreachable',
+  };
+}
+
+// POST /api/whatsapp/channels/:submissionId/admins
+//
+// Everyone in this group, an admin. Same two refusals the rename and the add
+// paths make, for the same reasons.
+whatsappRouter.post('/channels/:submissionId/admins', async (req, res) => {
+  if (!whatsappEnabled) return res.status(503).json({ error: 'whatsapp_not_configured' });
+  const found = channelForAdmin(req, String(req.params.submissionId ?? ''));
+  if (found.error) return res.status(found.error.status).json(found.error.body);
+  const channel = found.channel;
+
+  if (channel.status !== 'open' || !channel.chatId) {
+    return res.status(409).json({
+      error: 'channel_not_open',
+      message: 'There is no open group here — a group CYBills has stopped collecting through is no longer its to change.',
+    });
+  }
+  // The client's own conversation, merely pointed at CYBills. Handing out admin
+  // in somebody else's group from an accounting app is the same species of act
+  // as taking it apart, which the close path refuses to do unasked.
+  if (channel.adopted) {
+    return res.status(409).json({
+      error: 'channel_adopted',
+      message: 'This is the client’s own group, pointed at CYBills rather than opened by CYBot. Change its admins from inside it.',
+    });
+  }
+
+  const out = await askToPromote({ submission_id: channel.id });
+  if (!out.ok) {
+    patchChannel(channel.id, { lastError: out.message });
+    return res.status(out.status).json({ error: out.error, message: out.message, retryable: out.retryable });
+  }
+
+  // Merged rather than replaced: CYWS answers with whoever it promoted on THIS
+  // call, and somebody already an admin is not promoted again — so a second
+  // press would otherwise read as everybody losing it.
+  const row = channelById(channel.id) as WaChannel;
+  const admins = row.participantsPromoted ?? [];
+  const merged = [...admins, ...out.promoted.filter((a) => !admins.includes(a))];
+  const updated = patchChannel(channel.id, { participantsPromoted: merged, lastError: '' });
+
+  res.json({
+    ok: true,
+    channel: updated ? publicChannel(updated) : publicChannel(channel),
+    // How many this press changed. Zero is the ordinary answer once they all
+    // are, so it is reported as a number and worded as one rather than as a
+    // failure.
+    promotedNow: out.promoted.length,
   });
 });
 

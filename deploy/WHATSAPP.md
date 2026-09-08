@@ -79,6 +79,13 @@ load, never as a side effect, never in a loop.
 
 Two things to expect:
 
+- **Everyone put in goes in as an ADMIN** (`promote_participants: true` on
+  create-group, `promote: true` on add-participants). A collection group has to
+  keep working when CYBot is not looking at it: only an admin can add somebody
+  WhatsApp declined to add, rename the group, or take a person out of it — which
+  is the instruction the shortfall below ends with, and one an ordinary member
+  cannot follow. A CYWS that ignores the flag is not an error; the group's own
+  card carries **Make everyone an admin** for exactly that case.
 - **Somebody may not be added.** WhatsApp silently refuses to add a user whose
   privacy settings disallow it, and answers as though nothing happened. That is
   not an error, and the card says so — but usually only as a count. WhatsApp
@@ -322,12 +329,12 @@ paperwork split across the two and nothing saying which is current.
 
 ```
 POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/add-participants   (X-API-Key, same key)
-{ "submission_id": "CYB-org_red00001-a1b2c3d4", "participants": ["6592961171"] }
+{ "submission_id": "CYB-org_red00001-a1b2c3d4", "participants": ["6592961171"], "promote": true }
 ```
 
 | Status | Body | Meaning |
 |---|---|---|
-| 200 | `{data: {chat_id, participants_added}}` | Asked. `participants_added` is what WhatsApp acknowledged — **LIDs**, and legitimately EMPTY when it silently declined. |
+| 200 | `{data: {chat_id, participants_added, participants_promoted}}` | Asked. `participants_added` is what WhatsApp acknowledged — **LIDs**, and legitimately EMPTY when it silently declined. `participants_promoted` is who it made an admin. |
 | 400 | `{error: "submission_id_required" \| "participant_required"}` | |
 | 401 | `{error: "invalid_api_key"}` | |
 | 404 | `{error: "unknown_submission"}` | No group at CYWS under that id. |
@@ -356,6 +363,53 @@ POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/add-participants   (X-API
   for the same reason: it is what a bill arriving from it is matched back to,
   and an unstored one lands everything they send on the entity's General
   account.
+- **`promote: true` asks for them as an admin**, the same as the members a group
+  is opened with. Nothing fails over it — the number is in the group, which is
+  what was asked for — so a CYWS that ignores the flag answers without
+  `participants_promoted` and CYBills claims nothing.
+
+## Making the people in a group admins
+
+The people in a collection group are its admins, because the group has to keep
+working when CYBot is not looking at it. Only an admin can add a member, rename
+a group or remove somebody — so with CYBot the only one, "somebody already in
+the group has to add them" is an instruction nobody in the group can carry out.
+
+New groups ask for it as they are made. This is the repair for the ones opened
+before that, and for the ordinary case of a member added from inside WhatsApp,
+who comes in as an ordinary one. It is on every group's own card: **Connections →
+the group's row**, or the person's **Edit details → Connect to WhatsApp** →
+**Make everyone an admin**.
+
+```
+POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/promote-participants   (X-API-Key, same key)
+{ "submission_id": "CYB-org_red00001-a1b2c3d4" }
+```
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{data: {chat_id, participants_promoted}}` | Done. `participants_promoted` is who this call CHANGED — **LIDs** — and is legitimately EMPTY once they all are. |
+| 400 | `{error: "submission_id_required"}` | |
+| 401 | `{error: "invalid_api_key"}` | |
+| 404 | `{error: "unknown_submission"}` | No group at CYWS under that id. |
+| 502 | `{error: "promote_failed"}` | WhatsApp refused — only an admin of a group may promote in it. |
+| 503 | `{error: "group_promote_unavailable"}` | The CYBot number is not on WAHA. |
+
+- **Nobody is named in the request.** Who is in the group is WhatsApp's answer
+  rather than CYBills' — it hands back LIDs, and an entity-wide group can hold a
+  member added from inside WhatsApp whose number was never typed here — so CYWS
+  promotes whoever the group holds. Promoting an existing admin changes nothing,
+  which is what makes the button safe to press twice.
+- **An empty `participants_promoted` means everyone already was one**, and is
+  reported as that. Unlike adding, a refusal here is an ERROR rather than a
+  silent nothing: WhatsApp does not quietly decline a promote the way it
+  declines an add.
+- **A 404 with no `error` of its own is read as an unimplemented route**, not as
+  an unknown group, exactly as on the add road and for the same reason.
+- **CYBills decides which groups may be promoted in**, and it is the same two
+  refusals the rename and the add make. An **adopted** conversation is the
+  client's own, and handing out admin in it from an accounting app is the same
+  species of act as taking it apart. A **closed or replaced** collection is over.
 
 ## Closing a group down
 
