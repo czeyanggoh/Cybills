@@ -325,6 +325,10 @@ export function taxRateOutcome({
   const howRead = printed
     ? `GST at ${pctOf(pct)}, as printed on the document`
     : `GST of ${shown.cur}${shown.tax.toFixed(2)} on ${shown.cur}${shown.net.toFixed(2)} is ${pctOf(pct)}`;
+  // What was found, beside the answer, so a caller can act on the disagreement
+  // — splitByPrintedRate turns an off-base document into the two lines that
+  // each carry exactly their own rate.
+  const facts = { printedRate: printed || 0, workedRate: worked, offBase };
 
   // Tax IS charged — but only Singapore GST from a registered supplier can be
   // claimed. Without that evidence the tax is part of the cost, not input tax:
@@ -342,6 +346,7 @@ export function taxRateOutcome({
         `Tax of ${shown.cur}${shown.tax.toFixed(2)} (${pctOf(pct)}) is on the document, but ${why} — so it isn't Singapore input tax to claim. ` +
         'Coded No Tax, with the tax left in the cost. If the supplier IS Singapore GST-registered, set the code by hand.',
       claimsTax: false,
+      ...facts,
     };
   }
 
@@ -354,6 +359,7 @@ export function taxRateOutcome({
         name: row.name,
         reason: `${accountLabel ? `The ${accountLabel} account's` : "The account's"} own tax code in Xero, and the ${pctOf(pct)} GST on this document matches it.${baseNote}`,
         claimsTax: true,
+        ...facts,
       };
     }
   }
@@ -375,6 +381,7 @@ export function taxRateOutcome({
         (stated && !printed ? ` Read from the ${statedCur} figures the document states for tax purposes, not the ${cur} ones.` : '') +
         baseNote,
       claimsTax: true,
+      ...facts,
     };
   }
 
@@ -396,6 +403,7 @@ export function taxRateOutcome({
       name: noTax.name,
       reason: `A ${cur} document taxed at ${pctOf(pct)}, which isn't a rate in this chart — foreign GST isn't Singapore input tax, so nothing is claimed.`,
       claimsTax: false,
+      ...facts,
     };
   }
 
@@ -415,6 +423,7 @@ export function taxRateOutcome({
           : 'No rule of this organisation\'s own covered the document.') +
         baseNote,
       claimsTax: true,
+      ...facts,
     };
   }
 
@@ -424,6 +433,7 @@ export function taxRateOutcome({
       name: '',
       reason: 'Left blank: no tax rates are visible for this organisation, so nothing could be matched. Check Business settings → Lists → Tax rates.',
       claimsTax: false,
+      ...facts,
     };
   }
   const side = kind === 'sales' ? 'supplies' : 'purchases';
@@ -441,7 +451,81 @@ export function taxRateOutcome({
       `Business settings → Lists → Tax rates.${alsoAt} At that percentage it could also be import GST or reverse charge, so it isn't guessed.` +
       baseNote,
     claimsTax: false,
+    ...facts,
   };
+}
+
+// --- An off-base document, as two lines that each carry their own rate ------
+// When the printed rate and the arithmetic disagree, the document's one line
+// is a 9% line whose tax is not 9% of its net: the money is right (the tax is
+// posted as printed) but nobody reading the ledger can see why. The two
+// figures that explain it are both derivable once the printed rate is known —
+// the base the tax was charged on is tax ÷ rate, and whatever remains of the
+// net is money the tax was NOT charged on — so this writes them as two lines:
+//
+//   Supply taxed at 9%          net 198.00   tax 17.82
+//   Discount taken off after tax  net −60.43   tax  0.00
+//
+// The sign of the remainder says what it is: negative is a discount taken off
+// the tax-inclusive bill, positive is a part of the bill outside GST (a
+// deposit, a government fee, a zero-rated item). Each line's tax is then
+// exactly its rate times its net, which is the faithful copy of the paper —
+// and the rows still add up to the document's total and its tax, so the
+// publish path posts them as lines rather than refusing them.
+//
+// Null when there is nothing to split: no tax, no rate, or a remainder of
+// nothing. `rows` are grid rows (net / tax / total as strings); `note` is the
+// sentence for the Reason.
+const money = (n) => (Math.round(n * 100) / 100).toFixed(2);
+export function splitByPrintedRate({ total, tax, rate, category = '', taxRateName = '', noTaxName = 'No Tax' } = {}) {
+  const t = num(total);
+  const x = num(tax);
+  const r = Number(rate) || 0;
+  if (!(t > 0 && x > 0 && r > 0)) return null;
+  const base = Math.round((x * 100 * 100) / r) / 100; // net the tax was charged on
+  const rest = Math.round((t - x - base) * 100) / 100; // net it was not charged on
+  if (!(base > 0) || Math.abs(rest) < 0.005) return null;
+  const pctText = `${Number(r.toFixed(2))}%`;
+  const cat = String(category || '');
+  const rows = [
+    {
+      description: `Supply taxed at ${pctText} — ${money(x)} of GST on ${money(base)}`,
+      category: cat,
+      project: '',
+      project2: '',
+      net: money(base),
+      tax: money(x),
+      total: money(base + x),
+      taxRate: String(taxRateName || ''),
+    },
+    {
+      description: rest < 0 ? 'Discount taken off after tax (outside the GST base)' : 'Part of the bill outside GST',
+      category: cat,
+      project: '',
+      project2: '',
+      net: money(rest),
+      tax: '0.00',
+      total: money(rest),
+      taxRate: String(noTaxName || 'No Tax'),
+    },
+  ];
+  const note =
+    ` Split into two lines: ${money(base)} taxed at ${pctText}, and ${money(rest)} ` +
+    (rest < 0 ? 'of discount taken off after tax' : 'outside GST') +
+    ' — see Line items.';
+  return { rows, note };
+}
+
+// Whether a set of rows is the same money as the document: their totals add up
+// to its total, to the cent. A breakdown that does not is one the publish path
+// refuses (a mistake to fix, not to post around), so it is also the one an
+// automatic split may replace — rows that DO add up are somebody's breakdown,
+// and are left alone.
+export function linesAgreeWithTotal(rows, total) {
+  if (!Array.isArray(rows) || !rows.length) return false;
+  const c = (v) => Math.round(num(v) * 100);
+  const sum = rows.reduce((s, r) => s + (c(r?.total) || c(r?.net) + c(r?.tax)), 0);
+  return sum === c(total);
 }
 
 // The name alone, for callers that don't show a reason.

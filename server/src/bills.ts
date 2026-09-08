@@ -400,6 +400,7 @@ function normaliseLineItems(rows: unknown[]): LineItem[] {
       // — see the publish path in xero.ts.
       project: String(li?.project ?? ''),
       project2: String(li?.project2 ?? ''),
+      taxRate: String(li?.taxRate ?? ''),
       net: String(li?.net ?? ''),
       tax: String(li?.tax ?? ''),
       total: String(li?.total ?? ''),

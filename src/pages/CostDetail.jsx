@@ -58,7 +58,7 @@ import { formatDate } from '@/lib/date';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
-import { balanceLine, foldTaxIntoCost } from '@/lib/lineItems';
+import { balanceLine, foldTaxIntoCost, applyLineTaxRate } from '@/lib/lineItems';
 import { coveringNote } from '@/lib/coveringNote';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
@@ -1360,7 +1360,10 @@ export default function CostDetail() {
         // "Extract line items" on the rule pulls the printed lines in with the
         // read — but never over rows already on the document, which may have
         // been edited by hand.
-        lineItems: ruleLines.length && !d.lineItems?.length ? ruleLines : d.lineItems,
+        // Exactly the rows readDecisions is about to save: a supplier rule's
+        // extracted lines over an empty grid, or the two-line split an off-base
+        // document gets. Rows already on the document that add up are kept.
+        lineItems: 'lineItems' in patch ? patch.lineItems : d.lineItems,
       }));
       if (doc?.persisted) {
         const r = await updateBill(doc.id, patch).catch(() => null);
@@ -1402,12 +1405,23 @@ export default function CostDetail() {
   // net and then having to type the total as well is not a second decision — it
   // is the same decision, entered twice, with a chance to get it wrong.
   // The arithmetic itself lives in lib/lineItems.js, where it is tested.
+  // A line's own tax code is applied through applyLineTaxRate — the row's total
+  // stays and its split follows the code — so a line coded No Tax cannot go on
+  // carrying GST, which the publish path would refuse.
   const updateLineItem = (i, patch) =>
-    setLineItems(lineItems.map((li, idx) => (idx === i ? balanceLine(li, patch) : li)));
+    setLineItems(
+      lineItems.map((li, idx) =>
+        idx !== i
+          ? li
+          : 'taxRate' in patch
+            ? applyLineTaxRate(li, patch.taxRate, patch.taxRate ? rateFor(patch.taxRate) : rateFor(data.taxRate))
+            : balanceLine(li, patch)
+      )
+    );
   const addLineItem = () =>
     setLineItems([
       ...lineItems,
-      { description: '', category: data.category || 'Uncategorised', project: data.project || '', project2: '', net: '', tax: '', total: '' },
+      { description: '', category: data.category || 'Uncategorised', project: data.project || '', project2: '', net: '', tax: '', total: '', taxRate: '' },
     ]);
   const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
   // Put the rows back as they arrived. Deliberately NOT a per-keystroke undo:
@@ -1429,6 +1443,8 @@ export default function CostDetail() {
     catMode,
     lineProjects,
     project2Options,
+    // A line may carry its own tax code; the options are the document's own.
+    taxRateOptions: gstRegistered ? taxRateOptions : [],
     docProject: data.project || '',
   };
 

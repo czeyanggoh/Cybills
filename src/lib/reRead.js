@@ -15,7 +15,8 @@ import {
   supplierRuleCategoryReason,
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
-import { taxRateOutcome } from '@/lib/extractionSettings';
+import { taxRateOutcome, noTaxRateName } from '@/lib/extractionSettings';
+import { splitByPrintedRate, linesAgreeWithTotal } from '@/lib/taxRateRules';
 import { coveringNote } from '@/lib/coveringNote';
 import { mileagePatch } from '@/lib/mileage';
 
@@ -138,6 +139,29 @@ export function readDecisions(
   patch.taxRateReason = ex.taxRateReason || rate.reason || '';
   patch.taxRateEdited = false;
   patch.taxRateCleared = false;
+  // The printed rate and the arithmetic disagree: the tax was charged on a
+  // base that is not the net paid (a discount taken off after tax, a part of
+  // the bill outside GST). One line cannot say that — it is a 9% line whose
+  // tax is not 9% of its net — so the document gets the two lines that can,
+  // each carrying its own code. Never over rows that already add up to the
+  // document: those are somebody's breakdown. Rows that do NOT add up are ones
+  // the publish path would refuse anyway, the reader's summary of the table
+  // included, and replacing them with rows that do is the fix.
+  const split =
+    rate.offBase && rate.claimsTax !== false && inferredRate
+      ? splitByPrintedRate({
+          total: exTotal,
+          tax: exTaxOut,
+          rate: rate.printedRate,
+          category: ex.category || current.category || '',
+          taxRateName: inferredRate,
+          noTaxName: noTaxRateName(taxRates) || 'No Tax',
+        })
+      : null;
+  if (split && !linesAgreeWithTotal(current.lineItems, exTotal)) {
+    patch.lineItems = split.rows;
+    patch.taxRateReason += split.note;
+  }
   // Who the paper says it is for. A re-read decides the document again, so it is
   // allowed to decide there is no addressee at all — otherwise a name misread the
   // first time could never be taken off, and the wrong-entity warning it raised
@@ -182,7 +206,7 @@ export function readDecisions(
   if (noteDecided) patch.categoryReason = `From the email that sent this: ${String(ex.noteFollowed).trim()}`;
   // …except the due date, where the document's own beats the rule's terms.
   if (ex.dueDate) patch.dueDate = ex.dueDate;
-  if (ruleLines.length && !current.lineItems?.length) patch.lineItems = ruleLines;
+  if (ruleLines.length && !current.lineItems?.length && !patch.lineItems) patch.lineItems = ruleLines;
   // A mileage record's distance, and the total that follows from it at the
   // entity's rate per km. Decided last, because it overrules the money above:
   // the reader is told never to invent an amount for a journey, so `ex.total`

@@ -1,6 +1,6 @@
 // A line of an itemised table has to agree with itself: net + tax = total,
 // whichever of the three somebody just typed.
-import { balanceLine, cellNumber, foldTaxIntoCost, completeLine, completeLines } from '../src/lib/lineItems.js';
+import { balanceLine, cellNumber, foldTaxIntoCost, completeLine, completeLines, applyLineTaxRate } from '../src/lib/lineItems.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -93,6 +93,13 @@ check('a complete row is untouched', completeLine({ net: '10', tax: '0', total: 
 check('and other fields ride along', completeLine({ description: 'Ride fare', category: '493', net: '33', tax: '', total: '' }).description, 'Ride fare');
 check('completeLines maps them', completeLines([{ net: '1', tax: '', total: '' }, { net: '2', tax: '', total: '' }]).map((r) => r.total), ['1.00', '2.00']);
 check('and tolerates nothing at all', completeLines(null), []);
+
+// A row's own tax code: the total stays, the split follows the code.
+check('a 9% code splits the row total', applyLineTaxRate({ net: '', tax: '', total: '215.82' }, 'Standard-Rated Purchases', 9), { net: '198.00', tax: '17.82', total: '215.82', taxRate: 'Standard-Rated Purchases' });
+check('No Tax folds the tax into the cost', applyLineTaxRate({ net: '198.00', tax: '17.82', total: '215.82' }, 'No Tax', 0), { net: '215.82', tax: '0.00', total: '215.82', taxRate: 'No Tax' });
+check('a negative line takes a code too', applyLineTaxRate({ net: '-60.43', tax: '0.00', total: '-60.43' }, 'No Tax', 0), { net: '-60.43', tax: '0.00', total: '-60.43', taxRate: 'No Tax' });
+check('a row with no total only records the code', applyLineTaxRate({ description: 'x', net: '', tax: '', total: '' }, 'No Tax', 0), { description: 'x', net: '', tax: '', total: '', taxRate: 'No Tax' });
+check("blank means the document's code", applyLineTaxRate({ net: '100', tax: '9', total: '109' }, '', 9).taxRate, '');
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

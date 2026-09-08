@@ -14,12 +14,27 @@ import { accountsForOrg, taxRatesForOrg } from './xero.js';
 // its chart of accounts and whether it is GST-registered — which a browser has
 // to hand and a background read does not.
 
-export type TaxOutcome = { name: string; reason: string; claimsTax: boolean };
+export type TaxOutcome = {
+  name: string;
+  reason: string;
+  claimsTax: boolean;
+  // What the decision found beside the answer: the rate the document printed
+  // (0 when none), the one the money implies, and whether they disagree.
+  printedRate?: number;
+  workedRate?: number;
+  offBase?: boolean;
+};
+export type SplitRows = { rows: Array<Record<string, string>>; note: string } | null;
 type TaxRules = {
   taxRateOutcome: (args: Record<string, unknown>) => TaxOutcome;
   // A code that carries no tax, so a document coded to it records 0 tax. Same
   // module, same reason: the rule about what a tax code IS must have one copy.
   zeroTaxRate?: (name: unknown, rates?: unknown) => boolean;
+  noTaxRateName?: (rates: unknown) => string;
+  // An off-base document as two lines that each carry their own rate, and
+  // whether a set of rows is the same money as the document.
+  splitByPrintedRate?: (args: Record<string, unknown>) => SplitRows;
+  linesAgreeWithTotal?: (rows: unknown, total: unknown) => boolean;
 };
 
 let cache: TaxRules | null = null;
@@ -148,6 +163,35 @@ export async function decideTaxRate(
     });
   } catch (e) {
     console.error('[taxRules] decision failed', e);
+    return null;
+  }
+}
+
+// The two lines an off-base document gets — the tax was charged on a base
+// that is not the net paid — or null when the rows it already has add up to
+// its total (somebody's breakdown, left alone) or there is nothing to split.
+// Same module as the decision, so an emailed document is split exactly as an
+// uploaded one is.
+export async function splitForPrintedRate(
+  ctx: TaxContext,
+  outcome: TaxOutcome,
+  doc: { total?: unknown; tax?: unknown; category?: unknown; lineItems?: unknown }
+): Promise<SplitRows> {
+  if (!outcome.offBase || !outcome.claimsTax || !outcome.name) return null;
+  const rules = await loadTaxRules();
+  if (!rules?.splitByPrintedRate || !rules.linesAgreeWithTotal) return null;
+  try {
+    if (rules.linesAgreeWithTotal(doc.lineItems, doc.total)) return null;
+    return rules.splitByPrintedRate({
+      total: doc.total,
+      tax: doc.tax,
+      rate: outcome.printedRate,
+      category: String(doc.category ?? ''),
+      taxRateName: outcome.name,
+      noTaxName: rules.noTaxRateName?.(ctx.visibleRates) || 'No Tax',
+    });
+  } catch (e) {
+    console.error('[taxRules] split failed', e);
     return null;
   }
 }

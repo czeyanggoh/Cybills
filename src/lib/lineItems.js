@@ -67,6 +67,26 @@ export function completeLine(row) {
 
 export const completeLines = (rows) => (Array.isArray(rows) ? rows.map(completeLine) : []);
 
+// Give a row its own tax code, and the tax that code implies.
+//
+// A line may carry a tax code of its own ('' = the document's), because one
+// bill can hold a 9% supply beside a discount or a fee that carries no GST, and
+// a breakdown posted under one code has to override the tax on the row that
+// differs. The row's TOTAL is what is kept — the money on that line — and the
+// split moves: tax = total × r/(100 + r), net = total − tax. `ratePct` is the
+// percentage the chosen code carries (0 for No Tax, and for a code the caller
+// could not resolve, which then reads as carrying nothing).
+export function applyLineTaxRate(row, name, ratePct) {
+  const total = cellNumber(row?.total);
+  const next = { ...row, taxRate: String(name ?? '') };
+  if (total === null) return next;
+  const r = Number(ratePct) || 0;
+  const tax = r > 0 ? Math.round(((total * r) / (100 + r)) * 100) / 100 : 0;
+  next.tax = tax.toFixed(2);
+  next.net = (total - tax).toFixed(2);
+  return next;
+}
+
 // Fold every row's tax back into its own cost, leaving the row worth exactly
 // what it was worth before.
 //

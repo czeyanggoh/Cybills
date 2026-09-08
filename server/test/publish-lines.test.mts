@@ -21,6 +21,12 @@ const stub = http.createServer((req, res) => {
     res.end(JSON.stringify({ Accounts: ACCOUNTS.map((code) => ({ Code: code, Name: `Account ${code}`, Status: 'ACTIVE' })) }));
   } else if (path.endsWith('/TrackingCategories')) {
     res.end(JSON.stringify({ TrackingCategories: TRACKING }));
+  } else if (path.endsWith('/TaxRates')) {
+    res.end(JSON.stringify({ TaxRates: [
+      { Name: 'Standard-Rated Purchases', TaxType: 'INPUTY24', EffectiveRate: 9, Status: 'ACTIVE' },
+      { Name: 'Zero-Rated Purchases', TaxType: 'ZERORATEDINPUT', EffectiveRate: 0, Status: 'ACTIVE' },
+      { Name: 'Old Rate', TaxType: 'INPUT', EffectiveRate: 7, Status: 'DELETED' },
+    ] }));
   } else {
     res.statusCode = 404;
     res.end(JSON.stringify({ error: 'not_found' }));
@@ -99,6 +105,37 @@ lines = await linesOf(
 check('both categories tagged', lines[0].Tracking, [{ Name: 'Projects', Option: 'ASTP 01' }, { Name: 'Projects 2', Option: 'Phase A' }]);
 check('a silent row follows the bill', lines[1].Tracking, [{ Name: 'Projects', Option: 'ASTP 02' }]);
 check('stale option dropped, bill’s not substituted for it', lines[2].Tracking, undefined);
+
+// 10) A line's own tax code posts under that code; a blank one follows the bill.
+//     Royal China: 17.82 of GST at 9% on 198.00, and 60.43 of discount taken off
+//     the tax-inclusive bill — two lines, each with exactly its own rate's tax.
+lines = await linesOf(
+  bill({
+    total: '155.39',
+    tax: '17.82',
+    lineItems: [
+      row({ net: '198.00', tax: '17.82', total: '215.82', taxRate: 'Standard-Rated Purchases' }),
+      row({ net: '-60.43', tax: '0.00', total: '-60.43', taxRate: 'No Tax' }),
+    ],
+  })
+);
+check('a split document goes up as two lines', lines.length, 2);
+check('each under its own code', [lines[0].TaxType, lines[1].TaxType], ['INPUTY24', 'NONE']);
+check('each with exactly its own tax', [lines[0].TaxAmount, lines[1].TaxAmount], [17.82, 0]);
+check('the discount posts as a negative net', [lines[0].UnitAmount, lines[1].UnitAmount], [198, -60.43]);
+check('and the money is the document\u2019s', sum(lines, 'UnitAmount') + sum(lines, 'TaxAmount'), 155.39);
+
+lines = await linesOf(bill({ total: '218', tax: '18', lineItems: [row({ total: '109', net: '100', tax: '9' }), row({ total: '109', net: '100', tax: '9', taxRate: 'Zero-Rated Purchases' })] }));
+check('blank follows the bill; a named code is its own', [lines[0].TaxType, lines[1].TaxType], ['INPUT', 'ZERORATEDINPUT']);
+lines = await linesOf(bill({ total: '100', lineItems: [row({ total: '100', taxRate: 'Not A Rate Here' })] }));
+check('a name the org does not have follows the bill', lines[0].TaxType, 'INPUT');
+
+// 11) One stated GST figure is shared only across the rows that carry tax.
+lines = await linesOf(bill({ total: '109', tax: '9', lineItems: [row({ total: '60' }), row({ total: '49', taxRate: 'No Tax' })] }));
+check('a No Tax row takes no share of the stated GST', [lines[0].TaxAmount, lines[1].TaxAmount], [9, 0]);
+check('...and still sums to the bill', sum(lines, 'TaxAmount'), 9);
+const allNone = await built(bill({ total: '109', tax: '9', lineItems: [row({ total: '109', taxRate: 'No Tax' })] }));
+check('every row No Tax with GST stated -> mismatch', [allNone.kind, (allNone as any).reason], ['mismatch', 'tax']);
 
 // 9) Descriptions never go up blank.
 lines = await linesOf(bill({ total: '100', lineItems: [row({ total: '100', description: '' })] }));

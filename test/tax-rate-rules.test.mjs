@@ -10,6 +10,8 @@ import {
   isSingaporeGstRegNo,
   claimableSgGst,
   zeroTaxRate,
+  splitByPrintedRate,
+  linesAgreeWithTotal,
 } from '../src/lib/taxRateRules.js';
 
 let failures = 0;
@@ -354,6 +356,45 @@ check('noTaxRateName', [noTaxRateName(SG), noTaxRateName([]), noTaxRateName(hidd
   check('the number beats a label that disagrees', ask({ total: 108, tax: 8, taxLabel: 'GST 9%', printedRate: 8 }).name, '2023 Standard-Rated Purchases');
   check('a nonsense number falls back to the label', ask({ ...RC, taxLabel: '9% GST', printedRate: 900 }).name, 'Standard-Rated Purchases');
   check('and to the arithmetic when the label has none', ask({ ...RC, taxLabel: 'GST', printedRate: 0 }).name, '');
+
+  // The outcome says what it found beside the answer, so a caller can split.
+  r = ask({ ...RC, taxLabel: '9% GST' });
+  check('the outcome reports the printed rate and the disagreement', [r.printedRate, Math.round(r.workedRate * 10) / 10, r.offBase], [9, 13, true]);
+  r = ask({ total: 109, tax: 9, taxLabel: 'GST 9%' });
+  check('...and no disagreement where there is none', [r.printedRate, r.offBase], [9, false]);
+}
+
+// --- An off-base document becomes two lines that each carry their own rate --
+// Royal China again: 17.82 of GST at 9% was charged on 198.00, and the 155.39
+// due is 60.43 short of 215.82 because the Accor Plus discount came off the
+// tax-inclusive bill. The two lines are the faithful copy of the paper, and
+// each one's tax is exactly its rate times its net.
+{
+  const s = splitByPrintedRate({ total: 155.39, tax: 17.82, rate: 9, category: '453 - Entertainment', taxRateName: 'Standard-Rated Purchases', noTaxName: 'No Tax' });
+  check('two rows', s.rows.length, 2);
+  check('the taxed supply is tax ÷ rate', [s.rows[0].net, s.rows[0].tax, s.rows[0].total, s.rows[0].taxRate], ['198.00', '17.82', '215.82', 'Standard-Rated Purchases']);
+  check('the remainder carries no tax, under No Tax', [s.rows[1].net, s.rows[1].tax, s.rows[1].total, s.rows[1].taxRate], ['-60.43', '0.00', '-60.43', 'No Tax']);
+  check('a negative remainder is named as a discount', s.rows[1].description.startsWith('Discount taken off after tax'), true);
+  check('both rows keep the category', [s.rows[0].category, s.rows[1].category], ['453 - Entertainment', '453 - Entertainment']);
+  check('the rows add up to the document', linesAgreeWithTotal(s.rows, 155.39), true);
+  check('...and their tax to its tax', Math.round((Number(s.rows[0].tax) + Number(s.rows[1].tax)) * 100) / 100, 17.82);
+  has('the note says what was done', s.note, '198.00 taxed at 9%');
+  has('...and what the rest was', s.note, '-60.43 of discount taken off after tax');
+
+  // A positive remainder is a part of the bill the tax was not charged on.
+  const fee = splitByPrintedRate({ total: 129, tax: 9, rate: 9 });
+  check('a positive remainder is outside GST', [fee.rows[1].net, fee.rows[1].description], ['20.00', 'Part of the bill outside GST']);
+
+  // Nothing to split: an ordinary 9% document, no tax, no rate.
+  check('an ordinary document is not split', splitByPrintedRate({ total: 109, tax: 9, rate: 9 }), null);
+  check('no tax, no split', splitByPrintedRate({ total: 100, tax: 0, rate: 9 }), null);
+  check('no rate, no split', splitByPrintedRate({ total: 155.39, tax: 17.82, rate: 0 }), null);
+
+  // Whether rows are the same money as the document, which decides whether an
+  // automatic split may replace them.
+  check('rows that add up agree', linesAgreeWithTotal([{ total: '100' }, { net: '50', tax: '5' }], 155), true);
+  check('rows that do not, do not', linesAgreeWithTotal([{ total: '156' }, { total: '24' }], 155.39), false);
+  check('no rows never agree', [linesAgreeWithTotal([], 1), linesAgreeWithTotal(null, 1)], [false, false]);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

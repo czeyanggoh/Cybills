@@ -42,6 +42,9 @@ export function LineItemsGrid({
   catMode,
   lineProjects = [],
   project2Options = [],
+  // The org's tax codes, for a line that carries its own ('' = the document's).
+  // Omitted or empty = the column is not drawn.
+  taxRateOptions = [],
   docProject = '',
   // Row indexes to show, in order. Omitted = all of them. The grid always edits
   // by the row's REAL index, so filtering can never write to the wrong line.
@@ -53,7 +56,7 @@ export function LineItemsGrid({
   if (!rows.length) return null;
   const lineTotal = rows.reduce((s, li) => s + num(li.total), 0);
   const outBy = num(total) - lineTotal;
-  const labelSpan = 4 + (lineProjects.length > 0 ? 1 : 0) + (project2Options.length > 0 ? 1 : 0);
+  const labelSpan = 4 + (lineProjects.length > 0 ? 1 : 0) + (project2Options.length > 0 ? 1 : 0) + (taxRateOptions.length > 0 ? 1 : 0);
   const shown = visible ?? rows.map((_, i) => i);
 
   return (
@@ -65,6 +68,7 @@ export function LineItemsGrid({
             <th className="bg-muted/40 px-2 py-2 font-medium">Category</th>
             {lineProjects.length > 0 && <th className="bg-muted/40 px-2 py-2 font-medium">{singular(projectLabels.project)}</th>}
             {project2Options.length > 0 && <th className="bg-muted/40 px-2 py-2 font-medium">{singular(projectLabels.project2)}</th>}
+            {taxRateOptions.length > 0 && <th className="bg-muted/40 px-2 py-2 font-medium">Tax code</th>}
             <th className="bg-muted/40 px-2 py-2 text-right font-medium">Net</th>
             <th className="bg-muted/40 px-2 py-2 text-right font-medium">Tax</th>
             <th className="bg-muted/40 px-2 py-2 text-right font-medium">Total</th>
@@ -112,6 +116,19 @@ export function LineItemsGrid({
                       value={li.project2 || ''}
                       options={project2Options}
                       onChange={(v) => onUpdate(i, { project2: v })}
+                    />
+                  </td>
+                )}
+                {taxRateOptions.length > 0 && (
+                  <td className="px-2 py-1.5">
+                    {/* Blank is meaningful: the line posts under the document's
+                        own code. A line with its own code (a discount taken off
+                        after tax, a fee outside GST) posts under that one. */}
+                    <LineProjectSelect
+                      value={li.taxRate || ''}
+                      options={taxRateOptions}
+                      placeholder="Document’s"
+                      onChange={(v) => onUpdate(i, { taxRate: v })}
                     />
                   </td>
                 )}

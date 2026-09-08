@@ -893,6 +893,24 @@ function trackingAcross(cats: TrackingCat[], values: string[]): Array<{ Name: st
 // The org's active account codes, for checking a line's own category before it
 // is posted — a code Xero doesn't have would fail the whole bill, and one bad
 // line is not a reason to lose the other four.
+// The org's tax codes by the name the app stores, for a line that carries its
+// own. Empty on any failure, and the line then follows the bill's code.
+async function taxTypesByName(tenantId: string): Promise<Map<string, { code: string; rate: number }>> {
+  const out = new Map<string, { code: string; rate: number }>();
+  try {
+    const result = await relay('TaxRates', { tenantId });
+    if (!result.ok) return out;
+    for (const t of result.data?.TaxRates ?? []) {
+      if (t?.Status !== 'ACTIVE') continue;
+      const name = String(t.Name ?? '').trim();
+      if (name) out.set(name, { code: String(t.TaxType ?? ''), rate: Number(t.EffectiveRate) || 0 });
+    }
+  } catch {
+    // fall through: no per-line codes, the bill's applies
+  }
+  return out;
+}
+
 async function activeAccountCodes(tenantId: string): Promise<Set<string>> {
   const result = await relay('Accounts', { tenantId, query: { where: 'Status=="ACTIVE"' } });
   if (!result.ok) return new Set();
@@ -959,18 +977,39 @@ export async function perLineItems(
   });
   if (sum(totals) !== c(parseAmount(bill.total))) return mismatch('total');
 
+  const [codes, cats, rateTypes] = await Promise.all([
+    activeAccountCodes(opts.tenantId),
+    trackingCategories(opts.tenantId),
+    taxTypesByName(opts.tenantId),
+  ]);
+  // A line's own tax code, when it names one the org has: a discount taken off
+  // after tax or a fee outside GST posts under No Tax beside the 9% supply,
+  // rather than as a 9% line with its tax overridden to nothing. A name the
+  // org's list cannot place falls back to the bill's code — except the one
+  // every Xero has, which is spelt out so a split made before the list loaded
+  // still posts right.
+  const ownType = rows.map((row) => {
+    const name = String(row.taxRate ?? '').trim();
+    if (!name) return null;
+    const known = rateTypes.get(name);
+    if (known) return known;
+    return /^no tax$/i.test(name) ? { code: 'NONE', rate: 0 } : null;
+  });
+  const carriesNoTax = (i: number) => ownType[i] !== null && (ownType[i]!.code === 'NONE' || ownType[i]!.rate === 0);
+
   const billTax = c(parseAmount(bill.tax));
   let taxes = rowTax;
   if (sum(taxes) !== billTax) {
     // Only the "document states one GST figure" case is recoverable. Rows that
     // carry SOME tax but not the bill's are a disagreement, not a gap.
     if (taxes.some((t) => t !== 0) || billTax === 0) return mismatch('tax');
-    if (sum(totals.map((t) => Math.max(0, t))) <= 0) return mismatch('tax');
-    taxes = apportion(billTax, totals);
+    // Shared by net across the rows that carry tax at all — a row coded to a
+    // code that carries none takes no share of it.
+    const weights = totals.map((t, i) => (carriesNoTax(i) ? 0 : Math.max(0, t)));
+    if (sum(weights) <= 0) return mismatch('tax');
+    taxes = apportion(billTax, weights);
     if (sum(taxes) !== billTax) return mismatch('tax');
   }
-
-  const [codes, cats] = await Promise.all([activeAccountCodes(opts.tenantId), trackingCategories(opts.tenantId)]);
   const lines = rows.map((row, i) => {
     const own = codeFromCategory(row.category);
     const line: Record<string, unknown> = {
@@ -982,7 +1021,7 @@ export async function perLineItems(
       // A line whose own category isn't a live Xero account follows the account
       // chosen for the document rather than being dropped.
       AccountCode: own && codes.has(own) ? own : opts.accountCode,
-      TaxType: opts.taxType,
+      TaxType: ownType[i]?.code || opts.taxType,
       TaxAmount: taxes[i] / 100,
     };
     // The line's own projects, falling back to the document's for the first

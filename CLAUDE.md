@@ -984,6 +984,34 @@ working. The pick now writes its own sentence ("chosen by hand"), and a re-read
 writes the code AND the reason together, over whatever was there, so the two
 cannot say different things about one field.
 
+**An off-base document becomes two lines, and a line carries its own tax
+code.** Posted as one line, that receipt is a 9% line whose tax is not 9% of
+its net: the money is right (17.82 goes up as printed, an override Xero
+accepts) but nobody reading the ledger can see why. Both figures that explain
+it are derivable once the printed rate is known — the base the tax was charged
+on is tax ÷ rate (198.00), and whatever remains of the net is money the tax was
+NOT charged on (−60.43) — so `splitByPrintedRate` (`taxRateRules.js`, pure,
+`npm test`) writes them as two rows, the second under No Tax, named by the sign
+of the remainder: negative is a discount taken off the tax-inclusive bill,
+positive a part of the bill outside GST. Each row's tax is then exactly its
+rate times its net, and the rows still add up to the document's total and its
+tax, so publish posts them as lines. Written on every road a read arrives by —
+the upload, the re-read (`readDecisions`), and the server-side read an emailed
+or WhatsApp'd document gets (`splitForPrintedRate` in `taxRules.ts`) — and
+never over rows that already add up to the document (`linesAgreeWithTotal`):
+those are somebody's breakdown. Rows that do NOT add up, the reader's own
+summary of the table included, are ones the publish path would refuse anyway,
+and replacing them with rows that do is the fix. Automatic but visible: the
+Reason says what was split, the rows are in the grid, and Revert puts the
+single line back. For that to post right a line has to carry its own code:
+`taxRate` on a row ('' = the document's), a **Tax code** column in the grid
+(`applyLineTaxRate` in `lineItems.js` keeps the row's total and moves its
+split), stored through `normaliseLineItems`, and resolved per line in
+`perLineItems` (`xero.ts`) by the name the org gives it — No Tax spelt out to
+`NONE` so a split made before the list loaded still posts right. A stated GST
+figure is then shared only across the rows that carry tax at all. Covered by
+`npm test` at the root and in `server/` (`publish-lines`).
+
 **And a blank Reason is a bug wherever it appears.** Two paths through
 `taxRateOutcome` still returned one: a code the reader picked from the org's own
 rule, and — the one that matters — "no tax charged", which is where a document

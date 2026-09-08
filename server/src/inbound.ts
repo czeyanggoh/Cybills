@@ -6,7 +6,7 @@ import type { Request } from 'express';
 import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberForSession } from './users.js';
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
-import { decideTaxRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
+import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { insertBill, updateBill, settleProcessing, getBillById } from './store.js';
 import { keepMileageInStep } from './mileage.js';
 import { putBillFile } from './storage.js';
@@ -254,6 +254,22 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       // Tax that isn't claimable Singapore GST stays inside the cost: the amount
       // is not recorded as GST, and the total never changes.
       if (!outcome.claimsTax) patch.tax = 0;
+      // The printed rate and the arithmetic disagree — a discount taken off
+      // after tax, a part of the bill outside GST — so the document gets the
+      // two lines that each carry their own rate, exactly as an upload or a
+      // re-read gives them. The reader's own summary of the table is replaced
+      // only when it does not add up to the document, which is the case the
+      // publish path would refuse anyway.
+      const split = await splitForPrintedRate(inputs.taxCtx, outcome, {
+        total: d.total,
+        tax: patch.tax ?? d.tax,
+        category: d.category,
+        lineItems: d.lineItems,
+      });
+      if (split) {
+        patch.lineItems = split.rows;
+        patch.taxRateReason = `${String(patch.taxRateReason ?? '')}${split.note}`;
+      }
     }
 
     // The supplier's standing rule overlays the read — a rule is an explicit

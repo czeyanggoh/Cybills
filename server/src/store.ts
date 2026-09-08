@@ -107,6 +107,9 @@ export type Bill = {
     // The two Xero tracking categories, per line ('' = follow the bill's own).
     project?: string;
     project2?: string;
+    // The line's own tax code ('' = the bill's). A discount taken off after tax
+    // or a fee outside GST posts under its own code beside a 9% supply.
+    taxRate?: string;
     net: string;
     tax: string;
     total: string;

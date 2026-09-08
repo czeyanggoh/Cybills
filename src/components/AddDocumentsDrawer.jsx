@@ -29,8 +29,16 @@ import {
   supplierRulePatch,
   supplierRuleProjectReason,
 } from '@/lib/supplierRules';
-import { useExtractionSettings, defaultPaidFor, dueDateForNewDoc, taxRateOutcome, zeroTaxRate } from '@/lib/extractionSettings';
+import {
+  useExtractionSettings,
+  defaultPaidFor,
+  dueDateForNewDoc,
+  taxRateOutcome,
+  zeroTaxRate,
+  noTaxRateName,
+} from '@/lib/extractionSettings';
 import { foldTaxIntoCost } from '@/lib/lineItems';
+import { splitByPrintedRate, linesAgreeWithTotal } from '@/lib/taxRateRules';
 import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 import { coveringNote } from '@/lib/coveringNote';
@@ -452,6 +460,8 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
       // Set by the tax-rate decision below: false when the tax on the document
       // isn't Singapore GST this business can claim.
       let claimsTax = true;
+      // The decision itself, kept for the split below.
+      let rateOutcome = null;
       const defRate = kind === 'sales' ? settings.defaultTaxRateSales : settings.defaultTaxRateCosts;
       // Tax rate: a rule the extractor matched, else the arithmetic fallback
       // (standard-rated vintages / No Tax only), else the configured default.
@@ -485,6 +495,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           printedRate: extracted?.taxRatePrinted || 0,
         });
         claimsTax = outcome.claimsTax !== false;
+        rateOutcome = outcome;
         if (outcome.name) p.taxRate = outcome.name;
         // Say why — including when nothing could be picked, which is otherwise
         // a blank field with no way to tell what went wrong.
@@ -511,6 +522,24 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
         // own paper cannot be published at all.
         const rows = p.lineItems ?? cur?.lineItems;
         if (Array.isArray(rows) && rows.length) p.lineItems = foldTaxIntoCost(rows);
+      }
+      // The printed rate and the arithmetic disagree — the tax was charged on
+      // a base that is not the net paid — so the document gets the two lines
+      // that each carry their own rate, the same way the re-read gives them
+      // (readDecisions). Never over rows that already add up to the document.
+      if (rateOutcome?.offBase && claimsTax && p.taxRate && !zeroTaxRate(p.taxRate, visibleTaxRates)) {
+        const split = splitByPrintedRate({
+          total: cur?.total,
+          tax: p.tax ?? cur?.tax,
+          rate: rateOutcome.printedRate,
+          category: p.category ?? cur?.category ?? '',
+          taxRateName: p.taxRate,
+          noTaxName: noTaxRateName(visibleTaxRates) || 'No Tax',
+        });
+        if (split && !linesAgreeWithTotal(p.lineItems ?? cur?.lineItems, cur?.total)) {
+          p.lineItems = split.rows;
+          p.taxRateReason = `${p.taxRateReason || ''}${split.note}`;
+        }
       }
       p.paid = defaultPaidFor(settings, cur?.documentType);
       // Due date, in order of what the evidence supports:
