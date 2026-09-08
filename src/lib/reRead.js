@@ -20,6 +20,7 @@ import { splitByPrintedRate, linesAgreeWithTotal } from '@/lib/taxRateRules';
 import { coveringNote } from '@/lib/coveringNote';
 import { mileagePatch } from '@/lib/mileage';
 import { withAttendees } from '@/lib/attendees';
+import { starDescription } from '@/lib/description';
 
 // What a re-read decided, given the document as it stands (`current`) and what
 // the reader returned (`ex`). `patch` is what to save; the rest is the working
@@ -230,8 +231,15 @@ export function readDecisions(
   // so the question is asked again against the category the document will
   // actually carry. Idempotent, which is what makes applying it twice safe: a
   // description that already names who was there keeps the wording it has.
+  // …and the star that says a read wrote this description rather than a person.
+  // Applied here as well as server-side because this is the last hand on the
+  // text — the line-item fallback above composes one the server never saw — and
+  // it is idempotent, so the description the server already starred keeps the
+  // one star it has.
   if (patch.description) {
-    patch.description = withAttendees(patch.description, ex.attendees, patch.category || current.category || '');
+    patch.description = starDescription(
+      withAttendees(patch.description, ex.attendees, patch.category || current.category || '')
+    );
   }
 
   return {

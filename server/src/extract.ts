@@ -460,6 +460,27 @@ async function loadNoteRules(): Promise<NoteRules | null> {
 // (src/lib/attendees.js), loaded here by path. A second copy would drift, and
 // the drift would be a prompt asking about one set of categories while the
 // description is written for another.
+// And the star a read puts in front of its own description, loaded the same way
+// — pure (src/lib/description.js), so the browser's re-read and this composition
+// cannot disagree about whether a description already carries one.
+type DescriptionRules = { starDescription: (description: string) => string };
+let descriptionRules: DescriptionRules | null = null;
+let descriptionRulesTried = false;
+
+async function loadDescriptionRules(): Promise<DescriptionRules | null> {
+  if (descriptionRulesTried) return descriptionRules;
+  descriptionRulesTried = true;
+  try {
+    const url = new URL('../../src/lib/description.js', import.meta.url).href;
+    const mod = (await import(url)) as Partial<DescriptionRules>;
+    descriptionRules = typeof mod?.starDescription === 'function' ? (mod as DescriptionRules) : null;
+  } catch (e) {
+    console.error('[extract] description rules unavailable', e);
+    descriptionRules = null;
+  }
+  return descriptionRules;
+}
+
 type AttendeeRules = {
   attendeeCategories: (labels: string[]) => string[];
   withAttendees: (description: string, attendees: string, category: string) => string;
@@ -713,6 +734,9 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     withAttendees: (description: string) => description,
   };
   const attendeeCats = attendees.attendeeCategories(categories);
+  // Nothing loaded leaves the description exactly as it was read, which is what
+  // every other rule module does when it cannot be loaded.
+  const star = (await loadDescriptionRules())?.starDescription ?? ((d: string) => d);
   const attendeesGuide = attendeeCats.length
     ? '\n\nWHO WAS THERE. A meal, a round of refreshments, entertainment or a meeting is only half recorded by its ' +
       'amount: what the ledger needs beside it is who it was FOR — a year later nobody can tell a staff lunch from ' +
@@ -840,13 +864,19 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       // guests were never recorded says THAT instead of falling silent — the
       // silence is what an incomplete record looks like, and it is the one
       // thing nobody can reconstruct afterwards.
-      description: attendees.withAttendees(
-        withPeriod(
-          notFiller(parsed.data.description) || derivedDescription(parsed.data.supplier, category, parsed.data.documentType),
-          notFiller(parsed.data.period)
-        ),
-        notFiller(parsed.data.attendees),
-        category
+      // The star goes on LAST, in front of the whole composed sentence: it says
+      // this description was written by a read rather than by a person, so it
+      // has to stand in front of everything the read wrote — the period and the
+      // attendees included.
+      description: star(
+        attendees.withAttendees(
+          withPeriod(
+            notFiller(parsed.data.description) || derivedDescription(parsed.data.supplier, category, parsed.data.documentType),
+            notFiller(parsed.data.period)
+          ),
+          notFiller(parsed.data.attendees),
+          category
+        )
       ),
       categoryReason: notFiller(parsed.data.categoryReason),
       // Only a covering MESSAGE can fill this, and this is where that is

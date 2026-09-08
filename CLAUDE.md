@@ -293,6 +293,20 @@ document. Covered by `npm test` at the root and in `server/`
 (`test/attendees.test.mts`, driven over real HTTP so what is asserted is the
 prompt that goes out).
 
+**And a description a READ wrote starts with a star.** A cost's description is
+written by two hands — the reader's on the way in, a person's when they correct
+it — and in the ledger, in an export and in the Costs list the two look
+identical. So a read's own composed sentence carries `*` in front of it
+("* Lunch at Din Tai Fung — attendees not stated"), and a description somebody
+rewrites stops saying it the moment they drop the star. `starDescription`
+(`src/lib/description.js`, pure, `npm test` at the root) is applied LAST, after
+the period and the attendees, so the star stands in front of everything the read
+wrote — and idempotently, since the server stars it and the browser's re-read
+stars it again (that path composes a description from line items the server
+never saw). Nothing re-adds one to what a PERSON saved, and the documents read
+before it existed are left as they are: a sweep across a book of published
+paperwork to add punctuation would write more history than it is worth.
+
 **And the reader's instructions live beside the reader.** Review instructions —
 the business overview and the GST/coding overrides that go into the prompt with
 every document — was a row in Business settings -> Lists, among the dropdowns a
