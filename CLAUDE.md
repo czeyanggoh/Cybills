@@ -263,6 +263,36 @@ customer: the flag says "bill this to that client", so with no client it is an
 instruction with no object, and it would publish as a billable expense against
 nobody. Enforced in `runExtraction`, and again at publish.
 
+**A meal is a record of people, not only of money.** A restaurant bill states an
+amount and says nothing about the one question anybody asks of it afterwards:
+who was at the table. "Din Tai Fung — Entertainment" is a figure with no business
+purpose attached, and a year later nobody can tell a staff lunch from client
+entertainment — which is also what IRAS asks of an entertainment expense, and
+expects to have been written down at the time. So on the categories where the
+people are half the record, the read asks: `attendees` is its own field, filled
+from the covering message ("lunch with Dean and two of the ARC3 team"), from a
+named booking or function list, or from a printed head count ("4 pax"), and never
+invented — a guest list nobody wrote reads as evidence. `src/lib/attendees.js`
+(pure, `npm test` at the root, loaded server-side by `extract.ts` the way
+`coveringNote.js` is) says WHICH categories those are — the words a chart of
+accounts and a claim policy actually use, matched whole, so a Xero account code
+matches nothing and "Retreat" is not "eat" — and the prompt names the entity's
+OWN labels rather than describing them, because the chart has already made that
+judgement. An entity with no such category is asked nothing at all.
+
+The answer is APPENDED to the description (`withAttendees`), the way the billing
+period is and for the same reason: a reader told to work it into its own sentence
+writes it twice as often as not, and there is then nothing to check. **A meal
+whose guests nobody recorded says THAT** — "— attendees not stated" — because a
+silence there is indistinguishable from a meal whose guests did not matter, and
+it is the line that sends a reviewer to fill them in. Idempotent, since the
+re-read applies it again once a supplier rule has had the last word on the
+category (`readDecisions`); moved OFF a meal category, a document gives the bare
+marker back up, while names already found stay — they are still true of the
+document. Covered by `npm test` at the root and in `server/`
+(`test/attendees.test.mts`, driven over real HTTP so what is asserted is the
+prompt that goes out).
+
 **A note about one document beats a standing rule about every document.** A
 supplier rule ("everything from Grab is travel") is a policy; a covering note
 ("recharge this to CY-Biz") is a person's instruction about THIS receipt, so the

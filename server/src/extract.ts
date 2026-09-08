@@ -135,7 +135,18 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       description: {
         type: 'string',
         description:
-          'A concise plain-language summary of what was purchased. Always attempt one: the merchant and document type alone are enough for a useful answer, so itemisation is a bonus, not a requirement. Examples: "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper", "Monthly mobile and broadband charges" (a telco bill), "Annual company secretarial fee", "Card payment at Marina Bay Sands (Marquee)" (a bare payment slip). Return an EMPTY STRING ONLY if the document is illegible or you cannot tell what it is at all — and NEVER filler such as "placeholder", "N/A", "unknown" or "description". This text is published to the accounting ledger, where a made-up word is worse than a blank.',
+          'A concise plain-language summary of what was purchased. Always attempt one: the merchant and document type alone are enough for a useful answer, so itemisation is a bonus, not a requirement. Examples: "Grab ride Jurong to Pasir Panjang", "Office stationery — pens, paper", "Monthly mobile and broadband charges" (a telco bill), "Annual company secretarial fee", "Card payment at Marina Bay Sands (Marquee)" (a bare payment slip). Return an EMPTY STRING ONLY if the document is illegible or you cannot tell what it is at all — and NEVER filler such as "placeholder", "N/A", "unknown" or "description". This text is published to the accounting ledger, where a made-up word is worse than a blank. Do NOT name who was present here — that belongs in `attendees`, which is joined onto this text afterwards.',
+      },
+      // Who a meal, a round of coffees or a meeting was FOR. A separate field
+      // rather than a line in `description` for the reason `period` is: asked
+      // to work it into its own sentence, a reader folds it in twice as often
+      // as not, and there is then nothing to check. withAttendees joins the two
+      // (src/lib/attendees.js) — and says so when the answer is nothing, which
+      // is the sentence that sends a reviewer to fill it in.
+      attendees: {
+        type: 'string',
+        description:
+          'ONLY for a meal, refreshment, entertainment or meeting cost: WHO it was for. Take it from the covering message where there is one ("lunch with Dean and two of the ARC3 team"), or from the document itself — a named booking, a function or delegate list, a printed head count ("4 pax", a table of six). A group is a perfectly good answer: "the finance team", "staff at the Jurong office". EMPTY STRING for every other kind of cost, and empty when neither the document nor the message says who was there — NEVER invent a name or a number of people, because this is published to the ledger as the record of who was entertained.',
       },
       dueDate: {
         type: 'string',
@@ -279,6 +290,7 @@ const ReceiptSchema = z.object({
   customer: z.string().optional().default(''),
   rebillable: z.boolean().optional().default(false),
   description: z.string().optional().default(''),
+  attendees: z.string().optional().default(''),
   dueDate: z.string().optional().default(''),
   period: z.string().optional().default(''),
   cardLast4: z.string().optional().default(''),
@@ -438,6 +450,38 @@ async function loadNoteRules(): Promise<NoteRules | null> {
     noteRules = null;
   }
   return noteRules;
+}
+
+// Who was at the table, for the categories where that is half the record.
+//
+// Same arrangement as the covering-note rules above: the words that make a
+// category one about PEOPLE, and the rule for joining the answer onto the
+// description, live in one pure module the browser also uses
+// (src/lib/attendees.js), loaded here by path. A second copy would drift, and
+// the drift would be a prompt asking about one set of categories while the
+// description is written for another.
+type AttendeeRules = {
+  attendeeCategories: (labels: string[]) => string[];
+  withAttendees: (description: string, attendees: string, category: string) => string;
+};
+let attendeeRules: AttendeeRules | null = null;
+let attendeeRulesTried = false;
+
+async function loadAttendeeRules(): Promise<AttendeeRules | null> {
+  if (attendeeRulesTried) return attendeeRules;
+  attendeeRulesTried = true;
+  try {
+    const url = new URL('../../src/lib/attendees.js', import.meta.url).href;
+    const mod = (await import(url)) as Partial<AttendeeRules>;
+    attendeeRules =
+      typeof mod?.attendeeCategories === 'function' && typeof mod?.withAttendees === 'function'
+        ? (mod as AttendeeRules)
+        : null;
+  } catch (e) {
+    console.error('[extract] attendee rules unavailable', e);
+    attendeeRules = null;
+  }
+  return attendeeRules;
 }
 
 // What the sender said about this document, as guidance for the read.
@@ -656,6 +700,30 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       projects.map((p) => `- "${p.name}"${p.rules ? `: ${p.rules}` : ' (no rule written — match by name only)'}`).join('\n')
     : '';
 
+  // The entity's own categories where WHO the cost was for is half the record —
+  // a meal, a round of coffees, entertainment, a meeting. Named explicitly
+  // rather than described, because "an entertainment account" is a judgement
+  // this chart has already made: the labels below are the ones the read must
+  // answer for. Silent when the entity has no such category at all, which is
+  // one fewer paragraph in a prompt that is already long.
+  const attendees = (await loadAttendeeRules()) ?? {
+    attendeeCategories: () => [],
+    // Nothing loaded — the description is left exactly as it was read, which is
+    // the same answer every other rule module gives when it cannot be loaded.
+    withAttendees: (description: string) => description,
+  };
+  const attendeeCats = attendees.attendeeCategories(categories);
+  const attendeesGuide = attendeeCats.length
+    ? '\n\nWHO WAS THERE. A meal, a round of refreshments, entertainment or a meeting is only half recorded by its ' +
+      'amount: what the ledger needs beside it is who it was FOR — a year later nobody can tell a staff lunch from ' +
+      'client entertainment, and the tax authority asks who was entertained. So when you code a document to one of ' +
+      'the categories below, fill `attendees` from the covering message or from the document itself (a named ' +
+      'booking, a function or delegate list, a printed head count such as "4 pax"). Leave it EMPTY when neither ' +
+      'says — never invent a name or a number, and never write the people into `description`, which this field is ' +
+      'joined onto afterwards.\n' +
+      attendeeCats.map((c) => `- "${c}"`).join('\n')
+    : '';
+
   // Everything identical for every document in this organisation, in one block:
   // the fixed reading instructions, the org's own review instructions, and the
   // account / tax-code / project guides. Sent as a CACHED system prefix so it is
@@ -691,7 +759,8 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     categoriesGuide +
     taxRatesGuide +
     projectsGuide +
-    customersGuide;
+    customersGuide +
+    attendeesGuide;
 
   const isPdf = mediaType === PDF_MEDIA;
 
@@ -765,9 +834,19 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       // one from the fields we did read rather than leave the field blank. It's
       // derived from the document, not invented: supplier and the category it
       // was coded to. Blank only when even that is unknown.
-      description: withPeriod(
-        notFiller(parsed.data.description) || derivedDescription(parsed.data.supplier, category, parsed.data.documentType),
-        notFiller(parsed.data.period)
+      // …and, on a meal or a meeting, who it was for. Appended rather than
+      // asked for inline, the same way the period is: a reader told to work
+      // both into one sentence writes them twice as often as not. A meal whose
+      // guests were never recorded says THAT instead of falling silent — the
+      // silence is what an incomplete record looks like, and it is the one
+      // thing nobody can reconstruct afterwards.
+      description: attendees.withAttendees(
+        withPeriod(
+          notFiller(parsed.data.description) || derivedDescription(parsed.data.supplier, category, parsed.data.documentType),
+          notFiller(parsed.data.period)
+        ),
+        notFiller(parsed.data.attendees),
+        category
       ),
       categoryReason: notFiller(parsed.data.categoryReason),
       // Only a covering MESSAGE can fill this, and this is where that is

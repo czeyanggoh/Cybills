@@ -19,6 +19,7 @@ import { taxRateOutcome, noTaxRateName } from '@/lib/extractionSettings';
 import { splitByPrintedRate, linesAgreeWithTotal } from '@/lib/taxRateRules';
 import { coveringNote } from '@/lib/coveringNote';
 import { mileagePatch } from '@/lib/mileage';
+import { withAttendees } from '@/lib/attendees';
 
 // What a re-read decided, given the document as it stands (`current`) and what
 // the reader returned (`ex`). `patch` is what to save; the rest is the working
@@ -222,6 +223,16 @@ export function readDecisions(
       mileageRate
     )
   );
+
+  // Who a meal or a meeting was for. The read already put it on the description
+  // it returned, but the CATEGORY can still change here — a supplier rule
+  // ("everything from Din Tai Fung is Entertainment") has the last word on it —
+  // so the question is asked again against the category the document will
+  // actually carry. Idempotent, which is what makes applying it twice safe: a
+  // description that already names who was there keeps the wording it has.
+  if (patch.description) {
+    patch.description = withAttendees(patch.description, ex.attendees, patch.category || current.category || '');
+  }
 
   return {
     patch, rule, descr, inferredRate, rateReason: rate.reason, exTaxOut,
