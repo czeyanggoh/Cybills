@@ -951,6 +951,23 @@ supplier rules were guarding on a flag that could never be set. A document
 written before the markers existed carries neither, which is exactly the
 population a re-read needs to re-decide.
 
+**A rate the document PRINTS beats the one worked out from the money.** The
+percentage was only ever inferred — `tax / (total − tax)` — which assumes the
+tax base is the net paid, and it is not whenever a discount is taken off the
+tax-INCLUSIVE bill: Royal China prints "9% GST 17.82" on 198 of food and
+service charge, then takes 60.43 of Accor Plus discount off the gross, so the
+17.82 on the 137.57 actually paid reads as 13%, a rate no chart has, and the
+document was left blank with a sentence about import GST. The reader already
+copies the tax line as printed (`taxLabel`, "9% GST"), and the rule only ever
+used it to tell GST from VAT; `printedTaxRate` now reads the percentage out of
+it and that number decides (`taxRateOutcome`, ahead of the SGD restatement and
+the arithmetic). It decides the PERCENTAGE only: the evidence gate still comes
+first, so a printed 9% on an Australian invoice is still not Singapore GST, and
+a printed 10% is still declined for having no code. The disagreement is said
+in the Reason rather than absorbed — the printed rate, the worked-out one and
+why they differ — because a tax base that is not the net paid is also what a
+wrongly typed Tax amount looks like. Covered by `npm test` at the root.
+
 **And a blank Reason is a bug wherever it appears.** Two paths through
 `taxRateOutcome` still returned one: a code the reader picked from the org's own
 rule, and — the one that matters — "no tax charged", which is where a document

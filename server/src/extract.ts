@@ -203,7 +203,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       taxLabel: {
         type: 'string',
         description:
-          'What the document CALLS the tax on the line that carries the tax AMOUNT, copied as printed — "GST", "GST 9%", "GST charged at 9%", "VAT", "Sales Tax", "SST", "Consumption Tax", "TVA". Empty string when it charges no tax. Copy the words; do not translate "VAT" into "GST" — but do not translate "GST" into "VAT" either: where a template says "Total Charges (excluding VAT)" one line above "Total GST", the tax charged is GST, and that is the line to copy.',
+          'What the document CALLS the tax on the line that carries the tax AMOUNT, copied as printed — "GST", "GST 9%", "9% GST", "GST charged at 9%", "VAT", "Sales Tax", "SST", "Consumption Tax", "TVA". Empty string when it charges no tax. Copy the words; do not translate "VAT" into "GST" — but do not translate "GST" into "VAT" either: where a template says "Total Charges (excluding VAT)" one line above "Total GST", the tax charged is GST, and that is the line to copy. KEEP the percentage when the line prints one: it is the supplier\'s own statement of the rate charged, and it decides the tax code when the amounts alone cannot — a discount taken off the tax-inclusive bill leaves the tax looking like 13% of the net paid on a document that plainly says 9%.',
       },
       lineItems: {
         type: 'array',

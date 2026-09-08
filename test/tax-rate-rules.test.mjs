@@ -36,8 +36,9 @@ const SG = [
   { name: 'No Tax', code: 'NONE', rate: 0 },
 ];
 // A Singapore supplier's evidence: its GST registration number, and a document
-// that calls the tax GST.
-const SGGST = { gstRegNo: '201614382R', taxLabel: 'GST 9%' };
+// that calls the tax GST. The label carries no percentage here, so the tests
+// below are about the ARITHMETIC; a printed rate is its own section.
+const SGGST = { gstRegNo: '201614382R', taxLabel: 'GST' };
 const ask = (o) => taxRateOutcome({ rates: SG, currency: 'SGD', kind: 'cost', ...SGGST, ...o });
 
 // --- Is it Singapore GST at all? --------------------------------------------
@@ -288,6 +289,63 @@ check('noTaxRateName', [noTaxRateName(SG), noTaxRateName([]), noTaxRateName(hidd
   // 10% is not a Singapore rate at any vintage — that one is still declined.
   const au = taxRateOutcome({ rates: SG, kind: 'cost', ...SGGST, currency: 'AUD', total: 110, tax: 10 });
   check('10% in a foreign currency is still No Tax', [au.name, au.claimsTax], ['No Tax', false]);
+}
+
+// --- A rate the document PRINTS beats the one worked out from the money -----
+// Royal China, Raffles Sentosa: food 180 + 10% svc 18 = 198, "9% GST 17.82" on
+// that, and two Accor Plus discounts of 60.43 taken off the tax-inclusive bill,
+// so the total due is 155.39. The 17.82 on the 137.57 net paid works out at
+// 13% — a rate no chart has — and the document was left blank with a sentence
+// about import GST. The paper printed 9% all along, and it is the supplier's
+// own statement of what was charged.
+{
+  const RC = { total: 155.39, tax: 17.82, gstRegNo: '53484616E' };
+  let r = ask({ ...RC, taxLabel: '9% GST' });
+  check('the printed 9% codes it standard-rated', [r.name, r.claimsTax], ['Standard-Rated Purchases', true]);
+  has('...saying the rate came off the paper', r.reason, 'as printed on the document');
+  has('...and that the money reads differently', r.reason, '17.82 on 137.57 works out at 13.0%');
+  has('...and why that happens', r.reason, 'discount taken off after tax');
+
+  // The same words in the other orders the reader copies them in.
+  check('the percentage is read wherever the label puts it', [
+    ask({ ...RC, taxLabel: 'GST 9%' }).name,
+    ask({ ...RC, taxLabel: 'GST charged at 9%' }).name,
+    ask({ ...RC, taxLabel: 'GST (9%)' }).name,
+  ], ['Standard-Rated Purchases', 'Standard-Rated Purchases', 'Standard-Rated Purchases']);
+
+  // Without a percentage the label decides nothing about the rate, and the
+  // arithmetic declines exactly as before — naming the rate it saw.
+  r = ask({ ...RC, taxLabel: 'GST' });
+  check('a bare label leaves it to the arithmetic', [r.name, r.claimsTax], ['', false]);
+  has('...which still says 13%', r.reason, '13.0%');
+
+  // Agreement is the ordinary case and needs no remark.
+  r = ask({ total: 109, tax: 9, taxLabel: 'GST 9%' });
+  check('a printed rate the money agrees with', r.name, 'Standard-Rated Purchases');
+  check('...is not remarked on', r.reason.includes('different base'), false);
+
+  // A printed vintage is the vintage: a 2023 invoice reading "GST 8%" whose
+  // figures were rounded to 9% is still an 8% document.
+  check('the printed vintage wins over a rounded one', ask({ total: 1.09, tax: 0.09, taxLabel: 'GST 8%' }).name, '2023 Standard-Rated Purchases');
+
+  // A printed rate that is not a Singapore one is still declined — the label
+  // decides the percentage, never whether that percentage has a code.
+  r = ask({ ...RC, taxLabel: 'GST 10%' });
+  check('a printed 10% is still not guessed', [r.name, r.claimsTax], ['', false]);
+  has('...and the decline says it was printed', r.reason, '10.0% as printed');
+
+  // Evidence comes first: a printed 9% on a foreign supplier's invoice is
+  // still not Singapore GST.
+  r = ask({ total: 109, tax: 9, gstRegNo: '51 824 753 556', taxLabel: 'GST 9%' });
+  check('a printed rate is not a registration number', [r.name, r.claimsTax], ['No Tax', false]);
+
+  // And the account's own code still wins when the printed rate agrees with it.
+  r = ask({ ...RC, taxLabel: '9% GST', accountTaxType: 'BLINPUT3Y24', accountLabel: '4200' });
+  check('the account default reads the printed rate too', r.name, 'Disallowed Expenses');
+  has('...and carries the note', r.reason, 'different base');
+
+  // No tax at all is No Tax whatever the label prints.
+  check('a printed rate with no tax charged is still no tax', ask({ total: 100, tax: 0, taxLabel: 'GST 9%' }).name, 'No Tax');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

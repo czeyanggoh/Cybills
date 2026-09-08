@@ -112,6 +112,23 @@ export function claimableSgGst({ gstRegNo = '', taxLabel = '', restatedInBase = 
   return isSingaporeGstRegNo(gstRegNo) && looksLikeGst(taxLabel);
 }
 
+// The percentage the document PRINTS beside its tax — "9% GST", "GST 9%", "GST
+// charged at 9%" — as opposed to the one worked out from the money. 0 when it
+// prints none.
+//
+// The two are usually the same number, and when they differ the printed one is
+// the supplier's own statement of the rate charged, which the arithmetic can
+// only infer. A restaurant that takes a member discount off the tax-inclusive
+// bill prints "9% GST 17.82" on a total of 155.39, and 17.82 on the 137.57
+// net paid works out at 13% — a rate no chart has, so the document was left
+// blank with a sentence about import GST. The paper said 9% all along.
+const PRINTED_PCT = /(\d{1,2}(?:\.\d+)?)\s*%/;
+export function printedTaxRate(taxLabel) {
+  const m = PRINTED_PCT.exec(String(taxLabel || ''));
+  const n = m ? Number(m[1]) : 0;
+  return n > 0 && n < 100 ? n : 0;
+}
+
 const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
 // A rate matches the printed percentage when it is within half a point of it —
 // tight, so a 10% AU invoice never snaps to a 9% SG rate and 7 / 8 / 9 each land
@@ -280,12 +297,29 @@ export function taxRateOutcome({
   // invoice falls outside every vintage and is coded No Tax for being foreign.
   // The SGD pair the document itself prints doesn't drift, so it decides.
   const stated = baseNet > 0 && baseGst > 0;
-  const pct = stated ? (baseGst / baseNet) * 100 : (x / net) * 100;
+  const worked = stated ? (baseGst / baseNet) * 100 : (x / net) * 100;
   // Said in whichever currency the percentage was read from, so the sentence can
   // be checked against the document rather than only believed.
   const shown = stated
     ? { cur: `${statedCur} `, tax: baseGst, net: baseNet }
     : { cur: '', tax: x, net };
+  // A rate the document PRINTS beats the one worked out from the money: the
+  // supplier states what was charged, the arithmetic infers it, and the two
+  // part company whenever the tax base is not the net paid — a discount taken
+  // off after tax, a service charge or a deposit outside GST. See
+  // printedTaxRate. The disagreement is said out loud rather than absorbed,
+  // because it is also what a wrongly typed Tax amount looks like.
+  const printed = printedTaxRate(taxLabel);
+  const pct = printed || worked;
+  const offBase = printed > 0 && Math.abs(printed - worked) > TOLERANCE;
+  const baseNote = offBase
+    ? ` The document prints ${pctOf(printed)}, and ${shown.cur}${shown.tax.toFixed(2)} on ${shown.cur}${shown.net.toFixed(2)} works out at ${pctOf(worked)} — ` +
+      'so the GST was charged on a different base from the net paid (a discount taken off after tax, or a part of the bill outside GST). ' +
+      'The printed rate decides; check the Tax amount against the paper.'
+    : '';
+  const howRead = printed
+    ? `GST at ${pctOf(pct)}, as printed on the document`
+    : `GST of ${shown.cur}${shown.tax.toFixed(2)} on ${shown.cur}${shown.net.toFixed(2)} is ${pctOf(pct)}`;
 
   // Tax IS charged — but only Singapore GST from a registered supplier can be
   // claimed. Without that evidence the tax is part of the cost, not input tax:
@@ -313,7 +347,7 @@ export function taxRateOutcome({
     if (row && Math.abs(Number(row.rate) - pct) <= TOLERANCE) {
       return {
         name: row.name,
-        reason: `${accountLabel ? `The ${accountLabel} account's` : "The account's"} own tax code in Xero, and the ${pctOf(pct)} GST on this document matches it.`,
+        reason: `${accountLabel ? `The ${accountLabel} account's` : "The account's"} own tax code in Xero, and the ${pctOf(pct)} GST on this document matches it.${baseNote}`,
         claimsTax: true,
       };
     }
@@ -332,8 +366,9 @@ export function taxRateOutcome({
     return {
       name: best,
       reason:
-        `GST of ${shown.cur}${shown.tax.toFixed(2)} on ${shown.cur}${shown.net.toFixed(2)} is ${pctOf(pct)} — matched ${best}.` +
-        (stated ? ` Read from the ${statedCur} figures the document states for tax purposes, not the ${cur} ones.` : ''),
+        `${howRead} — matched ${best}.` +
+        (stated && !printed ? ` Read from the ${statedCur} figures the document states for tax purposes, not the ${cur} ones.` : '') +
+        baseNote,
       claimsTax: true,
     };
   }
@@ -369,10 +404,11 @@ export function taxRateOutcome({
     return {
       name: own?.name || std.name,
       reason:
-        `${pctOf(pct)} GST — Xero's standard code for ${kind === 'sales' ? 'supplies' : 'purchases'} at that rate (${std.code}). ` +
+        `${pctOf(pct)} GST${printed ? ' as printed' : ''} — Xero's standard code for ${kind === 'sales' ? 'supplies' : 'purchases'} at that rate (${std.code}). ` +
         (hiddenHere
           ? "It isn't switched on in Business settings → Lists → Tax rates, so the picker won't offer it until it is."
-          : 'No rule of this organisation\'s own covered the document.'),
+          : 'No rule of this organisation\'s own covered the document.') +
+        baseNote,
       claimsTax: true,
     };
   }
@@ -396,8 +432,9 @@ export function taxRateOutcome({
   return {
     name: '',
     reason:
-      `Left blank: this document is taxed at ${pctOf(pct)}, and no standard-rated ${side} code at that rate is visible in ` +
-      `Business settings → Lists → Tax rates.${alsoAt} At that percentage it could also be import GST or reverse charge, so it isn't guessed.`,
+      `Left blank: this document is taxed at ${pctOf(pct)}${printed ? ' as printed' : ''}, and no standard-rated ${side} code at that rate is visible in ` +
+      `Business settings → Lists → Tax rates.${alsoAt} At that percentage it could also be import GST or reverse charge, so it isn't guessed.` +
+      baseNote,
     claimsTax: false,
   };
 }
