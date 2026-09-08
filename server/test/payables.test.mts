@@ -127,6 +127,9 @@ bill(book1, { supplier: 'Merged Away', status: 'merged' });
 bill(book1, { supplier: 'Half Read', category: '', total: '0' });
 bill(book1, { supplier: 'In Xero', xeroInvoiceId: 'inv-old' });
 bill(book1, { supplier: 'A Sales Invoice', kind: 'sales' });
+// A credit note is money the supplier owes US — complete, ready, and not a
+// bill to pay. In a payment run it would read as a positive line for a refund.
+bill(book1, { supplier: 'Owes Us A Refund', documentType: 'Credit note/refund', total: '-530', tax: '0' });
 // Coded to an account this chart doesn't have: listed, but never offered as
 // payable — the alternative is a row that gets a contact made for it in Xero
 // and only then refuses.

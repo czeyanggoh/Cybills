@@ -31,10 +31,19 @@ import {
 // them. Only the id itself is escaped. Falls back to the bare link where no
 // short code has been recorded yet — one call to that tenant fills it, and a
 // link that usually works beats no link at all.
-export function xeroBillUrl(invoiceId, shortCode = '') {
+//
+// `docType` says which of Xero's two payable records the id names. A credit
+// note (ACCPAYCREDIT) is not a bill with a minus sign: it lives under its own
+// endpoint and its own page, and asking Edit.aspx for its id reports an invoice
+// that cannot be found. Absent means a bill — every id recorded before credit
+// notes could be published was one.
+export function xeroBillUrl(invoiceId, shortCode = '', docType = '') {
   const id = String(invoiceId || '').trim();
   if (!id) return '';
-  const target = `/AccountsPayable/Edit.aspx?InvoiceID=${encodeURIComponent(id)}`;
+  const target =
+    docType === 'ACCPAYCREDIT'
+      ? `/AccountsPayable/ViewCreditNote.aspx?creditNoteID=${encodeURIComponent(id)}`
+      : `/AccountsPayable/Edit.aspx?InvoiceID=${encodeURIComponent(id)}`;
   const code = String(shortCode || '').trim();
   return code
     ? `https://go.xero.com/organisationlogin/default.aspx?shortcode=${encodeURIComponent(code)}&redirecturl=${target}`

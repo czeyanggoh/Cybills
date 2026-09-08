@@ -1907,6 +1907,32 @@ notifying about **Invoices**. Env (server/.env): `XERO_WEBHOOK_KEY`, the key tha
 page shows. Unset, nothing can be verified and every delivery is refused — which
 is what an unconfigured deploy should do. Covered by `npm test` in `server/`.
 
+**A credit note publishes as a credit note.** A document typed "Credit
+note/refund" (anything whose `documentType` says credit — `isCreditNote` in
+`store.ts`, mirrored in `src/lib/readiness.js`) goes up through the same
+`publish-bill` route as an **ACCPAYCREDIT** credit note under Xero's
+`CreditNotes` endpoint, not as a bill with a minus on it. Decided by the TYPE,
+never by the sign: a negative total on an ordinary invoice is a misread and
+stays refused. Its total may be typed either way round — "-530" as the paper
+shows a refund, or "530" — so completeness asks for a NON-ZERO total
+(`totalComplete`), and `buildBillInvoice` flips a negative document positive
+(total, tax and every line together, so a breakdown keeps adding up) because
+Xero carries the direction in the record's Type and wants positive amounts. No
+DueDate, no Url, and the supplier's number goes in as `CreditNoteNumber`.
+
+The document records what it went up as: `xeroDocType` beside `xeroInvoiceId`
+(absent = ACCPAY, every row before this). Everything that later asks Xero about
+it branches on that — update-bill posts to `CreditNotes` with `CreditNoteID`,
+the attachment goes under `CreditNotes/{id}/Attachments`, the "Open in Xero"
+link is `ViewCreditNote.aspx?creditNoteID=`, and sync-payments reads each one
+on its own because `CreditNotes` has no `?IDs=` batch. Xero's webhooks have no
+CREDITNOTE category, so that sweep is the only road a credit note's status has.
+A document re-typed AFTER publishing cannot be updated into the other kind of
+record (409 `type_changed`): clear the link and publish again. Credit notes are
+left out of the CYWorkspace payables list — they are money owed to us, and a
+payment run would read one as a bill. Covered by `publish-bill.test.mts`,
+`payables.test.mts` and `test/readiness.test.mjs`.
+
 ## Two-step sign-in (TOTP), for the password login
 
 A Google account already carries its own second factor, so this exists for the

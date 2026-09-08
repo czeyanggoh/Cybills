@@ -18,15 +18,33 @@ const amount = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
 // Surfaced in the UI so users know exactly why something is still in the inbox.
 export const READY_FIELDS = ['Supplier', 'Date', 'Category', 'Total'];
 
+// A credit note or refund: the supplier owes US, so the money runs the other
+// way and it reaches Xero as a credit note rather than a bill. Decided by the
+// TYPE, never by the sign of the total — a negative total on an ordinary
+// invoice is a misread, not a refund. A document carries its type as `type`
+// (the list shape) or `documentType` (the stored shape); both are read.
+// Mirrors the server's isCreditNote.
+export function isCreditNote(d) {
+  return String(d?.type ?? d?.documentType ?? '').trim().toLowerCase().includes('credit');
+}
+
+// The total a document needs. A bill's must be above 0. A credit note's may be
+// typed either way round — "-530" as the paper shows a refund, or "530" as the
+// amount credited — so it only has to be non-zero; both post as 530 of credit.
+export function totalOk(d) {
+  const n = amount(d?.total);
+  return isCreditNote(d) ? n !== 0 : n > 0;
+}
+
 // A cost is "complete" (→ Ready) when it carries those fields: a real supplier
 // (not "Unknown supplier"), a date, a real category (not "Uncategorised"), and a
-// total above 0. Mirrors the server's costComplete so both follow one rule.
+// total (see totalOk). Mirrors the server's costComplete so both follow one rule.
 export function isComplete(d) {
   return (
     named(d?.supplier, 'unknown supplier') &&
     has(d?.date) &&
     named(d?.category, 'uncategorised') &&
-    amount(d?.total) > 0
+    totalOk(d)
   );
 }
 
@@ -36,7 +54,7 @@ export function missingFields(d) {
   if (!named(d?.supplier, 'unknown supplier')) out.push('Supplier');
   if (!has(d?.date)) out.push('Date');
   if (!named(d?.category, 'uncategorised')) out.push('Category');
-  if (!(amount(d?.total) > 0)) out.push('Total');
+  if (!totalOk(d)) out.push('Total');
   return out;
 }
 

@@ -9,6 +9,7 @@ import {
   updateBillInXero,
 } from '@/lib/organisations';
 import { lineItemsPostable } from '@/lib/bills';
+import { isCreditNote, totalOk } from '@/lib/readiness';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useExtractionSettings, PUBLISH_STATUSES } from '@/lib/extractionSettings';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
@@ -174,13 +175,21 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
   // The same completeness the server requires, and the same bulk publish skips
   // on — stated here so the button says what is missing before the click, rather
   // than the request failing after it.
+  // A credit note goes up as a Xero credit note (ACCPAYCREDIT) rather than a
+  // bill — same account, same tax code, the money running the other way. Its
+  // total may be typed "-530" the way the paper shows a refund; the server
+  // posts it as 530 of credit either way. Decided by the document's TYPE, and
+  // — once it is in Xero — by what it was posted as, since an update has to go
+  // to the record that exists.
+  const credit = updating ? bill?.xeroDocType === 'ACCPAYCREDIT' : isCreditNote(bill);
+  const noun = credit ? 'credit note' : 'bill';
   const missing = (() => {
     const out = [];
     const txt = (v) => String(v ?? '').trim();
     if (!txt(bill?.supplier) || txt(bill?.supplier).toLowerCase() === 'unknown supplier') out.push('a supplier');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(txt(bill?.date))) out.push('a date');
     if (!txt(bill?.category) || txt(bill?.category).toLowerCase() === 'uncategorised') out.push('a category');
-    if (!(Number(String(bill?.total ?? '').replace(/[^0-9.-]/g, '')) > 0)) out.push('a total above 0');
+    if (!totalOk(bill)) out.push(credit ? 'a total other than 0' : 'a total above 0');
     return out;
   })();
   const hasDate = missing.length === 0;
@@ -223,7 +232,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
       <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
       <div className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-lg bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
-          <h2 className="text-base font-semibold tracking-tight">{updating ? 'Update the bill in Xero' : 'Publish to Xero'}</h2>
+          <h2 className="text-base font-semibold tracking-tight">{updating ? `Update the ${noun} in Xero` : 'Publish to Xero'}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -240,7 +249,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
             <p className="text-sm">
               {updating ? 'Updated in ' : 'Posted to '}
               <span className="font-medium">{organisation?.tenantName || 'Xero'}</span>
-              {updating ? '' : ` as a ${done.status === 'DRAFT' ? 'draft ' : ''}bill`}
+              {updating ? '' : ` as a ${done.status === 'DRAFT' ? 'draft ' : ''}${done.docType === 'ACCPAYCREDIT' ? 'credit note' : 'bill'}`}
               {done.invoiceNumber ? ` (${done.invoiceNumber})` : ''}
               {postedLines > 1 ? `, as ${postedLines} line items` : ''}.
             </p>
@@ -282,7 +291,11 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
                 {updating ? 'Sends ' : 'Posts '}
                 <span className="font-medium text-foreground">{bill?.supplier || 'this document'}</span>
                 {bill?.total ? ` · ${bill.currency || ''} ${bill.total}` : ''}
-                {updating ? ' to the bill it already created in Xero, replacing what is there.' : ' as a supplier bill.'}
+                {updating
+                  ? ` to the ${noun} it already created in Xero, replacing what is there.`
+                  : credit
+                    ? ' as a supplier credit note — the amount is credited, not owed.'
+                    : ' as a supplier bill.'}
               </p>
               {/* The paper names somebody else. Said again HERE because this is
                   the irreversible half: a bill published into the wrong client's
@@ -383,16 +396,21 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
                     </div>
                   </label>
 
-                  <label className="flex items-center gap-3 text-sm">
-                    <span className="w-28 shrink-0 text-muted-foreground">Due date</span>
-                    <input
-                      type="date"
-                      value={dueDate}
-                      onChange={(e) => setDueDate(e.target.value)}
-                      title="Defaults to the invoice date, so the pair stays together if the date shifts for a locked period"
-                      className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    />
-                  </label>
+                  {/* Nothing falls due on a credit note — it is allocated
+                      against a bill or refunded — and Xero's credit notes have
+                      no due date field, so the row is not offered. */}
+                  {!credit && (
+                    <label className="flex items-center gap-3 text-sm">
+                      <span className="w-28 shrink-0 text-muted-foreground">Due date</span>
+                      <input
+                        type="date"
+                        value={dueDate}
+                        onChange={(e) => setDueDate(e.target.value)}
+                        title="Defaults to the invoice date, so the pair stays together if the date shifts for a locked period"
+                        className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+                    </label>
+                  )}
 
                   <label className="flex items-center gap-3 text-sm">
                     <span className="w-28 shrink-0 text-muted-foreground">{updating ? 'Status' : 'Post as'}</span>
@@ -414,7 +432,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
               {missing.length > 0 && (
                 <p className="rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                   <span className="font-medium">Can&rsquo;t publish yet.</span> This document still needs{' '}
-                  {missing.join(', ')}. Fill it in on the document first — a bill goes into a live ledger, and a
+                  {missing.join(', ')}. Fill it in on the document first — a {noun} goes into a live ledger, and a
                   missing date would land it in whatever period today falls in.
                 </p>
               )}

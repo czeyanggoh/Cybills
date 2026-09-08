@@ -360,6 +360,9 @@ export function billToDoc(b) {
     duplicateType: b.duplicateType || '',
     duplicateDismissed: Boolean(b.duplicateDismissed),
     xeroInvoiceId: b.xeroInvoiceId || '',
+    // What it went up as: a bill (ACCPAY) or a credit note (ACCPAYCREDIT). The
+    // two live under different pages in Xero, so the link needs to know.
+    xeroDocType: b.xeroDocType || '',
     xeroTenantName: b.xeroTenantName || '',
     xeroPostedAt: b.xeroPostedAt || '',
     // What Xero says about the published bill, read back on its invoice

@@ -84,9 +84,24 @@ const stub = http.createServer((req, res) => {
     });
     return;
   }
+  // A credit note goes to its own endpoint, and Xero answers with its own id
+  // and number fields. Recorded separately so a test can prove a credit note
+  // never reached /Invoices.
+  if (path.endsWith('/CreditNotes')) {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      creditPosted = JSON.parse(body || '{}').CreditNotes?.[0] ?? null;
+      res.end(JSON.stringify({
+        CreditNotes: [{ CreditNoteID: 'cn-1', CreditNoteNumber: 'CN-600052', Status: 'AUTHORISED', HasErrors: false, RemainingCredit: 530 }],
+      }));
+    });
+    return;
+  }
   res.statusCode = 404;
   res.end(JSON.stringify({ error: 'not_found', path }));
 });
+let creditPosted: any = null;
 await new Promise<void>((r) => stub.listen(4602, '127.0.0.1', r));
 process.env.CYWORKSPACE_RELAY_URL = 'http://127.0.0.1:4602';
 
@@ -264,6 +279,55 @@ check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 
     }).id
   );
   check('a rate into another currency is not sent', out.posted.CurrencyRate, undefined);
+}
+
+// 6) A credit note. Typed as one and carrying the minus the paper shows, it
+//    goes up as an ACCPAYCREDIT credit note — to the CreditNotes endpoint, with
+//    POSITIVE amounts, no due date and no link — and the document records what
+//    it was posted as. The same money as the paper: 530 of credit, 30 of it a
+//    refunded bank fee, under the account the document was coded to.
+{
+  const { getBillById } = await import('../src/store.ts');
+  const cn = bill({
+    documentType: 'Credit note/refund', invoiceNumber: '600052', currency: 'USD',
+    total: '-530', tax: '0',
+    lineItems: [
+      row({ description: 'Facebook Marketing Campaigns', total: '-500' }),
+      row({ description: 'Bank fees', total: '-30', category: '313A - Outlet Rental' }),
+    ],
+  });
+  creditPosted = null;
+  const out = await publish(cn.id);
+  check('credit note: published', out.status, 200);
+  check('credit note: nothing went to /Invoices', out.posted, null);
+  check('credit note: posted as an ACCPAYCREDIT credit note', creditPosted?.Type, 'ACCPAYCREDIT');
+  check('credit note: the amounts are positive — the type carries the direction',
+    creditPosted?.LineItems.map((l: any) => l.UnitAmount), [500, 30]);
+  check('credit note: each line keeps its own account', creditPosted?.LineItems.map((l: any) => l.AccountCode), ['315', '313A']);
+  check('credit note: the supplier number is the CreditNoteNumber', creditPosted?.CreditNoteNumber, '600052');
+  check('credit note: no InvoiceNumber, DueDate or Url — Xero credit notes have none',
+    [creditPosted?.InvoiceNumber, creditPosted?.DueDate, creditPosted?.Url], [undefined, undefined, undefined]);
+  check('credit note: still dated, still in its currency', [creditPosted?.Date, creditPosted?.CurrencyCode], ['2026-07-31', 'USD']);
+  check('credit note: the reply names the credit note', [out.body.invoice.invoiceId, out.body.invoice.invoiceNumber, out.body.invoice.docType], ['cn-1', 'CN-600052', 'ACCPAYCREDIT']);
+  const stored = getBillById('cybm', cn.id);
+  check('credit note: the document records what it was posted as', [stored?.xeroInvoiceId, stored?.xeroDocType], ['cn-1', 'ACCPAYCREDIT']);
+  check('credit note: and the status Xero gave it', stored?.xeroStatus, 'AUTHORISED');
+
+  // Typed positive, it is the same credit note — nothing is flipped.
+  creditPosted = null;
+  const plus = await publish(bill({ documentType: 'Credit note/refund', total: '109', tax: '9' }).id);
+  check('credit note typed positive: published', plus.status, 200);
+  check('credit note typed positive: same positive amounts', [creditPosted?.LineItems[0].UnitAmount, creditPosted?.LineItems[0].TaxAmount], [100, 9]);
+
+  // A credit note of nothing is not complete — and its refusal says so in
+  // credit-note words, not "above 0", which a minus would already satisfy.
+  const zero = await publish(bill({ documentType: 'Credit note/refund', total: '0' }).id);
+  check('credit note of 0: refused', [zero.status, zero.body.missing], [400, ['a total other than 0']]);
+
+  // A negative total on an ordinary invoice is NOT a credit note. It is a
+  // misread, and it stays refused rather than being quietly posted as either.
+  const neg = await publish(bill({ documentType: 'Invoice', total: '-530' }).id);
+  check('negative invoice: refused, not posted as a credit note', [neg.status, neg.body.missing], [400, ['a total above 0']]);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

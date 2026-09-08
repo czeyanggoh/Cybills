@@ -753,7 +753,7 @@ export default function Costs() {
       interactive: true,
       cell: (d) =>
         d.xeroInvoiceId ? (
-          <a href={xeroBillUrl(d.xeroInvoiceId, xeroShortCode)} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
+          <a href={xeroBillUrl(d.xeroInvoiceId, xeroShortCode, d.xeroDocType)} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
             View
           </a>
         ) : (

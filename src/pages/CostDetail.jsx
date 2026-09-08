@@ -44,6 +44,7 @@ import {
 } from '@/lib/supplierRules';
 import TeachRule from '@/components/TeachRule';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
+import { totalOk } from '@/lib/readiness';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { readDecisions } from '@/lib/reRead';
 import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
@@ -1004,7 +1005,9 @@ export default function CostDetail() {
   // advancing a half-filled doc, Move to ready validates these and tells you
   // exactly what's missing (answers "what does Move to Ready do?").
   const isBlank = (v) => !v || String(v).trim() === '' || String(v).trim() === '—';
-  const amountOk = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) > 0;
+  // The same rule readiness.js applies: above 0 for a bill, non-zero for a
+  // credit note, whose total is often typed with the minus the paper shows.
+  const amountOk = (v) => totalOk({ type: data.type, total: v });
   const READY_REQUIRED = [
     ['supplier', 'Supplier'],
     ['date', 'Date'],
@@ -1725,10 +1728,10 @@ export default function CostDetail() {
         {doc.persisted &&
           (doc.xeroInvoiceId ? (
             <a
-              href={xeroBillUrl(doc.xeroInvoiceId, xeroShortCode)}
+              href={xeroBillUrl(doc.xeroInvoiceId, xeroShortCode, doc.xeroDocType)}
               target="_blank"
               rel="noreferrer"
-              title={`Open this bill in ${doc.xeroTenantName || 'Xero'}`}
+              title={`Open this ${doc.xeroDocType === 'ACCPAYCREDIT' ? 'credit note' : 'bill'} in ${doc.xeroTenantName || 'Xero'}`}
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700 transition-colors hover:bg-green-600/20"
             >
               {/* Not "View in <entity>": a name like "CY Business Management
@@ -1761,7 +1764,7 @@ export default function CostDetail() {
             Only offered where there is a bill to update, and never for a cost
             sitting on an expense claim, which reaches Xero as the claim's line. */}
         {doc.persisted && doc.xeroInvoiceId && (
-          <TopButton onClick={openXeroUpdate} disabled={xeroBusy} title="Send this document's current figures to the bill it created in Xero">
+          <TopButton onClick={openXeroUpdate} disabled={xeroBusy} title={`Send this document's current figures to the ${doc.xeroDocType === 'ACCPAYCREDIT' ? 'credit note' : 'bill'} it created in Xero`}>
             Update in Xero
           </TopButton>
         )}
@@ -2512,7 +2515,7 @@ export default function CostDetail() {
       <PublishToXeroModal
         open={publishOpen}
         onClose={() => setPublishOpen(false)}
-        bill={{ id: doc.id, supplier: data.supplier, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck }}
+        bill={{ id: doc.id, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType }}
         onPublished={onPublished}
         mode={publishMode}
       />

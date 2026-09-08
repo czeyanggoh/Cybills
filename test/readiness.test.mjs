@@ -19,6 +19,8 @@ import {
   isSetAside,
   isMergedAway,
   isUnpublished,
+  isCreditNote,
+  totalOk,
   READY_FIELDS,
 } from '../src/lib/readiness.js';
 
@@ -192,6 +194,23 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
     inCostsAll(setAside), false);
   check('so All costs is the whole book bar those two',
     [all.filter(inCostsAll).length, all.length], [5, 7]);
+}
+
+// A credit note's money runs the other way, and its total is often typed with
+// the minus the paper shows. It is complete with any non-zero total; a bill
+// still needs one above 0, and a minus on an ordinary invoice is a misread,
+// not a refund.
+{
+  const base = { supplier: 'Adkeyz Technologies', date: '2026-08-25', category: '403 - Digital Marketer', status: 'new' };
+  const credit = { ...base, type: 'Credit note/refund', total: '-530' };
+  check('a credit note is known by its type, on either shape',
+    [isCreditNote(credit), isCreditNote({ documentType: 'Credit note' }), isCreditNote({ type: 'Invoice', total: '-530' })],
+    [true, true, false]);
+  check('a credit note typed with a minus is complete', [isComplete(credit), missingFields(credit)], [true, []]);
+  check('and typed positive, just the same', isComplete({ ...credit, total: '530' }), true);
+  check('but a credit note of nothing is not', [totalOk({ ...credit, total: '0' }), missingFields({ ...credit, total: '' })], [false, ['Total']]);
+  check('a negative total on an invoice is still missing its total',
+    missingFields({ ...base, type: 'Invoice', total: '-530' }), ['Total']);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');

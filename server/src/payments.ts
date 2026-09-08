@@ -10,6 +10,7 @@ import {
   costComplete,
   displayIdOf,
   getBillByIdAny,
+  isCreditNote,
   listBills,
   parseAmount,
   type Bill,
@@ -89,6 +90,9 @@ function payable(b: Bill): boolean {
   if (!INBOX_STATUSES.has(String(b.status ?? ''))) return false;
   if (b.xeroInvoiceId) return false;
   if (b.paid) return false;
+  // A credit note is money the supplier owes US. It is not a bill to pay, and
+  // in a payment run it would read as one — a positive line for a refund.
+  if (isCreditNote(b)) return false;
   return costComplete(b);
 }
 

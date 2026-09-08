@@ -160,6 +160,12 @@ export type Bill = {
   // Set once the bill has been published to Xero (via the cyworkspace relay).
   // A non-empty xeroInvoiceId means "already posted" and blocks re-publishing.
   xeroInvoiceId?: string;
+  // WHAT it was posted as. A credit note goes up as an ACCPAYCREDIT credit note
+  // rather than an ACCPAY bill, and Xero keeps the two in different endpoints
+  // with different ids — so every later read, update or attachment has to know
+  // which one to ask for. Absent on rows published before credit notes could
+  // be, which were all bills.
+  xeroDocType?: 'ACCPAY' | 'ACCPAYCREDIT';
   xeroTenantId?: string;
   xeroTenantName?: string;
   xeroPostedAt?: string; // ISO timestamp
@@ -670,10 +676,30 @@ const amount = (v: unknown) => {
   return Number.isFinite(n) ? n : 0;
 };
 const filled = (v: unknown) => v != null && String(v).trim() !== '' && String(v).trim() !== '—';
+
+// A credit note or refund: the supplier owes US, so the document's money runs
+// the other way. Decided by the TYPE a person (or the reader) gave it, not by
+// the sign of the total — a negative total on an ordinary invoice is a misread,
+// and treating it as a credit note would post a refund nobody received.
+// Matches "Credit note/refund" (the document page's list), "Credit note" (bulk
+// edit), and whatever else says credit.
+export function isCreditNote(b: { documentType?: unknown }): boolean {
+  return String(b?.documentType ?? '').trim().toLowerCase().includes('credit');
+}
+
+// The total a document needs to be complete. A bill's must be above 0; a
+// credit note's may be typed either way round — "-530" as the paper shows it
+// or "530" as the amount credited — so it only has to be non-zero. Both post
+// as 530 of credit (see buildBillInvoice in xero.ts).
+export function totalComplete(b: Bill): boolean {
+  const n = amount(b.total);
+  return isCreditNote(b) ? n !== 0 : n > 0;
+}
+
 export function costComplete(b: Bill): boolean {
   const supplier = filled(b.supplier) && String(b.supplier).trim().toLowerCase() !== 'unknown supplier';
   const category = filled(b.category) && String(b.category).trim().toLowerCase() !== 'uncategorised';
-  return supplier && filled(b.date) && category && amount(b.total) > 0;
+  return supplier && filled(b.date) && category && totalComplete(b);
 }
 
 // Auto-move a cost between the inbox ('new') and 'ready' based on completeness.
@@ -868,12 +894,13 @@ export function setBillFile(
 export function markBillPosted(
   orgId: string,
   id: string,
-  info: { xeroInvoiceId: string; xeroTenantId: string; xeroTenantName: string }
+  info: { xeroInvoiceId: string; xeroDocType?: 'ACCPAY' | 'ACCPAYCREDIT'; xeroTenantId: string; xeroTenantName: string }
 ): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
   if (!bill) return null;
   bill.xeroInvoiceId = info.xeroInvoiceId;
+  bill.xeroDocType = info.xeroDocType || 'ACCPAY';
   bill.xeroTenantId = info.xeroTenantId;
   bill.xeroTenantName = info.xeroTenantName;
   bill.xeroPostedAt = new Date().toISOString();
@@ -1011,6 +1038,7 @@ export function clearBillPosted(orgId: string, id: string): Bill | null {
   if (!bill) return null;
   const wasPublished = Boolean(bill.xeroInvoiceId);
   bill.xeroInvoiceId = undefined;
+  bill.xeroDocType = undefined;
   bill.xeroTenantId = undefined;
   bill.xeroTenantName = undefined;
   bill.xeroPostedAt = undefined;

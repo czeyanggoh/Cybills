@@ -218,7 +218,7 @@ function UploadItem({ item, onForce, onSkip }) {
   // whichever organisation the browser last had open there.
   const xeroShortCode = useXeroShortCode();
   const readerName = useReaderName();
-  const { status, file, error, duplicate, xeroInvoiceId, attachError } = item;
+  const { status, file, error, duplicate, xeroInvoiceId, xeroDocType, attachError } = item;
   return (
     <div className="rounded-md border p-3">
       <div className="flex items-center gap-3">
@@ -242,7 +242,7 @@ function UploadItem({ item, onForce, onSkip }) {
         )}
         {status === 'added' && xeroInvoiceId && (
           <a
-            href={xeroBillUrl(xeroInvoiceId, xeroShortCode)}
+            href={xeroBillUrl(xeroInvoiceId, xeroShortCode, xeroDocType)}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-xs font-medium text-foreground underline underline-offset-2"
@@ -754,6 +754,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
               status: 'added',
               bill: posted?.bill ?? withDefaults,
               xeroInvoiceId: posted?.invoice?.invoiceId || posted?.bill?.xeroInvoiceId || '',
+              xeroDocType: posted?.invoice?.docType || posted?.bill?.xeroDocType || '',
               // A published bill without its paper attached is worth saying out
               // loud here, rather than leaving it to be noticed in Xero.
               attachError: posted?.attachment && !posted.attachment.ok ? posted.attachment.error : '',
