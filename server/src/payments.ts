@@ -23,6 +23,7 @@ import {
   postingCodesFrom,
   taxRatesForOrg,
 } from './xero.js';
+import { bankRules, readLine, recordsFor, settleBillAgainstLine } from './bankMatch.js';
 
 // Payables: the half of a document's life that happens in CYWorkspace.
 //
@@ -292,6 +293,115 @@ paymentsRouter.post('/bills/:id/publish', async (req, res) => {
     status,
     dueDate: b.due_date,
     contactId,
+  });
+  return res.status(out.status).json(out.body);
+});
+
+// --- Bank match, the machine half ---------------------------------------------
+// CYWS's auto bank reconciliation settles each unreconciled statement line
+// against the Xero bill it pays, and for a line no Xero bill answers it looks
+// past the ledger — to Dext's review pile, and now to the documents here. Two
+// routes: what a statement line could pay, and the settle that publishes the
+// document and applies the payment in one act (bankMatch.ts, which the Bank tab
+// shares). Contract: deploy/BANK-MATCH.md.
+
+// GET /api/payments/bank-candidates?tenant_id=<uuid> — every document in this
+// Xero organisation's CYBills books that a statement line could pay.
+//
+// WIDER than /bills on purpose, and the difference is the whole point. The
+// payables list leaves out a document marked PAID, because a receipt in a
+// payment run pays the supplier a second time; here a receipt marked paid is
+// exactly what a card line on the statement IS, so it is offered. A bill
+// already published but still awaiting payment is offered too — publishing is
+// not paying. What is still left out is what no bank line can pay: a credit
+// note, a document on a claim or merged away, and one Xero already calls PAID.
+paymentsRouter.get('/bank-candidates', async (req, res) => {
+  if (unauthorised(req, res)) return;
+  const tenantId = String(req.query.tenant_id ?? '').trim();
+  if (!tenantId) {
+    return res.status(400).json({ error: 'tenant_id_required', message: 'Name the Xero tenant to list candidates for.' });
+  }
+  const rules = await bankRules();
+  if (!rules) return res.status(500).json({ error: 'rules_unavailable' });
+  const organisations = organisationsForTenant(tenantId);
+  if (!organisations.length) {
+    return res.json({ ok: true, tenant_id: tenantId, organisations: [], candidates: [] });
+  }
+  const candidates: any[] = [];
+  for (const organisation of organisations) {
+    const ws = dataScopeForOrg(organisation.id);
+    const settled = new Set(recordsFor(ws).filter((r) => r.kind === 'match').map((r) => r.billId));
+    const mine = listBills(ws).filter((b) => rules.matchable(b) && !settled.has(b.id));
+    if (!mine.length) continue;
+    const [accounts, rates] = await Promise.all([
+      accountsForOrg(WORKSPACE_ID, organisation.id),
+      taxRatesForOrg(WORKSPACE_ID, organisation.id),
+    ]);
+    for (const bill of mine) {
+      const published = Boolean(bill.xeroInvoiceId);
+      // A bill already in Xero needs no posting codes: it is paid, not posted.
+      const posting = published ? null : postingCodesFrom(bill, accounts, rates);
+      const row = payableRow(req, organisation, bill, posting ?? { ok: true, accountCode: '', taxType: '' });
+      candidates.push({
+        ...row,
+        paid: Boolean(bill.paid),
+        payment_method: bill.paymentMethod || '',
+        published,
+        xero_invoice_id: bill.xeroInvoiceId || '',
+        xero_status: bill.xeroStatus || '',
+        postable: published ? true : posting!.ok,
+        blocked_reason: published ? '' : posting!.ok ? '' : posting!.message,
+      });
+    }
+  }
+  res.json({
+    ok: true,
+    tenant_id: tenantId,
+    organisations: organisations.map((o) => ({ id: o.id, name: o.name })),
+    candidates,
+  });
+});
+
+// POST /api/payments/bills/:id/settle
+// Body: { tenant_id, contact_id?, line: { date, amount, currency, reference,
+//         description, bank_account_id, bank_account_name } }
+//
+// Publish the document AUTHORISED if it is not yet in Xero, then record the
+// payment from that bank account, on the statement date, for the statement
+// amount. `amount` is SIGNED as the report prints it — negative is money out —
+// and must equal the document's figure to the cent in the bank's currency; a
+// payment for a different figure is refused (422 amount_mismatch) rather than
+// leaving a part-paid bill. `contact_id` is the payables road's own rule: the
+// contact CYWS made first, carrying the payee's bank details, so the bill lands
+// on it by ID. Idempotent on the LINE: a line already settled against this
+// document answers 200 { already_settled: true }.
+paymentsRouter.post('/bills/:id/settle', async (req, res) => {
+  if (unauthorised(req, res)) return;
+  const b = req.body ?? {};
+  const tenantId = String(b.tenant_id ?? '').trim();
+  const line = await readLine(b.line);
+  if (!tenantId || !line) {
+    return res.status(400).json({
+      error: 'missing_field',
+      message: 'tenant_id and a statement line (date, signed amount, reference, bank_account_id) are required.',
+    });
+  }
+  const bill = getBillByIdAny(req.params.id);
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  const organisation = listOrganisations(WORKSPACE_ID).find((o) => dataScopeForOrg(o.id) === bill.orgId);
+  if (!organisation) {
+    return res.status(404).json({ error: 'organisation_not_found', message: 'This document belongs to no linked entity.' });
+  }
+  if (organisation.tenantId.trim().toLowerCase() !== tenantId.toLowerCase()) {
+    return res.status(409).json({
+      error: 'tenant_mismatch',
+      message: `This document belongs to “${organisation.name}”, which isn’t the Xero organisation you named.`,
+    });
+  }
+  const out = await settleBillAgainstLine(req, organisation, dataScopeForOrg(organisation.id), bill, line, {
+    via: 'cyws',
+    by: 'cyworkspace',
+    contactId: String(b.contact_id ?? '').trim() || undefined,
   });
   return res.status(out.status).json(out.body);
 });

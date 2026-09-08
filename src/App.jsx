@@ -75,9 +75,11 @@ function App() {
             {/* Customers is reached only from the Sales sub-nav, and is the
                 list of who those invoices go to — it goes with the section. */}
             <Route path="/customers" element={<SalesRoute><Customers /></SalesRoute>} />
-            <Route path="/bank" element={<Protected><Bank view="transactions" /></Protected>} />
-            <Route path="/bank/statements" element={<Protected><Bank view="statements" /></Protected>} />
-            <Route path="/bank/accounts" element={<Protected><Bank view="accounts" /></Protected>} />
+            {/* Bank match shows every document in the entity and writes payments
+                into its ledger, so it holds the Costs inbox's bar: Business Admin. */}
+            <Route path="/bank" element={<RequireBusinessAdmin><Bank view="transactions" /></RequireBusinessAdmin>} />
+            <Route path="/bank/statements" element={<RequireBusinessAdmin><Bank view="statements" /></RequireBusinessAdmin>} />
+            <Route path="/bank/accounts" element={<RequireBusinessAdmin><Bank view="accounts" /></RequireBusinessAdmin>} />
             <Route path="/vault" element={<Protected><Vault /></Protected>} />
             <Route path="/vault/tags" element={<Protected><VaultTags /></Protected>} />
             <Route path="/vault/downloads" element={<Protected><VaultDownloads /></Protected>} />

@@ -20,6 +20,7 @@ import { boardRouter } from './board.js';
 import { xeroWebhookRouter } from './xeroWebhook.js';
 import { whatsappRouter } from './whatsapp.js';
 import { paymentsRouter } from './payments.js';
+import { bankRouter } from './bankMatch.js';
 import { scrubFillerText } from './store.js';
 import { verifyShareToken } from './shareLinks.js';
 
@@ -176,6 +177,13 @@ app.use('/api/whatsapp', whatsappRouter);
 // puts a document in the ledger so it can be paid. Machine-to-machine, on the
 // same shared key.
 app.use('/api/payments', paymentsRouter);
+
+// Bank match: the statement lines CYWorkspace's auto bank reconciliation could
+// not settle, offered against the documents here that pay them, and settled —
+// published and paid in Xero — when a person confirms one. Session-guarded and
+// entity-scoped like the Costs API; the machine half of the same seam lives on
+// /api/payments (bank-candidates, settle).
+app.use('/api/bank', bankRouter);
 
 // The practice (CYBM) itself: its colleagues, their client access, and the
 // connected-client list with what each has cost in Claude API usage.

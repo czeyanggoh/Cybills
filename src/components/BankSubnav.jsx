@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 
 // Left sub-nav column for the Bank workspace.
 const SUBNAV = [
-  { label: 'Reconciliation', to: '/bank' },
+  { label: 'Bank match', to: '/bank' },
   { label: 'Statements', to: '/bank/statements' },
   { label: 'Accounts', to: '/bank/accounts' },
 ];

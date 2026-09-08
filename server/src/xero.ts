@@ -28,7 +28,7 @@ type RelayResult =
   | { ok: true; status: number; data: any }
   | { ok: false; status: number; error: string; message: string; data: any };
 
-async function relay(
+export async function relay(
   xeroPath: string,
   opts: {
     method?: string;
@@ -844,7 +844,7 @@ function xeroLineDescription(supplier: string, id: string, description: string):
 // on an answer that never moves. Only a real answer is cached, so a relay
 // hiccup can't pin '' there for good.
 const baseCurrencies = new Map<string, string>();
-async function baseCurrencyFor(tenantId: string): Promise<string> {
+export async function baseCurrencyFor(tenantId: string): Promise<string> {
   const hit = baseCurrencies.get(tenantId);
   if (hit) return hit;
   const result = await relay('Organisation', { tenantId });

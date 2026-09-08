@@ -21,6 +21,7 @@ import {
   Trash2,
   Menu,
   MessageCircle,
+  Landmark,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -55,6 +56,11 @@ const NAV = [
   // documents and everybody's messages, so it is hidden from anybody who could
   // not open the Costs inbox in the first place — the route guards it too.
   { to: '/whatsapp', label: 'WhatsApp', icon: MessageCircle, requires: 'business' },
+  // Bank match: the statement lines CYWorkspace's auto bank reconciliation
+  // could not settle, matched to the documents here that pay them. It
+  // publishes bills and records payments in the entity's ledger, and shows
+  // every document in the entity to do it, so it holds the same bar as Costs.
+  { to: '/bank', label: 'Bank', icon: Landmark, requires: 'business' },
 ];
 
 // Right-aligned top-bar tabs (support channels). Feature Requests now lives as

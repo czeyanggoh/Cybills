@@ -1807,6 +1807,75 @@ rather than posting a second copy. Covered by `npm test` in `server/`
 mounting the router directly would never meet the session guard, which is where
 the allowlist that lets these through lives.
 
+## Bank match: settling a statement line against the document it pays
+
+CYWS's **auto bank reconciliation** reads a client's Xero Bank Reconciliation
+report and settles each unreconciled statement line against the Xero bill it
+pays. What it cannot settle is, more often than not, a document still only HERE
+— read, coded, never published — because as far as Xero is concerned that bill
+does not exist. It already looks past the ledger to Dext's review pile for the
+invoice behind a line; this is the same look into CYBills, from both ends, and
+it is Dext's Bank Match: `deploy/BANK-MATCH.md` is the contract.
+
+**One act, two roads.** `settleBillAgainstLine` (`server/src/bankMatch.ts`)
+publishes the document AUTHORISED if it is not yet in Xero, then records a
+PAYMENT against it from the bank account, on the STATEMENT date, for the
+statement amount, carrying the bank's reference — which is what Xero's own
+reconciliation then pairs the line with. The BROWSER road is the **Bank** tab
+(`BankMatch.jsx`, Business Admin like Costs): `GET /api/bank/outstanding` asks
+CYWS for the lines its run left unsettled (`/api/webhooks/cybills/bank-recon/
+outstanding`, a route CYWS has to add — a bare 404 from an older CYWS is
+reported as "needs updating", not as "nothing outstanding"), the page suggests
+the document each pays, and a person presses Match (`POST /api/bank/match`).
+The MACHINE road is CYWS's run itself, on the payables seam (`payments.ts`, same
+key, same tenant check): `GET /api/payments/bank-candidates` lists every
+document a line could pay — WIDER than the payables list, because a receipt
+marked paid is exactly what a card line on the statement is, and a published
+bill awaiting payment is offered too — and `POST /api/payments/bills/:id/settle`
+does the act, idempotent on the line so a re-pressed run finds its earlier
+settlement rather than paying twice.
+
+**AUTHORISED, whatever the entity's publish status says**: Xero refuses a
+payment against a DRAFT or SUBMITTED bill, and the money has left the bank,
+which is as approved as a bill gets. A bill already sitting SUBMITTED (the
+automatic publish-after-reading's queue) is approved first, then paid.
+
+**The money has to agree to the cent, in the currency the bank moved**, and
+never through a converted guess: a foreign-currency document answers with the
+SGD figure it restated itself in (`baseTotal`) when the bank account is in that
+currency, or not at all. `src/lib/bankMatch.js` (pure, `npm test` at the root)
+is that judgement — `docAmountFor`, the date window, the supplier's name or the
+document's number in the bank text — and the server loads it by path the way
+`mileage.ts` does, so a document the page offers can never be refused for its
+amount and one the page would never offer can never be paid through the API. A
+different figure is `422 amount_mismatch`, because a payment for a different
+amount leaves a part-paid bill nobody asked for. The payment is for the BILL's
+own figure in its own currency, with `CurrencyRate` (foreign per base, the same
+way round as the invoice's) carrying the bank's figure onto it.
+
+**A suggestion is the money, the window and a NAME.** 'firm' when the bank text
+names the supplier or the document number — or the document is the only one at
+that figure within a week, which is what a card slip beside its receipt looks
+like — and 'possible' when only the money and the window agree, which is offered
+to choose from and never taken by itself. `bankMatches` claims each document for
+ONE line (the nearest), so two identical charges a week apart do not both point
+at one receipt. Money in is never matched: a customer paying or a refund is not
+a cost document.
+
+**Every settlement is recorded** (`bank-lines` collection, keyed by `lineKey` =
+date + cents + reference): CYWS hands the same lines back until the statement
+line is reconciled in Xero, so a settled line is shown as Matched rather than
+offered again. The record remembers the payment (Undo deletes it in Xero and
+puts the document's Paid toggle back; the bill stays published) and what the
+document said before. A line that is not a cost — a transfer, payroll — is
+IGNORED, which writes nothing to Xero. The document's own `paid` +
+`paymentMethod` are set by the match (this IS the payment, from THAT account),
+the three Xero fields are read back through `paymentFromInvoice` like the
+webhook's, and the WhatsApp tick turns green. Covered by `npm test` in `server/`
+(`test/bank-match.test.mts`, over real HTTP with one stub standing in for the
+relay and for CYWS). This REPLACED a simulated feed (`bankRecon.js`,
+`BankReconcile.jsx`) that seeded bank lines from the documents themselves.
+
 ## Xero via the cyworkspace relay
 
 CYBills never holds Xero credentials. All Xero traffic goes through
