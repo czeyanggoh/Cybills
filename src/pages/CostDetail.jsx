@@ -1229,8 +1229,8 @@ export default function CostDetail() {
     set(
       'taxRateReason',
       name
-        ? `${name} — chosen by hand. A re-read keeps a code a person picked; pick another to change it.`
-        : 'Left blank by hand. A re-read keeps that; pick a code to change it.'
+        ? `${name} — chosen by hand. A re-read decides the code again from the document.`
+        : 'Left blank by hand. A re-read decides the code again from the document.'
     );
     const r = rateFor(name);
     const total = num(data.total);
@@ -1305,7 +1305,7 @@ export default function CostDetail() {
       // read, or what the document already carried — is decided in one place
       // (readDecisions), so this page and the inbox's bulk re-read agree.
       const {
-        patch, rule, descr, inferredRate, rateReason, supplierName, categoryReason, projectReason, ruleLines,
+        patch, rule, descr, supplierName, categoryReason, projectReason, ruleLines,
       } = readDecisions(data, ex, {
         gstRegistered,
         taxRates: taxRateSource,
@@ -1336,12 +1336,14 @@ export default function CostDetail() {
         // GST this business can claim — so the form and the stored bill can't
         // disagree. Untouched when the read didn't decide the tax at all.
         tax: patch.tax != null ? Number(patch.tax).toFixed(2) : d.tax,
-        taxRate: rule.taxRate || d.taxRate || inferredRate,
-        taxRateReason: rule.taxRate
-          ? `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`
-          : d.taxRate
-            ? d.taxRateReason
-            : ex.taxRateReason || rateReason || d.taxRateReason,
+        // The code and its reason are exactly what readDecisions is about to
+        // SAVE — a re-read decides the tax code again whatever was there, a
+        // hand-picked one included, and the form must not show an answer the
+        // server no longer holds.
+        taxRate: 'taxRate' in patch ? patch.taxRate : d.taxRate,
+        taxRateReason: 'taxRateReason' in patch ? patch.taxRateReason : d.taxRateReason,
+        taxRateEdited: 'taxRateEdited' in patch ? patch.taxRateEdited : d.taxRateEdited,
+        taxRateCleared: 'taxRateCleared' in patch ? patch.taxRateCleared : d.taxRateCleared,
         description: rule.description || descr || d.description,
         paymentMethod: rule.paymentMethod || d.paymentMethod,
         paid: 'paid' in rule ? rule.paid : d.paid,

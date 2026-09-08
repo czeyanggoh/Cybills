@@ -937,19 +937,23 @@ inbox as "Unknown supplier / 0.00" with no way forward but typing it in; it is
 also how a supplier rule written AFTER the upload reaches the documents it was
 written for.
 
-**A re-read may revise the code CYBills itself chose — only a person's is
-kept.** It used to protect ANY existing tax rate, which made a re-read unable to
-do the very thing it is usually pressed for: the document kept the answer
-somebody was trying to change, and kept it silently, because the reason is
-written in the same breath and so was held back too. The two can be told apart
-now, because a person's decision is recorded as one — `taxRateEdited` for a code
-they picked, `taxRateCleared` for the blank they chose on purpose — by the
-document page, the inline cell and Bulk edit alike. Neither flag had ever
-reached the server: `PATCH /api/costs/bills/:id` took only strings, so
-`taxRateCleared` was dropped on every write and the listing's backfill and the
-supplier rules were guarding on a flag that could never be set. A document
-written before the markers existed carries neither, which is exactly the
-population a re-read needs to re-decide.
+**A re-read decides the tax code again, whoever set it.** It used to protect
+ANY existing tax rate, which made a re-read unable to do the very thing it is
+usually pressed for: the document kept the answer somebody was trying to
+change, and kept it silently, because the reason is written in the same breath
+and so was held back too. It then protected only a PERSON's code, and that was
+still wrong, because a person may pick No Tax on a receipt that plainly charges
+GST — and Cze's rule is that once somebody asks for a re-read, the rules are
+applied to the paper without regard to who typed what before. So `readDecisions`
+now writes the code it reached (or the blank, with its reason) over whatever was
+there, and clears the hand-pick markers with it. Those markers —
+`taxRateEdited` for a code a person picked, `taxRateCleared` for the blank they
+chose on purpose, written by the document page, the inline cell and Bulk edit
+alike — still hold against everything that runs BY ITSELF: the listing's
+backfill and the supplier-rule sweep were not asked to revisit anybody's
+choice, and a re-read was. Neither flag had ever reached the server before:
+`PATCH /api/costs/bills/:id` took only strings, so `taxRateCleared` was dropped
+on every write and the sweeps were guarding on a flag that could never be set.
 
 **A rate the document PRINTS beats the one worked out from the money.** The
 percentage was only ever inferred — `tax / (total − tax)` — which assumes the
@@ -974,13 +978,11 @@ wrongly typed Tax amount looks like. Covered by `npm test` at the root.
 Two things sat between that fix and the page, and both were the REASON going
 stale while the code moved. A code a person picks (the page's picker, the inline
 cell) kept whatever sentence the last read wrote, so a hand-picked No Tax sat
-under "Left blank: this document is taxed at 13.0%" — and since a re-read keeps a
-person's code, pressing it changed nothing and read as the fix not working. The
-pick now writes its own sentence ("chosen by hand"), naming the rule that holds
-it. And a re-read that DECLINES wrote its reason only over a blank code, so a
-code CYBills chose on an earlier read kept that read's sentence too;
-`readDecisions` now blanks the code and writes the new reason whenever no person
-decided it, and the supplier rule is put back after, as it always was.
+under "Left blank: this document is taxed at 13.0%" — and since a re-read then
+kept a person's code, pressing it changed nothing and read as the fix not
+working. The pick now writes its own sentence ("chosen by hand"), and a re-read
+writes the code AND the reason together, over whatever was there, so the two
+cannot say different things about one field.
 
 **And a blank Reason is a bug wherever it appears.** Two paths through
 `taxRateOutcome` still returned one: a code the reader picked from the org's own

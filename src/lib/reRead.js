@@ -117,31 +117,27 @@ export function readDecisions(
     if (!exTaxOut) patch.baseTax = 0;
   }
   // A re-read is an explicit instruction to decide this document again, and it
-  // is usually pressed BECAUSE the first read got the code wrong. Refusing to
-  // revise any existing rate made that impossible: the document kept the very
-  // answer somebody pressed the button to change, and kept it silently, since
-  // the reason is written in the same breath and so was also held back. So only
-  // a rate a PERSON decided is protected — `taxRateEdited` for a code they
-  // picked, `taxRateCleared` for the blank they chose on purpose. A document
-  // written before either marker existed carries neither, which is exactly the
-  // population that needs re-deciding.
-  const personDecided = Boolean(current.taxRateEdited) || Boolean(current.taxRateCleared);
-  if (!personDecided && inferredRate) {
-    patch.taxRate = inferredRate;
-    // Why it was coded that way, written with the code so the two can't drift.
-    patch.taxRateReason = ex.taxRateReason || rate.reason || '';
-  } else if (!personDecided) {
-    // Nothing could be chosen THIS time. Say why, rather than leaving a blank
-    // field that is indistinguishable from a bug — and say it over whatever the
-    // LAST read said, because a reason left standing from an earlier read
-    // describes a decision that has just been re-made and reached a different
-    // answer. The code CYBills itself chose last time goes with it: a re-read is
-    // the instruction to decide again, and "No Tax" under a sentence beginning
-    // "Left blank" is two answers on one field. A supplier rule's code is put
-    // back below, since the rule has the last word on everything it sets.
-    patch.taxRate = '';
-    patch.taxRateReason = ex.taxRateReason || rate.reason || '';
-  }
+  // is usually pressed BECAUSE the code on it is wrong — including a code a
+  // PERSON picked. It used to keep a hand-picked code, on the reasoning that a
+  // person's decision outranks the arithmetic; but somebody may pick No Tax on
+  // a receipt that plainly charges GST, and the whole point of pressing Re-read
+  // is that the rules are then applied to the paper without regard to who
+  // typed what before. So the code is decided again here, whatever it was and
+  // whoever set it, and the markers a hand pick leaves (`taxRateEdited`,
+  // `taxRateCleared`) are cleared with it: the answer on the document is now
+  // CYBills's own. Those markers still hold against everything that runs BY
+  // ITSELF — the listing's backfill and the supplier-rule sweep — because
+  // nobody asked those to revisit a person's choice; a re-read was asked for.
+  // The supplier rule is put back below, since it has the last word on
+  // everything it sets.
+  patch.taxRate = inferredRate || '';
+  // Why it was coded that way — or why it could not be — written with the code
+  // so the two can't drift, and over whatever the last read (or the last
+  // person) said, since a sentence left standing describes a decision that has
+  // just been re-made.
+  patch.taxRateReason = ex.taxRateReason || rate.reason || '';
+  patch.taxRateEdited = false;
+  patch.taxRateCleared = false;
   // Who the paper says it is for. A re-read decides the document again, so it is
   // allowed to decide there is no addressee at all — otherwise a name misread the
   // first time could never be taken off, and the wrong-entity warning it raised

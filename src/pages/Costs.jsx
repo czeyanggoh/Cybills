@@ -1018,8 +1018,8 @@ export default function Costs() {
       // same sentence — so the reader's earlier sentence does not sit under a
       // code a person just chose.
       taxRateReason: name
-        ? `${name} — chosen by hand. A re-read keeps a code a person picked; pick another to change it.`
-        : 'Left blank by hand. A re-read keeps that; pick a code to change it.',
+        ? `${name} — chosen by hand. A re-read decides the code again from the document.`
+        : 'Left blank by hand. A re-read decides the code again from the document.',
     };
     if (d.persisted) updateBill(d.id, patch).then(reload).catch(() => {});
     else setDocOverride(d.id, patch);
