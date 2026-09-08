@@ -43,6 +43,16 @@ export type WaChannel = {
   // two are indistinguishable and a resumed channel would announce that
   // WhatsApp had refused every single person.
   participantsKnown: boolean;
+  // Who WhatsApp says it made an ADMIN of the group. Everyone CYBills puts into
+  // a collection group is asked for as one, because the group has to outlive
+  // CYBot's involvement in it: only an admin can add somebody WhatsApp silently
+  // refused to add, rename the group, or take a person out of it — and "someone
+  // already in the group has to add them" is the instruction every one of those
+  // shortfalls ends with. Stored the way `participantsAdded` is, and just as
+  // opaque: what comes back are LIDs, so this is only ever counted, never named.
+  // Absent on rows written before promotion existed — which is not "nobody is an
+  // admin", merely "we never asked", and is why the button can be pressed again.
+  participantsPromoted?: string[];
   // This group was already a conversation before CYBills was pointed at it
   // (POST /channels/attach) rather than one CYBot opened. It matters when it is
   // closed down: emptying and leaving a group the client started is destroying
