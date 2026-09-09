@@ -26,7 +26,7 @@ import {
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { dataScopeForOrg, listOrganisations, primaryOrgId } from './organisations.js';
 import { workspaceId, WORKSPACE_ID } from './workspace.js';
-import { canAccessOrg, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg } from './users.js';
+import { addressIn, canAccessOrg, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg, visibleOwnersFor } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
 import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from './taxRules.js';
@@ -353,11 +353,17 @@ billsRouter.get('/bills', async (req, res) => {
   // document page — a document nobody opens is exactly the one that gets
   // published into the wrong ledger, so the list has to be able to say so.
   const check = await entityCheckFor(req);
-  const bills = listBills(orgId).map((b) => ({
-    ...b,
-    hasFile: Boolean(b.storageKey),
-    entityCheck: check(b, entityIdForBill(b)),
-  }));
+  // The one place every surface reads its documents from — Costs, Submission
+  // history, the exports, merge detection — so this is where a Standard user's
+  // view narrows to their own work and their direct reports'.
+  const owners = visibleOwnersFor(req, orgScope(req));
+  const bills = listBills(orgId)
+    .filter((b) => visibleToCaller(owners, b))
+    .map((b) => ({
+      ...b,
+      hasFile: Boolean(b.storageKey),
+      entityCheck: check(b, entityIdForBill(b)),
+    }));
   res.json({ bills });
 });
 
@@ -386,10 +392,36 @@ function contentDisposition(name: string): string {
 //
 // A refusal answers 404, not 403: whether a document exists is itself something
 // the caller isn't entitled to learn.
-function canReadBill(req: Request, bill: { orgId?: string }): boolean {
+function canReadBill(req: Request, bill: { orgId?: string; createdBy?: string; owner?: string }): boolean {
   const me = memberForSession(req);
   if (!me) return true; // sessionless mock/dev, as everywhere else
-  return canAccessOrg(me, entityIdForBill(bill));
+  const entity = entityIdForBill(bill);
+  if (!canAccessOrg(me, entity)) return false;
+  return visibleToCaller(visibleOwnersFor(req, entity), bill);
+}
+
+// Whose document is this, for the question of who may see it? A Standard user
+// without "Access all documents" sees their own and their direct reports'
+// (visibleOwnersFor, users.ts); everyone else sees the entity's whole book, and
+// gets a null set that skips this entirely.
+//
+// Matched on createdBy — the uploader's address, which is never rewritten — OR
+// the owner, and the union is the whole point. The first attempt at this
+// filtered on the OWNER alone, so a person's own upload vanished from every tab
+// the moment that (editable) field drifted from their session. Keyed on both,
+// their own upload can never be hidden from them, and a document REASSIGNED to
+// somebody is still theirs to work on.
+function visibleToCaller(owners: Set<string> | null, bill: { createdBy?: string; owner?: string }): boolean {
+  if (!owners) return true;
+  return addressIn(owners, bill.createdBy) || addressIn(owners, bill.owner);
+}
+
+// The same question for a write. A document this caller cannot see is one they
+// cannot change or destroy either. A document not in this scope at all is left
+// to the route's own 404, which is the answer it has always given.
+function mayWriteBill(req: Request): boolean {
+  const bill = getBillById(orgIdFor(req), String(req.params.id));
+  return !bill || canReadBill(req, bill);
 }
 
 // Which ENTITY a document belongs to. Its `orgId` is a data SCOPE, and the
@@ -577,6 +609,7 @@ billsRouter.get('/bills/:id/where', (req, res) => {
 // existing bill (e.g. one uploaded before file storage worked). Body:
 // { fileBase64, mediaType }.
 billsRouter.post('/bills/:id/file', async (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
   const orgId = orgIdFor(req);
   const bill = getBillById(orgId, req.params.id);
   if (!bill) return res.status(404).json({ error: 'not_found' });
@@ -627,6 +660,11 @@ function restatementPatch(b: Record<string, unknown>, into: Record<string, unkno
 // PATCH /api/costs/bills/:id — update editable fields (e.g. category) or the
 // workflow status ('ready' moves it out of the inbox).
 billsRouter.patch('/bills/:id', async (req, res) => {
+  // Not yours to edit if it isn't yours to see. The listing already hides it;
+  // a write route that took it anyway would make that a display detail rather
+  // than a rule. 404, like every other refusal here: whether a document exists
+  // is itself something the caller isn't entitled to learn.
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
   for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo']) {
@@ -732,6 +770,7 @@ billsRouter.patch('/bills/:id', async (req, res) => {
 // only calls it behind an explicit confirmation. File cleanup is best-effort and
 // never blocks removing the record.
 billsRouter.delete('/bills/:id', async (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
   const orgId = orgIdFor(req);
   const removed = deleteBillHard(orgId, req.params.id);
   if (!removed) return res.status(404).json({ error: 'not_found' });
@@ -747,6 +786,7 @@ billsRouter.delete('/bills/:id', async (req, res) => {
 // of Archive so it can be published again. Local only — it does NOT delete or
 // void anything in Xero. For when the bill was removed at the Xero end.
 billsRouter.post('/bills/:id/unpublish', (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
   const orgId = orgIdFor(req);
   const cleared = clearBillPosted(orgId, req.params.id);
   if (!cleared) return res.status(404).json({ error: 'not_found' });

@@ -880,6 +880,65 @@ export function effectiveRole(req: Request): string {
   return effectiveRoleFor(memberForSession(req), orgScope(req));
 }
 
+// --- Whose work a person may see ---------------------------------------------
+// A Business Admin or User Admin runs this entity's book, so they see all of it;
+// a practice colleague is a Business Admin inside every client they can open, so
+// effectiveRoleFor already carries them. A STANDARD user sees their OWN
+// submissions and those of the people who report to them — the Direct manager
+// column on the Users page, which is the line a claim's approval already travels
+// up (directManagerFor), so this is the org chart the app already holds rather
+// than a second one to keep in step with it.
+//
+// One level, deliberately: `managerId` names a DIRECT manager. Somebody who
+// needs a whole tree — a department head, a finance lead — is given
+// `privileges.accessAll`, which is exactly what that toggle in Edit privileges
+// says and the only thing it has ever meant.
+export function seesEveryDocument(u: User | null | undefined, orgId: string): boolean {
+  if (!u) return true; // the sessionless mock/dev context, open like the rest of the app
+  if (effectiveRoleFor(u, orgId) !== 'Standard') return true;
+  return Boolean((u.privileges as { accessAll?: unknown } | undefined)?.accessAll);
+}
+
+// The addresses a restricted caller's view is confined to — their own, plus
+// their direct reports' in THIS entity. Null when they see the whole book, so
+// the common case builds no set and the callers can skip filtering entirely.
+//
+// A report is looked up in the entity being asked about rather than in the one
+// the caller is standing in: the same person can hold a different role in each,
+// and a manager here is not a manager there.
+export function visibleOwnersFor(req: Request, orgId: string): Set<string> | null {
+  const me = memberForSession(req);
+  if (seesEveryDocument(me, orgId)) return null;
+  const mine = me as User;
+  const seen = new Set<string>();
+  const add = (email: string) => {
+    const n = norm(email);
+    if (n) seen.add(n);
+  };
+  add(mine.email);
+  for (const u of ensure(workspaceId(req))) {
+    if (u.workspaceId !== workspaceId(req) || u.removed || !u.email) continue;
+    if (!u.managerId || u.managerId !== mine.id) continue;
+    if (!inOrg(u, orgId) && !(u.practice && canAccessOrg(u, orgId))) continue;
+    add(u.email);
+  }
+  return seen;
+}
+
+// One spelling for an address, so that both sides of every comparison agree. A
+// set built one way and probed another would silently hide a person's own work,
+// which is the failure this whole area exists to avoid.
+export function normaliseAddress(value: unknown): string {
+  return norm(String(value ?? ''));
+}
+
+// Is this address one of them? A null set is an unrestricted caller.
+export function addressIn(owners: Set<string> | null, value: unknown): boolean {
+  if (!owners) return true;
+  const n = normaliseAddress(value);
+  return Boolean(n) && owners.has(n);
+}
+
 // Give every row an organisation it can actually be found under. Two cases:
 // rows that predate tenant scoping (a self-signup already picked their company
 // on /join, so honour that when it names a linked organisation; the seed and

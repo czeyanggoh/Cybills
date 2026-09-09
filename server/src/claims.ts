@@ -4,7 +4,7 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, canAccessOrg, canonicalPersonName, personNameForEmail } from './users.js';
+import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, addressIn, canAccessOrg, canonicalPersonName, normaliseAddress, orgScope, personNameForEmail, visibleOwnersFor } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
 import {
   getBillById,
@@ -415,9 +415,42 @@ function withLiveItems(c: Claim): Claim {
   return { ...c, transactions: liveTxns(c) };
 }
 
+// The entity a claim's scope belongs to — the same fold bills.ts applies to a
+// document: the primary entity's data scope is the legacy WORKSPACE_ID.
+const entityIdForClaim = (c: Claim): string => (!c.orgId || c.orgId === WORKSPACE_ID ? primaryOrgId() : c.orgId);
+
+// Whose claims a Standard user sees: their own, and their direct reports' — the
+// same line their documents follow (visibleOwnersFor, users.ts), and the line a
+// claim's approval already travels up.
+//
+// Three ways a claim can be theirs, because a claim names people three ways. It
+// was CREATED by them, which is an address and is never rewritten; or it is MADE
+// OUT to them, and `claimFor` is a NAME, so it is resolved back to the one
+// address exactly the way the approval emails resolve it. Either of those counts
+// for a direct report as well as for the caller.
+//
+// The third is the caller's ALONE: a claim routed to them for a DECISION, which
+// they must be able to open whoever raised it, or the approval request arrives
+// by email and leads to an empty list. Not widened to their reports — a claim
+// somebody who reports to me has to decide is theirs to decide, and the person
+// who raised it may be nothing to do with me.
+function claimVisibleTo(ws: string, owners: Set<string> | null, me: string, c: Claim): boolean {
+  if (!owners) return true;
+  if (me && normaliseAddress(c.approverEmail) === me) return true;
+  if (addressIn(owners, c.createdBy)) return true;
+  return addressIn(owners, emailForName(ws, c.claimFor));
+}
+
 claimsRouter.get('/', (req, res) => {
   const org = orgIdFor(req);
-  res.json({ claims: load().filter((c) => c.orgId === org && !c.deleted).map(withLiveItems) });
+  const ws = workspaceId(req);
+  const owners = visibleOwnersFor(req, orgScope(req));
+  const me = normaliseAddress(memberForSession(req)?.email);
+  res.json({
+    claims: load()
+      .filter((c) => c.orgId === org && !c.deleted && claimVisibleTo(ws, owners, me, c))
+      .map(withLiveItems),
+  });
 });
 
 // GET /api/claims/:id/where — which entity a claim belongs to.
@@ -439,6 +472,12 @@ claimsRouter.get('/:id/where', (req, res) => {
   if (!claim) return res.status(404).json({ error: 'not_found' });
   const me = memberForSession(req);
   if (!canAccessOrg(me, claim.orgId)) return res.status(404).json({ error: 'not_found' });
+  // And the same 404 for a claim in this entity that this caller may not see:
+  // it names its claimant, which is the very thing being kept from them.
+  const owners = visibleOwnersFor(req, entityIdForClaim(claim));
+  if (!claimVisibleTo(workspaceId(req), owners, normaliseAddress(me?.email), claim)) {
+    return res.status(404).json({ error: 'not_found' });
+  }
   const org = listOrganisations(workspaceId(req)).find((o) => o.id === claim.orgId);
   res.json({
     orgId: claim.orgId,
@@ -966,10 +1005,6 @@ claimsRouter.post('/:id/email', async (req, res) => {
 const ATTACHMENT_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg']);
 const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 const ATTACHMENTS_MAX = 10;
-
-// The entity a claim's scope belongs to — the same fold bills.ts applies to a
-// document: the primary entity's data scope is the legacy WORKSPACE_ID.
-const entityIdForClaim = (c: Claim): string => (!c.orgId || c.orgId === WORKSPACE_ID ? primaryOrgId() : c.orgId);
 
 // POST /api/claims/:id/attachments  { fileName, fileBase64, mediaType }
 // Allowed until the claim is APPROVED, like its items: an approved claim is a

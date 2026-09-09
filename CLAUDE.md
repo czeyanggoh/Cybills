@@ -57,6 +57,62 @@ every linked entity for the client-access picker).
 Env (server/.env): `PRACTICE_NAME`, `PRACTICE_DOMAIN` (only used to recognise
 pre-existing rows as practice staff on first run), `PRACTICE_TIMEZONE`.
 
+**A Standard user sees their own work, and their reports'.** The Edit
+privileges dialog has always offered three roles and an "Access all documents"
+toggle, and none of it reached the listing: every signed-in person in an entity
+saw every document and every claim in it, so Standard only ever meant "kept off
+the Users page and out of Business settings". It now means what it says. The
+line it follows is the **Direct manager** column on the Users page — already the
+line a claim's approval travels up (`directManagerFor`), so this is the org
+chart the app holds rather than a second one to keep in step with it. ONE level,
+deliberately: `managerId` names a direct manager, and somebody who needs a whole
+tree — a department head, a finance lead — is given `privileges.accessAll`,
+which is exactly what that toggle has always meant and the only thing it has
+ever meant. Business Admin and User Admin run the book and see all of it; a
+practice colleague is a Business Admin inside every client they can open, so
+`effectiveRoleFor` carries them without a word of their own.
+
+`seesEveryDocument` / `visibleOwnersFor` / `addressIn` live in `users.ts` beside
+the rows they read, and return **null for an unrestricted caller** so the common
+case builds no set at all. Reports are looked up in the entity being ASKED
+about, not the one the caller is standing in: the same person holds a different
+role in each, and a manager here is not a manager there.
+
+**Their own upload can never be hidden from them**, which is the whole reason
+the first attempt at this was removed. It filtered on the document's OWNER
+alone, so a person's own upload vanished from every tab the moment that
+(editable) field drifted from their session — the note in `bills.ts` is what was
+left of it. The set is matched against `createdBy` — the uploader's address,
+which is never rewritten — **or** the owner, and the union is the point: the
+first half means a drifting owner cannot lose them their own document, and the
+second means a document REASSIGNED to somebody is theirs to work on. So a
+manager sees their report's work by either road, and the entity's **general
+account** — the row that owns the paperwork nobody claimed — belongs to nobody's
+report and is not in a Standard user's list at all.
+
+**And it is a rule rather than a display detail.** The listing is only where it
+shows; `canReadBill` is where it holds, which covers the by-id read, the file,
+the file-meta, the `where` lookup and move-entity in one place, and the writes
+go through `mayWriteBill` — PATCH, DELETE, unpublish — because a document
+somebody cannot see is not one they may change or destroy. 404 throughout, never
+403: whether a document exists is itself something the caller isn't entitled to
+learn. `GET /api/costs/bills` is the one road every surface reads from, so Costs,
+Submission history, the exports and merge detection all narrow together.
+
+**A claim is visible three ways, and only two of them are shared.** It was
+CREATED by them (an address, never rewritten), or it is MADE OUT to them
+(`claimFor` is a NAME, resolved back through `emailForName` the way the approval
+emails resolve it) — either counts for a direct report as well. The third is the
+caller's ALONE: a claim routed to them for a DECISION, which they must be able
+to open whoever raised it, or the approval request arrives by email and leads to
+an empty list. Not widened to their reports, because a claim somebody who
+reports to me has to decide is theirs to decide, and the person who raised it
+may be nothing to do with me. The WhatsApp and Bank tabs show everybody's
+documents and were already Business Admin only, so they are untouched. What is
+still NOT enforced is the other half of that dialog — `createClaims` and
+`canPublish` — which is `docs/roles-enforcement.md`. Covered by `npm test` in
+`server/` (`test/document-visibility.test.mts`).
+
 **A person has one name, and a document has an owner.** `createdBy` on a bill is
 who UPLOADED it — always an email, never overwritten. The Document owner (the
 Costs "User" column, the drawer's picker, the detail field) is its own field,

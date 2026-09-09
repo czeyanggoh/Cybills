@@ -1,6 +1,7 @@
 # CYBills user roles & privilege enforcement — spec (match Dext)
 
-Status: **proposed** — enforcement not yet wired. Owner: **boss** (roles/permissions area).
+Status: **partly built** — gap 1 (Access all documents) landed 9 Sep 2026; gaps
+2-5 are still proposed. Owner: **boss** (roles/permissions area).
 Written 2026-08-21 as an advisory spec so the enforcement can be added without a
 two-session collision.
 
@@ -35,15 +36,29 @@ Business-Admin-gated server-side (`server/src/mail.ts`).
 
 ## Gaps to build
 
-### 1. Access all documents — `privileges.accessAll` (Standard only)
-- OFF → the user sees **only their own** documents; ON → all.
-- Enforce **server-side** in `GET /api/costs/bills` (`server/src/bills.ts`) and
-  the claims list (`server/src/claims.ts`, extend `visibleClaimsFor`): filter to
-  `createdBy === me` for a Standard user without `accessAll`.
-- ⚠️ Owner-drift trap: an earlier owner-based filter was removed because it hid a
-  person's own uploads when the editable "owner" field drifted (see the note in
-  `bills.ts`). Key the filter on the **session user's email/id vs `createdBy`**,
-  NOT the editable owner display field.
+### 1. Access all documents — `privileges.accessAll` (Standard only) — **DONE**
+Built 9 Sep 2026. A Standard user sees their own submissions and their **direct
+reports'** — the Direct manager column, which is the line a claim's approval
+already travels up, so it is the org chart the app already holds. One level:
+somebody who needs a whole tree gets `accessAll`, which is what the toggle is
+for. Business Admin, User Admin and the practice's colleagues are unaffected.
+
+- `seesEveryDocument` / `visibleOwnersFor` / `addressIn` in `server/src/users.ts`,
+  next to the rows they read.
+- Applied in `GET /api/costs/bills`, in `canReadBill` (which covers the by-id,
+  file, file-meta, where and move-entity roads at once), and on the writes —
+  PATCH / DELETE / unpublish — because a document somebody cannot see is not
+  one they may change. 404 throughout, never 403.
+- Claims follow the same line (`claimVisibleTo` in `server/src/claims.ts`), with
+  one addition: a claim routed to somebody for a DECISION is visible to them
+  whoever raised it, or the approval request arrives by email and leads to an
+  empty list. That clause is the caller's alone, not their reports'.
+- ⚠️ Owner-drift trap, avoided: an earlier owner-based filter was removed because
+  it hid a person's own uploads when the editable "owner" field drifted. The set
+  is matched against `createdBy` — the uploader's address, never rewritten — OR
+  the owner, and the union is the point: their own upload can never be hidden
+  from them, and a document reassigned TO somebody is still theirs to work on.
+- Covered by `npm test` in `server/` (`test/document-visibility.test.mts`).
 
 ### 2. Create expense claims — `privileges.createClaims` (Standard only)
 - OFF → hide/disable **"Add to expense claim"** (`src/pages/Costs.jsx`,
@@ -83,3 +98,6 @@ settings vanishing" work may already cover this — verify.
 - The `privileges` object is already round-tripped by the server
   (`EDITABLE` includes `privileges`), so only the **reads/enforcement** are
   missing, plus the `canPublish` → `publish` shape change.
+- The WhatsApp and Bank tabs show every document in the entity and are already
+  Business Admin only, on the route and in the rail, so gap 1 does not reach
+  them.
