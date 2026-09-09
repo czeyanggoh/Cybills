@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
-import { useClaims, isClaimArchived, formatClaimDate } from '@/lib/claimStore';
-import { useClaimantNames } from '@/lib/userStore';
+import { useClaims, isClaimArchived, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
+import { useClaimantNames, isAdminAccess } from '@/lib/userStore';
+import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
 import SearchSelect from '@/components/SearchSelect';
 import ComboSelect from '@/components/ComboSelect';
@@ -9,17 +10,16 @@ import { cn } from '@/lib/utils';
 
 // "Add item to expense claim" dialog — add to an existing claim or spin up a
 // new one. UI-only: confirming closes and reports the chosen claim.
-// The last day of the month we are in, as the date input wants it.
-function endOfThisMonth() {
-  const now = new Date();
-  // Day 0 of next month IS the last day of this one, which also gets February
-  // and leap years right without a table.
-  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${last.getFullYear()}-${pad(last.getMonth() + 1)}-${pad(last.getDate())}`;
-}
+// The last day of the month we are in, as the date input wants it. The rule
+// lives in claimDate.js, because the server applies the same one to a Standard
+// user's claim and the two must not disagree.
+const endOfThisMonth = () => endOfMonthFor(todayIso());
 
 export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
+  const { membership, googleEnabled } = useAuth();
+  // Not theirs to move: a Standard user's claim closes at the end of the month
+  // it is raised in, and the server settles it whatever this sends.
+  const endDateFixed = !isAdminAccess(membership, googleEnabled);
   const [mode, setMode] = useState('existing');
   const [claim, setClaim] = useState('');
   // A claim covers a month, and the date that closes it is the end of that
@@ -145,8 +145,13 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
                 <input
                   type="date"
                   value={newClaim.endDate}
+                  readOnly={endDateFixed}
+                  title={endDateFixed ? 'A claim ends on the last day of the month it is raised in.' : ''}
                   onChange={(e) => setNewClaim((s) => ({ ...s, endDate: e.target.value }))}
-                  className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className={cn(
+                    'h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    endDateFixed && 'cursor-not-allowed text-muted-foreground'
+                  )}
                 />
               </label>
             </div>

@@ -167,6 +167,13 @@ const dayFormatter = new Intl.DateTimeFormat('en-CA', {
   month: '2-digit',
   day: '2-digit',
 });
+// Exported because a CLAIM's end date is the same question: which MONTH a claim
+// raised just after midnight falls in is decided by this clock, and a second
+// copy of the timezone would be a second answer to it.
+export function practiceDayKey(d: Date): string {
+  return dayKey(d);
+}
+
 function dayKey(d: Date): string {
   try {
     return dayFormatter.format(d); // YYYY-MM-DD

@@ -50,7 +50,7 @@ import {
   CLAIM_ATTACHMENT_ACCEPT,
 } from '@/lib/claimStore';
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
-import { useUsers, canManageUsers } from '@/lib/userStore';
+import { useUsers, canManageUsers, isAdminAccess } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import {
@@ -267,6 +267,9 @@ export default function ExpenseClaimDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user, membership, googleEnabled } = useAuth();
+  // A Standard user's claim closes at the end of the month it was raised in, so
+  // the date is shown but not theirs to change. Refused server-side too.
+  const endDateFixed = !isAdminAccess(membership, googleEnabled);
   const { claims, loaded } = useClaimsState();
   const claim = claims.find((c) => String(c.id) === String(id)) || null;
   // Where a claim lives when it isn't in this entity's list: null = not asked
@@ -1144,7 +1147,12 @@ export default function ExpenseClaimDetail() {
                 <input
                   type="date"
                   value={toIsoClaimDate(claim.endDate)}
-                  disabled={claim.approvalStatus === 'approved'}
+                  disabled={claim.approvalStatus === 'approved' || endDateFixed}
+                  title={
+                    endDateFixed && claim.approvalStatus !== 'approved'
+                      ? 'A claim ends on the last day of the month it was raised in. Ask a Business Admin if this one has to close on another date.'
+                      : ''
+                  }
                   onChange={(e) => updateClaim(claim.id, { endDate: e.target.value }).catch(() => {})}
                   className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                 />

@@ -969,6 +969,40 @@ than through `Date`, which reads it as midnight UTC and would render it as the
 hour kept, for the activity feed — a trail of events where a bare date would say
 three things happened on Wednesday without saying which came first.
 
+**A claim covers a MONTH, and a Standard user's covers the one it was raised
+in.** The end date was a free date picker on every road into a claim, so
+somebody claiming on the 27th could close it on any date at all — and a claim
+whose period no reporting month covers is one nobody can reconcile against a
+month. For a Standard user it is now filled in and shown read-only: the last day
+of the month the claim is raised in. An ADMIN still chooses, which is why the
+rule asks the role rather than removing the field — a claim that genuinely
+closes on another date is a real thing (a leaver's last claim, a period
+corrected after the fact) and somebody has to be able to say so. Any admin tier,
+because the question here is the coarse "is this person a Standard user", and a
+User Admin manages everybody's documents by role.
+
+`endOfMonthFor` + `todayIso` (`src/lib/claimDate.js`, pure, `npm test` at the
+root) are the whole of the arithmetic, loaded server-side by
+`server/src/claimDates.ts` the way `mileage.ts` loads its own — the dialog's
+filled-in date and the stored one cannot disagree. **WHICH month is each side's
+own answer, deliberately**: the browser asks its own calendar, the server asks
+the PRACTICE's (`practiceDayKey`, exported from `usage.ts`, which already owned
+that clock), because between midnight and 8am on the 1st in Singapore UTC is
+still in the month that has just ended, and a claim raised then must not be
+closed against it.
+
+It is a rule rather than a disabled input: `POST /api/claims` overwrites
+whatever end date was sent, and `POST /:id/update` refuses a CHANGE with 403
+`end_date_fixed`. A resend of the date the claim already carries is not a
+change, so saving some other field on the same dialog can never trip it — and
+the two are compared through `toIsoClaimDate` rather than as raw strings, since
+an end date stored before this rule existed was typed in any of the shapes
+`parseDateParts` reads. Auto Expense claims are untouched: they are built
+server-side against their own configured period and never go through the route.
+Covered by `npm test` at the root and in `server/`
+(`test/claim-end-date.test.mts`, over real HTTP because the rule reads the
+caller's role out of their session).
+
 Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
 field, set on the document or across a selection in Bulk edit; readiness is
 derived, so a "Move to ready" button could only ever agree with the server or

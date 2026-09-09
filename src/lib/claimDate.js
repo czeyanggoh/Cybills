@@ -60,6 +60,31 @@ export function toIsoClaimDate(v) {
   return `${p.y}-${String(p.mo).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;
 }
 
+// A claim covers a MONTH, so the date that closes it is the last day of that
+// month. Somebody raising a claim on the 27th means "August", and typing 31 Aug
+// into a date picker to say so is work the app can do — which is why it is what
+// a Standard user's claim is filled in with, and what they cannot then move.
+//
+// Worked out from the PARTS, never by rolling a Date through somebody's zone:
+// the last day of August is the 31st wherever it is read. Day 0 of the next
+// month IS the last day of this one, in UTC so the arithmetic is the same
+// wherever it runs, which gets February and leap years right without a table.
+export function endOfMonthFor(v) {
+  const p = parseDateParts(v);
+  if (!p || p.mo < 1 || p.mo > 12) return '';
+  const last = new Date(Date.UTC(p.y, p.mo, 0)).getUTCDate();
+  return `${p.y}-${String(p.mo).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+}
+
+// Today as a calendar day, in whichever clock is handed to it. The browser
+// passes nothing and gets its own; the server passes the PRACTICE's, because a
+// day rolls over in Singapore rather than wherever UTC happens to be — between
+// midnight and 8am on the 1st those are two different months, and a claim
+// raised then must not close on the month that has just ended.
+export function todayIso(now = new Date()) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 // A moment where the TIME is half of what happened. The activity feed is a
 // trail of events — "3 item(s) added", "submitted for approval" — and the hour
 // is part of reading it, so this keeps it: "27 Aug 2026, 10:50". A column of

@@ -4,7 +4,7 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, addressIn, canAccessOrg, canonicalPersonName, normaliseAddress, orgScope, personNameForEmail, visibleOwnersFor } from './users.js';
+import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, addressIn, canAccessOrg, canonicalPersonName, effectiveRoleFor, normaliseAddress, orgScope, personNameForEmail, visibleOwnersFor } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
 import {
   getBillById,
@@ -16,6 +16,7 @@ import {
   parseAmount,
 } from './store.js';
 import { listOrganisations, primaryOrgId } from './organisations.js';
+import { endOfThisMonth, isoClaimDate } from './claimDates.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
 // X-Org-Id scoping as bills). Replaces the old per-browser localStorage claim
@@ -487,11 +488,32 @@ claimsRouter.get('/:id/where', (req, res) => {
   });
 });
 
+// A claim covers a MONTH, and for a STANDARD user it is the month it was raised
+// in: the end date is filled in rather than asked for, and is not theirs to
+// move afterwards. Somebody claiming on the 27th means "August", and a claim
+// free to run to any date at all is one whose period no reporting month covers.
+//
+// An admin still chooses, which is why this asks the role rather than removing
+// the field: a claim that genuinely closes on another date is a real thing — a
+// leaver's last claim, a period corrected after the fact — and somebody has to
+// be able to say so. Any admin tier, because the coarse question here is
+// whether this person is a Standard user, and a User Admin manages everybody's
+// documents by role.
+function endDateFixed(req: Request): boolean {
+  const me = memberForSession(req);
+  if (!me) return false; // the sessionless mock/dev context, open like the rest of the app
+  return effectiveRoleFor(me, orgScope(req)) === 'Standard';
+}
+
 // POST /api/claims — create a claim.
-claimsRouter.post('/', (req, res) => {
+claimsRouter.post('/', async (req, res) => {
   const b = req.body ?? {};
   const me = actor(req);
   const owner = String(b.claimFor || me.name || 'You');
+  // Whatever the request asked for. The dialog shows the date read-only, and
+  // this is what makes that a rule rather than a disabled input.
+  const asked = String(b.endDate || '');
+  const endDate = endDateFixed(req) ? (await endOfThisMonth()) || asked : asked;
   const claim: Claim = {
     id: randomUUID(),
     workspaceId: workspaceId(req),
@@ -499,8 +521,8 @@ claimsRouter.post('/', (req, res) => {
     claimFor: owner,
     type: 'Regular',
     name: String(b.name || 'Expense claim'),
-    claimDate: String(b.endDate || ''),
-    endDate: String(b.endDate || ''),
+    claimDate: endDate,
+    endDate,
     currency: 'SGD',
     transactions: [],
     history: [{ text: 'This expense claim was created', by: me.name || owner, at: nowIso() }],
@@ -692,9 +714,18 @@ claimsRouter.post('/:id/items/update', (req, res) =>
 
 // POST /api/claims/:id/update — edit top-level claim fields (name, end date).
 // Locked once approved so a finalized claim's details can't drift. End date is
-// stored verbatim (the client sends canonical ISO YYYY-MM-DD).
-claimsRouter.post('/:id/update', (req, res) =>
-  mutate(req, res, (claim, me) => {
+// stored verbatim (the client sends canonical ISO YYYY-MM-DD), and is refused
+// outright for a Standard user, whose claim closes at the end of the month it
+// was raised in.
+claimsRouter.post('/:id/update', async (req, res) => {
+  // Resolved before the mutation, because the comparison inside it is
+  // synchronous and a stored end date may have been typed in any of the shapes
+  // parseDateParts reads — compared as raw strings, '31/08/2026' and
+  // '2026-08-31' would read as somebody moving the date.
+  const iso = await isoClaimDate();
+  const sameDate = (a: unknown, b: unknown) =>
+    iso ? iso(a) === iso(b) : String(a ?? '').trim() === String(b ?? '').trim();
+  return mutate(req, res, (claim, me) => {
     if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
     const b = req.body ?? {};
     if (typeof b.name === 'string' && b.name.trim()) claim.name = b.name.trim();
@@ -718,12 +749,25 @@ claimsRouter.post('/:id/update', (req, res) =>
     if (typeof b.description === 'string') claim.description = b.description;
     if (typeof b.endDate === 'string') {
       const d = b.endDate.trim();
+      // A Standard user's claim closes at the end of the month it was raised
+      // in, so the date is not theirs to move. The field is read-only on the
+      // page; this is what holds when the request arrives anyway. A resend of
+      // the date it already carries is not a change and is let through, so
+      // saving some OTHER field on the same dialog can never trip this.
+      if (!sameDate(d, claim.endDate) && endDateFixed(req)) {
+        return res.status(403).json({
+          error: 'end_date_fixed',
+          message:
+            'A claim ends on the last day of the month it was raised in. ' +
+            'Ask a Business Admin if this one has to close on another date.',
+        });
+      }
       claim.endDate = d;
       claim.claimDate = d; // keep the two in sync (claimDate mirrors endDate)
       claim.history.unshift({ text: `End date set to ${d || '—'}`, by: me.name, at: nowIso() });
     }
-  })
-);
+  });
+});
 
 // POST /api/claims/:id/submit — submit for approval. The approver is derived
 // automatically from the claimant's direct manager (set in Users), so there's no

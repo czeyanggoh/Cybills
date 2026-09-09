@@ -10,9 +10,9 @@ import AutoClaimsModal from '@/components/AutoClaimsModal';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate } from '@/lib/claimStore';
+import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
-import { canManageBusiness, useUsers } from '@/lib/userStore';
+import { canManageBusiness, isAdminAccess, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 import { useExportSettings } from '@/lib/exportSettings';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
@@ -238,6 +238,12 @@ export default function ExpenseClaims() {
   const [selected, setSelected] = useState(() => new Set());
   const [showCreate, setShowCreate] = useState(false);
   const [newClaim, setNewClaim] = useState({ claimFor: '', endDate: '', name: '' });
+  // A claim covers a month, and a Standard user's covers THIS one: the date is
+  // filled in for them and shown read-only, because it is not theirs to move.
+  // The server settles it either way, so this is what the dialog says rather
+  // than what it enforces.
+  const endDateFixed = !isAdminAccess(membership, googleEnabled);
+  const fixedEndDate = endOfMonthFor(todayIso());
   const [query, setQuery] = useListView('claims', 'query', '');
   // Two narrowings beside the search box, which used to be a funnel and an
   // "Advanced" that did nothing at all — the buttons were there, the handlers
@@ -252,7 +258,9 @@ export default function ExpenseClaims() {
   const submitCreate = async () => {
     await createClaim({
       claimFor: newClaim.claimFor || meName,
-      endDate: newClaim.endDate, // ISO from the date picker; createClaim canonicalises
+      // The server settles this for a Standard user whatever is sent; the
+      // dialog sends the same answer so the two never look different.
+      endDate: endDateFixed ? fixedEndDate : newClaim.endDate, // ISO from the date picker; createClaim canonicalises
       name: newClaim.name.trim() || 'Expense claim',
     });
     setShowCreate(false);
@@ -734,10 +742,18 @@ export default function ExpenseClaims() {
                 <span className="font-medium">End date <span className="text-destructive">*</span></span>
                 <input
                   type="date"
-                  value={newClaim.endDate}
+                  value={endDateFixed ? fixedEndDate : newClaim.endDate}
+                  readOnly={endDateFixed}
+                  title={endDateFixed ? 'A claim ends on the last day of the month it is raised in.' : ''}
                   onChange={(e) => setNewClaim((c) => ({ ...c, endDate: e.target.value }))}
-                  className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className={cn(
+                    'h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    endDateFixed && 'cursor-not-allowed text-muted-foreground'
+                  )}
                 />
+                {endDateFixed && (
+                  <span className="text-xs text-muted-foreground">A claim covers the month it is raised in.</span>
+                )}
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium">Claim name</span>
@@ -757,7 +773,7 @@ export default function ExpenseClaims() {
               <button
                 type="button"
                 onClick={submitCreate}
-                disabled={!(newClaim.claimFor || meName) || !newClaim.endDate}
+                disabled={!(newClaim.claimFor || meName) || !(endDateFixed ? fixedEndDate : newClaim.endDate)}
                 className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 Create

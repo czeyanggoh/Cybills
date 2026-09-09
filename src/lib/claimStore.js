@@ -75,7 +75,7 @@ async function post(path, body) {
 // The rules live in their own pure module so `npm test` can hold them to
 // account, and are re-exported here because everything that shows a claim date
 // already reaches for them through this store.
-export { CLAIM_MON, parseDateParts, formatClaimDate, formatClaimStamp, toIsoClaimDate } from '@/lib/claimDate';
+export { CLAIM_MON, parseDateParts, formatClaimDate, formatClaimStamp, toIsoClaimDate, endOfMonthFor, todayIso } from '@/lib/claimDate';
 
 // Create a new claim; resolves with the created (shaped) claim. endDate is
 // stored canonically as ISO YYYY-MM-DD.
