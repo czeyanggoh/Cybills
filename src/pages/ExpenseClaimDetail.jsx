@@ -50,7 +50,7 @@ import {
   CLAIM_ATTACHMENT_ACCEPT,
 } from '@/lib/claimStore';
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
-import { useUsers, canManageUsers, isAdminAccess } from '@/lib/userStore';
+import { useUsers, canManageUsers, isAdminAccess, canPublishToXero } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import {
@@ -270,6 +270,10 @@ export default function ExpenseClaimDetail() {
   // A Standard user's claim closes at the end of the month it was raised in, so
   // the date is shown but not theirs to change. Refused server-side too.
   const endDateFixed = !isAdminAccess(membership, googleEnabled);
+  // "Publishing permissions" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers publish by role. Refused server-side too, on
+  // all four Xero routes — this is what stops the button being offered at all.
+  const mayPublish = canPublishToXero(membership, googleEnabled);
   const { claims, loaded } = useClaimsState();
   const claim = claims.find((c) => String(c.id) === String(id)) || null;
   // Where a claim lives when it isn't in this entity's list: null = not asked
@@ -488,7 +492,7 @@ export default function ExpenseClaimDetail() {
           : 'Published to Xero'}
       <ExternalLink className="h-3.5 w-3.5" />
     </a>
-  ) : (
+  ) : !mayPublish ? null : (
     <TopButton
       disabled={!locked || publishing}
       title={
@@ -753,7 +757,7 @@ export default function ExpenseClaimDetail() {
             {iAmApprover && (
               <TopButton onClick={() => { setReopenReason(''); setReopenOpen(true); }}>Unapprove</TopButton>
             )}
-            {claim.xeroInvoiceId && (
+            {claim.xeroInvoiceId && mayPublish && (
               <TopButton onClick={updateXero} disabled={publishing} title="Send this claim's current items to the bill it created in Xero">
                 {publishing ? 'Updating…' : 'Update in Xero'}
               </TopButton>

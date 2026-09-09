@@ -355,7 +355,8 @@ billsRouter.get('/bills', async (req, res) => {
   const check = await entityCheckFor(req);
   // The one place every surface reads its documents from — Costs, Submission
   // history, the exports, merge detection — so this is where a Standard user's
-  // view narrows to their own work and their direct reports'.
+  // view narrows to their OWN work. Not their reports': an approver decides a
+  // claim, which is a different thing from browsing somebody's receipts.
   const owners = visibleOwnersFor(req, orgScope(req));
   const bills = listBills(orgId)
     .filter((b) => visibleToCaller(owners, b))
@@ -392,12 +393,19 @@ function contentDisposition(name: string): string {
 //
 // A refusal answers 404, not 403: whether a document exists is itself something
 // the caller isn't entitled to learn.
-function canReadBill(req: Request, bill: { orgId?: string; createdBy?: string; owner?: string }): boolean {
+function canReadBill(req: Request, bill: { orgId?: string; createdBy?: string; owner?: string; status?: string }): boolean {
   const me = memberForSession(req);
   if (!me) return true; // sessionless mock/dev, as everywhere else
   const entity = entityIdForBill(bill);
   if (!canAccessOrg(me, entity)) return false;
-  return visibleToCaller(visibleOwnersFor(req, entity), bill);
+  if (visibleToCaller(visibleOwnersFor(req, entity), bill)) return true;
+  // The one exception, and only for the person who has to APPROVE it. A claim
+  // is routed to the claimant's manager for a decision, its PDF is assembled in
+  // the BROWSER out of these very files, and each row links through to the
+  // document behind it — so a report's claimed receipt stays readable while the
+  // rest of their Costs drawer does not. Reading only: it is still not theirs
+  // to edit, which is what mayWriteBill holds to.
+  return bill.status === 'expenseclaim' && visibleToCaller(visibleOwnersFor(req, entity, true), bill);
 }
 
 // Whose document is this, for the question of who may see it? A Standard user
@@ -416,12 +424,20 @@ function visibleToCaller(owners: Set<string> | null, bill: { createdBy?: string;
   return addressIn(owners, bill.createdBy) || addressIn(owners, bill.owner);
 }
 
-// The same question for a write. A document this caller cannot see is one they
-// cannot change or destroy either. A document not in this scope at all is left
-// to the route's own 404, which is the answer it has always given.
+// The same question for a write, and deliberately NARROWER than the read: a
+// document is theirs to change only if it is their own. An approver may open
+// their report's claimed receipt to decide the claim; they may not rewrite its
+// figures, which is the claimant's to correct and the claim's to carry.
+//
+// A document not in this scope at all is left to the route's own 404, which is
+// the answer it has always given.
 function mayWriteBill(req: Request): boolean {
   const bill = getBillById(orgIdFor(req), String(req.params.id));
-  return !bill || canReadBill(req, bill);
+  if (!bill) return true;
+  const me = memberForSession(req);
+  if (!me) return true; // sessionless mock/dev, as everywhere else
+  const entity = entityIdForBill(bill);
+  return canAccessOrg(me, entity) && visibleToCaller(visibleOwnersFor(req, entity), bill);
 }
 
 // Which ENTITY a document belongs to. Its `orgId` is a data SCOPE, and the

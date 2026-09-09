@@ -14,7 +14,7 @@ import { referenceFor, dateFor } from './claimRef.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, isCreditNote, listBills, markBillPosted, markBillXeroPayment, parseAmount, totalComplete, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, markClaimXeroPayment, publishedClaims, saveClaimXero } from './claims.js';
-import { appOrigin, memberForSession } from './users.js';
+import { appOrigin, canPublishToXero, memberForSession } from './users.js';
 import { syncWhatsappReaction } from './waReactions.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
@@ -1277,6 +1277,32 @@ function creditNoteFacingUp(bill: Bill): Bill {
   return { ...bill, total: flip(bill.total), tax: flip(bill.tax), lineItems } as Bill;
 }
 
+// May this caller put anything in the ledger at all? "Publishing permissions"
+// in Edit privileges, which was stored and never read — the radio said "Can't
+// publish to accounting software" and every publish button worked anyway.
+//
+// Guarded on the four ROUTES rather than inside postBillToXero, deliberately.
+// The payables hand-off from cyworkspace publishes through that same function
+// (one publish path, not two) but proves itself with the shared inbound key and
+// has no roster row at all, so a check down there would either refuse a payment
+// run or have to special-case it. This is the SESSION road, and the privilege
+// is a fact about a person.
+//
+// Updating counts as publishing: an update restates money in a live ledger,
+// which is the thing the privilege is about.
+// `any` for req/res the way every other helper in this file takes them — the
+// judgement itself is in canPublishToXero, which is typed against the roster row.
+function mayPublish(req: any, res: any): boolean {
+  if (canPublishToXero(memberForSession(req), String(req.params.id ?? ''))) return true;
+  res.status(403).json({
+    error: 'publish_not_allowed',
+    message:
+      `Your account is set to "Can’t publish to accounting software". ` +
+      'Ask a Business Admin to change it under Users -> Edit privileges.',
+  });
+  return false;
+}
+
 // POST /api/xero/organisations/:id/publish-bill — publish a stored cost
 // document to the linked Xero org as a supplier bill (ACCPAY invoice).
 // Body: { billId, accountCode, taxType, status?, dueDate?, description?,
@@ -1527,6 +1553,7 @@ export async function postBillToXero(
 
 xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
 
@@ -1695,6 +1722,7 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
 // guess about why.
 xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
   if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
 
@@ -2076,6 +2104,7 @@ async function attachClaimPdf(
 // IS the organisation, so nothing changes for a linked entity.
 xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
   if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
   const resolved = requirePublishTarget(req, res);
   if (!resolved) return;
   const { organisation, target } = resolved;
@@ -2177,6 +2206,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
 // waits until it is approved again.
 xeroRouter.post('/organisations/:id/update-claim', async (req, res) => {
   if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
   const resolved = requirePublishTarget(req, res);
   if (!resolved) return;
   const { organisation, target } = resolved;

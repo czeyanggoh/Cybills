@@ -445,7 +445,8 @@ function claimVisibleTo(ws: string, owners: Set<string> | null, me: string, c: C
 claimsRouter.get('/', (req, res) => {
   const org = orgIdFor(req);
   const ws = workspaceId(req);
-  const owners = visibleOwnersFor(req, orgScope(req));
+  // With reports: a claim routed to somebody for a decision has to reach them.
+  const owners = visibleOwnersFor(req, orgScope(req), true);
   const me = normaliseAddress(memberForSession(req)?.email);
   res.json({
     claims: load()
@@ -475,7 +476,7 @@ claimsRouter.get('/:id/where', (req, res) => {
   if (!canAccessOrg(me, claim.orgId)) return res.status(404).json({ error: 'not_found' });
   // And the same 404 for a claim in this entity that this caller may not see:
   // it names its claimant, which is the very thing being kept from them.
-  const owners = visibleOwnersFor(req, entityIdForClaim(claim));
+  const owners = visibleOwnersFor(req, entityIdForClaim(claim), true);
   if (!claimVisibleTo(workspaceId(req), owners, normaliseAddress(me?.email), claim)) {
     return res.status(404).json({ error: 'not_found' });
   }
@@ -802,6 +803,23 @@ function missingOnItem(orgId: string, t: Txn): string[] {
 
 claimsRouter.post('/:id/submit', (req, res) =>
   mutate(req, res, (claim, me) => {
+    // An APPROVED claim is a decision somebody made about a specific sum, and
+    // submitting it again quietly undid that decision: the status went back to
+    // awaiting approval, decidedBy / decidedAt / decidedFor were cleared, and
+    // the approver was asked for it a second time with nothing in the history
+    // to say the first answer had been thrown away. That is exactly what
+    // Unapprove does, minus the trail Unapprove writes — so a claim that has to
+    // change goes back through Unapprove, which records who reopened it and
+    // why. Rejected is not refused: fixing a rejected claim and sending it
+    // again is the whole point of rejecting one.
+    if (claim.approvalStatus === 'approved') {
+      return res.status(409).json({
+        error: 'already_approved',
+        message:
+          'This claim has already been approved. Unapprove it first if it has to change, ' +
+          'so the approval that is being undone is recorded.',
+      });
+    }
     // Submitting asks a person to approve a specific sum, and they approve what
     // the claim SAYS. An item with no date gave them nothing to check it
     // against — was it this period, was it already claimed — while the row wore

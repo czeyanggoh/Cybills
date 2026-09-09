@@ -90,6 +90,7 @@ const check = (name: string, got: unknown, want: unknown) => {
 
 const as = (email: string, name: string) =>
   `cyb_session=${jwt.sign({ sub: email, email, name }, 'test-session-secret', { expiresIn: '1h' })}`;
+const ASTRID_SESSION = as('astrid@redalpha.example', 'Astrid Test');
 const post = async (path: string, cookie: string, body: unknown = {}) => {
   const res = await fetch(`http://127.0.0.1:4641/api/claims${path}`, {
     method: 'POST',
@@ -159,6 +160,27 @@ check('the trail says who and why', r.body.claim?.history?.[0]?.text, 'This clai
 
 r = await post('/astrid-approved/approve', as('martin@redalpha.example', 'Martin Lim'));
 check('and it can be approved again', r.body.claim?.approvalStatus, 'approved');
+
+// --- Unapprove is the ONLY way back out of an approval -----------------------
+// Ticking an approved claim in the list and pressing Submit for approval put it
+// straight back to awaiting approval, cleared the decision and asked the
+// approver for it a second time — the same act Unapprove performs, with none of
+// the trail Unapprove writes. The list no longer offers it, and the route no
+// longer takes it.
+r = await post('/astrid-approved/submit', ASTRID_SESSION);
+check('an approved claim cannot be submitted again', r.status, 409);
+check('and is told to unapprove it first', r.body.error, 'already_approved');
+r = await post('/astrid-approved/submit', as('kai@cy-bm.sg', 'Kai Tan'));
+check('not by a practice colleague either', r.status, 409);
+// The approval it would have wiped is still standing.
+r = await post('/astrid-approved/reopen', as('martin@redalpha.example', 'Martin Lim'), { reason: 'checking' });
+check('the approval was still there to undo', r.status, 200);
+// Rejected is NOT refused: fixing a rejected claim and sending it again is the
+// whole point of rejecting one. It gets as far as needing a manager.
+r = await post('/astrid-2/reject', as('martin@redalpha.example', 'Martin Lim'), { reason: 'wrong month' });
+check('a claim can still be rejected', r.body.claim?.approvalStatus, 'rejected');
+r = await post('/astrid-2/submit', ASTRID_SESSION);
+check('and a rejected claim may be sent again', r.status === 409, false);
 
 server.close();
 if (failures) {

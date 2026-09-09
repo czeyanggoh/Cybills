@@ -899,14 +899,21 @@ export function seesEveryDocument(u: User | null | undefined, orgId: string): bo
   return Boolean((u.privileges as { accessAll?: unknown } | undefined)?.accessAll);
 }
 
-// The addresses a restricted caller's view is confined to — their own, plus
-// their direct reports' in THIS entity. Null when they see the whole book, so
-// the common case builds no set and the callers can skip filtering entirely.
+// The addresses a restricted caller's view is confined to. Null when they see
+// the whole book, so the common case builds no set at all and the callers skip
+// filtering entirely.
 //
-// A report is looked up in the entity being asked about rather than in the one
-// the caller is standing in: the same person can hold a different role in each,
-// and a manager here is not a manager there.
-export function visibleOwnersFor(req: Request, orgId: string): Set<string> | null {
+// `withReports` widens it to the people who report to them, and the two answers
+// are for two different questions. A direct report's CLAIM is theirs to see:
+// it is routed to them for a decision, and an approver who cannot open what
+// they are approving has been sent a dead email. A direct report's COSTS are
+// NOT — approving a claim is not a licence to read somebody's receipts drawer,
+// and the two were folded together only because they started from one rule.
+//
+// A report is looked up in the entity being ASKED about rather than the one the
+// caller is standing in: the same person can hold a different role in each, and
+// a manager here is not a manager there.
+export function visibleOwnersFor(req: Request, orgId: string, withReports = false): Set<string> | null {
   const me = memberForSession(req);
   if (seesEveryDocument(me, orgId)) return null;
   const mine = me as User;
@@ -916,6 +923,7 @@ export function visibleOwnersFor(req: Request, orgId: string): Set<string> | nul
     if (n) seen.add(n);
   };
   add(mine.email);
+  if (!withReports) return seen;
   for (const u of ensure(workspaceId(req))) {
     if (u.workspaceId !== workspaceId(req) || u.removed || !u.email) continue;
     if (!u.managerId || u.managerId !== mine.id) continue;
@@ -923,6 +931,21 @@ export function visibleOwnersFor(req: Request, orgId: string): Set<string> | nul
     add(u.email);
   }
   return seen;
+}
+
+// May this person publish to the accounting software? "Publishing permissions"
+// in Edit privileges, which until now was written onto the row and read by
+// nobody: the radio said "Can't publish to accounting software" and the button
+// published anyway.
+//
+// Only a STANDARD user is asked. Business Admin and User Admin publish by role,
+// and the privilege toggles are not even offered for them — so a `canPublish:
+// false` sitting on an admin's row is a leftover from before they were
+// promoted, and reading it would lock out the very people who run the ledger.
+export function canPublishToXero(u: User | null | undefined, orgId: string): boolean {
+  if (!u) return true; // the sessionless mock/dev context, open like the rest of the app
+  if (effectiveRoleFor(u, orgId) !== 'Standard') return true;
+  return Boolean((u.privileges as { canPublish?: unknown } | undefined)?.canPublish);
 }
 
 // One spelling for an address, so that both sides of every comparison agree. A
@@ -1561,6 +1584,10 @@ usersRouter.get('/me', (req, res) => {
     status,
     user: publicUser(user),
     admin: live && isAdminRole(role),
+    // Publishing is a per-person privilege on top of the role, so the server
+    // answers it here rather than leaving the browser to derive it from the
+    // role string — the same reason the three flags around it are sent.
+    canPublish: live && canPublishToXero(user, orgScope(req)),
     businessAdmin: live && isBusinessAdminRole(role),
     canManageUsers: live && canManageUsersRole(role),
     // The practice surfaces (Colleagues, Clients) — practice team only.

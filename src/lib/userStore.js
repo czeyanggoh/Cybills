@@ -536,6 +536,16 @@ export function canManageBusiness(membership, googleEnabled) {
   return access(membership, googleEnabled, 'businessAdmin', isBusinessAdminRole);
 }
 
+// Publish to the accounting software. Unlike the three above this is a
+// per-person PRIVILEGE on top of the role ("Publishing permissions" in Edit
+// privileges), so the server answers it on the membership payload rather than
+// leaving this to be derived from a role string. Both admin tiers publish by
+// role — the toggle is not offered for them — which is what the role fallback
+// says for an older payload that carries no flag.
+export function canPublishToXero(membership, googleEnabled) {
+  return access(membership, googleEnabled, 'canPublish', isAdminRole);
+}
+
 // The Users page and everything that edits the roster.
 export function canManageUsers(membership, googleEnabled) {
   return access(membership, googleEnabled, 'canManageUsers', canManageUsersRole);

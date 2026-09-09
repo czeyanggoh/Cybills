@@ -71,9 +71,9 @@ const GENERAL = generalUserFor('cybm', RED)!.email;
 // The store mints its own ids, so each document is remembered under a readable
 // name and the listings are compared by that.
 const ids: Record<string, string> = {};
-const doc = (name: string, createdBy: string, owner: string) => {
+const doc = (name: string, createdBy: string, owner: string, status = 'new') => {
   ids[name] = insertBill({
-    orgId: RED, kind: 'cost', status: 'new', documentType: 'Invoice', currency: 'SGD',
+    orgId: RED, kind: 'cost', status, documentType: 'Invoice', currency: 'SGD',
     supplier: 'Grab', total: '31.99', tax: '0', date: '2026-09-01', createdBy, owner,
   } as any).id;
 };
@@ -89,6 +89,9 @@ doc('d-general', 'kai@cy-bm.sg', GENERAL);
 doc('d-drifted', 'deanna.chua@redalphacyber.com', GENERAL);
 // And the mirror: uploaded by somebody else, made over to Deanna to work on.
 doc('d-handed-over', 'boss@redalphacyber.com', 'deanna.chua@redalphacyber.com');
+// Astrid's, and on a claim — which is the one thing of a report's that their
+// approver can open, because the claim is routed to them to decide.
+doc('d-astrid-claimed', 'astrid@redalphacyber.com', 'astrid@redalphacyber.com', 'expenseclaim');
 
 const claim = (id: string, claimFor: string, createdBy: string, approver: string, approverEmail: string) => ({
   id, workspaceId: 'cybm', orgId: RED, claimFor, type: 'Regular', name: 'Expense claim',
@@ -143,28 +146,33 @@ const claimsFor = async (email: string, name: string) => {
 };
 
 // --- The whole book, for the people who run it -------------------------------
-const everything = ['d-astrid', 'd-deanna', 'd-drifted', 'd-general', 'd-handed-over', 'd-martin'];
+const everything = ['d-astrid', 'd-astrid-claimed', 'd-deanna', 'd-drifted', 'd-general', 'd-handed-over', 'd-martin'];
 check('a Business Admin sees the entire book', await docsFor('boss@redalphacyber.com', 'Bee Admin'), everything);
 check('a practice colleague working the client sees it too', await docsFor('kai@cy-bm.sg', 'Kai Tan'), everything);
 check('so does a Standard user given Access all documents', await docsFor('wide@redalphacyber.com', 'Wide Standard'), everything);
 
-// --- A Standard user sees their own work, and their reports' -----------------
+// --- A Standard user's Costs list is their OWN work, and nothing else -------
+// Not their reports'. An approver decides a claim, which is a different act
+// from reading somebody's receipts drawer, and the two were folded together
+// only because they started life as one rule.
 const deanna = await docsFor('deanna.chua@redalphacyber.com', 'Deanna Chua');
-check('Deanna sees her own work and her report Astrid\'s', deanna, ['d-astrid', 'd-deanna', 'd-drifted', 'd-handed-over']);
+check('Deanna sees her own work', deanna, ['d-deanna', 'd-drifted', 'd-handed-over']);
 check('her own upload survives the owner being moved off it', deanna.includes('d-drifted'), true);
 check('a document made over to her is hers to work on', deanna.includes('d-handed-over'), true);
 check('the general account paperwork is not hers', deanna.includes('d-general'), false);
+check("and neither is her report Astrid's", deanna.includes('d-astrid'), false);
+check("nor her report's claimed receipt, in the LIST", deanna.includes('d-astrid-claimed'), false);
 
-check('Astrid, who manages nobody, sees only her own', await docsFor('astrid@redalphacyber.com', 'Astrid Test'), ['d-astrid']);
+check(
+  'Astrid sees her own, claimed or not',
+  await docsFor('astrid@redalphacyber.com', 'Astrid Test'),
+  ['d-astrid', 'd-astrid-claimed']
+);
 
-// One level. Astrid reports to Deanna, who reports to Martin — and Martin does
-// NOT see Astrid's work. A whole tree is what accessAll is for.
-// Everything of Deanna's is his to see, by either road: the two she uploaded
-// and the one that was made over to her.
 const martin = await docsFor('martin@redalphacyber.com', 'Martin Lim');
-check('Martin sees his own and all of his direct report\'s', martin, ['d-deanna', 'd-drifted', 'd-handed-over', 'd-martin']);
-check('and not his report\'s report\'s', martin.includes('d-astrid'), false);
-check('nor the general account\'s', martin.includes('d-general'), false);
+check('Martin sees only his own', martin, ['d-martin']);
+check("not his direct report's", martin.includes('d-deanna'), false);
+check("nor the general account's", martin.includes('d-general'), false);
 
 // --- The by-id roads, so the list is a rule and not a display detail ---------
 let r = await call('GET', `/api/costs/bills/${ids['d-martin']}`, as('astrid@redalphacyber.com', 'Astrid Test'));
@@ -186,9 +194,29 @@ check('deleting one is refused too', r.status, 404);
 r = await call('PATCH', `/api/costs/bills/${ids['d-astrid']}`, as('astrid@redalphacyber.com', 'Astrid Test'), { supplier: 'Her own' });
 check('while her own still edits', r.status, 200);
 
+// --- The approver's one exception --------------------------------------------
+// A claim's PDF is assembled in the BROWSER out of these files, and each row
+// links through to the document behind it, so an approver who cannot open the
+// receipt has been sent a decision they cannot make. Reading only.
+const DEANNA = as('deanna.chua@redalphacyber.com', 'Deanna Chua');
+r = await call('GET', `/api/costs/bills/${ids['d-astrid-claimed']}`, DEANNA);
+check("an approver can open their report's CLAIMED receipt", r.status, 200);
+r = await call('GET', `/api/costs/bills/${ids['d-astrid-claimed']}/file-meta`, DEANNA);
+check('and ask for its file, which is what the claim PDF does', r.status, 200);
+r = await call('GET', `/api/costs/bills/${ids['d-astrid']}`, DEANNA);
+check("but not the rest of that report's drawer", r.status, 404);
+r = await call('PATCH', `/api/costs/bills/${ids['d-astrid-claimed']}`, DEANNA, { supplier: 'Not mine to fix' });
+check('and a claimed receipt is still not theirs to edit', r.status, 404);
+r = await call('GET', `/api/costs/bills/${ids['d-astrid-claimed']}`, as('astrid@redalphacyber.com', 'Astrid Test'));
+check('the claimant still owns it', r.body.bill?.supplier, 'Grab');
+// Somebody who manages nobody gets no exception at all.
+r = await call('GET', `/api/costs/bills/${ids['d-astrid-claimed']}`, as('martin@redalphacyber.com', 'Martin Lim'));
+check('and it reaches only the approver, not the next manager up', r.status, 404);
+
 // --- Claims follow the same line ---------------------------------------------
 check('an admin sees every claim', await claimsFor('boss@redalphacyber.com', 'Bee Admin'), ['c-astrid', 'c-boss', 'c-deanna']);
-check('Deanna sees her own claim and her report claim', await claimsFor('deanna.chua@redalphacyber.com', 'Deanna Chua'), ['c-astrid', 'c-deanna']);
+// Claims DO reach the manager, which is the half that stays wide.
+check("Deanna sees her own claim and her report's", await claimsFor('deanna.chua@redalphacyber.com', 'Deanna Chua'), ['c-astrid', 'c-deanna']);
 check('Astrid sees only her own', await claimsFor('astrid@redalphacyber.com', 'Astrid Test'), ['c-astrid']);
 // Martin is the named approver on Deanna's claim, so he must see it whoever
 // raised it — otherwise the approval request arrives by email and leads to an

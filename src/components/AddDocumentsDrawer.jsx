@@ -39,7 +39,7 @@ import {
 } from '@/lib/extractionSettings';
 import { foldTaxIntoCost } from '@/lib/lineItems';
 import { splitByPrintedRate, linesAgreeWithTotal } from '@/lib/taxRateRules';
-import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere } from '@/lib/userStore';
+import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere, canPublishToXero } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 import { coveringNote } from '@/lib/coveringNote';
 
@@ -350,7 +350,11 @@ function tabForPath(pathname) {
 // enforces when it refuses to add one), and the panel says where the documents
 // are going, because it looks identical to the one that files into the inbox.
 export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdded = null }) {
-  const { visionEnabled, user } = useAuth();
+  const { visionEnabled, user, membership, googleEnabled } = useAuth();
+  // "Publishing permissions" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers publish by role. Refused server-side too, on
+  // all four Xero routes — this is what stops the button being offered at all.
+  const mayPublish = canPublishToXero(membership, googleEnabled);
   const readerName = useReaderName();
   const { pathname } = useLocation();
   const users = useUsers();
@@ -747,7 +751,9 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
             // Never on a claim: a claimed cost reaches Xero as a line of the
             // claim's bill, so publishing it here as a bill of its own would
             // both double it and make it unclaimable a moment later.
-            const posted = claim ? null : await autoPublishAfterRead(withDefaults);
+            // And never for somebody who may not publish: the server refuses it,
+            // so attempting it would only put a failure on a document that read fine.
+            const posted = claim || !mayPublish ? null : await autoPublishAfterRead(withDefaults);
             notifyBillsChanged();
             onAdded?.(posted?.bill ?? withDefaults);
             patch(it.id, {

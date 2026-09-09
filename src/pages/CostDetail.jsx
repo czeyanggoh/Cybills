@@ -28,7 +28,7 @@ import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, us
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useProjectLabels, singular } from '@/lib/projectLabels';
-import { useUsers, useOwnerNames } from '@/lib/userStore';
+import { useUsers, useOwnerNames, canPublishToXero } from '@/lib/userStore';
 import { setWhatsappSender } from '@/lib/whatsapp';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
@@ -233,7 +233,11 @@ export default function CostDetail() {
   // loads, `id` below is always the internal id the API is addressed by.
   const { id: routeId } = useParams();
   const navigate = useNavigate();
-  const { visionEnabled, user } = useAuth();
+  const { visionEnabled, user, membership, googleEnabled } = useAuth();
+  // "Publishing permissions" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers publish by role. Refused server-side too, on
+  // all four Xero routes — this is what stops the button being offered at all.
+  const mayPublish = canPublishToXero(membership, googleEnabled);
   const teamUsers = useUsers();
   // Who this document can belong to: the client's own people plus its general
   // account, which is where anything a practice colleague added sits. A
@@ -1750,7 +1754,7 @@ export default function CostDetail() {
             // of its own, and a plain category with no account code in it. The
             // claim IS how these costs reach the parent's ledger, so the button
             // isn't offered rather than offered and refused.
-            !bridge && (
+            !bridge && mayPublish && (
               <TopButton
                 onClick={openPublish}
                 disabled={Boolean(claimForItem)}
@@ -1764,7 +1768,7 @@ export default function CostDetail() {
             document could be fixed here and the ledger kept the first answer.
             Only offered where there is a bill to update, and never for a cost
             sitting on an expense claim, which reaches Xero as the claim's line. */}
-        {doc.persisted && doc.xeroInvoiceId && (
+        {doc.persisted && doc.xeroInvoiceId && mayPublish && (
           <TopButton onClick={openXeroUpdate} disabled={xeroBusy} title={`Send this document's current figures to the ${doc.xeroDocType === 'ACCPAYCREDIT' ? 'credit note' : 'bill'} it created in Xero`}>
             Update in Xero
           </TopButton>

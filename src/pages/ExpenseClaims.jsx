@@ -363,6 +363,14 @@ export default function ExpenseClaims() {
   // nothing to come back from. A published claim is archived by the publishing
   // and is not pulled back out of it here — its figures are in the ledger.
   const picked = everything.filter((c) => selected.has(c.id));
+  // An APPROVED claim is a decision somebody made about a specific sum, and
+  // submitting it again put it back to awaiting approval and cleared that
+  // decision — which is what Unapprove is for, except this did it with no trail
+  // and asked the approver a second time. So the button acts only on what it
+  // can actually submit and is dead when the selection holds none of it, the
+  // way the Costs toolbar's Archive and Unarchive each carry their own half.
+  const submittable = picked.filter((c) => c.approvalStatus !== 'approved');
+  const canSubmit = submittable.length > 0;
   const canArchive = picked.some((c) => !c.archived && !c.xeroInvoiceId);
   const canUnarchive = picked.some((c) => c.archived && !c.xeroInvoiceId);
 
@@ -459,11 +467,16 @@ export default function ExpenseClaims() {
       <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-x-visible md:pb-0">
         <button
             type="button"
-            disabled={!hasSelection}
+            disabled={!canSubmit}
             onClick={() => setApproveOpen(true)}
+            title={
+              hasSelection && !canSubmit
+                ? 'Already approved. Unapprove it first if it has to change.'
+                : ''
+            }
             className={cn(
               'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-opacity',
-              hasSelection ? 'bg-primary text-primary-foreground hover:opacity-90' : 'cursor-not-allowed bg-muted text-muted-foreground/60'
+              canSubmit ? 'bg-primary text-primary-foreground hover:opacity-90' : 'cursor-not-allowed bg-muted text-muted-foreground/60'
             )}
           >
             <Send className="h-3.5 w-3.5" /> Submit for approval
@@ -797,7 +810,7 @@ export default function ExpenseClaims() {
       <ClaimApprovalModal
         open={approveOpen}
         onClose={() => setApproveOpen(false)}
-        claims={rows.filter((c) => selected.has(c.id))}
+        claims={rows.filter((c) => selected.has(c.id) && c.approvalStatus !== 'approved')}
         onSubmit={async (ids) => {
           setApproveOpen(false);
           // Each routes to the claimant's direct manager, resolved server-side.

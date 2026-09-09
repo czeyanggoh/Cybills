@@ -57,26 +57,17 @@ every linked entity for the client-access picker).
 Env (server/.env): `PRACTICE_NAME`, `PRACTICE_DOMAIN` (only used to recognise
 pre-existing rows as practice staff on first run), `PRACTICE_TIMEZONE`.
 
-**A Standard user sees their own work, and their reports'.** The Edit
-privileges dialog has always offered three roles and an "Access all documents"
-toggle, and none of it reached the listing: every signed-in person in an entity
-saw every document and every claim in it, so Standard only ever meant "kept off
-the Users page and out of Business settings". It now means what it says. The
-line it follows is the **Direct manager** column on the Users page — already the
-line a claim's approval travels up (`directManagerFor`), so this is the org
-chart the app holds rather than a second one to keep in step with it. ONE level,
-deliberately: `managerId` names a direct manager, and somebody who needs a whole
-tree — a department head, a finance lead — is given `privileges.accessAll`,
-which is exactly what that toggle has always meant and the only thing it has
-ever meant. Business Admin and User Admin run the book and see all of it; a
-practice colleague is a Business Admin inside every client they can open, so
-`effectiveRoleFor` carries them without a word of their own.
-
-`seesEveryDocument` / `visibleOwnersFor` / `addressIn` live in `users.ts` beside
-the rows they read, and return **null for an unrestricted caller** so the common
-case builds no set at all. Reports are looked up in the entity being ASKED
-about, not the one the caller is standing in: the same person holds a different
-role in each, and a manager here is not a manager there.
+**A Standard user sees their own work.** The Edit privileges dialog has always
+offered three roles and an "Access all documents" toggle, and none of it reached
+the listing: every signed-in person in an entity saw every document and every
+claim in it, so Standard only ever meant "kept off the Users page and out of
+Business settings". `seesEveryDocument` / `visibleOwnersFor` / `addressIn` live
+in `users.ts` beside the rows they read, and return **null for an unrestricted
+caller** so the common case builds no set at all. Business Admin and User Admin
+run the book and see all of it; a practice colleague is a Business Admin inside
+every client they can open, so `effectiveRoleFor` carries them without a word of
+their own, and `privileges.accessAll` widens a Standard user back to the whole
+book, which is what that toggle has always meant.
 
 **Their own upload can never be hidden from them**, which is the whole reason
 the first attempt at this was removed. It filtered on the document's OWNER
@@ -85,33 +76,69 @@ alone, so a person's own upload vanished from every tab the moment that
 left of it. The set is matched against `createdBy` — the uploader's address,
 which is never rewritten — **or** the owner, and the union is the point: the
 first half means a drifting owner cannot lose them their own document, and the
-second means a document REASSIGNED to somebody is theirs to work on. So a
-manager sees their report's work by either road, and the entity's **general
-account** — the row that owns the paperwork nobody claimed — belongs to nobody's
-report and is not in a Standard user's list at all.
+second means a document REASSIGNED to somebody is theirs to work on. The
+entity's **general account** — the row that owns the paperwork nobody claimed —
+is nobody's, so it is not in a Standard user's list at all.
+
+**A CLAIM reaches the approver; the costs behind it do not.** Both started from
+one rule, and they are two questions. A claim is ROUTED to the claimant's direct
+manager for a decision, so it has to reach them: `visibleOwnersFor(req, org,
+true)` widens the set to the caller's direct reports, and only the claims list
+asks for that. Their reports' COSTS stay out of the Costs list — approving a
+claim is not a licence to read somebody's receipts drawer. **One exception, and
+only for the person deciding**: a document whose status is `expenseclaim` is
+READABLE by a direct report's manager, because the claim's PDF is assembled in
+the BROWSER out of these very files and each row links through to the document
+behind it, so an approver who cannot open the receipt has been sent a decision
+they cannot make. Reading only — `mayWriteBill` is deliberately narrower than
+`canReadBill`, so a claimed receipt is still the claimant's to correct.
+
+Reports are looked up in the entity being ASKED about, not the one the caller is
+standing in: the same person holds a different role in each, and a manager here
+is not a manager there. ONE level, deliberately — `managerId` names a direct
+manager, and a whole tree is what `accessAll` is for.
 
 **And it is a rule rather than a display detail.** The listing is only where it
 shows; `canReadBill` is where it holds, which covers the by-id read, the file,
-the file-meta, the `where` lookup and move-entity in one place, and the writes
-go through `mayWriteBill` — PATCH, DELETE, unpublish — because a document
-somebody cannot see is not one they may change or destroy. 404 throughout, never
-403: whether a document exists is itself something the caller isn't entitled to
-learn. `GET /api/costs/bills` is the one road every surface reads from, so Costs,
-Submission history, the exports and merge detection all narrow together.
+the file-meta, the `where` lookup and move-entity in one place, and the writes go
+through `mayWriteBill`. 404 throughout, never 403: whether a document exists is
+itself something the caller isn't entitled to learn. `GET /api/costs/bills` is
+the one road every surface reads from, so Costs, Submission history, the exports
+and merge detection all narrow together.
 
 **A claim is visible three ways, and only two of them are shared.** It was
 CREATED by them (an address, never rewritten), or it is MADE OUT to them
 (`claimFor` is a NAME, resolved back through `emailForName` the way the approval
 emails resolve it) — either counts for a direct report as well. The third is the
-caller's ALONE: a claim routed to them for a DECISION, which they must be able
-to open whoever raised it, or the approval request arrives by email and leads to
-an empty list. Not widened to their reports, because a claim somebody who
-reports to me has to decide is theirs to decide, and the person who raised it
+caller's ALONE: a claim routed to them for a DECISION, which they must be able to
+open whoever raised it. Not widened to their reports, because a claim somebody
+who reports to me has to decide is theirs to decide, and the person who raised it
 may be nothing to do with me. The WhatsApp and Bank tabs show everybody's
-documents and were already Business Admin only, so they are untouched. What is
-still NOT enforced is the other half of that dialog — `createClaims` and
-`canPublish` — which is `docs/roles-enforcement.md`. Covered by `npm test` in
-`server/` (`test/document-visibility.test.mts`).
+documents and were already Business Admin only, so they are untouched. Covered by
+`npm test` in `server/` (`test/document-visibility.test.mts`).
+
+**"Can’t publish to accounting software" now means it.** The other half of that
+dialog was the same fault: the radio was written onto the roster row and read by
+nobody, so every publish button worked and so did every route behind them.
+`canPublishToXero` (`users.ts`) asks only a STANDARD user — both admin tiers
+publish by role, and the toggles are not even offered for them, so a stale
+`false` left on an admin's row from before they were promoted must not lock them
+out of the ledger they run. It rides on the membership payload
+(`canPublish`) beside `admin` / `businessAdmin` / `canManageUsers`, so the
+browser never derives a different answer from the one the API enforces, and the
+buttons are HIDDEN rather than offered and refused: the cost page, the Costs
+toolbar, the claim page, and the drawer's automatic publish-after-reading, which
+would otherwise put a failure on a document that read perfectly well.
+
+**Guarded on the four routes, not inside the publish itself.** `publish-bill`,
+`update-bill`, `publish-claim` and `update-claim` each ask `mayPublish` —
+UPDATING counts, because an update restates money in a live ledger, which is the
+thing the privilege is about. Deliberately NOT inside `postBillToXero`, which
+the cyworkspace payables hand-off shares (one publish path, not two): that road
+proves itself with the shared inbound key and has no roster row at all, so a
+check down there would refuse a payment run. Covered by `npm test` in `server/`
+(`test/publish-privilege.test.mts`). What is still NOT enforced is
+`privileges.createClaims`, which is `docs/roles-enforcement.md`.
 
 **A person has one name, and a document has an owner.** `createdBy` on a bill is
 who UPLOADED it — always an email, never overwritten. The Document owner (the
@@ -907,6 +934,19 @@ who reopened it and why to the history, so the items are corrected and it is
 approved again without being re-submitted. Same people as Approve. The
 claimant is emailed, because they were told it was approved and would otherwise
 be waiting on money that has stopped moving. Covered by the same test.
+
+**And Unapprove is the only way back out of an approval.** Ticking an approved
+claim in the list and pressing **Submit for approval** put it straight back to
+`awaiting_approval`, cleared `decidedBy` / `decidedAt` / `decidedFor` and emailed
+the approver a fresh request — the same act Unapprove performs, with none of the
+trail Unapprove writes, so the record simply stopped saying the claim had ever
+been approved. `POST /:id/submit` now refuses an approved claim (409
+`already_approved`) and the list's button acts only on the claims it can
+actually submit, disabled when the selection holds none of them, the way the
+Costs toolbar's Archive and Unarchive each carry their own half. REJECTED is not
+refused: fixing a rejected claim and sending it again is the whole point of
+rejecting one. Covered by `npm test` in `server/`
+(`test/claim-approve-practice.test.mts`).
 
 **And a published claim is corrected the way a published cost is.** A claim
 whose bill is already in Xero may be unapproved too; the page then says the

@@ -1,7 +1,8 @@
 # CYBills user roles & privilege enforcement — spec (match Dext)
 
-Status: **partly built** — gap 1 (Access all documents) landed 9 Sep 2026; gaps
-2-5 are still proposed. Owner: **boss** (roles/permissions area).
+Status: **partly built** — gaps 1 (Access all documents) and 3 (Publishing
+permissions) landed 9 Sep 2026; gaps 2, 4 and 5 are still proposed.
+Owner: **boss** (roles/permissions area).
 Written 2026-08-21 as an advisory spec so the enforcement can be added without a
 two-session collision.
 
@@ -58,6 +59,11 @@ for. Business Admin, User Admin and the practice's colleagues are unaffected.
   is matched against `createdBy` — the uploader's address, never rewritten — OR
   the owner, and the union is the point: their own upload can never be hidden
   from them, and a document reassigned TO somebody is still theirs to work on.
+- Refined the same day, at Cze's request: a report's CLAIMS reach their approver
+  (they have to decide them) but a report's COSTS do not. The one exception is a
+  document already ON a claim, which the approver may READ but not edit — the
+  claim PDF is assembled in the browser out of those files, so without it an
+  approver is sent a decision they cannot see the evidence for.
 - Covered by `npm test` in `server/` (`test/document-visibility.test.mts`).
 
 ### 2. Create expense claims — `privileges.createClaims` (Standard only)
@@ -67,16 +73,32 @@ for. Business Admin, User Admin and the practice's colleagues are unaffected.
 - Server: reject `POST /api/claims` and `POST /api/claims/:id/items` for a
   Standard user without the privilege.
 
-### 3. Publishing permissions — Dext has **3 options**; CYBills stores a boolean
-Change `canPublish` (boolean) → `publish: 'all' | 'claims' | 'none'`.
-- `none` → hide every "Publish to Xero".
-- `claims` → only expense-claim publish allowed.
-- `all` → cost items + claims.
-- Enforce in UI (`src/pages/CostDetail.jsx` + `src/pages/ExpenseClaimDetail.jsx`
-  publish buttons, and the drawer's auto-publish in
-  `src/components/AddDocumentsDrawer.jsx`) **and** server-side:
-  `publish-bill` requires `all`; `publish-claim` requires `all` or `claims`
-  (`server/src/xero.ts`).
+### 3. Publishing permissions — `privileges.canPublish` — **DONE**
+Built 9 Sep 2026, keeping the stored BOOLEAN. The third Dext option
+("expense claims only") was considered and deliberately not built: Cze asked for
+the two options the dialog already offers to start working rather than for a new
+one to be added. If it is ever wanted, `canPublish` becomes
+`publish: 'all' | 'claims' | 'none'` and only `mayPublish` has to learn the
+difference.
+
+- `canPublishToXero` in `server/src/users.ts`, asked only of a STANDARD user:
+  both admin tiers publish by role and are never shown the toggles, so a stale
+  `false` on an admin row must not lock them out.
+- Answered on the membership payload as `canPublish`, beside `admin` /
+  `businessAdmin` / `canManageUsers`, so the browser never derives a different
+  answer from the one the API enforces. `canPublishToXero` in
+  `src/lib/userStore.js` reads it.
+- Server: `mayPublish` guards `publish-bill`, `update-bill`, `publish-claim` and
+  `update-claim` (`server/src/xero.ts`). UPDATING counts — it restates money in
+  a live ledger. NOT inside `postBillToXero`: the cyworkspace payables hand-off
+  shares it, proves itself with the inbound key and has no roster row, so a
+  check there would refuse a payment run.
+- UI: the buttons are HIDDEN rather than offered and refused —
+  `src/pages/CostDetail.jsx` (publish + update), `src/pages/Costs.jsx` (the bulk
+  toolbar), `src/pages/ExpenseClaimDetail.jsx` (publish + update), and the
+  drawer's automatic publish-after-reading in
+  `src/components/AddDocumentsDrawer.jsx`.
+- Covered by `npm test` in `server/` (`test/publish-privilege.test.mts`).
 
 ### 4. User Admin cannot manage Business Admins
 - When the signed-in user is **User Admin** and the target row is **Business
