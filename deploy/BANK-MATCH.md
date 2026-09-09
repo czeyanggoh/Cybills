@@ -45,10 +45,13 @@ payables routes use (`CYBILLS_API_KEY` at the CYWS end, `WHATSAPP_INBOUND_KEY`
 here), and CYBills calls CYWS with `CYWORKSPACE_API_KEY`, the key the Xero relay
 uses. Contract for the payables routes this sits beside: `deploy/PAYABLES.md`.
 
-## What CYWS has to add
+## What CYWS provides
 
-One read-only route, so the Bank tab in CYBills can show the lines the last run
-left outstanding for a client:
+One read-only route (`server/src/functions/cybillsBankRecon.ts` in
+cyworkspace), so the Bank tab in CYBills can show the lines the last run left
+outstanding for a client. The run records those lines as it goes, one entry per
+report, so the route has something to say only after the first run since it
+shipped:
 
 ```
 GET https://cyworkspace.cy-bm.sg/api/webhooks/cybills/bank-recon/outstanding?tenant_id=<uuid>
@@ -114,6 +117,12 @@ updating" rather than "nothing outstanding". Until the route exists the Bank tab
 shows that message and the matches already made; nothing else is affected.
 
 ## What CYBills offers CYWS
+
+CYWS's `matchLines` calls both of these (`functions/cybillsBankMatch.ts` in
+cyworkspace): after the Xero legs, every still-unmatched money-out line is
+paired with a candidate — `matched_cybills`, with the pairing's confidence —
+and a pairing confident enough for the run (or ticked on the review page) is
+settled through the second route.
 
 ### `GET /api/payments/bank-candidates?tenant_id=<uuid>`
 

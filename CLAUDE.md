@@ -1865,11 +1865,12 @@ statement amount, carrying the bank's reference — which is what Xero's own
 reconciliation then pairs the line with. The BROWSER road is the **Bank** tab
 (`BankMatch.jsx`, Business Admin like Costs): `GET /api/bank/outstanding` asks
 CYWS for the lines its run left unsettled (`/api/webhooks/cybills/bank-recon/
-outstanding`, a route CYWS has to add — a bare 404 from an older CYWS is
-reported as "needs updating", not as "nothing outstanding"), the page suggests
+outstanding`, which CYWS records as its run goes — a bare 404 from an older
+CYWS is reported as "needs updating", not as "nothing outstanding"), the page suggests
 the document each pays, and a person presses Match (`POST /api/bank/match`).
-The MACHINE road is CYWS's run itself, on the payables seam (`payments.ts`, same
-key, same tenant check): `GET /api/payments/bank-candidates` lists every
+The MACHINE road is CYWS's run itself — its `matchLines` calls both routes
+after the Xero legs, the way it consults Dext — on the payables seam
+(`payments.ts`, same key, same tenant check): `GET /api/payments/bank-candidates` lists every
 document a line could pay — WIDER than the payables list, because a receipt
 marked paid is exactly what a card line on the statement is, and a published
 bill awaiting payment is offered too — and `POST /api/payments/bills/:id/settle`
