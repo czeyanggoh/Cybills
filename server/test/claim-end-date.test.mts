@@ -13,6 +13,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-claim-end-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -139,6 +140,5 @@ check('to the date they chose', r.body.claim?.endDate, '2026-03-31');
 r = await post('/', UMA, { claimFor: 'Uma Admin', name: 'User Admin claim', endDate: '2026-01-15' });
 check('a User Admin is not a Standard user', r.body.claim?.endDate, '2026-01-15');
 
-server.close();
 console.log(failures ? `\n${failures} FAILED` : '\nAll passed');
-process.exit(failures ? 1 : 0);
+await finish(failures, server);

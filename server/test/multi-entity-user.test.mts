@@ -8,6 +8,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-multi-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -92,6 +93,5 @@ r = await call('POST', '/api/users', 'org-red', { firstName: 'Martin', lastName:
 check('adding him where he already is stays a duplicate', r.body.duplicates.length, 1);
 check('…and links nothing', r.body.linked.length, 0);
 
-server.close();
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures, server);

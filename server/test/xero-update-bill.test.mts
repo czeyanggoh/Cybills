@@ -10,6 +10,7 @@ import http from 'node:http';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-xeroupdate-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -144,7 +145,5 @@ r = await update(posted.id, { status: 'AUTHORISED' });
 check('the answer updates the stored Xero status', getBillById('cybm', posted.id)?.xeroStatus, 'AUTHORISED');
 check('the document is still linked to the SAME bill', getBillById('cybm', posted.id)?.xeroInvoiceId, 'inv-existing');
 
-server.close();
-stub.close();
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures, server, stub);

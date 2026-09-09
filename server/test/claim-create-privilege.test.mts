@@ -10,6 +10,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-claim-priv-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -131,6 +132,5 @@ check('an admin is never asked', canCreateClaims(rowFor('boss@redalphacyber.com'
 check('nor a User Admin', canCreateClaims(rowFor('uma@redalphacyber.com'), RED), true);
 check('and the sessionless context stays open', canCreateClaims(null, RED), true);
 
-server.close();
 console.log(failures ? `\n${failures} FAILED` : '\nAll passed');
-process.exit(failures ? 1 : 0);
+await finish(failures, server);

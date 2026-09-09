@@ -10,6 +10,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-share-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -119,6 +120,5 @@ check('sharing off: nothing new is minted', Object.keys(await mint([withFile.id]
 setSharing('org-cybm', true);
 check('sharing back on: the same link opens again', await fileStatus(withFile.id, minted), 200);
 
-server.close();
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures, server);

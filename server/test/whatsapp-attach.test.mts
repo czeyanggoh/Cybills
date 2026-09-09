@@ -17,6 +17,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-wa-attach-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -163,7 +164,6 @@ await post(`channels/${adopted}/close`, {}, ORG);
 const after = (await get('directory', KEY)).body.channels as any[];
 check('a closed collection stops being assignable', after.find((c) => c.submission_id === adopted)?.assignable, false);
 
-server.close();
 globalThis.fetch = realFetch;
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures, server);

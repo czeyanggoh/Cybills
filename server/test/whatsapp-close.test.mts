@@ -10,6 +10,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-wa-close-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -182,7 +183,6 @@ check('and the two counts differ by exactly what is hidden', seen.total - seen.c
 const one = await fetch(`http://127.0.0.1:4627/api/whatsapp/threads/${live}`, { headers: ORG });
 check('the thread still opens', one.status, 200);
 
-server.close();
 globalThis.fetch = realFetch;
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures, server);

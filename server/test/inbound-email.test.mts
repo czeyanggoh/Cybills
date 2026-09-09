@@ -7,6 +7,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-inbound-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -194,6 +195,5 @@ const grabRule = { category: '493 - Travel - National', project: 'Ops' };
   check('a document nobody is reading is untouched', settleProcessing('cybm', read.id)?.status, 'ready');
 }
 
-server.close();
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures, server);

@@ -7,6 +7,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-autodup-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -93,6 +94,5 @@ const redRows = await list('org-red');
 check('Off leaves the pair unflagged', redRows.find((b) => b.id === freshCopy.id)?.duplicateOfId || '', '');
 check('…and the original too', redRows.find((b) => b.id === fresh.id)?.duplicateOfId || '', '');
 
-server.close();
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures, server);

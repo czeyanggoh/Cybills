@@ -7,6 +7,7 @@ import http from 'node:http';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-xeroscope-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -98,7 +99,5 @@ check('another entity’s bill is not found', [r.status, r.body.error], [404, 'b
 r = await publish('org-nope', cybmBill.id);
 check('unknown organisation', [r.status, r.body.error], [404, 'organisation_not_found']);
 
-server.close();
-stub.close();
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
-process.exit(failures ? 1 : 0);
+await finish(failures, server, stub);

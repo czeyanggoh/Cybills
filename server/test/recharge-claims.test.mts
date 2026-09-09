@@ -14,6 +14,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-recharge-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -162,8 +163,4 @@ const unknown = await get('/api/payments/claims?tenant_id=t-nobody', { 'X-API-Ke
 check('an unknown tenant is an empty list, not an error', [unknown.status, unknown.body.claims], [200, []]);
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
-// Let the loop drain before exiting. Tearing down on top of a live handle
-// aborts the process on Windows, which turns a green run into a non-zero exit
-// and a failing `npm test` that names nothing.
-await new Promise((r) => setTimeout(r, 100));
-process.exit(failures ? 1 : 0);
+await finish(failures);

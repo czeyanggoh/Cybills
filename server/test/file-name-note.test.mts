@@ -11,6 +11,7 @@
 // rule an entity wrote about that supplier. Driven over real HTTP against a
 // stubbed reader, so what is asserted is the prompt that actually goes out.
 import http from 'node:http';
+import { finish } from './support.mts';
 
 process.env.OPENAI_API_KEY = 'test-key';
 process.env.OPENAI_EXTRACT_MODEL = 'gpt-4o-stub';
@@ -154,6 +155,4 @@ check('an unnamed document adds nothing to the prompt', r.prompt.includes('named
 check('…and nothing was followed', r.data.noteFollowed, '');
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
-server.close();
-stub.close();
-process.exit(failures ? 1 : 0);
+await finish(failures, server, stub);

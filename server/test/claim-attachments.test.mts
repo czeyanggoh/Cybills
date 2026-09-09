@@ -5,6 +5,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-claim-att-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -113,10 +114,6 @@ r = await call('DELETE', `/${claimId}/attachments/${att.id}`);
 check('and loses none', [r.status, r.body.error], [409, 'claim_locked']);
 check('the file still opens on an approved claim', (await fetch(`${base}/${claimId}/attachments/${att.id}/file`)).status, 200);
 
-server.close();
-if (failures) {
-  console.error(`\n${failures} failure(s)`);
-  process.exit(1);
-}
-console.log('\nAll claim attachment tests passed.');
-process.exit(0);
+if (failures) console.error(`\n${failures} failure(s)`);
+else console.log('\nAll claim attachment tests passed.');
+await finish(failures, server);

@@ -3,6 +3,7 @@
 // enforces is tested directly: the lines must be the same money as the bill, or
 // they don't go up as lines at all.
 import http from 'node:http';
+import { finish } from './support.mts';
 
 process.env.CYWORKSPACE_API_KEY = 'test-key';
 
@@ -142,5 +143,4 @@ lines = await linesOf(bill({ total: '100', lineItems: [row({ total: '100', descr
 check('blank description falls back', lines[0].Description, 'Supplier bill');
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
-stub.close();
-process.exit(failures ? 1 : 0);
+await finish(failures, stub);

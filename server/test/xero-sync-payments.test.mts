@@ -9,6 +9,7 @@ import http from 'node:http';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-syncpay-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -143,7 +144,5 @@ const red = await sync('org-red');
 check('the second entity sweeps its own book', red.body.checked, 1);
 check('...and its bill picks up the status', getBillById('org-red', otherEntity.id)?.xeroStatus, 'PAID');
 
-server.close();
-stub.close();
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures, server, stub);
