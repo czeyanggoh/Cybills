@@ -4,8 +4,10 @@ import { WORKSPACE_ID } from './workspace.js';
 import {
   dataScopeForOrg,
   listOrganisations,
+  publishTargetFor,
   type Organisation,
 } from './organisations.js';
+import { rechargeClaims } from './claims.js';
 import {
   costComplete,
   displayIdOf,
@@ -67,6 +69,28 @@ function organisationsForTenant(tenantId: string): Organisation[] {
   const wanted = tenantId.trim().toLowerCase();
   if (!wanted) return [];
   return listOrganisations(WORKSPACE_ID).filter((o) => o.tenantId.trim().toLowerCase() === wanted);
+}
+
+// Every entity whose claims REACH this Xero tenant — which is not the same
+// question as `organisationsForTenant`, and the difference is the whole reason
+// this exists. A BRIDGE entity has no tenant of its own: ST Engineering's staff
+// claim against Red Alpha's ledger, so the entity holding their claims answers
+// `tenantId === ''` and the payables rule above cannot see it. Claims are the
+// one thing a bridge entity CAN put in Xero (`publishTargetFor` resolves the
+// parent), so the recharge road has to ask where a claim would post, not where
+// the entity is linked.
+//
+// Deliberately a second helper rather than widening the first: payables must
+// keep the narrower rule. A bridge entity's COSTS are not payable through that
+// road — they reach the ledger as lines of a claim's own bill — and a payment
+// run that offered them would pay the same money twice.
+function organisationsPublishingTo(tenantId: string): Organisation[] {
+  const wanted = tenantId.trim().toLowerCase();
+  if (!wanted) return [];
+  return listOrganisations(WORKSPACE_ID).filter((o) => {
+    const target = publishTargetFor(WORKSPACE_ID, o);
+    return Boolean(target) && target!.tenantId.trim().toLowerCase() === wanted;
+  });
 }
 
 // The inbox statuses — a document still being worked on. Mirrors
@@ -184,6 +208,56 @@ paymentsRouter.get('/bills', async (req, res) => {
     tenant_id: tenantId,
     organisations: organisations.map((o) => ({ id: o.id, name: o.name })),
     bills,
+  });
+});
+
+// GET /api/payments/claims?tenant_id=<uuid> — the approved expense claims whose
+// bills post into this Xero tenant, for the RECHARGE half.
+//
+// A bridge entity exists because the people claiming against a client's ledger
+// do not work for that client: ST Engineering's staff claim against Red Alpha's
+// book. Their claims post there as ACCPAY bills against a clearing account, and
+// the practice then invoices the ST Engineering company that seconded them —
+// which nets that account back off. CYWS runs that half (it holds the PO
+// register that says who is seconded where, and it writes the sales invoice),
+// and this is where it reads what is waiting to be recharged.
+//
+// Scoped by PUBLISH TARGET, not by the entity's own tenant link — see
+// organisationsPublishingTo. Contract: deploy/RECHARGE.md.
+paymentsRouter.get('/claims', async (req, res) => {
+  if (unauthorised(req, res)) return;
+  const tenantId = String(req.query.tenant_id ?? '').trim();
+  if (!tenantId) {
+    return res.status(400).json({ error: 'tenant_id_required', message: 'Name the Xero tenant to list claims for.' });
+  }
+  const organisations = organisationsPublishingTo(tenantId);
+  if (!organisations.length) {
+    // Not an error, for the same reason the payables listing says so: CYWS asks
+    // about every tenant its user can see, and most are not CYBills clients.
+    return res.json({ ok: true, tenant_id: tenantId, organisations: [], claims: [] });
+  }
+
+  const origin = appOrigin(req);
+  const claims: Array<Record<string, unknown>> = [];
+  for (const organisation of organisations) {
+    for (const row of await rechargeClaims(dataScopeForOrg(organisation.id))) {
+      claims.push({
+        ...row,
+        org_id: organisation.id,
+        org_name: organisation.name,
+        // Carries ?org= because the app opens whichever entity that browser
+        // last had, and a bridge entity's claim looked for in the parent is a
+        // claim reported missing.
+        url: `${origin}/expense-claims/${row.id}?org=${encodeURIComponent(organisation.id)}`,
+      });
+    }
+  }
+
+  res.json({
+    ok: true,
+    tenant_id: tenantId,
+    organisations: organisations.map((o) => ({ id: o.id, name: o.name })),
+    claims,
   });
 });
 

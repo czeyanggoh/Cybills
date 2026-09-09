@@ -17,6 +17,7 @@ import {
 } from './store.js';
 import { listOrganisations, primaryOrgId } from './organisations.js';
 import { endOfThisMonth, isoClaimDate } from './claimDates.js';
+import { referenceFor } from './claimRef.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
 // X-Org-Id scoping as bills). Replaces the old per-browser localStorage claim
@@ -160,6 +161,64 @@ export function markClaimXeroPayment(
 // Every published claim in one entity's book, for the payment backfill.
 export function publishedClaims(org: string): Claim[] {
   return load().filter((c) => !c.deleted && c.orgId === org && c.xeroInvoiceId);
+}
+
+// One approved claim, as the RECHARGE seam describes it (deploy/RECHARGE.md).
+//
+// A bridge entity's claims post into its parent's ledger as ACCPAY bills
+// against a clearing account, and the practice then invoices the client that
+// seconded those people. CYWorkspace runs that half, so it needs the claims in
+// a shape it can group and bill from — which is deliberately NOT the Claim
+// record: a machine caller has no business with the approval history, the
+// per-item breakdown or the attachments.
+export type RechargeClaim = {
+  id: string;
+  /** "ST Eng Exp Claim 20-Aug-2026 21324972410" — what the Xero bill is named. */
+  reference: string;
+  claimant: string;
+  /** The claimant's own address, resolved back through the roster the way the
+   *  approval emails resolve it. A PO assigns PEOPLE, and a name is what a
+   *  claim stores — so the stable identity has to be handed over with it, or
+   *  the far end matches on a display name that the roster can rename. */
+  claimant_email: string;
+  /** The date coverage is decided by: the period the claim closes. */
+  period_end: string;
+  currency: string;
+  total: string;
+  items: number;
+  decided_at: string;
+  /** The ACCPAY bill this claim posted as, and what Xero says of it since. */
+  xero_invoice_id: string;
+  xero_status: string;
+  xero_paid_date: string;
+};
+
+// The approved claims in one entity's book. APPROVED only, and that is the
+// whole filter: an unapproved claim is not yet a cost anybody has agreed to,
+// so recharging it would invoice a client for money the practice has not
+// accepted it owes. A claim not yet published is still listed — it is a real
+// approved cost, and whether its bill has reached Xero is a separate question
+// the row answers for itself.
+export async function rechargeClaims(org: string): Promise<RechargeClaim[]> {
+  const rows: RechargeClaim[] = [];
+  for (const c of load()) {
+    if (c.deleted || c.orgId !== org || c.approvalStatus !== 'approved') continue;
+    rows.push({
+      id: c.id,
+      reference: await referenceFor(c),
+      claimant: c.claimFor,
+      claimant_email: emailForName(WORKSPACE_ID, c.claimFor),
+      period_end: c.endDate || c.claimDate || '',
+      currency: c.currency || 'SGD',
+      total: claimTotal(c),
+      items: c.transactions.length,
+      decided_at: c.decidedAt || '',
+      xero_invoice_id: c.xeroInvoiceId || '',
+      xero_status: c.xeroStatus || '',
+      xero_paid_date: c.xeroPaidDate || '',
+    });
+  }
+  return rows;
 }
 
 const COLLECTION = 'claims';
