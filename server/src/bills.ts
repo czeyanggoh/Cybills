@@ -33,7 +33,6 @@ import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from
 import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 import { makeEntityCheck } from './entityCheck.js';
 import { syncWhatsappReaction } from './waReactions.js';
-import { readGotNothing } from './blankRead.js';
 import { keepMileageInStep } from './mileage.js';
 import { channelById } from './waChannels.js';
 import { senderIdentity } from './waSender.js';
@@ -893,7 +892,11 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   // opposite, and it lands in the inbox as it always did.
   let bill = updated;
   if (bill.status === 'processing') {
-    const status = costComplete(bill) ? 'ready' : (await readGotNothing(bill)) ? 'archived' : 'new';
+    // Ready or New, never Archived: a blank read used to be set aside here
+    // and on the background roads alike, and that stopped at Cze's request —
+    // whether a photo is a document is a person's call. The "Nothing read"
+    // badge is what says so.
+    const status = costComplete(bill) ? 'ready' : 'new';
     bill = updateBill(orgId, req.params.id, { status }) || bill;
   } else {
     bill = reconcileReadiness(orgId, req.params.id) || bill;

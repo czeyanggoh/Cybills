@@ -72,7 +72,7 @@ function NothingReadBadge({ doc }) {
   if (doc.status === 'processing' || !statesNothing(docFacts(doc))) return null;
   return (
     <span
-      title="Nothing could be read off this file — no supplier, total, date or reference. It was set aside rather than filed. Open it to read it again by hand, or ask for a clearer copy."
+      title="Nothing could be read off this file — no supplier, total, date or reference. It is in the Costs inbox waiting for a person. Open it to read it again by hand, or ask for a clearer copy."
       className="mt-1 inline-flex items-center gap-1 whitespace-nowrap rounded border border-muted-foreground/30 bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
     >
       <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Nothing read

@@ -915,38 +915,54 @@ attention landed there only if somebody had already noticed it and pressed the
 button. Rows in To review wear a **"Needs: …"** badge naming the missing fields
 (`missingFields`), except where "Nothing read" already says it better.
 
-**A document the reader got NOTHING off never joins the work.** No supplier, no
-total, no date, no reference and no rows is not a document waiting to be coded —
-there is nothing on it to code, and nothing a reviewer can do at the keyboard
-except ask for it again. On the WhatsApp road a photo taken in a car park is an
-ordinary event, so ten of those beside two real ones is a working list that has
-stopped being one. It is now SET ASIDE instead (`archived`), which is the pile
-kept just in case: it is in Archived, it is in **Submission history**, and in
-both it wears the same **"Nothing read"** badge — derived from the same
-`statesNothing(docFacts(d))` the Costs row uses, so a document somebody has since
-filled in by hand simply stops saying it, and there was nothing to migrate.
+**A document the reader got NOTHING off lands in the inbox, wearing the badge
+that says so.** No supplier, no total, no date, no reference and no rows —
+a photo taken in a car park, a scan that is really a dark image. For a while
+those were SET ASIDE to Archived on the spot, on the reasoning that there is
+nothing on them to code; Cze asked for that to stop (9 Sep 2026): whether a
+picture is a document is a PERSON's call, and a file archived by nobody is a
+file nobody looks at. So every road lands it as New — `autoRead` for an emailed
+or WhatsApp'd document, `/bills/:id/finalize` for an upload — and the
+**"Nothing read"** badge, derived from `statesNothing(docFacts(d))` on the
+Costs row and in **Submission history** alike, is what sends a reviewer to it:
+re-read it, type it in, or archive it themselves. A document somebody has since
+filled in by hand simply stops wearing it. `readGotNothing` (`blankRead.ts`,
+which loads `mergeDetect.js` by path) is still what the read reports —
+`readIntoBill` says how it ended (`'read' | 'blank' | 'failed'`) — because
+the WhatsApp reaction and the breadcrumb still need to tell a read that came
+back empty from one that never happened: a FAILED read (the reader switched
+off, the call thrown, the file a kind the reader cannot take) writes
+"Auto-read didn't complete (…)" into the Category reason, where the document
+page shows it, and the sender's message on the WhatsApp road is left WITHOUT
+a tick either way, decided by `reactionFor` from the document. Covered by
+`npm test` in `server/` (`test/blank-read.test.mts`).
 
-**Only a read that actually RAN may set a document aside.** A read that failed,
-was refused, or never happened — extraction switched off, no API key, the
-process dying mid-read — leaves a document that looks identical and means the
-opposite: nobody has looked at it yet. Set those aside and a deploy with no
-reader would empty its own inbox. So `readIntoBill` says how it ended
-(`'read' | 'blank' | 'failed'`) and `settleProcessing` is TOLD where to land the
-document rather than working it out from the row, which cannot tell the two
-apart. The browser's own upload road decides at the same moment, in
-`/bills/:id/finalize`, off the same `readGotNothing` (`blankRead.ts`, which
-loads `mergeDetect.js` by path — the badge and the filing rule disagreeing is
-the sort of thing nobody can see and everybody has to explain). A failed read
-still writes its breadcrumb and still lands in the inbox.
-
-Nothing else changes: the file is kept, the row is a submission, Unarchive puts
-it back, and on the WhatsApp road the sender's message is still left WITHOUT a
-tick — which is how they are asked for a clearer photo, and is decided by
-`reactionFor` from the document rather than from where it was filed. Note this
-does take blank rows out of `rowsFor('inbox')`, which is what merge detection's
-provisional blank-pair pass reads: half of a two-page upload that read blank is
-now in Archived, and is merged by hand from there. Covered by `npm test` in
-`server/` (`test/blank-read.test.mts`).
+**What a file IS is worked out from its bytes, on the two roads nobody is
+watching.** The upload road is strict — the browser supplies `file.type` and
+`/extract` refuses anything that is not exactly one of the five types the
+reader takes — but an emailed attachment carried whatever the Worker's MIME
+parser reported (`application/octet-stream` from a mail client that never
+sets one, `image/jpg` from a phone, `application/pdf; name="x.pdf"` with its
+parameters still on) and a WhatsApp'd file whatever CYWS or the signed URL
+said. The filing filter let all of those through on the NAME, and the reader
+was handed the raw string; it treats only exactly `application/pdf` as a PDF,
+so a PDF under any other label went to OpenAI as an IMAGE with a bogus data
+URL, the API refused it, and the read ended as "Auto-read didn't complete" —
+while the same invoice uploaded by hand a minute later read fine. That is how
+a JWB invoice failed every first read. `server/src/mediaType.ts` is the one
+answer for both roads (`readerMediaType`): the magic bytes first, the
+declared type second (lowercased, parameters stripped, aliases folded), the
+extension last; the file is STORED under that type too, so the browser
+previews a PDF as a PDF. A kind the reader cannot take at all (HEIC, TIFF) is
+still filed but never sent: the breadcrumb names the type instead of an API
+error that names the wrong cause. And a read that THREW is tried once more
+after a moment (`INBOUND_READ_RETRY_MS`, default 2s) before the document is
+given up on — the SDKs retry a 429 or 5xx themselves, so this catches only what
+outlasted that, and nobody is watching this road to press Re-read. Not done:
+downscaling an oversized photo server-side, which the browser does at 1600px
+and which would need an image library the server does not carry. Covered by
+`npm test` in `server/` (`test/media-type.test.mts`, over real HTTP so what is
+asserted is the file block that actually goes out).
 
 **And a document being READ says so, on every road.** An emailed or WhatsApp'd
 document was created as `new` and read in the background, so for the ten to

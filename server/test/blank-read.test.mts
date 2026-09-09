@@ -115,13 +115,14 @@ const FIELDS = {
 // --- 1) The reader saw nothing ----------------------------------------------
 answer = { ...FIELDS };
 let bill = await arrive();
-check('a blank read is set aside, not filed', bill?.status, 'archived');
-// Kept, not thrown away: the file is still there and the row is still a
-// submission, which is the whole difference between this and deleting it.
+// It used to be set aside to Archived on the spot. Cze asked for that to
+// stop: whether a photo is a document is a person's call, so it lands in the
+// inbox as New, and the badge is what says a person has to look.
+check('a blank read lands in the inbox, not in Archived', bill?.status, 'new');
 check('…and the document is still there', Boolean(bill), true);
-// The badge that explains it is derived from the same rule, so Archived and
-// Submission history can say why it is there.
-check('…and still reads as blank, which is what the badge says', await readGotNothing(bill), true);
+// The badge that explains it is derived from the same rule, so the inbox and
+// Submission history can say why it needs a person.
+check('…and reads as blank, which is what the badge says', await readGotNothing(bill), true);
 
 // --- 2) A read that got something ------------------------------------------
 answer = { ...FIELDS, supplier: 'Singtel', total: 1098.57, date: '2026-09-03' };

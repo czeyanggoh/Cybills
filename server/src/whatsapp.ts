@@ -22,6 +22,7 @@ import { getBill, putBill, putBillFile } from './storage.js';
 import { readSetting } from './settings.js';
 import { resolveProvider } from './llm.js';
 import { autoRead } from './inbound.js';
+import { readerMediaType } from './mediaType.js';
 import { type WaMirroredMessage, loadMessages, saveMessages, messagesForChannel } from './waThread.js';
 import { syncWhatsappReaction } from './waReactions.js';
 import {
@@ -382,12 +383,20 @@ async function readAll(stream: NodeJS.ReadableStream): Promise<Buffer> {
 
 type Fetched = { bytes: Buffer; contentType: string; storageKey: string };
 
+// The type handed back is the one the READER can use — worked out from the
+// bytes (mediaType.ts), the declared type and the file name, in that order —
+// and only where none of those says PDF/PNG/JPEG/WebP/GIF does the declared
+// label stand, so the read can name it as a kind it cannot take. Passed
+// through raw, a PDF CYWS labelled `application/octet-stream` reached OpenAI
+// as an image and every first read of it failed.
 async function fetchDocument(
   scope: string,
-  payload: { r2_key?: string; file_url?: string; content_type?: string }
+  payload: { r2_key?: string; file_url?: string; content_type?: string; file_name?: string }
 ): Promise<Fetched | null> {
   const r2Key = String(payload.r2_key ?? '').trim();
   const declaredType = String(payload.content_type ?? '') || 'application/octet-stream';
+  const fileName = String(payload.file_name ?? '');
+  const typeOf = (bytes: Buffer, label: string) => readerMediaType(label, fileName, bytes) || label;
 
   if (r2Key && r2Enabled) {
     const obj = await getBill(r2Key);
@@ -396,7 +405,7 @@ async function fetchDocument(
       // `shared:` — an object in the shared bucket that CYWS owns. Read it,
       // never delete it: the same key is CYWS's own record of the message.
       if (bytes?.length) {
-        return { bytes, contentType: obj.contentType || declaredType, storageKey: `shared:${r2Key}` };
+        return { bytes, contentType: typeOf(bytes, obj.contentType || declaredType), storageKey: `shared:${r2Key}` };
       }
     }
     console.error('[whatsapp] shared R2 object unreadable, falling back to the signed URL', r2Key);
@@ -409,7 +418,7 @@ async function fetchDocument(
     if (!res.ok) return null;
     const bytes = Buffer.from(await res.arrayBuffer());
     if (!bytes.length) return null;
-    const contentType = res.headers.get('content-type')?.split(';')[0].trim() || declaredType;
+    const contentType = typeOf(bytes, res.headers.get('content-type')?.split(';')[0].trim() || declaredType);
     const fileHash = createHash('sha256').update(bytes).digest('hex');
     const stored = await putBillFile(scope, fileHash, contentType, bytes);
     return { bytes, contentType: stored.contentType, storageKey: stored.storageKey };

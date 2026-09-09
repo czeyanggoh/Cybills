@@ -8,6 +8,7 @@ import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { insertBill, updateBill, settleProcessing, getBillById } from './store.js';
+import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
@@ -154,6 +155,10 @@ export function overlaySupplierRule(
 // of coding rules.
 type ReadEnd = 'read' | 'blank' | 'failed';
 
+// Between the two attempts a thrown read gets. Short: the document is marked
+// Processing for the whole of it.
+const RETRY_DELAY_MS = Number(process.env.INBOUND_READ_RETRY_MS ?? 2000);
+
 async function readIntoBill(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: CoveringNote | null = null): Promise<ReadEnd> {
   if (!visionEnabled) return 'failed';
   const ws = workspaceId(req);
@@ -165,22 +170,43 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     inputs = { accounts: [], categories: [], customers: [], taxCtx: EMPTY_TAX_CONTEXT, taxRates: [], projects: [], instructions: '' };
   }
 
+  // The type the reader is given is the one worked out from the bytes (see
+  // mediaType.ts), and a file that is none of the five it takes is said so
+  // HERE — a HEIC off an iPhone sent to the API as an image is refused with an
+  // error that names the wrong cause.
+  if (!readerMediaType(mediaType, envelope?.fileName)) {
+    updateBill(scope, billId, { categoryReason: `Auto-read didn't complete (${unreadableTypeNote(mediaType, envelope?.fileName)}). Use Re-read.` });
+    return 'failed';
+  }
+
   let lastNote = 'no reader available';
   for (const provider of readerOrder(preferred)) {
-    const result = await runExtraction({
-      provider,
-      imageBase64: fileBase64,
-      mediaType,
-      accounts: inputs.accounts,
-      categories: inputs.categories,
-      customers: inputs.customers,
-      taxRates: inputs.taxRates,
-      projects: inputs.projects,
-      instructions: inputs.instructions,
-      // The envelope itself, not a paragraph made from it: runExtraction adds
-      // the note AND the file name, and has to be able to tell them apart.
-      note: envelope,
-    });
+    const read = () =>
+      runExtraction({
+        provider,
+        imageBase64: fileBase64,
+        mediaType,
+        accounts: inputs.accounts,
+        categories: inputs.categories,
+        customers: inputs.customers,
+        taxRates: inputs.taxRates,
+        projects: inputs.projects,
+        instructions: inputs.instructions,
+        // The envelope itself, not a paragraph made from it: runExtraction adds
+        // the note AND the file name, and has to be able to tell them apart.
+        note: envelope,
+      });
+    let result = await read();
+    // A read that THREW — the call never got an answer, as against one the
+    // reader answered badly — is tried once more after a moment. The SDKs
+    // retry a 429 or a 5xx of their own accord, so this only catches what
+    // outlasted that: a dropped connection, a timeout. Nobody is watching this
+    // road, so the second attempt here is the only one the document gets
+    // until a person presses Re-read.
+    if (!result.ok && result.error === 'extraction_failed') {
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      result = await read();
+    }
     if (result.outcome) {
       recordUsage(req, { feature: 'inbound-extract', provider: result.outcome.provider, model: result.outcome.model, usage: result.outcome.usage });
     }
@@ -334,14 +360,17 @@ export async function autoRead(
   try {
     end = await readIntoBill(req, scope, realOrgId, preferred, billId, fileBase64, mediaType, envelope);
   } finally {
-    // A document the reader got NOTHING off is set aside rather than filed into
-    // the inbox: no supplier, no total, no date, no reference and no rows is
-    // not work waiting to be coded, it is a file that has to be sent again. It
-    // is kept, in Archived and in Submission history, wearing the same "Nothing
-    // read" badge it would have worn in the inbox — and on the WhatsApp road
-    // its message is still left without a tick, which is how the sender is
-    // asked for a better photo.
-    settleProcessing(scope, billId, end === 'blank' ? 'archived' : 'new');
+    // Into the inbox whatever the read found — a blank read included. A
+    // document the reader got nothing off used to be SET ASIDE to Archived on
+    // the spot, and Cze asked for that to stop: whether a photo is a document
+    // is a person's call, and a file archived by nobody is a file nobody
+    // looks at. It lands as New wearing the "Nothing read" badge, which is what
+    // sends a reviewer to it; on the WhatsApp road its message is still left
+    // without a tick, which is how the sender is asked for a better photo.
+    // `end` is still reported, so the reaction and the caller can tell a blank
+    // read from a failed one.
+    void end;
+    settleProcessing(scope, billId, 'new');
   }
 }
 
@@ -505,10 +534,16 @@ inboundRouter.post('/email', async (req, res) => {
     if (!IMAGE_OR_PDF.test(contentType) && !IMAGE_OR_PDF.test(filename)) continue;
     const bytes = Buffer.from(base64, 'base64');
     const fileHash = createHash('sha256').update(bytes).digest('hex');
+    // What the file IS, off its bytes — not what the mail client labelled it.
+    // The label was passed straight through to the reader, which is how a PDF
+    // arriving as `application/octet-stream` failed every first read and read
+    // fine when uploaded by hand. Stored under the real type too, so the
+    // browser previews it as a PDF rather than offering a download.
+    const readType = readerMediaType(contentType, filename, bytes);
     let storageKey = '';
     let storedType = '';
     try {
-      const stored = await putBillFile(scope, fileHash, contentType, bytes);
+      const stored = await putBillFile(scope, fileHash, readType || contentType, bytes);
       storageKey = stored.storageKey;
       storedType = stored.contentType;
     } catch {
@@ -537,7 +572,7 @@ inboundRouter.post('/email', async (req, res) => {
       status: 'processing',
       kind: 'cost',
     });
-    madeBills.push({ id: bill.id, base64, mediaType: storedType || contentType, fileName: filename });
+    madeBills.push({ id: bill.id, base64, mediaType: readType || storedType || contentType, fileName: filename });
   }
 
   // Read with the org's chosen reader (Claude / OpenAI), the same one the manual
