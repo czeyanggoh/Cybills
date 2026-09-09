@@ -237,7 +237,7 @@ export default function Login() {
             {pwError && <p className="text-center text-xs text-destructive">{pwError}</p>}
             <label className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
               <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} className="accent-black" />
-              Trust this browser for 30 days
+              Don’t ask for a code on this browser again
             </label>
             <button
               type="submit"
@@ -262,12 +262,12 @@ export default function Login() {
               className="h-11 w-full rounded-md border bg-background px-3 text-center font-mono text-lg tracking-[0.3em] outline-none placeholder:tracking-normal placeholder:font-sans placeholder:text-base placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
             />
             {pwError && <p className="text-center text-xs text-destructive">{pwError}</p>}
-            {/* On by default: asked once, then not again on this machine. Worth
-                unticking on a shared computer, which is why it is visible
-                rather than assumed. */}
+            {/* On by default: asked once, then not again on this machine, for
+                good. Worth unticking on a shared computer, which is why it is
+                visible rather than assumed. */}
             <label className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
               <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} className="accent-black" />
-              Trust this browser for 30 days
+              Don’t ask for a code on this browser again
             </label>
             <button
               type="submit"

@@ -182,6 +182,13 @@ check('an expired challenge is refused', r.body.error, 'challenge_expired');
   check('a trusted browser is not asked for a code', Boolean(body.user), true);
   check('and says that is why', body.trusted, true);
 
+  // Forever, not for a month: the token carries no expiry of its own, and the
+  // cookie is written again on every sign-in it carries, so the browser's own
+  // cap on how long it will hold one never becomes an expiry.
+  const trustToken = trust.split('=')[1] ?? '';
+  check('the trust token does not expire', 'exp' in (jwt.decode(trustToken) as any), false);
+  check('a trusted sign-in re-stamps it', (again.headers.get('set-cookie') ?? '').includes('cyb_trust='), true);
+
   // It names one person, so it cannot be carried to somebody else's sign-in.
   const other = await fetch('http://127.0.0.1:4639/api/users/login', {
     method: 'POST',

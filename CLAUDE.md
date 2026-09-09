@@ -2241,15 +2241,23 @@ session those people do not have yet, and finishing enrolment is what gives them
 one. Google sign-in is untouched: that branch is only ever reached through the
 password form.
 
-**A trusted browser is asked once, then not again for 30 days** (`cyb_trust`,
-its own cookie). Without it a second factor on a daily tool is a tax, and the
-way people pay a tax like that is by choosing a worse password. The token names
-ONE person and the moment their factor was enrolled, so it cannot be replayed
-for somebody else, and a reset or a re-enrolment silently retires every browser
-trusted before it — which is what you want on the day the laptop is the thing
-that went missing. A RECOVERY code never trusts the browser it was used on,
-whatever the checkbox said: reaching for one is what it looks like when the
-phone is missing, and also what it looks like when the account is being taken.
+**A trusted browser is asked once, and then not again** (`cyb_trust`, its own
+cookie). Without it a second factor on a daily tool is a tax, and the way people
+pay a tax like that is by choosing a worse password. It used to lapse after 30
+days, which bought nothing: a month on it is the SAME machine the person proved
+themselves on, and the only thing the prompt taught was to reach for the phone
+on a schedule. So the token carries no expiry of its own, and the cookie — which
+a browser caps at roughly 400 days whatever is asked for — is written again on
+every sign-in that carries it, so that cap never becomes an expiry either.
+What ENDS it is what should: the token names ONE person and the moment their
+factor was enrolled, so it cannot be replayed for somebody else, and a reset or
+a re-enrolment silently retires every browser trusted before it — which is what
+you want on the day the laptop is the thing that went missing. A RECOVERY code
+never trusts the browser it was used on, whatever the checkbox said: reaching
+for one is what it looks like when the phone is missing, and also what it looks
+like when the account is being taken. Signing out is deliberately not one of
+them — it ends the SESSION, and being asked for a password again on a machine
+that has already proved itself is the point of the trust.
 
 `/api/users/login/totp` is allowlisted past the session guard, and has to be:
 whoever is standing at the code prompt has no session yet, which is the entire
