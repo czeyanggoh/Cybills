@@ -73,9 +73,11 @@ export function categoryCodeEnd(label) {
   const i = s.indexOf(' - ');
   if (i === -1) return -1;
   const head = s.slice(0, i).trim();
-  // Xero codes are short alphanumerics with internal hyphens ("200-10"), and
-  // always have a digit in them.
-  return /^(?=.*\d)[A-Za-z0-9][A-Za-z0-9-]{0,14}$/.test(head) ? i : -1;
+  // Xero codes are short alphanumerics with internal hyphens ("200-10") or
+  // slashes ("93511/000" — a code/sub-code chart), and always have a digit in
+  // them. A slash refused here read a whole chart as plain names: nothing could
+  // be published, and the rule editor said the account wasn't in the chart.
+  return /^(?=.*\d)[A-Za-z0-9][A-Za-z0-9/-]{0,14}$/.test(head) ? i : -1;
 }
 
 // The account code in a category label, or '' when it has none.

@@ -973,8 +973,9 @@ function codeFromCategory(category: unknown): string {
   if (i === -1) return '';
   const code = s.slice(0, i).trim();
   // A code always contains a digit. Without that test a bridge entity's plain
-  // category "Transport - Taxi" reads as the account code "Transport".
-  return /^(?=.*\d)[A-Za-z0-9][A-Za-z0-9-]{0,14}$/.test(code) ? code : '';
+  // category "Transport - Taxi" reads as the account code "Transport". Hyphens
+  // and slashes are part of a code ("200-10", "93511/000").
+  return /^(?=.*\d)[A-Za-z0-9][A-Za-z0-9/-]{0,14}$/.test(code) ? code : '';
 }
 
 // Build the Xero lines for a bill that has its own line items, so each one

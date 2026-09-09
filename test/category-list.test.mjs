@@ -39,6 +39,10 @@ check('a chart label has a code', categoryCode('412 - Consulting & Accounting'),
 check('…and a name', categoryName('412 - Consulting & Accounting'), 'Consulting & Accounting');
 check('a sub-coded label keeps its whole code', categoryCode('200-10 - Sales - Projects'), '200-10');
 check('…and everything after it is the name', categoryName('200-10 - Sales - Projects'), 'Sales - Projects');
+// A code/sub-code chart ("93511/000"): the slash is part of the code. Refused,
+// the whole chart read as plain names and nothing in it could be published.
+check('a slashed code is a code', categoryCode('93511/000 - REPAIR & MAINT'), '93511/000');
+check('…and the name is what follows it', categoryName('93511/000 - REPAIR & MAINT'), 'REPAIR & MAINT');
 
 // The bug this exists to stop: "Transport" is not an account code, so the label
 // is a name in full. Read as a code it would post a taxi fare to nothing.
