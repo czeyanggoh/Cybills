@@ -428,9 +428,18 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
           {/* Collapsed, this fills the rail. Hovered, it lifts out of the flow
               and floats over the content at full width — the rail keeps its
               place, so nothing reflows underneath. */}
+          {/* One column that scrolls as a whole when the window is shorter than
+              its contents. The section's own nav used to be the only part
+              allowed to give way — boxed into whatever height was left after
+              the eight pinned rows below it — so on a laptop screen it became
+              a four-row list inside a hundred-pixel scroll box, with "Expense
+              claims" cut in half behind a scroll bar of its own. Now nothing
+              is clipped: a tall window still pins the bottom group to the
+              bottom (mt-auto), and a short one scrolls the rail top to bottom
+              like any list. */}
           <div
             className={cn(
-              'flex h-full flex-col',
+              'flex h-full flex-col overflow-y-auto',
               flyout && 'absolute inset-y-0 left-0 z-40 w-56 border-r bg-card shadow-xl',
             )}
           >
@@ -452,7 +461,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
               </div>
             )}
             {!settingsCol && (
-              <nav className={cn('flex flex-col gap-1', showLabels ? 'px-3' : 'px-2')}>
+              <nav className={cn('flex shrink-0 flex-col gap-1', showLabels ? 'px-3' : 'px-2')}>
                 {mainNav.map((item) => (
                   <SidebarLink key={item.to} {...item} showLabel={showLabels} />
                 ))}
@@ -463,10 +472,10 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                 read, and the content gets the width back. Collapsed to the rail
                 it would be labels in 56px, so it waits for the fly-out. */}
             {showLabels && subnav && (
-              <div className={cn('min-h-0 flex-1 overflow-auto border-t', !settingsCol && 'mt-2')}>{subnav}</div>
+              <div className={cn('shrink-0 border-t', !settingsCol && 'mt-2')}>{subnav}</div>
             )}
             {!settingsCol && (
-            <div className={cn('flex flex-col gap-1 border-t', showLabels ? 'p-3' : 'px-2 py-3', !(showLabels && subnav) && 'mt-auto')}>
+            <div className={cn('mt-auto flex shrink-0 flex-col gap-1 border-t', showLabels ? 'p-3' : 'px-2 py-3')}>
               {bottomNav.map((item) => {
                 // An `href` item leaves for another app on another host
                 // (cyworkspace, above), so it is an anchor — same row, but the
