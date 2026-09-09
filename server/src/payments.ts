@@ -18,7 +18,7 @@ import {
   type Bill,
 } from './store.js';
 import { getBillFile } from './storage.js';
-import { appOrigin } from './users.js';
+import { appOrigin, peopleForOrg } from './users.js';
 import {
   accountsForOrg,
   postBillToXero,
@@ -274,6 +274,59 @@ paymentsRouter.get('/claims', async (req, res) => {
     tenant_id: tenantId,
     organisations: organisations.map((o) => ({ id: o.id, name: o.name, bridge: !isLinkedItself(o) })),
     claims,
+  });
+});
+
+// GET /api/payments/people?tenant_id=<uuid> — everybody in the entities whose
+// claims post into this Xero tenant.
+//
+// The recharge half is organised by PO, and a PO names the PEOPLE it covers.
+// Deriving that list from the claims already raised would be circular: nobody
+// could be put on a PO until they had a claim, and no claim could be recharged
+// until somebody was on a PO. So the roster is its own question, asked before
+// there is a single claim to show.
+//
+// `peopleForOrg` deliberately reaches wider than the entity's own roster — a
+// practice colleague working in a client's book is in it too. That is right
+// here: they can raise a claim in the entity, so they must be assignable. The
+// general account is not a person and is left out.
+paymentsRouter.get('/people', (req, res) => {
+  if (unauthorised(req, res)) return;
+  const tenantId = String(req.query.tenant_id ?? '').trim();
+  if (!tenantId) {
+    return res.status(400).json({ error: 'tenant_id_required', message: 'Name the Xero tenant to list people for.' });
+  }
+  const organisations = organisationsPublishingTo(tenantId);
+  // One row per ADDRESS, which is what a PO assignment matches on. Somebody who
+  // works in two of these entities is one person to assign, not two.
+  const seen = new Set<string>();
+  const people: Array<Record<string, unknown>> = [];
+  for (const organisation of organisations) {
+    const bridge = !isLinkedItself(organisation);
+    for (const p of peopleForOrg(WORKSPACE_ID, organisation.id)) {
+      const key = p.email.trim().toLowerCase();
+      if (!key || p.general || seen.has(key)) continue;
+      seen.add(key);
+      people.push({
+        email: p.email,
+        name: p.name,
+        // A colleague from the practice rather than one of this entity's own
+        // people — assignable, but worth telling apart in a list of 200.
+        external: p.external,
+        deactivated: p.deactivated,
+        org_id: organisation.id,
+        org_name: organisation.name,
+        bridge,
+      });
+    }
+  }
+  people.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+  res.json({
+    ok: true,
+    tenant_id: tenantId,
+    organisations: organisations.map((o) => ({ id: o.id, name: o.name, bridge: !isLinkedItself(o) })),
+    people,
   });
 });
 

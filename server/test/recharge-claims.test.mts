@@ -48,6 +48,14 @@ writeFileSync(
   JSON.stringify({
     items: [
       { id: 'u-1', workspaceId: 'cybm', name: 'Wei Ming Tan', email: 'weiming.tan@stengg.com', login: 'Yes', role: 'Standard', organisationId: 'org-ste', companyId: 'org-ste', companyName: 'Red Alpha - ST Engineering', privileges: {}, clientAccess: [], extraAccess: [], practice: false, general: false, removed: false, pending: false, deactivated: false },
+      // Somebody with no claim yet — the case the PO register exists to serve,
+      // since a person cannot be assigned to a PO by way of a claim they have
+      // not been able to raise.
+      { id: 'u-2', workspaceId: 'cybm', name: 'Never Claimed', email: 'never.claimed@stengg.com', login: 'Yes', role: 'Standard', organisationId: 'org-ste', companyId: 'org-ste', companyName: 'Red Alpha - ST Engineering', privileges: {}, clientAccess: [], extraAccess: [], practice: false, general: false, removed: false, pending: false, deactivated: false },
+      // Not a person: the row that owns the paperwork nobody claimed.
+      { id: 'u-gen', workspaceId: 'cybm', name: 'General', email: 'org_ste.general@cybills.local', login: 'No', role: 'Standard', organisationId: 'org-ste', companyId: 'org-ste', companyName: 'Red Alpha - ST Engineering', privileges: {}, clientAccess: [], extraAccess: [], practice: false, general: true, removed: false, pending: false, deactivated: false },
+      // Off the roster entirely.
+      { id: 'u-gone', workspaceId: 'cybm', name: 'Long Gone', email: 'long.gone@stengg.com', login: 'No', role: 'Standard', organisationId: 'org-ste', companyId: 'org-ste', companyName: 'Red Alpha - ST Engineering', privileges: {}, clientAccess: [], extraAccess: [], practice: false, general: false, removed: true, pending: false, deactivated: false },
     ],
   })
 );
@@ -191,6 +199,26 @@ check('and never the bridge', other.body.organisations.map((o: any) => o.id), ['
 // tenant its user can see, and most are not CYBills clients at all.
 const unknown = await get('/api/payments/claims?tenant_id=t-nobody', { 'X-API-Key': 'cyws-key' });
 check('an unknown tenant is an empty list, not an error', [unknown.status, unknown.body.claims], [200, []]);
+
+// --- the roster --------------------------------------------------------------
+// A PO names the PEOPLE it covers, and deriving that from the claims already
+// raised would be circular: nobody could go on a PO until they had a claim, and
+// no claim could be recharged until somebody was on a PO. So the roster is its
+// own question, answerable before there is a single claim.
+const noKeyPeople = await get('/api/payments/people?tenant_id=t-red');
+check('the roster needs the key too', noKeyPeople.status, 401);
+
+const people = await get('/api/payments/people?tenant_id=t-red', { 'X-API-Key': 'cyws-key' });
+check('the roster answers 200', people.status, 200);
+check(
+  'somebody who has never claimed is still assignable',
+  people.body.people.map((p: any) => p.email).sort(),
+  ['never.claimed@stengg.com', 'weiming.tan@stengg.com']
+);
+check('the general account is not a person', people.body.people.some((p: any) => /general/i.test(p.email)), false);
+check('nor is somebody off the roster', people.body.people.some((p: any) => /long\.gone/.test(p.email)), false);
+check('each says which entity, and whether it is a bridge', people.body.people.map((p: any) => [p.org_id, p.bridge])[0], ['org-ste', true]);
+check('another tenant gets its own roster', (await get('/api/payments/people?tenant_id=t-nobody', { 'X-API-Key': 'cyws-key' })).body.people, []);
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 await finish(failures);
