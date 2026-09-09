@@ -41,8 +41,8 @@ past the session guard. Contract for the payment half: `PAYABLES.md`.
   "ok": true,
   "tenant_id": "d1a343da-…",
   "organisations": [
-    { "id": "org_mt3yimem_…", "name": "Red Alpha Cybersecurity Pte. Ltd." },
-    { "id": "org_mt9qew30_…", "name": "Red Alpha - ST Engineering" }
+    { "id": "org_mt3yimem_…", "name": "Red Alpha Cybersecurity Pte. Ltd.", "bridge": false },
+    { "id": "org_mt9qew30_…", "name": "Red Alpha - ST Engineering", "bridge": true }
   ],
   "claims": [
     {
@@ -60,6 +60,7 @@ past the session guard. Contract for the payment half: `PAYABLES.md`.
       "xero_paid_date": "",
       "org_id": "org_mt9qew30_…",
       "org_name": "Red Alpha - ST Engineering",
+      "bridge": true,
       "url": "https://cybills.cy-bm.sg/expense-claims/6f1c…?org=org_mt9qew30_…"
     }
   ]
@@ -78,6 +79,22 @@ asks where a claim *would post* (`publishTargetFor`, which resolves the parent).
 The payables listing keeps the narrower rule deliberately. A bridge entity's
 **costs** are not payable that way — they reach the ledger as lines of a claim's
 own bill — and a payment run that offered them would pay the same money twice.
+
+**`bridge` says whose cost it is, and a caller that ignores it will invoice the
+wrong party.** Scoping by publish target returns two quite different things:
+the claims of people SECONDED in (a bridge entity — `bridge: true`), which are
+what the practice invoices on; and the tenant's OWN entity's claims
+(`bridge: false`), which are its own staff's cost, posting to an ordinary
+expense account rather than to a recharge clearing account. Recharging one of
+the second kind bills a client for somebody who has never worked for them, and
+it looks like an ordinary sales invoice from every angle.
+
+Both are returned deliberately — the route is the general "what reaches this
+ledger" question, and a payments-side caller wants both. The narrowing belongs
+to whichever tool is answering a narrower question. Fail CLOSED on it: a claim
+without `bridge: true` is not a bridge claim, because the expensive mistake is
+a wrong invoice and the cheap one is a claim left off a list somebody can
+refresh.
 
 **Only APPROVED claims are listed.** An unapproved claim is not yet a cost
 anybody has agreed to, and recharging one would invoice a client for money the

@@ -84,6 +84,11 @@ function organisationsForTenant(tenantId: string): Organisation[] {
 // keep the narrower rule. A bridge entity's COSTS are not payable through that
 // road — they reach the ledger as lines of a claim's own bill — and a payment
 // run that offered them would pay the same money twice.
+// Is this entity linked to Xero in its own right? A bridge entity is not — it
+// borrows its parent's ledger — and that is the one bit of the shape a caller
+// cannot work out from a name.
+const isLinkedItself = (o: Organisation): boolean => Boolean(o.tenantId.trim());
+
 function organisationsPublishingTo(tenantId: string): Organisation[] {
   const wanted = tenantId.trim().toLowerCase();
   if (!wanted) return [];
@@ -240,11 +245,22 @@ paymentsRouter.get('/claims', async (req, res) => {
   const origin = appOrigin(req);
   const claims: Array<Record<string, unknown>> = [];
   for (const organisation of organisations) {
+    // Two quite different things reach one tenant, and a caller that cannot
+    // tell them apart will act on the wrong one. A BRIDGE entity holds the
+    // claims of people seconded from somewhere else — those are the ones the
+    // practice invoices on. The tenant's OWN entity holds its own staff's
+    // claims, which are its own cost: they post to an ordinary expense account
+    // rather than to a recharge clearing account, and billing them to the
+    // seconding company would charge a client for somebody who never worked
+    // for them. So the row says which it is rather than leaving the far end to
+    // infer it from a name.
+    const bridge = !isLinkedItself(organisation);
     for (const row of await rechargeClaims(dataScopeForOrg(organisation.id))) {
       claims.push({
         ...row,
         org_id: organisation.id,
         org_name: organisation.name,
+        bridge,
         // Carries ?org= because the app opens whichever entity that browser
         // last had, and a bridge entity's claim looked for in the parent is a
         // claim reported missing.
@@ -256,7 +272,7 @@ paymentsRouter.get('/claims', async (req, res) => {
   res.json({
     ok: true,
     tenant_id: tenantId,
-    organisations: organisations.map((o) => ({ id: o.id, name: o.name })),
+    organisations: organisations.map((o) => ({ id: o.id, name: o.name, bridge: !isLinkedItself(o) })),
     claims,
   });
 });

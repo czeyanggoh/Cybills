@@ -80,6 +80,14 @@ writeFileSync(
       // Already published — still listed, because whether its BILL reached Xero
       // is a different question from whether it has been recharged.
       claim('c-published', { id: 'c-published', xeroInvoiceId: 'inv-77', xeroStatus: 'PAID', xeroPaidDate: '2026-09-05' }),
+      // Red Alpha's OWN staff claim, in the entity that is linked to the tenant
+      // in its own right. It reaches the same ledger, so the route lists it —
+      // but it is the company's own cost, not somebody else's to be invoiced
+      // for, and only `bridge` tells the two apart.
+      // `cybm`, not `org-red`: the PRIMARY entity's book is the legacy
+      // workspace scope (dataScopeForOrg), which is what its claims are stored
+      // against.
+      claim('c-own', { id: 'c-own', orgId: 'cybm', claimFor: 'Wei Ming Tan' }),
       // Another client's book entirely, on another tenant.
       claim('c-other', { id: 'c-other', orgId: 'org-other', claimFor: 'Someone Else' }),
     ],
@@ -129,7 +137,29 @@ check(
 check(
   'only approved, undeleted claims are offered',
   red.body.claims.map((c: any) => c.id).sort(),
+  ['c-approved', 'c-own', 'c-published']
+);
+
+// --- whose cost is it -------------------------------------------------------
+// Both kinds reach this one ledger and they are NOT the same thing. A bridge
+// entity's claims are somebody else's people, to be invoiced on; the tenant's
+// own entity's claims are its own staff's cost. Recharging one of those would
+// bill a client for a person who never worked for them, so the row has to say
+// which it is rather than leaving it to be guessed from an entity name.
+check(
+  'a bridge entity is marked as one',
+  red.body.claims.filter((c: any) => c.bridge).map((c: any) => c.id).sort(),
   ['c-approved', 'c-published']
+);
+check(
+  "and the tenant's OWN entity is not",
+  red.body.claims.filter((c: any) => !c.bridge).map((c: any) => c.id),
+  ['c-own']
+);
+check(
+  'the organisations say so too, so a caller can narrow before it reads a claim',
+  red.body.organisations.map((o: any) => [o.id, o.bridge]).sort(),
+  [['org-red', false], ['org-ste', true]]
 );
 
 const row = red.body.claims.find((c: any) => c.id === 'c-approved');
