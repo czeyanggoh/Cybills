@@ -137,8 +137,22 @@ thing the privilege is about. Deliberately NOT inside `postBillToXero`, which
 the cyworkspace payables hand-off shares (one publish path, not two): that road
 proves itself with the shared inbound key and has no roster row at all, so a
 check down there would refuse a payment run. Covered by `npm test` in `server/`
-(`test/publish-privilege.test.mts`). What is still NOT enforced is
-`privileges.createClaims`, which is `docs/roles-enforcement.md`.
+(`test/publish-privilege.test.mts`).
+
+**And "Create expense claims" gates BOTH halves of raising one.** The last of
+the three, and the same fault. `canCreateClaims` asks a Standard user alone, the
+same way, and guards `POST /api/claims` AND `POST /api/claims/:id/items` — a
+claim is assembled from its items, so refusing only one half would leave
+somebody holding an empty claim they could not fill, or filling one they could
+never have made. Removing and recategorising an item are deliberately NOT gated:
+taking a receipt back off is UNDOING, and somebody who should not have been able
+to add it must still be able to take it off. In the browser the "Add to expense
+claim" buttons (the Costs toolbar and both places on the cost page), "Create
+expense claim", the claim page's "Add items" and its **Move** control all go
+with it — Move lands items on ANOTHER claim, which is the same act as adding
+them to one, so gating it here is what stops it failing at the far end. Covered
+by `npm test` in `server/` (`test/claim-create-privilege.test.mts`). With this,
+every toggle in the Edit privileges dialog does what it says.
 
 **A person has one name, and a document has an owner.** `createdBy` on a bill is
 who UPLOADED it — always an email, never overwritten. The Document owner (the

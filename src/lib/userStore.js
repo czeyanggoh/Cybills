@@ -536,6 +536,14 @@ export function canManageBusiness(membership, googleEnabled) {
   return access(membership, googleEnabled, 'businessAdmin', isBusinessAdminRole);
 }
 
+// Raise an expense claim, and add items to one. A per-person privilege like
+// publishing, answered by the server on the membership payload for the same
+// reason. Both admin tiers do this by role, which is what the fallback says for
+// an older payload with no flag.
+export function canCreateClaims(membership, googleEnabled) {
+  return access(membership, googleEnabled, 'createClaims', isAdminRole);
+}
+
 // Publish to the accounting software. Unlike the three above this is a
 // per-person PRIVILEGE on top of the role ("Publishing permissions" in Edit
 // privileges), so the server answers it on the membership payload rather than

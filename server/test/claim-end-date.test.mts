@@ -46,7 +46,10 @@ const employee = (id: string, name: string, email: string, role: string) =>
   ({
     ...seed, id, name, email, role, practice: false, practiceRole: 'Standard', general: false,
     allClients: false, clientAccess: [], extraAccess: [], organisationId: RED,
-    deactivated: false, pending: false, removed: false, managerId: '', privileges: {},
+    deactivated: false, pending: false, removed: false, managerId: '',
+    // Raising a claim at all is its own privilege ("Create expense claims").
+    // Granted here so this test is about the DATE and nothing else.
+    privileges: { createClaims: true },
   }) as never;
 items.unshift(
   employee('emp_astrid', 'Astrid Test', 'astrid@redalphacyber.com', 'Standard'),

@@ -28,7 +28,7 @@ import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, us
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useProjectLabels, singular } from '@/lib/projectLabels';
-import { useUsers, useOwnerNames, canPublishToXero } from '@/lib/userStore';
+import { useUsers, useOwnerNames, canPublishToXero, canCreateClaims } from '@/lib/userStore';
 import { setWhatsappSender } from '@/lib/whatsapp';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
@@ -238,6 +238,10 @@ export default function CostDetail() {
   // the setting; both admin tiers publish by role. Refused server-side too, on
   // all four Xero routes — this is what stops the button being offered at all.
   const mayPublish = canPublishToXero(membership, googleEnabled);
+  // "Create expense claims" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers do this by role. Refused server-side on both
+  // halves of the act — opening a claim and putting items on it.
+  const mayClaim = canCreateClaims(membership, googleEnabled);
   const teamUsers = useUsers();
   // Who this document can belong to: the client's own people plus its general
   // account, which is where anything a practice colleague added sits. A
@@ -1783,13 +1787,15 @@ export default function CostDetail() {
             {xeroBusy === 'clear' ? 'Clearing…' : 'Clear Xero link'}
           </TopButton>
         )}
-        <TopButton
-          onClick={() => setClaimOpen(true)}
-          disabled={Boolean(claimBlocked)}
-          title={claimBlocked}
-        >
-          Add to expense claim
-        </TopButton>
+        {mayClaim && (
+          <TopButton
+            onClick={() => setClaimOpen(true)}
+            disabled={Boolean(claimBlocked)}
+            title={claimBlocked}
+          >
+            Add to expense claim
+          </TopButton>
+        )}
         <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
         {doc.mergedFrom?.length > 0 && <TopButton onClick={doUnmerge}>Unmerge</TopButton>}
         <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
@@ -2333,13 +2339,15 @@ export default function CostDetail() {
                   </button>
                 )}
                 {doc.persisted && <SaveStatus status={fieldSave} className="px-1" />}
-                <TopButton
-                  onClick={() => setClaimOpen(true)}
-                  disabled={Boolean(claimBlocked)}
-                  title={claimBlocked}
-                >
-                  Add to expense claim
-                </TopButton>
+                {mayClaim && (
+                  <TopButton
+                    onClick={() => setClaimOpen(true)}
+                    disabled={Boolean(claimBlocked)}
+                    title={claimBlocked}
+                  >
+                    Add to expense claim
+                  </TopButton>
+                )}
                 <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
                 <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
               </div>

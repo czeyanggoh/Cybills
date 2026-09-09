@@ -4,7 +4,7 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, addressIn, canAccessOrg, canonicalPersonName, effectiveRoleFor, normaliseAddress, orgScope, personNameForEmail, visibleOwnersFor } from './users.js';
+import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, addressIn, canAccessOrg, canCreateClaims, canonicalPersonName, effectiveRoleFor, normaliseAddress, orgScope, personNameForEmail, visibleOwnersFor } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
 import {
   getBillById,
@@ -489,6 +489,22 @@ claimsRouter.get('/:id/where', (req, res) => {
   });
 });
 
+// A caller who may not raise a claim is refused before one exists. Both halves
+// of the act ask it — opening the claim and putting items on it — because a
+// claim is assembled from its items and refusing only one would leave somebody
+// holding an empty claim they could not fill, or filling one they could not
+// have made.
+function mayCreateClaims(req: Request, res: Response): boolean {
+  if (canCreateClaims(memberForSession(req), orgScope(req))) return true;
+  res.status(403).json({
+    error: 'claims_not_allowed',
+    message:
+      'Your account is not set up to create expense claims. ' +
+      'Ask a Business Admin to turn on "Create expense claims" under Users -> Edit privileges.',
+  });
+  return false;
+}
+
 // A claim covers a MONTH, and for a STANDARD user it is the month it was raised
 // in: the end date is filled in rather than asked for, and is not theirs to
 // move afterwards. Somebody claiming on the 27th means "August", and a claim
@@ -508,6 +524,7 @@ function endDateFixed(req: Request): boolean {
 
 // POST /api/claims — create a claim.
 claimsRouter.post('/', async (req, res) => {
+  if (!mayCreateClaims(req, res)) return;
   const b = req.body ?? {};
   const me = actor(req);
   const owner = String(b.claimFor || me.name || 'You');
@@ -617,8 +634,13 @@ function noteChangeAfterSubmit(req: Request, claim: Claim, by: string, what: str
 // Allowed until the claim is APPROVED — you can still add to a claim that's
 // awaiting approval (the total changes, so the approver re-reviews). Only an
 // approved claim is locked, to keep its total stable for payment.
-claimsRouter.post('/:id/items', (req, res) =>
-  mutate(req, res, (claim, me) => {
+claimsRouter.post('/:id/items', (req, res) => {
+  // Building a claim is the other half of raising one, so it asks the same
+  // privilege. Removing and recategorising do NOT: taking a receipt back off a
+  // claim is undoing, and somebody who should not have added it must still be
+  // able to.
+  if (!mayCreateClaims(req, res)) return;
+  return mutate(req, res, (claim, me) => {
     if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
     const incoming: Txn[] = Array.isArray(req.body?.items) ? req.body.items : [];
     // A document lives in one entity's book. Putting another entity's bill on
@@ -675,8 +697,8 @@ claimsRouter.post('/:id/items', (req, res) =>
     // claim) and can't be lost to a half-finished round of requests.
     markBillsClaimed(claimed);
     if (added) noteChangeAfterSubmit(req, claim, me.name, `${added} item(s) added`);
-  })
-);
+  });
+});
 
 // POST /api/claims/:id/items/remove — remove items (by itemId) from the claim.
 claimsRouter.post('/:id/items/remove', (req, res) =>

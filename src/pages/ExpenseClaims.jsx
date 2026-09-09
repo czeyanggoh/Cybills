@@ -12,7 +12,7 @@ import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
-import { canManageBusiness, isAdminAccess, useUsers } from '@/lib/userStore';
+import { canManageBusiness, isAdminAccess, canCreateClaims, useUsers } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 import { useExportSettings } from '@/lib/exportSettings';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
@@ -242,6 +242,10 @@ export default function ExpenseClaims() {
   // filled in for them and shown read-only, because it is not theirs to move.
   // The server settles it either way, so this is what the dialog says rather
   // than what it enforces.
+  // "Create expense claims" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers do this by role. Refused server-side on both
+  // halves of the act — opening a claim and putting items on it.
+  const mayClaim = canCreateClaims(membership, googleEnabled);
   const endDateFixed = !isAdminAccess(membership, googleEnabled);
   const fixedEndDate = endOfMonthFor(todayIso());
   const [query, setQuery] = useListView('claims', 'query', '');
@@ -421,14 +425,16 @@ export default function ExpenseClaims() {
               Auto expense claims
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setShowCreate(true)}
-            className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
-          >
-            <Plus className="h-4 w-4" strokeWidth={2} />
-            Create expense claim
-          </button>
+          {mayClaim && (
+            <button
+              type="button"
+              onClick={() => setShowCreate(true)}
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted"
+            >
+              <Plus className="h-4 w-4" strokeWidth={2} />
+              Create expense claim
+            </button>
+          )}
         </div>
       </div>
 

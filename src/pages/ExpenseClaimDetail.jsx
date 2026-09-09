@@ -50,7 +50,7 @@ import {
   CLAIM_ATTACHMENT_ACCEPT,
 } from '@/lib/claimStore';
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
-import { useUsers, canManageUsers, isAdminAccess, canPublishToXero } from '@/lib/userStore';
+import { useUsers, canManageUsers, isAdminAccess, canPublishToXero, canCreateClaims } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import {
@@ -274,6 +274,10 @@ export default function ExpenseClaimDetail() {
   // the setting; both admin tiers publish by role. Refused server-side too, on
   // all four Xero routes — this is what stops the button being offered at all.
   const mayPublish = canPublishToXero(membership, googleEnabled);
+  // "Create expense claims" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers do this by role. Refused server-side on both
+  // halves of the act — opening a claim and putting items on it.
+  const mayClaim = canCreateClaims(membership, googleEnabled);
   const { claims, loaded } = useClaimsState();
   const claim = claims.find((c) => String(c.id) === String(id)) || null;
   // Where a claim lives when it isn't in this entity's list: null = not asked
@@ -897,6 +901,7 @@ export default function ExpenseClaimDetail() {
             <button
               type="button"
               onClick={() => setAddOpen(true)}
+              hidden={!mayClaim}
               title="Upload receipts straight onto this claim"
               className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
@@ -926,7 +931,12 @@ export default function ExpenseClaimDetail() {
                       <>
                         <p className="px-3 py-1.5 text-xs text-muted-foreground">{selected.size} item{selected.size === 1 ? '' : 's'} selected</p>
                         <button type="button" onClick={() => { setActionsOpen(false); setBulkCat(''); setBulkCatOpen(true); }} className="flex w-full px-3 py-2 text-left text-sm hover:bg-muted">Bulk edit</button>
-                        <button type="button" onClick={() => { setActionsOpen(false); setMoveTarget(''); setMoveOpen(true); }} className="flex w-full px-3 py-2 text-left text-sm hover:bg-muted">Move</button>
+                        {/* Moving items lands them on ANOTHER claim, which is
+                            the same act as adding them to one, so it goes with
+                            the privilege rather than failing at the far end. */}
+                        {mayClaim && (
+                          <button type="button" onClick={() => { setActionsOpen(false); setMoveTarget(''); setMoveOpen(true); }} className="flex w-full px-3 py-2 text-left text-sm hover:bg-muted">Move</button>
+                        )}
                         <button type="button" onClick={doRemove} className="flex w-full px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10">Remove</button>
                       </>
                     )}

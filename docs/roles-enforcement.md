@@ -1,7 +1,9 @@
 # CYBills user roles & privilege enforcement — spec (match Dext)
 
-Status: **partly built** — gaps 1 (Access all documents) and 3 (Publishing
-permissions) landed 9 Sep 2026; gaps 2, 4 and 5 are still proposed.
+Status: **partly built** — gaps 1 (Access all documents), 2 (Create expense
+claims) and 3 (Publishing permissions) all landed 9 Sep 2026, so every toggle in
+the dialog now does what it says. Gaps 4 and 5 — the two that are about one ROLE
+being able to act on another — are still proposed.
 Owner: **boss** (roles/permissions area).
 Written 2026-08-21 as an advisory spec so the enforcement can be added without a
 two-session collision.
@@ -66,12 +68,22 @@ for. Business Admin, User Admin and the practice's colleagues are unaffected.
   approver is sent a decision they cannot see the evidence for.
 - Covered by `npm test` in `server/` (`test/document-visibility.test.mts`).
 
-### 2. Create expense claims — `privileges.createClaims` (Standard only)
-- OFF → hide/disable **"Add to expense claim"** (`src/pages/Costs.jsx`,
-  `src/pages/CostDetail.jsx`) and **"Create expense claim"**
-  (`src/pages/ExpenseClaims.jsx`).
-- Server: reject `POST /api/claims` and `POST /api/claims/:id/items` for a
-  Standard user without the privilege.
+### 2. Create expense claims — `privileges.createClaims` — **DONE**
+Built 9 Sep 2026.
+
+- `canCreateClaims` in `server/src/users.ts`, asked only of a STANDARD user, and
+  answered on the membership payload as `createClaims`.
+- Server: `mayCreateClaims` guards `POST /api/claims` and
+  `POST /api/claims/:id/items`. Both halves, because a claim is assembled from
+  its items — refusing one would leave somebody with an empty claim they could
+  not fill. `items/remove` and `items/update` are deliberately NOT gated:
+  undoing must stay open, or a claim somebody should not have been given becomes
+  unfixable.
+- UI (hidden, not disabled): the Costs toolbar's "Add to expense claim", both of
+  the cost page's, "Create expense claim" on the claims list, and the claim
+  page's "Add items" and **Move** — Move lands items on another claim, which is
+  the same act as adding them to one.
+- Covered by `npm test` in `server/` (`test/claim-create-privilege.test.mts`).
 
 ### 3. Publishing permissions — `privileges.canPublish` — **DONE**
 Built 9 Sep 2026, keeping the stored BOOLEAN. The third Dext option

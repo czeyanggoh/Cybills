@@ -933,6 +933,23 @@ export function visibleOwnersFor(req: Request, orgId: string, withReports = fals
   return seen;
 }
 
+// May this person raise an expense claim? "Create expense claims" in Edit
+// privileges, the last of the three that was stored and never read.
+//
+// Only a STANDARD user is asked, for the same reason publishing only asks them:
+// both admin tiers do this by role and are never shown the toggles, so a stored
+// false on an admin row is a leftover from before they were promoted.
+//
+// It gates ADDING to a claim as well as opening one. A claim is assembled from
+// its items, so a person who may not raise one may not build one either — and
+// the two halves of the same act refusing differently would leave somebody with
+// an empty claim they could not fill.
+export function canCreateClaims(u: User | null | undefined, orgId: string): boolean {
+  if (!u) return true; // the sessionless mock/dev context, open like the rest of the app
+  if (effectiveRoleFor(u, orgId) !== 'Standard') return true;
+  return Boolean((u.privileges as { createClaims?: unknown } | undefined)?.createClaims);
+}
+
 // May this person publish to the accounting software? "Publishing permissions"
 // in Edit privileges, which until now was written onto the row and read by
 // nobody: the radio said "Can't publish to accounting software" and the button
@@ -1588,6 +1605,7 @@ usersRouter.get('/me', (req, res) => {
     // answers it here rather than leaving the browser to derive it from the
     // role string — the same reason the three flags around it are sent.
     canPublish: live && canPublishToXero(user, orgScope(req)),
+    createClaims: live && canCreateClaims(user, orgScope(req)),
     businessAdmin: live && isBusinessAdminRole(role),
     canManageUsers: live && canManageUsersRole(role),
     // The practice surfaces (Colleagues, Clients) — practice team only.

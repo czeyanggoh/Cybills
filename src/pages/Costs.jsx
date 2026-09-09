@@ -37,7 +37,7 @@ import { reReadDocument } from '@/lib/reRead';
 import { formatKm } from '@/lib/mileage';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
-import { canPublishToXero } from '@/lib/userStore';
+import { canPublishToXero, canCreateClaims } from '@/lib/userStore';
 import { updateBill, deleteBill, notifyBillsChanged, itemNumber, costPath } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
@@ -246,6 +246,10 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
   // the setting; both admin tiers publish by role. Refused server-side too, on
   // all four Xero routes — this is what stops the button being offered at all.
   const mayPublish = canPublishToXero(membership, googleEnabled);
+  // "Create expense claims" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers do this by role. Refused server-side on both
+  // halves of the act — opening a claim and putting items on it.
+  const mayClaim = canCreateClaims(membership, googleEnabled);
   // One export, over whatever you're pointing at: the ticked rows if any are
   // ticked, otherwise everything the tab is showing. (Two separate buttons for
   // that were only ever a way to pick the wrong one.)
@@ -305,7 +309,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       Publish to Xero
     </ToolbarButton>
   );
-  const claimBtn = (
+  const claimBtn = !mayClaim ? null : (
     <ToolbarButton disabled={!hasSelection} onClick={a.addClaim}>Add to expense claim</ToolbarButton>
   );
   // Archive and its undo are ONE button, because the tab already says which of
