@@ -17,7 +17,7 @@ import {
 } from './store.js';
 import { listOrganisations, primaryOrgId } from './organisations.js';
 import { endOfThisMonth, isoClaimDate } from './claimDates.js';
-import { referenceFor } from './claimRef.js';
+import { referenceFor, numberFor } from './claimRef.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
 // X-Org-Id scoping as bills). Replaces the old per-browser localStorage claim
@@ -186,6 +186,16 @@ export type RechargeClaim = {
   currency: string;
   total: string;
   items: number;
+  /** The bare numeric claim id — the "Claim No" a recharge report prints, as
+   *  opposed to `reference`, which is that number inside the whole string the
+   *  Xero bill is named with. */
+  claim_no: string;
+  /** Who actually decided it, and who it was routed to. They differ when a
+   *  practice colleague decides on the named approver's behalf, and a report
+   *  naming the wrong one is a report that says somebody approved their own
+   *  claim. */
+  approved_by: string;
+  approver: string;
   decided_at: string;
   /** The ACCPAY bill this claim posted as, and what Xero says of it since. */
   xero_invoice_id: string;
@@ -212,6 +222,12 @@ export async function rechargeClaims(org: string): Promise<RechargeClaim[]> {
       currency: c.currency || 'SGD',
       total: claimTotal(c),
       items: c.transactions.length,
+      claim_no: await numberFor(c),
+      // decidedBy is who pressed the button; approver is who it was routed to.
+      // A practice colleague deciding on somebody's behalf makes those two
+      // different people, and the report wants the one who actually decided.
+      approved_by: c.decidedBy || c.approver || '',
+      approver: c.approver || '',
       decided_at: c.decidedAt || '',
       xero_invoice_id: c.xeroInvoiceId || '',
       xero_status: c.xeroStatus || '',

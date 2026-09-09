@@ -9,6 +9,7 @@
 type ClaimRefModule = {
   claimReference: (claim: unknown) => string;
   claimDateFor: (claim: unknown) => string;
+  claimRef: (claim: unknown) => string;
 };
 
 let cache: ClaimRefModule | null = null;
@@ -21,7 +22,9 @@ async function load(): Promise<ClaimRefModule | null> {
     const url = new URL('../../src/lib/claimReference.js', import.meta.url).href;
     const mod = (await import(url)) as Partial<ClaimRefModule>;
     cache =
-      typeof mod?.claimReference === 'function' && typeof mod?.claimDateFor === 'function'
+      typeof mod?.claimReference === 'function'
+      && typeof mod?.claimDateFor === 'function'
+      && typeof mod?.claimRef === 'function'
         ? (mod as ClaimRefModule)
         : null;
   } catch (e) {
@@ -43,6 +46,22 @@ export async function referenceFor(claim: { name?: string }): Promise<string> {
   } catch (e) {
     console.error('[claimRef] could not build the reference', e);
     return fallback;
+  }
+}
+
+// The bare claim number — "260820120000", the "Claim ID" printed on the claim's
+// own page and on the PDF, and the "Claim No" a recharge report prints. That is
+// the same number `referenceFor` puts at the end of the bill's name; this is it
+// on its own, for a column that has no room for the rest. '' when the module
+// can't be loaded, and the caller shows nothing rather than an invented id.
+export async function numberFor(claim: unknown): Promise<string> {
+  const mod = await load();
+  if (!mod) return '';
+  try {
+    return mod.claimRef(claim) || '';
+  } catch (e) {
+    console.error('[claimRef] could not build the claim number', e);
+    return '';
   }
 }
 

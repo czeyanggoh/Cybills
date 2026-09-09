@@ -54,6 +54,9 @@ past the session guard. Contract for the payment half: `PAYABLES.md`.
       "currency": "SGD",
       "total": "36.50",
       "items": 2,
+      "claim_no": "260820120000",
+      "approved_by": "Kai Tan",
+      "approver": "Martin Lim",
       "decided_at": "2026-09-01T02:00:00.000Z",
       "xero_invoice_id": "",
       "xero_status": "",
@@ -95,6 +98,13 @@ to whichever tool is answering a narrower question. Fail CLOSED on it: a claim
 without `bridge: true` is not a bridge claim, because the expensive mistake is
 a wrong invoice and the cheap one is a claim left off a list somebody can
 refresh.
+
+**`approved_by` is who DECIDED; `approver` is who it was routed to.** A
+practice colleague may decide on the named approver's behalf, so the two are
+different people, and a recharge report naming the wrong one can end up saying
+somebody approved their own claim. `claim_no` sits beside `reference` for the
+same kind of reason: it is the bare number a report column prints, where
+`reference` is that number inside the whole string the Xero bill is named with.
 
 **Only APPROVED claims are listed.** An unapproved claim is not yet a cost
 anybody has agreed to, and recharging one would invoice a client for money the
