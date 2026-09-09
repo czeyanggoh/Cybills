@@ -144,6 +144,19 @@ wrong, and only the better of the two answers is kept. What comes back carries
 rather than pasting rows that don't add up. `npm test` in `server/` runs that
 path end to end against a stubbed reader.
 
+**Line items are the supplier's opt-in, on every road.** "Extract line items"
+on a supplier's rule is what puts rows on a document; otherwise it is a single
+coded total, and the rows are pulled on demand from the document page. The
+general read returns its own summary of the table as an aid to the description,
+and the server-side read an emailed or WhatsApp'd document gets (`readIntoBill`
+in `inbound.ts`) used to store that summary on EVERY document — rows nobody
+asked for, never reconciled against the total, which is the set the publish
+path refuses. It now keeps them only for a supplier whose rule opts in, mapped
+into the stored shape the way an upload's `lineItemRows` does (stored raw they
+were rows worth nothing). The off-base tax split still writes its two rows by
+itself, as designed. Covered by `npm test` in `server/`
+(`test/inbound-line-items.test.mts`).
+
 **One GST figure becomes per-line GST.** Nearly every SG invoice prints its rows
 excluding GST and states it once at the foot ("SUB TOTAL / GST 9% / TOTAL"), so
 the rows add up to the SUBTOTAL — and a reader told to make them add up to the

@@ -32,6 +32,30 @@ function supplierRuleFor(ws: string, orgId: string, supplier: string): Record<st
   return key ? map[key] : null;
 }
 
+// The reader's line rows as the document stores them — the same shape
+// lineItemRows in src/lib/bills.js writes on an upload, so a row that arrived
+// by email carries a net, a tax and a total the grid and the publish path can
+// read. Stored raw ({description, amount}) they were rows worth nothing.
+function lineItemRows(
+  rows: Array<{ description?: string; amount?: number; net?: number; tax?: number; category?: string }>,
+  fallbackCategory = ''
+) {
+  return rows.map((li) => {
+    const total = li.amount != null ? Number(li.amount) : Number(li.net ?? 0) + Number(li.tax ?? 0);
+    const tax = li.tax != null ? Number(li.tax) : 0;
+    const net = li.net != null ? Number(li.net) : total - tax;
+    return {
+      description: li.description || '',
+      category: li.category || fallbackCategory || 'Uncategorised',
+      project: '',
+      project2: '',
+      net: net.toFixed(2),
+      tax: tax.toFixed(2),
+      total: total.toFixed(2),
+    };
+  });
+}
+
 // The Xero chart of accounts, tax-code rules, project list and review
 // instructions for one org — the SAME inputs the browser assembles and sends
 // on an upload (src/lib/bills.js → fetchExtract), gathered here server-side so
@@ -216,6 +240,22 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       continue; // try the next provider
     }
     const d = result.data;
+    // The supplier's standing rule, looked up once: it decides below whether the
+    // reader's rows are kept at all, and is laid over the read at the end.
+    const vendorRule = supplierRuleFor(ws, realOrgId, d.supplier);
+    // Line items are the supplier's OPT-IN ("Extract line items" on its rule),
+    // exactly as they are on an upload and a re-read: a document is otherwise a
+    // single coded total, and the printed rows are pulled on demand from the
+    // document page. The general read returns its own summary of the table as
+    // an aid to the description, and this road used to store that summary on
+    // every emailed or WhatsApp'd document — rows nobody asked for, never
+    // reconciled against the document's total, which is the set the publish
+    // path refuses. Nothing is stored unless a person switched it on.
+    const wantsLines = Boolean(vendorRule?.extractLineItems);
+    const readerLines =
+      wantsLines && Array.isArray(d.lineItems) && d.lineItems.length
+        ? lineItemRows(d.lineItems, vendorRule?.category || d.category)
+        : undefined;
     const patch: Record<string, unknown> = {
       supplier: d.supplier,
       date: d.date,
@@ -258,7 +298,9 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       ...(d.taxRate ? { taxRate: d.taxRate, taxRateReason: d.taxRateReason } : {}),
       project: d.project,
       projectReason: d.projectReason,
-      lineItems: d.lineItems,
+      // Only when the supplier's rule asks for them (see above); otherwise the
+      // key is absent, so whatever the document already holds is left alone.
+      ...(readerLines ? { lineItems: readerLines } : {}),
     };
     // The tax code, decided by the same rules an upload runs — the reader only
     // names one when a written "when to use" rule plainly matched, and every
@@ -290,7 +332,10 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
         total: d.total,
         tax: patch.tax ?? d.tax,
         category: d.category,
-        lineItems: d.lineItems,
+        // The rows the document will actually carry — none, unless the supplier
+        // opted in — so a summary that is not being stored cannot stand in the
+        // split's way either.
+        lineItems: readerLines,
       });
       if (split) {
         patch.lineItems = split.rows;
@@ -312,7 +357,7 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     // Only for the fields the note actually decided (`noteFollowed` is empty
     // unless the reader took something from it), and never for the money: a
     // note cannot restate a total.
-    overlaySupplierRule(patch, supplierRuleFor(ws, realOrgId, d.supplier), {
+    overlaySupplierRule(patch, vendorRule, {
       supplier: d.supplier,
       noteFollowed: d.noteFollowed,
       via: envelope?.via,
