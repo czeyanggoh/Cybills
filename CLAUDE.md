@@ -1618,6 +1618,25 @@ so there the sender's number is matched against the roster's Mobile field, in
 any spelling; failing that, the entity's GENERAL account, which is what it is
 for. Never the person who created the group.
 
+**And the sender is SAID the same way.** The document's WhatsApp tab printed
+whatever WhatsApp put in the sender field, split at the `@` — which for a LID is
+`127676509610071`, fifteen digits that read as somebody's mobile and belong to
+nobody. CYBills cannot turn a LID into a number (that mapping is WhatsApp's, and
+CYWS is the side with a session to ask), but it holds the roster, and the roster
+already settled who the group belongs to. So `senderIdentity` (`waSender.ts`, a
+leaf, where `normaliseMobile` / `mobileOf` now live) answers in a name and a
+number — the push name WhatsApp sent, else the roster's; the number WhatsApp
+sent, else the roster mobile the group was opened with — and both the filing
+path and the thread route go through it, so the document tab and the WhatsApp
+thread cannot disagree about one message. Stored as `senderName` +
+`senderNumber` on the document's `whatsapp` record; `from` keeps the raw id, in
+the tooltip, for tracing. The rows filed before it are repaired off the listing
+(`backfillWhatsappSenders`), once, through its own writer — `whatsapp` is the
+document's record of what was received and is not in `EDITABLE`. What is left
+is the case only CYWS can fix: a LID with no push name in an ENTITY-WIDE group
+resolves to nobody, and `deploy/WHATSAPP.md` says what to send. Covered by
+`npm test` in `server/` (`test/whatsapp.test.mts`).
+
 Env (server/.env): `CYWORKSPACE_API_KEY` (the same key the Xero relay uses —
 creating groups switches on with it), `CYWORKSPACE_PUBLIC_URL` (the only host a
 file link may point at), `WHATSAPP_INBOUND_KEY` (the key CYWS sends BACK,

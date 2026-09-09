@@ -34,6 +34,7 @@ import {
 } from './waChannels.js';
 import { renameChannelsForUser } from './waRename.js';
 import { inboundKey, keyMatches } from './inboundKey.js';
+import { normaliseMobile, mobileOf, senderIdentity } from './waSender.js';
 
 // Bill collection over WhatsApp, in partnership with CYWorkspace (CYWS).
 //
@@ -58,42 +59,10 @@ import { inboundKey, keyMatches } from './inboundKey.js';
 // Xero relay (CYWORKSPACE_API_KEY). The key CYWS sends BACK is a different one
 // and ours to choose — see `inboundKey()`.
 
-// --- Phone numbers -----------------------------------------------------------
-// CYWS wants bare international format: digits only, no '+', no spaces, dashes
-// or brackets, 8-15 digits. People type all of those, and a number that arrives
-// malformed doesn't fail loudly — WhatsApp just doesn't add anybody — so it is
-// normalised and checked HERE, before a group is created around it.
-//
-// Returns '' for anything that can't be a number CYWS will accept. A leading 0
-// is refused rather than repaired: no country code begins with one, so "0123
-// 456 789" is somebody's national format and we cannot know which country to
-// prepend. Guessing that would add a stranger in another country to a group
-// holding a client's bills.
-export function normaliseMobile(raw: string): string {
-  const digits = String(raw ?? '').replace(/\D+/g, '');
-  // '00' is the other way of writing '+' — international access, not part of
-  // the number.
-  const bare = digits.startsWith('00') ? digits.slice(2) : digits;
-  if (bare.startsWith('0')) return '';
-  if (bare.length < 8 || bare.length > 15) return '';
-  return bare;
-}
-
-// The same normalisation applied to WhatsApp's own sender id ('60123@c.us'), so
-// a sender can be matched against a roster row's Mobile field.
-//
-// '@lid' is NOT one of those. A LID is a linked identity — an opaque per-user id
-// WhatsApp increasingly sends instead of the number so a group does not leak
-// everyone's — and it happens to be 15 digits, which is exactly the length of a
-// long international number. So stripping the domain produced a plausible
-// number that belongs to nobody: matched against the roster it found no one,
-// and printed to a person it read as their colleague's mobile. It is refused
-// here rather than at each call site, because it is never a number anywhere.
-export const mobileOf = (waId: string) => {
-  const raw = String(waId ?? '');
-  if (/@lid$/i.test(raw)) return '';
-  return normaliseMobile(raw.split('@')[0]);
-};
+// The phone-number rules and the sender resolver live in waSender.ts — a leaf,
+// so the document listing can name a sender without importing this router.
+// Re-exported here because this is where callers have always found them.
+export { normaliseMobile, mobileOf };
 
 // The channel record and its storage live in waChannels.ts — a leaf, so the
 // rename can read the same rows without importing this router. Re-exported here
@@ -1553,6 +1522,11 @@ async function fileWhatsappDocument(
   const fileHash = createHash('sha256').update(file.bytes).digest('hex');
   const sentAt = String(b.sent_at ?? '');
   const owner = ownerFor(ws, channel, String(b.sender ?? ''));
+  // Who sent it, in a name and a number. WhatsApp increasingly sends a LID
+  // where the number used to be, and a push name only sometimes, so the roster
+  // fills whichever of the two is blank — the person the group was opened for,
+  // or the row whose Mobile matches. `from` keeps the raw id for tracing.
+  const who = senderIdentity(ws, channel, String(b.sender ?? ''), String(b.sender_name ?? ''));
   // What the sender typed when they attached the file. This is the covering
   // note — "recharge this to CY-Biz" — and it is kept on the document so a
   // RE-READ sees it too: read once with it and again without, and the second
@@ -1563,8 +1537,9 @@ async function fileWhatsappDocument(
     chatSubject: String(b.chat_subject ?? channel.subject),
     messageId: String(b.message_id ?? ''),
     waMessageId: String(b.wa_message_id ?? ''),
-    from: String(b.sender ?? ''),
-    senderName: String(b.sender_name ?? ''),
+    from: who.id,
+    senderName: who.name,
+    senderNumber: who.number,
     text: String(b.body ?? '').trim().slice(0, 4000),
     sentAt,
     fileName: String(b.file_name ?? ''),
@@ -1929,33 +1904,19 @@ whatsappRouter.get('/threads/:submissionId', (req, res) => {
       personName: person ? person.user.name || person.user.email || '' : '',
       entityWide: !channel.userId,
     },
-    messages: messagesForChannel(channel.id).map((m) => ({
-      ...m,
+    messages: messagesForChannel(channel.id).map((m) => {
       // Never the raw sender id. WhatsApp increasingly sends a LID
       // ('127676509610071@lid') — an opaque per-user id, not a number and not
       // convertible to one — so showing it puts a meaningless 15-digit string
-      // where a name belongs. A group opened for one person is a conversation
-      // with that person, which was settled when it was made, so that is the
-      // answer; an entity-wide group falls back to the number when there
-      // really is one.
-      senderLabel: m.direction === 'out'
-        ? 'Us'
-        : m.senderName
-          || (person ? person.user.name || person.user.email : '')
-          || (mobileOf(m.sender) ? `+${mobileOf(m.sender)}` : '')
-          || 'Unknown',
-      // The number to reply on, and the id to trace by — separate fields
-      // because they are separate things. WhatsApp increasingly identifies a
-      // sender only by a LID, which is not a number and cannot be turned into
-      // one; the number then comes from the roster row of the person the group
-      // was opened for, which is the number somebody would actually message.
-      senderNumber: m.direction === 'out'
-        ? ''
-        : (mobileOf(m.sender) ? `+${mobileOf(m.sender)}` : (person ? normaliseMobile(person.user.mobile || '') && `+${normaliseMobile(person.user.mobile || '')}` : '')) || '',
-      // Shown as-is so a message can always be traced back to a sender, even
-      // when all WhatsApp gave us was an opaque id.
-      senderId: m.direction === 'out' ? '' : String(m.sender || ''),
-    })),
+      // where a name belongs. The name and the number are resolved through the
+      // same `senderIdentity` the document's WhatsApp tab is filed with (the
+      // group's own person, or the roster row the number matches), so the two
+      // pages say the same thing about one message. The id rides separately,
+      // so a message can always be traced back to a sender.
+      if (m.direction === 'out') return { ...m, senderLabel: 'Us', senderNumber: '', senderId: '' };
+      const who = senderIdentity(channel.workspaceId, channel, m.sender, m.senderName);
+      return { ...m, senderLabel: who.name || who.number || 'Unknown', senderNumber: who.number, senderId: who.id };
+    }),
     canManage: mayManage(req, channel.orgId),
   });
 });

@@ -19,6 +19,7 @@ import {
   moveBillToScope,
   storageKeyInUse,
   parseAmount,
+  setBillWhatsappSender,
   type Bill,
   type Candidate,
 } from './store.js';
@@ -34,6 +35,8 @@ import { makeEntityCheck } from './entityCheck.js';
 import { syncWhatsappReaction } from './waReactions.js';
 import { readGotNothing } from './blankRead.js';
 import { keepMileageInStep } from './mileage.js';
+import { channelById } from './waChannels.js';
+import { senderIdentity } from './waSender.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -100,6 +103,25 @@ function backfillOwners(ws: string, org: string, scope: string): void {
     if (email) updateBill(scope, b.id, { owner: email, createdBy: email });
   }
   repairForeignOwners(ws, org, scope);
+  backfillWhatsappSenders(ws, scope);
+}
+
+// The repair for documents that arrived over WhatsApp before the sender was
+// resolved: they carry a LID in `from` and a blank name, which the page printed
+// as a fifteen-digit number belonging to nobody. `senderNumber` is the marker —
+// absent on those rows, and written (as '' where there is genuinely nothing to
+// say) once, so the sweep rewrites nothing after its first pass. The channel
+// the document names is what settles who sent it, the same way it does at
+// filing time; a document whose group has since been forgotten is left as it is.
+export function backfillWhatsappSenders(ws: string, scope: string): void {
+  for (const b of listBills(scope)) {
+    const wa = b.whatsapp;
+    if (!wa || wa.senderNumber !== undefined) continue;
+    const channel = channelById(wa.submissionId);
+    if (!channel) continue;
+    const who = senderIdentity(ws, channel, wa.from, wa.senderName);
+    setBillWhatsappSender(scope, b.id, who);
+  }
 }
 
 // Who a document in THIS entity belongs to, when the address it carries is one

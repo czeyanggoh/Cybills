@@ -2388,10 +2388,17 @@ export default function CostDetail() {
                       has: the person, their number, the group, and when. */}
                   <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
                     <dt className="text-muted-foreground">From</dt>
-                    <dd className="m-0 break-words">
-                      {chat.senderName || '—'}
-                      {chat.from ? (
-                        <span className="ml-2 text-muted-foreground">{String(chat.from).split('@')[0]}</span>
+                    {/* The name and the number, never the raw sender id: WhatsApp
+                        increasingly sends a LID there — an opaque fifteen-digit
+                        per-user id, not a phone number — and printed here it read
+                        as somebody's mobile. Both fields are resolved server-side
+                        (the group's own person, or the roster row the number
+                        matches), so this tab and the WhatsApp thread agree. The
+                        id stays reachable in the tooltip, for tracing. */}
+                    <dd className="m-0 break-words" title={chat.from || undefined}>
+                      {chat.senderName || chat.senderNumber || 'Unknown'}
+                      {chat.senderName && chat.senderNumber ? (
+                        <span className="ml-2 text-muted-foreground">{chat.senderNumber}</span>
                       ) : null}
                     </dd>
                     <dt className="text-muted-foreground">Date</dt>

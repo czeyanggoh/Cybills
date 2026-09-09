@@ -679,6 +679,18 @@ spelling — `+60 12-345 6789` is the same number). No match means the entity's
 **General** account, which exists for the documents nobody claimed. Never the
 person who created the group: that would put their name on work they did not do.
 
+## Who sent it: `sender` and `sender_name`
+
+WhatsApp increasingly puts a **LID** in the sender field
+(`127676509610071@lid`) — an opaque per-user id, not a phone number, and
+CYBills cannot turn it back into one. Where the group was opened for ONE
+person, CYBills names them from the roster (their name and the mobile the group
+was opened with), so nothing is lost. In the ENTITY-WIDE group a LID with no
+`sender_name` is a stranger: send the push name in `sender_name` always, and
+where WAHA can map the LID to a number (its `lids` endpoint), send the number
+in `sender` as `<digits>@c.us` — that is the only road to the real number for
+a sender CYBills holds no roster row for.
+
 ## Environment (server/.env)
 
 | Var | Default | |

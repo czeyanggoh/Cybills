@@ -370,6 +370,41 @@ check('and nothing was fetched', fileFetches, 2);
   const filedByLid = listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2lid')!;
   // Theirs, because the group is theirs — not the General account.
   check('and belongs to the person the group was opened for', filedByLid.owner, 'astridy2004@gmail.com');
+  // The name WhatsApp sent is kept; the number a LID cannot supply is the
+  // roster's — the mobile the group was opened with — so the document's
+  // WhatsApp tab prints a person and a phone number, never the LID.
+  check('the push name is kept', filedByLid.whatsapp?.senderName, 'Astrid');
+  check('and the number comes off the roster', filedByLid.whatsapp?.senderNumber, '+60123456789');
+  check('while the raw id is kept for tracing', filedByLid.whatsapp?.from, '217630539546875@lid');
+
+  // The case in the screenshot: a LID and NO push name. That used to print
+  // "— 127676509610071" where a person belongs.
+  r = await post(
+    'invoice',
+    { ...invoice, submission_id: personGroup.id, message_id: 'clx8f2lid2', sender: '127676509610071@lid', sender_name: '' },
+    { 'X-API-Key': 'inbound-key' }
+  );
+  const nameless = listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2lid2')!;
+  check('with no push name, the roster names them', nameless.whatsapp?.senderName, 'Astrid Yang');
+  check('and gives their number', nameless.whatsapp?.senderNumber, '+60123456789');
+
+  // A row filed before the sender was resolved carries the LID and nothing
+  // else. The listing's sweep fills it in once, and once only.
+  const { insertBill } = await import('../src/store.ts');
+  const { backfillWhatsappSenders } = await import('../src/bills.ts');
+  const stale = insertBill({
+    orgId: 'cybm', fileHash: 'stale-lid', fileName: 'x.jpeg', supplier: '', invoiceNumber: '', documentType: '',
+    currency: '', total: 0, tax: 0, date: '', category: '', createdBy: '', owner: '', status: 'new', kind: 'cost',
+    whatsapp: {
+      submissionId: personGroup.id, chatId: 'c', chatSubject: 's', messageId: 'old-1', waMessageId: 'w',
+      from: '127676509610071@lid', senderName: '', text: '', sentAt: '', fileName: 'x.jpeg',
+    },
+  } as any);
+  backfillWhatsappSenders('cybm', 'cybm');
+  const repaired = listBills('cybm').find((b) => b.id === stale.id)!;
+  check('an older row is named on the next listing', repaired.whatsapp?.senderName, 'Astrid Yang');
+  check('with the number', repaired.whatsapp?.senderNumber, '+60123456789');
+  check('and its raw id untouched', repaired.whatsapp?.from, '127676509610071@lid');
 }
 
 // --- Testing it without CYWorkspace -------------------------------------------
@@ -552,6 +587,11 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   t = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
   const lid = t.body.messages.find((m: any) => m.id === 'MSG-lid');
   check('and the LID is never shown as the sender', lid.senderLabel.includes('127676509610071'), false);
+  // The same answer the document's WhatsApp tab gives: the roster's name and
+  // number for the person the group was opened for.
+  check('the group\'s own person is named instead', lid.senderLabel, 'Astrid Yang');
+  check('with their roster number', lid.senderNumber, '+60123456789');
+  check('and the raw id kept for tracing', lid.senderId, '127676509610071@lid');
 
   const index = await get('threads', { 'X-Org-Id': 'org_one0001' });
   check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 5);

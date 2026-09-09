@@ -64,6 +64,11 @@ export type Bill = {
     waMessageId: string;
     from: string;
     senderName: string;
+    // '+60123456789'. WhatsApp's own where it sent one, else the roster's for
+    // the person the group was opened for — WhatsApp increasingly puts a LID in
+    // `from`, which is not a number. Absent on rows filed before it existed;
+    // the listing fills those in (`backfillWhatsappSenders`).
+    senderNumber?: string;
     text: string;
     sentAt: string;
     fileName: string;
@@ -955,6 +960,21 @@ export function markBillWhatsappReaction(orgId: string, id: string, emoji: strin
   if (!bill) return false;
   if ((bill.whatsappReaction ?? '') === emoji) return false;
   bill.whatsappReaction = emoji;
+  persist(bills);
+  return true;
+}
+
+// Fill in who sent a WhatsApp'd document, on a row filed before the sender was
+// resolved. Its own writer for the same reason: the message a document arrived
+// in is the document's record of what was received, not a field a person edits,
+// so `whatsapp` is not in EDITABLE and never will be. Only the two identity
+// fields move; the raw sender id, the text and the file name are left as they
+// arrived.
+export function setBillWhatsappSender(orgId: string, id: string, who: { name: string; number: string }): boolean {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill?.whatsapp) return false;
+  bill.whatsapp = { ...bill.whatsapp, senderName: who.name, senderNumber: who.number };
   persist(bills);
   return true;
 }
