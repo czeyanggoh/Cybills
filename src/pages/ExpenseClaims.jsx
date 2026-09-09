@@ -238,16 +238,6 @@ export default function ExpenseClaims() {
   const [selected, setSelected] = useState(() => new Set());
   const [showCreate, setShowCreate] = useState(false);
   const [newClaim, setNewClaim] = useState({ claimFor: '', endDate: '', name: '' });
-  // A claim covers a month, and a Standard user's covers THIS one: the date is
-  // filled in for them and shown read-only, because it is not theirs to move.
-  // The server settles it either way, so this is what the dialog says rather
-  // than what it enforces.
-  // "Create expense claims" in Edit privileges. Only a Standard user carries
-  // the setting; both admin tiers do this by role. Refused server-side on both
-  // halves of the act — opening a claim and putting items on it.
-  const mayClaim = canCreateClaims(membership, googleEnabled);
-  const endDateFixed = !isAdminAccess(membership, googleEnabled);
-  const fixedEndDate = endOfMonthFor(todayIso());
   const [query, setQuery] = useListView('claims', 'query', '');
   // Two narrowings beside the search box, which used to be a funnel and an
   // "Advanced" that did nothing at all — the buttons were there, the handlers
@@ -272,6 +262,22 @@ export default function ExpenseClaims() {
     setScope('unpublished');
   };
   const { user, googleEnabled, membership } = useAuth();
+  // Both of these read `membership`, so they belong AFTER it is destructured.
+  // Sitting above it they were a temporal dead zone reference — a ReferenceError
+  // the moment the component rendered, which blanked the whole page. `const` is
+  // not hoisted the way a function declaration is, and nothing in a build catches
+  // it: the bundle is valid JavaScript that throws when it runs.
+  //
+  // A claim covers a month, and a Standard user's covers THIS one: the date is
+  // filled in for them and shown read-only, because it is not theirs to move.
+  // The server settles it either way, so this is what the dialog says rather
+  // than what it enforces.
+  const endDateFixed = !isAdminAccess(membership, googleEnabled);
+  const fixedEndDate = endOfMonthFor(todayIso());
+  // "Create expense claims" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers do this by role. Refused server-side on both
+  // halves of the act — opening a claim and putting items on it.
+  const mayClaim = canCreateClaims(membership, googleEnabled);
   const exportSettings = useExportSettings();
   const { data: organisations = [] } = useOrganisations();
   const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
