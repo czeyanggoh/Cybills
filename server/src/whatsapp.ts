@@ -17,7 +17,7 @@ import {
   groupSubjectFor,
   type User,
 } from './users.js';
-import { insertBill, listBills, displayIdOf } from './store.js';
+import { insertBill, listBills, displayIdOf, listBillsAcrossScopes, setBillWhatsappSender } from './store.js';
 import { getBill, putBill, putBillFile } from './storage.js';
 import { readSetting } from './settings.js';
 import { resolveProvider } from './llm.js';
@@ -34,7 +34,8 @@ import {
 } from './waChannels.js';
 import { renameChannelsForUser } from './waRename.js';
 import { inboundKey, keyMatches } from './inboundKey.js';
-import { normaliseMobile, mobileOf, senderIdentity } from './waSender.js';
+import { normaliseMobile, mobileOf, senderIdentity, type SenderIdentity } from './waSender.js';
+import { learnLid, rememberLid } from './waLids.js';
 
 // Bill collection over WhatsApp, in partnership with CYWorkspace (CYWS).
 //
@@ -427,7 +428,7 @@ async function fetchDocument(
 // utility bill — it lands on the entity's GENERAL account, which exists for
 // exactly this: the documents nobody claimed. Never on whoever opened the
 // group, which would put their name on work they did not do.
-function ownerFor(ws: string, channel: WaChannel, senderWaId: string): string {
+function ownerFor(ws: string, channel: WaChannel, who: SenderIdentity): string {
   // A group opened for ONE person is a conversation with that person, and that
   // is the ordinary case. Whose it is was settled when the group was made, so
   // it does not have to be worked out again from whatever WhatsApp puts in the
@@ -440,15 +441,9 @@ function ownerFor(ws: string, channel: WaChannel, senderWaId: string): string {
     if (person?.email) return person.email;
   }
   // The entity-wide group has several people in it, so who sent it is a real
-  // question: the number, matched against the Mobile on the roster.
-  const sender = mobileOf(senderWaId);
-  if (sender) {
-    const match = ensureUsers(ws).find(
-      (u: User) =>
-        !u.removed && !u.deactivated && normaliseMobile(u.mobile) === sender && canAccessOrg(u, channel.orgId)
-    );
-    if (match?.email) return match.email;
-  }
+  // question: the roster row the sender was identified as — by their number,
+  // or by what their LID has been learned to be (`senderIdentity`).
+  if (who.confirmed && who.email) return who.email;
   // Nobody we hold a number for: the entity's General account, which is what it
   // is for. Never the person who created the group.
   return generalUserFor(ws, channel.orgId)?.email ?? '';
@@ -1521,12 +1516,15 @@ async function fileWhatsappDocument(
 
   const fileHash = createHash('sha256').update(file.bytes).digest('hex');
   const sentAt = String(b.sent_at ?? '');
-  const owner = ownerFor(ws, channel, String(b.sender ?? ''));
   // Who sent it, in a name and a number. WhatsApp increasingly sends a LID
-  // where the number used to be, and a push name only sometimes, so the roster
-  // fills whichever of the two is blank — the person the group was opened for,
-  // or the row whose Mobile matches. `from` keeps the raw id for tracing.
+  // where the number used to be, and a push name only sometimes. What the LID
+  // stands for is learned first — the number CYWS sent beside it, or the one it
+  // can be asked for — and then the actual sender is looked for on the roster;
+  // the group's own person only stands in when nothing identifies them. `from`
+  // keeps the raw id for tracing.
+  await learnLid(channel.id, String(b.sender ?? ''), String(b.sender_pn ?? ''));
   const who = senderIdentity(ws, channel, String(b.sender ?? ''), String(b.sender_name ?? ''));
+  const owner = ownerFor(ws, channel, who);
   // What the sender typed when they attached the file. This is the covering
   // note — "recharge this to CY-Biz" — and it is kept on the document so a
   // RE-READ sees it too: read once with it and again without, and the second
@@ -1540,6 +1538,8 @@ async function fileWhatsappDocument(
     from: who.id,
     senderName: who.name,
     senderNumber: who.number,
+    senderUserId: who.userId,
+    senderPushName: String(b.sender_name ?? ''),
     text: String(b.body ?? '').trim().slice(0, 4000),
     sentAt,
     fileName: String(b.file_name ?? ''),
@@ -1710,6 +1710,10 @@ whatsappRouter.post('/message', async (req, res) => {
     recordDelivery({ submissionId, messageId: waMessageId, outcome: 'closed', detail: `${channel.subject} was ${channel.status}` });
     return res.status(409).json({ error: 'channel_closed', submission_id: submissionId });
   }
+
+  // What the sender's LID stands for, learned before the message is stored so
+  // the thread names them from the first read (see waLids.ts).
+  if (String(b.direction ?? 'in') !== 'out') await learnLid(submissionId, String(b.sender ?? ''), String(b.sender_pn ?? ''));
 
   const items = loadMessages();
   const existing = items.find((m) => m.id === waMessageId);
@@ -1913,13 +1917,67 @@ whatsappRouter.get('/threads/:submissionId', (req, res) => {
       // group's own person, or the roster row the number matches), so the two
       // pages say the same thing about one message. The id rides separately,
       // so a message can always be traced back to a sender.
-      if (m.direction === 'out') return { ...m, senderLabel: 'Us', senderNumber: '', senderId: '' };
+      if (m.direction === 'out') return { ...m, senderLabel: 'Us', senderNumber: '', senderId: '', senderConfirmed: true };
       const who = senderIdentity(channel.workspaceId, channel, m.sender, m.senderName);
-      return { ...m, senderLabel: who.name || who.number || 'Unknown', senderNumber: who.number, senderId: who.id };
+      return {
+        ...m,
+        senderLabel: who.name || who.number || 'Unknown',
+        senderNumber: who.number,
+        senderId: who.id,
+        // false when the label is a stand-in (the group's own person, a bare
+        // push name) rather than a roster row the sender was identified as.
+        senderConfirmed: who.confirmed,
+      };
     }),
     canManage: mayManage(req, channel.orgId),
   });
 });
+
+// POST /api/whatsapp/lids — "this was sent by Astrid Yang".
+//
+// WhatsApp identifies a sender by a LID, and when neither it nor CYWS can say
+// what number that is, the only person who knows who wrote "Pls pay." is the
+// reviewer who knows the group. Saying it once is enough: a LID is one WhatsApp
+// account for good, so every message it has sent and will send is theirs from
+// here — the documents already filed from it are renamed now (every entity's
+// book, since a LID is not scoped), the thread reads the same ledger, and the
+// next bill from it files under them. `{ lid, email }`; the person has to be
+// someone this entity can see, and the caller a Business Admin of it, the same
+// bar as everything else that edits the collection.
+whatsappRouter.post('/lids', (req, res) => {
+  const orgId = orgIdFor(req);
+  if (!orgId) return res.status(400).json({ error: 'org_required' });
+  if (!mayManage(req, orgId)) return res.status(403).json({ error: 'forbidden' });
+  const b = req.body ?? {};
+  const lid = String(b.lid ?? '').trim();
+  const email = String(b.email ?? '').trim().toLowerCase();
+  if (!lid || !lid.includes('@')) return res.status(400).json({ error: 'lid_required' });
+  if (!email) return res.status(400).json({ error: 'email_required' });
+  const ws = workspaceId(req);
+  const person = ensureUsers(ws).find(
+    (u: User) => !u.removed && (u.email || '').toLowerCase() === email && canAccessOrg(u, orgId)
+  );
+  if (!person) return res.status(404).json({ error: 'unknown_person' });
+
+  rememberLid({ lid, number: normaliseMobile(person.mobile || ''), userId: person.id, name: person.name || '', source: 'manual' });
+  const repaired = repairDocumentsFrom(ws, lid);
+  const who = senderIdentity(ws, { userId: '', orgId }, lid, '');
+  res.json({ ok: true, name: who.name, number: who.number, userId: who.userId, repaired });
+});
+
+// Every document that came from one sender id, renamed to what it now resolves
+// to. Across every entity's book, since a LID is one account everywhere.
+function repairDocumentsFrom(ws: string, lid: string): number {
+  let n = 0;
+  for (const bill of listBillsAcrossScopes()) {
+    if (!bill.whatsapp || bill.whatsapp.from !== lid) continue;
+    const channel = channelById(bill.whatsapp.submissionId);
+    if (!channel) continue;
+    const who = senderIdentity(ws, channel, bill.whatsapp.from, bill.whatsapp.senderPushName ?? '');
+    if (setBillWhatsappSender(bill.orgId, bill.id, who)) n++;
+  }
+  return n;
+}
 
 // PATCH /api/whatsapp/messages/:id — correct what the document is.
 //

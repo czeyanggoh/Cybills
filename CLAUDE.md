@@ -1618,24 +1618,30 @@ so there the sender's number is matched against the roster's Mobile field, in
 any spelling; failing that, the entity's GENERAL account, which is what it is
 for. Never the person who created the group.
 
-**And the sender is SAID the same way.** The document's WhatsApp tab printed
-whatever WhatsApp put in the sender field, split at the `@` — which for a LID is
-`127676509610071`, fifteen digits that read as somebody's mobile and belong to
-nobody. CYBills cannot turn a LID into a number (that mapping is WhatsApp's, and
-CYWS is the side with a session to ask), but it holds the roster, and the roster
-already settled who the group belongs to. So `senderIdentity` (`waSender.ts`, a
-leaf, where `normaliseMobile` / `mobileOf` now live) answers in a name and a
-number — the push name WhatsApp sent, else the roster's; the number WhatsApp
-sent, else the roster mobile the group was opened with — and both the filing
-path and the thread route go through it, so the document tab and the WhatsApp
-thread cannot disagree about one message. Stored as `senderName` +
-`senderNumber` on the document's `whatsapp` record; `from` keeps the raw id, in
-the tooltip, for tracing. The rows filed before it are repaired off the listing
-(`backfillWhatsappSenders`), once, through its own writer — `whatsapp` is the
-document's record of what was received and is not in `EDITABLE`. What is left
-is the case only CYWS can fix: a LID with no push name in an ENTITY-WIDE group
-resolves to nobody, and `deploy/WHATSAPP.md` says what to send. Covered by
-`npm test` in `server/` (`test/whatsapp.test.mts`).
+**But WHO SENT a message is its own question, and it is an approval trail.**
+"Pls pay." under a receipt is somebody approving it, so the document has to name
+the person who pressed send — not the group's owner. The tab printed whatever
+WhatsApp put in the sender field, split at the `@`, which for a LID is
+`127676509610071`: fifteen digits that read as somebody's mobile and belong to
+nobody. A LID is one WhatsApp account for good, which is what makes it worth
+LEARNING (`waLids.ts`, the `whatsapp-lids` ledger): the number CYWS sends beside
+it (`sender_pn`), else the number CYWS is asked for once per LID
+(`resolve-lid`, `deploy/WHATSAPP.md`), else a reviewer on the document — "Who
+sent this?" (`POST /api/whatsapp/lids`), which renames every document already
+filed from that account and files the next one under them. `senderIdentity`
+(`waSender.ts`, a leaf, where `normaliseMobile` / `mobileOf` now live) then
+answers in a name, a number and a `confirmed` flag: the ACTUAL sender first,
+wherever the number or the learned LID matches a roster row; else the push name
+alone; else the group's own person standing in, never claimed as confirmed —
+and unconfirmed is what puts the picker on the page. The filing path, the
+thread route and the entity-wide group's owner rule all go through it, so the
+tab, the thread and the owner cannot disagree. Stored as `senderName` /
+`senderNumber` / `senderUserId` (+ the raw `senderPushName`) on the document's
+`whatsapp` record; `from` keeps the raw id, in the tooltip, for tracing. Rows
+filed before, and rows still unconfirmed, are re-resolved off the listing
+(`backfillWhatsappSenders`) through their own writer, which writes only on a
+change — `whatsapp` is the document's record of what was received and is not
+in `EDITABLE`. Covered by `npm test` in `server/` (`test/whatsapp.test.mts`).
 
 Env (server/.env): `CYWORKSPACE_API_KEY` (the same key the Xero relay uses —
 creating groups switches on with it), `CYWORKSPACE_PUBLIC_URL` (the only host a

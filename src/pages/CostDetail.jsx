@@ -29,6 +29,7 @@ import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useProjectLabels, singular } from '@/lib/projectLabels';
 import { useUsers, useOwnerNames } from '@/lib/userStore';
+import { setWhatsappSender } from '@/lib/whatsapp';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
@@ -2400,6 +2401,23 @@ export default function CostDetail() {
                       {chat.senderName && chat.senderNumber ? (
                         <span className="ml-2 text-muted-foreground">{chat.senderNumber}</span>
                       ) : null}
+                      {/* Nobody on the roster was identified as the sender: the
+                          name above is a stand-in (the group's own person, a
+                          push name) or nothing. "Pls pay." is an approval, and
+                          an approval needs a name on it, so the reviewer who
+                          knows the group says who — once, for every message
+                          that account has sent or will send. */}
+                      {!chat.senderUserId && chat.from && !mockDoc ? (
+                        <WhatsappSenderPicker
+                          chat={chat}
+                          people={teamUsers.filter((u) => !u.deactivated && u.email)}
+                          onSaved={(who) =>
+                            setPersisted((p) =>
+                              p ? { ...p, whatsapp: { ...p.whatsapp, senderName: who.name, senderNumber: who.number, senderUserId: who.userId } } : p
+                            )
+                          }
+                        />
+                      ) : null}
                     </dd>
                     <dt className="text-muted-foreground">Date</dt>
                     <dd className="m-0">{chatDate || '—'}</dd>
@@ -2598,5 +2616,46 @@ export default function CostDetail() {
         onAdded={(pm) => set('paymentMethod', pm.label)}
       />
     </AppShell>
+  );
+}
+
+// "Sent by …" for a WhatsApp'd document whose sender the roster could not
+// vouch for. Picking a person stores what that WhatsApp account IS, so it is
+// asked once per account rather than once per receipt; the thread and every
+// document from the same sender follow. Hoisted, so it can live down here.
+function WhatsappSenderPicker({ chat, people, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pick = async (email) => {
+    if (!email) return;
+    setBusy(true);
+    setError('');
+    try {
+      const who = await setWhatsappSender({ lid: chat.from, email });
+      onSaved(who);
+    } catch (err) {
+      setError(err?.message || 'Could not save who sent this.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="ml-2 inline-flex items-center gap-2 align-middle">
+      <select
+        className="h-7 rounded-md border bg-background px-2 text-xs"
+        value=""
+        disabled={busy}
+        onChange={(e) => pick(e.target.value)}
+        aria-label="Who sent this?"
+      >
+        <option value="">{chat.senderName ? 'Not confirmed — who sent this?' : 'Who sent this?'}</option>
+        {people.map((u) => (
+          <option key={u.email} value={u.email}>
+            {u.name || u.email}
+          </option>
+        ))}
+      </select>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </span>
   );
 }

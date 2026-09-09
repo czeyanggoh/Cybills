@@ -347,3 +347,22 @@ export const DOC_CATEGORIES = [
 ];
 
 export const categoryLabel = (id) => DOC_CATEGORIES.find((c) => c.id === id)?.label || id || '';
+
+// "This was sent by …" — name the person behind a WhatsApp sender id.
+//
+// WhatsApp identifies the sender of a group message by a LID, an opaque id it
+// cannot always turn back into a number, so a receipt's "Pls pay." can arrive
+// with nobody's name on it. A reviewer who knows the group says who once, and
+// every message from that account — already filed or still to come — is theirs.
+export async function setWhatsappSender({ lid, email }) {
+  const res = await fetch('/api/whatsapp/lids', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ lid, email }),
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok) return data;
+  const err = new Error(data?.message || 'Could not save who sent this.');
+  err.code = data?.error || '';
+  throw err;
+}

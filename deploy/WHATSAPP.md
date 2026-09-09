@@ -679,17 +679,33 @@ spelling — `+60 12-345 6789` is the same number). No match means the entity's
 **General** account, which exists for the documents nobody claimed. Never the
 person who created the group: that would put their name on work they did not do.
 
-## Who sent it: `sender` and `sender_name`
+## Who sent it: `sender`, `sender_name`, `sender_pn`
 
-WhatsApp increasingly puts a **LID** in the sender field
-(`127676509610071@lid`) — an opaque per-user id, not a phone number, and
-CYBills cannot turn it back into one. Where the group was opened for ONE
-person, CYBills names them from the roster (their name and the mobile the group
-was opened with), so nothing is lost. In the ENTITY-WIDE group a LID with no
-`sender_name` is a stranger: send the push name in `sender_name` always, and
-where WAHA can map the LID to a number (its `lids` endpoint), send the number
-in `sender` as `<digits>@c.us` — that is the only road to the real number for
-a sender CYBills holds no roster row for.
+"Pls pay." under a receipt is an approval, so CYBills has to be able to say
+WHO sent every message, by name. WhatsApp increasingly puts a **LID** in the
+sender field (`127676509610071@lid`) — an opaque per-user id, stable for the
+account but not a phone number — and CYBills cannot turn it back into one on
+its own. Three roads, tried in this order; the first two are CYWS's:
+
+1. **`sender_pn`** — send the number beside the LID whenever WAHA has it:
+   `"sender": "127676509610071@lid", "sender_pn": "60123456789@c.us"`. WAHA
+   carries it on the message (`participantAlt` / `_data.key.participantPn`
+   depending on engine and version). Taken as read, no call made.
+2. **`POST /api/webhooks/cybills/resolve-lid`** (a route CYWS adds) — when a
+   LID arrives with no number, CYBills asks once per LID:
+   `{ "submission_id": "CYB-…", "lid": "127676509610071@lid" }` → `200 { "pn":
+   "60123456789", "name": "" }`, from WAHA's `GET /api/{session}/lids/{lid}`.
+   `404` means WhatsApp has never told this session the number (or an older
+   CYWS with no such route), and CYBills stops asking about that LID for the
+   life of the process.
+3. **A person, on the document.** When neither says, the document's WhatsApp
+   tab offers "Who sent this?" over the entity's roster. One answer names that
+   account for good: every message it has sent and will send.
+
+What CYBills learns is kept (`whatsapp-lids`), so a LID is resolved once and
+then known, and a number that matches a roster **Mobile** makes that person the
+sender — and, in the entity-wide group, the document's owner. Always send the
+push name in `sender_name`: it is shown until somebody better is known.
 
 ## Environment (server/.env)
 

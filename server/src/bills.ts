@@ -108,18 +108,25 @@ function backfillOwners(ws: string, org: string, scope: string): void {
 
 // The repair for documents that arrived over WhatsApp before the sender was
 // resolved: they carry a LID in `from` and a blank name, which the page printed
-// as a fifteen-digit number belonging to nobody. `senderNumber` is the marker —
-// absent on those rows, and written (as '' where there is genuinely nothing to
-// say) once, so the sweep rewrites nothing after its first pass. The channel
-// the document names is what settles who sent it, the same way it does at
-// filing time; a document whose group has since been forgotten is left as it is.
+// as a fifteen-digit number belonging to nobody. Two kinds of row are looked
+// at, and neither is rewritten unless the answer changed: one filed before
+// `senderNumber` existed, and one whose sender was never CONFIRMED — a LID the
+// ledger (waLids.ts) may have learned since, from CYWS or from a reviewer
+// naming them on another document. The channel the document names is what
+// settles who sent it, the same way it does at filing time; a document whose
+// group has since been forgotten is left as it is. `setBillWhatsappSender`
+// writes only on a real change, which is what keeps this cheap on every load.
 export function backfillWhatsappSenders(ws: string, scope: string): void {
   for (const b of listBills(scope)) {
     const wa = b.whatsapp;
-    if (!wa || wa.senderNumber !== undefined) continue;
+    if (!wa || (wa.senderNumber !== undefined && wa.senderUserId)) continue;
     const channel = channelById(wa.submissionId);
     if (!channel) continue;
-    const who = senderIdentity(ws, channel, wa.from, wa.senderName);
+    // What WhatsApp sent as the name, never what CYBills resolved it to: a row
+    // from before the push name was kept apart has only the raw one in
+    // `senderName`, and a row repaired since has it in `senderPushName`.
+    const pushName = wa.senderPushName ?? (wa.senderNumber === undefined ? wa.senderName : '');
+    const who = senderIdentity(ws, channel, wa.from, pushName);
     setBillWhatsappSender(scope, b.id, who);
   }
 }

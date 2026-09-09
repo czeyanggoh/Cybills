@@ -5,20 +5,22 @@
 // — and it happens to be fifteen digits, which is exactly the length of a long
 // international number. Printed where a sender belongs it read as a phone
 // number that belongs to nobody, and matched against the roster it found no
-// one. Nothing here can turn a LID back into a number: that mapping is held at
-// WhatsApp's end, and CYWS is the side with a session that could ask for it.
+// one. Nothing here can turn a LID back into a number by itself: that mapping
+// is WhatsApp's, and what CYBills has learned of it is in waLids.ts.
 //
-// What CYBills DOES hold is the roster. A group opened for one person is a
-// conversation with that person — settled when the group was made, never worked
-// out again from the sender field — and their roster row carries the name and
-// the mobile the group was opened with. An entity-wide group is a real question,
-// answered by the number when WhatsApp sent one. Either way the answer is the
-// same shape, so the thread page and the document page cannot disagree about who
-// sent a message.
+// What CYBills DOES hold is the roster, and the question that matters is who
+// ACTUALLY pressed send — "Pls pay." under a receipt is an approval, and an
+// approval needs a name on it. So the actual sender comes first wherever one
+// can be identified: the number WhatsApp sent, or the number/person a LID has
+// been learned to be, matched to a roster row. Only when nothing identifies
+// them does the group's own person stand in — a group opened for one person is
+// usually that person — and the answer says so (`confirmed: false`), which is
+// what puts the "Sent by" picker on the document.
 //
 // A leaf: the document listing reads it too, and must not import the router.
 import { canAccessOrg, ensure as ensureUsers, type User } from './users.js';
 import type { WaChannel } from './waChannels.js';
+import { lidFor, type LidRow } from './waLids.js';
 
 // --- Phone numbers -----------------------------------------------------------
 // CYWS wants bare international format: digits only, no '+', no spaces, dashes
@@ -56,13 +58,20 @@ export const mobileOf = (waId: string) => {
 };
 
 export type SenderIdentity = {
-  // The name WhatsApp sent (the sender's own push name), else the roster's, else ''.
+  /** The roster's name for the actual sender; else the push name WhatsApp
+   * sent; else the group's own person. '' when there is nobody to name. */
   name: string;
-  // '+60123456789' — the number WhatsApp sent, else the roster's, else ''.
+  /** '+60123456789' — sent by WhatsApp, learned for the LID, or the roster's. */
   number: string;
-  // What WhatsApp put in the sender field, as-is, so a message can always be
-  // traced back even when all it gave us was an opaque id.
+  /** What WhatsApp put in the sender field, as-is, so a message can always be
+   * traced back even when all it gave us was an opaque id. */
   id: string;
+  /** The roster row of the ACTUAL sender, when one was identified. */
+  userId: string;
+  email: string;
+  /** false when the name is the group's person standing in, or a bare push
+   * name — somebody, but not somebody the roster can vouch for. */
+  confirmed: boolean;
 };
 
 const live = (u: User) => !u.removed && !u.deactivated;
@@ -71,19 +80,27 @@ const plus = (mobile: string) => {
   return n ? `+${n}` : '';
 };
 
-// The roster row behind a message: the person the group was opened for, else
-// the person whose Mobile is the number it came from. The same two steps
-// `ownerFor` takes to decide whose document it is, so the name printed beside a
-// document and the owner it was filed under are the same person.
-function rosterRowFor(ws: string, channel: Pick<WaChannel, 'userId' | 'orgId'>, sender: string): User | null {
-  const users = ensureUsers(ws);
-  if (channel.userId) {
-    const person = users.find((u) => u.id === channel.userId && !u.removed);
-    if (person) return person;
+type Lookup = (lid: string) => LidRow | null;
+
+// The roster row of the person who actually sent it: the row a learned LID
+// names outright, else the row whose Mobile is the number — WhatsApp's own, or
+// the one learned for the LID. Always within the entity: a mapping learned in
+// one client's group must not name somebody the sender's entity cannot see.
+function actualSender(
+  users: User[],
+  channel: Pick<WaChannel, 'orgId'>,
+  sender: string,
+  lookup: Lookup,
+): { row: User | null; number: string } {
+  const learned = /@lid$/i.test(sender) ? lookup(sender) : null;
+  const inOrg = (u: User) => live(u) && canAccessOrg(u, channel.orgId);
+  if (learned?.userId) {
+    const row = users.find((u) => u.id === learned.userId && inOrg(u)) ?? null;
+    if (row) return { row, number: learned.number || normaliseMobile(row.mobile || '') };
   }
-  const number = mobileOf(sender);
-  if (!number) return null;
-  return users.find((u) => live(u) && normaliseMobile(u.mobile) === number && canAccessOrg(u, channel.orgId)) ?? null;
+  const number = mobileOf(sender) || learned?.number || '';
+  if (!number) return { row: null, number: '' };
+  return { row: users.find((u) => inOrg(u) && normaliseMobile(u.mobile) === number) ?? null, number };
 }
 
 export function senderIdentity(
@@ -91,13 +108,32 @@ export function senderIdentity(
   channel: Pick<WaChannel, 'userId' | 'orgId'>,
   sender: string,
   senderName: string,
+  lookup: Lookup = lidFor,
 ): SenderIdentity {
   const id = String(sender ?? '');
-  const row = rosterRowFor(ws, channel, id);
-  const sent = mobileOf(id);
-  return {
-    name: String(senderName ?? '').trim() || (row ? row.name || row.email || '' : ''),
-    number: sent ? `+${sent}` : row ? plus(row.mobile || '') : '',
-    id,
-  };
+  const users = ensureUsers(ws);
+  const pushName = String(senderName ?? '').trim();
+  const actual = actualSender(users, channel, id, lookup);
+  if (actual.row) {
+    return {
+      name: actual.row.name || actual.row.email || pushName,
+      number: actual.number ? `+${actual.number}` : plus(actual.row.mobile || ''),
+      id,
+      userId: actual.row.id,
+      email: actual.row.email || '',
+      confirmed: true,
+    };
+  }
+  // A number that is nobody's on the roster, or a push name on its own: real
+  // facts about the sender, but not a person CYBills can vouch for.
+  if (actual.number || pushName) {
+    return { name: pushName, number: actual.number ? `+${actual.number}` : '', id, userId: '', email: '', confirmed: false };
+  }
+  // Nothing identifies them. The group's own person stands in — a group opened
+  // for one person is usually that person — but is never claimed as confirmed.
+  const person = channel.userId ? users.find((u) => u.id === channel.userId && !u.removed) : null;
+  if (person) {
+    return { name: person.name || person.email || '', number: plus(person.mobile || ''), id, userId: '', email: '', confirmed: false };
+  }
+  return { name: '', number: '', id, userId: '', email: '', confirmed: false };
 }

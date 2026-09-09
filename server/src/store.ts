@@ -69,6 +69,14 @@ export type Bill = {
     // `from`, which is not a number. Absent on rows filed before it existed;
     // the listing fills those in (`backfillWhatsappSenders`).
     senderNumber?: string;
+    // The roster row of the person who ACTUALLY sent it, once identified — by
+    // their number, by what a LID was learned to be, or by a reviewer saying so
+    // on the document. '' means the name above is a stand-in (the group's own
+    // person, or a bare push name), which is what offers the "Sent by" picker.
+    senderUserId?: string;
+    // The push name WhatsApp sent, as sent, so a later repair can start from
+    // what was received rather than from a name CYBills itself resolved.
+    senderPushName?: string;
     text: string;
     sentAt: string;
     fileName: string;
@@ -970,13 +978,22 @@ export function markBillWhatsappReaction(orgId: string, id: string, emoji: strin
 // so `whatsapp` is not in EDITABLE and never will be. Only the two identity
 // fields move; the raw sender id, the text and the file name are left as they
 // arrived.
-export function setBillWhatsappSender(orgId: string, id: string, who: { name: string; number: string }): boolean {
+export function setBillWhatsappSender(orgId: string, id: string, who: { name: string; number: string; userId: string }): boolean {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
   if (!bill?.whatsapp) return false;
-  bill.whatsapp = { ...bill.whatsapp, senderName: who.name, senderNumber: who.number };
+  const wa = bill.whatsapp;
+  // Written only on a real change: the listing sweep asks on every load.
+  if (wa.senderName === who.name && wa.senderNumber === who.number && (wa.senderUserId ?? '') === who.userId) return false;
+  bill.whatsapp = { ...wa, senderName: who.name, senderNumber: who.number, senderUserId: who.userId };
   persist(bills);
   return true;
+}
+
+/** Every document, whichever entity's book it is in. For a repair keyed on a
+ * fact that is not scoped — a WhatsApp account is one LID in every group. */
+export function listBillsAcrossScopes(): Bill[] {
+  return load().slice();
 }
 
 // Mark cost documents as sitting on an expense claim. Same finishing move as a

@@ -33,9 +33,21 @@ const createCalls: CreateCall[] = [];
 let createReply: { status: number; body: unknown } = { status: 200, body: null };
 let fileFetches = 0;
 
+// What CYWS says a LID stands for. 404 by default — an older CYWS, or a LID
+// WhatsApp never told it the number for — and a number when a test sets one.
+let lidReply: { status: number; body: unknown } = { status: 404, body: { error: 'not_found' } };
+const lidAsks: string[] = [];
+
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
+  if (url.includes('/api/webhooks/cybills/resolve-lid')) {
+    lidAsks.push(JSON.parse(String(init?.body ?? '{}')).lid);
+    return new Response(JSON.stringify(lidReply.body), {
+      status: lidReply.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
   if (url.includes('/api/webhooks/cybills/create-group')) {
     createCalls.push(JSON.parse(String(init?.body ?? '{}')));
     return new Response(JSON.stringify(createReply.body), {
@@ -312,7 +324,11 @@ check('it lands in the inbox, unread', filed.status, 'new');
 // lets a RE-READ see it too — read once with "recharge this to CY-Biz" and
 // again without, and the second read quietly undoes the first.
 check('the covering note is kept', filed.whatsapp?.text, 'recharge this to CY-Biz');
-check('with who sent it and when', [filed.whatsapp?.senderName, filed.whatsapp?.sentAt], ['Dean', '2026-08-27T08:56:00.000Z']);
+// The number is a roster row's, so the sender is that person: the roster's
+// name, not the push name they set on their phone ('Dean'), which is kept
+// beside it as what was received.
+check('with who sent it and when', [filed.whatsapp?.senderName, filed.whatsapp?.sentAt], ['Astrid Yang', '2026-08-27T08:56:00.000Z']);
+check('as a confirmed sender, with the push name kept apart', [filed.whatsapp?.senderUserId, filed.whatsapp?.senderPushName], [dean.id, 'Dean']);
 check('and the group it came from', filed.whatsapp?.chatSubject, 'CYBills - Acme Pte Ltd');
 // The sender's number is on the roster, so the document is theirs — spelled
 // however they wrote it there ('+60 12-345 6789' is the same number).
@@ -370,26 +386,78 @@ check('and nothing was fetched', fileFetches, 2);
   const filedByLid = listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2lid')!;
   // Theirs, because the group is theirs — not the General account.
   check('and belongs to the person the group was opened for', filedByLid.owner, 'astridy2004@gmail.com');
-  // The name WhatsApp sent is kept; the number a LID cannot supply is the
-  // roster's — the mobile the group was opened with — so the document's
-  // WhatsApp tab prints a person and a phone number, never the LID.
+  // CYWS was asked what the LID stands for, and had no answer. The push name
+  // is a fact about the sender and is kept; a number nobody supplied is not
+  // invented, and the roster has not vouched for anyone.
+  check('CYWS was asked what the LID is', lidAsks.includes('217630539546875@lid'), true);
   check('the push name is kept', filedByLid.whatsapp?.senderName, 'Astrid');
-  check('and the number comes off the roster', filedByLid.whatsapp?.senderNumber, '+60123456789');
+  check('but no number is claimed', filedByLid.whatsapp?.senderNumber, '');
+  check('and nobody is confirmed as the sender', filedByLid.whatsapp?.senderUserId, '');
   check('while the raw id is kept for tracing', filedByLid.whatsapp?.from, '217630539546875@lid');
 
   // The case in the screenshot: a LID and NO push name. That used to print
-  // "— 127676509610071" where a person belongs.
+  // "— 127676509610071" where a person belongs. The group's own person stands
+  // in, unconfirmed — which is what offers the "Sent by" picker.
   r = await post(
     'invoice',
     { ...invoice, submission_id: personGroup.id, message_id: 'clx8f2lid2', sender: '127676509610071@lid', sender_name: '' },
     { 'X-API-Key': 'inbound-key' }
   );
   const nameless = listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2lid2')!;
-  check('with no push name, the roster names them', nameless.whatsapp?.senderName, 'Astrid Yang');
-  check('and gives their number', nameless.whatsapp?.senderNumber, '+60123456789');
+  check("with nothing else to go on, the group's person stands in", nameless.whatsapp?.senderName, 'Astrid Yang');
+  check('with their number', nameless.whatsapp?.senderNumber, '+60123456789');
+  check('but not as a confirmed sender', nameless.whatsapp?.senderUserId, '');
+
+  // Where CYWS CAN say the number, the sender is the roster row it belongs to.
+  lidReply = { status: 200, body: { pn: '60123456789' } };
+  r = await post(
+    'invoice',
+    { ...invoice, submission_id: personGroup.id, message_id: 'clx8f2lid3', sender: '333000000000001@lid', sender_name: '' },
+    { 'X-API-Key': 'inbound-key' }
+  );
+  const resolved = listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2lid3')!;
+  check('a LID CYWS resolves names the roster row', resolved.whatsapp?.senderName, 'Astrid Yang');
+  check('as a confirmed sender', resolved.whatsapp?.senderUserId, dean.id);
+  // Learned for good: the next message from that account does not ask again.
+  const asksBefore = lidAsks.length;
+  await post(
+    'invoice',
+    { ...invoice, submission_id: personGroup.id, message_id: 'clx8f2lid4', sender: '333000000000001@lid', sender_name: '' },
+    { 'X-API-Key': 'inbound-key' }
+  );
+  check('and is not asked about twice', lidAsks.length, asksBefore);
+  lidReply = { status: 404, body: { error: 'not_found' } };
+
+  // A number sent BESIDE the LID (`sender_pn`) is taken as read, no call made.
+  await post(
+    'invoice',
+    { ...invoice, submission_id: personGroup.id, message_id: 'clx8f2lid5', sender: '444000000000001@lid', sender_pn: '60123456789@c.us', sender_name: '' },
+    { 'X-API-Key': 'inbound-key' }
+  );
+  check('a sender_pn beside the LID is enough', listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2lid5')?.whatsapp?.senderUserId, dean.id);
+  check('without asking', lidAsks.includes('444000000000001@lid'), false);
+
+  // The reviewer's word: "this was sent by Astrid Yang". Once, for the account.
+  r = await post('lids', { lid: '127676509610071@lid', email: 'nobody@example.com' }, { 'X-Org-Id': 'org_one0001' });
+  check('a person the entity cannot see is refused', r.status, 404);
+  r = await post('lids', { lid: '127676509610071@lid', email: 'astridy2004@gmail.com' }, { 'X-Org-Id': 'org_one0001' });
+  check('naming the sender is accepted', r.status, 200);
+  check('and answers with who that now is', [r.body.name, r.body.number, r.body.userId], ['Astrid Yang', '+60123456789', dean.id]);
+  check('the documents already filed from that LID are renamed', r.body.repaired >= 1, true);
+  const renamed = listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2lid2')!;
+  check('so the screenshot document now has a confirmed sender', renamed.whatsapp?.senderUserId, dean.id);
+
+  // And in the ENTITY-WIDE group, where the sender decides the owner, the
+  // learned LID files the bill under them rather than the General account.
+  r = await post(
+    'invoice',
+    { ...invoice, message_id: 'clx8f2lid6', sender: '127676509610071@lid', sender_name: '' },
+    { 'X-API-Key': 'inbound-key' }
+  );
+  check('a learned LID owns its bills in the entity-wide group', listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2lid6')?.owner, 'astridy2004@gmail.com');
 
   // A row filed before the sender was resolved carries the LID and nothing
-  // else. The listing's sweep fills it in once, and once only.
+  // else. The listing's sweep fills it in, and rewrites nothing once settled.
   const { insertBill } = await import('../src/store.ts');
   const { backfillWhatsappSenders } = await import('../src/bills.ts');
   const stale = insertBill({
@@ -404,6 +472,7 @@ check('and nothing was fetched', fileFetches, 2);
   const repaired = listBills('cybm').find((b) => b.id === stale.id)!;
   check('an older row is named on the next listing', repaired.whatsapp?.senderName, 'Astrid Yang');
   check('with the number', repaired.whatsapp?.senderNumber, '+60123456789');
+  check('as the person the LID was learned to be', repaired.whatsapp?.senderUserId, dean.id);
   check('and its raw id untouched', repaired.whatsapp?.from, '127676509610071@lid');
 }
 
@@ -587,14 +656,24 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   t = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
   const lid = t.body.messages.find((m: any) => m.id === 'MSG-lid');
   check('and the LID is never shown as the sender', lid.senderLabel.includes('127676509610071'), false);
-  // The same answer the document's WhatsApp tab gives: the roster's name and
-  // number for the person the group was opened for.
-  check('the group\'s own person is named instead', lid.senderLabel, 'Astrid Yang');
+  // The same answer the document's WhatsApp tab gives: this LID was named by a
+  // reviewer above, so the thread reads the same ledger and vouches for them.
+  check('the person the LID was learned to be is named', lid.senderLabel, 'Astrid Yang');
   check('with their roster number', lid.senderNumber, '+60123456789');
+  check('as a confirmed sender', lid.senderConfirmed, true);
   check('and the raw id kept for tracing', lid.senderId, '127676509610071@lid');
+  // One nobody has named: a stand-in, and said to be one.
+  r = await post('message', {
+    ...base, wa_message_id: 'MSG-lid2', msg_type: 'chat', body: 'from an unknown LID',
+    sender: '555000000000001@lid', sender_name: 'Ken',
+  }, KEY);
+  t = await get(`threads/${submissionId}`, { 'X-Org-Id': 'org_one0001' });
+  const unknown = t.body.messages.find((m: any) => m.id === 'MSG-lid2');
+  check('an unlearned LID shows its push name', unknown.senderLabel, 'Ken');
+  check('and is not claimed as anyone on the roster', unknown.senderConfirmed, false);
 
   const index = await get('threads', { 'X-Org-Id': 'org_one0001' });
-  check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 5);
+  check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 6);
   check('and what is sitting there unfiled — the statement, not the filed receipt', index.body.threads.find((x: any) => x.submissionId === submissionId)?.unfiled, 1);
 
   // A reviewer disagrees with the model. Theirs is the answer that sticks —
