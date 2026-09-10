@@ -18,6 +18,10 @@ import {
 import { listOrganisations, primaryOrgId } from './organisations.js';
 import { endOfThisMonth, isoClaimDate } from './claimDates.js';
 import { referenceFor, numberFor } from './claimRef.js';
+import { claimPdfBytes } from './claimPdfDoc.js';
+import { shareToken, verifyShareToken } from './shareLinks.js';
+import { readSetting } from './settings.js';
+import { readSession } from './auth.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
 // X-Org-Id scoping as bills). Replaces the old per-browser localStorage claim
@@ -186,6 +190,12 @@ export type RechargeClaim = {
   currency: string;
   total: string;
   items: number;
+  /** A signed, expiring link to this claim's own PDF — its report, approval
+   *  history, supporting documents and receipts. The recharge report the
+   *  practice sends a client's manager prints the Claim No as a link to it, and
+   *  that person has no CYBills login, so a link to the claim PAGE would be a
+   *  sign-in screen. Expires with the token (30 days). */
+  pdf_url: string;
   /** The bare numeric claim id — the "Claim No" a recharge report prints, as
    *  opposed to `reference`, which is that number inside the whole string the
    *  Xero bill is named with. */
@@ -209,7 +219,7 @@ export type RechargeClaim = {
 // accepted it owes. A claim not yet published is still listed — it is a real
 // approved cost, and whether its bill has reached Xero is a separate question
 // the row answers for itself.
-export async function rechargeClaims(org: string): Promise<RechargeClaim[]> {
+export async function rechargeClaims(org: string, origin = ''): Promise<RechargeClaim[]> {
   const rows: RechargeClaim[] = [];
   for (const c of load()) {
     if (c.deleted || c.orgId !== org || c.approvalStatus !== 'approved') continue;
@@ -223,6 +233,7 @@ export async function rechargeClaims(org: string): Promise<RechargeClaim[]> {
       total: claimTotal(c),
       items: c.transactions.length,
       claim_no: await numberFor(c),
+      pdf_url: origin ? `${origin}/api/claims/${encodeURIComponent(c.id)}/pdf?s=${encodeURIComponent(shareToken(c.id))}` : '',
       // decidedBy is who pressed the button; approver is who it was routed to.
       // A practice colleague deciding on somebody's behalf makes those two
       // different people, and the report wants the one who actually decided.
@@ -1238,6 +1249,40 @@ claimsRouter.get('/:id/attachments/:attId/file', async (req, res) => {
   res.setHeader('Content-Disposition', `inline; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(att.fileName)}`);
   obj.body.on('error', () => res.destroy());
   obj.body.pipe(res);
+});
+
+// GET /api/claims/:id/pdf?s=<token> — the claim's own PDF, for somebody with no
+// session at all.
+//
+// The practice sends a client's manager a recharge report whose Claim No links
+// here. That person has no CYBills login and never will, so the link carries a
+// signed, expiring capability for this ONE claim (shareLinks.ts, the same
+// mechanism a receipt image uses) and the session guard lets it through on the
+// strength of that.
+//
+// A SESSION still works too, checked the ordinary way — the same URL then opens
+// for the colleague who sent it, without a token.
+claimsRouter.get('/:id/pdf', async (req, res) => {
+  const claim = load().find((c) => c.id === req.params.id && !c.deleted);
+  if (!claim) return res.status(404).json({ error: 'not_found' });
+  const signed = verifyShareToken(claim.id, String(req.query.s ?? ''));
+  if (!signed) {
+    const me = memberForSession(req);
+    // 404, never 403: whether a claim exists is not something an unauthorised
+    // caller is entitled to learn, which is the rule every other read here
+    // follows.
+    if (!readSession(req) || (me && !canAccessOrg(me, entityIdForClaim(claim)))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+  }
+  const org = claim.orgId === WORKSPACE_ID ? primaryOrgId() : claim.orgId;
+  const sharing = readSetting<{ imageSharing?: boolean }>(WORKSPACE_ID, 'cybills.export-settings.v1', org)?.imageSharing !== false;
+  const bytes = await claimPdfBytes(claim as never, appOrigin(req), { imageSharing: sharing });
+  if (!bytes) return res.status(502).json({ error: 'pdf_unavailable' });
+  const name = `${String(claim.name || 'expense-claim').replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')}.pdf`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${name}"`);
+  res.send(Buffer.from(bytes));
 });
 
 // DELETE /api/claims/:id/attachments/:attId — take a supporting document off

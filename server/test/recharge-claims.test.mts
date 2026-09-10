@@ -200,6 +200,37 @@ check('and never the bridge', other.body.organisations.map((o: any) => o.id), ['
 const unknown = await get('/api/payments/claims?tenant_id=t-nobody', { 'X-API-Key': 'cyws-key' });
 check('an unknown tenant is an empty list, not an error', [unknown.status, unknown.body.claims], [200, []]);
 
+// --- the claim's own PDF, for somebody with no login --------------------------
+// The practice sends a client's manager a recharge report whose Claim No links
+// to the claim PDF. That person has no CYBills login and never will, so the
+// link has to carry its own proof — and the report has to be given one to print.
+check('the row carries a signed link to the claim PDF', /\/api\/claims\/c-approved\/pdf\?s=\d+\./.test(row.pdf_url), true);
+check('...on the same host as the app', row.pdf_url.startsWith('https://cybills.example.com/'), true);
+
+{
+  const url = new URL(row.pdf_url);
+  const path = `${url.pathname}${url.search}`;
+  const res = await fetch(`${BASE}${path}`);
+  check('the signed link opens with no session at all', res.status, 200);
+  check('and answers a PDF', res.headers.get('content-type'), 'application/pdf');
+  const bytes = Buffer.from(await res.arrayBuffer());
+  // Rendered, not empty: the module has to have loaded and drawn something.
+  check('a real one', [bytes.subarray(0, 5).toString(), bytes.length > 1000], ['%PDF-', true]);
+
+  // The token names ONE claim, so replaying it against another opens nothing —
+  // a single leaked link must not open the whole book.
+  //
+  // 401 rather than 404, and that is the session guard answering BEFORE the
+  // route: an unverified token is not a claim-shaped question at all. It leaks
+  // less than a 404 would, because a real claim and one that does not exist
+  // answer identically — the four below are indistinguishable from outside.
+  const swapped = await fetch(`${BASE}/api/claims/c-published/pdf${url.search}`);
+  check('a token for one claim does not open another', swapped.status, 401);
+  check('nor does a missing token', (await fetch(`${BASE}/api/claims/c-approved/pdf`)).status, 401);
+  check('nor a forged one', (await fetch(`${BASE}/api/claims/c-approved/pdf?s=99999999999.nope`)).status, 401);
+  check('and an unknown claim answers exactly the same', (await fetch(`${BASE}/api/claims/nope/pdf${url.search}`)).status, 401);
+}
+
 // --- the roster --------------------------------------------------------------
 // A PO names the PEOPLE it covers, and deriving that from the claims already
 // raised would be circular: nobody could go on a PO until they had a claim, and

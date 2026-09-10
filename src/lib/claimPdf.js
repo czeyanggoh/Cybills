@@ -1,13 +1,26 @@
+// The claim PDF — the report, its approval history, the supporting documents
+// and the receipts — built here for the BROWSER and for the SERVER both.
+//
+// The server builds the same document behind a signed link, so somebody who was
+// sent a recharge report and has no CYBills login can still open the claim
+// behind a line of it. That is why this module's imports are RELATIVE and its
+// dependencies are pure leaves: Node has to be able to load the graph, and
+// `@/…` resolves to nothing outside Vite. The three browser-only things it
+// still needs — the export settings blob, the share-link minter and the exports
+// log — are loaded LAZILY inside the functions that use them, so the server
+// never reaches them at all.
+//
+// A second implementation for the server was the alternative, and it would have
+// drifted: the document an approver reads is the one thing here that must look
+// the same however it was produced.
 import { jsPDF } from 'jspdf';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { claimAttachmentUrl, formatClaimStamp } from '@/lib/claimStore';
-import { pdfDate, claimRef, claimExportName, claimsExportName, cleanHistoryText } from '@/lib/exportFormat';
-import { claimDateFor } from '@/lib/claimReference';
-import { approvalHistory } from '@/lib/approvalHistory';
-import { costPath, fetchShareLinks } from '@/lib/bills';
-import { getExportSettings } from '@/lib/exportSettings';
-import { recordExport } from '@/lib/exportsStore';
-import { mileageSummary } from '@/lib/mileage';
+import { formatClaimStamp } from './claimDate.js';
+import { claimAttachmentUrl, costPath, costFileUrl } from './itemId.js';
+import { pdfDate, claimRef, claimExportName, claimsExportName, cleanHistoryText } from './exportFormat.js';
+import { claimDateFor } from './claimReference.js';
+import { approvalHistory } from './approvalHistory.js';
+import { mileageSummary } from './mileage.js';
 
 // A4 LANDSCAPE in points, with a comfortable margin.
 //
@@ -43,11 +56,11 @@ const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
 // Without a signed link — no stored receipt, or the entity has Image sharing
 // off — the Item ID points at the document page instead, which is the only
 // other thing there is to show.
-const itemUrl = (t, links = {}) => {
+const itemUrl = (t, links = {}, origin = ORIGIN) => {
   const id = t?.itemId || t?.displayId;
   if (!id) return '';
   const shared = links[String(t?.itemId ?? '')] || links[String(id)];
-  return `${ORIGIN}${shared || costPath(t)}`;
+  return `${origin}${shared || costPath(t)}`;
 };
 
 // Roll the line items up into per-category net/tax/total.
@@ -66,7 +79,7 @@ function summarise(txns) {
 // Build the expense-claim PDF document (mirrors Dext's export, plus a final
 // "Approval history" page built from the claim's activity log). Returns the
 // jsPDF doc so callers can open, download, or (in tests) serialise it.
-export function buildClaimDoc(claim, links = {}) {
+export function buildClaimDoc(claim, links = {}, origin = ORIGIN) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
   const title = `${claim.claimFor}'s Expense Claim`.toUpperCase();
   const totalExp = '{tp}';
@@ -206,7 +219,7 @@ export function buildClaimDoc(claim, links = {}) {
     // used to be painted on and clicked through to nothing.
     const itemId = String(t.displayId || t.itemId || '');
     doc.setTextColor(LINK[0], LINK[1], LINK[2]);
-    const url = itemUrl(t, links);
+    const url = itemUrl(t, links, origin);
     if (url) doc.textWithLink(itemId, tc.item, top, { url });
     else doc.text(itemId, tc.item, top);
     doc.setTextColor(60);
@@ -306,7 +319,13 @@ export function buildClaimDoc(claim, links = {}) {
 // Signed links for the claim's own documents, so the Item IDs in the report
 // open for whoever was sent it. Nothing is minted when the entity has Image
 // sharing off (Business settings -> Exports).
+// Loaded lazily: both live in the browser half of the app (a blob store and a
+// fetch), and the server supplies its own links rather than minting them here.
 async function claimShareLinks(claim) {
+  const [{ getExportSettings }, { fetchShareLinks }] = await Promise.all([
+    import('./exportSettings.js'),
+    import('./bills.js'),
+  ]);
   if (!getExportSettings().imageSharing) return {};
   return fetchShareLinks((claim?.transactions || []).map((t) => t.itemId));
 }
@@ -319,9 +338,10 @@ async function claimShareLinks(claim) {
 // emailed PDF wants beside the figures. Returns '' if rendering fails.
 export async function buildClaimPdfBase64(claim) {
   try {
+    const { loadFile, links, origin } = await browserContext(claim);
     const out = await PDFDocument.create();
-    await addReportPages(out, claim, await claimShareLinks(claim));
-    await appendAttachments(out, claim);
+    await addReportPages(out, claim, links, origin);
+    await appendAttachments(out, loadFile, claim);
     const bytes = await out.save();
     let bin = '';
     const chunk = 0x8000;
@@ -346,12 +366,23 @@ const A4 = [RECEIPT_W, RECEIPT_H];
 // Best-effort: missing files are silently skipped. Returns true if at least one
 // page was appended. Shared by a receipt and a claim's own supporting document
 // — the same kinds of file, placed the same way.
-async function appendFile(out, url) {
+// How the BROWSER gets a stored file: the app's own routes, with its session.
+// The server passes its own loader instead, reading the object store directly —
+// it has no session, and the whole point of the signed link is that the person
+// opening it has none either.
+async function fetchLoadFile(ref) {
+  const url = ref.kind === 'attachment' ? claimAttachmentUrl(ref.claimId, ref.attachmentId) : costFileUrl(ref.itemId);
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  return { contentType: res.headers.get('Content-Type') || '', bytes: await res.arrayBuffer() };
+}
+
+async function appendFile(out, loadFile, ref) {
   try {
-    const res = await fetch(url);
-    if (!res.ok) return false;
-    const type = (res.headers.get('Content-Type') || '').toLowerCase();
-    const buf = await res.arrayBuffer();
+    const file = await loadFile(ref);
+    if (!file) return false;
+    const type = String(file.contentType || '').toLowerCase();
+    const buf = file.bytes;
     if (type.includes('pdf')) {
       const src = await PDFDocument.load(buf, { ignoreEncryption: true });
       const pages = await out.copyPages(src, src.getPageIndices());
@@ -374,7 +405,7 @@ async function appendFile(out, url) {
 }
 
 // A transaction's original receipt.
-const appendReceipt = (out, itemId) => appendFile(out, `/api/costs/bills/${encodeURIComponent(itemId)}/file`);
+const appendReceipt = (out, loadFile, itemId) => appendFile(out, loadFile, { kind: 'receipt', itemId });
 
 // The claim's own supporting documents — the internal approval email chain, a
 // quote, an HR form — at the back of the report, after the approval history and
@@ -382,7 +413,7 @@ const appendReceipt = (out, itemId) => appendFile(out, `/api/costs/bills/${encod
 // attached it, when), because a PDF of an email thread dropped straight after
 // the approval timeline reads as part of the approval rather than as evidence
 // the claimant supplied. Nothing is drawn when the claim has none.
-async function appendAttachments(out, claim) {
+async function appendAttachments(out, loadFile, claim) {
   const list = Array.isArray(claim?.attachments) ? claim.attachments : [];
   if (!list.length) return false;
   const font = await out.embedFont(StandardFonts.Helvetica);
@@ -410,14 +441,14 @@ async function appendAttachments(out, claim) {
   let added = false;
   for (const a of list) {
     // eslint-disable-next-line no-await-in-loop
-    if (await appendFile(out, claimAttachmentUrl(claim.id, a.id))) added = true;
+    if (await appendFile(out, loadFile, { kind: 'attachment', claimId: claim.id, attachmentId: a.id })) added = true;
   }
   return added;
 }
 
 // Copy the CYBills report (jsPDF) pages into a pdf-lib doc.
-async function addReportPages(out, claim, links) {
-  const bytes = buildClaimDoc(claim, links).output('arraybuffer');
+async function addReportPages(out, claim, links, origin) {
+  const bytes = buildClaimDoc(claim, links, origin).output('arraybuffer');
   const report = await PDFDocument.load(bytes);
   const pages = await out.copyPages(report, report.getPageIndices());
   pages.forEach((p) => out.addPage(p));
@@ -429,9 +460,9 @@ async function addReportPages(out, claim, links) {
 //   'receipts'      — the receipt documents only
 // Returns a Blob. Falls back to the report alone if no receipts resolve, so the
 // file is never empty.
-export async function assembleClaimPdf(claim, { detailLevel = 'with_receipts' } = {}) {
+export async function assembleClaimPdf(claim, { detailLevel = 'with_receipts', context } = {}) {
   const out = await PDFDocument.create();
-  await addClaimTo(out, claim, detailLevel);
+  await addClaimTo(out, claim, detailLevel, context || await browserContext(claim));
   const bytes = await out.save();
   return new Blob([bytes], { type: 'application/pdf' });
 }
@@ -440,24 +471,50 @@ export async function assembleClaimPdf(claim, { detailLevel = 'with_receipts' } 
 // out of assembleClaimPdf so exporting a LIST of claims produces the same pages
 // in the same order as exporting each one singly — two builders would drift,
 // and the drift would show up as one claim's report looking unlike the next.
-async function addClaimTo(out, claim, detailLevel) {
+async function addClaimTo(out, claim, detailLevel, { loadFile, links, origin }) {
   const before = out.getPageCount();
-  const links = await claimShareLinks(claim);
   if (detailLevel !== 'receipts') {
-    await addReportPages(out, claim, links);
+    await addReportPages(out, claim, links, origin);
     // The claim's own paperwork rides with the report, at every level that has
     // one: it is what the approver reads beside the figures, not a receipt.
-    await appendAttachments(out, claim);
+    await appendAttachments(out, loadFile, claim);
   }
   if (detailLevel !== 'summary') {
     for (const t of claim.transactions || []) {
       // eslint-disable-next-line no-await-in-loop
-      await appendReceipt(out, t.itemId);
+      await appendReceipt(out, loadFile, t.itemId);
     }
   }
   // Never nothing: a claim whose receipts all failed to resolve still gets its
   // report, so it cannot vanish silently out of a combined file.
-  if (out.getPageCount() === before) await addReportPages(out, claim, links);
+  if (out.getPageCount() === before) await addReportPages(out, claim, links, origin);
+}
+
+// What the browser supplies when a caller hasn't said otherwise: its own
+// session-backed fetch, and share links minted for this claim's receipts.
+async function browserContext(claim) {
+  return { loadFile: fetchLoadFile, links: await claimShareLinks(claim), origin: ORIGIN };
+}
+
+/**
+ * The claim PDF as raw BYTES, with everything the caller must supply supplied.
+ *
+ * This is the entry point the SERVER uses (server/src/claimPdfDoc.ts loads this
+ * module by path and hands over a `loadFile` that reads the object store). It
+ * takes no browser: no fetch, no settings blob, no exports log, no Blob — a
+ * Uint8Array, which is what an HTTP response wants anyway.
+ *
+ *   loadFile({ kind: 'receipt', itemId })                     -> { contentType, bytes } | null
+ *   loadFile({ kind: 'attachment', claimId, attachmentId })   -> { contentType, bytes } | null
+ *
+ * `links` are the signed URLs the Item IDs point at, and `origin` is the host to
+ * put in front of them: the reader of this document is somewhere else entirely,
+ * so a bare path resolves against nothing.
+ */
+export async function assembleClaimBytes(claim, { detailLevel = 'with_receipts', loadFile, links = {}, origin = '' } = {}) {
+  const out = await PDFDocument.create();
+  await addClaimTo(out, claim, detailLevel, { loadFile, links, origin });
+  return out.save();
 }
 
 // Several claims in ONE document, each starting on its own page, in the order
@@ -468,7 +525,7 @@ export async function assembleClaimsPdf(claims, { detailLevel = 'with_receipts' 
   const out = await PDFDocument.create();
   for (const claim of claims || []) {
     // eslint-disable-next-line no-await-in-loop
-    await addClaimTo(out, claim, detailLevel);
+    await addClaimTo(out, claim, detailLevel, await browserContext(claim));
   }
   const bytes = await out.save();
   return new Blob([bytes], { type: 'application/pdf' });
@@ -493,7 +550,7 @@ export async function generateClaimPdf(claim, { exportedBy = '', detailLevel = '
   // Keep the URL alive long enough for the opened tab to load it.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
   // Record it so it appears under Exports → Expense claims.
-  void recordExport({
+  void import('./exportsStore.js').then(({ recordExport }) => recordExport({
     kind: 'claims',
     name: claim.name || name,
     filename: name,
@@ -503,7 +560,7 @@ export async function generateClaimPdf(claim, { exportedBy = '', detailLevel = '
     // See claimCsv: the claimant is a fair second guess, "You" names nobody.
     exportedBy: exportedBy || claim.claimFor || '',
     blob,
-  });
+  }));
   return claim.id;
 }
 
@@ -532,7 +589,7 @@ export async function generateClaimsPdf(claims, { exportedBy = '', detailLevel =
     a.remove();
   }
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  void recordExport({
+  void import('./exportsStore.js').then(({ recordExport }) => recordExport({
     kind: 'claims',
     name: `Expense claims (${list.length})`,
     filename: name,
@@ -541,6 +598,6 @@ export async function generateClaimsPdf(claims, { exportedBy = '', detailLevel =
     count: list.length,
     exportedBy,
     blob,
-  });
+  }));
   return list.length;
 }

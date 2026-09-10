@@ -255,7 +255,7 @@ paymentsRouter.get('/claims', async (req, res) => {
     // for them. So the row says which it is rather than leaving the far end to
     // infer it from a name.
     const bridge = !isLinkedItself(organisation);
-    for (const row of await rechargeClaims(dataScopeForOrg(organisation.id))) {
+    for (const row of await rechargeClaims(dataScopeForOrg(organisation.id), origin)) {
       claims.push({
         ...row,
         org_id: organisation.id,

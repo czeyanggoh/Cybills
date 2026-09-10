@@ -374,74 +374,15 @@ export function billToDoc(b) {
   };
 }
 
-// The number a document's creation second DERIVES: YYMMDDHHMMSS in Singapore
-// time (e.g. 260820130500 = 20 Aug 2026 13:05:00), decoded from the ms the
-// internal id embeds.
-//
-// This is no longer where a document's number comes from — two uploads in the
-// same second derive the same twelve digits, and the number has to be unique
-// because it addresses the document. The server assigns and stores one instead
-// (`displayId`, see nextDisplayId in store.ts); use `doc.displayId`.
-//
-// This remains for the cases that have no record to read it from: a claim line
-// item holding only an internal id, a sample/demo doc, and the moment before a
-// backfill has run. Numeric ids pass through; anything unrecognised falls back
-// to a stable hash.
-export function displayItemId(id) {
-  const s = String(id ?? '');
-  if (/^\d+$/.test(s)) return s;
-  const m = /^bill_([0-9a-z]+)_/.exec(s);
-  if (m) {
-    const ms = parseInt(m[1], 36);
-    if (Number.isFinite(ms) && ms > 0) {
-      const d = new Date(ms + 8 * 60 * 60 * 1000); // shift to SGT, then read UTC parts
-      const p = (n) => String(n).padStart(2, '0');
-      return `${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
-    }
-  }
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return String(21000000000 + (h % 1000000000));
-}
-
-// The number to SHOW for a document: the one it was assigned, falling back to
-// the one its second derives (a claim line item holding only an internal id, a
-// sample doc). One expression so no screen has to remember the order.
-export function itemNumber(docOrId) {
-  const doc = docOrId && typeof docOrId === 'object' ? docOrId : null;
-  if (!doc) return displayItemId(docOrId);
-  return doc.displayId || displayItemId(doc.id ?? doc.itemId);
-}
-
-// The key to ADDRESS a document by, given only an id.
-//
-// A number passes through. An internal id stays an internal id: deriving a
-// number from it invents the twelve digits of its SECOND, and two documents
-// uploaded in the same second derive the same twelve — so the link would name
-// them both, and open whichever the reader happened to find first. The internal
-// id names exactly one document, and the detail page swaps the address bar for
-// that document's assigned number once it has read it.
-function addressKeyFor(id) {
-  const s = String(id ?? '');
-  if (/^\d+$/.test(s)) return s;
-  if (/^bill_/.test(s)) return s;
-  return displayItemId(s);
-}
-
-// The address of a cost document: the path carries the NUMBER the page itself
-// shows (/costs/260822123051), not the internal storage key, so a URL copied out
-// of the address bar is the number you can search the list for.
-//
-// Pass the DOCUMENT wherever you have it — its assigned number is the one that
-// is unique, and passing `doc.id` instead throws that away and derives an
-// ambiguous one. A bare id still works (a claim line item holds only that).
-export function costPath(docOrId) {
-  const doc = docOrId && typeof docOrId === 'object' ? docOrId : null;
-  const key = doc
-    ? doc.displayId || addressKeyFor(doc.id ?? doc.itemId)
-    : addressKeyFor(docOrId);
-  return `/costs/${key}`;
-}
+// How a document is NAMED and ADDRESSED lives in a pure leaf (itemId.js),
+// because the claim PDF's import graph has to be loadable by the SERVER as
+// well as the browser — it builds the same PDF behind a signed link, and this
+// module pulls in React, the org store and the supplier list. Re-exported so
+// every existing caller is unchanged.
+export { displayItemId, itemNumber, costPath, claimAttachmentUrl, costFileUrl } from '@/lib/itemId';
+// Imported as well as re-exported: `export … from` re-publishes a name without
+// binding it locally, and this module calls displayItemId itself.
+import { displayItemId } from '@/lib/itemId';
 
 // Which document a URL key names, out of a list of them.
 //

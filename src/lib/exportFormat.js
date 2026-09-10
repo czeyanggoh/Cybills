@@ -2,10 +2,10 @@
 // Dext's conventions: clean file names, "D MMM YYYY" dates, and a short claim
 // reference instead of a raw UUID.
 
-import { displayItemId } from '@/lib/bills';
+import { displayItemId } from './itemId.js';
 // The claim's own number and date formatting live in a pure module: the server
 // builds the Xero reference from the same code (see claimReference.js).
-import { dateParts, csvDate, claimRef } from '@/lib/claimReference';
+import { dateParts, csvDate, claimRef } from './claimReference.js';
 
 export { csvDate, claimRef };
 

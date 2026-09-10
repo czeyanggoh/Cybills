@@ -103,6 +103,12 @@ app.use((req, res, next) => {
   // still allows sharing.
   const shared = /^\/api\/costs\/bills\/([^/]+)\/file$/.exec(p);
   if (shared && verifyShareToken(decodeURIComponent(shared[1]), String(req.query.s ?? ''))) return next();
+  // And a CLAIM's own PDF, for the same reason one step further out: the
+  // practice sends a client's manager a recharge report whose Claim No links to
+  // it, and that person has no login here and never will. Same signed, expiring
+  // capability, naming the one claim it opens.
+  const sharedClaim = /^\/api\/claims\/([^/]+)\/pdf$/.exec(p);
+  if (sharedClaim && verifyShareToken(decodeURIComponent(sharedClaim[1]), String(req.query.s ?? ''))) return next();
   if (!readSession(req)) return res.status(401).json({ error: 'unauthenticated' });
   return next();
 });

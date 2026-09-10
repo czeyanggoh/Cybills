@@ -143,8 +143,7 @@ export async function removeClaimAttachment(claimId, attachmentId) {
 
 // Where an attachment's bytes are served from — opened by the page, and fetched
 // by the PDF assembler when it appends the document to the claim PDF.
-export const claimAttachmentUrl = (claimId, attachmentId) =>
-  `/api/claims/${encodeURIComponent(claimId)}/attachments/${encodeURIComponent(attachmentId)}/file`;
+export { claimAttachmentUrl } from '@/lib/itemId';
 
 // Attach a cost item (transaction shape) to a claim. Idempotent per itemId.
 export async function addItemToClaim(claimId, txn) {
