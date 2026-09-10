@@ -190,6 +190,12 @@ export type RechargeClaim = {
   currency: string;
   total: string;
   items: number;
+  /** The claim's own lines — one per receipt — for the BREAKDOWN a recharge
+   *  report carries beside its one-row-per-claim summary. The client's manager
+   *  checks the header against the PO and the lines against what their people
+   *  said they spent, and those are two different reads of the same money. Only
+   *  what that sheet prints: no item ids, no files, no tax split. */
+  lines: Array<{ date: string; category: string; supplier: string; description: string; total: string }>;
   /** A signed, expiring link to this claim's own PDF — its report, approval
    *  history, supporting documents and receipts. The recharge report the
    *  practice sends a client's manager prints the Claim No as a link to it, and
@@ -232,6 +238,15 @@ export async function rechargeClaims(org: string, origin = ''): Promise<Recharge
       currency: c.currency || 'SGD',
       total: claimTotal(c),
       items: c.transactions.length,
+      lines: c.transactions.map((t) => ({
+        date: String(t.date || ''),
+        category: String(t.category || ''),
+        supplier: String(t.supplier || ''),
+        description: String(t.description || ''),
+        // To the cent, the way claimTotal sums them, so a breakdown always adds
+        // up to the header row it sits beside.
+        total: Number(t.total || 0).toFixed(2),
+      })),
       claim_no: await numberFor(c),
       pdf_url: origin ? `${origin}/api/claims/${encodeURIComponent(c.id)}/pdf?s=${encodeURIComponent(shareToken(c.id))}` : '',
       // decidedBy is who pressed the button; approver is who it was routed to.

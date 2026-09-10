@@ -173,6 +173,13 @@ check(
 const row = red.body.claims.find((c: any) => c.id === 'c-approved');
 check('the claim is attributed to its entity', row.org_id, 'org-ste');
 check('the claimant is named', row.claimant, 'Wei Ming Tan');
+// The report's BREAKDOWN sheet prints one row per receipt, so the lines have
+// to travel — only what that sheet prints, and to the cent, so they add up to
+// the claim's own total.
+check('the lines travel, one per receipt', row.lines, [
+  { date: '2026-08-01', category: 'Transport - Taxi', supplier: 'Grab', description: '', total: '24.00' },
+  { date: '2026-08-02', category: 'Meal Weekday (after 9pm)', supplier: 'Koufu', description: '', total: '12.50' },
+]);
 // A PO assigns PEOPLE. A claim stores a display NAME, which the roster can
 // rename, so the stable identity has to travel with it.
 check('the claimant resolves to an address', row.claimant_email, 'weiming.tan@stengg.com');
