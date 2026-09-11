@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { X, ChevronDown, HelpCircle } from 'lucide-react';
-import { ROLES, ROLE_INFO } from '@/lib/userStore';
-import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
+import { rolesFor, roleTier, ROLE_INFO } from '@/lib/userStore';
+import { useOrganisations, getActiveOrganisationId, isStandaloneOrg } from '@/lib/organisations';
 import { mobileError, MOBILE_HINT } from '@/lib/mobile';
 import { cn } from '@/lib/utils';
 
@@ -50,7 +50,9 @@ export default function AddUserModal({ open, onClose, onAdd }) {
   // IS typed still has to be usable.
   const mobileMsg = mobileError(form.mobile);
   const canNext = form.firstName.trim() && form.lastName.trim() && emailValid && !mobileMsg;
-  const isStandard = form.role === 'Standard';
+  // Reporting Officer is a Standard user by another name, so it gets the same
+  // optional privileges.
+  const isStandard = roleTier(form.role) === 'Standard';
 
   // Invite (notify) only when they have login access + an email; pass the active
   // org name so the invite email names the right organisation. The server files
@@ -121,7 +123,7 @@ export default function AddUserModal({ open, onClose, onAdd }) {
                 <span>Role</span>
                 <div className="relative">
                   <select value={form.role} onChange={(e) => set('role', e.target.value)} className="h-10 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                    {rolesFor(isStandaloneOrg(activeOrg), form.role).map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 </div>

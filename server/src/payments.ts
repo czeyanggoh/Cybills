@@ -18,7 +18,7 @@ import {
   type Bill,
 } from './store.js';
 import { getBillFile } from './storage.js';
-import { appOrigin, peopleForOrg } from './users.js';
+import { appOrigin, peopleForOrg, REPORTING_OFFICER } from './users.js';
 import {
   accountsForOrg,
   postBillToXero,
@@ -314,6 +314,17 @@ paymentsRouter.get('/people', (req, res) => {
         // people — assignable, but worth telling apart in a list of 200.
         external: p.external,
         deactivated: p.deactivated,
+        // The role they hold in this entity. A REPORTING OFFICER is somebody at
+        // the seconding company who signs these claims off — the person a
+        // recharge report is addressed to, not a person a PO covers — and the
+        // flag beside it is that question answered, so the far end does not
+        // compare role names of its own.
+        role: p.role,
+        reporting_officer: p.role === REPORTING_OFFICER,
+        // Who their claims are routed to for approval, which is how a report's
+        // recipient is suggested for the people on a PO.
+        manager_email: p.managerEmail,
+        manager_name: p.managerName,
         org_id: organisation.id,
         org_name: organisation.name,
         bridge,

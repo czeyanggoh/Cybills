@@ -486,19 +486,40 @@ export function useUsers() {
 // Approval routing is a standalone "Direct manager" column, not a role.
 export const ROLES = ['Business Admin', 'User Admin', 'Standard'];
 
-// Map any legacy role stored on old user records onto one of the three, so the
-// table + pickers always show a valid current role. The collapsed 'Admin' tier
-// this replaces had full access, so it maps to Business Admin — a migration
-// should never quietly take away access someone already has.
+// The ST Engineering staff who sign off the claims of the people seconded
+// under them. A label, not a tier — they hold exactly what a Standard user
+// holds (see REPORTING_OFFICER in server/src/users.ts, the authority) — and
+// offered only in a BRIDGE entity, the one place claimants and their approvers
+// both work for somebody else and the roster needs to say which is which.
+export const REPORTING_OFFICER = 'Reporting Officer';
+
+// The roles a roster picker offers in this entity. `current` keeps a role the
+// row already holds on the list, so opening somebody never silently changes it.
+export function rolesFor(bridge, current) {
+  return bridge || current === REPORTING_OFFICER ? [...ROLES, REPORTING_OFFICER] : ROLES;
+}
+
+// Map any legacy role stored on old user records onto a current one, so the
+// table + pickers always show a valid role. The collapsed 'Admin' tier this
+// replaces had full access, so it maps to Business Admin — a migration should
+// never quietly take away access someone already has.
 export function normalizeRole(role) {
   if (role === 'Business Admin' || role === 'Admin') return 'Business Admin';
   if (role === 'User Admin') return 'User Admin';
+  if (role === REPORTING_OFFICER) return REPORTING_OFFICER;
   return 'Standard';
+}
+
+// What a role may DO — one of the three tiers. Every access question asks this
+// rather than the name, so Reporting Officer is never read as an admin.
+export function roleTier(role) {
+  const r = normalizeRole(role);
+  return r === REPORTING_OFFICER ? 'Standard' : r;
 }
 
 // Any admin tier — the coarse "not a Standard user" check.
 export function isAdminRole(role) {
-  return normalizeRole(role) !== 'Standard';
+  return roleTier(role) !== 'Standard';
 }
 
 // Change account-wide settings (Business settings: lists, categories, exports,
@@ -572,4 +593,9 @@ export const ROLE_INFO = {
     'Change their personal settings',
   ],
   Standard: ['Submit, view and edit their own items', 'Change their personal settings'],
+  [REPORTING_OFFICER]: [
+    'Approve the expense claims of the people who report to them',
+    'Submit, view and edit their own items',
+    'Named to CYWorkspace as a recharge report’s recipient',
+  ],
 };

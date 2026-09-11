@@ -1982,6 +1982,21 @@ to their own company's `role`. Deliberately NOT `clientAccess`, which belongs to
 the practice team and is wiped from every non-practice row on load. Covered by
 `npm test` in `server/`.
 
+**A bridge entity's approvers are Reporting Officers.** ST Engineering's staff
+and the managers who sign their claims off work for the same outside company, so
+on the roster they looked identical, and CYWS's recharge tool — which addresses
+each recharge report to the client's manager who approved those claims — had
+nobody to offer but two hundred names. `Reporting Officer` is a fourth roster
+role, offered only in a bridge entity (`rolesFor` in `userStore.js`), and a
+LABEL rather than a tier: `roleTier` folds it onto Standard, and every access
+question reads the tier (`effectiveRoleFor`), never the name — so approving an
+outside company's expenses never makes somebody an admin of a client's book, and
+`!== 'Standard'` checks cannot read it as one. `rosterRoleFor` is the name, for
+the roster and the seam. They approve through the Direct manager line like
+anybody else. `GET /api/payments/people` carries `role`, `reporting_officer` and
+each person's `manager_email` / `manager_name` (`deploy/RECHARGE.md`). Covered by
+`npm test` in `server/` (`test/recharge-claims.test.mts`).
+
 Still to do: privilege enforcement inside the entity is `docs/roles-enforcement.md`,
 which is deliberately untouched here: until it lands, everyone in a bridge
 entity sees every document in it. Fine for testing, not for real ST Eng staff.

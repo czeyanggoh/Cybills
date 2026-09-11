@@ -47,11 +47,14 @@ writeFileSync(
   join(DATA_DIR, 'users.json'),
   JSON.stringify({
     items: [
-      { id: 'u-1', workspaceId: 'cybm', name: 'Wei Ming Tan', email: 'weiming.tan@stengg.com', login: 'Yes', role: 'Standard', organisationId: 'org-ste', companyId: 'org-ste', companyName: 'Red Alpha - ST Engineering', privileges: {}, clientAccess: [], extraAccess: [], practice: false, general: false, removed: false, pending: false, deactivated: false },
+      { id: 'u-1', workspaceId: 'cybm', name: 'Wei Ming Tan', email: 'weiming.tan@stengg.com', login: 'Yes', role: 'Standard', managerId: 'u-ro', organisationId: 'org-ste', companyId: 'org-ste', companyName: 'Red Alpha - ST Engineering', privileges: {}, clientAccess: [], extraAccess: [], practice: false, general: false, removed: false, pending: false, deactivated: false },
       // Somebody with no claim yet — the case the PO register exists to serve,
       // since a person cannot be assigned to a PO by way of a claim they have
       // not been able to raise.
       { id: 'u-2', workspaceId: 'cybm', name: 'Never Claimed', email: 'never.claimed@stengg.com', login: 'Yes', role: 'Standard', organisationId: 'org-ste', companyId: 'org-ste', companyName: 'Red Alpha - ST Engineering', privileges: {}, clientAccess: [], extraAccess: [], practice: false, general: false, removed: false, pending: false, deactivated: false },
+      // The ST Engineering manager who signs Wei Ming's claims off — the person a
+      // recharge report is addressed to, and a label rather than an admin tier.
+      { id: 'u-ro', workspaceId: 'cybm', name: 'Lim Boon Kiat', email: 'boonkiat.lim@stengg.com', login: 'Yes', role: 'Reporting Officer', organisationId: 'org-ste', companyId: 'org-ste', companyName: 'Red Alpha - ST Engineering', privileges: {}, clientAccess: [], extraAccess: [], practice: false, general: false, removed: false, pending: false, deactivated: false },
       // Not a person: the row that owns the paperwork nobody claimed.
       { id: 'u-gen', workspaceId: 'cybm', name: 'General', email: 'org_ste.general@cybills.local', login: 'No', role: 'Standard', organisationId: 'org-ste', companyId: 'org-ste', companyName: 'Red Alpha - ST Engineering', privileges: {}, clientAccess: [], extraAccess: [], practice: false, general: true, removed: false, pending: false, deactivated: false },
       // Off the roster entirely.
@@ -297,11 +300,40 @@ check('the roster answers 200', people.status, 200);
 check(
   'somebody who has never claimed is still assignable',
   people.body.people.map((p: any) => p.email).sort(),
-  ['never.claimed@stengg.com', 'weiming.tan@stengg.com']
+  ['boonkiat.lim@stengg.com', 'never.claimed@stengg.com', 'weiming.tan@stengg.com']
 );
 check('the general account is not a person', people.body.people.some((p: any) => /general/i.test(p.email)), false);
 check('nor is somebody off the roster', people.body.people.some((p: any) => /long\.gone/.test(p.email)), false);
 check('each says which entity, and whether it is a bridge', people.body.people.map((p: any) => [p.org_id, p.bridge])[0], ['org-ste', true]);
+
+// --- Reporting Officers -------------------------------------------------------
+// The people who sign claims off work for the same outside company as the
+// people who raise them, so the roster has to say which is which — that is the
+// report's recipient, not somebody a PO covers.
+const byEmail = (e: string) => people.body.people.find((p: any) => p.email === e);
+check('a Reporting Officer survives the load as one', byEmail('boonkiat.lim@stengg.com')?.role, 'Reporting Officer');
+check('and is flagged, so the far end compares no role names', byEmail('boonkiat.lim@stengg.com')?.reporting_officer, true);
+check('a claimant is not', [byEmail('weiming.tan@stengg.com')?.role, byEmail('weiming.tan@stengg.com')?.reporting_officer], ['Standard', false]);
+check(
+  'each person names who their claims are routed to',
+  [byEmail('weiming.tan@stengg.com')?.manager_email, byEmail('weiming.tan@stengg.com')?.manager_name],
+  ['boonkiat.lim@stengg.com', 'Lim Boon Kiat']
+);
+check('and nobody where no manager is set', byEmail('never.claimed@stengg.com')?.manager_email, '');
+
+// A label, never a tier. Every privilege check reads the tier, so approving an
+// outside company's expenses does not make somebody an admin of a client's book.
+{
+  const users = await import('../src/users.ts');
+  const ro = { id: 'x', role: 'Reporting Officer', practice: false, organisationId: 'org-ste', extraAccess: [], privileges: {} } as any;
+  check('the roster names the role', users.rosterRoleFor(ro, 'org-ste'), 'Reporting Officer');
+  check('access reads it as Standard', users.effectiveRoleFor(ro, 'org-ste'), 'Standard');
+  check('which is not an admin tier', [users.isAdminRole('Reporting Officer'), users.isBusinessAdminRole('Reporting Officer')], [false, false]);
+  check('so they see their own work, not the whole book', users.seesEveryDocument(ro, 'org-ste'), false);
+  check('and publish only if given the privilege', users.canPublishToXero(ro, 'org-ste'), false);
+  check('held in a second entity, it is kept there too', users.rosterRoleFor({ ...ro, role: 'Standard', organisationId: 'org-red', extraAccess: [{ orgId: 'org-ste', role: 'Reporting Officer' }] }, 'org-ste'), 'Reporting Officer');
+}
+
 check('another tenant gets its own roster', (await get('/api/payments/people?tenant_id=t-nobody', { 'X-API-Key': 'cyws-key' })).body.people, []);
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');

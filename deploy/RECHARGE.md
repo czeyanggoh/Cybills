@@ -130,6 +130,37 @@ resolve it, and is what a PO assignment should match against. It is `""` for a
 claimant no longer on the roster — which is a row for a person to look at, not
 one to guess at.
 
+## `GET /api/payments/people?tenant_id=<uuid>` — and who signs claims off
+
+Everybody in the entities whose claims post into the tenant, one row per
+address. Each row carries, beside `email` / `name` / `external` /
+`deactivated` / `org_id` / `org_name` / `bridge`:
+
+```json
+{
+  "role": "Reporting Officer",
+  "reporting_officer": true,
+  "manager_email": "",
+  "manager_name": ""
+}
+```
+
+**A Reporting Officer is the ST Engineering manager who approves the claims of
+the people seconded under them** — a role offered only in a bridge entity
+(Users -> Edit privileges). The claimants and their approvers work for the SAME
+outside company, so on the roster they looked alike; the role is what tells
+them apart. They are who a recharge report is addressed to (a PO's
+`recipient_name` / `recipient_email` at the CYWS end), not people a PO covers.
+Key on `reporting_officer` rather than comparing `role` strings.
+
+`manager_email` / `manager_name` is the person's **Direct manager** — who their
+claims are routed to — so a PO's recipient can be suggested from the people on
+it. `""` where none is set.
+
+It is a label, not an access tier: a Reporting Officer holds exactly what a
+Standard user holds in CYBills (their own work, their direct reports' claims,
+and the per-person privileges on top).
+
 ## Reading the recharge back
 
 Nothing here records whether a claim has been recharged; CYWS does, and the

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink, MessageCircle, AlertTriangle } from 'lucide-react';
-import { ROLES, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
+import { rolesFor, roleTier, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
-import { useOrganisations } from '@/lib/organisations';
+import { useOrganisations, useBridgeEntity } from '@/lib/organisations';
 import { cleanHandle, inboundAddress, addressTail, suffixForUser } from '@/lib/inboundAddress';
 import { useWhatsappForUser, connectWhatsappForUser, addWhatsappParticipant } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
@@ -390,6 +390,9 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
   // Rosters are per-organisation, so an admin can move someone to another entity
   // — the row then only appears (and is only manageable) under that one.
   const { data: organisations = [] } = useOrganisations();
+  // The role is the one they hold in the entity OPEN, so that is the entity
+  // whose kind decides whether Reporting Officer is on offer.
+  const bridge = useBridgeEntity();
   const [organisationId, setOrganisationId] = useState(user?.organisationId || '');
   // The short form this person's entity puts in their address. Read from the
   // entity list the dialog already has, so nothing extra is fetched to print an
@@ -535,7 +538,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                 <span>Role</span>
                 <div className="relative">
                   <select value={role} onChange={(e) => setRole(e.target.value)} className="h-10 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    {(practice ? PRACTICE_ROLES : ROLES).map((r) => <option key={r} value={r}>{r}</option>)}
+                    {(practice ? PRACTICE_ROLES : rolesFor(bridge, user?.role)).map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 </div>
@@ -546,7 +549,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                   {((practice ? PRACTICE_ROLE_INFO : ROLE_INFO)[role] || []).map((line) => <li key={line}>{line}</li>)}
                 </ul>
               </div>
-              {role === 'Standard' && !practice && (
+              {roleTier(role) === 'Standard' && !practice && (
                 <div className="space-y-4">
                   <p className="text-sm font-medium">and optionally:</p>
                   <div className="flex items-center justify-between">

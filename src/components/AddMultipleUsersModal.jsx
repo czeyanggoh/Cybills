@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { X, ChevronDown } from 'lucide-react';
-import { ROLES } from '@/lib/userStore';
-import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
+import { rolesFor, roleTier } from '@/lib/userStore';
+import { useOrganisations, getActiveOrganisationId, isStandaloneOrg } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 import { mobileError } from '@/lib/mobile';
 
@@ -11,7 +11,9 @@ const blankRow = () => ({ firstName: '', lastName: '', email: '', mobile: '', ro
 // Parse a simple CSV (First name, Last name, Email, Mobile, Role). A header row
 // containing "first" is skipped. Privileges aren't in the CSV — they default off
 // and are set per row in the grid, same as the single "Add a user" dialog.
-function parseCsv(text) {
+// A role this entity doesn't offer (Reporting Officer outside a bridge entity)
+// reads as Standard, the same as a misspelt one.
+function parseCsv(text, roles) {
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
   const rows = [];
   for (const line of lines) {
@@ -19,7 +21,7 @@ function parseCsv(text) {
     if (rows.length === 0 && /first/i.test(cols[0] || '')) continue; // header
     const [firstName = '', lastName = '', email = '', mobile = '', role = 'Standard'] = cols;
     if (firstName || lastName || email) {
-      rows.push({ firstName, lastName, email, mobile, role: ROLES.includes(role) ? role : 'Standard', privileges: blankPriv() });
+      rows.push({ firstName, lastName, email, mobile, role: roles.includes(role) ? role : 'Standard', privileges: blankPriv() });
     }
   }
   return rows;
@@ -49,6 +51,7 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
   const { data: organisations = [] } = useOrganisations();
   const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
   const orgName = activeOrg?.name || 'CYBills';
+  const roles = rolesFor(isStandaloneOrg(activeOrg));
   const defaultMessage = `You've been invited to CYBills for ${orgName}. Click the link in this email to set your password and get started.`;
   const [message, setMessage] = useState(null);
   const effectiveMessage = message ?? defaultMessage;
@@ -68,7 +71,7 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
     e.target.value = '';
     if (!file) return;
     const text = await file.text();
-    const parsed = parseCsv(text);
+    const parsed = parseCsv(text, roles);
     if (parsed.length) setRows(parsed);
   };
   // A row somebody actually filled in. Blank rows are the grid's own padding.
@@ -164,8 +167,9 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
                 {rows.map((r, i) => {
                   // Privileges only apply to Standard users — admin roles already
                   // have full access, so the toggles are disabled (and shown on)
-                  // for them, mirroring the single "Add a user" dialog.
-                  const isStandard = r.role === 'Standard';
+                  // for them, mirroring the single "Add a user" dialog. A
+                  // Reporting Officer is Standard by another name.
+                  const isStandard = roleTier(r.role) === 'Standard';
                   const priv = r.privileges || {};
                   const check = (k) => (
                     <input
@@ -185,7 +189,7 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
                       <td className="py-1 pr-3">
                         <div className="relative">
                           <select value={r.role} onChange={(e) => setCell(i, 'role', e.target.value)} className="h-9 w-full appearance-none rounded-md border bg-background px-2.5 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                            {ROLES.map((role) => (
+                            {rolesFor(isStandaloneOrg(activeOrg), r.role).map((role) => (
                               <option key={role} value={role}>{role}</option>
                             ))}
                           </select>

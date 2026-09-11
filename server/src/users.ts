@@ -676,13 +676,25 @@ export function ensureGeneralUser(ws: string, orgId: string): User | null {
 export function peopleForOrg(
   ws: string,
   org: string
-): Array<{ email: string; name: string; address: string; external: boolean; general: boolean; deactivated: boolean }> {
+): Array<{
+  email: string;
+  name: string;
+  address: string;
+  external: boolean;
+  general: boolean;
+  deactivated: boolean;
+  role: string;
+  managerEmail: string;
+  managerName: string;
+}> {
   const memo = new Map<string, string>();
   // The general account has no handle and never gets one — nothing is sent to
   // its stored address, which is an internal identity. What it DOES answer to is
   // the entity's short form standing alone, which files exactly here.
   const suffix = org ? normaliseSuffix(getOrganisation(ws, org)?.emailSuffix || '') : '';
-  return ensure(ws)
+  const rows = ensure(ws);
+  const byId = new Map(rows.filter((u) => u.workspaceId === ws && !u.removed).map((u) => [u.id, u]));
+  return rows
     .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org))))
     .filter((u) => Boolean(u.email))
     .map((u) => ({
@@ -704,6 +716,13 @@ export function peopleForOrg(
       // on reading as a person, but nothing new should be handed to an account
       // that can no longer sign in.
       deactivated: Boolean(u.deactivated),
+      // The role they hold HERE, by name — Reporting Officer included, which is
+      // what the recharge tool picks a report's recipient by.
+      role: rosterRoleFor(u, org),
+      // Their Direct manager: who their claims are routed to for a decision.
+      // '' where none is set, or the row it named has since been removed.
+      managerEmail: (u.managerId && byId.get(u.managerId)?.email) || '',
+      managerName: (u.managerId && byId.get(u.managerId)?.name) || '',
     }));
 }
 
@@ -864,15 +883,23 @@ function defaultOrgFor(ws: string, u: User | null | undefined): string {
   return mine.includes(primary) ? primary : mine[0];
 }
 
-// What this person may do INSIDE a given entity. A colleague with access is a
-// Business Admin there; everyone else carries their own stored role.
-export function effectiveRoleFor(u: User | null | undefined, orgId: string): string {
+// The role this person holds in a given entity, as the roster names it. A
+// colleague with access is a Business Admin there; everyone else carries their
+// own stored role — Reporting Officer included, which is why this is not the
+// question to ask about access (effectiveRoleFor is).
+export function rosterRoleFor(u: User | null | undefined, orgId: string): string {
   if (!u) return 'Business Admin';
   if (u.practice) return canAccessOrg(u, orgId) ? 'Business Admin' : 'Standard';
   // In a second entity they hold the role they were given THERE — an admin of
   // their own company is not automatically an admin of somebody else's.
   const extra = extraAccessFor(u, orgId);
   return currentRole(extra ? extra.role : u.role);
+}
+
+// What this person may do INSIDE a given entity: the access tier of the role
+// they hold there. Every privilege check reads this.
+export function effectiveRoleFor(u: User | null | undefined, orgId: string): string {
+  return roleTier(rosterRoleFor(u, orgId));
 }
 
 // The caller's role in the entity they currently have selected.
@@ -1386,7 +1413,7 @@ export function memberForSession(req: Request): User | null {
 // Any admin tier — the coarse "not a Standard user" check. Prefer the two
 // specific predicates below wherever a surface belongs to one of them.
 export function isAdminRole(role: string | undefined): boolean {
-  return currentRole(role) !== 'Standard';
+  return roleTier(role) !== 'Standard';
 }
 
 // Change account-wide settings (Business settings). Business Admin only.
@@ -1404,10 +1431,37 @@ export function canManageUsersRole(role: string | undefined): boolean {
 // tier had full access, so it maps to Business Admin — a migration should never
 // quietly take away access someone already has. Anything else (Approver,
 // Bookkeeper, blank, …) → Standard.
+//
+// Reporting Officer is kept as written: it is a NAME for somebody, not a tier
+// of access (see REPORTING_OFFICER), so it survives here and is folded onto
+// Standard by roleTier wherever the question is what they may do.
 function currentRole(role: string | undefined): string {
   if (role === 'Business Admin' || role === 'Admin') return 'Business Admin';
   if (role === 'User Admin') return 'User Admin';
+  if (role === REPORTING_OFFICER) return REPORTING_OFFICER;
   return 'Standard';
+}
+
+// The ST Engineering staff who sign off the claims of the people seconded under
+// them. A bridge entity's claimants and their approvers work for the SAME
+// outside company, and on the roster the two looked identical — so the
+// recharge tool in CYWorkspace, which addresses each recharge report to the
+// client's manager who approved those claims, had nobody to offer but a list of
+// two hundred names. The role is what tells them apart.
+//
+// A LABEL, not a tier: they approve through the Direct manager line like
+// anybody else, and otherwise hold exactly what a Standard user holds — their
+// own work, their direct reports' claims, and the per-person privileges on top.
+// Handing an outside company's staff an admin tier in a client's book because
+// they approve expenses would be the wrong way round.
+export const REPORTING_OFFICER = 'Reporting Officer';
+
+// What a role may DO: one of the three access tiers. Every privilege check
+// asks this rather than the role's name, so a label like Reporting Officer can
+// never be read as "not Standard, therefore an admin".
+export function roleTier(role: string | undefined): string {
+  const r = currentRole(role);
+  return r === REPORTING_OFFICER ? 'Standard' : r;
 }
 
 // Rewrite stored roles to the current three-role scheme in place. Runs on load
@@ -1563,7 +1617,7 @@ usersRouter.get('/', (req, res) => {
       // must not read as though they were.
       .map((u) => ({
         ...publicUser(u),
-        role: effectiveRoleFor(u, org),
+        role: rosterRoleFor(u, org),
         homeOrgName:
           (u.organisationId || '') === org
             ? ''
@@ -1807,7 +1861,7 @@ usersRouter.post('/', async (req, res) => {
             ...(Array.isArray(dup.extraAccess) ? dup.extraAccess : []).filter((e) => e.orgId !== org),
             { orgId: org, role: currentRole(String(u.role ?? '')) },
           ];
-          linked.push({ email: dup.email, name: dup.name, role: effectiveRoleFor(dup, org) });
+          linked.push({ email: dup.email, name: dup.name, role: rosterRoleFor(dup, org) });
           continue;
         }
         // A practice colleague reaches a client through client access, not

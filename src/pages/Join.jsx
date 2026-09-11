@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { CheckCircle2, Clock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { joinCompany, fetchJoinPeople, fetchJoinCompanies } from '@/lib/userStore';
+import { joinCompany, fetchJoinPeople, fetchJoinCompanies, REPORTING_OFFICER } from '@/lib/userStore';
 import { mobileError, MOBILE_HINT } from '@/lib/mobile';
 
 // Self-signup asks for a simple role — an employee who submits, or an
@@ -67,7 +67,10 @@ export default function Join() {
   }, [companyId]);
 
   const claimed = people.find((p) => p.id === claimId) || null;
-  const roleLabel = (v) => JOIN_ROLES.find((r) => r.value === v)?.label || 'Employee';
+  // A row an admin already made keeps the role they gave it, and Reporting
+  // Officer is not one a person picks for themselves, so it is only ever shown.
+  const roleLabel = (v) =>
+    JOIN_ROLES.find((r) => r.value === v)?.label || (v === REPORTING_OFFICER ? REPORTING_OFFICER : 'Employee');
 
   // Already an approved member — nothing to do here.
   if (membership.status === 'active') return <Navigate to="/costs" replace />;
