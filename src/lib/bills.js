@@ -325,6 +325,7 @@ export function billToDoc(b) {
     // earlier document rather than read off this one.
     supplierGstRegNo: b.supplierGstRegNo || '',
     supplierGstRegNoRemembered: Boolean(b.supplierGstRegNoRemembered),
+    supplierGstRegNoFrom: b.supplierGstRegNoRemembered ? b.supplierGstRegNoFrom || 'document' : '',
     taxLabel: b.taxLabel || '',
     // Whether a read has recorded that evidence at all. Documents read before it
     // was kept carry neither key, and "no GST number found" would be a claim

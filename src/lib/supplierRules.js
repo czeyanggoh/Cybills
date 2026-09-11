@@ -55,6 +55,12 @@ export function emptySupplierRule() {
     dueDays: '',
     description: '',
     extractLineItems: false,
+    // The supplier's Singapore GST registration number, typed by a person for
+    // the supplier whose number the reader keeps missing. Not a field of any
+    // document — it is EVIDENCE the server hands the tax decision when a read
+    // found no number of its own (server/src/supplierGst.ts), so it never
+    // appears in supplierRulePatch.
+    gstRegNo: '',
   };
 }
 

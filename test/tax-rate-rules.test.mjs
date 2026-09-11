@@ -411,6 +411,10 @@ check('noTaxRateName', [noTaxRateName(SG), noTaxRateName([]), noTaxRateName(hidd
   check('a number read off the page says nothing of the kind', /wasn't read off/.test(read.reason), false);
   // Said only where the number decided anything: a document with no tax on it
   // never reached the gate.
+  has('a number off the supplier rule says so',
+    ask({ total: 74.67, tax: 6.17, gstRegNo: 'M8-8001588-5', gstRegNoRemembered: 'rule' }).reason, "the one on this supplier's rule");
+  has("…and another client's rule says that",
+    ask({ total: 74.67, tax: 6.17, gstRegNo: 'M8-8001588-5', gstRegNoRemembered: 'ruleOther' }).reason, "another client's supplier rule");
   const none = ask({ total: 4.5, tax: 0, gstRegNo: 'M8-8001588-5', gstRegNoRemembered: true });
   check('no tax charged, no remembered-number note', /wasn't read off/.test(none.reason), false);
 }

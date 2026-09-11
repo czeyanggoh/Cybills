@@ -12,6 +12,10 @@ import { listBillsAcrossScopes } from './store.js';
 // 9%" in plain sight. Missed, the document is coded No Tax and the GST is folded
 // into the cost — money the client paid and is entitled to claim back, gone.
 //
+// And where the reader keeps missing it, a PERSON can type it on the supplier's
+// rule (Supplier rules -> GST registration no.), which is the strongest source
+// of all short of the paper itself — see withRememberedGstRegNo for the order.
+//
 // A registration number is a fact about the SUPPLIER, not about one page of its
 // paperwork, and it is public (IRAS publishes the register). So once any
 // document from a supplier has been read with a valid Singapore number, a later
@@ -67,48 +71,118 @@ async function loadRules(): Promise<Rules | null> {
 
 const compact = (v: string) => v.toUpperCase().replace(/[\s.-]/g, '');
 
-// The Singapore GST number a supplier has been READ with before, in the form
-// it was printed; '' when there is none, or its documents disagree about it
-// evenly. A re-read counts the document's OWN earlier read like any other: that
-// number was printed on this very paper, which is the best evidence there is.
-export async function rememberedGstRegNo(supplier: unknown): Promise<string> {
+// Where a number that was not read off the document came from — stored as
+// `supplierGstRegNoFrom`, and what the tax reason names:
+//   'rule'      this entity's supplier rule — somebody typed it, for this book;
+//   'ruleOther' another entity's supplier rule for the same supplier;
+//   'document'  an earlier document of the supplier's that was READ with it.
+export type GstRegNoSource = 'rule' | 'ruleOther' | 'document';
+
+type Vote = { n: number; at: string; printed: string };
+// The one number a set of sightings agrees on; '' when there is none, or two
+// numbers are seen equally often — a disagreement, not an answer.
+function winner(seen: Map<string, Vote>): string {
+  const ranked = [...seen.values()].sort((a, b) => b.n - a.n || (a.at < b.at ? 1 : -1));
+  if (!ranked.length) return '';
+  if (ranked.length > 1 && ranked[0].n === ranked[1].n) return '';
+  return ranked[0].printed;
+}
+function sight(seen: Map<string, Vote>, reg: string, at = '') {
+  const k = compact(reg);
+  const cur = seen.get(k);
+  if (!cur) seen.set(k, { n: 1, at, printed: reg });
+  else {
+    cur.n += 1;
+    if (at > cur.at) { cur.at = at; cur.printed = reg; }
+  }
+}
+
+type RuleMap = Record<string, { gstRegNo?: unknown } | undefined>;
+
+// The number a supplier rule names for this supplier, in one rules blob; ''
+// when the rule names none, or one that isn't a Singapore number.
+function ruleNumber(rules: Rules, map: RuleMap | null, key: string): string {
+  for (const [name, rule] of Object.entries(map || {})) {
+    if (rules.normaliseSupplier(name) !== key) continue;
+    const reg = String(rule?.gstRegNo ?? '').trim();
+    if (reg && rules.isSingaporeGstRegNo(reg)) return reg;
+  }
+  return '';
+}
+
+// Where the rule blobs come from. Only the settings store has them, and it is
+// optional here so the memory still works for a caller with no entity at hand.
+export type RuleContext = { ws: string; orgId: string } | null;
+
+// The Singapore GST number known for a supplier from somewhere other than the
+// document in hand, and where it came from. A re-read counts the document's
+// OWN earlier read like any other: that number was printed on this very paper,
+// which is the best evidence there is.
+export async function knownGstRegNo(
+  supplier: unknown,
+  ctx: RuleContext = null
+): Promise<{ reg: string; from: GstRegNoSource } | null> {
   const rules = await loadRules();
-  if (!rules) return '';
+  if (!rules) return null;
   const key = rules.normaliseSupplier(supplier);
-  if (!key) return '';
-  // Per number: how many documents carry it, and the latest printed spelling.
-  const seen = new Map<string, { n: number; at: string; printed: string }>();
+  if (!key) return null;
+
+  if (ctx) {
+    const { readSetting, readSettingAcrossOrgs } = await import('./settings.js');
+    // This entity's rule: a person's instruction for this book, so it decides.
+    const own = ruleNumber(rules, readSetting<RuleMap>(ctx.ws, 'cybills.supplier.rules.v1', ctx.orgId), key);
+    if (own) return { reg: own, from: 'rule' };
+    // Another entity's: the same supplier's registration, typed deliberately by
+    // somebody who looked it up — better evidence than any read, as long as the
+    // rules that name one agree.
+    const typed = new Map<string, Vote>();
+    for (const map of readSettingAcrossOrgs<RuleMap>(ctx.ws, 'cybills.supplier.rules.v1')) {
+      const reg = ruleNumber(rules, map, key);
+      if (reg) sight(typed, reg);
+    }
+    const other = winner(typed);
+    if (other) return { reg: other, from: 'ruleOther' };
+  }
+
+  const seen = new Map<string, Vote>();
   for (const b of listBillsAcrossScopes()) {
     if (b.status === 'deleted' || b.supplierGstRegNoRemembered) continue;
     const reg = String(b.supplierGstRegNo || '').trim();
     if (!reg || !rules.isSingaporeGstRegNo(reg)) continue;
     if (rules.normaliseSupplier(b.supplier) !== key) continue;
-    const k = compact(reg);
-    const at = String(b.createdAt || '');
-    const cur = seen.get(k);
-    if (!cur) seen.set(k, { n: 1, at, printed: reg });
-    else {
-      cur.n += 1;
-      if (at > cur.at) { cur.at = at; cur.printed = reg; }
-    }
+    sight(seen, reg, String(b.createdAt || ''));
   }
-  const ranked = [...seen.values()].sort((a, b) => b.n - a.n || (a.at < b.at ? 1 : -1));
-  if (!ranked.length) return '';
-  // Two numbers read equally often is a disagreement, not an answer.
-  if (ranked.length > 1 && ranked[0].n === ranked[1].n) return '';
-  return ranked[0].printed;
+  const read = winner(seen);
+  return read ? { reg: read, from: 'document' } : null;
 }
 
-// A read's answer with the supplier's remembered number filled in, where the
-// read found none that counts. Returns the read untouched otherwise — including
-// when it found a number of its own, valid or not: a foreign registration read
-// off the paper is evidence AGAINST claiming, and must not be papered over.
+// The number remembered from documents alone — what the memory knew before
+// supplier rules could name one.
+export async function rememberedGstRegNo(supplier: unknown): Promise<string> {
+  const hit = await knownGstRegNo(supplier);
+  return hit?.reg ?? '';
+}
+
+// A read's answer with the supplier's known number filled in where the read
+// found none that counts.
+//
+// A valid Singapore number read off the paper always stands. Otherwise:
+//   - THIS entity's supplier rule fills it even over a number the read found
+//     that isn't a Singapore one. Somebody typed that rule for this supplier,
+//     which makes a misread the likelier story, and a rule is an instruction —
+//     it outranks the reader on every field it sets;
+//   - anything weaker (another entity's rule, an earlier document) fills only
+//     a BLANK. A foreign registration read off the paper is evidence AGAINST
+//     claiming, and must not be papered over by a memory.
 export async function withRememberedGstRegNo<T extends { supplier?: unknown; supplierGstRegNo?: unknown }>(
-  data: T
-): Promise<T & { supplierGstRegNoRemembered?: boolean }> {
-  if (String(data.supplierGstRegNo ?? '').trim()) return { ...data, supplierGstRegNoRemembered: false };
-  const reg = await rememberedGstRegNo(data.supplier);
-  return reg
-    ? { ...data, supplierGstRegNo: reg, supplierGstRegNoRemembered: true }
-    : { ...data, supplierGstRegNoRemembered: false };
+  data: T,
+  ctx: RuleContext = null
+): Promise<T & { supplierGstRegNoRemembered?: boolean; supplierGstRegNoFrom?: GstRegNoSource | '' }> {
+  const rules = await loadRules();
+  const read = String(data.supplierGstRegNo ?? '').trim();
+  const asRead = { ...data, supplierGstRegNoRemembered: false, supplierGstRegNoFrom: '' as const };
+  if (read && rules?.isSingaporeGstRegNo(read)) return asRead;
+  const hit = await knownGstRegNo(data.supplier, ctx);
+  if (!hit || (read && hit.from !== 'rule')) return asRead;
+  return { ...data, supplierGstRegNo: hit.reg, supplierGstRegNoRemembered: true, supplierGstRegNoFrom: hit.from };
 }

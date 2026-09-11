@@ -743,6 +743,22 @@ itself (a foreign one is evidence AGAINST), and two numbers read equally often
 remember neither. The tax reason says the number was remembered rather than
 read (`gstRegNoRemembered` on `taxRateOutcome`).
 
+**And a person can simply type it, on the supplier's rule** (Supplier rules ->
+**GST registration no.**, `gstRegNo` on the rule), for the supplier whose number
+the reader keeps missing. The dialog refuses a number `isSingaporeGstRegNo`
+doesn't accept — one the gate would silently ignore is worse than one refused
+where it was typed. It is EVIDENCE, not a field of any document, so it is never
+in `supplierRulePatch`; the server reads it. The order is: a valid Singapore
+number read off the paper; THIS entity's rule (which also beats a non-Singapore
+number the read found — somebody typed a Singapore number for this supplier, so
+a misread is the likelier story, and a rule outranks the reader everywhere
+else); another entity's rule for the same supplier (`readSettingAcrossOrgs`,
+agreeing); an earlier document read with it. The last two fill only a BLANK.
+Where it came from is stored as `supplierGstRegNoFrom` (`rule` / `ruleOther` /
+`document`) and named in the tax reason and on the document page. It reaches
+documents read from then on; one already coded No Tax gets its GST back by a
+re-read, which is what the dialog says.
+
 **So the evidence is kept on the document.** `supplierGstRegNo` and `taxLabel`
 were read on every document and dropped the moment the code was chosen —
 `readIntoBill` even put them in its patch, where `updateBill` discarded them —

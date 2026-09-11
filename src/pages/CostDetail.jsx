@@ -2149,7 +2149,13 @@ export default function CostDetail() {
                       {doc.supplierGstRegNo
                         ? <span className="font-medium text-muted-foreground">{doc.supplierGstRegNo}</span>
                         : 'not found'}
-                      {doc.supplierGstRegNoRemembered ? ' (not on this document — remembered from an earlier one of this supplier’s)' : ''}
+                      {doc.supplierGstRegNoRemembered
+                        ? doc.supplierGstRegNoFrom === 'rule'
+                          ? ' (not read off this document — from this supplier’s rule)'
+                          : doc.supplierGstRegNoFrom === 'ruleOther'
+                            ? ' (not read off this document — from another client’s rule for this supplier)'
+                            : ' (not on this document — remembered from an earlier one of this supplier’s)'
+                        : ''}
                       {doc.taxLabel ? <> · tax printed as “{doc.taxLabel}”</> : ''}
                     </p>
                   )}

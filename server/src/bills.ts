@@ -673,6 +673,13 @@ function restatementPatch(b: Record<string, unknown>, into: Record<string, unkno
   }
 }
 
+// Where a remembered GST number came from, as one of the three words the page
+// and the tax reason know (supplierGst.ts). An older client that sends only the
+// flag meant an earlier document — the only source there was.
+function gstSource(v: unknown): string {
+  return v === 'rule' || v === 'ruleOther' ? v : 'document';
+}
+
 // PATCH /api/costs/bills/:id — update editable fields (e.g. category) or the
 // workflow status ('ready' moves it out of the inbox).
 billsRouter.patch('/bills/:id', async (req, res) => {
@@ -686,7 +693,10 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
-  if (typeof b.supplierGstRegNoRemembered === 'boolean') patch.supplierGstRegNoRemembered = b.supplierGstRegNoRemembered;
+  if (typeof b.supplierGstRegNoRemembered === 'boolean') {
+    patch.supplierGstRegNoRemembered = b.supplierGstRegNoRemembered;
+    patch.supplierGstRegNoFrom = b.supplierGstRegNoRemembered ? gstSource(b.supplierGstRegNoFrom) : '';
+  }
   // Reassigning the owner never rewrites createdBy: who uploaded a document is
   // a fact about the past, and overwriting it with a display name is what left
   // one person listed twice in the first place.
@@ -913,6 +923,7 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   }
   // Never left over from a previous read: a finalize is a whole read's answer.
   patch.supplierGstRegNoRemembered = b.supplierGstRegNoRemembered === true;
+  patch.supplierGstRegNoFrom = b.supplierGstRegNoRemembered === true ? gstSource(b.supplierGstRegNoFrom) : '';
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
   restatementPatch(b, patch);
@@ -1082,7 +1093,7 @@ billsRouter.post('/bills', async (req, res) => {
     // Absent rather than '' when nothing read it: the page reads the key's
     // presence to know whether a read ever recorded any evidence at all.
     ...(typeof b.supplierGstRegNo === 'string' ? { supplierGstRegNo: b.supplierGstRegNo } : {}),
-    ...(b.supplierGstRegNoRemembered === true ? { supplierGstRegNoRemembered: true } : {}),
+    ...(b.supplierGstRegNoRemembered === true ? { supplierGstRegNoRemembered: true, supplierGstRegNoFrom: gstSource(b.supplierGstRegNoFrom) } : {}),
     ...(typeof b.taxLabel === 'string' ? { taxLabel: b.taxLabel } : {}),
     // createdBy is who UPLOADED it and nothing else. The drawer's "Document
     // owner" is a separate field, resolved to an email so one person can't end

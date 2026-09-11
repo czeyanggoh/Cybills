@@ -132,4 +132,48 @@ answer = { ...FIELDS, supplier: 'Eng Guan & Co', invoiceNumber: '150000', suppli
 await arrive();
 check('an even split between two numbers remembers neither', await rememberedGstRegNo('Eng Guan & Co'), '');
 
+// --- 8) A number typed on the supplier RULE ----------------------------------
+// For the supplier whose number the reader keeps missing: somebody looks it up
+// once and types it on the rule, and it counts as evidence from then on.
+const { saveCollection } = await import('../src/jsonStore.ts');
+const { WORKSPACE_ID } = await import('../src/workspace.ts');
+saveCollection('settings', [
+  {
+    workspaceId: WORKSPACE_ID,
+    key: 'cybills.supplier.rules.v1::org_one0001',
+    value: {
+      'Unidbox Hardware Pte Ltd': { category: '', gstRegNo: '200412345W' },
+      // Not a Singapore number — the dialog refuses it, and if one got in
+      // anyway the tax decision must not treat it as evidence.
+      'Budget Mart': { gstRegNo: 'W10-1808-32000123' },
+    },
+  },
+  // Another client's rule for a supplier this one has never set anything for.
+  { workspaceId: WORKSPACE_ID, key: 'cybills.supplier.rules.v1::org_two0002', value: { 'Kopi Place': { gstRegNo: 'M2-0009302-4' } } },
+]);
+
+answer = { ...FIELDS, supplier: 'UNIDBOX HARDWARE PTE. LTD.', invoiceNumber: 'PSO1' };
+const ruled = await arrive();
+check("this entity's rule supplies the number the read missed", ruled.supplierGstRegNo, '200412345W');
+check('…and says it came from the rule', [ruled.supplierGstRegNoRemembered, ruled.supplierGstRegNoFrom], [true, 'rule']);
+check('…so the GST is claimed', ruled.tax, 6.17);
+check("…and the reason names the rule", /this supplier's rule/.test(String(ruled.taxRateReason)), true);
+
+// A rule is an instruction: it beats a number the read got that isn't a
+// Singapore one (a misread is the likelier story for a supplier somebody
+// typed a Singapore number for) — but never a valid one off the paper.
+answer = { ...FIELDS, supplier: 'Unidbox Hardware Pte Ltd', invoiceNumber: 'PSO2', supplierGstRegNo: 'W10-1808-32000123' };
+check('the rule beats a non-Singapore number the read found', (await arrive()).supplierGstRegNo, '200412345W');
+answer = { ...FIELDS, supplier: 'Unidbox Hardware Pte Ltd', invoiceNumber: 'PSO3', supplierGstRegNo: '201111111A' };
+const printed = await arrive();
+check('…but a Singapore number printed on the document wins', [printed.supplierGstRegNo, Boolean(printed.supplierGstRegNoRemembered)], ['201111111A', false]);
+
+answer = { ...FIELDS, supplier: 'Budget Mart', invoiceNumber: 'B1' };
+check('a rule holding a foreign number is not evidence', (await arrive()).tax, 0);
+
+answer = { ...FIELDS, supplier: 'Kopi Place', invoiceNumber: 'K1' };
+const elsewhere = await arrive();
+check("another client's rule for the same supplier counts", [elsewhere.supplierGstRegNo, elsewhere.supplierGstRegNoFrom], ['M2-0009302-4', 'ruleOther']);
+check('…and is claimed', elsewhere.tax, 6.17);
+
 await finish(failures, stub);

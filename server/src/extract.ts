@@ -4,6 +4,8 @@ import { visionEnabled } from './env.js';
 import { apportion, notFiller, derivedDescription, withPeriod } from './store.js';
 import { recordUsage } from './usage.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
+import { workspaceId } from './workspace.js';
+import { orgScope } from './users.js';
 import { readDocument, resolveProvider, type Provider } from './llm.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
@@ -973,7 +975,9 @@ extractRouter.post('/extract', async (req, res) => {
   // A supplier whose GST number an earlier document was read with keeps it on a
   // read that missed it (supplierGst.ts). Done here, not in runExtraction, so
   // the read itself stays a pure function of the file and its inputs.
-  return res.json({ ok: true, data: await withRememberedGstRegNo(result.data) });
+  // The entity the read is for, so its own supplier rule can name the number.
+  const ctx = { ws: workspaceId(req), orgId: orgScope(req) };
+  return res.json({ ok: true, data: await withRememberedGstRegNo(result.data, ctx) });
 });
 
 // --- Line items -------------------------------------------------------------

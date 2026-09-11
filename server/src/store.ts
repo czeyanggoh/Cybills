@@ -168,6 +168,9 @@ export type Bill = {
   // (server/src/supplierGst.ts) — never itself a source for the next one.
   supplierGstRegNo?: string;
   supplierGstRegNoRemembered?: boolean;
+  // Where a remembered number came from: this entity's supplier rule, another
+  // entity's, or an earlier document ('rule' | 'ruleOther' | 'document').
+  supplierGstRegNoFrom?: string;
   taxLabel?: string;
   // The reviewer saying the entity is right after all — an intercompany
   // recharge, a trading name, a group company paying for a subsidiary. Same
@@ -895,6 +898,7 @@ const EDITABLE: (keyof Bill)[] = [
   'billedToRegNo',
   'supplierGstRegNo',
   'supplierGstRegNoRemembered',
+  'supplierGstRegNoFrom',
   'taxLabel',
   'entityCheckDismissed',
 ];

@@ -27,6 +27,15 @@ export function readSetting<T = unknown>(ws: string, key: string, org = ''): T |
   return (value ?? null) as T | null;
 }
 
+// Every entity's copy of one per-entity blob — for a fact that is not the
+// entity's own, like a supplier's GST registration number typed on one client's
+// supplier rule, which is just as true in every other client's book.
+export function readSettingAcrossOrgs<T = unknown>(ws: string, key: string): T[] {
+  return loadCollection<Setting>(COLLECTION)
+    .filter((s) => s.workspaceId === ws && (s.key === key || s.key.startsWith(`${key}::`)) && s.value != null)
+    .map((s) => s.value as T);
+}
+
 settingsRouter.get('/:key', (req, res) => {
   const ws = workspaceId(req);
   const rec = loadCollection<Setting>(COLLECTION).find((s) => s.workspaceId === ws && s.key === req.params.key);

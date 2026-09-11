@@ -234,6 +234,8 @@ export function taxRateOutcome({
   // passes the gate exactly as a read one does — a supplier's registration is a
   // fact about the supplier, not about the page — but the reason says so, since
   // it is the one piece of evidence nobody can check against the paper in hand.
+  // true / 'document' for an earlier document, 'rule' for this entity's
+  // supplier rule, 'ruleOther' for another entity's.
   gstRegNoRemembered = false,
 } = {}) {
   const out = taxRateDecision(arguments[0] ?? {});
@@ -241,9 +243,14 @@ export function taxRateOutcome({
   // every answer reached AFTER the evidence gate, and by none reached before it
   // (no tax charged, not registered, a code the org's own rule picked).
   if (gstRegNoRemembered && out.claimsTax && 'workedRate' in out && String(gstRegNo || '').trim()) {
+    // true (from before rules could name one) reads as an earlier document.
+    const where = {
+      rule: "it is the one on this supplier's rule",
+      ruleOther: "it is the one another client's supplier rule records for them",
+    }[gstRegNoRemembered] || 'it is the one read from an earlier document of theirs';
     out.reason =
       `${out.reason ? `${out.reason} ` : ''}The supplier's GST registration number (${String(gstRegNo).trim()}) ` +
-      "wasn't read off this document; it is the one read from an earlier document of theirs.";
+      `wasn't read off this document; ${where}.`;
   }
   return out;
 }

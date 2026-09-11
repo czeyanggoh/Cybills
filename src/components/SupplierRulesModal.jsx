@@ -12,6 +12,7 @@ import {
   saveSupplierRule,
   supplierRuleCount,
 } from '@/lib/supplierRules';
+import { isSingaporeGstRegNo } from '@/lib/taxRateRules';
 import { cn } from '@/lib/utils';
 
 function FieldLabel({ children, hint = '' }) {
@@ -82,9 +83,15 @@ export default function SupplierRulesModal({
   const set = (k, v) => setRule((r) => ({ ...r, [k]: v }));
   const named = String(supplier || '').trim();
   const count = supplierRuleCount(rule);
+  // A number that isn't a Singapore one would be quietly ignored by the tax
+  // decision, which is worse than refusing it here where it was typed.
+  const gstRegNo = String(rule.gstRegNo || '').trim();
+  const gstRegNoBad = Boolean(gstRegNo) && !isSingaporeGstRegNo(gstRegNo);
+  const showGstRegNo = !bridge && gstRegistered;
 
   const apply = () => {
-    saveSupplierRule(named, rule);
+    if (gstRegNoBad) return;
+    saveSupplierRule(named, { ...rule, gstRegNo: gstRegNo.toUpperCase() });
     onApply?.(rule);
     onClose();
   };
@@ -215,6 +222,31 @@ export default function SupplierRulesModal({
                 className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
+
+            {/* Input tax is claimed only when the supplier's Singapore GST
+                number is on the document, and the reader misses it in small
+                print. This is where somebody who has looked it up says it once
+                for every document from this supplier. */}
+            {showGstRegNo && (
+              <div className="md:col-span-2">
+                <FieldLabel hint="(when the reader can’t find it on the document)">GST registration no.</FieldLabel>
+                <input
+                  value={rule.gstRegNo}
+                  onChange={(e) => set('gstRegNo', e.target.value)}
+                  placeholder="e.g. M8-8001588-5 or 201526186C"
+                  aria-invalid={gstRegNoBad}
+                  className={cn(
+                    'h-10 w-full max-w-xs rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring',
+                    gstRegNoBad && 'border-destructive'
+                  )}
+                />
+                <p className={cn('mt-1 text-xs', gstRegNoBad ? 'text-destructive' : 'text-muted-foreground')}>
+                  {gstRegNoBad
+                    ? 'That isn’t a Singapore GST registration number (a UEN like 201526186C, or an M-number like M8-8001588-5). A foreign registration number isn’t Singapore GST, so there is nothing to claim.'
+                    : 'Lets the GST on this supplier’s documents be claimed when the number isn’t read off the page. A number printed on the document still wins. Applies to documents read from now on — re-read one already coded No Tax to get its GST back.'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -235,10 +267,10 @@ export default function SupplierRulesModal({
             <button
               type="button"
               onClick={apply}
-              disabled={!named}
+              disabled={!named || gstRegNoBad}
               className={cn(
                 'inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity',
-                named ? 'hover:opacity-90' : 'cursor-not-allowed opacity-50'
+                named && !gstRegNoBad ? 'hover:opacity-90' : 'cursor-not-allowed opacity-50'
               )}
             >
               Apply

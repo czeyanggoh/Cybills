@@ -76,7 +76,7 @@ export function readDecisions(
     // The rate the supplier printed beats the one the money implies — see
     // printedTaxRate in taxRateRules.js.
     printedRate: ex.taxRatePrinted || 0,
-    gstRegNoRemembered: Boolean(ex.supplierGstRegNoRemembered),
+    gstRegNoRemembered: ex.supplierGstRegNoRemembered ? ex.supplierGstRegNoFrom || 'document' : false,
   });
   const inferredRate = rate.name;
   // Tax is RECORDED only when it is Singapore GST this business can claim:
@@ -180,6 +180,7 @@ export function readDecisions(
   // always describe the same read.
   patch.supplierGstRegNo = ex.supplierGstRegNo || '';
   patch.supplierGstRegNoRemembered = Boolean(ex.supplierGstRegNoRemembered);
+  patch.supplierGstRegNoFrom = ex.supplierGstRegNoRemembered ? ex.supplierGstRegNoFrom || 'document' : '';
   patch.taxLabel = ex.taxLabel || '';
   if (descr) patch.description = descr;
   if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;

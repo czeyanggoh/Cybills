@@ -242,7 +242,7 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     }
     // With the supplier's GST number filled in where this read missed it and an
     // earlier one didn't — the same as an upload gets (supplierGst.ts).
-    const d = await withRememberedGstRegNo(result.data);
+    const d = await withRememberedGstRegNo(result.data, { ws, orgId: realOrgId });
     // The supplier's standing rule, looked up once: it decides below whether the
     // reader's rows are kept at all, and is laid over the read at the end.
     const vendorRule = supplierRuleFor(ws, realOrgId, d.supplier);
@@ -288,6 +288,7 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       // updateBill, which stores only EDITABLE fields.
       supplierGstRegNo: d.supplierGstRegNo,
       supplierGstRegNoRemembered: Boolean(d.supplierGstRegNoRemembered),
+      supplierGstRegNoFrom: d.supplierGstRegNoFrom || '',
       taxLabel: d.taxLabel,
       // Who the paper says it is FOR, so a document that arrived by email or
       // WhatsApp is checked against the entity it landed in like any other. It
