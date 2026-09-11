@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Image as ImageIcon, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { fetchBillFileMeta, billFileUrl } from '@/lib/bills';
 import { cn } from '@/lib/utils';
+import ZoomableImage from '@/components/ZoomableImage';
 
 // An image icon that opens a lightbox of the uploaded receipt(s). `itemIds` is
 // one bill id or a list of them (a claim's line items) — each item's receipt is
@@ -60,7 +61,7 @@ export default function ReceiptViewer({ itemIds, size = 'sm' }) {
               ) : String(cur.contentType).includes('pdf') ? (
                 <iframe src={billFileUrl(cur.id)} title="Uploaded receipt" className="h-[70vh] w-full" />
               ) : (
-                <img src={billFileUrl(cur.id)} alt="Uploaded receipt" className="mx-auto max-h-[74vh] w-full object-contain" />
+                <ZoomableImage src={billFileUrl(cur.id)} alt="Uploaded receipt" className="h-[74vh] w-full" />
               )}
               {withFiles.length > 1 && cur && (
                 <>

@@ -64,6 +64,7 @@ import { balanceLine, foldTaxIntoCost, applyLineTaxRate } from '@/lib/lineItems'
 import { coveringNote } from '@/lib/coveringNote';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
+import ZoomableImage from '@/components/ZoomableImage';
 
 function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
   return (
@@ -137,7 +138,7 @@ function ReceiptPreview({ doc, imageUrl, previewType }) {
         {previewType === 'pdf' ? (
           <iframe src={imageUrl} title="Uploaded document" className="h-[45vh] w-full md:h-[560px]" />
         ) : (
-          <img src={imageUrl} alt="Uploaded receipt" className="max-h-[45vh] w-full object-contain md:max-h-[560px]" />
+          <ZoomableImage src={imageUrl} alt="Uploaded receipt" className="h-[45vh] w-full md:h-[560px]" />
         )}
       </div>
     );

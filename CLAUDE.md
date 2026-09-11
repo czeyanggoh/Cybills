@@ -1298,6 +1298,17 @@ statuses in one ledger. The automatic publish-after-reading is deliberately NOT
 covered: nobody looked at that document, so it posts as SUBMITTED into an
 approval queue rather than straight into the payable ledger.
 
+## A receipt image zooms by itself
+
+The small print is the point of a receipt, and the only way to read it was the
+browser's zoom, which blows up the whole page and pushes the form off screen.
+`ZoomableImage` (`src/components/ZoomableImage.jsx`) is the document page's
+preview and the receipt lightbox: Ctrl/⌘ + wheel (a trackpad pinch arrives as
+the same event) zooms around the pointer and is caught before the browser sees
+it; the PLAIN wheel is left alone so the page still scrolls past; drag pans,
+double-click toggles close-up / fit, and buttons do the same plus rotate a photo
+taken sideways. A PDF is still the browser's own viewer, which has its zoom.
+
 ## What a Costs export is a file OF
 
 CSV, PDF and ZIP are three different things over the same selection, and only
