@@ -106,6 +106,16 @@ somebody approved their own claim. `claim_no` sits beside `reference` for the
 same kind of reason: it is the bare number a report column prints, where
 `reference` is that number inside the whole string the Xero bill is named with.
 
+**Each line opens its own receipt.** `lines[]` carries, beside what the
+report's Breakdown sheet prints, the document's `item_no` and a `file_url` —
+a signed, expiring link to THAT receipt's file, the same capability a receipt
+link inside the claim PDF carries, so a manager with no login opens the one
+receipt a line is about rather than the whole claim. It is `""` where there is
+no stored file, or where the entity has Image sharing off: the file route reads
+that toggle on every request and would refuse the link, and a number that opens
+nothing beats one that opens an error. The token is bound to the document in
+the path, so it opens no other.
+
 **Only APPROVED claims are listed.** An unapproved claim is not yet a cost
 anybody has agreed to, and recharging one would invoice a client for money the
 practice has not accepted it owes. A claim that is approved but not yet

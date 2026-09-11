@@ -9,6 +9,7 @@ import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } f
 import {
   getBillById,
   getBillByIdAny,
+  displayIdOf,
   billOrgId,
   markBillsClaimed,
   unmarkBillsClaimed,
@@ -195,7 +196,24 @@ export type RechargeClaim = {
    *  checks the header against the PO and the lines against what their people
    *  said they spent, and those are two different reads of the same money. Only
    *  what that sheet prints: no item ids, no files, no tax split. */
-  lines: Array<{ date: string; category: string; supplier: string; description: string; total: string }>;
+  lines: Array<{
+    date: string;
+    category: string;
+    supplier: string;
+    description: string;
+    total: string;
+    /** The document's own number — the Item ID on its page, on the claim PDF
+     *  and in every export. */
+    item_no: string;
+    /** A signed, expiring link to THAT receipt's file, so the breakdown's Item
+     *  No opens the one receipt a line is about rather than the whole claim.
+     *  The manager reading it has no login, so this is the same capability a
+     *  receipt link inside the claim PDF carries. '' where there is no stored
+     *  file, or where the entity has Image sharing off — the file route would
+     *  refuse the link, and a number that opens nothing beats one that opens an
+     *  error. */
+    file_url: string;
+  }>;
   /** A signed, expiring link to this claim's own PDF — its report, approval
    *  history, supporting documents and receipts. The recharge report the
    *  practice sends a client's manager prints the Claim No as a link to it, and
@@ -227,6 +245,12 @@ export type RechargeClaim = {
 // the row answers for itself.
 export async function rechargeClaims(org: string, origin = ''): Promise<RechargeClaim[]> {
   const rows: RechargeClaim[] = [];
+  // The entity's Image sharing toggle (Business settings -> Exports), read once
+  // for the whole book. The receipt file route reads it again on every request,
+  // so a link minted past it would open nothing but a refusal.
+  const settingsOrg = org === WORKSPACE_ID ? primaryOrgId() : org;
+  const sharing =
+    readSetting<{ imageSharing?: boolean }>(WORKSPACE_ID, 'cybills.export-settings.v1', settingsOrg)?.imageSharing !== false;
   for (const c of load()) {
     if (c.deleted || c.orgId !== org || c.approvalStatus !== 'approved') continue;
     rows.push({
@@ -238,15 +262,26 @@ export async function rechargeClaims(org: string, origin = ''): Promise<Recharge
       currency: c.currency || 'SGD',
       total: claimTotal(c),
       items: c.transactions.length,
-      lines: c.transactions.map((t) => ({
-        date: String(t.date || ''),
-        category: String(t.category || ''),
-        supplier: String(t.supplier || ''),
-        description: String(t.description || ''),
-        // To the cent, the way claimTotal sums them, so a breakdown always adds
-        // up to the header row it sits beside.
-        total: Number(t.total || 0).toFixed(2),
-      })),
+      lines: c.transactions.map((t) => {
+        const bill = getBillByIdAny(String(t.itemId ?? ''));
+        // Addressed by the INTERNAL id, which is unambiguous; the token is bound
+        // to exactly the string in the path, so the two must be the same one.
+        const fileId = bill?.id || '';
+        return {
+          date: String(t.date || ''),
+          category: String(t.category || ''),
+          supplier: String(t.supplier || ''),
+          description: String(t.description || ''),
+          // To the cent, the way claimTotal sums them, so a breakdown always
+          // adds up to the header row it sits beside.
+          total: Number(t.total || 0).toFixed(2),
+          item_no: (fileId && displayIdOf(fileId)) || String(t.displayId || '') || displayIdOf(String(t.itemId ?? '')),
+          file_url:
+            origin && sharing && fileId && bill?.storageKey
+              ? `${origin}/api/costs/bills/${encodeURIComponent(fileId)}/file?s=${encodeURIComponent(shareToken(fileId))}`
+              : '',
+        };
+      }),
       claim_no: await numberFor(c),
       pdf_url: origin ? `${origin}/api/claims/${encodeURIComponent(c.id)}/pdf?s=${encodeURIComponent(shareToken(c.id))}` : '',
       // decidedBy is who pressed the button; approver is who it was routed to.

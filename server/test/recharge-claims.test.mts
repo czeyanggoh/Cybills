@@ -60,6 +60,20 @@ writeFileSync(
   })
 );
 
+// A real receipt with a stored file, for the breakdown's per-line link. The
+// claim below points its first line at it; the second line names a document
+// that has no file at all.
+const { insertBill, setBillFile } = await import('../src/store.ts');
+const { putBillFile } = await import('../src/storage.ts');
+const receipt = insertBill({
+  orgId: 'org-ste', kind: 'cost', status: 'expenseclaim', supplier: 'Grab', documentType: 'Receipt',
+  currency: 'SGD', date: '2026-08-01', category: 'Transport - Taxi', description: 'Site visit', total: '24', tax: '0',
+} as any);
+{
+  const stored = await putBillFile('org-ste', `${receipt.id}-hash`, 'image/png', Buffer.from('the-grab-receipt'));
+  setBillFile('org-ste', receipt.id, stored.storageKey, stored.contentType);
+}
+
 const claim = (id: string, over: Record<string, unknown> = {}) => ({
   id, workspaceId: 'cybm', orgId: 'org-ste', claimFor: 'Wei Ming Tan', type: 'Regular',
   name: 'ST Eng Exp Claim', claimDate: '2026-08-31', endDate: '2026-08-31', currency: 'SGD',
@@ -77,7 +91,12 @@ writeFileSync(
   join(DATA_DIR, 'claims.json'),
   JSON.stringify({
     items: [
-      claim('c-approved'),
+      claim('c-approved', {
+        transactions: [
+          { itemId: receipt.id, date: '2026-08-01', supplier: 'Grab', category: 'Transport - Taxi', net: '24', tax: '0', total: '24' },
+          { itemId: '260802120000', date: '2026-08-02', supplier: 'Koufu', category: 'Meal Weekday (after 9pm)', net: '12.50', tax: '0', total: '12.50' },
+        ],
+      }),
       // Not yet a cost anybody has agreed to — recharging it would invoice a
       // client for money the practice has not accepted it owes.
       claim('c-open', { id: 'c-open', approvalStatus: '' }),
@@ -176,10 +195,37 @@ check('the claimant is named', row.claimant, 'Wei Ming Tan');
 // The report's BREAKDOWN sheet prints one row per receipt, so the lines have
 // to travel — only what that sheet prints, and to the cent, so they add up to
 // the claim's own total.
-check('the lines travel, one per receipt', row.lines, [
-  { date: '2026-08-01', category: 'Transport - Taxi', supplier: 'Grab', description: '', total: '24.00' },
-  { date: '2026-08-02', category: 'Meal Weekday (after 9pm)', supplier: 'Koufu', description: '', total: '12.50' },
-]);
+check(
+  'the lines travel, one per receipt',
+  row.lines.map(({ date, category, supplier, description, total }: any) => ({ date, category, supplier, description, total })),
+  [
+    { date: '2026-08-01', category: 'Transport - Taxi', supplier: 'Grab', description: '', total: '24.00' },
+    { date: '2026-08-02', category: 'Meal Weekday (after 9pm)', supplier: 'Koufu', description: '', total: '12.50' },
+  ]
+);
+
+// --- each line's own receipt -------------------------------------------------
+// The breakdown's Item No opens the ONE receipt a line is about, for a manager
+// with no login — so each line carries the document's number and a signed link
+// to that document's file.
+check('a line carries its document number', [row.lines[0].item_no, /^\d+$/.test(row.lines[0].item_no)], [receipt.displayId, true]);
+check(
+  'and a signed link to that receipt',
+  row.lines[0].file_url.startsWith(`https://cybills.example.com/api/costs/bills/${encodeURIComponent(receipt.id)}/file?s=`),
+  true
+);
+// A line whose document has no stored file gets its number and no link: a
+// number that opens nothing beats one that opens an error.
+check('a line with no stored file has no link', [row.lines[1].item_no, row.lines[1].file_url], ['260802120000', '']);
+{
+  const u = new URL(row.lines[0].file_url);
+  const res = await fetch(`${BASE}${u.pathname}${u.search}`);
+  check('the receipt link opens with no session at all', res.status, 200);
+  check('and it is that receipt', Buffer.from(await res.arrayBuffer()).toString(), 'the-grab-receipt');
+  // The token is bound to ONE document, so it opens no other.
+  const moved = await fetch(`${BASE}/api/costs/bills/260802120000/file${u.search}`);
+  check('the same token does not open another document', moved.status, 401);
+}
 // A PO assigns PEOPLE. A claim stores a display NAME, which the roster can
 // rename, so the stable identity has to travel with it.
 check('the claimant resolves to an address', row.claimant_email, 'weiming.tan@stengg.com');
