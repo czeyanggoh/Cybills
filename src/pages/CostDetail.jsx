@@ -2138,6 +2138,20 @@ export default function CostDetail() {
                   {gstRegistered && data.taxRateReason && (
                     <p className="mt-1.5 text-xs text-muted-foreground">{data.taxRateReason}</p>
                   )}
+                  {/* What the code was decided on, as the read found it. A
+                      code picked by hand replaces the reason above, and without
+                      this there was nothing left to say whether the reader had
+                      seen the supplier's GST number at all. */}
+                  {gstRegistered && doc?.persisted && doc.taxEvidenceRecorded && (
+                    <p className="mt-1 text-xs text-muted-foreground/80">
+                      Read from the document: supplier GST no.{' '}
+                      {doc.supplierGstRegNo
+                        ? <span className="font-medium text-muted-foreground">{doc.supplierGstRegNo}</span>
+                        : 'not found'}
+                      {doc.supplierGstRegNoRemembered ? ' (not on this document — remembered from an earlier one of this supplier’s)' : ''}
+                      {doc.taxLabel ? <> · tax printed as “{doc.taxLabel}”</> : ''}
+                    </p>
+                  )}
                 </Field>
               )}
               <Field label="Tax amount">

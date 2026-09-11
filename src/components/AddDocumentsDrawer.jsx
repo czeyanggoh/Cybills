@@ -497,6 +497,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           gstRegNo: extracted?.supplierGstRegNo || '',
           taxLabel: extracted?.taxLabel || '',
           printedRate: extracted?.taxRatePrinted || 0,
+          gstRegNoRemembered: Boolean(extracted?.supplierGstRegNoRemembered),
         });
         claimsTax = outcome.claimsTax !== false;
         rateOutcome = outcome;

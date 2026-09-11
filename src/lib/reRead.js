@@ -76,6 +76,7 @@ export function readDecisions(
     // The rate the supplier printed beats the one the money implies — see
     // printedTaxRate in taxRateRules.js.
     printedRate: ex.taxRatePrinted || 0,
+    gstRegNoRemembered: Boolean(ex.supplierGstRegNoRemembered),
   });
   const inferredRate = rate.name;
   // Tax is RECORDED only when it is Singapore GST this business can claim:
@@ -173,6 +174,13 @@ export function readDecisions(
     patch.billedTo = ex.billedTo || '';
     patch.billedToRegNo = ex.billedToRegNo || '';
   }
+  // What the tax code above was decided on, saved beside it — the only way to
+  // answer "why didn't it take the GST?" later without reading the paper again
+  // and guessing what the reader saw. Written whenever the code is, so the two
+  // always describe the same read.
+  patch.supplierGstRegNo = ex.supplierGstRegNo || '';
+  patch.supplierGstRegNoRemembered = Boolean(ex.supplierGstRegNoRemembered);
+  patch.taxLabel = ex.taxLabel || '';
   if (descr) patch.description = descr;
   if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
   if (ex.project) {

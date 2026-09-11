@@ -683,9 +683,10 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
+  if (typeof b.supplierGstRegNoRemembered === 'boolean') patch.supplierGstRegNoRemembered = b.supplierGstRegNoRemembered;
   // Reassigning the owner never rewrites createdBy: who uploaded a document is
   // a fact about the past, and overwriting it with a display name is what left
   // one person listed twice in the first place.
@@ -907,9 +908,11 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   const orgId = orgIdFor(req);
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'description', 'cardLast4', 'project', 'projectReason', 'billedTo', 'billedToRegNo']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'description', 'cardLast4', 'project', 'projectReason', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
+  // Never left over from a previous read: a finalize is a whole read's answer.
+  patch.supplierGstRegNoRemembered = b.supplierGstRegNoRemembered === true;
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
   restatementPatch(b, patch);
@@ -1075,6 +1078,12 @@ billsRouter.post('/bills', async (req, res) => {
     // it is being filed into from the moment it lands.
     billedTo: String(b.billedTo ?? ''),
     billedToRegNo: String(b.billedToRegNo ?? ''),
+    // What the tax code was decided on, kept so the decision can be explained.
+    // Absent rather than '' when nothing read it: the page reads the key's
+    // presence to know whether a read ever recorded any evidence at all.
+    ...(typeof b.supplierGstRegNo === 'string' ? { supplierGstRegNo: b.supplierGstRegNo } : {}),
+    ...(b.supplierGstRegNoRemembered === true ? { supplierGstRegNoRemembered: true } : {}),
+    ...(typeof b.taxLabel === 'string' ? { taxLabel: b.taxLabel } : {}),
     // createdBy is who UPLOADED it and nothing else. The drawer's "Document
     // owner" is a separate field, resolved to an email so one person can't end
     // up stored two ways (a display name here, their address there).

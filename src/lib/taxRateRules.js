@@ -229,7 +229,45 @@ export function taxRateOutcome({
   // it in its own field; 0 when it printed none. The label's own percentage is
   // the fallback, for a reader that copied "9% GST" but reported no number.
   printedRate = 0,
+  // The registration number was not read off THIS document but remembered from
+  // an earlier one of the same supplier's (server/src/supplierGst.ts). It
+  // passes the gate exactly as a read one does — a supplier's registration is a
+  // fact about the supplier, not about the page — but the reason says so, since
+  // it is the one piece of evidence nobody can check against the paper in hand.
+  gstRegNoRemembered = false,
 } = {}) {
+  const out = taxRateDecision(arguments[0] ?? {});
+  // Only where the gate was actually passed on it: `workedRate` is carried by
+  // every answer reached AFTER the evidence gate, and by none reached before it
+  // (no tax charged, not registered, a code the org's own rule picked).
+  if (gstRegNoRemembered && out.claimsTax && 'workedRate' in out && String(gstRegNo || '').trim()) {
+    out.reason =
+      `${out.reason ? `${out.reason} ` : ''}The supplier's GST registration number (${String(gstRegNo).trim()}) ` +
+      "wasn't read off this document; it is the one read from an earlier document of theirs.";
+  }
+  return out;
+}
+
+function taxRateDecision({
+  total,
+  tax,
+  rates,
+  allRates = null,
+  suggested = '',
+  gstRegistered = true,
+  defaultName = '',
+  currency = '',
+  baseCurrency = 'SGD',
+  baseTotal = 0,
+  baseTax = 0,
+  statedCurrency = '',
+  kind = 'cost',
+  accountTaxType = '',
+  accountLabel = '',
+  gstRegNo = '',
+  taxLabel = '',
+  printedRate = 0,
+}) {
   const list = Array.isArray(rates) ? rates : [];
   const everything = Array.isArray(allRates) && allRates.length ? allRates : list;
   const noTax = list.find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));

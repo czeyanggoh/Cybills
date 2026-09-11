@@ -158,6 +158,17 @@ export type Bill = {
   // entirely correct. Never used to code anything (see src/lib/billedTo.js).
   billedTo?: string;
   billedToRegNo?: string;
+  // The evidence the tax code was decided on: the supplier's GST registration
+  // number and what the paper calls its tax ("GST 9%"), as the read found them.
+  // Read on every document for years and thrown away the moment the code was
+  // chosen, so "why didn't it take the GST?" could never be answered from the
+  // record — only by reading the paper again and guessing what the reader saw.
+  // `supplierGstRegNoRemembered` says the number was NOT on this read at all,
+  // but carried over from an earlier document of the same supplier's
+  // (server/src/supplierGst.ts) — never itself a source for the next one.
+  supplierGstRegNo?: string;
+  supplierGstRegNoRemembered?: boolean;
+  taxLabel?: string;
   // The reviewer saying the entity is right after all — an intercompany
   // recharge, a trading name, a group company paying for a subsidiary. Same
   // shape and the same reason as `duplicateDismissed`: a warning nobody can
@@ -882,6 +893,9 @@ const EDITABLE: (keyof Bill)[] = [
   // answer does.
   'billedTo',
   'billedToRegNo',
+  'supplierGstRegNo',
+  'supplierGstRegNoRemembered',
+  'taxLabel',
   'entityCheckDismissed',
 ];
 

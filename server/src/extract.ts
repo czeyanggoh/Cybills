@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { visionEnabled } from './env.js';
 import { apportion, notFiller, derivedDescription, withPeriod } from './store.js';
 import { recordUsage } from './usage.js';
+import { withRememberedGstRegNo } from './supplierGst.js';
 import { readDocument, resolveProvider, type Provider } from './llm.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
@@ -969,7 +970,10 @@ extractRouter.post('/extract', async (req, res) => {
   }
 
   if (!result.ok) return res.status(result.status).json({ error: result.error });
-  return res.json({ ok: true, data: result.data });
+  // A supplier whose GST number an earlier document was read with keeps it on a
+  // read that missed it (supplierGst.ts). Done here, not in runExtraction, so
+  // the read itself stays a pure function of the file and its inputs.
+  return res.json({ ok: true, data: await withRememberedGstRegNo(result.data) });
 });
 
 // --- Line items -------------------------------------------------------------

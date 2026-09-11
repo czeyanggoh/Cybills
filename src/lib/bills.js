@@ -320,6 +320,16 @@ export function billToDoc(b) {
     // from anywhere that doesn't compute it — which reads as "nothing to say".
     billedTo: b.billedTo || '',
     billedToRegNo: b.billedToRegNo || '',
+    // What the tax code was decided on — the supplier's GST number and what the
+    // paper calls its tax — and whether that number was remembered from an
+    // earlier document rather than read off this one.
+    supplierGstRegNo: b.supplierGstRegNo || '',
+    supplierGstRegNoRemembered: Boolean(b.supplierGstRegNoRemembered),
+    taxLabel: b.taxLabel || '',
+    // Whether a read has recorded that evidence at all. Documents read before it
+    // was kept carry neither key, and "no GST number found" would be a claim
+    // about a read nobody wrote down.
+    taxEvidenceRecorded: typeof b.supplierGstRegNo === 'string' || typeof b.taxLabel === 'string',
     entityCheck: b.entityCheck || null,
     entityCheckDismissed: Boolean(b.entityCheckDismissed),
     movedFrom: b.movedFrom || null,

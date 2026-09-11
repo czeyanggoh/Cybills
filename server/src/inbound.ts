@@ -7,6 +7,7 @@ import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberF
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
+import { withRememberedGstRegNo } from './supplierGst.js';
 import { insertBill, updateBill, settleProcessing, getBillById } from './store.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
@@ -239,7 +240,9 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       if (result.error === 'refused') break; // the reader saw it and declined — another won't differ
       continue; // try the next provider
     }
-    const d = result.data;
+    // With the supplier's GST number filled in where this read missed it and an
+    // earlier one didn't — the same as an upload gets (supplierGst.ts).
+    const d = await withRememberedGstRegNo(result.data);
     // The supplier's standing rule, looked up once: it decides below whether the
     // reader's rows are kept at all, and is laid over the read at the end.
     const vendorRule = supplierRuleFor(ws, realOrgId, d.supplier);
@@ -280,7 +283,11 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       // The distance off a mileage record. Priced below, at the entity's own
       // rate per km, the same way the browser's finalize prices an upload.
       distanceKm: d.distanceKm,
+      // What the tax code below is decided on — kept, so the decision can be
+      // explained afterwards. Both used to sit in this patch and be dropped by
+      // updateBill, which stores only EDITABLE fields.
       supplierGstRegNo: d.supplierGstRegNo,
+      supplierGstRegNoRemembered: Boolean(d.supplierGstRegNoRemembered),
       taxLabel: d.taxLabel,
       // Who the paper says it is FOR, so a document that arrived by email or
       // WhatsApp is checked against the entity it landed in like any other. It

@@ -725,6 +725,36 @@ tax GST. The numbers can't settle it — Thailand's VAT is 7% and Malaysia's SST
 that the document codes to No Tax and the tax amount is NOT recorded — it stays
 inside the cost, which is what foreign tax is. The total never changes.
 
+**And a supplier's number is remembered, because the reader misses small
+print.** The gate is right and it hangs a client's whole input tax on one line
+of 6pt type — "GST No: M8-8001588-5" under a hardware shop's address, the
+header of an HR Easily invoice whose totals say "GST @ 9%" in plain sight.
+Missed, the document codes No Tax and the GST is folded into the cost. A
+registration number is a fact about the SUPPLIER and a public one, so
+`withRememberedGstRegNo` (`server/src/supplierGst.ts`) gives a read that found
+none the number an earlier document of that supplier's was READ with — across
+every entity's book, since the number is the same whoever it bills. Applied on
+both roads a read returns by (`/extract` and `readIntoBill`), so the upload,
+the re-read and the background read all see it. Only a number READ off paper
+counts (a carried one is `supplierGstRegNoRemembered` and never a source, so it
+travels one step at most), only one `isSingaporeGstRegNo` accepts, only by an
+exact normalised name (`normaliseSupplier`), never over a number the read found
+itself (a foreign one is evidence AGAINST), and two numbers read equally often
+remember neither. The tax reason says the number was remembered rather than
+read (`gstRegNoRemembered` on `taxRateOutcome`).
+
+**So the evidence is kept on the document.** `supplierGstRegNo` and `taxLabel`
+were read on every document and dropped the moment the code was chosen —
+`readIntoBill` even put them in its patch, where `updateBill` discarded them —
+so "why didn't it take the GST?" could never be answered from the record, and a
+code picked by hand then overwrote the one reason that said. They are stored now
+(EDITABLE, the create and finalize routes, the re-read's patch) and printed under
+the tax code on the document page ("Read from the document: supplier GST no. …
+· tax printed as …"), only where a read recorded them: a document read before
+has neither key, and "not found" would be a claim about a read nobody wrote
+down. Covered by `npm test` at the root and in `server/`
+(`test/supplier-gst.test.mts`).
+
 **A foreign-currency invoice says what it is worth in SGD, and that is the half
 that matters.** A Singapore GST-registered supplier billing in USD has to
 restate the supply in SGD on the face of the invoice, because that is the figure

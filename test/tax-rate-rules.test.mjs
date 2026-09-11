@@ -397,5 +397,23 @@ check('noTaxRateName', [noTaxRateName(SG), noTaxRateName([]), noTaxRateName(hidd
   check('no rows never agree', [linesAgreeWithTotal([], 1), linesAgreeWithTotal(null, 1)], [false, false]);
 }
 
+// --- A registration number remembered from an earlier document ---------------
+// (server/src/supplierGst.ts.) It passes the gate like a read one, and the
+// reason says it was not on this page — the one piece of evidence nobody can
+// check against the paper in hand.
+{
+  const mem = ask({ total: 74.67, tax: 6.17, gstRegNo: 'M8-8001588-5', gstRegNoRemembered: true });
+  check('the old M8- form passes the gate', isSingaporeGstRegNo('M8-8001588-5'), true);
+  check('a remembered number claims the GST', [mem.name, mem.claimsTax], ['Standard-Rated Purchases', true]);
+  has('…and the reason says it was remembered', mem.reason, "wasn't read off this document");
+  has('…naming the number', mem.reason, 'M8-8001588-5');
+  const read = ask({ total: 74.67, tax: 6.17, gstRegNo: 'M8-8001588-5' });
+  check('a number read off the page says nothing of the kind', /wasn't read off/.test(read.reason), false);
+  // Said only where the number decided anything: a document with no tax on it
+  // never reached the gate.
+  const none = ask({ total: 4.5, tax: 0, gstRegNo: 'M8-8001588-5', gstRegNoRemembered: true });
+  check('no tax charged, no remembered-number note', /wasn't read off/.test(none.reason), false);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 process.exit(failures ? 1 : 0);
