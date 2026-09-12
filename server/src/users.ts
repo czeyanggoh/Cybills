@@ -655,6 +655,20 @@ function ensureGeneralUsers(items: User[], ws: string): boolean {
     );
     changed = true;
   }
+  // A handle on the general row is a contradiction, and a silent one. Nothing
+  // resolves it: userByEmailHandle skips general rows on purpose, and a dotted
+  // local part can never match an entity's short form (normaliseSuffix strips
+  // the dot), so `finance.excelas@cybills.sg` — typed into a card that offered
+  // the field — 404s at the door while the card goes on printing it as though
+  // it worked. It also takes the address out of a real person's reach, since
+  // ensureEmailHandles counts every stored handle as taken. Cleared on load,
+  // the way stale document owners and claim names are, and BEFORE
+  // ensureEmailHandles runs so the freed address is available the same pass.
+  for (const u of items) {
+    if (u.workspaceId !== ws || !u.general || !u.emailHandle) continue;
+    u.emailHandle = '';
+    changed = true;
+  }
   return changed;
 }
 
@@ -2372,9 +2386,14 @@ usersRouter.patch('/:id', (req, res) => {
   // people on one handle is not a cosmetic clash: every bill forwarded to it
   // would file under whichever row was found first, silently and for good.
   if ('emailHandle' in filtered) {
+    const target = load().find((u) => u.id === req.params.id && !u.removed);
+    // The general account answers to the entity's short form standing alone and
+    // to nothing else, so a handle on it is an address that resolves to nobody —
+    // refused here as well as hidden in the dialog, because hiding a field is a
+    // decision the browser makes and anybody can ask the API directly.
+    if (target?.general) return res.status(409).json({ error: 'general_has_no_handle' });
     const handle = normaliseHandle(String(filtered.emailHandle ?? ''));
     if (!handle) return res.status(400).json({ error: 'invalid_handle' });
-    const target = load().find((u) => u.id === req.params.id && !u.removed);
     const takenBy = target ? addressClash(target, handle) : '';
     if (takenBy) {
       return res.status(409).json({

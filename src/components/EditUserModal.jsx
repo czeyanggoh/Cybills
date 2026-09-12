@@ -3,7 +3,7 @@ import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink, MessageCir
 import { rolesFor, roleTier, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
 import { useOrganisations, useBridgeEntity } from '@/lib/organisations';
-import { cleanHandle, inboundAddress, addressTail, suffixForUser } from '@/lib/inboundAddress';
+import { cleanHandle, inboundAddress, entityAddress, addressTail, suffixForUser } from '@/lib/inboundAddress';
 import { useWhatsappForUser, connectWhatsappForUser, addWhatsappParticipant } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
@@ -19,7 +19,14 @@ import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
 function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
   const [copied, setCopied] = useState(false);
   const clean = cleanHandle(handle);
-  const address = inboundAddress(clean, suffix);
+  // The general account is not a person, and its address is not a handle: it
+  // answers to the entity's short form standing ALONE and to nothing else.
+  // Offered an editable handle it accepted one, and the card then printed
+  // `finance.excelas@cybills.sg` — an address the server resolves to nobody,
+  // so every bill forwarded to it 404s at the door with the card still saying
+  // it works. Read-only here, refused on the route.
+  const isGeneral = Boolean(user.general);
+  const address = isGeneral ? entityAddress(suffix) : inboundAddress(clean, suffix);
   const tail = addressTail(suffix);
   const pending = user.pendingForward;
   const copy = () => {
@@ -34,8 +41,31 @@ function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
         <Mail className="h-4 w-4" strokeWidth={1.75} /> Extract by email
       </div>
       <p className="text-xs text-muted-foreground">
-        Forward bills to this address and CYBills files them under {user.name || 'this user'}.
+        {isGeneral
+          ? `${user.companyName || 'This entity'}’s own address — for a supplier’s file, or a shared mailbox, where naming one employee would be wrong the day they leave. Bills sent to it file under ${user.name || 'the general account'}.`
+          : `Forward bills to this address and CYBills files them under ${user.name || 'this user'}.`}
       </p>
+      {isGeneral ? (
+        address ? (
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 flex-1 items-center overflow-hidden rounded-md border bg-muted/40 px-3">
+              <span className="truncate text-sm">{address}</span>
+            </div>
+            <button type="button" onClick={copy} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-muted">
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        ) : (
+          /* No short form, so the entity has no address of its own yet. Inventing
+             one from its name would send paperwork nowhere. */
+          <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {user.companyName || 'This entity'} has no short form yet, so it has no address of its own. Set one in
+            Business settings → Extraction → Extract by Email.
+          </p>
+        )
+      ) : (
+      <>
       {/* The local-part is editable: the generated one is a starting point, not
           the address the person has to live with. The domain is fixed, so it is
           shown rather than typed — half an address is not a thing to get wrong. */}
@@ -77,6 +107,8 @@ function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
           needs repointing at the new address.
         </p>
       )}
+      </>
+      )}
 
       {/* Gmail forwarding confirmation caught for this user */}
       {pending ? (
@@ -105,8 +137,8 @@ function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
         </div>
       ) : (
         <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          When {user.name || 'this user'} sets up Gmail forwarding to this address, Google&rsquo;s confirmation link will
-          appear here to click — no mailbox needed.
+          When {isGeneral ? 'somebody' : user.name || 'this user'} sets up Gmail forwarding to this address,
+          Google&rsquo;s confirmation link will appear here to click — no mailbox needed.
         </p>
       )}
     </div>
@@ -437,7 +469,9 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
           mobile,
           // Only when it actually changed — sending it unchanged would make an
           // edit to somebody's NAME fail on their own existing address.
-          ...(wanted && wanted !== user.emailHandle ? { emailHandle: wanted } : {}),
+          // Never for the general account: its address is the entity's short
+          // form, not a handle, and the route refuses one anyway.
+          ...(!user.general && wanted && wanted !== user.emailHandle ? { emailHandle: wanted } : {}),
           ...(movingOut ? { organisationId } : {}),
         });
       } else {
