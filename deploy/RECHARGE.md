@@ -57,6 +57,7 @@ past the session guard. Contract for the payment half: `PAYABLES.md`.
       "claim_no": "260820120000",
       "approved_by": "Kai Tan",
       "approver": "Martin Lim",
+      "approver_email": "martin.lim@stengg.com",
       "decided_at": "2026-09-01T02:00:00.000Z",
       "xero_invoice_id": "",
       "xero_status": "",
@@ -98,6 +99,13 @@ to whichever tool is answering a narrower question. Fail CLOSED on it: a claim
 without `bridge: true` is not a bridge claim, because the expensive mistake is
 a wrong invoice and the cheap one is a claim left off a list somebody can
 refresh.
+
+**`approver_email` is the Reporting Officer's address, and the recharge tool
+fills a recharge's approvers from it.** The routed approver is the claimant's
+direct manager, which is what a Reporting Officer IS in a bridge entity — and
+CYWS matches a reply to a step by ADDRESS, so a name alone could not be used.
+It is `''` only for a claim approved before the address was stored whose
+approver has since left the roster, which is a row for a person to look at.
 
 **`approved_by` is who DECIDED; `approver` is who it was routed to.** A
 practice colleague may decide on the named approver's behalf, so the two are

@@ -230,6 +230,13 @@ export type RechargeClaim = {
    *  claim. */
   approved_by: string;
   approver: string;
+  /** The ROUTED approver's address — the claimant's direct manager, which is
+   *  what a Reporting Officer IS here. A name is a display string the roster
+   *  can rewrite, so anything keying on the approver (the recharge tool fills
+   *  a recharge's Reporting Officers from it) has to have the address. '' for
+   *  a claim approved before the address was stored and whose approver has
+   *  since left the roster. */
+  approver_email: string;
   decided_at: string;
   /** The ACCPAY bill this claim posted as, and what Xero says of it since. */
   xero_invoice_id: string;
@@ -289,6 +296,9 @@ export async function rechargeClaims(org: string, origin = ''): Promise<Recharge
       // different people, and the report wants the one who actually decided.
       approved_by: c.decidedBy || c.approver || '',
       approver: c.approver || '',
+      // Stored on the claim when it was submitted; resolved from the name for
+      // the claims raised before that field existed.
+      approver_email: c.approverEmail || emailForName(WORKSPACE_ID, c.approver) || '',
       decided_at: c.decidedAt || '',
       xero_invoice_id: c.xeroInvoiceId || '',
       xero_status: c.xeroStatus || '',

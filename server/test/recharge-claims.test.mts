@@ -84,7 +84,7 @@ const claim = (id: string, over: Record<string, unknown> = {}) => ({
     { itemId: '260801120000', date: '2026-08-01', supplier: 'Grab', category: 'Transport - Taxi', net: '24', tax: '0', total: '24' },
     { itemId: '260802120000', date: '2026-08-02', supplier: 'Koufu', category: 'Meal Weekday (after 9pm)', net: '12.50', tax: '0', total: '12.50' },
   ],
-  history: [], approvalStatus: 'approved', approver: '', approverEmail: '', decidedBy: '',
+  history: [], approvalStatus: 'approved', approver: 'Martin Lim', approverEmail: 'martin.lim@stengg.com', decidedBy: '',
   decidedAt: '2026-09-01T02:00:00.000Z',
   archived: false, deleted: false, createdBy: 'weiming.tan@stengg.com', createdAt: new Date(Date.UTC(2026, 7, 20, 4, 0, 0)).toISOString(),
   ...over,
@@ -232,6 +232,10 @@ check('a line with no stored file has no link', [row.lines[1].item_no, row.lines
 // A PO assigns PEOPLE. A claim stores a display NAME, which the roster can
 // rename, so the stable identity has to travel with it.
 check('the claimant resolves to an address', row.claimant_email, 'weiming.tan@stengg.com');
+// The same rule for the APPROVER: a recharge's Reporting Officers are filled
+// from whoever approved the claims, and a reply only moves a step when it comes
+// from one of their addresses — so the name alone would be no use.
+check('and so does the approver', [row.approver, row.approver_email], ['Martin Lim', 'martin.lim@stengg.com']);
 check('coverage is decided by the period end', row.period_end, '2026-08-31');
 check('the total is the sum of its items', row.total, '36.50');
 check('the item count travels', row.items, 2);
