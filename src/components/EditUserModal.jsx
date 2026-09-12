@@ -114,8 +114,16 @@ function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
       {pending ? (
         <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-50 px-3 py-3 dark:bg-amber-500/10">
           <p className="text-sm font-medium text-amber-900 dark:text-amber-200">Forwarding confirmation received</p>
+          {/* A confirmation does not always carry a link we recognise, and the
+              code alone finishes the job — so where there is no button, say
+              where the code goes rather than pointing at a link that isn't
+              there, which is what made this read as broken. */}
           <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
-            Google sent a confirmation for a forward to this address. Open the link{pending.code ? `, or enter code ${pending.code},` : ''} to finish setting it up.
+            {pending.url ? (
+              <>Google sent a confirmation for a forward to this address. Open the link{pending.code ? `, or enter code ${pending.code},` : ''} to finish setting it up.</>
+            ) : (
+              <>Google sent a confirmation for a forward to this address, with no link we could read. Enter code {pending.code} in Gmail under Settings → Forwarding and POP/IMAP, beside the address waiting to be verified.</>
+            )}
           </p>
           <div className="flex flex-wrap items-center gap-2 pt-1">
             {pending.url && (

@@ -674,16 +674,41 @@ export const inboundRouter = Router();
 
 const IMAGE_OR_PDF = /pdf|png|jpe?g|gif|webp|tiff?|heic/i;
 
+// A verification link: Google's mail host, the /mail/ path, and the `vf-` token
+// that marks it as one. mail-settings.google.com is the classic spelling and was
+// the only one the old pattern took, which is how a confirmation arrived with
+// its code stored and no link at all — a panel offering a button that isn't
+// there. The host is read loosely and the `vf-` token strictly, because the
+// token is what says "verification" and the host is the part that moves.
+const CONFIRM_LINK = /^https:\/\/(?:[a-z0-9-]+\.)*google\.com\/mail\/\S*vf-/i;
+// The fallback, used only once the SENDER says this is a confirmation: Google's
+// own mail path, minus the pages every Google mail carries at the foot of it.
+const GOOGLE_MAIL_LINK = /^https:\/\/(?:[a-z0-9-]+\.)*google\.com\/mail\//i;
+const GOOGLE_FOOTER_LINK = /^https:\/\/(?:support|policies|myaccount|accounts)\.google\.com\//i;
+
 // Pull the Gmail forwarding-confirmation link (and numeric code, if any) out of
 // a Google confirmation email. Returns null when this isn't one.
-function parseForwardConfirmation(from: string, subject: string, body: string) {
+//
+// The link is picked from the ones `linksIn` already pulled out of the message
+// rather than matched again here, and that is the point rather than a tidy-up:
+// it decodes `&amp;`, and a confirmation URL is all query parameters, so a link
+// scraped straight out of the HTML part arrives with its ampersands still
+// encoded and fails when clicked.
+function parseForwardConfirmation(from: string, subject: string, body: string, links: string[] = []) {
   const isGoogle =
     /forwarding-noreply@google\.com/i.test(from) ||
     (/confirm/i.test(subject) && /forward/i.test(subject));
-  const urlMatch = body.match(/https:\/\/mail-settings\.google\.com\/mail\/[^\s"'<>]+/i);
+  const confirm = links.find((u) => CONFIRM_LINK.test(u)) || '';
+  // A verification link on its own still identifies a confirmation, so a mail
+  // whose sender we don't recognise is judged exactly as strictly as before —
+  // the loose fallback is reached only when the sender has already said.
+  if (!isGoogle && !confirm) return null;
+  const url =
+    confirm ||
+    links.find((u) => GOOGLE_MAIL_LINK.test(u) && !GOOGLE_FOOTER_LINK.test(u)) ||
+    '';
   const codeMatch = body.match(/\b(\d{6,})\b/); // Gmail's numeric confirmation code
-  if (!isGoogle && !urlMatch) return null;
-  return { url: urlMatch ? urlMatch[0] : '', code: codeMatch ? codeMatch[1] : '' };
+  return { url, code: codeMatch ? codeMatch[1] : '' };
 }
 
 // GET /api/inbound/config — the webhook URL + shared secret + mail domain, for
@@ -836,7 +861,7 @@ inboundRouter.post('/email', async (req, res) => {
   // app rather than filing it as a bill. Mirrored all the same — it arrived, and
   // a tab that shows only the mail that became a document is a tab that cannot
   // answer why something didn't.
-  const conf = parseForwardConfirmation(from, subject, body);
+  const conf = parseForwardConfirmation(from, subject, body, links);
   if (conf && (conf.url || conf.code)) {
     setPendingForward(user.id, { url: conf.url, code: conf.code, from });
     mirror({ outcome: 'forwarding_confirmation' });
