@@ -1491,6 +1491,78 @@ The rules live in `server/src/users.ts` next to the rows they read
 `src/lib/inboundAddress.js` so the address a page previews is the address that
 gets saved. Covered by `npm test` at the root and in `server/`.
 
+## A bill that arrives as a LINK, and the mail that arrives at all
+
+**Some invoices are a sentence and a link.** Xero's own subscription invoice is
+the case: "View your bill online: INV-7822201", with the PDF behind a login, and
+a growing number of supplier portals do the same. The inbound road files one
+document per ATTACHMENT, so that mail filed nothing — and left nothing: no
+document, no row, no reason, just a delivery that answered `created: 0`. CYBills
+holds no credentials for those portals and should not; **n8n** does, and already
+runs retrievals of exactly this kind. So a delivery that filed nothing of its own
+hands its links over (`server/src/n8n.ts`, `N8N_FETCH_URL` + optional
+`N8N_API_KEY`) and files what comes back through the same storage, the same
+owner, the same covering envelope and the same background read an attachment
+gets — a document that arrived by link is indistinguishable afterwards from one
+that arrived as a file.
+
+**Only where the attachments produced nothing.** A mail carrying both the
+invoice and a link to the same invoice must not file the cost twice, and the
+attachment is the document when there is one. Every http(s) link goes over, in
+the order it was written, with the first also as `url`: a mail carries an
+unsubscribe link and a help-centre link beside the one that matters, and the
+workflow holding the portal credentials is the half equipped to tell them apart.
+
+**The bytes decide what a file is.** This is the load-bearing check on the road.
+A portal that wants a login answers **200 with a sign-in PAGE**, and a workflow
+handing that back — labelled `application/pdf`, named `invoice.pdf`, because
+that is what the author typed — would otherwise have it filed as a cost and
+given to the reader, which would dutifully read a login form. So the declared
+type and the file name are not consulted at all here; `sniffMediaType` is, and
+nothing else. Whatever shape n8n answers in is read (an n8n item array, a binary
+passthrough, a hand-built object, or the bytes themselves under a non-JSON
+content type) — the contract is `deploy/EMAIL-INBOUND.md`.
+
+**Every failure is a NOTE, never an exception.** The delivery was answered before
+the call went out (a portal login is slower than a model read, and the Worker
+waits for neither), so nothing downstream can fail it. A non-2xx, an unreachable
+host, a workflow that found nothing: each lands on the message in n8n's own
+words, quoted back from its `error`/`message`/`note`/`reason` field where it has
+one, because "n8n returned nothing" and "the login had expired" send a reviewer
+to different places.
+
+**And the mail itself is now somewhere.** Costs can only ever show what a
+delivery PRODUCED, so a mail that filed nothing appeared nowhere in CYBills at
+all — the link case above, a `.docx` invoice, a forwarding confirmation — and "I
+emailed that last week" had no answer here. Every delivery is mirrored
+(`mailThread.ts`, a leaf like `waThread.ts` and for the same reason: the
+delivery road and the router both read it), **upserted on the message id** so a
+Worker retrying a timed-out POST leaves one row rather than two and does not ask
+n8n to fetch the same invoice twice. The id is the MIME `Message-ID` where the
+Worker forwards one, and otherwise what the message IS — recipient, sender,
+subject, date and the head of the body.
+
+**The Email tab is threaded by PERSON**, the way the WhatsApp tab is threaded by
+group, because that is what an inbound address is: `martin.redalpha@cybills.sg`
+is one person's pipe and the entity's short form standing alone is its general
+account's. A message's thread is therefore decided by where it was DELIVERED,
+never by who sent it. Each row shows what became of the mail — the documents it
+produced (linked through to their own pages), the attachments that were skipped
+and why, its links (shown whether or not n8n is switched on: a link somebody can
+open themselves beats a dead end), and n8n's own words. **Fetch the document**
+is the retry a person presses, and it is the one road allowed to follow links on
+a message that ALREADY has a document — pressing it twice is how the second
+invoice on one mail is got — because it is the one with a person behind it.
+**Business Admin**, on the route as well as in the rail: it shows everybody's
+mail in the entity, the same bar as the Costs inbox it sits beside.
+
+Env (server/.env): `N8N_FETCH_URL`, `N8N_API_KEY`, `N8N_TIMEOUT_MS` (default
+120s). Unset, the road is simply not there and the mail is still mirrored saying
+so. Covered by `npm test` in `server/` (`test/email-link.test.mts`, driven over
+real HTTP at both ends — the inbound endpoint as the Worker calls it, and a stub
+standing in for n8n — so what is asserted is the request that actually goes out
+and the bytes that actually come back).
+
 ## Bill collection over WhatsApp (with CYWorkspace)
 
 The people who hold a client's invoices are not the people who log into CYBills,

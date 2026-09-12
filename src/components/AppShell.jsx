@@ -21,6 +21,7 @@ import {
   Trash2,
   Menu,
   MessageCircle,
+  Mail,
   Landmark,
   X,
 } from 'lucide-react';
@@ -56,6 +57,12 @@ const NAV = [
   // documents and everybody's messages, so it is hidden from anybody who could
   // not open the Costs inbox in the first place — the route guards it too.
   { to: '/whatsapp', label: 'WhatsApp', icon: MessageCircle, requires: 'business' },
+  // And the other pipe documents arrive down. Costs shows what an email
+  // PRODUCED; this shows what was sent — including the mail that produced
+  // nothing, which is the half that was invisible: an invoice sent as a link
+  // rather than an attachment used to file nothing and leave no trace. Same
+  // bar as WhatsApp, for the same reason — it is everybody's mail.
+  { to: '/email', label: 'Email', icon: Mail, requires: 'business' },
   // Bank match: the statement lines CYWorkspace's auto bank reconciliation
   // could not settle, matched to the documents here that pay them. It
   // publishes bills and records payments in the entity's ledger, and shows

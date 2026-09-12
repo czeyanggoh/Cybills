@@ -139,6 +139,22 @@ export const env = {
   // hand it over without any VPS access (see whatsapp.ts, inboundKey).
   WHATSAPP_INBOUND_KEY: process.env.WHATSAPP_INBOUND_KEY ?? '',
 
+  // --- n8n (the document behind a link) -------------------------------------
+  // A bill increasingly arrives as a LINK rather than an attachment — Xero's own
+  // subscription invoice is the case this exists for: "View your bill online",
+  // with the PDF behind a login. CYBills holds no credentials for those portals
+  // and should not; n8n does. So a mail that filed no document hands its links
+  // to this webhook, which answers with the file (base64 in JSON, or the bytes
+  // themselves) and CYBills files and reads it exactly as it would an
+  // attachment. Unset, the road simply is not there and the mail is still
+  // mirrored in the Email tab saying so. See deploy/EMAIL-INBOUND.md.
+  N8N_FETCH_URL: process.env.N8N_FETCH_URL ?? '',
+  // Sent as X-API-Key, for a webhook set to header auth. Optional.
+  N8N_API_KEY: process.env.N8N_API_KEY ?? '',
+  // A portal login + download is slow, and nobody is waiting on this: the
+  // delivery was answered before the call went out.
+  N8N_TIMEOUT_MS: Number(process.env.N8N_TIMEOUT_MS) || 120000,
+
   // The webhook key from the Xero app's Webhooks page (My Apps -> Webhooks).
   // Xero signs every delivery with it (x-xero-signature, HMAC-SHA256 over the
   // RAW body), and that signature is the only thing that says a POST really

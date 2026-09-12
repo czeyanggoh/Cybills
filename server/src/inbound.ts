@@ -21,6 +21,8 @@ import { recordUsage } from './usage.js';
 import { readSetting } from './settings.js';
 import { workspaceId } from './workspace.js';
 import { visionEnabled, claudeEnabled, openaiEnabled, googleEnabled } from './env.js';
+import { fetchDocumentsForLinks, linksIn } from './n8n.js';
+import { recordMail, recordLinkFetch, type MailAttachment, type MailDocument, type MailMessage } from './mailThread.js';
 
 const norm = (s: string) => String(s ?? '').trim().toLowerCase();
 
@@ -427,6 +429,111 @@ export async function autoRead(
   }
 }
 
+// The covering message as it is stored on a document and given to the reader —
+// the email's own five fields. Wider than CoveringNote, which is only what the
+// READ is told; `to` and `date` belong to the document's record of the mail.
+type MailEnvelope = { from: string; to: string; subject: string; date: string; text: string };
+
+// File one document that arrived as BYTES rather than as an attachment — what
+// n8n hands back from behind a link — exactly as the attachment road files one:
+// same storage, same owner, same covering envelope, same "Processing" status
+// while the read runs. Shared so a document that came by link is
+// indistinguishable from one that came as a file the moment it lands.
+async function fileFetchedDocument(
+  scope: string,
+  user: { email: string },
+  envelope: MailEnvelope,
+  doc: { bytes: Buffer; fileName: string; mediaType: string }
+): Promise<{ id: string; displayId: string }> {
+  const fileHash = createHash('sha256').update(doc.bytes).digest('hex');
+  let storageKey = '';
+  let storedType = '';
+  try {
+    const stored = await putBillFile(scope, fileHash, doc.mediaType, doc.bytes);
+    storageKey = stored.storageKey;
+    storedType = stored.contentType;
+  } catch {
+    // Keep the metadata record even if the file store fails, as the attachment
+    // road does — a document with no retrievable file is still a document.
+  }
+  const bill = insertBill({
+    orgId: scope,
+    fileHash,
+    fileName: doc.fileName,
+    supplier: '',
+    invoiceNumber: '',
+    documentType: '',
+    currency: '',
+    total: 0,
+    tax: 0,
+    date: '',
+    category: '',
+    createdBy: user.email,
+    owner: user.email,
+    email: { from: envelope.from, to: envelope.to, subject: envelope.subject, date: envelope.date, text: envelope.text },
+    storageKey,
+    contentType: storedType || doc.mediaType,
+    status: 'processing',
+    kind: 'cost',
+  });
+  return { id: bill.id, displayId: bill.displayId };
+}
+
+// Ask n8n what is behind this message's links, and file whatever comes back.
+//
+// Only ever called for a delivery that filed NOTHING of its own: an attachment
+// is the document when there is one, and a mail carrying both an invoice and a
+// link to the same invoice must not produce it twice. The result is written
+// onto the mirrored message either way — a note saying what n8n said is what
+// the Email tab shows when the answer was "nothing", and a reviewer with a
+// reason can act where one staring at an empty inbox cannot.
+//
+// Best-effort throughout, and never allowed to throw into a background caller:
+// the delivery has already been answered by the time this runs.
+export async function followMessageLinks(
+  req: Request,
+  message: MailMessage,
+  user: { email: string },
+  provider: Provider
+): Promise<{ note: string; documents: MailDocument[] }> {
+  const envelope: MailEnvelope = {
+    from: message.from,
+    to: message.to,
+    subject: message.subject,
+    date: message.sentAt,
+    text: message.text,
+  };
+  let result: { documents: Array<{ bytes: Buffer; fileName: string; mediaType: string }>; note: string };
+  try {
+    result = await fetchDocumentsForLinks(message.links, envelope);
+  } catch (err) {
+    result = { documents: [], note: `n8n could not be reached (${err instanceof Error ? err.message : String(err)})` };
+  }
+
+  const made: MailDocument[] = [];
+  const reads: Array<{ id: string; bytes: Buffer; mediaType: string; fileName: string }> = [];
+  for (const doc of result.documents) {
+    try {
+      const bill = await fileFetchedDocument(message.scope, user, envelope, doc);
+      made.push({ billId: bill.id, displayId: bill.displayId, fileName: doc.fileName, via: 'link' });
+      reads.push({ id: bill.id, bytes: doc.bytes, mediaType: doc.mediaType, fileName: doc.fileName });
+    } catch (err) {
+      console.error('[inbound] could not file a linked document', err);
+    }
+  }
+  recordLinkFetch(message.id, result.note, made);
+
+  // Read each one the way an emailed attachment is read — with the covering
+  // message, and under its own file name.
+  for (const r of reads) {
+    void autoRead(req, message.scope, message.orgId, provider, r.id, r.bytes.toString('base64'), r.mediaType, {
+      ...envelope,
+      fileName: r.fileName,
+    });
+  }
+  return { note: result.note, documents: made };
+}
+
 // The shared secret the Cloudflare Worker signs its POSTs with. Prefer an env
 // override (INBOUND_SECRET); otherwise CYBills generates one on first use and
 // persists it to the data dir, so an admin can read it from the app and paste it
@@ -502,6 +609,10 @@ inboundRouter.post('/email', async (req, res) => {
   let text = String(b.text || '');
   let html = String(b.html || '');
   let sentAt = String(b.date || '');
+  // The Message-ID header, where the raw MIME is forwarded. It is the one
+  // identifier a mail carries of its own, so it is what the Email tab's rows
+  // are keyed on when it is there.
+  let messageIdFromMime = '';
   // Attachments the caller may pass pre-parsed: { filename, contentType, contentBase64 }.
   let atts: Array<{ filename: string; contentType: string; contentBase64: string }> =
     Array.isArray(b.attachments) ? b.attachments : [];
@@ -523,6 +634,7 @@ inboundRouter.post('/email', async (req, res) => {
         to = recipients?.value?.[0]?.address || '';
       }
       sentAt = parsed.date ? parsed.date.toISOString() : sentAt;
+      messageIdFromMime = String(parsed.messageId || '');
       text = parsed.text || text;
       html = typeof parsed.html === 'string' ? parsed.html : html;
       atts = (parsed.attachments || []).map((a) => ({
@@ -547,15 +659,6 @@ inboundRouter.post('/email', async (req, res) => {
   const user = userByEmailHandle(local) || generalUserByEmailSuffix(workspaceId(req), local);
   if (!user) return res.status(404).json({ error: 'unknown_recipient', to });
 
-  // A Gmail forwarding confirmation: hold the link for the user to click in the
-  // app rather than filing it as a bill.
-  const conf = parseForwardConfirmation(from, subject, body);
-  if (conf && (conf.url || conf.code)) {
-    setPendingForward(user.id, { url: conf.url, code: conf.code, from });
-    return res.json({ ok: true, kind: 'forwarding_confirmation', user: user.id });
-  }
-
-  // Otherwise file each PDF/image attachment as a cost document owned by the user.
   // Two org ids in play, and they differ for the primary entity:
   //   realOrgId — the organisation RECORD id, which its per-org settings and Xero
   //               tenant are keyed on (a colleague on no single entity files into
@@ -568,24 +671,82 @@ inboundRouter.post('/email', async (req, res) => {
   // Attribute this document's API spend to its client entity on the Clients page
   // (recordUsage reads the X-Org-Id header; the Worker sends none).
   (req.headers as Record<string, string>)['x-org-id'] = realOrgId;
+
   // The covering message, stored on every document it delivered. The body is
   // capped: a forwarded thread can run to hundreds of lines, and what matters is
   // what the sender wrote at the top of it.
-  const envelope = {
+  const envelope: MailEnvelope = {
     from,
     to,
     subject,
     date: sentAt,
     text: String(text || '').trim().slice(0, 4000),
   };
-  const madeBills: Array<{ id: string; base64: string; mediaType: string; fileName: string }> = [];
+
+  // The message's own identity, and the key the mirror is upserted on. The MIME
+  // carries one; a Worker that posts pre-parsed fields does not, so the message
+  // is named by what it IS instead — a delivery retried after a timeout must
+  // leave one row in the Email tab rather than two, and must not ask n8n to
+  // fetch the same invoice a second time.
+  const messageId =
+    String(b.messageId || b.message_id || messageIdFromMime).trim() ||
+    `mail_${createHash('sha256').update(`${to}|${from}|${subject}|${sentAt}|${body.slice(0, 2000)}`).digest('hex').slice(0, 24)}`;
+  const received = new Date().toISOString();
+
+  // Every http(s) link in the message. Read here rather than at the point of
+  // use so the Email tab can SHOW them even where n8n is switched off or found
+  // nothing: a link somebody can click themselves is better than a dead end.
+  const links = linksIn(text, html);
+
+  const mirror = (over: Partial<MailMessage>): MailMessage =>
+    recordMail({
+      id: messageId,
+      workspaceId: workspaceId(req),
+      orgId: realOrgId,
+      scope,
+      userId: user.id,
+      to,
+      from,
+      subject,
+      text: envelope.text,
+      sentAt: sentAt || received,
+      receivedAt: received,
+      attachments: [],
+      documents: [],
+      links,
+      linkNote: '',
+      linkFetchedAt: '',
+      outcome: 'nothing',
+      ...over,
+    });
+
+  // A Gmail forwarding confirmation: hold the link for the user to click in the
+  // app rather than filing it as a bill. Mirrored all the same — it arrived, and
+  // a tab that shows only the mail that became a document is a tab that cannot
+  // answer why something didn't.
+  const conf = parseForwardConfirmation(from, subject, body);
+  if (conf && (conf.url || conf.code)) {
+    setPendingForward(user.id, { url: conf.url, code: conf.code, from });
+    mirror({ outcome: 'forwarding_confirmation' });
+    return res.json({ ok: true, kind: 'forwarding_confirmation', user: user.id });
+  }
+
+  // Otherwise file each PDF/image attachment as a cost document owned by the user.
+  const madeBills: Array<{ id: string; displayId: string; base64: string; mediaType: string; fileName: string }> = [];
+  const attachmentRows: MailAttachment[] = [];
   for (const a of atts) {
     const filename = String(a?.filename || 'document');
     const contentType = String(a?.contentType || '');
     const base64 = typeof a?.contentBase64 === 'string' ? a.contentBase64 : '';
     if (!base64) continue;
-    if (!IMAGE_OR_PDF.test(contentType) && !IMAGE_OR_PDF.test(filename)) continue;
     const bytes = Buffer.from(base64, 'base64');
+    if (!IMAGE_OR_PDF.test(contentType) && !IMAGE_OR_PDF.test(filename)) {
+      // Kept in the mirror rather than dropped silently: a .docx invoice is the
+      // commonest reason a mail "arrived and nothing happened", and the row
+      // saying so is the only place anybody would ever see it.
+      attachmentRows.push({ fileName: filename, contentType, bytes: bytes.length, skipped: 'not a PDF or image' });
+      continue;
+    }
     const fileHash = createHash('sha256').update(bytes).digest('hex');
     // What the file IS, off its bytes — not what the mail client labelled it.
     // The label was passed straight through to the reader, which is how a PDF
@@ -625,8 +786,15 @@ inboundRouter.post('/email', async (req, res) => {
       status: 'processing',
       kind: 'cost',
     });
-    madeBills.push({ id: bill.id, base64, mediaType: readType || storedType || contentType, fileName: filename });
+    attachmentRows.push({ fileName: filename, contentType: storedType || contentType, bytes: bytes.length, skipped: '' });
+    madeBills.push({ id: bill.id, displayId: bill.displayId, base64, mediaType: readType || storedType || contentType, fileName: filename });
   }
+
+  const message = mirror({
+    attachments: attachmentRows,
+    documents: madeBills.map((b) => ({ billId: b.id, displayId: b.displayId, fileName: b.fileName, via: 'attachment' as const })),
+    outcome: madeBills.length ? 'documents' : 'nothing',
+  });
 
   // Read with the org's chosen reader (Claude / OpenAI), the same one the manual
   // re-read uses — not the deploy default, which may not be the org's working key.
@@ -634,8 +802,10 @@ inboundRouter.post('/email', async (req, res) => {
   const provider = resolveProvider(settings?.readerProvider);
 
   // Answer the Worker straight away, then read each document in the background —
-  // a model call takes 10-30s and the Worker shouldn't wait on it.
-  res.json({ ok: true, kind: 'documents', created: madeBills.length, user: user.id });
+  // a model call takes 10-30s and the Worker shouldn't wait on it. A link fetch
+  // is slower still (a portal login), which is the other reason nothing after
+  // this line is waited on.
+  res.json({ ok: true, kind: 'documents', created: madeBills.length, user: user.id, message: message.id });
   // The covering message belongs to the EMAIL, the file name to the
   // attachment — one forward can carry three invoices, and reading all three
   // under the name of the first would tell the reader something untrue about
@@ -645,5 +815,18 @@ inboundRouter.post('/email', async (req, res) => {
       ...envelope,
       fileName: b.fileName,
     });
+  }
+
+  // Nothing came as a file, but something was written: a Xero subscription
+  // invoice is a link and a sentence, and until now that mail filed nothing at
+  // all. Ask n8n what is behind the links — ONLY when the attachments produced
+  // nothing, so a mail carrying both the invoice and a link to it cannot file
+  // the same cost twice, and only ONCE per message, so a delivery the Worker
+  // retries cannot fetch the same invoice again. Asking a second time is a
+  // person's call, on the message, in the Email tab.
+  if (!madeBills.length && links.length && !message.linkFetchedAt) {
+    void followMessageLinks(req, message, user, provider).catch((err) =>
+      console.error('[inbound] link fetch failed', err)
+    );
   }
 });

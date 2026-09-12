@@ -14,6 +14,7 @@ import Suppliers from './pages/Suppliers';
 import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
 import Whatsapp from './pages/Whatsapp';
+import Email from './pages/Email';
 import SalesDetail from './pages/SalesDetail';
 import Customers from './pages/Customers';
 import Exports from './pages/Exports';
@@ -72,6 +73,10 @@ function App() {
                 Admin, which a colleague is inside every client they are given. */}
             <Route path="/whatsapp" element={<RequireBusinessAdmin><Whatsapp /></RequireBusinessAdmin>} />
             <Route path="/whatsapp/:submissionId" element={<RequireBusinessAdmin><Whatsapp /></RequireBusinessAdmin>} />
+            {/* The Email tab. Same bar as WhatsApp and for the same reason: it
+                shows everybody's mail in the entity, not the caller's own. */}
+            <Route path="/email" element={<RequireBusinessAdmin><Email /></RequireBusinessAdmin>} />
+            <Route path="/email/:userId" element={<RequireBusinessAdmin><Email /></RequireBusinessAdmin>} />
             {/* Customers is reached only from the Sales sub-nav, and is the
                 list of who those invoices go to — it goes with the section. */}
             <Route path="/customers" element={<SalesRoute><Customers /></SalesRoute>} />

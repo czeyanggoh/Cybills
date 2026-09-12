@@ -8,6 +8,7 @@ import { orgRouter } from './org.js';
 import { extractRouter, vaultRouter } from './extract.js';
 import { billsRouter } from './bills.js';
 import { inboundRouter } from './inbound.js';
+import { emailRouter } from './email.js';
 import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { claimsRouter } from './claims.js';
@@ -172,6 +173,12 @@ app.use('/api/auto-claims', autoClaimsRouter);
 // Users — server-backed + shared (people list + approver roster).
 app.use('/api/users', usersRouter);
 app.use('/api/inbound', inboundRouter);
+
+// The Email tab: every delivery that reached this entity's addresses, threaded
+// by the person it was addressed to, with what became of it. Costs shows what
+// mail PRODUCED; this shows what arrived — including the mail that produced
+// nothing, which is the half nobody could see before.
+app.use('/api/email', emailRouter);
 
 // Bill collection over WhatsApp, in partnership with CYWorkspace: asking it for
 // a group per submission, and receiving the supplier bills its classifier
