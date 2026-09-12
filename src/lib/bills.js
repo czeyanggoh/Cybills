@@ -357,6 +357,11 @@ export function billToDoc(b) {
     // collection group. Null for anything else, which is what the WhatsApp tab
     // reads to know it has nothing to show.
     whatsapp: b.whatsapp || null,
+    // An invoice that arrived as a LINK rather than a file, and where the fetch
+    // got to: 'awaiting_trust' is the document in the inbox ASKING whether its
+    // sender may be followed, and it is what the row's badge and the page's
+    // banner read. Null on everything else.
+    emailLink: b.emailLink || null,
     dueDate: b.dueDate || '',
     // Completed on the way in, so a row stored before the server did it — a net
     // with no total — reads as what it is worth rather than as nothing. The

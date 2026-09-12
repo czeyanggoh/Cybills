@@ -152,3 +152,22 @@ export function isUnpublished(d) {
   if (d?.xeroInvoiceId) return false;
   return d?.status !== 'expenseclaim' && d?.status !== 'merged';
 }
+
+// A document whose invoice is a LINK nobody has agreed to follow yet.
+//
+// It is a real cost in the inbox from the moment the mail lands — that is where
+// somebody is already looking, so that is where the question gets asked — but
+// it has no file and no figures, because fetching the file means pointing a
+// workflow that holds portal credentials at a stranger's URL. Trusting the
+// sender (or fetching this one) fills the same row.
+//
+// It matters to every badge in the list: a placeholder states nothing, so
+// without this it wears "Nothing read", which is what a document the reader
+// FAILED on looks like — and there is nothing wrong with this one. It is
+// waiting on a person, not on a better photograph.
+export const awaitingLink = (d) => d?.emailLink?.status === 'awaiting_trust';
+
+// A fetch that was tried and produced no document — the login had expired, the
+// workflow was down. Says so on the row rather than leaving an empty document
+// that looks like a failed read.
+export const linkFetchFailed = (d) => d?.emailLink?.status === 'failed';

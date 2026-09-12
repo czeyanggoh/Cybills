@@ -1506,6 +1506,60 @@ owner, the same covering envelope and the same background read an attachment
 gets — a document that arrived by link is indistinguishable afterwards from one
 that arrived as a file.
 
+**But a link is only followed for a sender somebody has TRUSTED.**
+`<handle>@cybills.sg` is a public catch-all: anyone who learns an address can
+send to it. Following every link on every delivery therefore points a workflow
+that HOLDS PORTAL CREDENTIALS at whatever URL a stranger cared to send — the
+shape of a credential-phishing attack, and a robot does not hesitate over a
+login page that looks nearly right. So the first mail from an address arrives as
+**a cost document in the Costs inbox that asks**: no file, badged "Trust
+sender?", carrying the covering message, the sender and the links. **Trust this
+sender & fetch** fetches it and everything else of theirs waiting, and every
+later mail from that address is fetched on arrival without asking again; **Just
+fetch this one** gets the document and remembers nothing. `trustedSenders.ts`
+holds the decisions, per entity — trust is a judgement about whose paperwork
+THIS client accepts — in its own collection rather than a settings blob, because
+a route appends to it and because who trusted what, and when, is worth keeping.
+
+**The question is asked where somebody is already looking.** It could have been
+a notice on the Email tab, and then it would be a question in a room nobody
+enters: the Costs inbox is the list people work through, so the waiting document
+is a real row in it from the moment the mail lands — `awaitingLink`
+(`readiness.js`, pure, `npm test`) is what the badge reads, and it also SUPPRESSES
+the two badges that would otherwise misdescribe it. A placeholder states nothing,
+so without it the row wears "Nothing read", which is what a document the READER
+failed on looks like; nothing is wrong with this one, and it is waiting on a
+person rather than on a better photograph. Merge detection skips them for the
+same reason — blank BY DESIGN, two arriving together look exactly like two halves
+of one document to the provisional pass, and neither is a page of anything yet.
+
+**The fetch fills the row that asked.** `followMessageLinks` takes the
+placeholder's id and `attachFetchedFile` puts the bytes, the name and the real
+file hash onto it (`storeFetched` is the half both roads share): the placeholder
+IS the cost — it has been in the list, it may already have been coded or
+reassigned — and a second row beside it would be the same cost twice, which is
+the one thing the inbox exists to prevent. A second document in the same answer
+is inserted beside it, as a mail linking to two invoices should be. Nothing came
+back leaves the row standing with n8n's own words on it (`emailLink.status`
+= `failed`), because an empty document with no explanation is indistinguishable
+from a failed read.
+
+**Trusting is both halves of one decision.** `POST /api/email/senders/trust`
+records it AND sweeps every document of theirs already waiting in this entity,
+oldest first — trusting somebody and then having to press fetch on each of their
+documents is one decision made twice, and the second half is the one people
+forget. `normaliseSender` is why `Xero <billing@post.xero.com>` and
+`billing@post.xero.com` are one sender: a `From` reaches CYBills parsed by
+mailparser on one road and as the raw header on the other, and compared as
+written the same person would be asked about twice. Untrusting removes the
+permission and nothing else: what was already fetched stays, because those are
+documents and they happened. Business Admin throughout, on the route as well as
+in the page — this decides what CYBills will do BY ITSELF with a stranger's URL
+— and the list lives on the Email tab under **Trusted senders**, where the
+consequence of each entry is visible and can be taken back. Covered by
+`npm test` in `server/` (`test/trusted-sender.test.mts`, over real HTTP at both
+ends).
+
 **Only where the attachments produced nothing.** A mail carrying both the
 invoice and a link to the same invoice must not file the cost twice, and the
 attachment is the document when there is one. Every http(s) link goes over, in
@@ -1557,8 +1611,8 @@ invoice on one mail is got — because it is the one with a person behind it.
 mail in the entity, the same bar as the Costs inbox it sits beside.
 
 Env (server/.env): `N8N_FETCH_URL`, `N8N_API_KEY`, `N8N_TIMEOUT_MS` (default
-120s). Unset, the road is simply not there and the mail is still mirrored saying
-so. Covered by `npm test` in `server/` (`test/email-link.test.mts`, driven over
+120s). Unset, the road is simply not there: the mail is still mirrored and the
+document still stands in the inbox with its links, saying so. Covered by `npm test` in `server/` (`test/email-link.test.mts`, driven over
 real HTTP at both ends — the inbound endpoint as the Worker calls it, and a stub
 standing in for n8n — so what is asserted is the request that actually goes out
 and the bytes that actually come back).

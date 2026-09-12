@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Info,
   ExternalLink,
+  Link2 as LinkIcon,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -22,6 +23,7 @@ import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
+import { trustSender, fetchDocumentLink } from '@/lib/mailbox';
 import { DOCS, getDoc } from '@/data/docs';
 import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
 import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, useOrganisations, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
@@ -367,6 +369,10 @@ export default function CostDetail() {
   const [xeroBusy, setXeroBusy] = useState(''); // '' | 'attach' | 'clear'
   const [xeroNote, setXeroNote] = useState('');
   const [teach, setTeach] = useState(null); // { field, value } after a manual correction
+  // The link question: fetching this document's invoice from behind its link,
+  // and whether its sender may be followed without asking next time.
+  const [linkBusy, setLinkBusy] = useState('');
+  const [linkNote, setLinkNote] = useState('');
 
   const doc = mockDoc ?? persisted;
   // The key everything server-side is addressed by. Falls back to the URL's key
@@ -928,6 +934,36 @@ export default function CostDetail() {
   const entityCheck = doc?.entityCheck;
   const wrongEntity = entityCheck?.status === 'mismatch';
   const moveTargets = wrongEntity ? entityCheck.candidates || [] : [];
+
+  // An invoice that arrived as a LINK, with nobody having yet said its sender
+  // may be followed. The document is already here — this is the question it is
+  // standing in the inbox to ask, and the two answers are "trust them from now
+  // on" and "just fetch this one".
+  const link = doc?.emailLink || null;
+  const askingToFetch = link?.status === 'awaiting_trust';
+  const linkFailed = link?.status === 'failed' && !doc?.hasFile;
+
+  // Business Admin, the same bar the Email tab holds and the server enforces:
+  // this decides what CYBills will do by itself with a stranger's URL.
+  const mayDecideLinks = !googleEnabled || Boolean(membership?.businessAdmin || membership?.admin);
+
+  const runLink = async (what, fn) => {
+    setLinkBusy(what);
+    setLinkNote('');
+    try {
+      const out = await fn();
+      // A fetch that found nothing is an ANSWER, not a failure: n8n's own words
+      // are what tell somebody whether to fix the workflow or the login.
+      setLinkNote(out?.ok ? '' : out?.note || out?.notes?.[0] || 'Nothing came back from that link.');
+      const r = await fetchBillById(doc.id).catch(() => null);
+      if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+      notifyBillsChanged();
+    } catch (err) {
+      setLinkNote(err.message);
+    } finally {
+      setLinkBusy('');
+    }
+  };
 
   const confirmEntity = async () => {
     const r = await updateBill(doc.id, { entityCheckDismissed: true }).catch(() => null);
@@ -1608,6 +1644,73 @@ export default function CostDetail() {
             {readyError.length === 1 ? 'it' : 'them'} in, then Move to ready.
           </span>
           <button type="button" onClick={() => setReadyError([])} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
+        </div>
+      )}
+      {/* An invoice that came as a LINK. First of the banners, because until it
+          is answered there is nothing else on this page to do: the document has
+          no file, no supplier and no figures — it is the question itself. */}
+      {(askingToFetch || linkFailed) && (
+        <div className="mb-3 rounded-md border border-sky-600/40 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+          <div className="flex flex-wrap items-start gap-2">
+            <LinkIcon className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-[18rem] flex-1">
+              <p>
+                {askingToFetch ? 'This arrived by email as a link, with no attachment.' : 'The link could not be fetched.'}{' '}
+                <span className="font-medium">{link.from || 'an unknown sender'}</span> sent it
+                {doc?.email?.subject ? ` — “${doc.email.subject}”` : ''}.
+                {askingToFetch
+                  ? ' Fetching the invoice means opening that link with the credentials n8n holds, so somebody has to say the sender is trusted.'
+                  : ''}
+              </p>
+              {(linkNote || (linkFailed && link.note)) && (
+                <p className="mt-1 font-medium">{linkNote || link.note}</p>
+              )}
+              {/* The links themselves, whatever is decided: one somebody can
+                  open in their own browser beats a dead end. */}
+              <div className="mt-1 space-y-0.5">
+                {(link.links || []).slice(0, 3).map((href) => (
+                  <a
+                    key={href}
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="block max-w-full truncate text-xs underline underline-offset-2"
+                  >
+                    {href}
+                  </a>
+                ))}
+              </div>
+              {!mayDecideLinks && (
+                <p className="mt-1 text-xs">A Business Admin can fetch it, or trust this sender.</p>
+              )}
+            </div>
+            {mayDecideLinks && (
+              <span className="ml-auto flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={Boolean(linkBusy)}
+                  onClick={() => runLink('trust', () => trustSender(link.from))}
+                  className="inline-flex h-7 items-center rounded-md border border-sky-700/40 bg-sky-100 px-2.5 text-xs font-medium transition-colors hover:bg-sky-200 disabled:opacity-60"
+                >
+                  {linkBusy === 'trust' ? 'Fetching…' : 'Trust this sender & fetch'}
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(linkBusy)}
+                  onClick={() => runLink('once', () => fetchDocumentLink(doc.id))}
+                  className="whitespace-nowrap text-xs text-sky-900/70 underline underline-offset-2 hover:text-sky-900 disabled:opacity-60"
+                >
+                  {linkBusy === 'once' ? 'Fetching…' : askingToFetch ? 'Just fetch this one' : 'Try again'}
+                </button>
+              </span>
+            )}
+          </div>
+          {askingToFetch && (
+            <p className="mt-1.5 pl-6 text-xs text-sky-900/80">
+              Trusting them fetches this and everything else of theirs that is waiting, and every later invoice from
+              that address is fetched on arrival. Not sure who they are? Archive this instead.
+            </p>
+          )}
         </div>
       )}
       {/* Billed to somebody who isn't this entity. It sits above the duplicate

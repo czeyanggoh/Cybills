@@ -70,6 +70,12 @@ me.emailHandle = 'astrid4';
 me.organisationId = 'org_one0001';
 save(users);
 
+// The sender is TRUSTED here, so what follows is about the fetch itself. Whose
+// links may be followed at all — and the document that stands in the inbox
+// asking until somebody says — is trusted-sender.test.mts's subject.
+const { trustSender } = await import('../src/trustedSenders.ts');
+trustSender('cybm', 'org_one0001', 'cybm', 'czeyang.goh@cy-bm.sg', 'test@cy-bm.sg');
+
 const app = express();
 app.use(express.json({ limit: '25mb' }));
 app.use('/api/inbound', inboundRouter);

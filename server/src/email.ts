@@ -32,6 +32,7 @@ import { googleEnabled } from './env.js';
 import { resolveProvider } from './llm.js';
 import { readSetting } from './settings.js';
 import { mailById, mailForOrg, type MailMessage } from './mailThread.js';
+import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
 import { followMessageLinks } from './inbound.js';
 import { n8nEnabled } from './n8n.js';
 
@@ -167,7 +168,14 @@ emailRouter.get('/threads/:userId', (req, res) => {
       general: Boolean(person?.user.general),
       missing: !person,
     },
-    messages: messages.map((m) => ({ ...m, summary: summaryOf(m) })),
+    // Whether this sender's links are followed without asking. Per MESSAGE
+    // rather than once for the thread: a mailbox receives from everybody, and
+    // the question is always about the address that sent THIS one.
+    messages: messages.map((m) => ({
+      ...m,
+      summary: summaryOf(m),
+      senderTrusted: isTrustedSender(ws, orgId, dataScopeForOrg(orgId), m.from),
+    })),
     linkFetchEnabled: n8nEnabled(),
   });
 });
@@ -208,6 +216,118 @@ emailRouter.post('/messages/:id/fetch', async (req, res) => {
   // Waited on, unlike the delivery road's: somebody is watching this one, and
   // the answer is the whole point of having pressed it. The READ that follows
   // still runs in the background — the document exists either way.
-  const { note, documents } = await followMessageLinks(req, message, person.user, provider);
+  // The placeholder, where one is waiting: the fetch fills the row that has
+  // been asking rather than standing a second cost beside it.
+  const { note, documents } = await followMessageLinks(req, message, person.user, provider, message.pendingBillId || '');
+  res.json({ ok: documents.length > 0, note, documents });
+});
+
+// What a fetch needs, for one message: who to file under and which reader.
+// Resolved in one place because the three roads below all need the same two.
+function fetchContextFor(ws: string, message: MailMessage) {
+  const person = personFor(ws, message.userId);
+  if (!person) return null;
+  const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', message.orgId);
+  return { user: person.user, provider: resolveProvider(settings?.readerProvider) };
+}
+
+// GET /api/email/senders — whose links this entity follows without asking.
+emailRouter.get('/senders', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const senders = trustedSendersFor(ws, orgId, dataScopeForOrg(orgId)).map((t) => ({
+    address: t.address,
+    at: t.at,
+    by: t.by,
+  }));
+  res.json({ senders, linkFetchEnabled: n8nEnabled() });
+});
+
+/**
+ * POST /api/email/senders/trust — this sender may be followed from now on.
+ *
+ * Two things at once, deliberately. It records the decision, so every later
+ * mail from that address is fetched on arrival without asking again; and it
+ * acts on it NOW, for every document of theirs already standing in the inbox
+ * waiting for exactly this answer. Trusting a sender and then having to press
+ * fetch on each of their documents separately would be the same decision made
+ * twice, and the second half is the one people forget.
+ */
+emailRouter.post('/senders/trust', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const address = normaliseSender(String(req.body?.address ?? ''));
+  if (!address || !address.includes('@')) {
+    return res.status(422).json({ error: 'bad_address', message: 'That is not an email address.' });
+  }
+  const me = memberForSession(req);
+  trustSender(ws, orgId, dataScopeForOrg(orgId), address, me?.email || '');
+
+  // Everything of theirs that was waiting on the answer. Ordered oldest first,
+  // so a backlog is cleared in the order it arrived.
+  const waiting = mailHere(ws, orgId)
+    .filter((m) => Boolean(m.pendingBillId) && normaliseSender(m.from) === address)
+    .sort((a, b) => String(a.sentAt).localeCompare(String(b.sentAt)));
+
+  const notes: string[] = [];
+  let fetched = 0;
+  if (n8nEnabled()) {
+    for (const message of waiting) {
+      const ctx = fetchContextFor(ws, message);
+      if (!ctx) continue;
+      const out = await followMessageLinks(req, message, ctx.user, ctx.provider, message.pendingBillId || '');
+      fetched += out.documents.length;
+      if (!out.documents.length) notes.push(out.note);
+    }
+  } else if (waiting.length) {
+    notes.push('No n8n webhook is configured (N8N_FETCH_URL), so nothing could be fetched.');
+  }
+
+  res.json({ ok: true, address, waiting: waiting.length, fetched, notes });
+});
+
+// POST /api/email/senders/untrust — stop following this sender's links.
+//
+// What was already fetched under the trust stays: those are documents now, and
+// they happened. Only what arrives NEXT goes back to asking.
+emailRouter.post('/senders/untrust', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const address = normaliseSender(String(req.body?.address ?? ''));
+  const removed = untrustSender(ws, orgId, dataScopeForOrg(orgId), address);
+  res.json({ ok: true, address, removed });
+});
+
+/**
+ * POST /api/email/documents/:billId/fetch — fetch this one, without trusting.
+ *
+ * The other answer to the question the inbox row asks. Somebody who recognises
+ * one invoice but does not want every future mail from that address followed
+ * automatically gets the document and nothing else — no rule written, nothing
+ * remembered. Addressed by the DOCUMENT because that is where the question was
+ * asked; the message behind it is what actually carries the links.
+ */
+emailRouter.post('/documents/:billId/fetch', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const billId = String(req.params.billId ?? '');
+  const message = mailHere(ws, orgId).find((m) => m.pendingBillId === billId)
+    || mailHere(ws, orgId).find((m) => m.documents.some((d) => d.billId === billId));
+  if (!message) return res.status(404).json({ error: 'unknown_document' });
+  if (!message.links.length) return res.status(422).json({ error: 'no_links', message: 'This document carries no link to follow.' });
+  if (!n8nEnabled()) {
+    return res.status(503).json({ error: 'n8n_not_configured', message: 'No n8n webhook is configured (N8N_FETCH_URL).' });
+  }
+
+  const ctx = fetchContextFor(ws, message);
+  if (!ctx) return res.status(422).json({ error: 'unknown_owner', message: 'The person this mail was addressed to is no longer on the roster.' });
+
+  const { note, documents } = await followMessageLinks(req, message, ctx.user, ctx.provider, billId);
   res.json({ ok: documents.length > 0, note, documents });
 });

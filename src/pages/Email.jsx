@@ -1,10 +1,17 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, ExternalLink, FileText, Info, Link2, Loader2, Mail, Paperclip, Search } from 'lucide-react';
+import { Check, ChevronLeft, ExternalLink, FileText, Info, Link2, Loader2, Mail, Paperclip, Search, ShieldCheck, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { cn } from '@/lib/utils';
 import { useActiveOrganisation } from '@/lib/organisations';
-import { useMailThreads, useMailThread, fetchMessageLinks } from '@/lib/mailbox';
+import {
+  useMailThreads,
+  useMailThread,
+  useTrustedSenders,
+  fetchMessageLinks,
+  trustSender,
+  untrustSender,
+} from '@/lib/mailbox';
 
 // What arrived by email, threaded by the person it was addressed to.
 //
@@ -141,7 +148,71 @@ function ThreadList() {
           Showing {rows.length} of {threads.length} mailboxes · {messages} messages
         </p>
       )}
+
+      <TrustedSenders />
     </AppShell>
+  );
+}
+
+// Whose links are followed without asking.
+//
+// Listed here rather than buried in Business settings because this is where the
+// decisions are made and where their consequence is visible: every address on
+// this list has its invoices fetched on arrival, and the only honest way to run
+// a permission is to be able to see it and take it back.
+function TrustedSenders() {
+  const [{ senders, linkFetchEnabled, loading }, reload] = useTrustedSenders();
+  const [busy, setBusy] = useState('');
+
+  if (loading || (!senders.length && !linkFetchEnabled)) return null;
+
+  const remove = async (address) => {
+    setBusy(address);
+    try {
+      await untrustSender(address);
+      await reload();
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <section className="mt-8 max-w-3xl">
+      <h2 className="flex items-center gap-2 text-sm font-semibold">
+        <ShieldCheck className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} /> Trusted senders
+      </h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        An invoice sometimes arrives as a link rather than a file. Fetching it means opening that link with the
+        credentials n8n holds, so it is only done for senders somebody here has trusted. Everyone else&rsquo;s mail
+        lands in Costs as a document that asks first.
+      </p>
+      {senders.length === 0 ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          Nobody yet. The first link that arrives will ask.
+        </p>
+      ) : (
+        <ul className="mt-2 divide-y rounded-lg border">
+          {senders.map((t) => (
+            <li key={t.address} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+              <Check className="h-4 w-4 shrink-0 text-emerald-600" strokeWidth={2} />
+              <span className="font-medium">{t.address}</span>
+              <span className="text-xs text-muted-foreground">
+                trusted {time(t.at)}
+                {t.by ? ` by ${t.by}` : ''}
+              </span>
+              <button
+                type="button"
+                disabled={busy === t.address}
+                onClick={() => remove(t.address)}
+                className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-60"
+              >
+                <X className="h-3 w-3" /> {busy === t.address ? 'Removing…' : 'Stop trusting'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -159,6 +230,26 @@ function Thread({ userId }) {
       // A fetch that found nothing is an ANSWER, not a failure: n8n's own words
       // are what tell a reviewer whether to fix the workflow or the login.
       setNote(out.documents?.length ? `${out.note} — reading ${out.documents.length === 1 ? 'it' : 'them'} now.` : out.note);
+      await reload();
+    } catch (err) {
+      setNote(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  // Trusting the sender is the OTHER answer, and the bigger one: it fetches
+  // everything of theirs already waiting and every later invoice on arrival.
+  async function trust(id, address) {
+    setBusy(id);
+    setNote('');
+    try {
+      const out = await trustSender(address);
+      setNote(
+        out.fetched
+          ? `${address} is trusted — ${out.fetched} document${out.fetched === 1 ? '' : 's'} fetched, and their invoices will be fetched on arrival from now on.`
+          : out.notes?.[0] || `${address} is trusted. Their invoices will be fetched on arrival.`
+      );
       await reload();
     } catch (err) {
       setNote(err.message);
@@ -206,6 +297,7 @@ function Thread({ userId }) {
             linkFetchEnabled={linkFetchEnabled}
             busy={busy === m.id}
             onFetch={() => fetchLinks(m.id)}
+            onTrust={() => trust(m.id, m.from)}
           />
         ))}
       </div>
@@ -213,7 +305,7 @@ function Thread({ userId }) {
   );
 }
 
-function Message({ m, linkFetchEnabled, busy, onFetch }) {
+function Message({ m, linkFetchEnabled, busy, onFetch, onTrust }) {
   const filed = m.documents?.length > 0;
   return (
     <div className="rounded-lg border bg-card">
@@ -244,6 +336,20 @@ function Message({ m, linkFetchEnabled, busy, onFetch }) {
               </Link>
             ))}
           </div>
+        )}
+
+        {/* The document waiting in Costs for this sender to be trusted. It is
+            a real cost row from the moment the mail lands — the inbox is where
+            somebody is already looking — so the thread points at it rather than
+            describing it. */}
+        {m.pendingBillId && (
+          <Link
+            to={`/costs/${encodeURIComponent(m.pendingDisplayId || m.pendingBillId)}`}
+            className="inline-flex items-center gap-1.5 rounded-md border border-sky-600/40 bg-sky-50 px-2 py-1 text-xs text-sky-900 transition-colors hover:bg-sky-100"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+            Waiting in Costs — {m.pendingDisplayId || 'open it'}
+          </Link>
         )}
 
         {/* An attachment that was NOT filed. The commonest reason a mail
@@ -285,16 +391,38 @@ function Message({ m, linkFetchEnabled, busy, onFetch }) {
         {m.linkNote && m.linkNote !== m.summary && (
           <span className="text-xs text-muted-foreground">{m.linkNote}</span>
         )}
-        {m.links?.length > 0 && linkFetchEnabled && (
-          <button
-            type="button"
-            onClick={onFetch}
-            disabled={busy}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-60"
+        {m.senderTrusted && (
+          <span
+            title={`${m.from} is trusted here, so their links are followed on arrival.`}
+            className="inline-flex items-center gap-1 text-xs text-emerald-700"
           >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
-            {filed ? 'Fetch again' : 'Fetch the document'}
-          </button>
+            <ShieldCheck className="h-3.5 w-3.5" /> sender trusted
+          </span>
+        )}
+        {m.links?.length > 0 && linkFetchEnabled && (
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            {!m.senderTrusted && (
+              <button
+                type="button"
+                onClick={onTrust}
+                disabled={busy}
+                title={`Follow ${m.from}'s links from now on, and fetch anything of theirs that is waiting.`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-sky-700/40 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-900 transition-colors hover:bg-sky-100 disabled:opacity-60"
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                Trust this sender
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onFetch}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+              {filed ? 'Fetch again' : 'Fetch the document'}
+            </button>
+          </span>
         )}
       </div>
     </div>

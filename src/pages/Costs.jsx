@@ -11,6 +11,7 @@ import {
   Trash2,
   AlertTriangle,
   Layers,
+  Link2 as LinkIcon,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -48,6 +49,7 @@ import BulkEditModal from '@/components/BulkEditModal';
 import DocCardList from '@/components/DocCardList';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { useCostsDocs, rowsFor, isInInbox, isComplete, isArchived, needsReview, missingFields } from '@/lib/costsData';
+import { awaitingLink, linkFetchFailed } from '@/lib/readiness';
 import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
@@ -633,7 +635,33 @@ export default function Costs() {
               It WRAPS. "Needs: Supplier, Date, Category" is the longest thing
               in this column by far, and holding it on one line made Status the
               widest column on the page for the sake of a badge. */}
-          {needsReview(d) && !statesNothing(docFacts(d)) && (
+          {/* An invoice that arrived as a LINK, with nobody yet having said its
+              sender may be followed. It states nothing and has no file, so
+              without this it wears "Nothing read" — which is what a document
+              the READER failed on looks like, and there is nothing wrong with
+              this one. The badge is the way in: open it and answer. */}
+          {awaitingLink(d) && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(costPath(d.id));
+              }}
+              title={`This arrived by email from ${d.emailLink?.from || 'an unknown sender'} as a link rather than a file. Open it to fetch the document.`}
+              className="inline-flex items-start gap-1 rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-left text-[11px] font-medium leading-tight text-sky-700 transition-colors hover:bg-sky-500/20"
+            >
+              <LinkIcon className="mt-px h-3 w-3 shrink-0" strokeWidth={2} /> Trust sender?
+            </button>
+          )}
+          {linkFetchFailed(d) && !d.storageKey && (
+            <span
+              title={d.emailLink?.note || 'The link could not be followed.'}
+              className="inline-flex items-start gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-left text-[11px] font-medium leading-tight text-amber-700"
+            >
+              <LinkIcon className="mt-px h-3 w-3 shrink-0" strokeWidth={2} /> Link not fetched
+            </span>
+          )}
+          {needsReview(d) && !awaitingLink(d) && !statesNothing(docFacts(d)) && (
             <span
               title="The reader could not fill these in. Open the document and supply them — it moves to Ready by itself once they are there."
               className="inline-flex items-start gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-left text-[11px] font-medium leading-tight text-amber-700"
@@ -647,7 +675,7 @@ export default function Costs() {
               Still never while it is being read — blank is what a document
               looks like for the ten to thirty seconds before its answer
               lands. */}
-          {d.status !== 'processing' && statesNothing(docFacts(d)) && (
+          {d.status !== 'processing' && !awaitingLink(d) && !linkFetchFailed(d) && statesNothing(docFacts(d)) && (
             <span
               title="The reader got nothing off this document — no supplier, total, date or reference. Open it to read it again by hand, or merge it with the document it is a page of."
               className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-muted-foreground/30 bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
@@ -879,7 +907,15 @@ export default function Costs() {
   // never merges anything does not want a badge about it.
   const mergeMode = settings.mergeMode || 'Automatic';
   const mergeGroups = useMemo(
-    () => (mergeMode === 'Off' ? [] : findMergeCandidates(rowsFor(allDocs, 'inbox'))),
+    () =>
+      mergeMode === 'Off'
+        ? []
+        : // A document still waiting for its link to be fetched is blank BY
+          // DESIGN, and two of them arriving in one batch look exactly like two
+          // halves of one document to the provisional pass. Neither is a page of
+          // anything yet — there is no paper at all — so they are left out until
+          // their file lands.
+          findMergeCandidates(rowsFor(allDocs, 'inbox').filter((d) => !awaitingLink(d))),
     [allDocs, mergeMode]
   );
   // Automatic: the STRONGEST tier is combined without asking. A firm group is
@@ -1143,7 +1179,7 @@ export default function Costs() {
   // when you would rather work through them from the toolbar than click a badge.
   const openNextMergeSuggestion = () => {
     if (!mergeGroups.length) {
-      const blanks = rowsFor(allDocs, 'inbox').filter((d) => statesNothing(docFacts(d))).length;
+      const blanks = rowsFor(allDocs, 'inbox').filter((d) => !awaitingLink(d) && statesNothing(docFacts(d))).length;
       setMergeNote(
         blanks > 1
           ? `Nothing could be paired up. ${blanks} documents in the inbox read as blank, so there is no way to tell which of them is a page of what — open one to read it again, or select it with its other half and press Merge.`

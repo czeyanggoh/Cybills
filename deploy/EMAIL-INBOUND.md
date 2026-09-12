@@ -149,6 +149,37 @@ N8N_TIMEOUT_MS=120000                 # optional; a portal login is slow
 Unset, the road simply is not there: the mail is still mirrored in the Email tab
 saying so, with its links there to open by hand.
 
+### Whose links are followed: trusted senders
+
+`<handle>@cybills.sg` is a public catch-all — anyone who learns an address can
+send to it. Handing every link on every delivery to n8n would therefore point a
+workflow that **holds portal credentials** at whatever URL a stranger cared to
+send, which is the shape of a credential-phishing attack, and a robot does not
+hesitate over a login page that looks nearly right.
+
+So following a link is a decision somebody makes, once, about a **sender**:
+
+```
+mail with a link, sender NOT trusted
+        │
+        ▼
+a cost document in the Costs inbox — no file, badged "Trust sender?"
+        │   somebody opens it and answers
+        ├── "Trust this sender & fetch"  → fetched now, and every later mail
+        │                                  from that address is fetched on arrival
+        └── "Just fetch this one"        → fetched, nothing remembered
+```
+
+The waiting document is a **real row in the inbox** rather than a note
+somewhere else, because the inbox is where somebody is already looking. It
+carries the covering message, the sender and the links; the fetch fills **that
+row** rather than standing a second cost beside it.
+
+Trusting is per client entity, Business Admin (the Email tab's bar, enforced on
+the route). The list is on the **Email** tab under *Trusted senders*, where it
+can be taken back — what was already fetched stays, since those are documents
+now; only what arrives next goes back to asking.
+
 ### What CYBills sends
 
 ```json
@@ -209,3 +240,7 @@ It exists for the mail that produced NOTHING: a link nobody could follow, a
 `.docx` the reader cannot take, a forwarding confirmation. Those deliveries
 appeared nowhere in CYBills at all, so "I emailed that last week" had no answer
 here.
+
+Each message shows whether its sender is trusted, carries **Trust this sender**
+and **Fetch the document**, and links through to the cost document waiting on
+the answer.

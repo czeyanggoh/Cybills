@@ -8,7 +8,7 @@ import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
-import { insertBill, updateBill, settleProcessing, getBillById } from './store.js';
+import { insertBill, updateBill, settleProcessing, getBillById, setBillEmailLink, attachFetchedFile } from './store.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
 import { putBillFile } from './storage.js';
@@ -21,8 +21,9 @@ import { recordUsage } from './usage.js';
 import { readSetting } from './settings.js';
 import { workspaceId } from './workspace.js';
 import { visionEnabled, claudeEnabled, openaiEnabled, googleEnabled } from './env.js';
-import { fetchDocumentsForLinks, linksIn } from './n8n.js';
-import { recordMail, recordLinkFetch, type MailAttachment, type MailDocument, type MailMessage } from './mailThread.js';
+import { fetchDocumentsForLinks, linksIn, n8nEnabled } from './n8n.js';
+import { recordMail, recordLinkFetch, mailById, type MailAttachment, type MailDocument, type MailMessage } from './mailThread.js';
+import { isTrustedSender, normaliseSender } from './trustedSenders.js';
 
 const norm = (s: string) => String(s ?? '').trim().toLowerCase();
 
@@ -434,17 +435,14 @@ export async function autoRead(
 // READ is told; `to` and `date` belong to the document's record of the mail.
 type MailEnvelope = { from: string; to: string; subject: string; date: string; text: string };
 
-// File one document that arrived as BYTES rather than as an attachment — what
-// n8n hands back from behind a link — exactly as the attachment road files one:
-// same storage, same owner, same covering envelope, same "Processing" status
-// while the read runs. Shared so a document that came by link is
-// indistinguishable from one that came as a file the moment it lands.
-async function fileFetchedDocument(
+// Put the fetched bytes in the file store. Split from the two things that can
+// then be done with them — INSERT a document, or fill the one already standing
+// in the inbox waiting for this very file — because the placeholder is the cost
+// and a second row beside it would be the same cost twice.
+async function storeFetched(
   scope: string,
-  user: { email: string },
-  envelope: MailEnvelope,
   doc: { bytes: Buffer; fileName: string; mediaType: string }
-): Promise<{ id: string; displayId: string }> {
+): Promise<{ fileHash: string; fileName: string; storageKey: string; contentType: string }> {
   const fileHash = createHash('sha256').update(doc.bytes).digest('hex');
   let storageKey = '';
   let storedType = '';
@@ -456,10 +454,25 @@ async function fileFetchedDocument(
     // Keep the metadata record even if the file store fails, as the attachment
     // road does — a document with no retrievable file is still a document.
   }
+  return { fileHash, fileName: doc.fileName, storageKey, contentType: storedType || doc.mediaType };
+}
+
+// File one document that arrived as BYTES rather than as an attachment — what
+// n8n hands back from behind a link — exactly as the attachment road files one:
+// same storage, same owner, same covering envelope, same "Processing" status
+// while the read runs. Shared so a document that came by link is
+// indistinguishable from one that came as a file the moment it lands.
+async function fileFetchedDocument(
+  scope: string,
+  user: { email: string },
+  envelope: MailEnvelope,
+  doc: { bytes: Buffer; fileName: string; mediaType: string }
+): Promise<{ id: string; displayId: string }> {
+  const file = await storeFetched(scope, doc);
   const bill = insertBill({
     orgId: scope,
-    fileHash,
-    fileName: doc.fileName,
+    fileHash: file.fileHash,
+    fileName: file.fileName,
     supplier: '',
     invoiceNumber: '',
     documentType: '',
@@ -471,10 +484,66 @@ async function fileFetchedDocument(
     createdBy: user.email,
     owner: user.email,
     email: { from: envelope.from, to: envelope.to, subject: envelope.subject, date: envelope.date, text: envelope.text },
-    storageKey,
-    contentType: storedType || doc.mediaType,
+    storageKey: file.storageKey,
+    contentType: file.contentType,
     status: 'processing',
     kind: 'cost',
+  });
+  return { id: bill.id, displayId: bill.displayId };
+}
+
+/**
+ * The document a LINK mail is, before anybody has said whether its sender may
+ * be followed.
+ *
+ * It is a real row in the Costs inbox from the moment the mail lands, and that
+ * is the point: the inbox is where somebody is already looking, so it is where
+ * the question gets asked. It carries the covering message, the links and the
+ * sender — everything needed to decide — and no file, because fetching one is
+ * the decision. Trusting the sender (or fetching this once) fills THIS row.
+ */
+export function placeholderForLinks(
+  scope: string,
+  user: { email: string },
+  envelope: MailEnvelope,
+  message: { id: string; links: string[] },
+  note: string
+): { id: string; displayId: string } {
+  const bill = insertBill({
+    orgId: scope,
+    // Named for the MESSAGE, not for bytes it does not have. A blank hash is
+    // shared by every other placeholder, which the exact-file duplicate check
+    // would read as the same document arriving again and again.
+    fileHash: createHash('sha256').update(`emaillink:${message.id}`).digest('hex'),
+    // What a reviewer scanning the list will recognise: what the sender called
+    // it. A document with no name at all reads as a row nothing happened to.
+    fileName: (envelope.subject || 'Emailed link').slice(0, 200),
+    supplier: '',
+    invoiceNumber: '',
+    documentType: '',
+    currency: '',
+    total: 0,
+    tax: 0,
+    date: '',
+    category: '',
+    createdBy: user.email,
+    owner: user.email,
+    email: { from: envelope.from, to: envelope.to, subject: envelope.subject, date: envelope.date, text: envelope.text },
+    storageKey: '',
+    contentType: '',
+    // NEW, not 'processing': nothing is being read, and a row that says
+    // "Processing" for as long as nobody answers a question is a lie about who
+    // is waiting for whom.
+    status: 'new',
+    kind: 'cost',
+    emailLink: {
+      messageId: message.id,
+      from: normaliseSender(envelope.from),
+      links: message.links,
+      status: 'awaiting_trust',
+      note,
+      at: new Date().toISOString(),
+    },
   });
   return { id: bill.id, displayId: bill.displayId };
 }
@@ -488,13 +557,20 @@ async function fileFetchedDocument(
 // the Email tab shows when the answer was "nothing", and a reviewer with a
 // reason can act where one staring at an empty inbox cannot.
 //
+// `fillBillId` is the placeholder that has been standing in the inbox asking
+// about this sender: the FIRST document lands on that row rather than beside
+// it, so the cost somebody has already seen (and may have coded, or reassigned)
+// becomes the document instead of being joined by a twin. Anything further in
+// the same answer — a mail linking to two invoices — is inserted.
+//
 // Best-effort throughout, and never allowed to throw into a background caller:
 // the delivery has already been answered by the time this runs.
 export async function followMessageLinks(
   req: Request,
   message: MailMessage,
   user: { email: string },
-  provider: Provider
+  provider: Provider,
+  fillBillId = ''
 ): Promise<{ note: string; documents: MailDocument[] }> {
   const envelope: MailEnvelope = {
     from: message.from,
@@ -510,16 +586,52 @@ export async function followMessageLinks(
     result = { documents: [], note: `n8n could not be reached (${err instanceof Error ? err.message : String(err)})` };
   }
 
+  const linkRecord = {
+    messageId: message.id,
+    from: normaliseSender(message.from),
+    links: message.links,
+    note: result.note,
+  };
+
   const made: MailDocument[] = [];
   const reads: Array<{ id: string; bytes: Buffer; mediaType: string; fileName: string }> = [];
+  let fill = fillBillId;
   for (const doc of result.documents) {
     try {
-      const bill = await fileFetchedDocument(message.scope, user, envelope, doc);
-      made.push({ billId: bill.id, displayId: bill.displayId, fileName: doc.fileName, via: 'link' });
-      reads.push({ id: bill.id, bytes: doc.bytes, mediaType: doc.mediaType, fileName: doc.fileName });
+      let id = '';
+      let displayId = '';
+      if (fill) {
+        const file = await storeFetched(message.scope, doc);
+        const filled = attachFetchedFile(message.scope, fill, file);
+        if (!filled) {
+          fill = '';
+          continue;
+        }
+        id = filled.id;
+        displayId = filled.displayId;
+        fill = '';
+      } else {
+        const bill = await fileFetchedDocument(message.scope, user, envelope, doc);
+        id = bill.id;
+        displayId = bill.displayId;
+      }
+      setBillEmailLink(message.scope, id, { ...linkRecord, status: 'fetched' });
+      made.push({ billId: id, displayId, fileName: doc.fileName, via: 'link' });
+      reads.push({ id, bytes: doc.bytes, mediaType: doc.mediaType, fileName: doc.fileName });
     } catch (err) {
       console.error('[inbound] could not file a linked document', err);
     }
+  }
+  // Nothing came back, and the row that asked is still standing there: it says
+  // what n8n answered, so the next person to open it is looking at a reason
+  // rather than at an empty document. Still `awaiting_trust` where the sender
+  // was never trusted at all — the question has not been answered, only the
+  // fetch has failed.
+  if (fill) {
+    setBillEmailLink(message.scope, fill, {
+      ...linkRecord,
+      status: 'failed',
+    });
   }
   recordLinkFetch(message.id, result.note, made);
 
@@ -790,10 +902,45 @@ inboundRouter.post('/email', async (req, res) => {
     madeBills.push({ id: bill.id, displayId: bill.displayId, base64, mediaType: readType || storedType || contentType, fileName: filename });
   }
 
+  // Whether this delivery's links may be followed at all.
+  //
+  // `<handle>@cybills.sg` is a public catch-all, so the sender of a mail with a
+  // link is an untrusted party until somebody here says otherwise: handing a
+  // stranger's URL to a workflow that holds portal credentials is the shape of
+  // a phishing attack, and a robot does not hesitate over a login page that
+  // looks nearly right. A trusted sender's links are followed on arrival, as
+  // before; anybody else's arrive as a document in the inbox that ASKS.
+  //
+  // Already handled means already handled: a delivery the Worker retries must
+  // not stand a second copy of the same question in the inbox, nor re-fetch a
+  // document it already has.
+  //
+  // And only where there IS a road: with no n8n webhook configured, the answer
+  // to the question leads nowhere, so asking it would put a document in the
+  // inbox for every newsletter that ever reached a CYBills address. The mail is
+  // still mirrored in the Email tab, links and all.
+  const prior = mailById(messageId);
+  const settledAlready = Boolean(prior?.pendingBillId || prior?.documents.length || prior?.linkFetchedAt);
+  const followable = !madeBills.length && links.length > 0 && !settledAlready && n8nEnabled();
+  const trusted = followable && isTrustedSender(workspaceId(req), realOrgId, scope, from);
+  const pending =
+    followable && !trusted
+      ? placeholderForLinks(
+          scope,
+          user,
+          envelope,
+          { id: messageId, links },
+          `Not fetched yet — ${normaliseSender(from) || 'this sender'} has not been trusted here.`
+        )
+      : null;
+
   const message = mirror({
     attachments: attachmentRows,
     documents: madeBills.map((b) => ({ billId: b.id, displayId: b.displayId, fileName: b.fileName, via: 'attachment' as const })),
-    outcome: madeBills.length ? 'documents' : 'nothing',
+    outcome: madeBills.length ? 'documents' : pending ? 'awaiting_trust' : 'nothing',
+    pendingBillId: pending?.id || prior?.pendingBillId || '',
+    pendingDisplayId: pending?.displayId || prior?.pendingDisplayId || '',
+    linkNote: pending ? `Waiting — is ${normaliseSender(from)} trusted?` : '',
   });
 
   // Read with the org's chosen reader (Claude / OpenAI), the same one the manual
@@ -805,7 +952,17 @@ inboundRouter.post('/email', async (req, res) => {
   // a model call takes 10-30s and the Worker shouldn't wait on it. A link fetch
   // is slower still (a portal login), which is the other reason nothing after
   // this line is waited on.
-  res.json({ ok: true, kind: 'documents', created: madeBills.length, user: user.id, message: message.id });
+  res.json({
+    ok: true,
+    kind: 'documents',
+    created: madeBills.length,
+    user: user.id,
+    message: message.id,
+    // The document standing in the inbox asking whether this sender may be
+    // followed, where there is one. Named in the reply so the Worker's own log
+    // says what became of a delivery that filed nothing.
+    awaiting: pending?.displayId || '',
+  });
   // The covering message belongs to the EMAIL, the file name to the
   // attachment — one forward can carry three invoices, and reading all three
   // under the name of the first would tell the reader something untrue about
@@ -819,12 +976,10 @@ inboundRouter.post('/email', async (req, res) => {
 
   // Nothing came as a file, but something was written: a Xero subscription
   // invoice is a link and a sentence, and until now that mail filed nothing at
-  // all. Ask n8n what is behind the links — ONLY when the attachments produced
-  // nothing, so a mail carrying both the invoice and a link to it cannot file
-  // the same cost twice, and only ONCE per message, so a delivery the Worker
-  // retries cannot fetch the same invoice again. Asking a second time is a
-  // person's call, on the message, in the Email tab.
-  if (!madeBills.length && links.length && !message.linkFetchedAt) {
+  // all. A sender somebody has already trusted has their links followed here
+  // and now — which is what trusting them bought. Everybody else's document is
+  // sitting in the inbox asking, and waits for an answer.
+  if (trusted) {
     void followMessageLinks(req, message, user, provider).catch((err) =>
       console.error('[inbound] link fetch failed', err)
     );

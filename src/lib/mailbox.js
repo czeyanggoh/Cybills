@@ -107,3 +107,61 @@ export async function fetchMessageLinks(messageId) {
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
   });
 }
+
+/** Whose links this entity follows without asking. */
+export function useTrustedSenders() {
+  const [state, setState] = useState({ senders: [], linkFetchEnabled: false, loading: true, error: '' });
+
+  const reload = useCallback(async () => {
+    setState((s) => ({ ...s, loading: true }));
+    try {
+      const data = await json('/api/email/senders', { headers: orgHeaders() });
+      setState({
+        senders: data.senders ?? [],
+        linkFetchEnabled: Boolean(data.linkFetchEnabled),
+        loading: false,
+        error: '',
+      });
+    } catch (err) {
+      setState({ senders: [], linkFetchEnabled: false, loading: false, error: err.message });
+    }
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+  return [state, reload];
+}
+
+/**
+ * Trust a sender: follow their links from now on, and fetch what is already
+ * waiting on the answer.
+ *
+ * Both halves at once, deliberately — trusting somebody and then having to
+ * press fetch on each of their waiting documents is one decision made twice,
+ * and the second half is the one people forget.
+ */
+export async function trustSender(address) {
+  return json('/api/email/senders/trust', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ address }),
+  });
+}
+
+/** Stop following this sender's links. What was already fetched stays. */
+export async function untrustSender(address) {
+  return json('/api/email/senders/untrust', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ address }),
+  });
+}
+
+/** Fetch this one document's link without trusting anybody. */
+export async function fetchDocumentLink(billId) {
+  return json(`/api/email/documents/${encodeURIComponent(billId)}/fetch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+  });
+}

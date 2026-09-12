@@ -55,9 +55,16 @@ export type MailMessage = {
   /** What n8n said when it was asked to follow them. Empty = never asked. */
   linkNote: string;
   linkFetchedAt: string;
-  /** 'documents' | 'forwarding_confirmation' | 'nothing' — what the delivery
-   *  came to. Recomputed whenever a link fetch lands a document later. */
+  /** 'documents' | 'awaiting_trust' | 'forwarding_confirmation' | 'nothing' —
+   *  what the delivery came to. Recomputed whenever a link fetch lands a
+   *  document later. */
   outcome: string;
+  /** The document standing in the Costs inbox waiting for this sender to be
+   *  trusted. A mail whose invoice is a LINK is a cost the moment it arrives —
+   *  the row is where the question is asked, because the inbox is where somebody
+   *  is already looking. Cleared once the fetch lands a real document on it. */
+  pendingBillId?: string;
+  pendingDisplayId?: string;
 };
 
 const MIRRORED = 'email-thread';
@@ -130,7 +137,13 @@ export function recordLinkFetch(id: string, note: string, documents: MailDocumen
   // The outcome is what the delivery CAME TO, so it is restated rather than
   // stuck at what it was the moment the mail landed: a message that filed
   // nothing until n8n answered is a message that filed something.
-  if (row.documents.length) row.outcome = 'documents';
+  if (row.documents.length) {
+    row.outcome = 'documents';
+    // The placeholder has BECOME one of those documents (the fetch fills the row
+    // that was asking), so it is no longer waiting for anything.
+    row.pendingBillId = '';
+    row.pendingDisplayId = '';
+  }
   saveMail(items);
   return row;
 }

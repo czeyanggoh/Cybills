@@ -81,6 +81,26 @@ export type Bill = {
     sentAt: string;
     fileName: string;
   };
+  // A document that arrived as a LINK rather than as a file: an emailed invoice
+  // whose PDF is behind a portal login. It is a real row in the inbox from the
+  // moment the mail lands — with no file yet, because following a stranger's
+  // link with n8n's portal credentials is a decision somebody has to make. This
+  // is the question and its answer: who sent it, what the links were, and where
+  // the fetch got to. Not EDITABLE — like `whatsapp`, it is the record of what
+  // was received rather than a field anybody types into.
+  emailLink?: {
+    /** The mirrored message (mailThread.ts) this document came from. */
+    messageId: string;
+    /** The sender the trust question is ABOUT, normalised. */
+    from: string;
+    links: string[];
+    /** 'awaiting_trust' — asking; 'fetched' — the file below came from a link;
+     *  'failed' — it was tried and n8n could not produce a document. */
+    status: 'awaiting_trust' | 'fetched' | 'failed';
+    /** n8n's own words on the last attempt, or why it has not been attempted. */
+    note: string;
+    at: string;
+  };
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   taxRateReason?: string; // why that tax code — the "when to use" rule it matched
   // A PERSON chose to leave the tax rate blank. An empty `taxRate` on its own
@@ -971,6 +991,57 @@ export function markBillXeroPayment(
   bill.xeroPaymentRef = info.xeroPaymentRef;
   persist(bills);
   return true;
+}
+
+// Record where a LINKED document's fetch has got to — asking, fetched, failed.
+//
+// Its own writer rather than a field of updateBill's EDITABLE list, for the
+// reason markBillXeroPayment has one: this is what HAPPENED to the document, not
+// a field a reviewer fills in, and a PATCH from the browser must not be able to
+// declare a document fetched.
+export function setBillEmailLink(orgId: string, id: string, patch: Partial<NonNullable<Bill['emailLink']>>): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  const was = bill.emailLink;
+  bill.emailLink = {
+    messageId: patch.messageId ?? was?.messageId ?? '',
+    from: patch.from ?? was?.from ?? '',
+    links: patch.links ?? was?.links ?? [],
+    status: patch.status ?? was?.status ?? 'awaiting_trust',
+    note: patch.note ?? was?.note ?? '',
+    at: patch.at ?? new Date().toISOString(),
+  };
+  persist(bills);
+  return bill;
+}
+
+// The file a LINK finally yielded, landing on the document that was already
+// standing in the inbox for it.
+//
+// A fetch fills the row that asked rather than inserting a second one: the
+// placeholder IS the cost — it has been in the list, it may already have been
+// coded or owned by somebody — and a new row beside it would be the same cost
+// twice, which is the one thing the inbox exists to prevent. The file hash
+// moves to the real bytes' with it, so duplicate detection sees the document
+// rather than the placeholder it was.
+export function attachFetchedFile(
+  orgId: string,
+  id: string,
+  file: { fileHash: string; fileName: string; storageKey: string; contentType: string }
+): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  bill.fileHash = file.fileHash;
+  bill.fileName = file.fileName;
+  bill.storageKey = file.storageKey;
+  bill.contentType = file.contentType;
+  // Being read, and saying so — the same state the attachment road creates a
+  // document in, cleared by autoRead's finally.
+  bill.status = 'processing';
+  persist(bills);
+  return bill;
 }
 
 // Remember which emoji we last put on this document's WhatsApp message.
