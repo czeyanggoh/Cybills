@@ -182,7 +182,7 @@ now; only what arrives next goes back to asking.
 
 ### What CYBills sends
 
-```json
+```jsonc
 {
   "url": "https://in.xero.com/abc123DEF",
   "links": ["https://in.xero.com/abc123DEF", "https://central.xero.com/s/article/billing"],
@@ -190,9 +190,27 @@ now; only what arrives next goes back to asking.
   "to": "astrid4@cybills.sg",
   "subject": "FW: Your Xero Invoice for Tiffinlabs US LLC",
   "date": "2026-09-11T02:25:00.000Z",
-  "text": "the covering message, capped at 4000 characters"
+  "text": "the covering message, capped at 4000 characters",
+
+  // The message's own id, to correlate a run by (and to name screenshots with).
+  "message_id": "mail_9d5a3635e61e3966277fbeb3",
+  // The HTML part, which a workflow's own recipes pick the invoice link out of
+  // far better than a list of every URL in the mail can. Capped at 120 KB.
+  "body_html": "<p>View your bill online: <a href=\"…\">INV-7822201</a></p>",
+  // Which client's book this is for — the Xero organisation's name and tenant
+  // id, so a portal download is attributable to an entity at the far end.
+  "xero_name": "CY Business Management",
+  "tenant_id": "b7f1…",
+  "attachments": []
 }
 ```
+
+Each of those also goes out in camelCase (`messageId`, `bodyHtml`, `xeroName`,
+`tenantId`), so a workflow can be keyed either way round without a change here.
+This is the shape CYBM's own **Invoice Fetch** workflow
+(`https://n8n.cy-bm.sg/webhook/invoice-fetch`) validates before it will run: it
+requires `message_id`, `xero_name`, a `from`, and at least one of
+`body_html` / `links[]` / `url`.
 
 `url` is the first link; `links` is all of them, in the order they were written,
 deduped and capped at 25. **Which of them is the invoice is n8n's decision** —
@@ -206,6 +224,7 @@ Whichever of these your workflow finds easiest to produce — all are read:
 
 ```jsonc
 [{ "fileName": "INV-7822201.pdf", "mimeType": "application/pdf", "data": "<base64>" }]
+{ "ok": true, "filename": "INV-7822201.pdf", "pdf_base64": "<base64>" }   // Invoice Fetch's own shape
 { "fileName": "…", "contentBase64": "<base64>" }        // or fileBase64 / base64 / content / pdf
 { "documents": [ … ] }                                   // or files / attachments
 ```
@@ -221,6 +240,10 @@ must not have it filed as a cost and read as an invoice. So the declared type an
 the file name are not consulted at all: only the file's own signature is. Nothing
 that isn't a PDF, PNG, JPEG, WebP or GIF is kept, and the message says what came
 back instead.
+
+A non-2xx that carries JSON has its own `error` / `message` field quoted back
+rather than 400 characters of body, which is how Invoice Fetch's `500
+{ ok: false, error: … }` reads as a sentence.
 
 Anything else — a non-2xx, an unreachable host, a workflow that found nothing —
 is a **note on the message**, never an error thrown at the delivery: the mail is

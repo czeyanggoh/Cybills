@@ -52,6 +52,13 @@ export type MailMessage = {
   documents: MailDocument[];
   /** Every http(s) link in the message, in the order it was written. */
   links: string[];
+  /** The HTML part, kept ONLY while there is a link still to be followed: a
+   *  fetch happens later than the delivery (after somebody trusts the sender),
+   *  and the workflow's own recipes pick the invoice link out of the markup far
+   *  better than a list of every URL in the mail can. Capped, and dropped the
+   *  moment a document lands — otherwise every newsletter that ever arrived
+   *  would sit in this store at full size for ever. */
+  html?: string;
   /** What n8n said when it was asked to follow them. Empty = never asked. */
   linkNote: string;
   linkFetchedAt: string;
@@ -117,6 +124,7 @@ export function recordMail(row: MailMessage): MailMessage {
     documents,
     linkNote: row.linkNote || was.linkNote,
     linkFetchedAt: row.linkFetchedAt || was.linkFetchedAt,
+    html: row.html || was.html || '',
     outcome: documents.length ? 'documents' : row.outcome || was.outcome,
   };
   items[at] = merged;
@@ -143,6 +151,9 @@ export function recordLinkFetch(id: string, note: string, documents: MailDocumen
     // that was asking), so it is no longer waiting for anything.
     row.pendingBillId = '';
     row.pendingDisplayId = '';
+    // And the markup was only ever kept to fetch FROM. The links stay, so a
+    // "Fetch again" still has a source to work with.
+    row.html = '';
   }
   saveMail(items);
   return row;

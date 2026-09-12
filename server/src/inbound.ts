@@ -4,7 +4,7 @@ import { simpleParser } from 'mailparser';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import type { Request } from 'express';
 import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberForSession } from './users.js';
-import { dataScopeForOrg, primaryOrgId } from './organisations.js';
+import { dataScopeForOrg, getOrganisation, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
@@ -579,9 +579,21 @@ export async function followMessageLinks(
     date: message.sentAt,
     text: message.text,
   };
+  // Which client's book this is for, said the way a portal download has to be
+  // attributable at the far end: the Xero organisation's name and its tenant
+  // id. A bridge entity has no tenant of its own, so its own name stands in —
+  // the workflow requires a name, and refusing the fetch for want of one would
+  // be CYBills failing to say something it knows.
+  const org = getOrganisation(workspaceId(req), message.orgId);
   let result: { documents: Array<{ bytes: Buffer; fileName: string; mediaType: string }>; note: string };
   try {
-    result = await fetchDocumentsForLinks(message.links, envelope);
+    result = await fetchDocumentsForLinks(message.links, {
+      ...envelope,
+      messageId: message.id,
+      html: message.html || '',
+      xeroName: org?.tenantName || org?.name || '',
+      tenantId: org?.tenantId || '',
+    });
   } catch (err) {
     result = { documents: [], note: `n8n could not be reached (${err instanceof Error ? err.message : String(err)})` };
   }
@@ -854,6 +866,7 @@ inboundRouter.post('/email', async (req, res) => {
       linkNote: '',
       linkFetchedAt: '',
       outcome: 'nothing',
+      html: '',
       ...over,
     });
 
@@ -960,6 +973,14 @@ inboundRouter.post('/email', async (req, res) => {
       : null;
 
   const message = mirror({
+    // The HTML part, kept only where something may still be fetched FROM it —
+    // both roads: a trusted sender's fetch runs a moment from now, an untrusted
+    // one's whenever somebody answers. The workflow's own recipes read the
+    // markup, and they pick an invoice link out of it far better than a list of
+    // every URL in the mail can. Capped hard: a marketing email runs to
+    // hundreds of kilobytes and this store is a JSON file, and it is dropped
+    // the moment a document lands.
+    html: followable ? String(html || '').slice(0, 120000) : '',
     attachments: attachmentRows,
     documents: madeBills.map((b) => ({ billId: b.id, displayId: b.displayId, fileName: b.fileName, via: 'attachment' as const })),
     outcome: madeBills.length ? 'documents' : pending ? 'awaiting_trust' : 'nothing',

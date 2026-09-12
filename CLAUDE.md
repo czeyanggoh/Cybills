@@ -1560,6 +1560,21 @@ consequence of each entry is visible and can be taken back. Covered by
 `npm test` in `server/` (`test/trusted-sender.test.mts`, over real HTTP at both
 ends).
 
+**CYBills speaks the workflow's contract, not the other way round.** CYBM's own
+**Invoice Fetch** (`n8n.cy-bm.sg/webhook/invoice-fetch`, Playwright into the
+supplier's portal) is shared with cyworkspace and validates its callers, so the
+envelope carries what it requires — `message_id` to correlate a run by,
+`body_html` for the recipes that pick the invoice link out of the markup,
+`xero_name` + `tenant_id` for the entity the download is attributable to — each
+in snake_case AND camelCase, so a differently-wired workflow needs no change
+here. The reply is read the same way round: `pdf_base64` (what a Python sidecar
+writes) alongside `contentBase64` / `data` / the bytes themselves. Editing a live
+workflow other callers depend on to suit this one would have been the wrong half
+to change. The HTML is kept on the mirrored message only while something may
+still be fetched from it, capped at 120 KB and dropped the moment a document
+lands — a fetch happens LATER than the delivery (after somebody trusts the
+sender), so the markup has to outlive the request that carried it.
+
 **Only where the attachments produced nothing.** A mail carrying both the
 invoice and a link to the same invoice must not file the cost twice, and the
 attachment is the document when there is one. Every http(s) link goes over, in

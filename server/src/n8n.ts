@@ -86,8 +86,26 @@ function itemsIn(data: unknown, depth = 0): Array<Record<string, unknown>> {
   return [o, ...nested];
 }
 
-const BASE64_KEYS = ['contentBase64', 'fileBase64', 'pdfBase64', 'base64', 'content', 'data', 'file', 'pdf', 'body'];
-const NAME_KEYS = ['fileName', 'filename', 'name', 'title'];
+// Every spelling a workflow might hand the bytes back under. `pdf_base64` is
+// the one CYBM's own Invoice Fetch answers with, and the snake_case forms
+// generally are what a Python sidecar writes — the camelCase ones are what an
+// n8n binary passthrough writes. Cheaper to read all of them than to make
+// somebody edit a live workflow that other callers already depend on.
+const BASE64_KEYS = [
+  'pdf_base64',
+  'contentBase64',
+  'content_base64',
+  'fileBase64',
+  'file_base64',
+  'pdfBase64',
+  'base64',
+  'content',
+  'data',
+  'file',
+  'pdf',
+  'body',
+];
+const NAME_KEYS = ['fileName', 'filename', 'file_name', 'name', 'title'];
 
 const pick = (o: Record<string, unknown>, keys: string[]): string => {
   for (const k of keys) {
@@ -154,7 +172,24 @@ function documentFrom(o: Record<string, unknown>, link: string): FetchedDocument
  */
 export async function fetchDocumentsForLinks(
   links: string[],
-  envelope: { from?: string; to?: string; subject?: string; date?: string; text?: string }
+  envelope: {
+    from?: string;
+    to?: string;
+    subject?: string;
+    date?: string;
+    text?: string;
+    /** The message's own id. Required by CYBM's Invoice Fetch, which uses it to
+     *  correlate a run and to name the screenshots it takes on the way. */
+    messageId?: string;
+    /** The HTML part. A workflow's own recipes pick the invoice link out of it,
+     *  which they do better than a list of every URL in the mail can. */
+    html?: string;
+    /** Which client's book this is for, said two ways: the Xero organisation's
+     *  name and its tenant id. A portal download has to be attributable to an
+     *  entity at the far end, and CYBills is the half that knows which. */
+    xeroName?: string;
+    tenantId?: string;
+  }
 ): Promise<LinkFetchResult> {
   const url = String(env.N8N_FETCH_URL || '').trim();
   if (!url) return { documents: [], note: 'no n8n webhook is configured (N8N_FETCH_URL)', attempted: false };
@@ -172,6 +207,12 @@ export async function fetchDocumentsForLinks(
     res = await fetch(url, {
       method: 'POST',
       headers,
+      // Both spellings of everything a workflow might key on: snake_case is
+      // what CYBM's Invoice Fetch validates (`message_id`, `body_html`,
+      // `xero_name`, `tenant_id`) and what a Python sidecar reads, camelCase is
+      // what a hand-written n8n node usually expects. Sending both costs a few
+      // bytes and means a workflow can be wired either way round without a
+      // change here.
       body: JSON.stringify({
         url: links[0],
         links,
@@ -180,6 +221,15 @@ export async function fetchDocumentsForLinks(
         subject: envelope.subject || '',
         date: envelope.date || '',
         text: envelope.text || '',
+        message_id: envelope.messageId || '',
+        messageId: envelope.messageId || '',
+        body_html: envelope.html || '',
+        bodyHtml: envelope.html || '',
+        xero_name: envelope.xeroName || '',
+        xeroName: envelope.xeroName || '',
+        tenant_id: envelope.tenantId || '',
+        tenantId: envelope.tenantId || '',
+        attachments: [],
       }),
       signal: AbortSignal.timeout(Number(env.N8N_TIMEOUT_MS) || 120000),
     });
@@ -189,8 +239,20 @@ export async function fetchDocumentsForLinks(
   }
 
   if (!res.ok) {
-    const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 160);
-    return { documents: [], note: `n8n answered ${res.status}${detail ? ` — ${detail}` : ''}`, attempted: true };
+    // A workflow that refuses says why in a field — CYBM's Invoice Fetch
+    // answers 500 with `{ ok: false, error: … }` — so the sentence a reviewer
+    // reads is that one rather than 400 characters of JSON.
+    const raw = (await res.text().catch(() => '')).trim();
+    let said = '';
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      said = itemsIn(parsed)
+        .map((o) => pick(o, ['error', 'message', 'note', 'reason', '_error']))
+        .find(Boolean) || '';
+    } catch {
+      said = raw.replace(/\s+/g, ' ').slice(0, 160);
+    }
+    return { documents: [], note: `n8n answered ${res.status}${said ? ` — ${said.slice(0, 200)}` : ''}`, attempted: true };
   }
 
   const contentType = String(res.headers.get('content-type') || '').toLowerCase();

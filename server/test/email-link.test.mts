@@ -137,6 +137,14 @@ let bills = listBills('cybm');
 check('n8n was asked once', calls.length, 1);
 check('…with the key it is configured with', calls[0]?.key, 'test-n8n-key');
 check('…and every link, the first one named', [calls[0]?.body.url, (calls[0]?.body.links as string[])?.length], ['https://in.xero.com/abc123DEF', 2]);
+// What CYBM's own Invoice Fetch workflow validates before it will run: the
+// message it can correlate by, the markup its recipes pick the invoice link out
+// of, and the Xero organisation the download is attributable to. Asserted as
+// the request that actually goes out, because a missing field there is a 500
+// from n8n that reads as "the link could not be fetched".
+check('…the message id it correlates a run by', Boolean(calls[0]?.body.message_id), true);
+check('…the markup its recipes read', String(calls[0]?.body.body_html || '').includes('in.xero.com'), true);
+check('…and the entity the download belongs to', [calls[0]?.body.xero_name, calls[0]?.body.tenant_id], ['CYBM', 't-1']);
 check('the document behind the link was filed', bills.length, 1);
 check('…under the name n8n gave it', bills[0]?.fileName, 'INV-7822201.pdf');
 check('…owned by the person it was emailed to', [bills[0]?.owner, bills[0]?.createdBy], ['astridy2004@gmail.com', 'astridy2004@gmail.com']);
@@ -218,5 +226,24 @@ const other = await fetch(`http://127.0.0.1:4631/api/email/messages/nope/fetch`,
   headers: { 'X-Org-Id': 'org_one0001' },
 });
 check('an unknown message is a 404, never a 403', other.status, 404);
+
+// --- The shape CYBM's own workflow answers in --------------------------------
+// `{ ok, filename, pdf_base64 }` — snake_case, from a Python sidecar. Read as
+// readily as an n8n binary passthrough's camelCase, so a live workflow other
+// callers already depend on never has to be edited to suit this one.
+answer = {
+  status: 200,
+  contentType: 'application/json',
+  body: JSON.stringify({ ok: true, status: 'ok', filename: 'INV-9001.pdf', bytes: PDF.length, pdf_base64: PDF.toString('base64') }),
+};
+const wasBills = listBills('cybm').length;
+r = await post({ ...xeroMail, subject: 'FW: Xero invoice, sidecar shape', text: 'https://in.xero.com/sidecar1' });
+await settle(() => listBills('cybm').length > wasBills);
+check('a sidecar answer is read too', listBills('cybm').find((b) => b.fileName === 'INV-9001.pdf')?.contentType, 'application/pdf');
+answer = {
+  status: 200,
+  contentType: 'application/json',
+  body: JSON.stringify([{ fileName: 'INV-7822201.pdf', mimeType: 'application/pdf', data: PDF.toString('base64') }]),
+};
 
 await finish(failures, server, n8n);
