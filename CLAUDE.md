@@ -2507,6 +2507,12 @@ says the run has not reported back. One request at a time per tenant is CYWS's
 rule (a second press answers `already_running`), because the retrieval drives a
 single browser. An older CYWS answers a bare 404, reported as needing an update.
 
+**The card fee line follows the bill's outlet.** Added without tracking, the
+0.18 fee on an HQ bill fell in no outlet, so HQ's costs came up short by the
+fee. `feeLineTracking` gives the fee line the Tracking (both categories) of the
+bill's LARGEST line by amount — the outlet that is most of the money when the
+lines differ — and none when no line carries any.
+
 **CYWS matches card-fee lines too, and a cleared Xero link frees the line.**
 `GET /api/payments/bank-candidates` puts the entity's rules on every candidate
 (`card_fees: [{bank_account, percent}]`), and CYWS's matcher

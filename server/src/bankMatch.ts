@@ -507,6 +507,27 @@ const keepLine = (li: any) => ({
   ...(Array.isArray(li.Tracking) && li.Tracking.length ? { Tracking: li.Tracking } : {}),
 });
 
+// The tracking the fee line carries: the bill's LARGEST line's (by amount).
+// Left untagged, a card fee on an HQ bill landed in no outlet at all, so the
+// outlet's costs came up short by the fee. With several lines on different
+// outlets, the fee follows the one that is most of the money. Nothing when no
+// line carries any tracking.
+export function feeLineTracking(lines: any[]): Array<{ Name: string; Option: string }> | undefined {
+  let best: any = null;
+  let bestAmount = -1;
+  for (const li of lines || []) {
+    const amount = Math.abs((Number(li?.UnitAmount) || 0) * (Number(li?.Quantity) || 1));
+    if (amount > bestAmount) {
+      best = li;
+      bestAmount = amount;
+    }
+  }
+  const tracking = Array.isArray(best?.Tracking)
+    ? best.Tracking.filter((t: any) => t?.Name && t?.Option).map((t: any) => ({ Name: String(t.Name), Option: String(t.Option) }))
+    : [];
+  return tracking.length ? tracking : undefined;
+}
+
 async function addCardFeeLine(
   organisation: Organisation,
   invoiceId: string,
@@ -517,6 +538,7 @@ async function addCardFeeLine(
   const existing: any[] = Array.isArray(invoice.LineItems) ? invoice.LineItems : [];
   const already = existing.find((li) => String(li.Description ?? '').includes(FEE_LINE_MARK));
   if (already) return { ok: true, lineItemId: String(already.LineItemID ?? '') };
+  const tracking = feeLineTracking(existing);
   const feeLine = {
     Description: `${fee.percent}% ${FEE_LINE_MARK} ${fee.bankAccount}`,
     Quantity: 1,
@@ -524,6 +546,8 @@ async function addCardFeeLine(
     AccountCode: fee.accountCode,
     TaxType: 'NONE',
     TaxAmount: 0,
+    // The same outlet (and second category) as the bill's largest line.
+    ...(tracking ? { Tracking: tracking } : {}),
   };
   const res = await relay('Invoices', {
     method: 'POST',

@@ -449,6 +449,18 @@ check('and the publish tells CYWS the autofilled line is spent too', lineNotices
   check('reported, and the fee line remembered on the match', [r.body.fee?.ok, r.body.fee?.amount, Boolean(r.body.match?.feeLineItemId)], [true, 0.18, true]);
   const canvaInvoice = r.body.match?.invoiceId;
 
+  // The fee line takes the outlet of the bill's largest line — left untagged it
+  // fell in no outlet, and HQ's costs came up short by the fee.
+  const { feeLineTracking } = await import('../src/bankMatch.ts');
+  check('the fee follows the outlet of the bill’s largest line', feeLineTracking([
+    { UnitAmount: 16.5, Quantity: 1, Tracking: [{ Name: 'Outlets', Option: 'HQ' }] },
+    { UnitAmount: 3.2, Quantity: 1, Tracking: [{ Name: 'Outlets', Option: 'Tangs' }] },
+  ]), [{ Name: 'Outlets', Option: 'HQ' }]);
+  check('a single line’s outlet (and second category) come across whole', feeLineTracking([
+    { UnitAmount: 16.5, Quantity: 1, Tracking: [{ Name: 'Outlets', Option: 'HQ' }, { Name: 'Staff', Option: 'Avi' }] },
+  ]), [{ Name: 'Outlets', Option: 'HQ' }, { Name: 'Staff', Option: 'Avi' }]);
+  check('a bill with no tracking gives the fee none', feeLineTracking([{ UnitAmount: 16.5, Quantity: 1 }]), undefined);
+
   r = await call(`/api/bank/matches/${r.body.match.id}/undo`, { method: 'POST', headers: ORG });
   const afterUndo = invoiceUpdates[invoiceUpdates.length - 1];
   check('undo deletes the payment and takes the fee line back off the bill', [
