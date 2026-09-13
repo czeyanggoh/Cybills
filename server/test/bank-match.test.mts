@@ -509,6 +509,16 @@ check('and the publish tells CYWS the autofilled line is spent too', lineNotices
   check('the other matches stand', r.body.records.filter((x: any) => x.kind === 'match').length >= 1, true);
 }
 
+// --- a published document is never back in Ready ---------------------------------------
+{
+  const pub = bill({ supplier: 'SF Bukit Merah', invoiceNumber: 'INV-BM1', status: 'ready', xeroInvoiceId: 'inv-pub', xeroDocType: 'ACCPAY', xeroTenantId: 'tenant-1' });
+  await call('/api/costs/bills', { headers: ORG });
+  check('the listing puts a published document stuck in Ready back in Archive', getBillById(book1, pub.id)?.status, 'archived');
+  r = await call(`/api/costs/bills/${pub.id}`, { method: 'PATCH', headers: ORG, body: JSON.stringify({ status: 'ready', description: 'Rental September' }) });
+  const saved = getBillById(book1, pub.id)!;
+  check('a stale Ready saved for it is ignored, and the rest of the save lands', [r.status, saved.status, saved.description], [200, 'archived', 'Rental September']);
+}
+
 // --- Refresh asks CYWS to retrieve from Xero -----------------------------------------
 r = await call('/api/bank/refresh', { method: 'POST', headers: ORG });
 check('Refresh asks CYWS to start a retrieval for this entity’s tenant', [r.status, r.body.ok, refreshCalls], [200, true, ['tenant-1']]);

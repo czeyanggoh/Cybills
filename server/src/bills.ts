@@ -9,6 +9,7 @@ import {
   clearBillPosted,
   costComplete,
   sweepStuckProcessing,
+  archivePublishedWorkingDocs,
   flagDuplicate,
   scanDuplicates,
   bookRevision,
@@ -337,6 +338,7 @@ const proofsSweptAt = new Map<string, number>();
 billsRouter.get('/bills', async (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
+  archivePublishedWorkingDocs(orgId); // a published bill is never back in Ready
   backfillOwners(workspaceId(req), orgScope(req), orgId);
   applySupplierRules(workspaceId(req), orgScope(req), orgId);
   autoScanDuplicates(workspaceId(req), orgScope(req), orgId);
@@ -797,6 +799,14 @@ billsRouter.patch('/bills/:id', async (req, res) => {
       const folded = await foldLineTaxIntoCost(rows);
       if (folded) patch.lineItems = folded;
     }
+  }
+  // A document already in Xero is finished work: publishing archived it, and a
+  // working status (new / ready / review / processing) sent for it is a stale
+  // one — the document page saves the status it last knew before Update in Xero,
+  // which put published bills back in Ready. Ignored rather than refused, so the
+  // rest of the save still lands.
+  if (typeof patch.status === 'string' && ['new', 'ready', 'review', 'processing'].includes(String(patch.status)) && getBillById(orgId, req.params.id)?.xeroInvoiceId) {
+    delete patch.status;
   }
   let updated = updateBill(orgId, req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'not_found' });

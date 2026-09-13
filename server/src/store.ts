@@ -1064,6 +1064,24 @@ export function markBillPosted(
   return bill;
 }
 
+// Put back into Archive every published document a stale save moved into a
+// working status (new / ready / review / processing) — the document page used
+// to resend the status it last knew before Update in Xero, which reopened bills
+// that were already in the ledger. Run off the listing; writes only on a change.
+export function archivePublishedWorkingDocs(orgId: string): number {
+  const bills = load();
+  let n = 0;
+  for (const b of bills) {
+    if (b.orgId !== orgId || !b.xeroInvoiceId) continue;
+    if (['new', 'ready', 'review', 'processing'].includes(String(b.status))) {
+      b.status = 'archived';
+      n += 1;
+    }
+  }
+  if (n) persist(bills);
+  return n;
+}
+
 // Record what Xero last said about a published bill: its status, the date it
 // was fully paid, and the reference on the payment(s) behind that. Its own
 // writer rather than a patch through updateBill, for the same reason

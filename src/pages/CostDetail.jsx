@@ -1901,7 +1901,17 @@ export default function CostDetail() {
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        {setAside ? (
+        {doc.persisted && doc.xeroInvoiceId ? (
+          // In Xero, the ledger is where it stands: "Ready" on a bill already
+          // posted read as work still to do.
+          <span
+            title={`Published to ${doc.xeroTenantName || 'Xero'}`}
+            className="inline-flex h-8 items-center gap-1 rounded-md border border-green-600/40 bg-green-600/10 px-3 text-sm text-green-800"
+          >
+            <CheckCircle2 className="h-4 w-4" /> Published
+            {xeroPaidStatus(doc) ? <span className="text-green-700/80">· {xeroPaidStatus(doc).label}</span> : null}
+          </span>
+        ) : setAside ? (
           // Said where the status always is. Without it an archived document
           // wore "Missing: Category" and an Archive button, which reads exactly
           // like a document nobody had touched.

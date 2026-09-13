@@ -1444,6 +1444,15 @@ claim's send it — so pressing Publish in two places cannot put two different
 statuses in one ledger. The automatic publish-after-reading is deliberately NOT
 covered by `publishStatus`.
 
+**A published document is never back in Ready.** Publishing archives it, but
+the document page saved the status it last knew before Update in Xero, so a
+bill already in the ledger could be reopened as Ready. The PATCH route now
+ignores a working status (new / ready / review / processing) sent for a
+document with a `xeroInvoiceId` while keeping the rest of the save,
+`archivePublishedWorkingDocs` repairs the ones already stuck off the listing,
+and the page's status chip reads **Published · <Xero status>** for anything in
+Xero. Covered by `test/bank-match.test.mts`.
+
 **A supplier that invoices after the period gets the period's date.** A
 virtual-assistant agency invoicing on 2 September for August's hours has done
 nothing in September, and a practice closing August needs the cost there. So the
