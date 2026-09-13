@@ -6,7 +6,7 @@ import { costPath } from '@/lib/bills';
 import { formatDate } from '@/lib/date';
 import { useActiveOrganisation, useXeroAccounts } from '@/lib/organisations';
 import { useExtractionSettings } from '@/lib/extractionSettings';
-import { fetchBankOutstanding, matchBankLine, undoBankMatch, dismissBankLine, restoreBankLine } from '@/lib/bankStore';
+import { fetchBankOutstanding, requestBankRefresh, matchBankLine, undoBankMatch, dismissBankLine, restoreBankLine } from '@/lib/bankStore';
 import { bankMatches, lineKey, suggestionFor, isMoneyOut, docAmountFor, matchReason } from '@/lib/bankMatch';
 import { cn } from '@/lib/utils';
 
@@ -61,7 +61,7 @@ export default function BankMatch() {
     [accounts]
   );
 
-  const [state, setState] = useState({ loading: true, lines: [], records: [], error: '', code: '', retrievedAt: '', reports: [], tenant: null });
+  const [state, setState] = useState({ loading: true, lines: [], records: [], error: '', code: '', retrievedAt: '', reports: [], tenant: null, refresh: null });
   const [acct, setAcct] = useState('all');
   const [showDone, setShowDone] = useState(false);
   // Per line: the document a person picked (when several were possible), the
@@ -85,6 +85,7 @@ export default function BankMatch() {
         retrievedAt: out.retrieved_at || '',
         reports: out.reports || [],
         tenant: out.tenant || null,
+        refresh: out.refresh || null,
       });
     } catch (err) {
       setState((s) => ({ ...s, loading: false, error: err.message, code: err.code || '' }));
@@ -93,6 +94,49 @@ export default function BankMatch() {
   useEffect(() => {
     load();
   }, [load, organisation?.id]);
+
+  // Refresh asks CYWorkspace to RETRIEVE the latest from Xero (its n8n Bank
+  // Reconciliation run), then waits for the reports to land — one per bank
+  // account, a minute or two each, since the run drives one browser at a time.
+  // The request is CYWS's record (`refresh` on /outstanding), so a reload or a
+  // colleague looking at the same client sees it waiting too.
+  const REFRESH_WAIT_MS = 20 * 60 * 1000;
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
+  const [clock, setClock] = useState(() => Date.now());
+  const refreshState = useMemo(() => {
+    const r = state.refresh;
+    const asked = r?.requested_at ? Date.parse(r.requested_at) : NaN;
+    if (!Number.isFinite(asked)) return null;
+    const accounts = Array.isArray(r.accounts) ? r.accounts : [];
+    const expected = Math.max(1, accounts.length);
+    const arrived = (state.reports || []).filter((x) => Number.isFinite(Date.parse(x.retrieved_at)) && Date.parse(x.retrieved_at) >= asked).length;
+    const done = arrived >= expected;
+    return { asked, accounts, expected, arrived: Math.min(arrived, expected), done, timedOut: !done && clock - asked > REFRESH_WAIT_MS };
+  }, [state.refresh, state.reports, clock, REFRESH_WAIT_MS]);
+  const waiting = Boolean(refreshState && !refreshState.done && !refreshState.timedOut);
+  useEffect(() => {
+    if (!waiting) return undefined;
+    const t = setInterval(() => {
+      setClock(Date.now());
+      load();
+    }, 20_000);
+    return () => clearInterval(t);
+  }, [waiting, load]);
+  const refreshFromXero = async () => {
+    setRefreshing(true);
+    setRefreshError('');
+    try {
+      await requestBankRefresh();
+    } catch (err) {
+      setRefreshError(err.message);
+    } finally {
+      setRefreshing(false);
+      setClock(Date.now());
+      load();
+    }
+  };
+  const askedAt = refreshState ? new Date(refreshState.asked).toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' }) : '';
 
   // What has been done to each line, by key.
   const recordByKey = useMemo(() => {
@@ -268,6 +312,35 @@ export default function BankMatch() {
         </p>
       </div>
 
+      {waiting && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
+          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+          <p>
+            <span className="font-medium">Retrieving the latest from Xero</span>
+            {refreshState.accounts.length ? ` for ${refreshState.accounts.join(', ')}` : ''} — asked at {askedAt}. CYWorkspace runs the
+            bank reconciliation report one account at a time, and new lines appear here as each arrives ({refreshState.arrived} of{' '}
+            {refreshState.expected} so far).
+          </p>
+        </div>
+      )}
+      {refreshState?.timedOut && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            The retrieval asked for at {askedAt} has not reported back after 20 minutes ({refreshState.arrived} of {refreshState.expected}{' '}
+            account{refreshState.expected === 1 ? '' : 's'} arrived). Check the Auto Bank Reconciliation run in CYWorkspace; Refresh asks again.
+          </p>
+        </div>
+      )}
+      {refreshError && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            <span className="font-medium">CYWorkspace could not start a retrieval.</span> {refreshError}
+          </p>
+        </div>
+      )}
+
       {state.error && (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -298,8 +371,14 @@ export default function BankMatch() {
           <label className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
             <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} /> Show matched &amp; ignored
           </label>
-          <button type="button" onClick={load} disabled={state.loading} title="Ask CYWorkspace again" className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm transition-colors hover:bg-muted disabled:opacity-50">
-            <RefreshCw className={cn('h-3.5 w-3.5', state.loading && 'animate-spin')} /> Refresh
+          <button
+            type="button"
+            onClick={refreshFromXero}
+            disabled={refreshing || waiting}
+            title="Ask CYWorkspace to retrieve the latest unreconciled lines from Xero"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || waiting || state.loading) && 'animate-spin')} /> {waiting ? 'Retrieving…' : 'Refresh'}
           </button>
           <button
             type="button"

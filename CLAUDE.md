@@ -2493,6 +2493,20 @@ USD bill). The record keeps `feeLineItemId`, and Undo deletes the payment and
 then takes the fee line back off. Covered by `npm test` at the root and in `server/`
 (`test/bank-match.test.mts`).
 
+**Refresh retrieves, it does not merely re-read.** The Bank tab only ever read
+what CYWS's last run left outstanding, so a line imported into Xero this
+morning was invisible until the next scheduled run. **Refresh** now calls
+`POST /api/bank/refresh` → CYWS's `POST /api/webhooks/cybills/bank-recon/refresh`
+(`requestRefreshFromCyws`), which fires the same n8n Bank Reconciliation
+retrieval CYWS's own button and daily task fire. The lines come back by the
+usual road (the auto-bank-recon webhook records them, `/outstanding` hands them
+over), and `/outstanding` now carries `refresh: {requested_at, accounts}` — so
+the page shows "Retrieving the latest from Xero…" with how many accounts have
+reported back, re-reads every 20 seconds while waiting, and after 20 minutes
+says the run has not reported back. One request at a time per tenant is CYWS's
+rule (a second press answers `already_running`), because the retrieval drives a
+single browser. An older CYWS answers a bare 404, reported as needing an update.
+
 **CYWS matches card-fee lines too, and a cleared Xero link frees the line.**
 `GET /api/payments/bank-candidates` puts the entity's rules on every candidate
 (`card_fees: [{bank_account, percent}]`), and CYWS's matcher

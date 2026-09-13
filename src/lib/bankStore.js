@@ -34,6 +34,13 @@ export function fetchBankOutstanding() {
   return request('/api/bank/outstanding');
 }
 
+// Ask CYWorkspace to retrieve the latest unreconciled lines from Xero now (its
+// n8n Bank Reconciliation run). { ok, requested_at, accounts, already_running }.
+// The lines arrive later; fetchBankOutstanding reads them as always.
+export function requestBankRefresh() {
+  return request('/api/bank/refresh', { method: 'POST' });
+}
+
 // Settle one line against one document: publish it if it is not yet in Xero,
 // then record the payment. `line` is echoed back as the server handed it out,
 // plus `bank_account_code` where a person had to pick the account.

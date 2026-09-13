@@ -57,6 +57,8 @@ const paidInvoices = new Set<string>();
 let invoiceSeq = 0;
 // What CYWS is told about spent lines, and a switch to make it unreachable.
 const lineNotices: any[] = [];
+// Every retrieval CYBills asked CYWS to start, by tenant.
+const refreshCalls: any[] = [];
 let noticesDown = false;
 const stub = http.createServer((req, res) => {
   const url = new URL(String(req.url), 'http://x');
@@ -82,6 +84,18 @@ const stub = http.createServer((req, res) => {
       reports: [{ name: 'DBS Current.xlsx', retrieved_at: '2026-08-26T01:00:00.000Z' }],
       lines: [L1, L2, L3, L4, L5],
     }));
+  }
+  if (path === '/api/webhooks/cybills/bank-recon/refresh' && req.method === 'POST') {
+    if (req.headers['x-api-key'] !== 'relay-key') { res.statusCode = 401; return res.end(JSON.stringify({ error: 'invalid_api_key' })); }
+    if (url.searchParams.get('tenant_id') === 'tenant-2') {
+      // An older CYWS: Express's bare 404, no JSON.
+      res.statusCode = 404;
+      res.setHeader('content-type', 'text/html');
+      return res.end('Cannot POST /api/webhooks/cybills/bank-recon/refresh');
+    }
+    refreshCalls.push(url.searchParams.get('tenant_id'));
+    res.statusCode = 202;
+    return res.end(JSON.stringify({ ok: true, requested_at: '2026-09-13T02:00:00.000Z', accounts: ['DBS Current'] }));
   }
   if (path === '/api/webhooks/cybills/bank-recon/used' && req.method === 'POST') {
     return body((b) => {
@@ -482,6 +496,13 @@ check('and the publish tells CYWS the autofilled line is spent too', lineNotices
   r = await call('/api/bank/outstanding', { headers: ORG });
   check('the other matches stand', r.body.records.filter((x: any) => x.kind === 'match').length >= 1, true);
 }
+
+// --- Refresh asks CYWS to retrieve from Xero -----------------------------------------
+r = await call('/api/bank/refresh', { method: 'POST', headers: ORG });
+check('Refresh asks CYWS to start a retrieval for this entity’s tenant', [r.status, r.body.ok, refreshCalls], [200, true, ['tenant-1']]);
+check('and says when it asked, and for which accounts', [r.body.requested_at, r.body.accounts, r.body.already_running], ['2026-09-13T02:00:00.000Z', ['DBS Current'], false]);
+r = await call('/api/bank/refresh', { method: 'POST', headers: { 'X-Org-Id': 'org-2' } });
+check('an older CYWS with no refresh route is said to need updating', [r.status, r.body.error], [404, 'route_missing']);
 
 stub.close();
 if (failures) {

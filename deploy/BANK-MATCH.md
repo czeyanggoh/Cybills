@@ -82,6 +82,8 @@ GET https://cyworkspace.cy-bm.sg/api/webhooks/cybills/bank-recon/outstanding?ten
 }
 ```
 
+- **`refresh`** (`{requested_at, accounts}` or `null`): the last retrieval CYBills
+  asked for (below), so the Bank tab can say it is still waiting.
 - **Which lines**: every unreconciled statement line from the tenant's most
   recent auto-bank-recon run(s) that CYWS did **not** post — its `not_posted`,
   whatever the reason (`no_match`, `below_min_confidence`,
@@ -115,6 +117,29 @@ CYBills tells a **bare** 404 (Express's "Cannot GET", no JSON body — an older
 CYWS with no such route) apart from a JSON refusal, and says "CYWorkspace needs
 updating" rather than "nothing outstanding". Until the route exists the Bank tab
 shows that message and the matches already made; nothing else is affected.
+
+### Starting a retrieval: `POST …/cybills/bank-recon/refresh?tenant_id=<uuid>`
+
+The Bank tab's **Refresh** asks for the latest instead of re-reading the last
+run: CYWS fires the SAME n8n Bank Reconciliation retrieval its own page button
+and the daily task fire (`buildBankRecTriggerPayload` for the tenant's saved
+retrieve selection, to `BANK_REC_REPORT_WEBHOOK_URL`). The reports come back
+through `/api/webhooks/auto-bank-recon` and are recorded for `/outstanding` as
+always — nothing new on the return road.
+
+| Status | Body | Meaning |
+|---|---|---|
+| 202 | `{ok: true, requested_at, accounts}` | fired; `accounts` are the bank account names asked for |
+| 202 | `{ok: true, already_running: true, requested_at, accounts}` | an earlier request is still waiting for its reports; nothing fired (xero-cyws drives one browser) |
+| 422 | `{error: "no_bank_accounts"}` | no active bank account selected for retrieval |
+| 409 | `{error: "xero_not_connected"}` | |
+| 502 | `{error: "n8n_webhook_failed"}` | n8n refused or was unreachable |
+| 503 | `{error: "webhook_not_configured"}` | `BANK_REC_REPORT_WEBHOOK_URL` unset on CYWS |
+
+A request is settled once every account it named has a report retrieved at or
+after `requested_at`, or 20 minutes have passed. CYBills' `POST /api/bank/refresh`
+calls this, and the page re-reads `/outstanding` every 20 seconds while the
+request is waiting.
 
 ## What CYBills offers CYWS
 

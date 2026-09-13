@@ -868,7 +868,7 @@ export async function undoSettlement(record: BankLineRecord, organisation: Organ
 // GET https://cyworkspace.cy-bm.sg/api/webhooks/cybills/bank-recon/outstanding?tenant_id=…
 // Contract: deploy/BANK-MATCH.md.
 export type OutstandingResult =
-  | { ok: true; lines: BankLine[]; retrievedAt: string; reports: Array<{ name: string; retrieved_at: string }>; tenantName: string }
+  | { ok: true; lines: BankLine[]; retrievedAt: string; reports: Array<{ name: string; retrieved_at: string }>; tenantName: string; refresh: { requested_at: string; accounts: string[] } | null }
   | { ok: false; error: string; message: string; status: number };
 
 export async function fetchOutstandingFromCyws(tenantId: string): Promise<OutstandingResult> {
@@ -910,6 +910,52 @@ export async function fetchOutstandingFromCyws(tenantId: string): Promise<Outsta
     retrievedAt: String(data?.retrieved_at ?? ''),
     reports: Array.isArray(data?.reports) ? data.reports.map((x: any) => ({ name: String(x?.name ?? ''), retrieved_at: String(x?.retrieved_at ?? '') })) : [],
     tenantName: String(data?.tenant?.tenant_name ?? ''),
+    // The last retrieval CYBills asked CYWS for, so the page can say it is
+    // still waiting. Absent from an older CYWS.
+    refresh: data?.refresh && typeof data.refresh.requested_at === 'string'
+      ? { requested_at: String(data.refresh.requested_at), accounts: Array.isArray(data.refresh.accounts) ? data.refresh.accounts.map(String) : [] }
+      : null,
+  };
+}
+
+// POST https://cyworkspace…/api/webhooks/cybills/bank-recon/refresh?tenant_id=…
+// Ask CYWS to run the n8n Bank Reconciliation retrieval now, instead of waiting
+// for its next scheduled run. The lines arrive later, through CYWS's usual
+// auto-bank-recon webhook, and are read on /outstanding as always. Contract:
+// deploy/BANK-MATCH.md.
+export type RefreshResult =
+  | { ok: true; requestedAt: string; accounts: string[]; alreadyRunning: boolean }
+  | { ok: false; status: number; error: string; message: string };
+
+export async function requestRefreshFromCyws(tenantId: string): Promise<RefreshResult> {
+  if (!env.CYWORKSPACE_RELAY_URL || !env.CYWORKSPACE_API_KEY) {
+    return { ok: false, status: 503, error: 'cyws_not_configured', message: 'Set CYWORKSPACE_API_KEY (and CYWORKSPACE_RELAY_URL) in server/.env.' };
+  }
+  const url = new URL(`${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/bank-recon/refresh`);
+  url.searchParams.set('tenant_id', tenantId);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-API-Key': env.CYWORKSPACE_API_KEY, Accept: 'application/json' },
+      // Building the payload reads Xero twice before n8n is called.
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (err) {
+    return { ok: false, status: 502, error: 'cyws_unreachable', message: `Could not reach CYWorkspace: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const data: any = await res.json().catch(() => null);
+  if (!res.ok) {
+    if (res.status === 404 && !data?.error) {
+      return { ok: false, status: 404, error: 'route_missing', message: 'CYWorkspace cannot start a retrieval from here yet (it needs updating — see deploy/BANK-MATCH.md).' };
+    }
+    return { ok: false, status: res.status, error: String(data?.error ?? 'cyws_error'), message: String(data?.message ?? `CYWorkspace answered ${res.status}.`) };
+  }
+  return {
+    ok: true,
+    requestedAt: String(data?.requested_at ?? ''),
+    accounts: Array.isArray(data?.accounts) ? data.accounts.map(String) : [],
+    alreadyRunning: Boolean(data?.already_running),
   };
 }
 
@@ -993,8 +1039,22 @@ bankRouter.get('/outstanding', async (req, res) => {
     retrieved_at: out.retrievedAt,
     reports: out.reports,
     records,
+    refresh: out.refresh,
     tenant: { id: organisation.tenantId, name: out.tenantName || organisation.tenantName || organisation.name },
   });
+});
+
+// POST /api/bank/refresh — ask CYWS to retrieve the latest unreconciled lines
+// from Xero now (its n8n Bank Reconciliation run), rather than waiting for the
+// next scheduled one. Answers as soon as CYWS has fired the run; the page then
+// re-reads /outstanding until the reports arrive. Business Admin like the rest
+// of the tab.
+bankRouter.post('/refresh', async (req, res) => {
+  const scope = requireBankEntity(req, res);
+  if (!scope) return;
+  const out = await requestRefreshFromCyws(scope.organisation.tenantId);
+  if (!out.ok) return res.status(out.status >= 500 ? 502 : out.status).json({ error: out.error, message: out.message });
+  res.json({ ok: true, requested_at: out.requestedAt, accounts: out.accounts, already_running: out.alreadyRunning });
 });
 
 // POST /api/bank/match — { billId, line } — a person settling one line.
