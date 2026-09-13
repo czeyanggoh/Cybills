@@ -2,6 +2,10 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from '@/App.jsx'
 import '@/index.css'
+import { installEscapeToClose } from '@/lib/escapeToClose'
+
+// Escape closes whichever popup is on top — every dialog, drawer and menu.
+installEscapeToClose()
 
 // Stale-bundle recovery. Vite emits `vite:preloadError` when a dynamic import
 // can't fetch its chunk — almost always because the user's tab was loaded

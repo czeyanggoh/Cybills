@@ -164,14 +164,6 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
     return () => { alive = false; };
   }, []);
 
-  // Close the lightbox on Escape.
-  useEffect(() => {
-    if (!lightbox) return;
-    const onKey = (e) => { if (e.key === 'Escape') setLightbox(null); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [lightbox]);
-
   function submit() {
     if (!input.trim() && pendingImgs.length === 0) return;
     api('', 'POST', { text: input.trim(), screenshots: pendingImgs.map((p) => p.url), author });

@@ -58,16 +58,6 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
   // opens the right organisation rather than whichever one the browser last had.
   const xeroShortCode = useXeroShortCode();
 
-  // Escape closes the dialog, at any step — once the bill is posted there is
-  // nothing left to lose by closing, and before that the form is still here.
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
   // A company that isn't GST-registered publishes everything as No Tax, whatever
   // the bill still carries — the last gate before a stale code reaches Xero.
   const gstRegistered = useGstRegistered();

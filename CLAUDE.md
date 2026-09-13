@@ -1385,6 +1385,23 @@ it; the PLAIN wheel is left alone so the page still scrolls past; drag pans,
 double-click toggles close-up / fit, and buttons do the same plus rotate a photo
 taken sideways. A PDF is still the browser's own viewer, which has its zoom.
 
+## Escape closes the popup on top
+
+Every dialog, drawer, lightbox and menu is a hand-built `fixed inset-0` layer,
+and there are about fifty of them, so Escape is answered once, app-wide
+(`src/lib/escapeToClose.js`, installed in `main.jsx`), rather than by a listener
+in each. It finds the TOP layer (highest z-index, later in the page on a tie)
+and PRESSES what already closes it: a `data-escape-close` control, else the
+`aria-label="Close"` X, else the dimmed backdrop, else the layer itself (a
+menu's click-catcher). Pressing rather than calling is the point — a Close
+disabled mid-save stays shut to Escape, and whatever closing does (the
+claim-added dialog moving on to the next document) happens as for a click. A
+control that answers Escape itself (ComboSelect, an inline rename reverting,
+the bank-match popover) calls `preventDefault` and this stands aside. A new
+popup needs nothing, provided its X carries `aria-label="Close"`; one closed by
+a differently named button marks it `data-escape-close` (the line-items grid's
+Done).
+
 ## What a Costs export is a file OF
 
 CSV, PDF and ZIP are three different things over the same selection, and only

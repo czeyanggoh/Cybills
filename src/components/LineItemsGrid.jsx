@@ -276,6 +276,7 @@ export function LineItemsEditor({ open, onClose, title, preview, actions, ...gri
         <button
           type="button"
           onClick={onClose}
+          data-escape-close
           className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
         >
           <X className="h-3.5 w-3.5" /> Done

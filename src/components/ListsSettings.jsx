@@ -539,7 +539,7 @@ function ListNameField({ index, label }) {
           // most people finish a field, and a rename that needs a click
           // somewhere else to take is a rename that looks like it didn't.
           if (e.key === 'Enter') { e.preventDefault(); commit(); ref.current?.blur(); }
-          if (e.key === 'Escape') { setValue(label); ref.current?.blur(); }
+          if (e.key === 'Escape') { e.preventDefault(); setValue(label); ref.current?.blur(); }
         }}
         placeholder={fallback}
         aria-label="List name"
@@ -667,7 +667,7 @@ function NameCell({ row, kind }) {
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') { e.preventDefault(); commit(); ref.current?.blur(); }
-        if (e.key === 'Escape') { setValue(row.name); ref.current?.blur(); }
+        if (e.key === 'Escape') { e.preventDefault(); setValue(row.name); ref.current?.blur(); }
       }}
       aria-label="Name"
       className="h-9 w-full min-w-[11rem] rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"

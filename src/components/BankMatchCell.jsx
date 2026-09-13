@@ -27,7 +27,9 @@ function Popover({ anchorRef, onClose, children }) {
       if (ref.current?.contains(e.target) || anchorRef.current?.contains(e.target)) return;
       onClose();
     };
-    const esc = (e) => e.key === 'Escape' && onClose();
+    // Claimed, so the app-wide Escape (lib/escapeToClose) doesn't also close
+    // whatever the popover sits on.
+    const esc = (e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
     document.addEventListener('mousedown', away);
     document.addEventListener('keydown', esc);
     return () => {
