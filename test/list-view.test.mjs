@@ -2,7 +2,7 @@
 // it is what a stored value is worth once the page has moved on: what was saved
 // is last release's, and a filter object from before a field existed, or a scope
 // key that no longer does, shows an empty list nobody can explain.
-import { restoreView } from '../src/lib/listView.js';
+import { restoreView, walkPosition } from '../src/lib/listView.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -42,6 +42,14 @@ check(
 const emptyFilters = () => ({ status: '', supplier: '' });
 check('a factory fallback is called, not stored', restoreView(undefined, emptyFilters), { status: '', supplier: '' });
 check('…and a stored object still merges over it', restoreView({ supplier: 'Grab' }, emptyFilters), { status: '', supplier: 'Grab' });
+
+// --- Previous / Next along the list --------------------------------------------
+check('the middle of a list has both neighbours', walkPosition(['a', 'b', 'c'], 'b'), { index: 1, total: 3, prev: 'a', next: 'c' });
+check('the first row has no Previous', walkPosition(['a', 'b', 'c'], 'a'), { index: 0, total: 3, prev: null, next: 'b' });
+check('the last row has no Next', walkPosition(['a', 'b', 'c'], 'c'), { index: 2, total: 3, prev: 'b', next: null });
+check('a number and its string are the same id', walkPosition([260826113257, 'x'], '260826113257'), { index: 0, total: 2, prev: null, next: 'x' });
+check('a row not in the list stands nowhere and goes nowhere', walkPosition(['a', 'b'], 'z'), { index: -1, total: 2, prev: null, next: null });
+check('no list at all', walkPosition(undefined, 'a'), { index: -1, total: 0, prev: null, next: null });
 
 console.log(failures ? `\n${failures} failing` : '\nAll passing');
 process.exit(failures ? 1 : 0);

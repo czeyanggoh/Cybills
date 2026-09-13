@@ -60,7 +60,7 @@ import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import BankMatchCell from '@/components/BankMatchCell';
 import { useBankLines, invalidateBankLines } from '@/lib/bankStore';
 import { matchesByDoc, lineKey as bankLineKey } from '@/lib/bankMatch';
-import { useListView } from '@/lib/listView';
+import { useListView, rememberWalk } from '@/lib/listView';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
@@ -1044,6 +1044,15 @@ export default function Costs() {
     });
   }
   const hasSelection = selected.size > 0;
+
+  // The order the rows are on screen in, kept for the document page: its
+  // Previous / Next walk THIS list — scoped, filtered and sorted as it stands —
+  // so "next" from a row means the row beneath it. Keyed on the ids rather than
+  // the array, which is rebuilt every render.
+  const walkIds = rows.map((d) => String(d.id)).join('\n');
+  useEffect(() => {
+    rememberWalk('costs', walkIds ? walkIds.split('\n') : []);
+  }, [walkIds]);
 
   // Change a row's category — persists for uploaded bills (server) and samples
   // (localStorage).

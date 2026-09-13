@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeft,
@@ -24,7 +24,7 @@ import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/cla
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { trustSender, fetchDocumentLink } from '@/lib/mailbox';
-import { DOCS, getDoc } from '@/data/docs';
+import { getDoc } from '@/data/docs';
 import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
 import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, useOrganisations, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
@@ -47,6 +47,7 @@ import {
 } from '@/lib/supplierRules';
 import TeachRule from '@/components/TeachRule';
 import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
+import { readWalk, walkPosition } from '@/lib/listView';
 import { totalOk } from '@/lib/readiness';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { readDecisions } from '@/lib/reRead';
@@ -417,7 +418,19 @@ export default function CostDetail() {
     : claimForItem
       ? `Already on expense claim ${claimRef(claimForItem)}. Take it off that claim first to move it.`
       : '';
-  const index = DOCS.findIndex((d) => String(d.id) === String(id));
+  // Where this document stands in the list it was opened from — the Costs
+  // page's rows as they were on screen (rememberWalk), else the inbox — so
+  // Previous / Next walk that list and never anything else. Ids the book no
+  // longer holds (deleted since the list was drawn) are dropped rather than
+  // navigated to.
+  const walk = useMemo(() => {
+    const inBook = new Set(inboxAllDocs.map((d) => String(d.id)));
+    const remembered = readWalk('costs').filter((v) => inBook.has(v));
+    const fromList = walkPosition(remembered, id);
+    if (fromList.index !== -1) return fromList;
+    return walkPosition(rowsFor(inboxAllDocs, 'inbox').map((d) => d.id), id);
+  }, [inboxAllDocs, id]);
+  const index = walk.index;
 
   // Reset the form when navigating between documents. Sample docs resolve from
   // the in-memory mock; uploaded bills are fetched by id from the store.
@@ -872,8 +885,10 @@ export default function CostDetail() {
 
 
   const go = (delta) => {
-    const next = DOCS[index + delta];
-    if (next) navigate(costPath(next));
+    const nextId = delta < 0 ? walk.prev : walk.next;
+    if (nextId === null) return;
+    const next = inboxAllDocs.find((d) => String(d.id) === nextId);
+    navigate(costPath(next ?? nextId));
   };
 
   // After an action that finishes with this document (Add to expense claim,
@@ -1972,18 +1987,18 @@ export default function CostDetail() {
           <button
             type="button"
             onClick={() => go(-1)}
-            disabled={index <= 0}
+            disabled={walk.prev === null}
             className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
           >
             <ChevronLeft className="h-4 w-4" /> Previous
           </button>
           <span className="tabular-nums text-muted-foreground">
-            {index >= 0 ? index + 1 : '–'} / {DOCS.length}
+            {index >= 0 ? index + 1 : '–'} / {walk.total}
           </span>
           <button
             type="button"
             onClick={() => go(1)}
-            disabled={index >= DOCS.length - 1}
+            disabled={walk.next === null}
             className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
           >
             Next <ChevronRight className="h-4 w-4" />

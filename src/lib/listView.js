@@ -71,3 +71,47 @@ export function useListView(name, field, fallback) {
   }, [name, field, value]);
   return [value, setValue];
 }
+
+// The ORDER of the rows a list page is showing, so its rows' Previous / Next
+// walk the list the reviewer opened them from — narrowed, sorted and scoped
+// the way it was on screen — rather than some other list. It lives beside the
+// view above because it is the same stretch of work: what you were looking at,
+// and the order you were looking at it in.
+//
+// The document page used to walk a list of SAMPLE documents left over from
+// before there was a server, so Next from a real cost landed on "Yew Kee Two,
+// 8 / 18" — a page that could not render because there was nothing behind it.
+const walkKeyFor = (name) => `cybills.listwalk.${name}`;
+
+export function rememberWalk(name, ids) {
+  try {
+    sessionStorage.setItem(walkKeyFor(name), JSON.stringify(ids.map(String)));
+  } catch {
+    /* nothing to do: Previous / Next fall back to the inbox */
+  }
+}
+
+export function readWalk(name) {
+  try {
+    const raw = sessionStorage.getItem(walkKeyFor(name));
+    const value = raw ? JSON.parse(raw) : null;
+    return Array.isArray(value) ? value.filter((v) => typeof v === 'string' || typeof v === 'number').map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Where `id` stands in `ids`, and its neighbours. Pure, so the arithmetic that
+// enables the two buttons and prints "3 / 41" can be held to account. An id not
+// in the list is index -1 with no neighbours — the page shows "–" and disables
+// both, rather than jumping somewhere from nowhere.
+export function walkPosition(ids, id) {
+  const list = Array.isArray(ids) ? ids.map(String) : [];
+  const index = list.indexOf(String(id));
+  return {
+    index,
+    total: list.length,
+    prev: index > 0 ? list[index - 1] : null,
+    next: index >= 0 && index < list.length - 1 ? list[index + 1] : null,
+  };
+}
