@@ -68,8 +68,23 @@ export function amountsAgree(doc, line) {
   return CENTS(mine) === Math.abs(CENTS(line?.amount));
 }
 
-// A document a bank line could pay. Cost documents only; never a credit note
-// (money the supplier owes us — a payment in, not out); never one on an expense
+// A document a bank line could pay: a VENDOR INVOICE or a RECEIPT. The other
+// kinds are not costs a line settles — a PAYMENT PROOF is the bank's own record
+// that a line was paid (matched, it would publish a transfer confirmation as a
+// bill and pay it, beside the invoice it actually paid); a MILEAGE record is a
+// journey reimbursed through a claim; a credit note is money the supplier owes
+// us; a statement, a delivery note and an ATM slip carry no cost of their own.
+// A blank type (documents read before there was one) and "Other" (the reader's
+// name for a bill it could not place) are still offered: refusing them would
+// hide a real bill for want of a label.
+export function payableKind(type) {
+  const t = String(type ?? '').trim().toLowerCase();
+  if (!t || t === 'other') return true;
+  if (/credit|payment proof|mileage|statement|remittance|delivery|atm|expense statement/.test(t)) return false;
+  return /receipt|invoice/.test(t);
+}
+
+// Cost documents only; of a payable kind (above); never one on an expense
 // claim (its money reaches the ledger as a line of the claim's bill) or merged
 // away (another document's money); never one Xero already calls PAID. A
 // document already PUBLISHED but still awaiting payment is offered: publishing
@@ -79,7 +94,7 @@ export function matchable(doc) {
   if ((doc.kind || 'cost') !== 'cost') return false;
   const status = String(doc.status || '');
   if (['expenseclaim', 'merged', 'deleted', 'processing'].includes(status)) return false;
-  if (/credit/i.test(String(doc.type || doc.documentType || ''))) return false;
+  if (!payableKind(doc.type || doc.documentType)) return false;
   if (String(doc.xeroStatus || '').toUpperCase() === 'PAID') return false;
   if (String(doc.xeroStatus || '').toUpperCase() === 'VOIDED') return false;
   return amountOf(doc.total) > 0;

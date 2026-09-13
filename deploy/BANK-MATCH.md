@@ -132,9 +132,14 @@ point: the payables list leaves out a document marked PAID because a receipt in
 a payment run pays the supplier a second time, but a receipt marked paid is
 exactly what a card line on the statement *is*, so it is offered here. A bill
 already **published** but still awaiting payment is offered too — publishing is
-not paying. What is still left out is what no bank line can pay: a credit note,
-a document on an expense claim or merged away, one Xero already calls PAID, and
-one CYBills has already settled against a line.
+not paying. What is still left out is what no bank line can pay. Only a
+**vendor invoice or a receipt** is offered (a blank type and "Other" count as
+one): a **payment proof** — a transfer confirmation, a PayNow screenshot — is
+the bank's own record that a line was paid, not a cost the line pays, and
+matched it would publish the confirmation as a bill beside the invoice it
+settled; a mileage record, a statement, a delivery note and a credit note carry
+no cost a line settles. Nor a document on an expense claim or merged away, one
+Xero already calls PAID, or one CYBills has already settled against a line.
 
 ```json
 {
@@ -223,7 +228,7 @@ paying it twice.
 | `400 missing_field` | no `tenant_id`, or no usable line (date, non-zero signed amount) |
 | `409 tenant_mismatch` | the document belongs to a different client's ledger |
 | `409 line_already_matched` | this line is already settled against ANOTHER document — undo that first (Bank tab) |
-| `409 not_matchable` | on a claim, merged, a credit note, or Xero already says PAID |
+| `409 not_matchable` | on a claim, merged, not an invoice or receipt (a payment proof, a credit note, a mileage record), or Xero already says PAID |
 | `422 money_in` | the line is money coming in |
 | `422 amount_mismatch` | the figures differ — a payment for a different amount would leave a part-paid bill, so it is refused rather than posted |
 | `422 no_bank_account` | the line names no bank account and none was picked |

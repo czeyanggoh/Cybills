@@ -2293,7 +2293,12 @@ after the Xero legs, the way it consults Dext — on the payables seam
 (`payments.ts`, same key, same tenant check): `GET /api/payments/bank-candidates` lists every
 document a line could pay — WIDER than the payables list, because a receipt
 marked paid is exactly what a card line on the statement is, and a published
-bill awaiting payment is offered too — and `POST /api/payments/bills/:id/settle`
+bill awaiting payment is offered too, but only ever a VENDOR INVOICE or a
+RECEIPT (`payableKind`; a blank type and "Other" count as one): a **payment
+proof** is the bank's own record that a line was paid, not a cost the line
+pays, and matched it would publish a transfer confirmation as a bill beside the
+invoice it settled; a mileage record, a statement and a credit note carry no
+cost a line settles — and `POST /api/payments/bills/:id/settle`
 does the act, idempotent on the line so a re-pressed run finds its earlier
 settlement rather than paying twice.
 

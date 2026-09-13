@@ -16,6 +16,7 @@ import {
   bankMatches,
   suggestionFor,
   matchesByDoc,
+  payableKind,
 } from '../src/lib/bankMatch.js';
 
 let failures = 0;
@@ -62,6 +63,12 @@ check('not one on an expense claim', matchable(doc({ status: 'expenseclaim' })),
 check('not one merged away', matchable(doc({ status: 'merged' })), false);
 check('not one still being read', matchable(doc({ status: 'processing' })), false);
 check('not a credit note', matchable(doc({ type: 'Credit note/refund', total: '-530' })), false);
+check('not a payment proof — the bank’s own record that a line was paid, not a cost the line pays', matchable(doc({ type: 'Payment proof', paid: true })), false);
+check('not a mileage record — a journey, reimbursed through a claim', matchable(doc({ type: 'Mileage' })), false);
+check('not a statement', matchable(doc({ type: 'Statement/remittance advice' })), false);
+check('a document with no type yet is still offered', matchable(doc({ type: '' })), true);
+check('and so is "Other" — the reader’s name for a bill it could not place', matchable(doc({ type: 'Other' })), true);
+check('the kinds a line can pay', ['Receipt', 'Invoice', 'Tax invoice', 'Payment proof', 'Delivery note', 'ATM withdrawal', 'Expense statement'].map(payableKind), [true, true, true, false, false, false, false]);
 check('not a document with no money', matchable(doc({ total: '0' })), false);
 check('a document set aside by hand may still be paid', matchable(doc({ status: 'archived' })), true);
 
