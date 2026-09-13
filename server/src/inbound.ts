@@ -793,7 +793,32 @@ const isAttachedEmail = (contentType: string, filename: string) =>
 const MAX_ATTACHED_DEPTH = 2;
 const MAX_ATTACHED_EMAILS = 50;
 
-type InboundAttachment = { filename: string; contentType: string; contentBase64: string };
+type InboundAttachment = {
+  filename: string;
+  contentType: string;
+  contentBase64: string;
+  // What says a part is DECORATION rather than a document: embedded in the HTML
+  // by content id, marked inline / related, or given no file name of its own.
+  // Optional, so a pre-parsed Worker payload without them still files as before.
+  contentId?: string;
+  inline?: boolean;
+  named?: boolean;
+};
+
+// A logo or a signature image carried inside the email, not a document sent
+// with it. A supplier's receipt mail ("קבלה מס' 700040" from smartbee) embeds
+// its 11 KB logo by content id and puts the RECEIPT behind a link; the logo was
+// filed as the document, read as nothing, and — because an attachment had been
+// filed — the link was never followed. Small (a real receipt photo or scan is
+// far bigger) AND either embedded/inline or nameless. PDFs are never decoration.
+const DECORATION_MAX_BYTES = 64 * 1024;
+function isDecorationImage(a: InboundAttachment, readType: string, bytes: number, html: string): boolean {
+  if (!/^image\//i.test(readType)) return false;
+  if (bytes >= DECORATION_MAX_BYTES) return false;
+  const cid = String(a.contentId || '').replace(/^<|>$/g, '');
+  const referenced = Boolean(cid) && html.includes(`cid:${cid}`);
+  return referenced || a.inline === true || a.named === false;
+}
 type InboundMail = {
   to: string;
   from: string;
@@ -822,6 +847,9 @@ async function parseMime(bytes: Buffer): Promise<InboundMail> {
       filename: a.filename || 'document',
       contentType: a.contentType || '',
       contentBase64: a.content ? Buffer.from(a.content).toString('base64') : '',
+      contentId: String(a.cid || a.contentId || ''),
+      inline: a.contentDisposition === 'inline' || Boolean(a.related),
+      named: Boolean(a.filename) && a.filename !== 'noname',
     })),
   };
 }
@@ -993,6 +1021,13 @@ async function deliverMail(
     // fine when uploaded by hand. Stored under the real type too, so the
     // browser previews it as a PDF rather than offering a download.
     const readType = readerMediaType(contentType, filename, bytes);
+    // A logo or signature inside the email is not a document — and filing it
+    // would also stop the mail's LINKS being followed, which is where the real
+    // receipt often is. Listed, with the reason, and never filed.
+    if (isDecorationImage(a, readType || contentType, bytes.length, String(mail.html || ''))) {
+      attachmentRows.push({ fileName: filename, contentType: readType || contentType, bytes: bytes.length, skipped: 'an image inside the email (a logo or signature), not a document' });
+      continue;
+    }
     let storageKey = '';
     let storedType = '';
     try {

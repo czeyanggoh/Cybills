@@ -1791,6 +1791,18 @@ already mirrored for ANOTHER book or person is suffixed rather than taken over,
 since one original email can be forwarded to two. Covered by `npm test` in
 `server/` (`test/attached-email.test.mts`).
 
+**A logo inside the email is not an attachment.** smartbee's receipt mail
+("קבלה מס' 700040") embeds its 11 KB logo by content id and puts the receipt
+behind a link; the logo was filed as the document, read as nothing, and —
+because a file had been filed — the link was never followed. `parseMime` now
+keeps each part's `contentId`, inline/related flag and whether it had a name of
+its own, and `isDecorationImage` skips an IMAGE under 64 KB that is referenced by
+`cid:` in the HTML, inline/related, or nameless ("noname"). It is listed on the
+Email tab row with the reason and never filed, so the mail counts as having
+produced nothing and its links take the usual road (trusted: fetched; else a
+"Trust sender?" document). PDFs and anything larger are always filed. Covered by
+`npm test` in `server/` (`test/inline-image.test.mts`).
+
 **Only where the attachments produced nothing.** A mail carrying both the
 invoice and a link to the same invoice must not file the cost twice, and the
 attachment is the document when there is one. Every http(s) link goes over, in
