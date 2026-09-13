@@ -121,6 +121,20 @@ check(
   linksIn(xeroMail.text, xeroMail.html),
   ['https://in.xero.com/abc123DEF', 'https://central.xero.com/s/article/billing']
 );
+// smartbee's receipt mail: the logo links the bare homepage FIRST, and a generic
+// n8n recipe takes the first link — so the receipt file has to lead.
+{
+  const FILE = 'https://smartbee.co.il/public/files/6a8d465d05274e4e7610ca52/1.a04ba73507d9eba84770c5b17b858e7f2afd924d.734c3469d05cd6f48b871df047c3c7fff28e';
+  const ranked = linksIn('', [
+    '<a href="https://smartbee.co.il"><img src="cid:logo"></a>',
+    `<a href="${FILE}">קישור לצפייה בקובץ</a>`,
+    '<a href="https://smartbee.co.il/start/default/registration.aspx">הרשמה</a>',
+    '<img src="http://url128.smartbee.co.il/wf/open?upn=u001.t6tT-2FxwjHOb6chthzGUz8FI5DVs8KMWEn7jrEK6l1Q">',
+    '<a href="http://url128.smartbee.co.il/wf/open?upn=u001.t6tT-2FxwjHOb6chthzGUz8FI5DVs8KMWEn7jrEK6l1Q">x</a>',
+  ].join(''));
+  check('the receipt file leads, ahead of the homepage the logo links to', ranked[0], FILE);
+  check('…and the homepage, the registration page and the open tracker trail it', ranked.slice(1).map((u) => new URL(u).pathname), ['/', '/start/default/registration.aspx', '/wf/open']);
+}
 check(
   'a full stop at the end of a sentence is not part of the link',
   linksIn('pay this: https://in.xero.com/abc123DEF.', ''),

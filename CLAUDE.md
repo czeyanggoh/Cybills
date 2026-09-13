@@ -1805,10 +1805,15 @@ produced nothing and its links take the usual road (trusted: fetched; else a
 
 **Only where the attachments produced nothing.** A mail carrying both the
 invoice and a link to the same invoice must not file the cost twice, and the
-attachment is the document when there is one. Every http(s) link goes over, in
-the order it was written, with the first also as `url`: a mail carries an
-unsubscribe link and a help-centre link beside the one that matters, and the
-workflow holding the portal credentials is the half equipped to tell them apart.
+attachment is the document when there is one. Every http(s) link goes over,
+RANKED, with the first also as `url`: a workflow's generic recipe takes `url`, and
+smartbee's receipt mail puts its bare homepage (the logo's link) first, so the
+homepage was fetched instead of the receipt. `rankLinks` (`n8n.ts`, applied in
+`linksIn` and again when a stored mail is fetched) is a stable score — a file or
+download path, `.pdf`, invoice/receipt words and an opaque token lead; a bare
+homepage, a login/registration/help/unsubscribe page and an email-open tracker
+trail — so links that look alike keep the mail's own order. The whole list still
+goes, and the workflow still decides.
 
 **The bytes decide what a file is.** This is the load-bearing check on the road.
 A portal that wants a login answers **200 with a sign-in PAGE**, and a workflow

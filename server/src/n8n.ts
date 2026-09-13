@@ -67,7 +67,42 @@ export function linksIn(text: string, html: string): string[] {
   for (const m of String(text || '').matchAll(/https?:\/\/[^\s<>"')\]]+/gi)) add(m[0]);
   // A plain-text URL sitting inside the HTML part too (Outlook writes both).
   for (const m of source.matchAll(/https?:\/\/[^\s<>"')\]]+/gi)) add(m[0]);
-  return out;
+  return rankLinks(out);
+}
+
+// The links most likely to BE the document, first — a stable sort, so links
+// that look alike keep the order the mail wrote them in.
+//
+// The whole list still goes to n8n, but the first also goes as `url`, and a
+// workflow's generic recipe takes that one. smartbee's receipt mail puts its
+// bare homepage first ("https://smartbee.co.il", the logo's link), then the
+// receipt file, then a registration page and an email-open tracker — and the
+// homepage is what got fetched. Nothing here claims to KNOW which link is the
+// invoice; it only stops the obvious non-documents standing in front of it.
+const DOC_HINT = /\/files?\/|\/download|\/public\/|\/attachments?\/|\/documents?\/|\/view\b|invoice|receipt|\bbill\b|\/bills?\/|statement|\.pdf\b|kabala|heshbonit/i;
+const NOT_DOC_HINT = /log-?in|sign-?in|sign-?up|regist|unsubscribe|preferences|opt-?out|privacy|terms|\/help|support|\/faq|\/article|facebook\.com|linkedin\.com|instagram\.com|twitter\.com|x\.com\//i;
+const TRACKER_HINT = /\/wf\/open|\/open\?|pixel|\/track(ing)?\b|beacon/i;
+function linkScore(raw: string): number {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return -5;
+  }
+  const path = u.pathname.replace(/\/+$/, '');
+  let s = 0;
+  if (!path && !u.search) s -= 3; // a bare homepage is never the document
+  if (DOC_HINT.test(u.pathname + u.search)) s += 3;
+  if (path.split('/').some((seg) => /^[A-Za-z0-9._-]{20,}$/.test(seg))) s += 1; // an opaque file token
+  if (NOT_DOC_HINT.test(u.hostname + u.pathname)) s -= 3;
+  if (TRACKER_HINT.test(u.pathname + u.search)) s -= 4;
+  return s;
+}
+export function rankLinks(links: string[]): string[] {
+  return links
+    .map((url, i) => ({ url, i, s: linkScore(url) }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .map((x) => x.url);
 }
 
 // n8n answers in more than one shape depending on how the workflow was wired —
@@ -165,10 +200,10 @@ function documentFrom(o: Record<string, unknown>, link: string): FetchedDocument
 /**
  * Ask n8n what is behind these links.
  *
- * The whole list goes over, in the order it was written, with the first also as
- * `url` — a mail carries an unsubscribe link and a help-centre link beside the
- * invoice, and which of them is the document is a question the workflow holding
- * the portal credentials is the one equipped to answer.
+ * The whole list goes over, RANKED (rankLinks: the most document-like first, a
+ * bare homepage, a login page or an email-open tracker last), with the first
+ * also as `url` — a mail carries an unsubscribe link and a help-centre link
+ * beside the invoice, and a workflow's generic recipe takes `url`.
  */
 export async function fetchDocumentsForLinks(
   links: string[],
@@ -214,8 +249,10 @@ export async function fetchDocumentsForLinks(
       // bytes and means a workflow can be wired either way round without a
       // change here.
       body: JSON.stringify({
-        url: links[0],
-        links,
+        // Ranked again here: a mail stored before ranking existed ("Fetch
+        // again") carries its links in the order they were written.
+        url: rankLinks(links)[0],
+        links: rankLinks(links),
         from: envelope.from || '',
         to: envelope.to || '',
         subject: envelope.subject || '',
