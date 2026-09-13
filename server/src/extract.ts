@@ -224,6 +224,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'The percentage the document PRINTS beside its tax, as a number — 9 for "9% GST", "GST 9%" or "GST charged at 9%"; 7 for "VAT 7%". 0 when no percentage is printed anywhere near the tax line. Never work it out from the amounts: this is what the supplier wrote, and it decides the tax code when the amounts cannot (a discount taken off the tax-inclusive bill leaves the tax looking like 13% of the net paid on a receipt that plainly says 9%).',
       },
+      motorVehicle: {
+        type: 'boolean',
+        description:
+          'true when this document is a cost of OWNING OR RUNNING A MOTOR VEHICLE: fuel for a vehicle (petrol, diesel, EV charging), parking (a car park, season parking, parking coupons), ERP, road tax, COE, motor insurance, vehicle servicing, repairs, tyres, a car wash, renting or leasing a vehicle, or buying one. false when somebody ELSE carries you or your goods — a taxi, Grab or any ride-hailing trip, a bus, MRT or train fare, a flight, a courier, delivery or freight charge — and false for every other kind of cost. A mileage record is false.',
+      },
       lineItems: {
         type: 'array',
         description:
@@ -267,6 +272,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'supplierGstRegNo',
       'taxLabel',
       'taxRatePrinted',
+      'motorVehicle',
       'billedTo',
       'billedToRegNo',
       'cardLast4',
@@ -304,6 +310,7 @@ const ReceiptSchema = z.object({
   supplierGstRegNo: z.string().optional().default(''),
   taxLabel: z.string().optional().default(''),
   taxRatePrinted: z.number().optional().default(0),
+  motorVehicle: z.boolean().optional().default(false),
   billedTo: z.string().optional().default(''),
   billedToRegNo: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
@@ -780,6 +787,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'A MILEAGE record — a map route screenshot, an odometer photo, a mileage log — is a journey, not a purchase: set `documentType` to "Mileage", read `distanceKm` off it, ' +
     'leave `supplier` empty unless a name is actually printed, leave `total` and `tax` at 0 unless an amount is printed, and describe the journey in `description` (origin → destination, e.g. "Drive: Work (ST Engineering Jurong East) → MacRitchie Reservoir Park, 13 km"). ' +
     'The amount is worked out afterwards from the distance at the company\'s rate per km — never invent one. ' +
+    'Set `motorVehicle` to true for the cost of owning or running a vehicle — fuel, parking, ERP, servicing, repairs, vehicle rental — and false when the business paid somebody else to carry people or goods (a taxi, a Grab ride, a courier): it decides that the GST is not claimed, so do not guess it from the supplier\'s industry alone. ' +
     'If a field is not present, use an empty string or 0. ' +
     'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
     accountsGuide +
@@ -907,6 +915,10 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       // CYBills ask whether the document is in the right client's book at all.
       billedTo: notFiller(parsed.data.billedTo),
       billedToRegNo: notFiller(parsed.data.billedToRegNo),
+      // The paper is a motor vehicle expense, so its GST is not claimed
+      // (src/lib/motorVehicle.js). A mileage record is a journey in somebody's
+      // own car, already worth no tax, and not the business's vehicle.
+      motorVehicle: parsed.data.motorVehicle === true && parsed.data.documentType !== 'Mileage',
       lineItems: parsed.data.lineItems.map((li) => ({ ...li, description: notFiller(li.description) })),
     };
     return { ok: true, data, outcome };

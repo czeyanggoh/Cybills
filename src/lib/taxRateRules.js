@@ -3,7 +3,8 @@
 // Dependency-free on purpose: this is the arithmetic that decides what GST a
 // client claims, so it is tested directly (test/tax-rate-rules.test.mjs) rather
 // than only through the pages that call it. `extractionSettings.js` re-exports
-// it for those callers.
+// it for those callers. Its one import is another pure rule of the same kind.
+import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from './motorVehicle.js';
 
 // --- Auto-pickable tax codes ------------------------------------------------
 // The ONLY codes CYBills is allowed to choose from arithmetic alone:
@@ -237,7 +238,27 @@ export function taxRateOutcome({
   // true / 'document' for an earlier document, 'rule' for this entity's
   // supplier rule, 'ruleOther' for another entity's.
   gstRegNoRemembered = false,
+  // The document's category label ("449 - Motor Vehicle Expenses"), and the
+  // reader's own judgement that the paper is the cost of owning or running a
+  // vehicle. Either makes it a motor vehicle expense (src/lib/motorVehicle.js).
+  category = '',
+  motorVehicle = false,
 } = {}) {
+  // A motor vehicle expense is No Tax, ahead of everything: the account's own
+  // default, the org's "when to use" rules and the printed GST. It is the
+  // practice's rule about the expense rather than a reading of the paper, so
+  // no amount of GST on a petrol receipt makes it claimable. A company that is
+  // not GST-registered is left to its own (silent) answer, which is No Tax too.
+  const label = String(category || accountLabel || '');
+  if (gstRegistered && isMotorVehicleExpense({ category: label, motorVehicle: motorVehicle === true, kind })) {
+    const noTax = (Array.isArray(rates) ? rates : []).find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));
+    return {
+      name: noTax ? noTax.name : MOTOR_VEHICLE_TAX_RATE,
+      reason: motorVehicleReason({ category: label, motorVehicle: motorVehicle === true }),
+      claimsTax: false,
+      motorVehicle: true,
+    };
+  }
   const out = taxRateDecision(arguments[0] ?? {});
   // Only where the gate was actually passed on it: `workedRate` is carried by
   // every answer reached AFTER the evidence gate, and by none reached before it

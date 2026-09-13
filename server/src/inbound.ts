@@ -8,6 +8,7 @@ import { dataScopeForOrg, getOrganisation, primaryOrgId } from './organisations.
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
+import { keepMotorVehicleNoTax } from './motorVehicle.js';
 import { insertBill, updateBill, settleProcessing, getBillById, setBillEmailLink, attachFetchedFile } from './store.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
@@ -292,6 +293,8 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       supplierGstRegNo: d.supplierGstRegNo,
       supplierGstRegNoRemembered: Boolean(d.supplierGstRegNoRemembered),
       supplierGstRegNoFrom: d.supplierGstRegNoFrom || '',
+      // The reader's judgement that this is a motor vehicle expense — No Tax.
+      motorVehicle: d.motorVehicle === true,
       taxLabel: d.taxLabel,
       // Who the paper says it is FOR, so a document that arrived by email or
       // WhatsApp is checked against the entity it landed in like any other. It
@@ -376,6 +379,10 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     // A mileage record is priced at the entity's rate per km — its total is
     // distance × rate, never a figure the reader found on the paper.
     await keepMileageInStep(ws, realOrgId, getBillById(scope, billId), patch);
+    // A motor vehicle expense is No Tax — decided AFTER the supplier rule has
+    // laid its category and its tax code over the read, since either can be
+    // the half that makes it one, and a rule's code must not claim its GST.
+    await keepMotorVehicleNoTax(getBillById(scope, billId), patch);
     const saved = updateBill(scope, billId, patch);
     // The read ran. Whether it came back with anything is what decides where
     // the document lands, and it is asked of the SAVED document rather than of

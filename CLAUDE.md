@@ -759,6 +759,33 @@ Where it came from is stored as `supplierGstRegNoFrom` (`rule` / `ruleOther` /
 documents read from then on; one already coded No Tax gets its GST back by a
 re-read, which is what the dialog says.
 
+**A motor vehicle expense incurred in Singapore is No Tax, in every client's
+book.** The practice's rule, and CYBills was breaking it quietly: nearly every
+chart defaults "449 - Motor Vehicle Expenses" to NONE, but the decision follows an
+account's default only when the GST PRINTED agrees with it, and a No Tax default
+never agrees with a petrol receipt printing "TOTAL GST 8.56" — so it fell through
+to the arithmetic and coded SPC receipts Standard-Rated. Four charts (Sensu,
+Sunstream, TYA, Wow Studio) default their motor accounts to INPUTY24 anyway, so
+following the chart could never be consistent. `src/lib/motorVehicle.js` (pure,
+`npm test` at the root) decides it by two signals, either enough: the ACCOUNT's
+name, as whole words ("Motor Vehicle", "Petrol", "CAR MAINT", a bridge's
+"Parking" — never "Transport - Taxi" or "Credit Card"), and the READER's
+`motorVehicle` flag for the paper itself (fuel, parking, ERP, servicing, vehicle
+rental; never a taxi, a Grab ride or a courier), stored on the document.
+`taxRateOutcome` applies it ahead of everything, on the upload and the re-read,
+and the reason names which signal decided. It beats a supplier rule's tax code
+(the re-read deletes it, the background read and PATCH overwrite it and take
+`taxRate` out of the rule's `ruleFields`, or the rule sweep would write it back).
+`server/src/motorVehicle.ts` loads the same module and holds it on every write —
+the page's category picker, the inline cell, Bulk edit, the emailed/WhatsApp read
+(`keepMotorVehicleNoTax`) — and over each stored book on the listing
+(`enforceMotorVehicleNoTax`), zeroing the tax in both currencies and on the lines
+while the TOTAL never moves. Left alone: a code a PERSON picked or a blank they
+chose (a goods van's GST is claimable; a re-read clears the markers and applies
+the rule again), a PUBLISHED bill (Update in Xero is the road), and a document on
+an expense claim or merged away. Covered by `npm test` in `server/`
+(`test/motor-vehicle.test.mts`).
+
 **So the evidence is kept on the document.** `supplierGstRegNo` and `taxLabel`
 were read on every document and dropped the moment the code was chosen —
 `readIntoBill` even put them in its patch, where `updateBill` discarded them —

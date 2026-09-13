@@ -498,6 +498,9 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           taxLabel: extracted?.taxLabel || '',
           printedRate: extracted?.taxRatePrinted || 0,
           gstRegNoRemembered: extracted?.supplierGstRegNoRemembered ? extracted.supplierGstRegNoFrom || 'document' : false,
+          // A motor vehicle expense is No Tax, by its account or by the paper.
+          category: codedTo,
+          motorVehicle: extracted?.motorVehicle === true,
         });
         claimsTax = outcome.claimsTax !== false;
         rateOutcome = outcome;

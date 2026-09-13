@@ -48,7 +48,16 @@ export function readDecisions(
   const exTax = ex.tax != null ? ex.tax : current.tax;
   // The account this document was coded to decides its tax code when the printed
   // GST agrees with it — what Xero's own UI does when you pick an account.
-  const codedTo = String(ex.category || current.category || '');
+  // The supplier's rule is looked up FIRST, because its category is the one the
+  // document will end up carrying, and whether that is a motor vehicle account
+  // is part of deciding the tax code.
+  const supplierName = ex.supplier || current.supplier;
+  const vendorRule = matchSupplierRule(supplierName);
+  const rule = supplierRulePatch(vendorRule, { invoiceDate: ex.date || current.date, gstRegistered });
+  // A covering note that decided the category beats the rule's (see below), so
+  // the category the note chose is the one to judge.
+  const noteChoseCategory = Boolean(String(ex.noteFollowed || '').trim()) && Boolean(ex.category);
+  const codedTo = String((noteChoseCategory ? ex.category : rule.category) || ex.category || current.category || '');
   const account = (accounts ?? []).find(
     (a) => `${a.code} - ${a.name}` === codedTo || a.code === codedTo
   );
@@ -77,6 +86,10 @@ export function readDecisions(
     // printedTaxRate in taxRateRules.js.
     printedRate: ex.taxRatePrinted || 0,
     gstRegNoRemembered: ex.supplierGstRegNoRemembered ? ex.supplierGstRegNoFrom || 'document' : false,
+    // A motor vehicle expense is No Tax — by the account it will carry, or by
+    // the reader's judgement of the paper (src/lib/motorVehicle.js).
+    category: codedTo,
+    motorVehicle: ex.motorVehicle === true,
   });
   const inferredRate = rate.name;
   // Tax is RECORDED only when it is Singapore GST this business can claim:
@@ -84,9 +97,6 @@ export function readDecisions(
   // the amount belongs in the cost rather than in the GST box. The total is
   // untouched either way — the money paid doesn't change.
   const exTaxOut = gstRegistered && rate.claimsTax !== false ? exTax : 0;
-  const supplierName = ex.supplier || current.supplier;
-  const vendorRule = matchSupplierRule(supplierName);
-  const rule = supplierRulePatch(vendorRule, { invoiceDate: ex.date || current.date, gstRegistered });
   const projectReason =
     supplierRuleProjectReason(vendorRule, supplierName) || String(ex.projectReason || '').trim();
   const categoryReason =
@@ -182,6 +192,10 @@ export function readDecisions(
   patch.supplierGstRegNoRemembered = Boolean(ex.supplierGstRegNoRemembered);
   patch.supplierGstRegNoFrom = ex.supplierGstRegNoRemembered ? ex.supplierGstRegNoFrom || 'document' : '';
   patch.taxLabel = ex.taxLabel || '';
+  // The reader's judgement that the paper is a motor vehicle expense — kept, so
+  // the rule still holds when somebody later moves the document to an account
+  // that does not say so.
+  patch.motorVehicle = ex.motorVehicle === true;
   if (descr) patch.description = descr;
   if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
   if (ex.project) {
@@ -210,9 +224,13 @@ export function readDecisions(
     if (ex.project) delete ruled.project;
     if (ex.customer) delete ruled.customer;
   }
+  // …and except a motor vehicle expense's tax code, which is No Tax whatever a
+  // supplier's rule says: the rule is about one supplier, this is about every
+  // client's book (src/lib/motorVehicle.js).
+  if (rate.motorVehicle) delete ruled.taxRate;
   Object.assign(patch, ruled);
   if (ruled.category) patch.categoryReason = categoryReason;
-  if (rule.taxRate) patch.taxRateReason = `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`;
+  if (ruled.taxRate) patch.taxRateReason = `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`;
   if (ruled.project) patch.projectReason = projectReason;
   if (noteDecided) patch.categoryReason = `From the email that sent this: ${String(ex.noteFollowed).trim()}`;
   // …except the due date, where the document's own beats the rule's terms.

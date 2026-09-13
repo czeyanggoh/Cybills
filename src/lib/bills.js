@@ -327,6 +327,8 @@ export function billToDoc(b) {
     supplierGstRegNoRemembered: Boolean(b.supplierGstRegNoRemembered),
     supplierGstRegNoFrom: b.supplierGstRegNoRemembered ? b.supplierGstRegNoFrom || 'document' : '',
     taxLabel: b.taxLabel || '',
+    // The reader judged the paper a motor vehicle expense: No Tax (motorVehicle.js).
+    motorVehicle: Boolean(b.motorVehicle),
     // Whether a read has recorded that evidence at all. Documents read before it
     // was kept carry neither key, and "no GST number found" would be a claim
     // about a read nobody wrote down.

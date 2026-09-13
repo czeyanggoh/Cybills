@@ -30,6 +30,7 @@ import { addressIn, canAccessOrg, emailForPerson, generalUserFor, isInternalAddr
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
 import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from './taxRules.js';
+import { enforceMotorVehicleNoTax, keepMotorVehicleNoTax } from './motorVehicle.js';
 import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 import { makeEntityCheck } from './entityCheck.js';
 import { syncWhatsappReaction } from './waReactions.js';
@@ -339,6 +340,11 @@ billsRouter.get('/bills', async (req, res) => {
   );
   void repairZeroTaxAmounts(orgId).catch((err) =>
     console.error('[bills] zero-tax repair failed', err)
+  );
+  // A motor vehicle expense is No Tax in every client's book, including the
+  // ones read before the rule existed (motorVehicle.ts).
+  void enforceMotorVehicleNoTax(orgId).catch((err) =>
+    console.error('[bills] motor vehicle sweep failed', err)
   );
   // File any Auto Expense claim whose period has ended. Rides on the fetch every
   // list already makes rather than a background worker, so a period that ended
@@ -720,6 +726,7 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   // never be set.
   if (typeof b.taxRateEdited === 'boolean') patch.taxRateEdited = b.taxRateEdited;
   if (typeof b.taxRateCleared === 'boolean') patch.taxRateCleared = b.taxRateCleared;
+  if (typeof b.motorVehicle === 'boolean') patch.motorVehicle = b.motorVehicle;
   restatementPatch(b, patch);
   // "Not a duplicate" — the reviewer's verdict, which clears the flag and
   // survives every later re-check.
@@ -752,6 +759,9 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   const explicitStatus = typeof b.status === 'string';
   const orgId = orgIdFor(req);
   await keepMileageInStep(workspaceId(req), orgScope(req), getBillById(orgId, req.params.id), patch);
+  // Moved onto a motor vehicle account — the page's picker, the inline cell,
+  // Bulk edit — it is No Tax, unless this very write is a person picking a code.
+  await keepMotorVehicleNoTax(getBillById(orgId, req.params.id), patch);
   // A code that carries no tax means no tax recorded — the same invariant the
   // form applies when somebody picks the code, applied again here so no other
   // caller can store the pair. Reads the rate being SET, else the one the
@@ -924,6 +934,7 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   // Never left over from a previous read: a finalize is a whole read's answer.
   patch.supplierGstRegNoRemembered = b.supplierGstRegNoRemembered === true;
   patch.supplierGstRegNoFrom = b.supplierGstRegNoRemembered === true ? gstSource(b.supplierGstRegNoFrom) : '';
+  patch.motorVehicle = b.motorVehicle === true;
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
   restatementPatch(b, patch);

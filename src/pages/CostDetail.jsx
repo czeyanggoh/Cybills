@@ -68,6 +68,7 @@ import { coveringNote } from '@/lib/coveringNote';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 import ZoomableImage from '@/components/ZoomableImage';
+import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from '@/lib/motorVehicle';
 
 function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
   return (
@@ -696,6 +697,25 @@ export default function CostDetail() {
       setTeach({ field: key, value });
     }
     setData((d) => ({ ...d, [key]: value }));
+    // Moved onto a motor vehicle account: No Tax, the same as the server holds it
+    // (server/src/motorVehicle.ts) — shown here at once, so the form does not
+    // keep claiming GST the stored document has already given up. Not where a
+    // person picked the code themselves.
+    if (
+      key === 'category' &&
+      !data.taxRateEdited &&
+      !data.taxRateCleared &&
+      isMotorVehicleExpense({ category: value, motorVehicle: doc?.motorVehicle === true })
+    ) {
+      const noTaxName = noTaxRateName(taxRateSource) || MOTOR_VEHICLE_TAX_RATE;
+      setData((d) => ({
+        ...d,
+        taxRate: noTaxName,
+        taxRateReason: motorVehicleReason({ category: value }),
+        tax: '0.00',
+        lineItems: Array.isArray(d.lineItems) && d.lineItems.length ? foldTaxIntoCost(d.lineItems) : d.lineItems,
+      }));
+    }
     if (readyError.length) setReadyError([]); // fixing a field clears the "not ready" banner
     const sf = SERVER_FIELDS[key];
     if (doc?.persisted && sf) {
