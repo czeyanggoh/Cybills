@@ -176,6 +176,11 @@ export type Bill = {
   // PDF links. Assigned once at insert and STORED, because it has to be unique
   // and a derived number can't promise that (see nextDisplayId).
   displayId: string;
+  // The document's Item ID in Dext (their export calls the column "Receipt ID"),
+  // set only by an import. It is the one identity two systems agree on, so a
+  // second import of the same export — or an overlapping one — finds it and
+  // skips the row rather than filing the same cost twice.
+  dextId?: string;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email of whoever UPLOADED it, or '' in mock mode
   // The document's owner — the person the User column names and the Document
@@ -599,6 +604,28 @@ const inInbox = (b: Bill) => INBOX_STATUSES.has(String(b.status || 'new'));
 // is a cost, matching how insertBill normalises it.
 export const billKind = (k: unknown): string =>
   k === 'sales' ? 'sales' : k === 'supplier_statement' ? 'supplier_statement' : 'cost';
+
+// The live document in this entity that was imported from Dext under `dextId`.
+//
+// A document imported before the ID was stored carries it only in its file
+// name — "21616969450" for one fetched from the export's link, the downloaded
+// file's own name otherwise — so a row with no `dextId` is matched by a whole
+// run of digits in that name. Mirrored by `importedDextIds` in
+// src/lib/dextImport.js, which the import screen uses to count the skips
+// before it fetches anything. A deleted document does not count: removing one
+// must not make it impossible to bring back.
+export function billByDextId(orgId: string, dextId: string): Bill | null {
+  const id = String(dextId ?? '').trim();
+  if (!id) return null;
+  return (
+    load().find(
+      (b) =>
+        b.orgId === orgId &&
+        b.status !== 'deleted' &&
+        (b.dextId ? b.dextId === id : (String(b.fileName ?? '').match(/\d{6,}/g) ?? ([] as string[])).includes(id))
+    ) ?? null
+  );
+}
 
 // First (highest-confidence) duplicate for `cand`, or null. Cheapest checks
 // first; each tier requires the fields it keys on to actually be present.

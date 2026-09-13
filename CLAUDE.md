@@ -551,6 +551,23 @@ money), and one already there. Every one of them is a state the reviewer can und
 first, so the message is the instruction. Covered by `npm test` at the root and
 in `server/` (`test/entity-check.test.mts`).
 
+## Importing from Dext skips what is already here, by Item ID
+
+A migration is rarely one export: somebody imports June, then June to August.
+The import forces past CYBills' resemblance checks on purpose (a permit applied
+for and the same permit issued look alike and are both real), so without an
+identity every overlapping row was filed twice. Dext's Item ID ("Receipt ID" in
+its standard export; either header is read) is that identity: stored as
+`dextId` on the document, and `POST /api/costs/bills` refuses a second live
+document with the same one, 409 `already_imported`, **force or not**. A document
+imported before the field existed is known by its file name, which was named by
+the id (`billByDextId` in `store.ts`, mirrored by `importedDextIds` in
+`src/lib/dextImport.js`). The screen counts the skips before it fetches anything
+(`planImport`), including a row repeating an id earlier in the same file, and
+says how many; a DELETED document does not hold its id, so it can be brought
+back. Covered by `npm test` at the root and in `server/`
+(`test/dext-import-dedup.test.mts`).
+
 ## Merge detection: which uploads are really one document
 
 Two separate uploads are often one cost, and the two ways that happens do not

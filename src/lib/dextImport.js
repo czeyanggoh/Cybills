@@ -118,14 +118,16 @@ export function parseDextExport(text) {
   if (!rows.length) return { rows: [], missing: DEXT_HEADERS.slice() };
   const [header, ...body] = rows;
   const col = indexHeaders(header);
-  const missing = DEXT_HEADERS.filter((h) => col(h) === -1);
+  // Dext's screens call the id "Item ID" and its standard export "Receipt ID";
+  // a custom column set may use either, and they are one column.
+  const missing = DEXT_HEADERS.filter((h) => col(h) === -1 && !(h === 'Receipt ID' && col('Item ID') !== -1));
   const cell = (r, name) => {
     const i = col(name);
     return i === -1 ? '' : String(r[i] ?? '').trim();
   };
   const out = body.map((r, i) => ({
     line: i + 2, // the row's line in the file, for a message a person can act on
-    receiptId: cell(r, 'Receipt ID'),
+    receiptId: cell(r, 'Receipt ID') || cell(r, 'Item ID'),
     supplier: cell(r, 'Supplier'),
     invoiceNumber: cell(r, 'Invoice Number'),
     date: isoDate(cell(r, 'Date')),
@@ -194,6 +196,45 @@ export function matchFiles(rows, files) {
   };
 }
 
+// The Dext Item IDs this entity already holds, from the documents listing.
+// A document imported since the ID was stored carries it as `dextId`; one
+// imported before carries it only in its file name ("21616969450", or the
+// downloaded file's own name), so a document with no `dextId` offers the whole
+// digit runs of its name. Mirrors `billByDextId` in server/src/store.ts, which
+// has the last word. A deleted document is not held: removing one must not make
+// it impossible to bring back.
+export function importedDextIds(bills) {
+  const ids = new Set();
+  for (const b of bills || []) {
+    if (!b || b.status === 'deleted') continue;
+    if (b.dextId) ids.add(String(b.dextId));
+    else for (const d of digitsIn(b.fileName)) ids.add(d);
+  }
+  return ids;
+}
+
+// Which rows to import, by Item ID and nothing else. A row whose ID is already
+// in the book is skipped, and so is the second row of one ID inside the same
+// file (an export taken over overlapping ranges repeats rows). A row with no ID
+// cannot be told apart from anything, so it is imported, as it always was.
+export function planImport(rows, existingIds) {
+  const held = existingIds || new Set();
+  const seen = new Set();
+  const toImport = [];
+  const alreadyImported = [];
+  const repeated = [];
+  for (const row of rows || []) {
+    const id = row.receiptId;
+    if (id && held.has(id)) alreadyImported.push(row);
+    else if (id && seen.has(id)) repeated.push(row);
+    else {
+      if (id) seen.add(id);
+      toImport.push(row);
+    }
+  }
+  return { toImport, alreadyImported, repeated };
+}
+
 // One row as the body of POST /api/costs/bills. The fields Dext already
 // decided are carried across as they are — that coding work is the whole reason
 // to migrate rather than re-upload — and nothing is invented for a blank cell.
@@ -203,6 +244,9 @@ export function billPayload(row) {
   // "Statement/remittance advice"), kept rather than flattened: it is a fact
   // somebody established about the paperwork.
   const body = { kind: 'cost', documentType: row.documentType || 'Receipt' };
+  // Stored on the document, so the next import of an overlapping export skips
+  // this row (see planImport) and the server refuses it if the screen did not.
+  put(body, 'dextId', row.receiptId);
   put(body, 'supplier', row.supplier);
   put(body, 'invoiceNumber', row.invoiceNumber);
   put(body, 'date', row.date);

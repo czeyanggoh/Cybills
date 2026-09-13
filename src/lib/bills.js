@@ -148,6 +148,9 @@ export async function addBill(payload, { force = false } = {}) {
   });
   if (res.status === 409) {
     const body = await res.json().catch(() => ({}));
+    // A Dext import naming an Item ID this entity already holds. Not a
+    // duplicate verdict to review: the row is simply already here.
+    if (body.error === 'already_imported') return { alreadyImported: true };
     return { duplicate: body.duplicate ?? null, rejected: Boolean(body.rejected) };
   }
   if (!res.ok) throw new Error('add_failed');

@@ -6,6 +6,7 @@
 // row. So the rules that decide those are pinned here.
 import {
   parseCsv, isoDate, amount, parseDextExport, matchFiles, billPayload, patchPayload, cleanCategory,
+  importedDextIds, planImport,
 } from '../src/lib/dextImport.js';
 
 let failures = 0;
@@ -114,6 +115,7 @@ check('and is reported as spare, so it can be found', wrongName.spare.length, 1)
 check('the create body carries the coding as it stands', billPayload(rows[0]), {
   kind: 'cost',
   documentType: 'Expense claim',
+  dextId: '21616969450',
   supplier: 'Grab',
   invoiceNumber: 'INV-1',
   date: '2026-08-20',
@@ -161,6 +163,26 @@ check('an SGD document is not restated against itself', 'baseCurrency' in billPa
 // The link in the Image column is where the document itself comes from when
 // there is no downloaded file to match.
 check('the image link is carried for fetching', real.rows[1].image, 'https://rbnk.me/i/pQ9Qj-p2mKs');
+
+// --- Skipping what is already here, by Item ID ----------------------------------
+const ITEM = ['Item ID,Supplier,Total', '555000111,Grab,10.00', '555000222,Grab,10.00', '555000111,Grab,10.00', ',Grab,10.00'].join('\n');
+const itemRows = parseDextExport(ITEM);
+check('an "Item ID" column is the id too', itemRows.rows[0].receiptId, '555000111');
+check('and is not reported as a missing Receipt ID', itemRows.missing.includes('Receipt ID'), false);
+
+const held = importedDextIds([
+  { dextId: '555000222', fileName: 'x.pdf' },
+  // Imported before the id was stored: only its file name carries it.
+  { fileName: 'Receipt_777000333 (1).pdf' },
+  // A deleted document does not hold its id, or it could never come back.
+  { dextId: '888000444', status: 'deleted' },
+]);
+check('held ids come from dextId and, failing that, the file name', [...held].sort(), ['555000222', '777000333']);
+
+const plan = planImport(itemRows.rows, held);
+check('a row already in the book is skipped', plan.alreadyImported.map((r) => r.receiptId), ['555000222']);
+check('a second row of one id in the file is skipped', plan.repeated.map((r) => r.receiptId), ['555000111']);
+check('the first of it, and a row with no id, still import', plan.toImport.map((r) => r.receiptId), ['555000111', '']);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

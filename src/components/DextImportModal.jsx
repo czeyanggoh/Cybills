@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
-import { X, Upload, FileText, Check } from 'lucide-react';
-import { parseDextExport, matchFiles, billPayload, patchPayload } from '@/lib/dextImport';
-import { addBill, updateBill, fetchDextImage, sha256Hex } from '@/lib/bills';
+import { X, Upload, FileText, Check, AlertTriangle } from 'lucide-react';
+import { parseDextExport, matchFiles, billPayload, patchPayload, importedDextIds, planImport } from '@/lib/dextImport';
+import { addBill, updateBill, fetchBills, fetchDextImage, sha256Hex } from '@/lib/bills';
 import { useActiveOrganisation } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
@@ -38,6 +38,9 @@ export default function DextImportModal({ open, onClose, onImported }) {
   const org = useActiveOrganisation();
   const [csvName, setCsvName] = useState('');
   const [parsed, setParsed] = useState(null);
+  // The Item IDs already in this entity's book, read when the CSV is chosen so
+  // the skips are counted before anything is fetched.
+  const [heldIds, setHeldIds] = useState(null);
   const [files, setFiles] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -46,15 +49,19 @@ export default function DextImportModal({ open, onClose, onImported }) {
   const csvInput = useRef(null);
   const fileInput = useRef(null);
 
+  const plan = useMemo(
+    () => (parsed && heldIds ? planImport(parsed.rows, heldIds) : null),
+    [parsed, heldIds]
+  );
   const match = useMemo(
-    () => (parsed ? matchFiles(parsed.rows, files) : null),
-    [parsed, files]
+    () => (plan ? matchFiles(plan.toImport, files) : null),
+    [plan, files]
   );
 
   if (!open) return null;
 
   const reset = () => {
-    setCsvName(''); setParsed(null); setFiles([]); setError(''); setDone(null); setProgress({ at: 0, of: 0 });
+    setCsvName(''); setParsed(null); setHeldIds(null); setFiles([]); setError(''); setDone(null); setProgress({ at: 0, of: 0 });
   };
   const close = () => { if (!busy) { reset(); onClose(); } };
 
@@ -69,7 +76,11 @@ export default function DextImportModal({ open, onClose, onImported }) {
         return;
       }
       setCsvName(file.name);
+      setHeldIds(null);
       setParsed(result);
+      // The server refuses a held ID regardless; this is so the screen can say
+      // how many will be skipped, and not fetch their images for nothing.
+      setHeldIds(importedDextIds(await fetchBills()));
     } catch {
       setError('That file could not be read as a CSV.');
     }
@@ -79,7 +90,12 @@ export default function DextImportModal({ open, onClose, onImported }) {
     if (!match || busy) return;
     setBusy(true);
     setError('');
-    const outcome = { created: 0, withFile: 0, failed: [] };
+    const outcome = {
+      created: 0,
+      withFile: 0,
+      skipped: plan.alreadyImported.length + plan.repeated.length,
+      failed: [],
+    };
     setProgress({ at: 0, of: match.pairs.length });
     for (let i = 0; i < match.pairs.length; i += 1) {
       const { row, file } = match.pairs[i];
@@ -120,7 +136,10 @@ export default function DextImportModal({ open, onClose, onImported }) {
         // in two places is two things to keep agreeing with each other.
         // eslint-disable-next-line no-await-in-loop
         const res = await addBill(body, { force: true });
-        if (res?.bill?.id) {
+        if (res?.alreadyImported) {
+          // Imported since this screen counted — another tab, or somebody else.
+          outcome.skipped += 1;
+        } else if (res?.bill?.id) {
           outcome.created += 1;
           if (body.fileBase64) outcome.withFile += 1;
           const patch = patchPayload(row);
@@ -159,6 +178,11 @@ export default function DextImportModal({ open, onClose, onImported }) {
                 <Check className="h-4 w-4" /> Imported {done.created} document{done.created === 1 ? '' : 's'} into {org?.name || 'this entity'}.
               </p>
               <Row>{done.withFile} of them came with their original file.</Row>
+              {done.skipped > 0 && (
+                <Row>
+                  {done.skipped} skipped: their Item ID was already in {org?.name || 'this entity'}.
+                </Row>
+              )}
               {done.failed.length > 0 && (
                 <p className="text-sm text-destructive">
                   {done.failed.length} could not be imported: {done.failed.slice(0, 8).join(', ')}
@@ -188,6 +212,15 @@ export default function DextImportModal({ open, onClose, onImported }) {
                     {parsed.missing.length > 0 && ` Columns not found: ${parsed.missing.join(', ')}.`}
                   </p>
                 )}
+                {parsed && !plan && <p className="mt-1 text-sm text-muted-foreground">Checking which are already imported…</p>}
+                {plan && (plan.alreadyImported.length > 0 || plan.repeated.length > 0) && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {plan.alreadyImported.length > 0 &&
+                      `${plan.alreadyImported.length} already imported (same Item ID) and will be skipped. `}
+                    {plan.repeated.length > 0 &&
+                      `${plan.repeated.length} repeat${plan.repeated.length === 1 ? 's' : ''} an Item ID earlier in the file and will be skipped.`}
+                  </p>
+                )}
               </div>
 
               {/* Step 2 — the files */}
@@ -199,13 +232,13 @@ export default function DextImportModal({ open, onClose, onImported }) {
                 </button>
                 {parsed && files.length === 0 && (
                   <p className="mt-2 text-sm text-muted-foreground">
-                    {parsed.rows.filter((r) => r.image).length} of {parsed.rows.length} will be
+                    {(plan?.toImport || parsed.rows).filter((r) => r.image).length} of {(plan?.toImport || parsed.rows).length} will be
                     fetched from the links in the CSV. Add files here only to override that.
                   </p>
                 )}
                 {match && files.length > 0 && (
                   <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-                    <p>{match.matched} of {parsed.rows.length} matched to a document, by the Receipt ID in the filename.</p>
+                    <p>{match.matched} of {plan.toImport.length} matched to a document, by the Item ID in the filename.</p>
                     {match.withoutFile.length > 0 && (
                       <p className="flex items-start gap-1.5">
                         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -235,11 +268,11 @@ export default function DextImportModal({ open, onClose, onImported }) {
             // page rather than in front of you.
             <button
               type="button"
-              disabled={!parsed || busy}
+              disabled={!plan || !plan.toImport.length || busy}
               onClick={run}
               className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
-              {busy ? 'Importing…' : `Import ${parsed?.rows.length || ''} into ${org?.name || 'this entity'}`}
+              {busy ? 'Importing…' : `Import ${plan ? plan.toImport.length : ''} into ${org?.name || 'this entity'}`}
             </button>
           )}
         </div>

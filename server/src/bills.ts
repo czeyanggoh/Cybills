@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { readSession } from './auth.js';
 import {
   findDuplicate,
+  billByDextId,
   insertBill,
   updateBill,
   reconcileReadiness,
@@ -1053,6 +1054,16 @@ billsRouter.post('/bills', async (req, res) => {
     kind: b.kind,
   };
 
+  // A Dext import names the document it came from. Unlike the resemblance
+  // checks below this is an IDENTITY, so `force` does not get past it: the
+  // import forces through lookalikes on purpose (a permit applied for and the
+  // same permit issued), and re-running an export must still not file every
+  // row a second time.
+  const dextId = String(b.dextId ?? '').trim().slice(0, 64);
+  if (dextId && billByDextId(orgId, dextId)) {
+    return res.status(409).json({ error: 'already_imported', dextId });
+  }
+
   const dup = findDuplicate(orgId, candidate);
   // Block duplicates by default, but let an explicit `force` ("Add anyway")
   // override any match — including a byte-identical file — so the user is never
@@ -1119,6 +1130,7 @@ billsRouter.post('/bills', async (req, res) => {
     owner: ownerEmail(req, b.owner, me?.email ?? ''),
     storageKey,
     contentType,
+    ...(dextId ? { dextId } : {}),
     // Default to the inbox ('new'). The Add-Documents drawer opts into
     // 'processing' (Dext-style "reading" step) and auto-advances to the inbox a
     // moment later; other creators (Vault "Copy to Costs/Sales", Split) omit
