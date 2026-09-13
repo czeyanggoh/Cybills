@@ -20,9 +20,10 @@
 //
 // The payee is the supplier, the amount transferred is the total, and the
 // transaction reference is the document number — the reader is told so
-// (server/src/extract.ts). It is still a cost document like any other: if the
-// invoice it pays is ALSO in the book, the duplicate check and merge detection
-// ("a payment papered twice") are what pair the two.
+// (server/src/extract.ts). It is NOT a cost: it is set aside to Archived on
+// arrival and never published (it would post the spending a second time, beside
+// the invoice it settled). Its use is the invoices it pays — src/lib/proofMatch.js
+// says which, and applying it marks them paid.
 //
 // Pure, loaded server-side by path (server/src/paymentProof.ts) the way
 // mileage.js is. Tested by test/payment-proof.test.mjs.

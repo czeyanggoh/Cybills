@@ -267,6 +267,27 @@ export type Bill = {
   // allows one reaction per account per message, so a later one REPLACES the
   // earlier — which is exactly the progression wanted (received, then paid).
   whatsappReaction?: string;
+  // A PAYMENT PROOF and the invoices it pays (src/lib/proofMatch.js). On the
+  // proof: which documents it settles, when, by whom, and whether it applied
+  // itself. `proofAutoDeclined` is somebody undoing an automatic match, which the
+  // sweep must not simply make again. On each invoice: the proof that paid it,
+  // and what Paid and the payment method said before, so Undo puts them back.
+  // Their own writers (applyPaymentProof / unapplyPaymentProof), never EDITABLE.
+  paysBills?: string[];
+  paysBillsAppliedAt?: string;
+  paysBillsAppliedBy?: string;
+  paysBillsAuto?: boolean;
+  proofAutoDeclined?: boolean;
+  paidByProof?: {
+    proofId: string;
+    proofDisplayId: string;
+    date: string;
+    reference: string;
+    appliedAt: string;
+    appliedBy: string;
+    auto: boolean;
+    before: { paid: boolean; paymentMethod: string };
+  };
 };
 
 // What the caller knows about an incoming upload before it is stored.
@@ -649,6 +670,7 @@ export function findDuplicate(orgId: string, cand: Candidate, excludeId?: string
       billKind(b.kind) === kind &&
       b.status !== 'deleted' &&
       b.status !== 'merged' &&
+      !isPaymentProofType(b.documentType) &&
       b.id !== excludeId &&
       (cutoff < 0 || i < cutoff)
   );
@@ -788,6 +810,14 @@ const filled = (v: unknown) => v != null && String(v).trim() !== '' && String(v)
 // edit), and whatever else says credit.
 export function isCreditNote(b: { documentType?: unknown }): boolean {
   return String(b?.documentType ?? '').trim().toLowerCase().includes('credit');
+}
+
+// A payment proof (src/lib/paymentProof.js, whose isPaymentProof this mirrors
+// for the synchronous store). Never a duplicate of the invoice it pays: the two
+// share a supplier, a total and often a date, and they are the payment and the
+// bill — which is what proofMatch.js pairs, not what the duplicate check flags.
+export function isPaymentProofType(type: unknown): boolean {
+  return String(type ?? '').trim().toLowerCase().replace(/[\s_-]+/g, ' ') === 'payment proof';
 }
 
 // The total a document needs to be complete. A bill's must be above 0; a
@@ -1319,6 +1349,83 @@ export function moveBillToScope(
 }
 
 // Update an existing bill's editable fields in place. Returns null if not found.
+// A payment proof settles these invoices. Each is marked Paid — unless it is
+// already in Xero, where the ledger's own payment is the answer and the copy
+// here is left as published — takes the proof's payment method where it has
+// none, and remembers what both said before. Invoices this proof paid before
+// and no longer does are put back first, so re-applying a different set is one
+// act. One pass over the store. Null when the proof or any invoice is missing.
+export function applyPaymentProof(
+  orgId: string,
+  proofId: string,
+  ids: string[],
+  by: string,
+  auto: boolean
+): { proof: Bill; invoices: Bill[] } | null {
+  const bills = load();
+  const proof = bills.find((b) => b.orgId === orgId && b.id === proofId);
+  if (!proof) return null;
+  const wanted = new Set(ids.map(String));
+  const invoices = bills.filter((b) => b.orgId === orgId && wanted.has(b.id));
+  if (invoices.length !== wanted.size || wanted.has(proofId)) return null;
+  const now = new Date().toISOString();
+  for (const b of bills) {
+    if (b.orgId === orgId && b.paidByProof?.proofId === proofId && !wanted.has(b.id)) releaseProof(b);
+  }
+  for (const inv of invoices) {
+    const before = inv.paidByProof?.proofId === proofId
+      ? inv.paidByProof.before
+      : { paid: Boolean(inv.paid), paymentMethod: String(inv.paymentMethod ?? '') };
+    inv.paidByProof = {
+      proofId,
+      proofDisplayId: proof.displayId || '',
+      date: proof.date || '',
+      reference: proof.invoiceNumber || '',
+      appliedAt: now,
+      appliedBy: by,
+      auto,
+      before,
+    };
+    if (!inv.xeroInvoiceId) {
+      inv.paid = true;
+      if (!inv.paymentMethod && proof.paymentMethod) inv.paymentMethod = proof.paymentMethod;
+    }
+  }
+  proof.paysBills = [...wanted];
+  proof.paysBillsAppliedAt = now;
+  proof.paysBillsAppliedBy = by;
+  proof.paysBillsAuto = auto;
+  persist(bills);
+  return { proof, invoices };
+}
+
+function releaseProof(b: Bill): void {
+  const before = b.paidByProof?.before;
+  if (before && !b.xeroInvoiceId) {
+    b.paid = before.paid;
+    b.paymentMethod = before.paymentMethod;
+  }
+  b.paidByProof = undefined;
+}
+
+// Undo: every invoice this proof paid goes back to what it said before, and the
+// proof stops applying itself — somebody said this match was wrong, and the next
+// listing must not make it again. Returns the proof and the invoices released.
+export function unapplyPaymentProof(orgId: string, proofId: string, by: string): { proof: Bill; invoices: Bill[] } | null {
+  const bills = load();
+  const proof = bills.find((b) => b.orgId === orgId && b.id === proofId);
+  if (!proof) return null;
+  const invoices = bills.filter((b) => b.orgId === orgId && b.paidByProof?.proofId === proofId);
+  for (const inv of invoices) releaseProof(inv);
+  proof.paysBills = [];
+  proof.paysBillsAppliedAt = new Date().toISOString();
+  proof.paysBillsAppliedBy = by;
+  proof.paysBillsAuto = false;
+  proof.proofAutoDeclined = true;
+  persist(bills);
+  return { proof, invoices };
+}
+
 export function updateBill(orgId: string, id: string, patch: Partial<Bill>): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);

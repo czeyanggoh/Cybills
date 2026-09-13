@@ -1,6 +1,8 @@
 import type { Bill } from './store.js';
 
-// A payment proof is paid and carries no tax, server-side.
+// A payment proof is paid, carries no tax, and is set aside to Archived,
+// server-side — it is never published (xero.ts refuses one), and its use is the
+// invoices it pays (proofMatch.ts).
 //
 // The rule is NOT written here: it is the same pure module the document page
 // and the upload drawer apply (src/lib/paymentProof.js), loaded by path the way
@@ -42,6 +44,16 @@ async function loadProofRules(): Promise<ProofRules | null> {
   return rules;
 }
 
+// The statuses a proof is archived out of: the inbox, and a document still
+// being read (the upload's finalize and the background read both land here).
+const PROOF_ARCHIVES_FROM = ['new', 'viewed', 'review', 'ready', 'processing'];
+
+/** Whether a stored document is typed as a payment proof. */
+export async function isPaymentProofDoc(b: { documentType?: unknown } | null | undefined): Promise<boolean> {
+  const r = await loadProofRules();
+  return Boolean(r && b && r.isPaymentProof(b.documentType));
+}
+
 /**
  * Hold a document typed as a payment proof to what the type says. Mutates
  * `patch` in place; returns whether it wrote anything. Does nothing unless this
@@ -58,6 +70,11 @@ export async function keepPaymentProofInStep(current: Partial<Bill> | null, patc
   const out = r.paymentProofPatch(doc);
   if (!Object.keys(out).length) return false;
   Object.assign(patch, out);
+  // Set aside, not filed: a transfer confirmation is not a cost to code or
+  // publish, and in the working list it reads as one. What it is FOR is the
+  // invoices it pays (proofMatch.ts). A write that names its own status is a
+  // person's decision — somebody pulling a proof back out — and is left alone.
+  if (!('status' in patch) && PROOF_ARCHIVES_FROM.includes(String(doc.status || ''))) patch.status = 'archived';
   // A supplier rule that last wrote the code no longer owns it — or the rule
   // sweep would write its code back on the next listing.
   if ('taxRate' in out) {

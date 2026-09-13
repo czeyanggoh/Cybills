@@ -21,6 +21,8 @@ import {
   storageKeyInUse,
   parseAmount,
   setBillWhatsappSender,
+  applyPaymentProof,
+  unapplyPaymentProof,
   type Bill,
   type Candidate,
 } from './store.js';
@@ -36,7 +38,8 @@ import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 import { makeEntityCheck } from './entityCheck.js';
 import { syncWhatsappReaction } from './waReactions.js';
 import { keepMileageInStep } from './mileage.js';
-import { keepPaymentProofInStep } from './paymentProof.js';
+import { isPaymentProofDoc, keepPaymentProofInStep } from './paymentProof.js';
+import { autoApplyPaymentProofs, proofMatchRules, unappliedProof } from './proofMatch.js';
 import { channelById } from './waChannels.js';
 import { senderIdentity } from './waSender.js';
 
@@ -335,6 +338,9 @@ billsRouter.get('/bills', async (req, res) => {
   backfillOwners(workspaceId(req), orgScope(req), orgId);
   applySupplierRules(workspaceId(req), orgScope(req), orgId);
   autoScanDuplicates(workspaceId(req), orgScope(req), orgId);
+  // A payment proof marks the invoices it FIRMLY pays as paid, by itself
+  // (proofMatch.ts) — before the rows are read, so this very list shows it.
+  await autoApplyPaymentProofs(orgId).catch((err) => console.error('[bills] payment proof sweep failed', err));
   // Fills in the background — it needs the org's rates over the relay, and the
   // list must not wait on a network call. The next fetch shows the result.
   void backfillTaxRates(workspaceId(req), orgScope(req), orgId).catch((err) =>
@@ -806,6 +812,132 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   });
 });
 
+// A payment proof and the invoices it pays (src/lib/proofMatch.js, loaded by
+// proofMatch.ts). The document itself stays a payment proof — never published,
+// archived on arrival — and these three routes are what it is FOR.
+const proofRow = (b: Bill) => ({
+  id: b.id,
+  displayId: b.displayId || '',
+  supplier: b.supplier || '',
+  invoiceNumber: b.invoiceNumber || '',
+  date: b.date || '',
+  currency: b.currency || '',
+  total: b.total,
+  documentType: b.documentType || '',
+  status: b.status,
+  paid: Boolean(b.paid),
+  xeroInvoiceId: b.xeroInvoiceId || '',
+  xeroStatus: b.xeroStatus || '',
+});
+
+// GET /api/costs/bills/:id/proof — seen from either side. For a proof: the
+// invoices it pays, or the matches and the invoices it could pay. For anything
+// else: the proof that paid it, or the unapplied proofs whose matches include it.
+// Only documents the caller can see are offered, as everywhere else.
+billsRouter.get('/bills/:id/proof', async (req, res) => {
+  const orgId = orgIdFor(req);
+  const bill = getBillById(orgId, String(req.params.id));
+  if (!bill || !canReadBill(req, bill)) return res.status(404).json({ error: 'not_found' });
+  const r = await proofMatchRules();
+  if (!r) return res.status(503).json({ error: 'unavailable' });
+  const owners = visibleOwnersFor(req, orgScope(req));
+  const docs = listBills(orgId).filter((b) => visibleToCaller(owners, b));
+
+  if (r.isPaymentProof(bill.documentType)) {
+    const byId = new Map(docs.map((b) => [b.id, b]));
+    const applied = (bill.paysBills ?? []).map((id) => byId.get(id)).filter((b): b is Bill => Boolean(b));
+    const matches = applied.length
+      ? []
+      : r.proofMatches(bill, docs).map((m) => ({ ids: m.ids, total: m.total, confidence: m.confidence, reasons: m.reasons, docs: m.docs.map(proofRow) }));
+    const candidates = applied.length
+      ? []
+      : docs
+          .filter((d) => r.payableByProof(d, bill, { anyDate: true }))
+          .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+          .slice(0, 60)
+          .map(proofRow);
+    return res.json({ ok: true, kind: 'proof', applied: applied.map(proofRow), auto: Boolean(bill.paysBillsAuto), matches, candidates });
+  }
+
+  const payer = bill.paidByProof?.proofId ? getBillById(orgId, bill.paidByProof.proofId) : null;
+  if (payer) {
+    return res.json({
+      ok: true,
+      kind: 'invoice',
+      paidBy: canReadBill(req, payer) ? { ...proofRow(payer), auto: Boolean(bill.paidByProof?.auto) } : null,
+      offers: [],
+    });
+  }
+  const offers: unknown[] = [];
+  for (const p of docs) {
+    if (!unappliedProof(r, p)) continue;
+    for (const m of r.proofMatches(p, docs)) {
+      if (m.ids.includes(bill.id)) {
+        offers.push({ proof: proofRow(p), ids: m.ids, total: m.total, confidence: m.confidence, reasons: m.reasons, docs: m.docs.map(proofRow) });
+      }
+    }
+  }
+  res.json({ ok: true, kind: 'invoice', paidBy: null, offers: offers.slice(0, 5) });
+});
+
+// POST /api/costs/bills/:id/apply-proof — { billIds }. Marks those invoices paid
+// by this proof. Held to the same rule the page offers from: every invoice one
+// this proof may pay, and together adding up to it TO THE CENT — a payment that
+// does not add up leaves an invoice marked paid that was not, which is exactly
+// the invoice a payment run then skips.
+billsRouter.post('/bills/:id/apply-proof', async (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  const orgId = orgIdFor(req);
+  const proof = getBillById(orgId, String(req.params.id));
+  if (!proof) return res.status(404).json({ error: 'not_found' });
+  const r = await proofMatchRules();
+  if (!r) return res.status(503).json({ error: 'unavailable' });
+  if (!r.isPaymentProof(proof.documentType)) {
+    return res.status(422).json({ error: 'not_payment_proof', message: 'Only a payment proof can mark invoices as paid.' });
+  }
+  if (['deleted', 'merged'].includes(String(proof.status))) {
+    return res.status(409).json({ error: 'proof_unavailable', message: 'This payment proof has been merged away or deleted.' });
+  }
+  const raw: unknown[] = Array.isArray(req.body?.billIds) ? req.body.billIds : [];
+  const ids = [...new Set(raw.map((v) => String(v ?? '')).filter(Boolean))];
+  if (!ids.length) return res.status(400).json({ error: 'no_invoices', message: 'Pick the invoices this payment proof pays.' });
+  const owners = visibleOwnersFor(req, orgScope(req));
+  const found = ids.map((id) => getBillById(orgId, id));
+  if (found.some((d) => !d || !visibleToCaller(owners, d))) return res.status(404).json({ error: 'not_found' });
+  const invoices = found as Bill[];
+  const refused = invoices.filter((d) => !r.payableByProof(d, proof, { anyDate: true }));
+  if (refused.length) {
+    return res.status(422).json({
+      error: 'not_payable',
+      message:
+        `${refused.slice(0, 3).map((d) => d.supplier || d.displayId).join(', ')} cannot be paid by this proof — ` +
+        'it is already paid, a credit note or another payment proof, in a currency the proof cannot be compared with, or no longer a live document.',
+    });
+  }
+  if (!r.sumsExactly(proof, invoices)) {
+    const sum = invoices.reduce((s, d) => s + (Number(d.total) || 0), 0);
+    return res.status(422).json({
+      error: 'amount_mismatch',
+      message: `These invoices add up to ${sum.toFixed(2)} and the payment is ${(Number(proof.total) || 0).toFixed(2)}. A payment proof marks invoices paid only when they add up to it exactly.`,
+    });
+  }
+  const out = applyPaymentProof(orgId, proof.id, invoices.map((d) => d.id), readSession(req)?.email ?? '', false);
+  if (!out) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, bill: out.proof, invoices: out.invoices });
+});
+
+// POST /api/costs/bills/:id/unapply-proof — this proof pays none of them after
+// all: each invoice goes back to what Paid said before, and the proof stops
+// matching itself on the next listing.
+billsRouter.post('/bills/:id/unapply-proof', (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  const orgId = orgIdFor(req);
+  const proof = getBillById(orgId, String(req.params.id));
+  if (!proof) return res.status(404).json({ error: 'not_found' });
+  const out = unapplyPaymentProof(orgId, proof.id, readSession(req)?.email ?? '');
+  res.json({ ok: true, bill: out?.proof ?? proof, invoices: out?.invoices ?? [] });
+});
+
 // DELETE /api/costs/bills/:id — PERMANENT delete. Drops the record for good AND
 // reclaims its stored file from R2 (or local disk). This is the destructive
 // counterpart to the soft delete/archive (status change, file kept) — the client
@@ -958,7 +1090,10 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
 
   // Fuzzy dedup against every OTHER doc (skip the file-hash tier — that already
   // ran at create). Exclude this row so it can't match itself.
-  const dup = findDuplicate(
+  // Never for a payment proof: it shares a supplier, a total and often a date
+  // with the invoice it pays, and the two are the payment and the bill — which
+  // proofMatch.ts pairs — not one document uploaded twice.
+  const dup = (await isPaymentProofDoc(updated)) ? null : findDuplicate(
     orgId,
     { fileHash: '', supplier: updated.supplier, invoiceNumber: updated.invoiceNumber, total: updated.total, date: updated.date, kind: updated.kind },
     updated.id

@@ -365,6 +365,11 @@ export function billToDoc(b) {
     // (Dext's "Autofill payment") — null until a person accepts a match in the
     // inbox's Match column. See src/lib/bankMatch.js.
     bankMatch: b.bankMatch || null,
+    // A payment proof and the invoices it pays (src/lib/proofMatch.js): on an
+    // invoice, the proof that paid it; on a proof, the invoices it settles.
+    paidByProof: b.paidByProof || null,
+    paysBills: Array.isArray(b.paysBills) ? b.paysBills : [],
+    paysBillsAuto: Boolean(b.paysBillsAuto),
     customer: b.customer || '',
     project: b.project || '',
     cardLast4: b.cardLast4 || '',
@@ -576,6 +581,38 @@ export async function updateBill(id, patch) {
   if (!res.ok) throw new Error('update_failed');
   return res.json();
 }
+
+// A payment proof and the invoices it pays, seen from either side. For a proof:
+// `{ kind: 'proof', applied, auto, matches, candidates }`; for anything else:
+// `{ kind: 'invoice', paidBy, offers }`. Null when it cannot be asked.
+export async function fetchProofMatches(id) {
+  try {
+    const res = await fetch(`/api/costs/bills/${id}/proof`, { headers: orgHeaders() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function proofAct(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.message || 'That could not be saved.');
+  return data;
+}
+
+// Mark these invoices paid by this proof. The server holds the set to adding up
+// to the proof exactly, and refuses it in its own words otherwise.
+export const applyPaymentProof = (proofId, billIds) =>
+  proofAct(`/api/costs/bills/${proofId}/apply-proof`, { billIds });
+
+// Undo a proof's match: its invoices go back to what Paid said before.
+export const unapplyPaymentProof = (proofId) => proofAct(`/api/costs/bills/${proofId}/unapply-proof`);
 
 // Put a misfiled document in the entity it is actually addressed to. Returns
 // { ok, orgName } on success, or { ok: false, message } carrying the server's

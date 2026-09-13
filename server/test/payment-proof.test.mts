@@ -185,6 +185,67 @@ await patch(published.id, { documentType: 'Payment proof' });
 const after = getBillById(scope, published.id);
 check('a published document keeps its figures — Update in Xero is the road', [after?.paid ?? false, after?.taxRate, after?.tax], [false, 'INPUTY24', 9]);
 
+// --- a payment proof is set aside, and never published ------------------------
+check('finalize sets a payment proof aside to Archived', getBillById(scope, processing.id)?.status, 'archived');
+check('so does typing one on the page', getBillById(scope, receipt.id)?.status, 'archived');
+const { postBillToXero } = await import('../src/xero.ts');
+const refusal = await postBillToXero(
+  { headers: {} } as any,
+  { id: 'org', tenantId: 'tenant' },
+  'ws',
+  getBillById(scope, receipt.id)!,
+  { accountCode: '429', taxType: 'NONE', status: 'AUTHORISED' }
+);
+check('publishing a payment proof is refused', [refusal.status, refusal.body?.error], [422, 'payment_proof']);
+
+// --- the invoices it pays ---------------------------------------------------------
+const base = {
+  orgId: scope, kind: 'cost', status: 'ready', supplier: 'Nuphar Design Pte Ltd', invoiceNumber: '', documentType: 'Invoice',
+  currency: 'SGD', date: '2026-08-01', category: '429 - General Expenses', total: 0, tax: 0, fileName: 'i.pdf',
+  categoryReason: '', projectReason: '', taxRate: '', taxRateReason: '', description: '', createdBy: '', storageKey: '', contentType: '', paid: false,
+};
+const invoice = (over: Record<string, unknown>) => insertBill({ ...base, fileHash: `inv${Math.random()}`, ...over } as any);
+const inv60 = invoice({ invoiceNumber: 'ND-011', total: 60 });
+const inv49 = invoice({ invoiceNumber: 'ND-012', total: 49, date: '2026-08-10' });
+const other49 = invoice({ supplier: 'Singtel', total: 49 });
+const nuphar = insertBill({
+  ...base, fileHash: 'proof-nuphar', status: 'archived', supplier: 'NUPHAR DESIGN', documentType: 'Payment proof',
+  date: '2026-08-20', total: 109, invoiceNumber: 'FT2608201234', description: 'PayNow to Nuphar Design', paid: true, taxRate: 'No Tax',
+} as any);
+
+const list = async () => (await fetch(`${BASE}/api/costs/bills`)).json();
+const post = async (path: string, payload: unknown = {}) => {
+  const r = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  return { status: r.status, body: (await r.json()) as any };
+};
+const paidOf = (id: string) => Boolean(getBillById(scope, id)?.paid);
+
+await list();
+check('the listing marks the two invoices that add up to the proof paid, by itself', [paidOf(inv60.id), paidOf(inv49.id), paidOf(other49.id)], [true, true, false]);
+check('the proof records which it pays', [...(getBillById(scope, nuphar.id)?.paysBills ?? [])].sort(), [inv60.id, inv49.id].sort());
+check('matched automatically', getBillById(scope, nuphar.id)?.paysBillsAuto, true);
+let seen = (await (await fetch(`${BASE}/api/costs/bills/${inv60.id}/proof`)).json()) as any;
+check('the invoice names the proof that paid it', [seen.kind, seen.paidBy?.id, seen.paidBy?.auto], ['invoice', nuphar.id, true]);
+seen = (await (await fetch(`${BASE}/api/costs/bills/${nuphar.id}/proof`)).json()) as any;
+check('the proof lists the invoices it pays', seen.applied.map((x: any) => x.id).sort(), [inv60.id, inv49.id].sort());
+
+let act = await post(`/api/costs/bills/${nuphar.id}/unapply-proof`);
+check('undo puts both invoices back to unpaid', [act.status, paidOf(inv60.id), paidOf(inv49.id)], [200, false, false]);
+await list();
+check('and the next listing does not match it again', getBillById(scope, nuphar.id)?.paysBills ?? [], []);
+seen = (await (await fetch(`${BASE}/api/costs/bills/${inv49.id}/proof`)).json()) as any;
+check('the invoice is offered the proof instead', [seen.paidBy, seen.offers?.[0]?.proof?.id], [null, nuphar.id]);
+
+act = await post(`/api/costs/bills/${nuphar.id}/apply-proof`, { billIds: [inv60.id] });
+check('a set that does not add up is refused', [act.status, act.body?.error, paidOf(inv60.id)], [422, 'amount_mismatch', false]);
+act = await post(`/api/costs/bills/${nuphar.id}/apply-proof`, { billIds: [inv60.id, other49.id] });
+check('a hand-picked set that adds up is applied', [act.status, paidOf(inv60.id), paidOf(other49.id), paidOf(inv49.id)], [200, true, true, false]);
+check('by hand, not automatically', getBillById(scope, inv60.id)?.paidByProof?.auto, false);
+act = await post(`/api/costs/bills/${nuphar.id}/apply-proof`, { billIds: [inv60.id, inv49.id] });
+check('re-applying a different set releases the invoice it no longer pays', [act.status, paidOf(inv60.id), paidOf(inv49.id), paidOf(other49.id)], [200, true, true, false]);
+act = await post(`/api/costs/bills/${inv60.id}/apply-proof`, { billIds: [inv49.id] });
+check('an invoice cannot pay invoices', [act.status, act.body?.error], [422, 'not_payment_proof']);
+
 stub.close();
 if (failures) {
   console.error(`\n${failures} failure(s)`);

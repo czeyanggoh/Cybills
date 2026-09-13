@@ -62,6 +62,7 @@ import { useXeroShortCode } from '@/lib/organisations';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { formatDate } from '@/lib/date';
 import BankMatchPanel from '@/components/BankMatchPanel';
+import PaymentProofPanel from '@/components/PaymentProofPanel';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -2414,6 +2415,24 @@ export default function CostDetail() {
                   <BankMatchPanel
                     doc={persisted}
                     onChanged={(bill) => {
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+                    }}
+                  />
+                </div>
+              )}
+              {/* A payment proof and the invoices it pays: on a proof, which
+                  invoices it settles; on an invoice, the proof that paid it.
+                  Applying marks the invoices Paid, so the page takes the
+                  document back from the server afterwards. */}
+              {persisted && (
+                <div className="col-span-full">
+                  <PaymentProofPanel
+                    doc={{ ...persisted, type: data.type || persisted.type }}
+                    onChanged={async () => {
+                      const bill = await fetchBillById(persisted.id);
                       if (!bill) return;
                       const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
                       setPersisted(pd);

@@ -921,10 +921,45 @@ and told the PAYEE is the supplier, the amount transferred the total and the
 reference the document number; a merchant's receipt or an invoice stamped PAID
 is still a Receipt or an Invoice. `keepPaymentProofInStep` runs only on a write
 that SETS the type (finalize, the background read, a PATCH carrying it) so
-unticking Paid afterwards, because the transfer bounced, sticks. It is otherwise
-a cost like any other: if the invoice it pays is also in the book, the duplicate
-check and merge detection are what pair the two — but it is never offered to
-**Bank match** (`payableKind` in `bankMatch.js`): it is the bank's own record
+unticking Paid afterwards, because the transfer bounced, sticks.
+
+**A payment proof is not a cost, so it is set aside and pays invoices instead.**
+Published, it would post the same spending a second time beside the invoice it
+settled. So the same write that types it also ARCHIVES it (out of the inbox and
+the processing state, unless that write names its own status — a person pulling
+it back out), `postBillToXero` refuses one (422 `payment_proof`, the one road
+every publish takes), bulk and automatic publish skip it, and the duplicate
+check never pairs one with its own invoice (`isPaymentProofType` in `store.ts`,
+and finalize asks nothing of one). What it is FOR is the question every unpaid
+invoice is waiting on. `src/lib/proofMatch.js` (pure, `npm test` at the root,
+loaded by `server/src/proofMatch.ts`) says which invoices a proof pays: an
+unpaid, live cost invoice (never another proof, a credit note, one already
+marked paid or paid by another proof, one Xero calls PAID or VOIDED), dated up
+to 180 days before the payment or a week after, whose money agrees TO THE CENT
+in the proof's currency (a foreign invoice by its SGD restatement, never a
+converted guess) — one invoice for the whole amount, or several of the same
+payee's that add up to it exactly, which is how a supplier with a month of
+small bills is actually paid. Tied by the payee being the supplier or the proof
+quoting the invoice's own number. **Only a FIRM match acts by itself**: the set
+the proof quotes by number, one of the payee's invoices at the amount, or the
+only combination of the payee's invoices that adds up — and only while it is
+the ONLY firm answer (two are a choice, and a choice is a person's), and not an
+invoice another proof also firmly claims. `autoApplyPaymentProofs` runs it off
+the listing, guarded by the book revision, so it works whichever arrives first.
+Everything else is offered on the document page (`PaymentProofPanel.jsx`, under
+Bank match) from both sides — the proof lists what it pays or could pay, with a
+hand-picker held to adding up exactly; the invoice names the proof that paid it
+or one that could — and the Costs row says "Paid by proof" / "Pays N invoices" /
+"No invoice matched". `POST /api/costs/bills/:id/apply-proof` holds any set to
+`sumsExactly` whoever chose it. Applying marks each invoice Paid (not one
+already in Xero, whose own payment is the answer), fills its payment method from
+the proof's where it has none, and remembers what both said (`paidByProof` on
+the invoice, `paysBills` on the proof — their own writers, never EDITABLE), so
+**Undo** (`unapply-proof`) puts them back and sets `proofAutoDeclined`, or the
+next listing would make the same match again. Nothing is written to Xero; a
+paid invoice simply stops being offered to a payment run, which is the point.
+Covered by `npm test` in `server/` (`test/payment-proof.test.mts`). It is never
+offered to **Bank match** (`payableKind` in `bankMatch.js`): it is the bank's own record
 that a line was paid, not a cost the line pays. **And the book is swept for the
 ones read before the type existed**: the Costs toolbar's **Find payment proofs**
 (the ticked rows, else everything the tab shows — Export's rule) asks the reader

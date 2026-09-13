@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   Layers,
   Link2 as LinkIcon,
+  Banknote,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -696,6 +697,39 @@ export default function Costs() {
               className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-muted-foreground/30 bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
             >
               <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Nothing read
+            </span>
+          )}
+          {/* A payment proof and the invoices it pays (src/lib/proofMatch.js):
+              the invoice says it is paid and links to the proof; the proof, in
+              Archived, says how many it settles — or that it found none, which
+              is the one that wants a person to open it and pick. */}
+          {d.paidByProof && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(costPath(d.paidByProof.proofId));
+              }}
+              title={`Paid by payment proof ${d.paidByProof.proofDisplayId || ''}${d.paidByProof.date ? ` on ${formatDate(d.paidByProof.date)}` : ''}${d.paidByProof.auto ? ' (matched automatically)' : ''}. Open the proof.`}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-500/20"
+            >
+              <Banknote className="h-3 w-3" strokeWidth={2} /> Paid by proof
+            </button>
+          )}
+          {isPaymentProof(d.type) && d.status !== 'processing' && (
+            <span
+              title={
+                d.paysBills.length
+                  ? `This payment proof settles ${d.paysBills.length} invoice${d.paysBills.length === 1 ? '' : 's'}${d.paysBillsAuto ? ', matched automatically' : ''}. Open it to see which.`
+                  : 'No invoice in the book adds up to this payment yet. Open it to pick the invoices it pays.'
+              }
+              className={cn(
+                'inline-flex items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] font-medium',
+                d.paysBills.length ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700' : 'border-muted-foreground/30 bg-muted text-muted-foreground'
+              )}
+            >
+              <Banknote className="h-3 w-3" strokeWidth={2} />
+              {d.paysBills.length ? `Pays ${d.paysBills.length} invoice${d.paysBills.length === 1 ? '' : 's'}` : 'No invoice matched'}
             </span>
           )}
           {mergeGroupFor.has(d.id) && (
@@ -1387,13 +1421,15 @@ export default function Costs() {
     const skipped = {
       published: picked.filter((d) => d.xeroInvoiceId).length,
       claimed: picked.filter((d) => !d.xeroInvoiceId && d.status === 'expenseclaim').length,
+      // A payment proof pays invoices; it is never one (xero.ts refuses it too).
+      proofs: picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && isPaymentProof(d.type)).length,
     };
-    const targets = picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && isComplete(d));
-    const incomplete = picked.length - targets.length - skipped.published - skipped.claimed;
+    const targets = picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && !isPaymentProof(d.type) && isComplete(d));
+    const incomplete = picked.length - targets.length - skipped.published - skipped.claimed - skipped.proofs;
     if (!targets.length) {
       setMergeNote(
         'Nothing to publish — a document must have a supplier, a date, a real category and a total above 0, ' +
-          'and not already be published or on an expense claim.'
+          'and not already be published, on an expense claim, or a payment proof.'
       );
       return;
     }

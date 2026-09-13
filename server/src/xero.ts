@@ -16,6 +16,7 @@ import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, markClaimXeroPayment, publishedClaims, saveClaimXero } from './claims.js';
 import { appOrigin, canPublishToXero, memberForSession } from './users.js';
 import { syncWhatsappReaction } from './waReactions.js';
+import { isPaymentProofDoc } from './paymentProof.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -1415,6 +1416,16 @@ export async function postBillToXero(
     force?: boolean;
   }
 ): Promise<{ status: number; body: any }> {
+  // A payment proof is evidence that money was sent, not a bill: published, it
+  // would post the same spending a second time beside the invoice it settled.
+  // Refused on this one road every publish takes — the button, bulk, the
+  // automatic publish and the payables hand-off alike.
+  if (!bill.xeroInvoiceId && (await isPaymentProofDoc(bill))) {
+    return { status: 422, body: {
+      error: 'payment_proof',
+      message: 'This is a payment proof — evidence that money was sent, not a bill — so it is not published to Xero. It marks the invoices it pays as paid instead.',
+    } };
+  }
   if (bill.xeroInvoiceId && opts.force !== true) {
     return { status: 409, body: {
       error: 'already_posted',
