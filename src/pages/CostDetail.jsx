@@ -59,6 +59,7 @@ import { xeroBillUrl } from '@/lib/autoPublish';
 import { useXeroShortCode } from '@/lib/organisations';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { formatDate } from '@/lib/date';
+import BankMatchPanel from '@/components/BankMatchPanel';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -2359,6 +2360,23 @@ export default function CostDetail() {
               )}
 
               <SectionHeading>Payment</SectionHeading>
+              {/* Dext's Bank match, on the page: the bank statement line that
+                  pays this document, and Autofill payment. Shown only where
+                  there is a match to show. Autofill turns Paid on and names the
+                  bank account below; PUBLISH records the payment. */}
+              {persisted && (
+                <div className="col-span-full">
+                  <BankMatchPanel
+                    doc={persisted}
+                    onChanged={(bill) => {
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+                    }}
+                  />
+                </div>
+              )}
               {/* The reviewer's own flag, in Dext's sense: "this was already
                   settled when it was captured, so publish it as paid". It is
                   NOT what Xero reports about the bill afterwards — that is the
@@ -2386,15 +2404,6 @@ export default function CostDetail() {
                 >
                   Add payment method
                 </button>
-                {/* The inbox's Autofill payment: the bank statement line this
-                    document is paid against, recorded when it is published. */}
-                {doc?.bankMatch && (
-                  <p className="mt-2 rounded border border-emerald-600/40 bg-emerald-500/10 px-2 py-1.5 text-xs text-emerald-900">
-                    <span className="font-medium">Bank match:</span> paid from {doc.bankMatch.bankAccountName || 'the bank account'} on{' '}
-                    {formatDate(doc.bankMatch.date)} ({doc.bankMatch.currency} {Math.abs(Number(doc.bankMatch.amount) || 0).toFixed(2)}). The
-                    payment is recorded in Xero when this document is published.
-                  </p>
-                )}
               </Field>
 
               {/* What the ledger says has happened since this document was

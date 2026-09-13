@@ -2293,7 +2293,12 @@ xero.ts) — so the person's one act in the inbox is honoured by whichever road
 later publishes the document. A line settled since by another road is not paid
 twice. Clear puts Paid and the payment method back to what they were. A
 document already in Xero and awaiting payment is settled on the spot, since
-there is a bill to pay against. Covered by the same server test.
+there is a bill to pay against. The document page carries the same block in
+its Details tab, above the payment fields (`BankMatchPanel.jsx`): Dext's info
+line, then the line's date, amount, description and bank account with the
+Autofill button, shown only where there is a match to show — the same lines,
+the same pairing and the same act as the inbox's column, seen from the page a
+reviewer has open. Covered by the same server test.
 
 **Every settlement is recorded** (`bank-lines` collection, keyed by `lineKey` =
 date + cents + reference): CYWS hands the same lines back until the statement
