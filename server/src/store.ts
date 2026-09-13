@@ -274,6 +274,11 @@ export type Bill = {
   // and what Paid and the payment method said before, so Undo puts them back.
   // Their own writers (applyPaymentProof / unapplyPaymentProof), never EDITABLE.
   paysBills?: string[];
+  // Set the moment a proof is archived for being one — by the write that typed
+  // it, or by the sweep over the ones typed before that rule existed. It is
+  // what makes the setting-aside happen ONCE: a proof somebody pulls back out
+  // of Archived keeps the flag, so nothing puts it back there behind them.
+  proofSetAside?: boolean;
   paysBillsAppliedAt?: string;
   paysBillsAppliedBy?: string;
   paysBillsAuto?: boolean;
@@ -1008,6 +1013,9 @@ const EDITABLE: (keyof Bill)[] = [
   'motorVehicle',
   'taxLabel',
   'entityCheckDismissed',
+  // Written by keepPaymentProofInStep beside the status it archives, never taken
+  // from a request body (the PATCH route copies named fields only).
+  'proofSetAside',
 ];
 
 // Attach (or replace) the stored file on an existing bill. Returns null if not
@@ -1349,6 +1357,27 @@ export function moveBillToScope(
 }
 
 // Update an existing bill's editable fields in place. Returns null if not found.
+// The payment proofs typed before a proof was archived for being one, still
+// sitting in the inbox as if they were work: set aside, once each. Only a proof
+// never set aside before (`proofSetAside`), so one somebody has since pulled
+// back out stays where they put it; never one being read (its read archives it),
+// published (Xero has it — Update in Xero is that road), on a claim, merged away
+// or deleted. One pass over the store; returns how many it archived.
+export function archiveStandingProofs(orgId: string): number {
+  const bills = load();
+  let n = 0;
+  for (const b of bills) {
+    if (b.orgId !== orgId || (b.kind || 'cost') !== 'cost') continue;
+    if (!isPaymentProofType(b.documentType) || b.proofSetAside || b.xeroInvoiceId) continue;
+    if (!['new', 'viewed', 'review', 'ready'].includes(String(b.status || ''))) continue;
+    b.status = 'archived';
+    b.proofSetAside = true;
+    n += 1;
+  }
+  if (n) persist(bills);
+  return n;
+}
+
 // A payment proof settles these invoices. Each is marked Paid — unless it is
 // already in Xero, where the ledger's own payment is the answer and the copy
 // here is left as published — takes the proof's payment method where it has

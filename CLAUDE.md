@@ -927,7 +927,12 @@ unticking Paid afterwards, because the transfer bounced, sticks.
 Published, it would post the same spending a second time beside the invoice it
 settled. So the same write that types it also ARCHIVES it (out of the inbox and
 the processing state, unless that write names its own status — a person pulling
-it back out), `postBillToXero` refuses one (422 `payment_proof`, the one road
+it back out), and the proofs typed BEFORE that rule are swept out of the inbox
+off the listing (`archiveStandingProofs`, guarded by the book revision). Both
+set `proofSetAside`, which is what makes it happen once: a proof somebody pulls
+back out of Archived keeps the flag and is never put back behind them, and a
+proof already in Xero, on a claim, merged away or still being read is not
+touched. `postBillToXero` refuses one (422 `payment_proof`, the one road
 every publish takes), bulk and automatic publish skip it, and the duplicate
 check never pairs one with its own invoice (`isPaymentProofType` in `store.ts`,
 and finalize asks nothing of one). What it is FOR is the question every unpaid

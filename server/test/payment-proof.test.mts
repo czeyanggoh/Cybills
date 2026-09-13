@@ -246,6 +246,29 @@ check('re-applying a different set releases the invoice it no longer pays', [act
 act = await post(`/api/costs/bills/${inv60.id}/apply-proof`, { billIds: [inv49.id] });
 check('an invoice cannot pay invoices', [act.status, act.body?.error], [422, 'not_payment_proof']);
 
+// --- the proofs typed before archiving existed ---------------------------------
+check('typing one records that it was set aside', getBillById(scope, receipt.id)?.proofSetAside, true);
+const standing = insertBill({
+  ...base, fileHash: 'proof-standing', status: 'ready', supplier: 'OCBC Transfer', documentType: 'Payment proof',
+  date: '2026-07-02', total: 77.7, invoiceNumber: 'OCBC-TRF-1', paid: true, taxRate: 'No Tax',
+} as any);
+const standingPublished = insertBill({
+  ...base, fileHash: 'proof-standing-published', status: 'ready', supplier: 'DBS Transfer', documentType: 'Payment proof',
+  date: '2026-07-03', total: 12.3, paid: true, xeroInvoiceId: 'inv-standing', taxRate: 'No Tax',
+} as any);
+const standingClaimed = insertBill({
+  ...base, fileHash: 'proof-standing-claimed', status: 'expenseclaim', supplier: 'UOB Transfer', documentType: 'Payment proof',
+  date: '2026-07-04', total: 45.6, paid: true, taxRate: 'No Tax',
+} as any);
+await list();
+check('a proof left in the inbox from before is archived by the listing', [getBillById(scope, standing.id)?.status, getBillById(scope, standing.id)?.proofSetAside], ['archived', true]);
+check('one already in Xero is left where it is', getBillById(scope, standingPublished.id)?.status, 'ready');
+check('and so is one on an expense claim', getBillById(scope, standingClaimed.id)?.status, 'expenseclaim');
+const pulledOut = await patch(standing.id, { status: 'new' });
+check('somebody can pull it back out', pulledOut?.status, 'new');
+await list();
+check('and the next listing leaves it there — it is set aside once', getBillById(scope, standing.id)?.status, 'new');
+
 stub.close();
 if (failures) {
   console.error(`\n${failures} failure(s)`);

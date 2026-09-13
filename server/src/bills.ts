@@ -23,6 +23,7 @@ import {
   setBillWhatsappSender,
   applyPaymentProof,
   unapplyPaymentProof,
+  archiveStandingProofs,
   type Bill,
   type Candidate,
 } from './store.js';
@@ -332,12 +333,19 @@ async function repairZeroTaxAmounts(scope: string): Promise<void> {
   }
 }
 
+const proofsSweptAt = new Map<string, number>();
 billsRouter.get('/bills', async (req, res) => {
   const orgId = orgIdFor(req);
   sweepStuckProcessing(orgId); // self-heal any doc stuck in Processing
   backfillOwners(workspaceId(req), orgScope(req), orgId);
   applySupplierRules(workspaceId(req), orgScope(req), orgId);
   autoScanDuplicates(workspaceId(req), orgScope(req), orgId);
+  // The payment proofs typed before a proof was archived for being one leave
+  // the inbox, once each (archiveStandingProofs) — skipped over an unchanged book.
+  if (proofsSweptAt.get(orgId) !== bookRevision()) {
+    archiveStandingProofs(orgId);
+    proofsSweptAt.set(orgId, bookRevision());
+  }
   // A payment proof marks the invoices it FIRMLY pays as paid, by itself
   // (proofMatch.ts) — before the rows are read, so this very list shows it.
   await autoApplyPaymentProofs(orgId).catch((err) => console.error('[bills] payment proof sweep failed', err));

@@ -74,7 +74,12 @@ export async function keepPaymentProofInStep(current: Partial<Bill> | null, patc
   // publish, and in the working list it reads as one. What it is FOR is the
   // invoices it pays (proofMatch.ts). A write that names its own status is a
   // person's decision — somebody pulling a proof back out — and is left alone.
-  if (!('status' in patch) && PROOF_ARCHIVES_FROM.includes(String(doc.status || ''))) patch.status = 'archived';
+  if (!('status' in patch) && PROOF_ARCHIVES_FROM.includes(String(doc.status || ''))) {
+    patch.status = 'archived';
+    // Once: pulled back out afterwards, nothing archives it again
+    // (archiveStandingProofs in store.ts skips a proof carrying this).
+    patch.proofSetAside = true;
+  }
   // A supplier rule that last wrote the code no longer owns it — or the rule
   // sweep would write its code back on the next listing.
   if ('taxRate' in out) {
