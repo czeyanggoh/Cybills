@@ -72,7 +72,26 @@ export type MailMessage = {
    *  is already looking. Cleared once the fetch lands a real document on it. */
   pendingBillId?: string;
   pendingDisplayId?: string;
+  /** Set on an email that arrived ATTACHED to another (an .eml — Gmail's
+   *  "Forward as attachment"): the normalised address of whoever sent the mail
+   *  carrying it. Its own `from` is only text inside a file, which anybody can
+   *  write, so this is the address its links are trusted by — never `from`. */
+  forwardedBy?: string;
+  /** The id of the mail it was attached to. */
+  forwardedIn?: string;
+  /** The emails attached to THIS one, each mirrored as its own row. */
+  forwarded?: Array<{ id: string; subject: string; from: string }>;
 };
+
+/**
+ * The address whose trust decides whether this message's links are followed.
+ *
+ * The sender, except for an email that arrived attached to another: its From
+ * line is text in a file and can name anybody — a stranger attaching a forged
+ * "invoice" from a supplier this entity trusts would otherwise have n8n follow
+ * it. So it is the person who actually delivered it to CYBills.
+ */
+export const trustAddressOf = (m: Pick<MailMessage, 'from' | 'forwardedBy'>): string => m.forwardedBy || m.from;
 
 const MIRRORED = 'email-thread';
 
@@ -118,10 +137,17 @@ export function recordMail(row: MailMessage): MailMessage {
     ...was.documents,
     ...row.documents.filter((d) => !was.documents.some((x) => x.billId === d.billId)),
   ];
+  // The emails attached to it, the same way: a retry that carried fewer of
+  // them does not unsay the ones already delivered.
+  const forwarded = [
+    ...(was.forwarded || []),
+    ...(row.forwarded || []).filter((f) => !(was.forwarded || []).some((x) => x.id === f.id)),
+  ];
   const merged: MailMessage = {
     ...was,
     ...row,
     documents,
+    ...(forwarded.length ? { forwarded } : {}),
     linkNote: row.linkNote || was.linkNote,
     linkFetchedAt: row.linkFetchedAt || was.linkFetchedAt,
     html: row.html || was.html || '',

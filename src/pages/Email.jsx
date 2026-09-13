@@ -297,7 +297,7 @@ function Thread({ userId }) {
             linkFetchEnabled={linkFetchEnabled}
             busy={busy === m.id}
             onFetch={() => fetchLinks(m.id)}
-            onTrust={() => trust(m.id, m.from)}
+            onTrust={() => trust(m.id, m.forwardedBy || m.from)}
           />
         ))}
       </div>
@@ -307,11 +307,18 @@ function Thread({ userId }) {
 
 function Message({ m, linkFetchEnabled, busy, onFetch, onTrust }) {
   const filed = m.documents?.length > 0;
+  // Whose trust this message's links wait on. For an email that arrived
+  // attached to another, the person who delivered it: the From line inside an
+  // .eml is text anybody could have written.
+  const trustAddress = m.forwardedBy || m.from;
   return (
     <div className="rounded-lg border bg-card">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-2.5">
         <span className="font-medium">{m.subject || '(no subject)'}</span>
         <span className="text-sm text-muted-foreground">{m.from}</span>
+        {m.forwardedBy && (
+          <span className="text-xs text-muted-foreground">attached to a mail from {m.forwardedBy}</span>
+        )}
         <span className="ml-auto text-xs text-muted-foreground">{time(m.sentAt || m.receivedAt)}</span>
       </div>
 
@@ -393,7 +400,7 @@ function Message({ m, linkFetchEnabled, busy, onFetch, onTrust }) {
         )}
         {m.senderTrusted && (
           <span
-            title={`${m.from} is trusted here, so their links are followed on arrival.`}
+            title={`${trustAddress} is trusted here, so their links are followed on arrival.`}
             className="inline-flex items-center gap-1 text-xs text-emerald-700"
           >
             <ShieldCheck className="h-3.5 w-3.5" /> sender trusted
@@ -406,7 +413,7 @@ function Message({ m, linkFetchEnabled, busy, onFetch, onTrust }) {
                 type="button"
                 onClick={onTrust}
                 disabled={busy}
-                title={`Follow ${m.from}'s links from now on, and fetch anything of theirs that is waiting.`}
+                title={`Follow ${trustAddress}'s links from now on, and fetch anything of theirs that is waiting.`}
                 className="inline-flex items-center gap-1.5 rounded-md border border-sky-700/40 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-900 transition-colors hover:bg-sky-100 disabled:opacity-60"
               >
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}

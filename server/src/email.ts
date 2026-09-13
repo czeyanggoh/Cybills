@@ -31,7 +31,7 @@ import { workspaceId } from './workspace.js';
 import { googleEnabled } from './env.js';
 import { resolveProvider } from './llm.js';
 import { readSetting } from './settings.js';
-import { mailById, mailForOrg, type MailMessage } from './mailThread.js';
+import { mailById, mailForOrg, trustAddressOf, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
 import { followMessageLinks } from './inbound.js';
 import { n8nEnabled } from './n8n.js';
@@ -84,6 +84,12 @@ const nameOf = (u: User) => u.name || u.email || '';
 function summaryOf(m: MailMessage): string {
   if (m.outcome === 'forwarding_confirmation') return 'Forwarding confirmation';
   if (m.documents.length) return `${m.documents.length} document${m.documents.length === 1 ? '' : 's'}`;
+  // A mail whose paperwork is the emails attached to it: each is its own row,
+  // and saying "Nothing filed" here would send somebody looking for a failure.
+  if (m.outcome === 'forwarded') {
+    const n = m.forwarded?.length || 0;
+    return `${n} attached email${n === 1 ? '' : 's'}, each listed on its own`;
+  }
   if (m.linkNote) return m.linkNote;
   const skipped = m.attachments.filter((a) => a.skipped);
   if (skipped.length) return `${skipped.length} attachment${skipped.length === 1 ? '' : 's'} not read — ${skipped[0].skipped}`;
@@ -129,7 +135,9 @@ emailRouter.get('/threads', (req, res) => {
         documents: rows.reduce((n, m) => n + m.documents.length, 0),
         // What arrived and became nothing. This is the number the tab exists
         // for, so it is counted rather than left to be eyeballed.
-        unfiled: rows.filter((m) => !m.documents.length && m.outcome !== 'forwarding_confirmation').length,
+        unfiled: rows.filter(
+          (m) => !m.documents.length && m.outcome !== 'forwarding_confirmation' && m.outcome !== 'forwarded'
+        ).length,
         lastMessageAt: last?.sentAt || last?.receivedAt || '',
         lastSubject: last?.subject || '',
         lastSummary: last ? summaryOf(last) : '',
@@ -170,11 +178,12 @@ emailRouter.get('/threads/:userId', (req, res) => {
     },
     // Whether this sender's links are followed without asking. Per MESSAGE
     // rather than once for the thread: a mailbox receives from everybody, and
-    // the question is always about the address that sent THIS one.
+    // the question is always about the address that sent THIS one — or, for an
+    // email attached to another, the address that delivered it.
     messages: messages.map((m) => ({
       ...m,
       summary: summaryOf(m),
-      senderTrusted: isTrustedSender(ws, orgId, dataScopeForOrg(orgId), m.from),
+      senderTrusted: isTrustedSender(ws, orgId, dataScopeForOrg(orgId), trustAddressOf(m)),
     })),
     linkFetchEnabled: n8nEnabled(),
   });
@@ -267,9 +276,10 @@ emailRouter.post('/senders/trust', async (req, res) => {
   trustSender(ws, orgId, dataScopeForOrg(orgId), address, me?.email || '');
 
   // Everything of theirs that was waiting on the answer. Ordered oldest first,
-  // so a backlog is cleared in the order it arrived.
+  // so a backlog is cleared in the order it arrived. An attached email waits on
+  // whoever delivered it, never on the From line inside the file.
   const waiting = mailHere(ws, orgId)
-    .filter((m) => Boolean(m.pendingBillId) && normaliseSender(m.from) === address)
+    .filter((m) => Boolean(m.pendingBillId) && normaliseSender(trustAddressOf(m)) === address)
     .sort((a, b) => String(a.sentAt).localeCompare(String(b.sentAt)));
 
   const notes: string[] = [];

@@ -24,7 +24,7 @@ import { readSetting } from './settings.js';
 import { workspaceId } from './workspace.js';
 import { visionEnabled, claudeEnabled, openaiEnabled, googleEnabled } from './env.js';
 import { fetchDocumentsForLinks, linksIn, n8nEnabled } from './n8n.js';
-import { recordMail, recordLinkFetch, mailById, type MailAttachment, type MailDocument, type MailMessage } from './mailThread.js';
+import { recordMail, recordLinkFetch, mailById, trustAddressOf, type MailAttachment, type MailDocument, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender } from './trustedSenders.js';
 import { publishByRule } from './autoPublishRule.js';
 import { applyRuleInvoiceDate } from './ruleDate.js';
@@ -533,7 +533,11 @@ export function placeholderForLinks(
   user: { email: string },
   envelope: MailEnvelope,
   message: { id: string; links: string[] },
-  note: string
+  note: string,
+  // Whose trust the question is about: the sender, or for an email attached
+  // to another, whoever delivered it (`trustAddressOf`). The Trust buttons and
+  // the sweep read it off `emailLink.from`.
+  trustFrom = envelope.from
 ): { id: string; displayId: string } {
   const bill = insertBill({
     orgId: scope,
@@ -564,7 +568,7 @@ export function placeholderForLinks(
     kind: 'cost',
     emailLink: {
       messageId: message.id,
-      from: normaliseSender(envelope.from),
+      from: normaliseSender(trustFrom),
       links: message.links,
       status: 'awaiting_trust',
       note,
@@ -626,7 +630,7 @@ export async function followMessageLinks(
 
   const linkRecord = {
     messageId: message.id,
-    from: normaliseSender(message.from),
+    from: normaliseSender(trustAddressOf(message)),
     links: message.links,
     note: result.note,
   };
@@ -772,90 +776,100 @@ inboundRouter.get('/config', (req, res) => {
   });
 });
 
-inboundRouter.post('/email', async (req, res) => {
-  const secret = getInboundSecret();
-  if (!secret) return res.status(503).json({ error: 'inbound_not_configured' });
-  if ((req.header('X-Inbound-Secret') || '') !== secret) return res.status(401).json({ error: 'unauthorized' });
+// An email that arrived ATTACHED to another — Gmail's "Forward as attachment",
+// which is how somebody hands over a month of subscription invoices at once:
+// one mail from them, sixteen `.eml` files inside it, each the original invoice
+// email. Each is opened and delivered as the mail it IS — its own row in the
+// Email tab, its own attachments filed, its own links — rather than skipped as
+// "not a PDF or image", which filed nothing and left sixteen invoices unread.
+//
+// Decided by the type OR the name, and BEFORE the PDF/image filter: a file
+// called "Invoice.pdf.eml" matches /pdf/ by name and would otherwise be filed as
+// a PDF and handed to the reader as one.
+const isAttachedEmail = (contentType: string, filename: string) =>
+  /^message\/rfc822\b/i.test(contentType) || /\.eml$/i.test(filename);
+// A forward of a forward is real; a mail nested deeper than that is not
+// paperwork anybody sent on purpose, and each level is another parse.
+const MAX_ATTACHED_DEPTH = 2;
+const MAX_ATTACHED_EMAILS = 50;
 
-  const b = req.body ?? {};
-  let to = String(b.to || '');
-  let from = String(b.from || '');
-  let subject = String(b.subject || '');
-  let text = String(b.text || '');
-  let html = String(b.html || '');
-  let sentAt = String(b.date || '');
-  // The Message-ID header, where the raw MIME is forwarded. It is the one
-  // identifier a mail carries of its own, so it is what the Email tab's rows
-  // are keyed on when it is there.
-  let messageIdFromMime = '';
-  // Attachments the caller may pass pre-parsed: { filename, contentType, contentBase64 }.
-  let atts: Array<{ filename: string; contentType: string; contentBase64: string }> =
-    Array.isArray(b.attachments) ? b.attachments : [];
+type InboundAttachment = { filename: string; contentType: string; contentBase64: string };
+type InboundMail = {
+  to: string;
+  from: string;
+  subject: string;
+  text: string;
+  html: string;
+  sentAt: string;
+  messageId: string;
+  atts: InboundAttachment[];
+};
 
-  // Preferred path: the Worker forwards the RAW MIME (base64). Parse it here with
-  // a real library — robust against Gmail's nested multipart and encodings, and
-  // testable, unlike an inline Worker parser.
-  if (typeof b.raw === 'string' && b.raw) {
-    try {
-      const parsed = await simpleParser(Buffer.from(b.raw, 'base64'));
-      subject = parsed.subject || subject;
-      from = parsed.from?.value?.[0]?.address || from;
-      // The Worker's envelope recipient is the authority — it is who the mail
-      // was actually delivered to. But a Worker that forwards only the raw MIME
-      // sends no `to` at all, and the local-part IS how a document is filed, so
-      // an empty one meant every such delivery answered "unknown recipient".
-      if (!to) {
-        const recipients = Array.isArray(parsed.to) ? parsed.to[0] : parsed.to;
-        to = recipients?.value?.[0]?.address || '';
-      }
-      sentAt = parsed.date ? parsed.date.toISOString() : sentAt;
-      messageIdFromMime = String(parsed.messageId || '');
-      text = parsed.text || text;
-      html = typeof parsed.html === 'string' ? parsed.html : html;
-      atts = (parsed.attachments || []).map((a) => ({
-        filename: a.filename || 'document',
-        contentType: a.contentType || '',
-        contentBase64: a.content ? Buffer.from(a.content).toString('base64') : '',
-      }));
-    } catch (e) {
-      console.error('[inbound] MIME parse failed', e);
-    }
-  }
-  const body = `${text}\n${html}`;
+// Parsed with a real library — robust against Gmail's nested multipart and
+// encodings, and testable, unlike an inline Worker parser.
+async function parseMime(bytes: Buffer): Promise<InboundMail> {
+  const parsed = await simpleParser(bytes);
+  const recipients = Array.isArray(parsed.to) ? parsed.to[0] : parsed.to;
+  return {
+    to: recipients?.value?.[0]?.address || '',
+    from: parsed.from?.value?.[0]?.address || '',
+    subject: parsed.subject || '',
+    text: parsed.text || '',
+    html: typeof parsed.html === 'string' ? parsed.html : '',
+    sentAt: parsed.date ? parsed.date.toISOString() : '',
+    messageId: String(parsed.messageId || ''),
+    atts: (parsed.attachments || []).map((a) => ({
+      filename: a.filename || 'document',
+      contentType: a.contentType || '',
+      contentBase64: a.content ? Buffer.from(a.content).toString('base64') : '',
+    })),
+  };
+}
 
-  // Local-part of the recipient = the user handle (minus any +suffix).
-  const local = (to.split('@')[0] || to).trim();
-  // A person first, then the entity itself. An entity's short form standing
-  // alone — `redalpha@cybills.sg`, where a person's handle would normally be —
-  // is the company's own address rather than anybody's, so what arrives there
-  // belongs to its GENERAL account: the row that already owns the paperwork
-  // nobody claimed. Second, never first, so a person whose bare handle happens
-  // to be that word keeps their own mail.
-  const user = userByEmailHandle(local) || generalUserByEmailSuffix(workspaceId(req), local);
-  if (!user) return res.status(404).json({ error: 'unknown_recipient', to });
+// What one delivery shares across every mail inside it: who it files under,
+// which book, which reader, and the work to start once the Worker is answered.
+type Delivery = {
+  req: Request;
+  user: { id: string; email: string };
+  realOrgId: string;
+  scope: string;
+  /** Where it was DELIVERED — the thread, for an attached email too. */
+  to: string;
+  provider: Provider;
+  later: Array<() => void>;
+  attachedLeft: number;
+};
 
-  // Two org ids in play, and they differ for the primary entity:
-  //   realOrgId — the organisation RECORD id, which its per-org settings and Xero
-  //               tenant are keyed on (a colleague on no single entity files into
-  //               the practice's own primary org).
-  //   scope     — the bills-store scope. The primary org (CYBM) folds to the
-  //               legacy WORKSPACE_ID scope, so an emailed doc lands in the inbox
-  //               the user actually sees.
-  const realOrgId = user.organisationId || primaryOrgId();
-  const scope = dataScopeForOrg(realOrgId);
-  // Attribute this document's API spend to its client entity on the Clients page
-  // (recordUsage reads the X-Org-Id header; the Worker sends none).
-  (req.headers as Record<string, string>)['x-org-id'] = realOrgId;
+type Attached = {
+  /** The normalised address of whoever delivered the OUTERMOST mail. */
+  by: string;
+  inId: string;
+  depth: number;
+  /** What that person wrote around it, if anything. */
+  note: string;
+};
+
+async function deliverMail(
+  d: Delivery,
+  mail: InboundMail,
+  attached: Attached | null
+): Promise<{ message: MailMessage; created: number; attachedEmails: number; awaiting: string[]; confirmation: boolean }> {
+  const { req, user, realOrgId, scope, to } = d;
+  const depth = attached?.depth ?? 0;
+  const body = `${mail.text}\n${mail.html}`;
 
   // The covering message, stored on every document it delivered. The body is
   // capped: a forwarded thread can run to hundreds of lines, and what matters is
-  // what the sender wrote at the top of it.
+  // what the sender wrote at the top of it. An attached email carries the
+  // forwarder's own words in front of its own, since those are the instruction
+  // ("recharge these to CY-Biz") and the attached mail cannot know them.
+  const own = String(mail.text || '').trim();
   const envelope: MailEnvelope = {
-    from,
+    from: mail.from,
     to,
-    subject,
-    date: sentAt,
-    text: String(text || '').trim().slice(0, 4000),
+    subject: mail.subject,
+    date: mail.sentAt,
+    text: (attached?.note ? `${attached.note}\n\n${own}` : own).slice(0, 4000),
   };
 
   // The message's own identity, and the key the mirror is upserted on. The MIME
@@ -863,15 +877,22 @@ inboundRouter.post('/email', async (req, res) => {
   // is named by what it IS instead — a delivery retried after a timeout must
   // leave one row in the Email tab rather than two, and must not ask n8n to
   // fetch the same invoice a second time.
-  const messageId =
-    String(b.messageId || b.message_id || messageIdFromMime).trim() ||
-    `mail_${createHash('sha256').update(`${to}|${from}|${subject}|${sentAt}|${body.slice(0, 2000)}`).digest('hex').slice(0, 24)}`;
+  let messageId =
+    String(mail.messageId || '').trim() ||
+    `mail_${createHash('sha256').update(`${to}|${mail.from}|${mail.subject}|${mail.sentAt}|${body.slice(0, 2000)}`).digest('hex').slice(0, 24)}`;
+  // One original email can reach two books — forwarded to two clients, or to
+  // two people — and its Message-ID is the same both times. Upserted on the
+  // bare id, the second delivery would take over the first one's row.
+  const clash = mailById(messageId);
+  if (clash && (clash.workspaceId !== workspaceId(req) || clash.scope !== scope || clash.userId !== user.id)) {
+    messageId = `${messageId}#${createHash('sha256').update(`${scope}|${user.id}`).digest('hex').slice(0, 8)}`;
+  }
   const received = new Date().toISOString();
 
   // Every http(s) link in the message. Read here rather than at the point of
   // use so the Email tab can SHOW them even where n8n is switched off or found
   // nothing: a link somebody can click themselves is better than a dead end.
-  const links = linksIn(text, html);
+  const links = linksIn(mail.text, mail.html);
 
   const mirror = (over: Partial<MailMessage>): MailMessage =>
     recordMail({
@@ -881,10 +902,10 @@ inboundRouter.post('/email', async (req, res) => {
       scope,
       userId: user.id,
       to,
-      from,
-      subject,
+      from: mail.from,
+      subject: mail.subject,
       text: envelope.text,
-      sentAt: sentAt || received,
+      sentAt: mail.sentAt || received,
       receivedAt: received,
       attachments: [],
       documents: [],
@@ -893,29 +914,71 @@ inboundRouter.post('/email', async (req, res) => {
       linkFetchedAt: '',
       outcome: 'nothing',
       html: '',
+      ...(attached ? { forwardedBy: attached.by, forwardedIn: attached.inId } : {}),
       ...over,
     });
 
   // A Gmail forwarding confirmation: hold the link for the user to click in the
   // app rather than filing it as a bill. Mirrored all the same — it arrived, and
   // a tab that shows only the mail that became a document is a tab that cannot
-  // answer why something didn't.
-  const conf = parseForwardConfirmation(from, subject, body, links);
-  if (conf && (conf.url || conf.code)) {
-    setPendingForward(user.id, { url: conf.url, code: conf.code, from });
-    mirror({ outcome: 'forwarding_confirmation' });
-    return res.json({ ok: true, kind: 'forwarding_confirmation', user: user.id });
+  // answer why something didn't. Never for an ATTACHED email: that is a file
+  // anybody could have written, and a confirmation link is a setting.
+  if (!attached) {
+    const conf = parseForwardConfirmation(mail.from, mail.subject, body, links);
+    if (conf && (conf.url || conf.code)) {
+      setPendingForward(user.id, { url: conf.url, code: conf.code, from: mail.from });
+      const message = mirror({ outcome: 'forwarding_confirmation' });
+      return { message, created: 0, attachedEmails: 0, awaiting: [], confirmation: true };
+    }
   }
 
-  // Otherwise file each PDF/image attachment as a cost document owned by the user.
+  // Otherwise file each PDF/image attachment as a cost document owned by the
+  // user, and deliver each attached email as a mail of its own.
   const madeBills: Array<{ id: string; displayId: string; base64: string; mediaType: string; fileName: string }> = [];
   const attachmentRows: MailAttachment[] = [];
-  for (const a of atts) {
+  const children: Array<{ id: string; subject: string; from: string }> = [];
+  const awaiting: string[] = [];
+  let created = 0;
+  let attachedEmails = 0;
+  for (const a of mail.atts) {
     const filename = String(a?.filename || 'document');
     const contentType = String(a?.contentType || '');
     const base64 = typeof a?.contentBase64 === 'string' ? a.contentBase64 : '';
     if (!base64) continue;
     const bytes = Buffer.from(base64, 'base64');
+    if (isAttachedEmail(contentType, filename)) {
+      let skipped = '';
+      if (depth >= MAX_ATTACHED_DEPTH) {
+        skipped = 'an attached email nested too deeply to open';
+      } else if (d.attachedLeft <= 0) {
+        skipped = `more than ${MAX_ATTACHED_EMAILS} attached emails in one delivery`;
+      } else {
+        d.attachedLeft -= 1;
+        try {
+          const inner = await parseMime(bytes);
+          const out = await deliverMail(
+            d,
+            { ...inner, to },
+            {
+              // Always the OUTERMOST sender: they are the one who delivered it.
+              by: attached?.by || normaliseSender(mail.from),
+              inId: messageId,
+              depth: depth + 1,
+              note: attached ? attached.note : own,
+            }
+          );
+          children.push({ id: out.message.id, subject: out.message.subject, from: out.message.from });
+          created += out.created;
+          attachedEmails += 1 + out.attachedEmails;
+          awaiting.push(...out.awaiting);
+        } catch (e) {
+          console.error('[inbound] attached email could not be parsed', e);
+          skipped = 'an attached email that could not be opened';
+        }
+      }
+      attachmentRows.push({ fileName: filename, contentType: contentType || 'message/rfc822', bytes: bytes.length, skipped });
+      continue;
+    }
     if (!IMAGE_OR_PDF.test(contentType) && !IMAGE_OR_PDF.test(filename)) {
       // Kept in the mirror rather than dropped silently: a .docx invoice is the
       // commonest reason a mail "arrived and nothing happened", and the row
@@ -975,18 +1038,24 @@ inboundRouter.post('/email', async (req, res) => {
   // looks nearly right. A trusted sender's links are followed on arrival, as
   // before; anybody else's arrive as a document in the inbox that ASKS.
   //
+  // For an ATTACHED email the sender that counts is whoever delivered it
+  // (`trustAddressOf`): its own From line is text inside a file, and a forged
+  // one naming a trusted supplier must not be what points n8n at a link.
+  //
   // Already handled means already handled: a delivery the Worker retries must
   // not stand a second copy of the same question in the inbox, nor re-fetch a
-  // document it already has.
+  // document it already has. And a mail whose documents are the emails attached
+  // to it has nothing of its own to fetch: its links are the forwarder's.
   //
   // And only where there IS a road: with no n8n webhook configured, the answer
   // to the question leads nowhere, so asking it would put a document in the
   // inbox for every newsletter that ever reached a CYBills address. The mail is
   // still mirrored in the Email tab, links and all.
+  const trustFrom = trustAddressOf({ from: mail.from, forwardedBy: attached?.by });
   const prior = mailById(messageId);
   const settledAlready = Boolean(prior?.pendingBillId || prior?.documents.length || prior?.linkFetchedAt);
-  const followable = !madeBills.length && links.length > 0 && !settledAlready && n8nEnabled();
-  const trusted = followable && isTrustedSender(workspaceId(req), realOrgId, scope, from);
+  const followable = !madeBills.length && !children.length && links.length > 0 && !settledAlready && n8nEnabled();
+  const trusted = followable && isTrustedSender(workspaceId(req), realOrgId, scope, trustFrom);
   const pending =
     followable && !trusted
       ? placeholderForLinks(
@@ -994,7 +1063,8 @@ inboundRouter.post('/email', async (req, res) => {
           user,
           envelope,
           { id: messageId, links },
-          `Not fetched yet — ${normaliseSender(from) || 'this sender'} has not been trusted here.`
+          `Not fetched yet — ${normaliseSender(trustFrom) || 'this sender'} has not been trusted here.`,
+          trustFrom
         )
       : null;
 
@@ -1006,54 +1076,139 @@ inboundRouter.post('/email', async (req, res) => {
     // every URL in the mail can. Capped hard: a marketing email runs to
     // hundreds of kilobytes and this store is a JSON file, and it is dropped
     // the moment a document lands.
-    html: followable ? String(html || '').slice(0, 120000) : '',
+    html: followable ? String(mail.html || '').slice(0, 120000) : '',
     attachments: attachmentRows,
     documents: madeBills.map((b) => ({ billId: b.id, displayId: b.displayId, fileName: b.fileName, via: 'attachment' as const })),
-    outcome: madeBills.length ? 'documents' : pending ? 'awaiting_trust' : 'nothing',
+    forwarded: children,
+    outcome: madeBills.length ? 'documents' : children.length ? 'forwarded' : pending ? 'awaiting_trust' : 'nothing',
     pendingBillId: pending?.id || prior?.pendingBillId || '',
     pendingDisplayId: pending?.displayId || prior?.pendingDisplayId || '',
-    linkNote: pending ? `Waiting — is ${normaliseSender(from)} trusted?` : '',
+    linkNote: pending ? `Waiting — is ${normaliseSender(trustFrom)} trusted?` : '',
   });
+  if (pending) awaiting.push(pending.displayId);
+  created += madeBills.length;
+
+  // The covering message belongs to the EMAIL, the file name to the
+  // attachment — one forward can carry three invoices, and reading all three
+  // under the name of the first would tell the reader something untrue about
+  // two of them.
+  for (const b of madeBills) {
+    d.later.push(() => {
+      void autoRead(req, scope, realOrgId, d.provider, b.id, b.base64, b.mediaType, {
+        ...envelope,
+        fileName: b.fileName,
+      });
+    });
+  }
+  // Nothing came as a file, but something was written: a Xero subscription
+  // invoice is a link and a sentence. A sender somebody has already trusted has
+  // their links followed here and now — which is what trusting them bought.
+  // Everybody else's document is sitting in the inbox asking.
+  if (trusted) {
+    d.later.push(() => {
+      void followMessageLinks(req, message, user, d.provider).catch((err) =>
+        console.error('[inbound] link fetch failed', err)
+      );
+    });
+  }
+  return { message, created, attachedEmails, awaiting, confirmation: false };
+}
+
+inboundRouter.post('/email', async (req, res) => {
+  const secret = getInboundSecret();
+  if (!secret) return res.status(503).json({ error: 'inbound_not_configured' });
+  if ((req.header('X-Inbound-Secret') || '') !== secret) return res.status(401).json({ error: 'unauthorized' });
+
+  const b = req.body ?? {};
+  let to = String(b.to || '');
+  let from = String(b.from || '');
+  let subject = String(b.subject || '');
+  let text = String(b.text || '');
+  let html = String(b.html || '');
+  let sentAt = String(b.date || '');
+  // The Message-ID header, where the raw MIME is forwarded. It is the one
+  // identifier a mail carries of its own, so it is what the Email tab's rows
+  // are keyed on when it is there.
+  let messageIdFromMime = '';
+  // Attachments the caller may pass pre-parsed: { filename, contentType, contentBase64 }.
+  let atts: InboundAttachment[] = Array.isArray(b.attachments) ? b.attachments : [];
+
+  // Preferred path: the Worker forwards the RAW MIME (base64).
+  if (typeof b.raw === 'string' && b.raw) {
+    try {
+      const parsed = await parseMime(Buffer.from(b.raw, 'base64'));
+      subject = parsed.subject || subject;
+      from = parsed.from || from;
+      // The Worker's envelope recipient is the authority — it is who the mail
+      // was actually delivered to. But a Worker that forwards only the raw MIME
+      // sends no `to` at all, and the local-part IS how a document is filed, so
+      // an empty one meant every such delivery answered "unknown recipient".
+      if (!to) to = parsed.to;
+      sentAt = parsed.sentAt || sentAt;
+      messageIdFromMime = parsed.messageId;
+      text = parsed.text || text;
+      html = parsed.html || html;
+      atts = parsed.atts;
+    } catch (e) {
+      console.error('[inbound] MIME parse failed', e);
+    }
+  }
+
+  // Local-part of the recipient = the user handle (minus any +suffix).
+  const local = (to.split('@')[0] || to).trim();
+  // A person first, then the entity itself. An entity's short form standing
+  // alone — `redalpha@cybills.sg`, where a person's handle would normally be —
+  // is the company's own address rather than anybody's, so what arrives there
+  // belongs to its GENERAL account: the row that already owns the paperwork
+  // nobody claimed. Second, never first, so a person whose bare handle happens
+  // to be that word keeps their own mail.
+  const user = userByEmailHandle(local) || generalUserByEmailSuffix(workspaceId(req), local);
+  if (!user) return res.status(404).json({ error: 'unknown_recipient', to });
+
+  // Two org ids in play, and they differ for the primary entity:
+  //   realOrgId — the organisation RECORD id, which its per-org settings and Xero
+  //               tenant are keyed on (a colleague on no single entity files into
+  //               the practice's own primary org).
+  //   scope     — the bills-store scope. The primary org (CYBM) folds to the
+  //               legacy WORKSPACE_ID scope, so an emailed doc lands in the inbox
+  //               the user actually sees.
+  const realOrgId = user.organisationId || primaryOrgId();
+  const scope = dataScopeForOrg(realOrgId);
+  // Attribute this document's API spend to its client entity on the Clients page
+  // (recordUsage reads the X-Org-Id header; the Worker sends none).
+  (req.headers as Record<string, string>)['x-org-id'] = realOrgId;
 
   // Read with the org's chosen reader (Claude / OpenAI), the same one the manual
   // re-read uses — not the deploy default, which may not be the org's working key.
   const settings = readSetting<{ readerProvider?: string }>(workspaceId(req), 'cybills.extraction-settings.v1', realOrgId);
   const provider = resolveProvider(settings?.readerProvider);
 
+  const delivery: Delivery = { req, user, realOrgId, scope, to, provider, later: [], attachedLeft: MAX_ATTACHED_EMAILS };
+  const out = await deliverMail(
+    delivery,
+    { to, from, subject, text, html, sentAt, messageId: String(b.messageId || b.message_id || messageIdFromMime), atts },
+    null
+  );
+  if (out.confirmation) return res.json({ ok: true, kind: 'forwarding_confirmation', user: user.id });
+
   // Answer the Worker straight away, then read each document in the background —
   // a model call takes 10-30s and the Worker shouldn't wait on it. A link fetch
-  // is slower still (a portal login), which is the other reason nothing after
-  // this line is waited on.
+  // is slower still (a portal login), which is the other reason nothing started
+  // below is waited on.
   res.json({
     ok: true,
     kind: 'documents',
-    created: madeBills.length,
+    created: out.created,
     user: user.id,
-    message: message.id,
+    message: out.message.id,
+    // How many attached emails were opened and delivered as mails of their own.
+    forwarded: out.attachedEmails,
     // The document standing in the inbox asking whether this sender may be
     // followed, where there is one. Named in the reply so the Worker's own log
-    // says what became of a delivery that filed nothing.
-    awaiting: pending?.displayId || '',
+    // says what became of a delivery that filed nothing — the first of them,
+    // and all of them for a forward carrying several.
+    awaiting: out.awaiting[0] || '',
+    awaitingAll: out.awaiting,
   });
-  // The covering message belongs to the EMAIL, the file name to the
-  // attachment — one forward can carry three invoices, and reading all three
-  // under the name of the first would tell the reader something untrue about
-  // two of them.
-  for (const b of madeBills) {
-    void autoRead(req, scope, realOrgId, provider, b.id, b.base64, b.mediaType, {
-      ...envelope,
-      fileName: b.fileName,
-    });
-  }
-
-  // Nothing came as a file, but something was written: a Xero subscription
-  // invoice is a link and a sentence, and until now that mail filed nothing at
-  // all. A sender somebody has already trusted has their links followed here
-  // and now — which is what trusting them bought. Everybody else's document is
-  // sitting in the inbox asking, and waits for an answer.
-  if (trusted) {
-    void followMessageLinks(req, message, user, provider).catch((err) =>
-      console.error('[inbound] link fetch failed', err)
-    );
-  }
+  for (const run of delivery.later) run();
 });

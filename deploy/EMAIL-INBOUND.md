@@ -180,6 +180,23 @@ the route). The list is on the **Email** tab under *Trusted senders*, where it
 can be taken back — what was already fetched stays, since those are documents
 now; only what arrives next goes back to asking.
 
+### Emails forwarded as attachments (.eml)
+
+Gmail's **Forward as attachment** sends one mail carrying each original email as
+a `message/rfc822` part (an `.eml`). Each one is opened and delivered as the
+mail it is: its own row in the Email tab (threaded under the address the forward
+was delivered to, marked "attached to a mail from …"), its own PDFs and images
+filed, and its own links asked about. Both Worker shapes work — raw MIME, or
+pre-parsed `attachments` with `contentType: message/rfc822` or a `.eml` name.
+Two levels of nesting are opened, 50 attached emails per delivery at most; past
+that the row says so.
+
+**An attached email's links are trusted by whoever DELIVERED it**, never by the
+From line inside the file — anybody can write any address there, so a stranger
+attaching a forged email "from" a trusted supplier is still asked about. The
+"Trust sender?" question on such a document names the forwarder. n8n is still
+sent the ORIGINAL sender as `from`, since that is whose portal the link is.
+
 ### What CYBills sends
 
 ```jsonc

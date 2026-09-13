@@ -1750,7 +1750,17 @@ export default function CostDetail() {
             <div className="min-w-[18rem] flex-1">
               <p>
                 {askingToFetch ? 'This arrived by email as a link, with no attachment.' : 'The link could not be fetched.'}{' '}
-                <span className="font-medium">{link.from || 'an unknown sender'}</span> sent it
+                {/* An email attached to another: the link waits on whoever
+                    DELIVERED it, and the original sender is named beside. */}
+                {doc?.email?.from && !doc.email.from.toLowerCase().includes(String(link.from || '').toLowerCase()) ? (
+                  <>
+                    <span className="font-medium">{link.from}</span> forwarded it, as an attached email from {doc.email.from}
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium">{link.from || 'an unknown sender'}</span> sent it
+                  </>
+                )}
                 {doc?.email?.subject ? ` — “${doc.email.subject}”` : ''}.
                 {askingToFetch
                   ? ' Fetching the invoice means opening that link with the credentials n8n holds, so somebody has to say the sender is trusted.'

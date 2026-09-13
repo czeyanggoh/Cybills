@@ -1762,6 +1762,26 @@ still be fetched from it, capped at 120 KB and dropped the moment a document
 lands — a fetch happens LATER than the delivery (after somebody trusts the
 sender), so the markup has to outlive the request that carried it.
 
+**An email forwarded AS AN ATTACHMENT is opened, and trusted by who sent it
+in.** Gmail's "Forward as attachment" hands over a month of subscription
+invoices as one mail carrying sixteen `.eml` files, and every one was skipped as
+"not a PDF or image" — the mail filed nothing. `deliverMail` (`inbound.ts`) now
+delivers each `message/rfc822` part as the mail it IS: its own Email tab row
+(threaded where the forward was DELIVERED, `forwardedBy` / `forwardedIn` on it,
+`forwarded` on the carrier, whose outcome reads `forwarded` rather than
+"Nothing filed"), its own attachments filed with its own covering note, its own
+links. Checked BEFORE the PDF/image filter, which matches a name like
+"Invoice.pdf.eml". Two levels deep, 50 per delivery, said on the row past that;
+never a forwarding confirmation, since a file is not Google. **Its links wait on
+the FORWARDER** (`trustAddressOf` in `mailThread.ts`), everywhere trust is read —
+the placeholder's `emailLink.from`, the trust sweep, `senderTrusted`, both Trust
+buttons: the From line inside an `.eml` is text anybody can write, so trusting
+it would let a stranger attach a forged "Xero" email and have n8n follow the
+link. n8n is still told the original sender, whose portal it is. A Message-ID
+already mirrored for ANOTHER book or person is suffixed rather than taken over,
+since one original email can be forwarded to two. Covered by `npm test` in
+`server/` (`test/attached-email.test.mts`).
+
 **Only where the attachments produced nothing.** A mail carrying both the
 invoice and a link to the same invoice must not file the cost twice, and the
 attachment is the document when there is one. Every http(s) link goes over, in
