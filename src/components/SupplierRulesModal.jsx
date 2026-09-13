@@ -209,9 +209,11 @@ export default function SupplierRulesModal({
 
             {/* A supplier that invoices AFTER the period it bills for — August's
                 hours invoiced on 2 September — wants the cost in August. */}
-            <div className="md:col-span-2">
+            {/* An ordinary grid cell, like every other dropdown here — spanning
+                both columns with a fixed width made it a size of its own. */}
+            <div>
               <FieldLabel>Invoice date</FieldLabel>
-              <div className="max-w-sm">
+              <div>
                 <Select value={rule.invoiceDate || ''} onChange={(v) => set('invoiceDate', v)}>
                   <option value="">As printed on the document</option>
                   {SUPPLIER_INVOICE_DATE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -226,9 +228,9 @@ export default function SupplierRulesModal({
 
             {/* A bridge entity's costs never post as bills of their own. */}
             {!bridge && (
-              <div className="md:col-span-2">
+              <div>
                 <FieldLabel>Publish to Xero after reading</FieldLabel>
-                <div className="max-w-sm">
+                <div>
                   <Select value={rule.autoPublish || ''} onChange={(v) => set('autoPublish', v)}>
                     <option value="">Follow Extraction settings</option>
                     {SUPPLIER_AUTO_PUBLISH_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
