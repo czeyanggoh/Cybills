@@ -58,6 +58,11 @@ export const COST_COLUMNS = [
   { key: 'tax', label: 'Tax', primary: true, width: 'w-[80px]' },
   // …and this one is w-36 (144px) + px-3 either side.
   { key: 'taxRate', label: 'Tax rate', primary: true, width: 'w-[170px]' },
+  // Dext's Bank match, on the row: the bank statement line that pays this
+  // document, and the Autofill that makes publish record the payment. On by
+  // default — a document the bank has already paid is what a reviewer wants to
+  // clear first, and the column is the only thing that would tell them.
+  { key: 'match', label: 'Match', primary: true, width: 'w-[130px]' },
   { key: 'ref', label: 'Document reference', width: 'w-[170px]' },
   { key: 'description', label: 'Description', width: 'w-[260px]' },
   { key: 'itemId', label: 'Item ID', width: 'w-[130px]' },

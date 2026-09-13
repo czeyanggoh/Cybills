@@ -342,6 +342,10 @@ export function billToDoc(b) {
     description: b.description || '',
     paymentMethod: b.paymentMethod || '',
     paid: Boolean(b.paid),
+    // The bank statement line this document will be paid against on publish
+    // (Dext's "Autofill payment") — null until a person accepts a match in the
+    // inbox's Match column. See src/lib/bankMatch.js.
+    bankMatch: b.bankMatch || null,
     customer: b.customer || '',
     project: b.project || '',
     cardLast4: b.cardLast4 || '',

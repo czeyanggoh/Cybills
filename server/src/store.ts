@@ -121,6 +121,31 @@ export type Bill = {
   description?: string; // plain-language summary of what was purchased
   paymentMethod?: string; // Xero payment account label the cost was paid from
   paid?: boolean; // whether the cost has been paid
+  // The bank statement line this document is going to be paid AGAINST — Dext's
+  // "Autofill payment": the inbox found the line in the bank feed that pays
+  // this document, a person accepted it, and when the document is PUBLISHED
+  // the payment is recorded from that bank account on the statement date, so
+  // the line reconciles in Xero. Pending until publish; cleared by it (the
+  // settlement is then in the bank-lines record) or by the person. Not in
+  // EDITABLE — written only by the autofill route, which checks the money
+  // first (server/src/bankMatch.ts).
+  bankMatch?: {
+    key: string;
+    date: string;
+    amount: number; // signed, negative = money out
+    currency: string;
+    reference: string;
+    description: string;
+    bankAccountId: string;
+    bankAccountName: string;
+    bankAccountCode: string;
+    // What the document said before the autofill turned Paid on, so clearing
+    // it puts them back.
+    paidBefore: boolean;
+    paymentMethodBefore: string;
+    at: string;
+    by: string;
+  };
   customer?: string; // Xero customer contact the cost is allocated to
   project?: string; // Xero tracking option (project) the cost is allocated to
   cardLast4?: string; // last 4 digits of the payment card (a merge-match signal)
@@ -1040,6 +1065,20 @@ export function attachFetchedFile(
   // Being read, and saying so — the same state the attachment road creates a
   // document in, cleared by autoRead's finally.
   bill.status = 'processing';
+  persist(bills);
+  return bill;
+}
+
+// Set or clear the bank statement line a document will be paid against on
+// publish (see Bill.bankMatch). Its own writer, like the Xero fields: EDITABLE
+// is the surface a PERSON may patch freely, and this one is written only after
+// the money has been checked against the line.
+export function setBillBankMatch(orgId: string, id: string, match: Bill['bankMatch'] | null): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  if (match) bill.bankMatch = match;
+  else delete bill.bankMatch;
   persist(bills);
   return bill;
 }

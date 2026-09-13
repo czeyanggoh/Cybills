@@ -50,6 +50,8 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
   // Whether the posted lines were marked billable to the customer (Xero's
   // billable expense). Null when the document wasn't marked rebillable.
   const [rebilled, setRebilled] = useState(null);
+  // The bank payment recorded from the inbox's Autofill, or why it was not.
+  const [bankPayment, setBankPayment] = useState(null);
   // A company that isn't GST-registered publishes everything as No Tax, whatever
   // the bill still carries — the last gate before a stale code reaches Xero.
   const gstRegistered = useGstRegistered();
@@ -215,6 +217,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
       setDone(result.invoice);
       setPostedLines(Number(result.lines) || 0);
       setAttachment(result.attachment ?? null);
+      setBankPayment(result.bankPayment ?? null);
       setRebilled(result.rebilled ?? null);
       onPublished?.(result);
     } catch (err) {
@@ -255,6 +258,18 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
             </p>
             {attachment?.ok && (
               <p className="text-xs text-muted-foreground">The document is attached to it under Related Files.</p>
+            )}
+            {bankPayment?.ok && !bankPayment.skipped && (
+              <p className="max-w-sm text-xs text-muted-foreground">
+                Paid from the bank line: a payment of {bankPayment.payment?.currency} {Number(bankPayment.payment?.amount || 0).toFixed(2)} on{' '}
+                {bankPayment.payment?.date} is recorded against the bill, so the statement line reconciles.
+              </p>
+            )}
+            {bankPayment && !bankPayment.ok && (
+              <p className="max-w-sm text-xs text-amber-700">
+                The bill posted, but the bank payment could not be recorded: {bankPayment.message || bankPayment.error} Match it from the
+                Bank tab, or record the payment by hand in Xero.
+              </p>
             )}
             {/* A cost meant to be recharged and silently not marked is money
                 nobody bills for, so it is said either way. */}
@@ -297,6 +312,17 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
                     ? ' as a supplier credit note — the amount is credited, not owed.'
                     : ' as a supplier bill.'}
               </p>
+              {/* The inbox's Autofill payment: the bank line this document is
+                  paid against. Said HERE because the publish is what writes the
+                  payment, and it is the irreversible half. */}
+              {!updating && bill?.bankMatch && (
+                <p className="rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900">
+                  <span className="font-medium">Bank match.</span> A payment of {bill.bankMatch.currency}{' '}
+                  {Math.abs(Number(bill.bankMatch.amount) || 0).toFixed(2)} from {bill.bankMatch.bankAccountName || 'the bank account'} on{' '}
+                  {bill.bankMatch.date} is recorded against the bill as it is published, so the statement line reconciles in Xero. It
+                  publishes as Awaiting payment for that reason, whatever status is picked below.
+                </p>
+              )}
               {/* The paper names somebody else. Said again HERE because this is
                   the irreversible half: a bill published into the wrong client's
                   ledger claims that client's input tax on a supply made to

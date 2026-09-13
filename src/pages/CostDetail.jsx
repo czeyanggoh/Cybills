@@ -2386,6 +2386,15 @@ export default function CostDetail() {
                 >
                   Add payment method
                 </button>
+                {/* The inbox's Autofill payment: the bank statement line this
+                    document is paid against, recorded when it is published. */}
+                {doc?.bankMatch && (
+                  <p className="mt-2 rounded border border-emerald-600/40 bg-emerald-500/10 px-2 py-1.5 text-xs text-emerald-900">
+                    <span className="font-medium">Bank match:</span> paid from {doc.bankMatch.bankAccountName || 'the bank account'} on{' '}
+                    {formatDate(doc.bankMatch.date)} ({doc.bankMatch.currency} {Math.abs(Number(doc.bankMatch.amount) || 0).toFixed(2)}). The
+                    payment is recorded in Xero when this document is published.
+                  </p>
+                )}
               </Field>
 
               {/* What the ledger says has happened since this document was

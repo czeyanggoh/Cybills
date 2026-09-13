@@ -231,6 +231,19 @@ paying it twice.
 | `422 not_approved` | Xero would not move a DRAFT/SUBMITTED bill to AUTHORISED, in its own words |
 | `422 payment_refused` | Xero rejected the payment, in its own words; `invoice_id` says the bill IS in the ledger now, so do not post it again |
 
+## The inbox, for reviewers — Dext's Match column
+
+The Costs inbox draws the same lines on the document's own row, the way Dext
+does: a bank icon and **Match found** (or **Matches found**) on an item whose
+payment is in the bank feed, and **Autofill payment** in the popover. Autofill
+turns Paid on, names the bank account as the payment method, and keeps the line
+on the document as its pending payment; it writes nothing to Xero. **Publish**
+then records the payment from that account on the statement date as the bill
+is created — publishing as Awaiting payment whatever status was picked, because
+a payment needs that — and the dialog says so before the click and reports the
+payment after. Clear puts the fields back. A document already in Xero and
+awaiting payment is settled on the spot.
+
 ## The Bank tab, for people
 
 **Bank → Bank match** (Business Admin, like the Costs inbox): the outstanding

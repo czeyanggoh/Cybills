@@ -232,3 +232,27 @@ export function suggestionFor(candidates) {
   const firm = (candidates || []).filter((c) => c.confidence === 'firm');
   return firm.length === 1 ? firm[0] : null;
 }
+
+/**
+ * The same pairing seen from the DOCUMENT's side — what the Costs inbox's
+ * Match column draws: for each document, the statement lines that could be
+ * its payment, best first. `bankMatches` decides the pairing (one line
+ * suggests one document); this only turns it round, so the inbox and the Bank
+ * tab can never disagree about which line pays which document. A document
+ * with one line is "Match found", with several "Matches found" — Dext's words.
+ */
+export function matchesByDoc(lines, docs) {
+  const byDoc = new Map();
+  for (const [key, cands] of bankMatches(lines, docs)) {
+    const line = (lines || []).find((l) => lineKey(l) === key);
+    if (!line) continue;
+    for (const c of cands) {
+      const list = byDoc.get(c.doc.id) || [];
+      list.push({ line, confidence: c.confidence, days: c.days, reasons: c.reasons });
+      byDoc.set(c.doc.id, list);
+    }
+  }
+  const rank = (m) => (m.confidence === 'firm' ? 0 : 1);
+  for (const list of byDoc.values()) list.sort((a, b) => rank(a) - rank(b) || Math.abs(a.days) - Math.abs(b.days));
+  return byDoc;
+}

@@ -2274,6 +2274,27 @@ ONE line (the nearest), so two identical charges a week apart do not both point
 at one receipt. Money in is never matched: a customer paying or a refund is not
 a cost document.
 
+**And the inbox does it Dext's way: a Match column, and Autofill payment.**
+The Bank tab is the reconciler's view; the reviewer's is the Costs inbox, where
+Dext puts a bank icon and "Match found" on the ROW of an item whose payment is
+in the bank feed. So the inbox reads the same outstanding lines
+(`useBankLines`, one fetch per entity, shared with the Bank tab) and turns the
+pairing round (`matchesByDoc`, pure) — "Match found" for one line, "Matches
+found" for several — with Dext's own words in the popover and **Autofill
+payment** as the act. Autofill (`POST /api/bank/autofill`) checks the money by
+the same rule, turns Paid on, names the bank account as the payment method, and
+keeps the line on the document (`Bill.bankMatch`, its own writer, not
+EDITABLE); it writes NOTHING to Xero. The PUBLISH does: `postBillToXero` finds
+the pending line, publishes AUTHORISED whatever was asked (`statusForced`, said
+in the dialog beforehand and in the reply), and records the payment from that
+account on the statement date the moment the bill exists
+(`applyPendingBankPayment`, loaded on demand since bankMatch.ts imports
+xero.ts) — so the person's one act in the inbox is honoured by whichever road
+later publishes the document. A line settled since by another road is not paid
+twice. Clear puts Paid and the payment method back to what they were. A
+document already in Xero and awaiting payment is settled on the spot, since
+there is a bill to pay against. Covered by the same server test.
+
 **Every settlement is recorded** (`bank-lines` collection, keyed by `lineKey` =
 date + cents + reference): CYWS hands the same lines back until the statement
 line is reconciled in Xero, so a settled line is shown as Matched rather than

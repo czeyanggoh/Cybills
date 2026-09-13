@@ -305,6 +305,43 @@ check('the run re-pressed finds its settlement rather than paying twice', [r.sta
 r = await call('/api/payments/bank-candidates?tenant_id=tenant-1', { headers: KEY });
 check('and the settled receipt is no longer a candidate', (r.body.candidates ?? []).map((c: any) => c.supplier), ['A1 Consultancy']);
 
+// --- Autofill payment: Dext's move, from the inbox -------------------------------
+// The Match column names the line; Autofill keeps it on the document and turns
+// Paid on; PUBLISH records the payment. Nothing reaches Xero at autofill time.
+const L6 = { date: '2026-08-27', amount: -45.5, currency: 'SGD', reference: 'AUTOFILL CO', description: '', bank_account_id: 'acct-dbs', bank_account_name: 'DBS Current' };
+const af = bill({ supplier: 'Autofill Co', invoiceNumber: 'AF-1', category: '493 - Travel - National', taxRate: 'No Tax', total: '45.50', tax: '0', date: '2026-08-26' });
+const autofill = (billId: string, line: any) => call('/api/bank/autofill', { method: 'POST', headers: ORG, body: JSON.stringify({ billId, line }) });
+
+const paymentsBefore = payments.length;
+const postsBefore = invoicePosts.length;
+r = await autofill(af.id, L6);
+check('autofill keeps the line on the document without touching Xero', [r.status, r.body.settled, payments.length, invoicePosts.length], [200, false, paymentsBefore, postsBefore]);
+stored = getBillById(book1, af.id)!;
+check('Paid is on, from that account, and the line is pending', [stored.paid, stored.paymentMethod, stored.bankMatch?.date, stored.bankMatch?.amount], [true, 'DBS Current', '2026-08-27', -45.5]);
+check('and it remembers what stood before', [stored.bankMatch?.paidBefore, stored.bankMatch?.paymentMethodBefore], [false, '']);
+
+r = await autofill(a1.id, { ...L6, amount: -1 });
+check('a line at a different figure is refused at autofill, not at publish', [r.status, r.body.error], [422, 'amount_mismatch']);
+
+r = await call('/api/bank/autofill/clear', { method: 'POST', headers: ORG, body: JSON.stringify({ billId: af.id }) });
+stored = getBillById(book1, af.id)!;
+check('clear puts Paid and the payment method back', [r.status, stored.paid, stored.paymentMethod, stored.bankMatch], [200, false, '', undefined]);
+
+await autofill(af.id, L6);
+r = await call('/api/xero/organisations/org-1/publish-bill', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ billId: af.id, accountCode: '493', taxType: 'NONE', status: 'DRAFT' }),
+});
+check('publish goes through', [r.status, r.body.ok], [200, true]);
+check('AUTHORISED whatever was asked — a payment needs it — and it says so', [invoicePosts[invoicePosts.length - 1]?.Status, r.body.statusForced], ['AUTHORISED', true]);
+const lastPayment = payments[payments.length - 1];
+check('the payment is recorded against the new bill, on the statement date, for the document’s figure', [lastPayment?.Invoice, lastPayment?.Date, lastPayment?.Amount, lastPayment?.Account], [{ InvoiceID: r.body.invoice.invoiceId }, '2026-08-27', 45.5, { AccountID: 'acct-dbs' }]);
+check('and reported beside the publish', [r.body.bankPayment?.ok, r.body.bankPayment?.payment?.date], [true, '2026-08-27']);
+stored = getBillById(book1, af.id)!;
+check('the document is paid in Xero and the pending line is spent', [stored.xeroStatus, stored.bankMatch, stored.paid], ['PAID', undefined, true]);
+r = await call('/api/bank/outstanding', { headers: ORG });
+check('the settlement is on record, as the publish’s', r.body.records.some((x: any) => x.kind === 'match' && x.billId === af.id && x.publishedHere === true), true);
+
 stub.close();
 if (failures) {
   console.error(`\n${failures} check(s) failed`);

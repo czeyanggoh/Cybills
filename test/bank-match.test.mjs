@@ -15,6 +15,7 @@ import {
   candidatesFor,
   bankMatches,
   suggestionFor,
+  matchesByDoc,
 } from '../src/lib/bankMatch.js';
 
 let failures = 0;
@@ -133,6 +134,19 @@ check('a foreign document at its restated figure', candidatesFor(line({ amount: 
   // Both are firm on both lines by name; ownership goes by nearest date, so
   // each line suggests exactly one and it is the right one.
   check('each line suggests its own receipt', [suggestionFor(m.get(lineKey(l1)))?.doc.id, suggestionFor(m.get(lineKey(l2)))?.doc.id], ['g1', 'g2']);
+}
+
+// --- from the document's side ------------------------------------------------
+{
+  const l1 = line({ date: '2026-08-19', description: 'GRAB' });
+  const l2 = line({ date: '2026-08-26', description: 'GRAB' });
+  const l3 = line({ date: '2026-08-20', description: 'FAST A1 CONSULTANCY', amount: -250 });
+  const grab = doc({ id: 'g', supplier: 'Grab', date: '2026-08-18' });
+  const a1 = doc({ id: 'a', total: '250', date: '2026-08-18' });
+  const m = matchesByDoc([l1, l2, l3], [grab, a1, doc({ id: 'none', total: '999' })]);
+  check('a document with one line: one match, firm', m.get('a').map((x) => [x.line.date, x.confidence]), [['2026-08-20', 'firm']]);
+  check('a document two lines could pay: both listed, the nearer firm, the other left for a person', m.get('g').map((x) => [x.line.date, x.confidence]), [['2026-08-19', 'firm'], ['2026-08-26', 'possible']]);
+  check('a document nothing pays is absent', m.has('none'), false);
 }
 
 if (failures) {

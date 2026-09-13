@@ -13,6 +13,7 @@ import {
   getBillById,
   markBillXeroPayment,
   parseAmount,
+  setBillBankMatch,
   updateBill,
   type Bill,
 } from './store.js';
@@ -310,15 +311,48 @@ export async function settleBillAgainstLine(
     }
   }
 
-  // The payment. Amount in the INVOICE's currency — Xero applies a payment to a
-  // bill in the bill's own currency — and, where the bank account is in another,
-  // the rate that carries the bank's figure onto it. Xero's CurrencyRate on a
-  // payment is FOREIGN PER BASE, the same way round as on the invoice
-  // (currencyRateFor in xero.ts): it divides the amount by it to reach what the
-  // bank moved. USD 17.17 paid as SGD 22.20 is a rate of 0.7734.
+  return recordPaymentForLine(organisation, ws, bill, line, invoiceId, {
+    publishedHere,
+    published,
+    via: opts.via,
+    by: opts.by,
+  });
+}
+
+/**
+ * The payment itself, against a bill that is already in Xero: record it from
+ * the bank account, on the statement date, for the bill's own figure; read the
+ * bill back and record what Xero now says; turn the document's own Paid toggle
+ * on; remember the match. Shared by the two roads that settle a line directly
+ * (the Bank tab, CYWS's run) and by PUBLISH, which applies a pending autofill
+ * (Bill.bankMatch) the moment the bill exists — so a payment recorded either
+ * way is recorded the same way.
+ */
+export async function recordPaymentForLine(
+  organisation: Organisation,
+  ws: string,
+  bill: Bill,
+  line: BankLine,
+  invoiceId: string,
+  opts: { publishedHere: boolean; published?: any; via: 'browser' | 'cyws'; by: string }
+): Promise<SettleResult> {
+  const account: Record<string, string> | null = line.bank_account_id
+    ? { AccountID: line.bank_account_id }
+    : line.bank_account_code
+      ? { Code: line.bank_account_code }
+      : null;
+  if (!account) {
+    return { status: 422, body: { error: 'no_bank_account', message: 'This statement line names no bank account to pay from. Pick one.' } };
+  }
+  const billCurrency = String(bill.currency ?? '').trim().toUpperCase();
   const invoiceAmount = parseAmount(bill.total);
   const bankAmount = Math.abs(line.amount);
-  const billCurrency = String(bill.currency ?? '').trim().toUpperCase();
+  // Amount in the INVOICE's currency — Xero applies a payment to a bill in the
+  // bill's own currency — and, where the bank account is in another, the rate
+  // that carries the bank's figure onto it. Xero's CurrencyRate on a payment is
+  // FOREIGN PER BASE, the same way round as on the invoice (currencyRateFor in
+  // xero.ts): it divides the amount by it to reach what the bank moved. USD
+  // 17.17 paid as SGD 22.20 is a rate of 0.7734.
   const payment: Record<string, unknown> = {
     Invoice: { InvoiceID: invoiceId },
     Account: account,
@@ -344,7 +378,7 @@ export async function settleBillAgainstLine(
       // The bill IS in the ledger now, even though the payment is not — say so,
       // so the caller does not post it a second time.
       invoice_id: invoiceId,
-      published_here: publishedHere,
+      published_here: opts.publishedHere,
     } };
   }
   const paymentId = String(record.PaymentID ?? '');
@@ -358,11 +392,15 @@ export async function settleBillAgainstLine(
     : { xeroStatus: 'PAID', xeroPaidDate: line.date, xeroPaymentRef: String(payment.Reference ?? '') };
   markBillXeroPayment(ws, bill.id, xero);
   // And the document's own Paid toggle: this IS the payment, from THIS account.
-  const paidBefore = Boolean(bill.paid);
-  const paymentMethodBefore = String(bill.paymentMethod ?? '');
+  // A pending autofill already turned it on and remembers what stood before;
+  // otherwise what stands now is what stood before.
+  const paidBefore = bill.bankMatch ? Boolean(bill.bankMatch.paidBefore) : Boolean(bill.paid);
+  const paymentMethodBefore = bill.bankMatch ? String(bill.bankMatch.paymentMethodBefore ?? '') : String(bill.paymentMethod ?? '');
   const patch: Partial<Bill> = { paid: true };
-  if (line.bank_account_name && !paymentMethodBefore) patch.paymentMethod = line.bank_account_name;
+  if (line.bank_account_name && !String(bill.paymentMethod ?? '')) patch.paymentMethod = line.bank_account_name;
   updateBill(ws, bill.id, patch);
+  // The pending autofill is spent: the settlement is the record now.
+  if (bill.bankMatch) setBillBankMatch(ws, bill.id, null);
   // The tick on the WhatsApp message the receipt arrived in turns green.
   void syncWhatsappReaction(ws, bill.id);
 
@@ -378,7 +416,7 @@ export async function settleBillAgainstLine(
     paymentId,
     paidBefore,
     paymentMethodBefore,
-    publishedHere,
+    publishedHere: opts.publishedHere,
     via: opts.via,
     at: new Date().toISOString(),
     by: opts.by,
@@ -387,16 +425,62 @@ export async function settleBillAgainstLine(
 
   return { status: 200, body: {
     ok: true,
-    invoice: published?.invoice ?? {
+    invoice: opts.published?.invoice ?? {
       invoiceId,
       invoiceNumber: String(invoice?.InvoiceNumber ?? bill.invoiceNumber ?? ''),
       status: xero.xeroStatus,
     },
-    published: publishedHere ? { lines: published?.lines, perLine: published?.perLine, attachment: published?.attachment } : null,
+    published: opts.publishedHere ? { lines: opts.published?.lines, perLine: opts.published?.perLine, attachment: opts.published?.attachment } : null,
     payment: { paymentId, date: line.date, amount: invoiceAmount, currency: billCurrency, reference: payment.Reference },
     match,
     bill: getBillById(ws, bill.id),
   } };
+}
+
+/**
+ * Apply a document's pending autofill (Bill.bankMatch) to the bill that has
+ * just been published for it. Called by postBillToXero once the bill exists:
+ * Dext's "Autofill payment" fills the payment fields in the inbox, and it is
+ * the PUBLISH that records the payment — so the person's one act in the inbox
+ * is honoured by whichever road later publishes the document (the dialog, the
+ * bulk button, the payables hand-off). Never throws; the bill is in the ledger
+ * either way, and a refusal is reported beside the publish result.
+ */
+export async function applyPendingBankPayment(
+  organisation: Organisation,
+  ws: string,
+  billId: string,
+  invoiceId: string,
+  by: string
+): Promise<{ ok: boolean; skipped?: boolean; error?: string; message?: string; payment?: any; match?: BankLineRecord }> {
+  const bill = getBillById(ws, billId);
+  const pending = bill?.bankMatch;
+  if (!bill || !pending) return { ok: true, skipped: true };
+  const line = await readLine({
+    date: pending.date,
+    amount: pending.amount,
+    currency: pending.currency,
+    reference: pending.reference,
+    description: pending.description,
+    bank_account_id: pending.bankAccountId,
+    bank_account_name: pending.bankAccountName,
+    bank_account_code: pending.bankAccountCode,
+  });
+  if (!line) return { ok: false, error: 'bad_line', message: 'The saved bank line could not be read.' };
+  // A line settled since — the Bank tab, or CYWS's run — is not paid twice.
+  const already = recordsFor(ws).find((r) => r.kind === 'match' && r.key === line.key);
+  if (already) {
+    setBillBankMatch(ws, bill.id, null);
+    return { ok: true, skipped: true, match: already, message: 'This statement line was already settled.' };
+  }
+  try {
+    const out = await recordPaymentForLine(organisation, ws, bill, line, invoiceId, { publishedHere: true, via: 'browser', by });
+    if (out.status !== 200) return { ok: false, error: String(out.body?.error ?? 'payment_failed'), message: String(out.body?.message ?? '') };
+    return { ok: true, payment: out.body.payment, match: out.body.match };
+  } catch (err) {
+    console.error('[bank] pending payment failed', err);
+    return { ok: false, error: 'payment_failed', message: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**
@@ -619,4 +703,98 @@ bankRouter.post('/lines/:id/restore', async (req, res) => {
   if (!record) return res.status(404).json({ error: 'record_not_found' });
   saveRecords(records.filter((r) => r.id !== record.id));
   res.json({ ok: true });
+});
+
+// --- Autofill payment: Dext's move, in the inbox --------------------------------
+// The Costs inbox's Match column shows, on the document's own row, the bank
+// statement line that pays it. "Autofill payment" is the person accepting that:
+// it turns Paid on, names the bank account as the payment method, and keeps the
+// line on the document (Bill.bankMatch) so that PUBLISH — from the dialog, the
+// bulk button, or the payables hand-off — records the payment from that account
+// on the statement date the moment the bill exists (applyPendingBankPayment,
+// called by postBillToXero). Nothing reaches Xero at autofill time; the person
+// is filling in fields, and the ledger is written when they publish, which is
+// how Dext does it and why the publish dialog says the payment out loud.
+//
+// The money is checked HERE, at the moment of accepting, by the same rule the
+// Bank tab and the settle route hold — so what publish later records can never
+// be a payment for a different figure.
+
+// POST /api/bank/autofill — { billId, line }
+bankRouter.post('/autofill', async (req, res) => {
+  const scope = requireBankEntity(req, res);
+  if (!scope) return;
+  const { organisation, ws } = scope;
+  const mod = await bankRules();
+  const billId = String(req.body?.billId ?? '').trim();
+  const line = await readLine(req.body?.line);
+  if (!billId || !line || !mod) {
+    return res.status(400).json({ error: 'missing_field', message: 'billId and a statement line (date, amount, reference) are required.' });
+  }
+  const bill = getBillById(ws, billId);
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  if (!mod.isMoneyOut(line)) {
+    return res.status(422).json({ error: 'money_in', message: 'This statement line is money coming IN, and a cost document is money going out.' });
+  }
+  if (!mod.matchable(bill)) {
+    return res.status(409).json({ error: 'not_matchable', message: `“${bill.supplier || 'This document'}” can’t be paid against a bank line: it is on an expense claim, merged away, a credit note, or Xero already says it is paid.` });
+  }
+  const mine = mod.docAmountFor(bill, line);
+  const cents = (n: number) => Math.round(n * 100);
+  if (mine == null || cents(mine) !== Math.abs(cents(line.amount))) {
+    return res.status(422).json({
+      error: 'amount_mismatch',
+      message: mine == null
+        ? `“${bill.supplier}” is billed in ${bill.currency || 'another currency'} and states no ${line.currency || 'bank-currency'} figure, so it can’t be paid against this line.`
+        : `“${bill.supplier}” is ${bill.currency || ''} ${mine.toFixed(2)}, and this statement line is ${line.currency || ''} ${Math.abs(line.amount).toFixed(2)}.`,
+    });
+  }
+  const taken = recordsFor(ws).find((r) => r.key === line.key);
+  if (taken) {
+    return res.status(409).json({ error: taken.kind === 'match' ? 'line_already_matched' : 'line_dismissed', message: taken.kind === 'match' ? 'This statement line has already been settled against a document.' : 'This statement line was set aside as not a cost. Offer it again from the Bank tab first.' });
+  }
+  // Already in Xero and awaiting payment: there is a bill to pay against right
+  // now, so this is the settle itself rather than something to hold for publish.
+  if (bill.xeroInvoiceId) {
+    const out = await settleBillAgainstLine(req, organisation, ws, bill, line, { via: 'browser', by: who(req) });
+    return res.status(out.status).json({ ...out.body, settled: out.status === 200 });
+  }
+  // What stood before, so Clear can put it back.
+  const paidBefore = bill.bankMatch ? Boolean(bill.bankMatch.paidBefore) : Boolean(bill.paid);
+  const paymentMethodBefore = bill.bankMatch ? String(bill.bankMatch.paymentMethodBefore ?? '') : String(bill.paymentMethod ?? '');
+  setBillBankMatch(ws, bill.id, {
+    key: line.key,
+    date: line.date,
+    amount: line.amount,
+    currency: line.currency,
+    reference: line.reference,
+    description: line.description,
+    bankAccountId: line.bank_account_id,
+    bankAccountName: line.bank_account_name,
+    bankAccountCode: line.bank_account_code || '',
+    paidBefore,
+    paymentMethodBefore,
+    at: new Date().toISOString(),
+    by: who(req),
+  });
+  const patch: Partial<Bill> = { paid: true };
+  if (line.bank_account_name) patch.paymentMethod = line.bank_account_name;
+  const updated = updateBill(ws, bill.id, patch);
+  res.json({ ok: true, settled: false, bill: updated });
+});
+
+// POST /api/bank/autofill/clear — { billId } — take the pending payment off
+// again, and put Paid and the payment method back to what they were.
+bankRouter.post('/autofill/clear', async (req, res) => {
+  const scope = requireBankEntity(req, res);
+  if (!scope) return;
+  const { ws } = scope;
+  const billId = String(req.body?.billId ?? '').trim();
+  const bill = billId ? getBillById(ws, billId) : null;
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  const pending = bill.bankMatch;
+  if (!pending) return res.json({ ok: true, bill });
+  setBillBankMatch(ws, bill.id, null);
+  const updated = updateBill(ws, bill.id, { paid: Boolean(pending.paidBefore), paymentMethod: String(pending.paymentMethodBefore ?? '') });
+  res.json({ ok: true, bill: updated });
 });

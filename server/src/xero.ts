@@ -1456,8 +1456,16 @@ export async function postBillToXero(
     contactId: opts.contactId,
   });
   if (!prepared.ok) return { status: prepared.status, body: prepared.body };
-  const payload = { ...prepared.payload, Status: opts.status };
   const docType = prepared.docType;
+  // A document carrying a pending bank payment (the inbox's "Autofill payment",
+  // Bill.bankMatch) publishes AUTHORISED whatever was asked: the payment is
+  // recorded against the bill the moment it exists, and Xero refuses a payment
+  // against a DRAFT or SUBMITTED bill. The money has left the bank, which is as
+  // approved as a bill gets. Said in the reply (`statusForced`) so the dialog
+  // can say it too.
+  const pendingPayment = docType === 'ACCPAY' && Boolean(bill.bankMatch);
+  const status = pendingPayment ? 'AUTHORISED' : opts.status;
+  const payload = { ...prepared.payload, Status: status };
   const endpoint = xeroEndpointFor(docType);
   const noun = docType === 'ACCPAYCREDIT' ? 'credit note' : 'bill';
 
@@ -1513,6 +1521,29 @@ export async function postBillToXero(
   // if the upload fails, and /attach-file can retry it.
   const attachment = await attachBillFile(organisation.tenantId, xeroId, updated ?? bill, docType);
 
+  // The payment the inbox already agreed to (Autofill payment): recorded from
+  // the bank account on the statement date now that the bill exists, so the
+  // statement line reconciles in Xero. Loaded on demand — bankMatch.ts imports
+  // this module — and never allowed to fail the publish: the bill is in the
+  // ledger either way, and a refusal is reported beside it.
+  let bankPayment: any = null;
+  if (pendingPayment) {
+    try {
+      const { applyPendingBankPayment } = await import('./bankMatch.js');
+      bankPayment = await applyPendingBankPayment(
+        organisation as any,
+        workspace,
+        bill.id,
+        xeroId,
+        String(memberForSession(req)?.email ?? '')
+      );
+      updated = getBillById(workspace, bill.id) ?? updated;
+    } catch (err) {
+      console.error('[xero] pending bank payment failed', err);
+      bankPayment = { ok: false, error: 'payment_failed', message: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   // A cost incurred on a client's behalf: mark its lines billable to them, so
   // Xero offers them up when that client's next invoice is raised. Needs the
   // customer to be a Xero contact — without an id there is nobody to bill.
@@ -1535,7 +1566,7 @@ export async function postBillToXero(
       invoiceId: xeroId,
       invoiceNumber: xeroNumber,
       docType,
-      status: String(invoice.Status ?? opts.status),
+      status: String(invoice.Status ?? status),
       // A credit note has no AmountDue; RemainingCredit is its counterpart.
       amountDue: Number(invoice.AmountDue ?? invoice.RemainingCredit ?? 0),
       total: Number(invoice.Total ?? 0),
@@ -1547,6 +1578,10 @@ export async function postBillToXero(
     perLine: prepared.perLine,
     attachment,
     rebilled,
+    // The bank payment recorded from the inbox's autofill, or why it was not.
+    // Null when the document carried none.
+    bankPayment,
+    statusForced: pendingPayment && opts.status !== 'AUTHORISED',
     bill: updated,
   } };
 }

@@ -57,6 +57,9 @@ import TableSettingsMenu from '@/components/TableSettingsMenu';
 import ExtractionProgress from '@/components/ExtractionProgress';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
+import BankMatchCell from '@/components/BankMatchCell';
+import { useBankLines, invalidateBankLines } from '@/lib/bankStore';
+import { matchesByDoc, lineKey as bankLineKey } from '@/lib/bankMatch';
 import { useListView } from '@/lib/listView';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
@@ -744,6 +747,17 @@ export default function Costs() {
         />
       ),
     },
+    match: {
+      sortable: false,
+      interactive: true,
+      cell: (d) => (
+        <BankMatchCell
+          doc={d}
+          matches={bankMatchesByDoc.get(d.id) || []}
+          onChanged={() => invalidateBankLines()}
+        />
+      ),
+    },
     ref: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.invoiceNumber || '—' },
     description: { cellClass: 'max-w-[260px] truncate text-muted-foreground', cell: (d) => d.description || '—' },
     itemId: { cellClass: 'whitespace-nowrap font-mono text-xs text-muted-foreground', cell: (d) => itemNumber(d) },
@@ -847,6 +861,17 @@ export default function Costs() {
 
   // Combined document set (persisted bills + sample docs with local edits).
   const { allDocs, reload } = useCostsDocs();
+  // Dext's Bank match, per row: the bank statement lines CYWorkspace's auto
+  // bank reconciliation left unsettled, paired with the documents here that
+  // they pay (src/lib/bankMatch.js — the same pairing the Bank tab draws). A
+  // line already settled or set aside is not offered again.
+  const bank = useBankLines();
+  const bankMatchesByDoc = useMemo(() => {
+    const done = new Set(bank.records.map((r) => r.key));
+    const open = bank.lines.filter((l) => !done.has(l.key || bankLineKey(l)));
+    return open.length ? matchesByDoc(open, allDocs) : new Map();
+  }, [bank.lines, bank.records, allDocs]);
+
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();
   const taxRates = useVisibleTaxRates(); // shared managed list (Lists → Tax rates)
