@@ -906,8 +906,18 @@ is still a Receipt or an Invoice. `keepPaymentProofInStep` runs only on a write
 that SETS the type (finalize, the background read, a PATCH carrying it) so
 unticking Paid afterwards, because the transfer bounced, sticks. It is otherwise
 a cost like any other: if the invoice it pays is also in the book, the duplicate
-check and merge detection are what pair the two. Covered by `npm test` in
-`server/` (`test/payment-proof.test.mts`, over real HTTP with a stubbed reader).
+check and merge detection are what pair the two — but it is never offered to
+**Bank match** (`payableKind` in `bankMatch.js`): it is the bank's own record
+that a line was paid, not a cost the line pays. **And the book is swept for the
+ones read before the type existed**: the Costs toolbar's **Find payment proofs**
+(the ticked rows, else everything the tab shows — Export's rule) asks the reader
+for the KIND alone, `POST /api/costs/classify-type` (a short prompt, a short
+answer, usage recorded as `classify-type`), and re-types a transfer confirmation
+through the ordinary PATCH so the same rule applies, with the reader's sentence
+written to the document's note. Rerun processing would have re-decided every
+field on every document it touched to do that one thing. Covered by `npm test`
+in `server/` (`test/payment-proof.test.mts`, over real HTTP with a stubbed
+reader).
 
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:

@@ -87,6 +87,34 @@ check('and told what one is', String(props.documentType?.description || '').incl
 check('a transfer confirmation reads as a payment proof', d?.documentType, 'Payment proof');
 check('with the payee as the supplier', d?.supplier, 'A1 Consultancy Pte Ltd');
 
+// --- the sweep: the reader asked for the kind alone ---------------------------
+answer = { documentType: 'Payment proof', reason: 'A DBS transfer confirmation naming the payee and the amount sent.' };
+let cres = await fetch(`${BASE}/api/costs/classify-type`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ imageBase64: PNG, mediaType: 'image/png', fileName: 'IMG_4821.png' }),
+});
+let cbody = (await cres.json()) as any;
+const cschema = schemas[schemas.length - 1];
+const cprops = cschema?.properties ?? cschema?.schema?.properties ?? {};
+check('classify-type asks for the kind and a reason, nothing else', Object.keys(cprops).sort(), ['documentType', 'reason']);
+check('offering the payment proof kind among the others', cprops.documentType?.enum?.includes('Payment proof'), true);
+check('and answers with what the reader said', [cbody.ok, cbody.documentType, cbody.reason], [true, 'Payment proof', 'A DBS transfer confirmation naming the payee and the amount sent.']);
+answer = { documentType: 'Receipt', reason: 'A till receipt from the merchant.' };
+cres = await fetch(`${BASE}/api/costs/classify-type`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ imageBase64: PNG, mediaType: 'image/png' }),
+});
+cbody = (await cres.json()) as any;
+check('a receipt is reported as one — the browser leaves it alone', cbody.documentType, 'Receipt');
+cres = await fetch(`${BASE}/api/costs/classify-type`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ imageBase64: PNG, mediaType: 'image/heic' }),
+});
+check('a kind the reader cannot take is refused up front', cres.status, 400);
+
 // --- the upload road: finalize lands it paid and at No Tax ------------------
 const fresh = () =>
   insertBill({

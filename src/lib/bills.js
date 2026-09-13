@@ -172,6 +172,20 @@ export async function finalizeBill(id, fields, { checkDuplicates = true } = {}) 
 // general read (see server/src/extract.ts). Returns { lines, grandTotal,
 // linesTotal, reconciled, note } so the caller can say whether the rows can be
 // trusted, or null when the read failed.
+// Ask the reader what KIND of document this is, and nothing else — the sweep
+// that finds payment proofs among documents read before the type existed.
+// Returns { documentType, reason } or null when the reader could not say.
+export async function fetchClassifyType(imageBase64, mediaType, fileName = '') {
+  const res = await fetch('/api/costs/classify-type', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ imageBase64, mediaType, fileName, provider: requestedProvider() }),
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  return data?.ok ? { documentType: String(data.documentType || ''), reason: String(data.reason || '') } : null;
+}
+
 export async function fetchExtractLines(imageBase64, mediaType, accounts) {
   const instructions = await fetchReviewInstructions(getActiveOrganisationId());
   // The org's projects (its first Xero tracking category), so each LINE can be

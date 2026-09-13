@@ -1367,6 +1367,77 @@ const SummarySchema = z.object({ subject: z.string(), summary: z.string() });
 
 export const vaultRouter = Router();
 
+// POST /api/costs/classify-type — body: { imageBase64, mediaType, fileName?,
+// provider? }. Asks the reader ONE question about a document: what KIND it is.
+// It exists for the documents read before a type did — "Payment proof" was
+// added on 13 Sep 2026, and every transfer confirmation read before that is
+// sitting in the book as a Receipt, Not paid, waiting on a payment that has
+// already happened. Rerun processing would re-type them, and also re-decide
+// every other field on every document it touched; this reads the type alone,
+// with a short prompt and a short answer, so a book can be swept for the cost
+// of a few hundred tokens a document. The browser applies the answer through
+// the ordinary PATCH (keepPaymentProofInStep), so the same rule holds however
+// the type was set.
+const CLASSIFY_TYPES = ['Receipt', 'Invoice', 'Payment proof', 'Credit note/refund', 'Mileage', 'Other'] as const;
+const ClassifySchema = z.object({
+  documentType: z.enum(CLASSIFY_TYPES),
+  reason: z.string(),
+});
+const CLASSIFY_PROMPT =
+  'You classify a single business document by its KIND. Answer with one of:\n' +
+  '- "Payment proof": evidence that money was SENT rather than a bill for it — a bank transfer confirmation, a PayNow / PayLah / GIRO / FAST screenshot, an internet-banking "transfer successful" or "payment successful" page, a card-payment notification, a remittance advice the PAYER produced. It names a payee and an amount transferred and shows no line items, no tax and no supplier letterhead.\n' +
+  '- "Receipt": a merchant\'s own record of a sale — a till receipt, a card slip from the merchant\'s terminal, an e-receipt or order confirmation from the seller. A receipt stamped or marked PAID is still a Receipt.\n' +
+  '- "Invoice": a supplier\'s bill or tax invoice asking for or recording payment, on the supplier\'s letterhead, whether or not it is marked paid.\n' +
+  '- "Credit note/refund": a supplier\'s credit note or a refund confirmation.\n' +
+  '- "Mileage": a record of a journey — a map route, an odometer photo, a mileage log — with no purchase.\n' +
+  '- "Other": anything else.\n' +
+  'Decide from what the document IS, not from what it is about: a bank\'s confirmation that an invoice was paid is a Payment proof; the invoice it paid is an Invoice. When in doubt between Payment proof and Receipt, ask who produced the page — the BANK or payment app (Payment proof) or the MERCHANT (Receipt). Say why in one sentence.';
+
+extractRouter.post('/classify-type', async (req, res) => {
+  if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+  const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
+  const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
+  if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType)) {
+    return res.status(400).json({ error: 'invalid_image' });
+  }
+  const provider = resolveProvider(req.body?.provider);
+  // The file name is a label, never evidence (see runExtraction): offered only
+  // where a word a person chose survives, and only as a hint.
+  const fileName = typeof req.body?.fileName === 'string' ? req.body.fileName : '';
+  const hint = fileName ? ((await loadNoteRules())?.fileNameHint(fileName) ?? '') : '';
+  const isPdf = mediaType === PDF_MEDIA;
+  try {
+    const outcome = await readDocument({
+      provider,
+      fileBase64: imageBase64,
+      mediaType,
+      maxTokens: 256,
+      schemaName: 'document_kind',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          documentType: { type: 'string', enum: [...CLASSIFY_TYPES] },
+          reason: { type: 'string', description: 'One sentence: what on the page decided it.' },
+        },
+        required: ['documentType', 'reason'],
+      },
+      systemPrompt: CLASSIFY_PROMPT,
+      prompt:
+        `What kind of document is this ${isPdf ? 'PDF' : 'image'}?` +
+        (hint ? ` The file was named "${hint}" — a label somebody typed, which may say what it is but is not itself evidence.` : ''),
+    });
+    recordUsage(req, { feature: 'classify-type', provider: outcome.provider, model: outcome.model, usage: outcome.usage });
+    if (!outcome.ok) return res.status(502).json({ error: 'no_data' });
+    const parsed = ClassifySchema.safeParse(outcome.json);
+    if (!parsed.success) return res.status(502).json({ error: 'no_data' });
+    res.json({ ok: true, documentType: parsed.data.documentType, reason: notFiller(parsed.data.reason) });
+  } catch (err) {
+    console.error('[classify-type]', err);
+    res.status(502).json({ error: 'read_failed', message: (err as Error).message });
+  }
+});
+
 vaultRouter.post('/summarize', async (req, res) => {
   if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
 

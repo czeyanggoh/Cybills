@@ -34,7 +34,10 @@ import {
 import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName, publishStatusLabel } from '@/lib/extractionSettings';
 import { useReaderName } from '@/lib/readerProvider';
-import { reReadDocument } from '@/lib/reRead';
+import { reReadDocument, retypeIfPaymentProof } from '@/lib/reRead';
+import { isPaymentProof } from '@/lib/paymentProof';
+import { isMileage } from '@/lib/mileage';
+import { isCreditNote } from '@/lib/readiness';
 import { formatKm } from '@/lib/mileage';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
@@ -292,6 +295,14 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       Rerun processing
     </ToolbarButton>
   ) : null;
+  // A sweep for the transfer confirmations read before "Payment proof" was a
+  // type: the ticked rows if any, otherwise everything the tab shows, each read
+  // once for its kind only. Same gate as Rerun processing — no reader, no sweep.
+  const findProofsBtn = a.canReRead ? (
+    <ToolbarButton disabled={a.busy} onClick={a.findProofs}>
+      {hasSelection ? 'Find payment proofs in selected' : 'Find payment proofs'}
+    </ToolbarButton>
+  ) : null;
   // Permanent delete, sat at the end of the row away from the everyday buttons.
   // It confirms before it does anything (it also drops the stored file).
   const deleteBtn = (
@@ -343,6 +354,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {exportBtn}
       {bulkEditBtn}
       {reprocessBtn}
+      {findProofsBtn}
       {claimBtn}
       {publishBtn}
       {mergeBtn}
@@ -1446,8 +1458,61 @@ export default function Costs() {
     );
   };
 
+  // Find payment proofs: the documents read before the type existed (13 Sep
+  // 2026) are sitting in the book as Receipts — Not paid, waiting on a payment
+  // that has already happened. This asks the reader for the KIND alone, over
+  // the ticked rows or over everything the tab shows (Export's rule), and
+  // re-types the transfer confirmations through the ordinary PATCH so the same
+  // rule that types one by hand marks it paid and codes it No Tax. Left out:
+  // a document with no file, one already in Xero (its money is in the ledger),
+  // one on a claim or merged away, and one already a payment proof, a mileage
+  // record or a credit note. One at a time, like Rerun processing, and for the
+  // same reason: each is a model call billed to this entity — a short one.
+  const findPaymentProofs = async () => {
+    const pool = hasSelection ? selectedDocs() : rows;
+    const picked = pool.filter(
+      (d) =>
+        d.persisted &&
+        d.hasFile &&
+        (d.kind || 'cost') === 'cost' &&
+        !d.xeroInvoiceId &&
+        !['expenseclaim', 'merged', 'processing'].includes(String(d.status || '')) &&
+        !isPaymentProof(d.type) &&
+        !isMileage(d.type) &&
+        !isCreditNote(d)
+    );
+    if (!picked.length) {
+      setMergeNote('Nothing here to check: every document shown is already typed, published, on a claim, or has no file.');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Check ${picked.length} document${picked.length === 1 ? '' : 's'} for payment proofs?\n\nEach is read once by ${readerName} for its kind only (a short read). A transfer confirmation, PayNow screenshot or payment notification is re-typed as a Payment proof, marked Paid and coded No Tax. Nothing else on any document changes.`
+      )
+    )
+      return;
+    setRunning('proofs');
+    const tally = { retyped: 0, kept: 0, nofile: 0, failed: 0 };
+    for (let i = 0; i < picked.length; i += 1) {
+      setMergeNote(`Checking ${i + 1} of ${picked.length} with ${readerName}… ${tally.retyped} re-typed so far.`);
+      tally[await retypeIfPaymentProof(picked[i])] += 1;
+    }
+    notifyBillsChanged();
+    await reload();
+    setRunning('');
+    setSelected(new Set());
+    setMergeNote(
+      `Checked ${tally.retyped + tally.kept} document${tally.retyped + tally.kept === 1 ? '' : 's'}: ` +
+        (tally.retyped
+          ? `${tally.retyped} re-typed as Payment proof and marked Paid (filter Type = Payment proof to review ${tally.retyped === 1 ? 'it' : 'them'}).`
+          : 'none were payment proofs.') +
+        (tally.failed ? ` ${tally.failed} could not be read.` : '')
+    );
+  };
+
   const actions = {
     move: moveSelected,
+    findProofs: findPaymentProofs,
     del: deleteSelected,
     addClaim: () => hasSelection && setClaimOpen(true),
     exportCsv: () => { setExportSelectionOnly(false); setExportOpen(true); },

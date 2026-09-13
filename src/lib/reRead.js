@@ -7,7 +7,8 @@
 // AFTER the upload only reaches it through this path. Which value wins is a
 // precedence question with several near-misses, so it is decided ONCE here
 // rather than separately in each caller.
-import { billFileUrl, fetchExtract, updateBill, lineItemRows } from '@/lib/bills';
+import { billFileUrl, fetchExtract, fetchClassifyType, updateBill, lineItemRows } from '@/lib/bills';
+import { isPaymentProof, PAYMENT_PROOF_TYPE } from '@/lib/paymentProof';
 import { prepareUpload } from '@/lib/image';
 import {
   matchSupplierRule,
@@ -278,7 +279,7 @@ export function readDecisions(
 // The document's stored file, downscaled the same way an upload is (a raw phone
 // photo is several MB once base64-encoded — over the server's body limit).
 // Returns null when there's no file, or it can't be fetched.
-async function fileForDoc(doc) {
+export async function fileForDoc(doc) {
   if (!doc?.hasFile) return null;
   try {
     const resp = await fetch(billFileUrl(doc.id));
@@ -316,6 +317,36 @@ export async function reReadDocument(doc, ctx) {
     const { patch } = readDecisions(doc, ex, ctx);
     await updateBill(doc.id, patch);
     return ex.supplier || Number(ex.total) > 0 ? 'ok' : 'blank';
+  } catch {
+    return 'failed';
+  }
+}
+
+// Is this document a PAYMENT PROOF the reader typed as something else? Asks the
+// reader for the kind alone (fetchClassifyType) and, where the answer is
+// "Payment proof", writes the type through the ordinary PATCH — the server's
+// keepPaymentProofInStep then marks it paid and codes it No Tax, exactly as it
+// would for a document typed by hand. Returns a reason code for the tally:
+//
+//   'retyped' — it was a payment proof, and now says so
+//   'kept'    — the reader says it is what it already was
+//   'nofile'  — nothing to look at
+//   'failed'  — the reader did not answer
+export async function retypeIfPaymentProof(doc) {
+  if (!doc?.persisted) return 'nofile';
+  const rec = await fileForDoc(doc);
+  if (!rec) return 'nofile';
+  try {
+    const kind = await fetchClassifyType(rec.base64, rec.mediaType, doc.fileName || '');
+    if (!kind) return 'failed';
+    if (!isPaymentProof(kind.documentType)) return 'kept';
+    await updateBill(doc.id, {
+      documentType: PAYMENT_PROOF_TYPE,
+      // Why the type changed, on the page's History where a re-typed document
+      // is looked at. The reader's own sentence, so it can be disagreed with.
+      note: kind.reason ? `${doc.note ? `${doc.note}\n` : ''}Re-typed as a payment proof: ${kind.reason}` : undefined,
+    });
+    return 'retyped';
   } catch {
     return 'failed';
   }
