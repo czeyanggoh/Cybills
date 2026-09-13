@@ -1427,9 +1427,12 @@ this one. `publishStatus` (Business settings -> Extraction -> **Publishing**)
 is the entity's answer, and all three places a PERSON presses Publish read it —
 the document page's dialog opens on it, and the inbox's bulk publish and a
 claim's send it — so pressing Publish in two places cannot put two different
-statuses in one ledger. The automatic publish-after-reading is deliberately NOT
-covered: nobody looked at that document, so it posts as SUBMITTED into an
-approval queue rather than straight into the payable ledger.
+statuses in one ledger. The automatic publish-after-reading has its OWN status,
+`autoPublishStatus` (Extraction -> **Post automatically as**, shown once that
+toggle is on): whether an unchecked read may go straight into the payable ledger
+is a separate judgement from what a person's click posts as. It defaults to
+AUTHORISED (awaiting payment), as the practice asked (13 Sep 2026); an entity
+that wants a check first picks Awaiting approval.
 
 ## A receipt image zooms by itself
 

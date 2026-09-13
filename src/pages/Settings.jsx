@@ -893,7 +893,7 @@ function Extraction() {
       <Card title="Publishing">
         <Row
           label="Post bills to Xero as"
-          hint="What Publish to Xero posts a bill as, wherever somebody presses it — the dialog opens on it, and the inbox's bulk publish and a claim's use it too. Only an Approved bill can take a payment in Xero, so that is what a bill has to reach before the money can leave. Publishing automatically after reading is separate: nobody looked at that document, so it always posts as Awaiting approval."
+          hint="What Publish to Xero posts a bill as, wherever somebody presses it — the dialog opens on it, and the inbox's bulk publish and a claim's use it too. Only an Approved bill can take a payment in Xero, so that is what a bill has to reach before the money can leave. Publishing automatically after reading has its own status, under Tax below."
         >
           <SelectBox
             value={PUBLISH_STATUSES.find((o) => o.value === form.publishStatus)?.label || PUBLISH_STATUSES[0].label}
@@ -929,9 +929,21 @@ function Extraction() {
         {!bridge && (
           <Row
             label="Publish to Xero after reading"
-            hint="Off by default. When on, a document that's been read is posted straight to Xero as Awaiting Approval — which means nobody checks the reading first, and publishing finishes the document: it archives, and can no longer go on an expense claim. Only complete documents are posted; anything missing a supplier, date, category or total stays here to publish by hand."
+            hint="Off by default. When on, a document that's been read is posted straight to Xero with the status below — which means nobody checks the reading first, and publishing finishes the document: it archives, and can no longer go on an expense claim. Only complete documents are posted; anything missing a supplier, date, category or total stays here to publish by hand."
           >
             <Toggle on={form.publishToXeroAfterReading} onChange={(v) => set('publishToXeroAfterReading', v)} />
+          </Row>
+        )}
+        {!bridge && form.publishToXeroAfterReading && (
+          <Row
+            label="Post automatically as"
+            hint="Approved (awaiting payment) puts the bill straight into the payable ledger, ready to be paid, without anybody checking the reading. Awaiting approval sends it to Xero's approval queue first."
+          >
+            <SelectBox
+              value={PUBLISH_STATUSES.find((o) => o.value === (form.autoPublishStatus || 'AUTHORISED'))?.label || PUBLISH_STATUSES[2].label}
+              onChange={(label) => set('autoPublishStatus', PUBLISH_STATUSES.find((o) => o.label === label)?.value || 'AUTHORISED')}
+              options={PUBLISH_STATUSES.map((o) => o.label)}
+            />
           </Row>
         )}
         {/* Tax CODES, not the tax amount: a bridge entity has none of its own,

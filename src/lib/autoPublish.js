@@ -51,7 +51,8 @@ export function xeroBillUrl(invoiceId, shortCode = '', docType = '') {
     : `https://go.xero.com${target}`;
 }
 
-// Post a freshly-read bill to Xero as Awaiting Approval (Xero's SUBMITTED), so
+// Post a freshly-read bill to Xero as the entity's "Post automatically as"
+// status (Approved, awaiting payment, by default), so
 // a document that's been read is already waiting in the ledger rather than
 // sitting here until someone publishes it by hand. Publishing finishes the
 // document: the server archives it, and it can no longer go on an expense
@@ -74,7 +75,8 @@ export function xeroBillUrl(invoiceId, shortCode = '', docType = '') {
 // throws: reading a document must not fail because Xero was unreachable.
 export async function autoPublishAfterRead(bill) {
   try {
-    if (!getExtractionSettings().publishToXeroAfterReading) return null;
+    const settings = getExtractionSettings();
+    if (!settings.publishToXeroAfterReading) return null;
     if (!bill?.id || bill.xeroInvoiceId) return null;
     // A payment proof is never published — it pays invoices, it is not one.
     if (isPaymentProof(bill.type ?? bill.documentType)) return null;
@@ -106,7 +108,11 @@ export async function autoPublishAfterRead(bill) {
       billId: bill.id,
       accountCode,
       taxType,
-      status: 'SUBMITTED', // "Awaiting approval" in Xero
+      // Business settings → Extraction → "Post automatically as"; Approved
+      // (awaiting payment) unless the entity chose otherwise.
+      status: ['DRAFT', 'SUBMITTED', 'AUTHORISED'].includes(settings.autoPublishStatus)
+        ? settings.autoPublishStatus
+        : 'AUTHORISED',
       // No dueDate: the server sets it to the date it actually posts, so the two
       // stay together when a locked period shifts the date.
     });

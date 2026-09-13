@@ -79,6 +79,12 @@ export const DEFAULT_EXTRACTION_SETTINGS = {
   // workspace that had ever opened that page. The old key is simply ignored;
   // the rest of the blob is untouched.
   publishToXeroAfterReading: false,
+  // What that automatic publish posts as. Its own setting rather than
+  // `publishStatus`, because whether an UNCHECKED read may go straight into the
+  // payable ledger is a separate judgement from what a person's click posts as.
+  // Approved (awaiting payment) by default, as the practice asked: a bill still
+  // awaiting approval is a second queue in Xero, and cannot take a payment.
+  autoPublishStatus: 'AUTHORISED',
   defaultTaxRateCosts: '', // '' = None; otherwise a tax-rate name from the list
   defaultTaxRateSales: '',
   dueCostsMode: DUE_MODES[0],
