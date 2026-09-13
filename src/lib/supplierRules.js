@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import { blobStore } from '@/lib/blobStore';
 import { computeDueDate, DUE_MODES } from '@/lib/extractionSettings';
+import { INVOICE_DATE_MODES, ruleInvoiceDate } from '@/lib/ruleDate';
 
 // The same currency list the sales-side rules offer — one list, so a rule reads
 // the same whichever side of the ledger it was written on.
@@ -53,6 +54,10 @@ export function emptySupplierRule() {
     paid: '', // '' = follow Extraction settings; else 'Paid' / 'Not paid'
     dueMode: '', // '' = follow Extraction settings; else a DUE_MODES value
     dueDays: '',
+    // '' = the date printed on the document; 'endOfPreviousMonth' = the last day
+    // of the month before it, for a supplier that invoices after the period it
+    // bills for (src/lib/ruleDate.js). The due date stays as printed.
+    invoiceDate: '',
     description: '',
     extractLineItems: false,
     // Publish to Xero after reading, and as what: '' = follow Extraction
@@ -73,6 +78,7 @@ export function emptySupplierRule() {
 
 export const SUPPLIER_DUE_MODES = DUE_MODES;
 export const SUPPLIER_PAID_OPTIONS = ['Paid', 'Not paid'];
+export const SUPPLIER_INVOICE_DATE_OPTIONS = INVOICE_DATE_MODES;
 export const SUPPLIER_AUTO_PUBLISH_OPTIONS = [
   { value: 'AUTHORISED', label: 'Publish as Approved (awaiting payment)' },
   { value: 'SUBMITTED', label: 'Publish as Awaiting approval' },
@@ -133,7 +139,7 @@ export function hasSupplierRule(name) {
 // actually sets appear, so a caller can spread it over what it already has and
 // the rule wins there and only there. Keys match both the detail form's `data`
 // and the server's bill fields, so the same patch drives either.
-export function supplierRulePatch(rule, { invoiceDate = '', gstRegistered = true } = {}) {
+export function supplierRulePatch(rule, { invoiceDate = '', gstRegistered = true, keepMonthEnd = false } = {}) {
   const r = { ...emptySupplierRule(), ...(rule || {}) };
   const p = {};
   for (const k of ['category', 'customer', 'project', 'currency', 'paymentMethod', 'description']) {
@@ -143,8 +149,20 @@ export function supplierRulePatch(rule, { invoiceDate = '', gstRegistered = true
   // to overrule the registration.
   if (gstRegistered && String(r.taxRate || '').trim()) p.taxRate = r.taxRate;
   if (r.paid) p.paid = r.paid === 'Paid';
+  // Payment terms run from the date the supplier actually invoiced, so they are
+  // worked out before the rule moves that date.
   const due = r.dueMode ? computeDueDate(r.dueMode, r.dueDays, invoiceDate) : '';
   if (due) p.dueDate = due;
+  const date = ruleInvoiceDate(r.invoiceDate, invoiceDate, { keepMonthEnd });
+  if (date && date !== invoiceDate) {
+    p.date = date;
+    // The day the supplier actually invoiced is still a fact worth keeping. A
+    // "due on receipt" invoice is read with no due date of its own (one equal to
+    // the invoice date is dropped), so once the date moves it would leave
+    // nothing on the document saying 2 September — kept as the due date instead,
+    // unless payment terms have already given one.
+    if (!p.dueDate) p.dueDate = invoiceDate;
+  }
   return p;
 }
 

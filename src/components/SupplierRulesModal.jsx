@@ -7,6 +7,7 @@ import {
   SUPPLIER_DUE_MODES,
   SUPPLIER_PAID_OPTIONS,
   SUPPLIER_AUTO_PUBLISH_OPTIONS,
+  SUPPLIER_INVOICE_DATE_OPTIONS,
   clearSupplierRule,
   emptySupplierRule,
   matchSupplierRule,
@@ -204,6 +205,23 @@ export default function SupplierRulesModal({
                 <option value="">Follow Extraction settings</option>
                 {SUPPLIER_PAID_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
               </Select>
+            </div>
+
+            {/* A supplier that invoices AFTER the period it bills for — August's
+                hours invoiced on 2 September — wants the cost in August. */}
+            <div className="md:col-span-2">
+              <FieldLabel>Invoice date</FieldLabel>
+              <div className="max-w-sm">
+                <Select value={rule.invoiceDate || ''} onChange={(v) => set('invoiceDate', v)}>
+                  <option value="">As printed on the document</option>
+                  {SUPPLIER_INVOICE_DATE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </Select>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {rule.invoiceDate === 'endOfPreviousMonth'
+                  ? 'For a supplier that invoices after the period is over: an invoice dated 02/09/2026 is recorded, and published to Xero, as 31/08/2026. The due date stays as printed. Applies to documents read from now on, and to this one when you press Apply.'
+                  : 'The date printed on the document is used as it is.'}
+              </p>
             </div>
 
             {/* A bridge entity's costs never post as bills of their own. */}

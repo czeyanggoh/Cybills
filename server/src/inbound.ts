@@ -27,6 +27,7 @@ import { fetchDocumentsForLinks, linksIn, n8nEnabled } from './n8n.js';
 import { recordMail, recordLinkFetch, mailById, type MailAttachment, type MailDocument, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender } from './trustedSenders.js';
 import { publishByRule } from './autoPublishRule.js';
+import { applyRuleInvoiceDate } from './ruleDate.js';
 
 const norm = (s: string) => String(s ?? '').trim().toLowerCase();
 
@@ -378,6 +379,10 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       noteFollowed: d.noteFollowed,
       via: envelope?.via,
     });
+    // A supplier that invoices after the period it bills for: the rule moves the
+    // date to the end of the previous month (src/lib/ruleDate.js), the same as an
+    // upload or a re-read gets. The printed due date is left alone.
+    await applyRuleInvoiceDate(vendorRule, patch);
     // A mileage record is priced at the entity's rate per km — its total is
     // distance × rate, never a figure the reader found on the paper.
     await keepMileageInStep(ws, realOrgId, getBillById(scope, billId), patch);

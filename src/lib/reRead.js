@@ -236,6 +236,10 @@ export function readDecisions(
   if (noteDecided) patch.categoryReason = `From the email that sent this: ${String(ex.noteFollowed).trim()}`;
   // …except the due date, where the document's own beats the rule's terms.
   if (ex.dueDate) patch.dueDate = ex.dueDate;
+  // The invoice date the rule gives it (the end of the previous month, for a
+  // supplier that invoices after the period), worked out from the date just READ
+  // off the paper — so a second re-read lands on the same day, not a month back.
+  if (rule.date) patch.date = rule.date;
   if (ruleLines.length && !current.lineItems?.length && !patch.lineItems) patch.lineItems = ruleLines;
   // A mileage record's distance, and the total that follows from it at the
   // entity's rate per km. Decided last, because it overrules the money above:

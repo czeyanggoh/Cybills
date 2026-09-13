@@ -673,7 +673,13 @@ export default function CostDetail() {
     const named = String(value || '').trim();
     if (!named || named === data.supplier) return set('supplier', value);
     const rule = matchSupplierRule(named);
-    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered });
+    // keepMonthEnd: this document's date may already be the one the rule moved it
+    // to, and applying the rule again must not walk 31/08 back to 31/07.
+    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered, keepMonthEnd: true });
+    // The rule keeps the printed invoice date as the due date when it moves the
+    // date — for a READ, which starts with none. A due date already on this
+    // document is somebody's, and only the rule's own payment terms replace it.
+    if (patch.dueDate && !rule?.dueMode && data.dueDate) delete patch.dueDate;
     if (!Object.keys(patch).length) return set('supplier', value);
     // A tax code carries the tax it implies, worked out from THIS document's
     // total — the same sum the Tax rate field does.
@@ -879,7 +885,12 @@ export default function CostDetail() {
   // A rule saved from the Supplier field lands on this document straight away —
   // that's the point of writing it here rather than on the Suppliers list.
   const applySupplierRuleToForm = (rule) => {
-    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered });
+    // keepMonthEnd: this document's date may already be the one the rule moved it
+    // to, and applying the rule again must not walk 31/08 back to 31/07.
+    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered, keepMonthEnd: true });
+    // A due date already on this document is somebody's; only the rule's own
+    // payment terms replace it, never the printed-date fallback.
+    if (patch.dueDate && !rule?.dueMode && data.dueDate) delete patch.dueDate;
     // A tax code brings the tax it implies, from this document's own total.
     if (patch.taxRate) {
       const r = rateFor(patch.taxRate);

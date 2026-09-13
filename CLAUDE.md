@@ -1437,6 +1437,29 @@ claim's send it — so pressing Publish in two places cannot put two different
 statuses in one ledger. The automatic publish-after-reading is deliberately NOT
 covered by `publishStatus`.
 
+**A supplier that invoices after the period gets the period's date.** A
+virtual-assistant agency invoicing on 2 September for August's hours has done
+nothing in September, and a practice closing August needs the cost there. So the
+supplier rule carries **Invoice date** (`invoiceDate`: '' = as printed,
+`endOfPreviousMonth`), and `src/lib/ruleDate.js` (pure, `npm test` at the root,
+loaded server-side by `server/src/ruleDate.ts` the way `mileage.ts` loads its
+own) moves 02/09/2026 to 31/08/2026 on every road: `supplierRulePatch` for the
+upload and the page's Apply, `readDecisions` for a re-read, `applyRuleInvoiceDate`
+after `overlaySupplierRule` for an emailed or WhatsApp'd document. The DUE date is
+left as printed — that is when the money is owed — and payment terms run from the
+real invoice date. A "due on receipt" invoice is read with NO due date (one equal
+to the invoice date is dropped), so when the rule moves the date and nothing else
+gave a due date, the printed invoice date is kept as the due date — otherwise the
+day the supplier actually invoiced is on no field at all. The page's own roads
+(naming the supplier, Apply) never put that fallback over a due date the document
+already carries. Note that Xero still gets a DueDate equal to the date POSTED
+unless one is typed into the Publish dialog (`buildBillInvoice`), which is the
+standing locked-period rule and is untouched here. A read always shifts from the date just read off the paper, so
+a second re-read lands on the same day; the page's Apply, which starts from the
+date already on screen, passes `keepMonthEnd` so pressing it twice cannot walk
+31/08 back to 31/07. Covered by `npm test` in `server/`
+(`test/rule-invoice-date.test.mts`).
+
 **Publishing after reading is a SUPPLIER's rule.** Posting unchecked paper
 straight into a live ledger is only safe where the coding is already settled, so
 the supplier rule carries **Publish to Xero after reading** (`autoPublish`:
