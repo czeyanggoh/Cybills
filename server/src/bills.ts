@@ -967,11 +967,17 @@ billsRouter.delete('/bills/:id', async (req, res) => {
 // to Xero: clears the stored invoice id / tenant / date and brings it back out
 // of Archive so it can be published again. Local only — it does NOT delete or
 // void anything in Xero. For when the bill was removed at the Xero end.
-billsRouter.post('/bills/:id/unpublish', (req, res) => {
+billsRouter.post('/bills/:id/unpublish', async (req, res) => {
   if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
   const orgId = orgIdFor(req);
   const cleared = clearBillPosted(orgId, req.params.id);
   if (!cleared) return res.status(404).json({ error: 'not_found' });
+  // A bank match on this document paid the bill that is being forgotten, so it
+  // goes too: the statement line is free again, here and for CYWS. Loaded on
+  // demand, the way xero.ts loads bankMatch.js, since that module's imports lead
+  // back here.
+  const { forgetMatchesForBill } = await import('./bankMatch.js');
+  forgetMatchesForBill(orgId, req.params.id);
   const bill = reconcileReadiness(orgId, req.params.id) || cleared;
   res.json({ ok: true, bill: { ...bill, hasFile: Boolean(bill.storageKey) } });
 });

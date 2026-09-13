@@ -25,7 +25,7 @@ import {
   postingCodesFrom,
   taxRatesForOrg,
 } from './xero.js';
-import { bankRules, readLine, recordsFor, settleBillAgainstLine } from './bankMatch.js';
+import { bankRules, cardFeeRules, readLine, recordsFor, settleBillAgainstLine } from './bankMatch.js';
 
 // Payables: the half of a document's life that happens in CYWorkspace.
 //
@@ -484,6 +484,13 @@ paymentsRouter.get('/bank-candidates', async (req, res) => {
   const candidates: any[] = [];
   for (const organisation of organisations) {
     const ws = dataScopeForOrg(organisation.id);
+    // The entity's card-fee rules (Bank match → Card fees), on every candidate
+    // of its, so CYWS's own matcher can pair a line that is a document plus the
+    // bank's fee — the same rule CYBills holds again when it settles.
+    const cardFees = cardFeeRules(organisation)
+      .map((r: any) => ({ bank_account: String(r?.bankAccount ?? '').trim(), percent: Number(String(r?.percent ?? '').replace(/[^0-9.]/g, '')), account: String(r?.accountCode ?? '').trim() }))
+      .filter((r) => r.bank_account && r.percent > 0 && r.account)
+      .map(({ bank_account, percent }) => ({ bank_account, percent }));
     const settled = new Set(recordsFor(ws).filter((r) => r.kind === 'match').map((r) => r.billId));
     const mine = listBills(ws).filter((b) => rules.matchable(b) && !settled.has(b.id));
     if (!mine.length) continue;
@@ -505,6 +512,7 @@ paymentsRouter.get('/bank-candidates', async (req, res) => {
         xero_status: bill.xeroStatus || '',
         postable: published ? true : posting!.ok,
         blocked_reason: published ? '' : posting!.ok ? '' : posting!.message,
+        card_fees: cardFees,
       });
     }
   }

@@ -157,7 +157,8 @@ Xero already calls PAID, or one CYBills has already settled against a line.
     "has_file": true, "file_url": "https://cybills.cy-bm.sg/api/payments/bills/bill_…/file",
     "paid": true, "payment_method": "",
     "published": false, "xero_invoice_id": "", "xero_status": "",
-    "postable": true, "blocked_reason": "", "account_code": "493", "tax_type": "NONE"
+    "postable": true, "blocked_reason": "", "account_code": "493", "tax_type": "NONE",
+    "card_fees": [{ "bank_account": "UOB SGD", "percent": 1 }]
   }]
 }
 ```
@@ -170,6 +171,19 @@ figure the bank moved). Then the date window (a payment lands a few days before
 the paper is dated at the earliest, and up to terms after), then the supplier's
 name or `invoice_number` in the bank text. `src/lib/bankMatch.js` is CYBills'
 own version of that judgement, if it is useful to mirror.
+
+`card_fees` are the candidate's entity's card-fee rules (CYBills → Extraction →
+Bank match → Card fees): a bank that takes a percentage on a card spend in the
+SAME statement line — UOB's 1%. A line on `bank_account` whose `|amount|` is
+`total × (1 + percent/100)`, rounded to the cent (a cent either way), is that
+document plus the fee — only for a document in the bank's own currency
+(`base_total: null`). Match it as strongly as a same-money line only when the bank
+text names the supplier or the number; never for being the only document at the
+figure. Settle it exactly as any other line, with the statement amount and the
+line's `bank_account_name`: CYBills re-checks the rule, adds the fee to the bill
+as a No Tax line and records ONE payment for the whole line, which is the shape
+Xero's reconciliation suggests for the line by itself. Empty when the entity has
+none.
 
 `postable: false` on an unpublished candidate means the settle would fail at
 the publish step (`blocked_reason` says why — usually a category that is not in

@@ -757,6 +757,27 @@ export async function applyPendingBankPayment(
 }
 
 /**
+ * Forget every bank match on a document whose Xero link was CLEARED ("Clear
+ * Xero link": the bill was removed at the Xero end, and with it the payment).
+ * Without this the match record outlived the bill it paid: the statement line
+ * still read as settled on the Bank tab and in the inbox, and CYWS still held it
+ * as spent, so the line could be settled by nobody. Nothing is sent to Xero —
+ * clearing the link is local by definition, and whatever was there is gone —
+ * so this only puts the document's Paid and payment method back to what they
+ * were before the match and tells CYWS the line is free again.
+ */
+export function forgetMatchesForBill(ws: string, billId: string): number {
+  const all = loadRecords();
+  const mine = all.filter((r) => r.orgId === ws && r.kind === 'match' && r.billId === billId);
+  if (!mine.length) return 0;
+  saveRecords(all.filter((r) => !mine.includes(r)));
+  const first = mine[0];
+  updateBill(ws, billId, { paid: Boolean(first.paidBefore), paymentMethod: String(first.paymentMethodBefore ?? '') });
+  for (const r of mine) queueLineNotice(r, 'released');
+  return mine.length;
+}
+
+/**
  * Undo a settlement: delete the payment in Xero, record what the bill says
  * now, put the document's Paid toggle back, and forget the match. The bill
  * stays published — publishing is not undone by unmatching, and the line goes

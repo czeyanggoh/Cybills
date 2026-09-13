@@ -2493,6 +2493,18 @@ USD bill). The record keeps `feeLineItemId`, and Undo deletes the payment and
 then takes the fee line back off. Covered by `npm test` at the root and in `server/`
 (`test/bank-match.test.mts`).
 
+**CYWS matches card-fee lines too, and a cleared Xero link frees the line.**
+`GET /api/payments/bank-candidates` puts the entity's rules on every candidate
+(`card_fees: [{bank_account, percent}]`), and CYWS's matcher
+(`cybillsBankMatch.ts` there) pairs a line that is a document plus that fee the
+way this page does; its settle arrives here like any other and gets the fee line
+on the bill. And **Clear Xero link** (`/bills/:id/unpublish`) now forgets the
+bank matches on that document (`forgetMatchesForBill`): the match record used to
+outlive the bill it paid, so the statement line still read as settled on the Bank
+tab and in the inbox, and CYWS still held it as spent. The document's Paid and
+payment method go back to what they were before the match, and CYWS is sent a
+`released` notice. Nothing goes to Xero: clearing the link is local.
+
 **And a match says WHY.** Every firm match used to read "Names this supplier",
 including the two kinds that name nothing (the document's number in the bank
 text, and being the only document at that figure within a week), so nobody could

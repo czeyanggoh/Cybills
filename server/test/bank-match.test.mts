@@ -445,6 +445,21 @@ check('and the publish tells CYWS the autofilled line is spent too', lineNotices
 
   r = await autofill(canva.id, UOB);
   check('autofill accepts the same fee match', [r.status, r.body.ok], [200, true]);
+
+  // CYWS's matcher needs the rule too: every candidate of the entity carries it.
+  r = await call('/api/payments/bank-candidates?tenant_id=tenant-1', { headers: KEY });
+  check('bank-candidates carry the entity’s card-fee rules for CYWS', (r.body.candidates ?? [])[0]?.card_fees, [{ bank_account: 'UOB SGD', percent: 1 }]);
+
+  // Settled, then the Xero link cleared (the bill was removed at the Xero end):
+  // the match goes with it, and the line is free again — here and for CYWS.
+  r = await match(canva.id, UOB);
+  check('settled again', [r.status, r.body.ok], [200, true]);
+  r = await call(`/api/costs/bills/${canva.id}/unpublish`, { method: 'POST', headers: ORG });
+  check('the Xero link is cleared', r.status, 200);
+  r = await call('/api/bank/outstanding', { headers: ORG });
+  check('and the match on it is forgotten, so the line is outstanding again', r.body.records.some((x: any) => x.kind === 'match' && x.billId === canva.id), false);
+  const freed = await waitFor(() => lineNotices.some((n) => n.action === 'released' && n.line?.reference === UOB.reference));
+  check('and CYWS is told the line is free', freed, true);
 }
 
 stub.close();
