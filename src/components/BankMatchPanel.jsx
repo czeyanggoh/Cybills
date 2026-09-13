@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import { Landmark, Info, Check } from 'lucide-react';
 import { formatDate } from '@/lib/date';
 import { useBankLines, invalidateBankLines, autofillBankPayment, clearBankPayment } from '@/lib/bankStore';
-import { matchesByDoc, lineKey } from '@/lib/bankMatch';
+import { matchesByDoc, lineKey, matchReason } from '@/lib/bankMatch';
 import { notifyBillsChanged } from '@/lib/bills';
+import { useActiveOrganisation } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
 // The Bank match block on the document page — Dext's, in the Details tab:
@@ -36,13 +37,15 @@ export default function BankMatchPanel({ doc, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const pending = doc?.bankMatch || null;
+  // The entity's own name is not evidence of the supplier (bankMatch.js).
+  const ownName = useActiveOrganisation()?.name || '';
 
   const matches = useMemo(() => {
     if (!doc?.id || pending) return [];
     const done = new Set(bank.records.map((r) => r.key));
     const open = bank.lines.filter((l) => !done.has(l.key || lineKey(l)));
-    return open.length ? matchesByDoc(open, [doc]).get(doc.id) || [] : [];
-  }, [doc, pending, bank.lines, bank.records]);
+    return open.length ? matchesByDoc(open, [doc], { ownNames: [ownName] }).get(doc.id) || [] : [];
+  }, [doc, pending, bank.lines, bank.records, ownName]);
 
   if (!pending && !matches.length) return null;
 
@@ -99,7 +102,9 @@ export default function BankMatchPanel({ doc, onChanged }) {
           </div>
         ) : (
           <div className="space-y-5">
-            {matches.map(({ line, confidence }, i) => (
+            {matches.map((match, i) => {
+              const { line, confidence } = match;
+              return (
               <div key={line.key || lineKey(line)} className={cn('space-y-3', i > 0 && 'border-t pt-4')}>
                 <Row label="Date" right={money(line)}>{formatDate(line.date)}</Row>
                 <Row label="Description">{line.description || line.reference || '—'}</Row>
@@ -114,11 +119,12 @@ export default function BankMatchPanel({ doc, onChanged }) {
                     {busy ? 'Filling…' : 'Autofill payment'}
                   </button>
                   <span className={cn('text-xs', confidence === 'firm' ? 'text-emerald-700' : 'text-amber-700')}>
-                    {confidence === 'firm' ? 'Names this supplier' : 'Same amount, close date'}
+                    {matchReason(match, doc)}
                   </span>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
         {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}

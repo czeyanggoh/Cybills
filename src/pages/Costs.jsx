@@ -31,6 +31,7 @@ import {
   publishBillToXero,
   useBridgeEntity,
   useXeroShortCode,
+  useActiveOrganisation,
 } from '@/lib/organisations';
 import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName, publishStatusLabel } from '@/lib/extractionSettings';
@@ -912,11 +913,14 @@ export default function Costs() {
   // they pay (src/lib/bankMatch.js — the same pairing the Bank tab draws). A
   // line already settled or set aside is not offered again.
   const bank = useBankLines();
+  // The entity's own name is not evidence of the supplier (bankMatch.js): an
+  // outgoing transfer's narrative often names the payer, which is us.
+  const bankOwnName = useActiveOrganisation()?.name || '';
   const bankMatchesByDoc = useMemo(() => {
     const done = new Set(bank.records.map((r) => r.key));
     const open = bank.lines.filter((l) => !done.has(l.key || bankLineKey(l)));
-    return open.length ? matchesByDoc(open, allDocs) : new Map();
-  }, [bank.lines, bank.records, allDocs]);
+    return open.length ? matchesByDoc(open, allDocs, { ownNames: [bankOwnName] }) : new Map();
+  }, [bank.lines, bank.records, allDocs, bankOwnName]);
 
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();

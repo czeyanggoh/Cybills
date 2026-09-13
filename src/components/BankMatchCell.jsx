@@ -3,6 +3,7 @@ import { Landmark, Check, X } from 'lucide-react';
 import { formatDate } from '@/lib/date';
 import { autofillBankPayment, clearBankPayment } from '@/lib/bankStore';
 import { notifyBillsChanged } from '@/lib/bills';
+import { matchReason } from '@/lib/bankMatch';
 import { cn } from '@/lib/utils';
 
 // The Match column of the Costs inbox — Dext's Bank match, on the document's
@@ -131,7 +132,9 @@ export default function BankMatchCell({ doc, matches = [], onChanged }) {
                 fields so that it can be reconciled easily when you publish.
               </p>
               <ul className="mt-3 space-y-2">
-                {matches.map(({ line, confidence }) => (
+                {matches.map((match) => {
+                  const { line, confidence } = match;
+                  return (
                   <li key={line.key} className="rounded border border-neutral-700 px-2.5 py-2">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="tabular-nums text-neutral-200">{formatDate(line.date)}</span>
@@ -142,14 +145,15 @@ export default function BankMatchCell({ doc, matches = [], onChanged }) {
                     </div>
                     <div className="mt-1.5 flex items-center justify-between gap-2">
                       <span className={cn('text-[11px]', confidence === 'firm' ? 'text-emerald-300' : 'text-amber-300')}>
-                        {confidence === 'firm' ? 'Names this supplier' : 'Same amount, close date'}
+                        {matchReason(match, doc)}
                       </span>
                       <button type="button" onClick={() => fill(line)} disabled={busy} className="text-sm text-sky-300 hover:underline disabled:opacity-50">
                         {busy ? 'Filling…' : 'Autofill payment'}
                       </button>
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </>
           )}

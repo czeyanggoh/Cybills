@@ -151,16 +151,28 @@ function bankText(line) {
   return `${line?.description ?? ''} ${line?.reference ?? ''}`.toUpperCase().replace(/[^A-Z0-9]+/g, ' ');
 }
 
-// Whether the supplier's name is in the bank text. A bank narrative truncates
-// and abbreviates ("GRAB* SINGAPORE", "AMZN MKTP SG"), so one distinctive word
-// of the name found whole is taken as the name, and a word of the name found
-// as the START of a bank word covers "GRAB" in "GRABPAY".
-export function nameInBankText(supplier, line) {
-  const words = nameTokens(supplier);
-  if (!words.length) return false;
+// The word of the supplier's name found in the bank text, or ''. A bank
+// narrative truncates and abbreviates ("GRAB* SINGAPORE", "AMZN MKTP SG"), so
+// one distinctive word of the name found whole is taken as the name, and a word
+// of the name found as the START of a bank word covers "GRAB" in "GRABPAY".
+//
+// `ownNames` are the ENTITY's own names. An outgoing transfer's narrative very
+// often carries the payer — "IVPT Excellence AS Pte Ltd" on Excellence's own
+// statement — so a document whose supplier shares a word with the entity (a
+// payment proof read as "EXCELLENCE A.S PTE. LTD.", an intercompany recharge)
+// was reported as naming its supplier when the bank was only naming us. A word
+// the entity's own name carries is evidence of nothing, so it is not counted.
+export function nameMatchIn(supplier, line, { ownNames = [] } = {}) {
+  const own = new Set((ownNames || []).flatMap((n) => nameTokens(n)));
+  const words = nameTokens(supplier).filter((w) => !own.has(w));
+  if (!words.length) return '';
   const text = ` ${bankText(line)} `;
   const bankWords = text.trim().split(/\s+/).filter(Boolean);
-  return words.some((w) => text.includes(` ${w} `) || (w.length >= 4 && bankWords.some((b) => b.startsWith(w))));
+  return words.find((w) => text.includes(` ${w} `) || (w.length >= 4 && bankWords.some((b) => b.startsWith(w)))) || '';
+}
+
+export function nameInBankText(supplier, line, opts) {
+  return Boolean(nameMatchIn(supplier, line, opts));
 }
 
 // Whether the document's own number is in the bank text — the strongest tie
@@ -181,20 +193,23 @@ export function numberInBankText(doc, line) {
  * 'possible' when only the money and the window agree, which is offered but
  * never taken without a person. A line paying nothing here answers [].
  */
-export function candidatesFor(line, docs) {
+export function candidatesFor(line, docs, opts = {}) {
   if (!isMoneyOut(line)) return [];
   const out = [];
   for (const doc of docs || []) {
     if (!matchable(doc)) continue;
     if (!amountsAgree(doc, line)) continue;
     if (!inWindow(doc, line)) continue;
-    const named = nameInBankText(doc.supplier, line);
+    // The word itself, not just whether one was found: it is what the page
+    // shows as the reason, so a person can see WHICH word tied the two.
+    const word = nameMatchIn(doc.supplier, line, opts);
+    const named = Boolean(word);
     const numbered = numberInBankText(doc, line);
     const days = daysAfter(doc, line);
     const reasons = ['amount'];
     if (numbered) reasons.push('number');
     if (named) reasons.push('name');
-    out.push({ doc, days, reasons, confidence: named || numbered ? 'firm' : 'possible' });
+    out.push({ doc, days, reasons, word, confidence: named || numbered ? 'firm' : 'possible' });
   }
   // A lone document at this figure within a week of the line is firm even
   // unnamed — most card narratives name nobody a person would recognise.
@@ -214,9 +229,9 @@ export function candidatesFor(line, docs) {
  * A document still stands as a 'possible' candidate on other lines — the
  * person choosing sees it — but only one line SUGGESTS it.
  */
-export function bankMatches(lines, docs) {
+export function bankMatches(lines, docs, opts = {}) {
   const all = new Map();
-  for (const line of lines || []) all.set(lineKey(line), candidatesFor(line, docs));
+  for (const line of lines || []) all.set(lineKey(line), candidatesFor(line, docs, opts));
 
   // Which line each firm document goes to: the line nearest in date.
   const best = new Map(); // doc id -> { key, days }
@@ -241,6 +256,20 @@ export function bankMatches(lines, docs) {
   return out;
 }
 
+// WHY a line and a document were paired, in words a person can check against
+// the bank text in front of them. "Names this supplier" was shown for every
+// firm match, including the two that name nothing at all (the document number,
+// and being the only document at that figure) — so nobody could tell which of
+// the three it was, or see that the word was the entity's own name.
+export function matchReason(match, doc) {
+  const r = match?.reasons || [];
+  if (r.includes('elsewhere')) return 'Also fits a closer payment — check which is right';
+  if (r.includes('number')) return `Bank text has invoice number ${String(doc?.invoiceNumber ?? '').trim()}`.trim();
+  if (r.includes('name')) return match?.word ? `Bank text names the supplier (${match.word})` : 'Bank text names the supplier';
+  if (r.includes('only')) return 'Only document at this amount within a week';
+  return 'Same amount, close date';
+}
+
 // The one document a line SUGGESTS — its first firm candidate, or null. A
 // line with several firm candidates suggests none: a person has to choose.
 export function suggestionFor(candidates) {
@@ -256,14 +285,14 @@ export function suggestionFor(candidates) {
  * tab can never disagree about which line pays which document. A document
  * with one line is "Match found", with several "Matches found" — Dext's words.
  */
-export function matchesByDoc(lines, docs) {
+export function matchesByDoc(lines, docs, opts = {}) {
   const byDoc = new Map();
-  for (const [key, cands] of bankMatches(lines, docs)) {
+  for (const [key, cands] of bankMatches(lines, docs, opts)) {
     const line = (lines || []).find((l) => lineKey(l) === key);
     if (!line) continue;
     for (const c of cands) {
       const list = byDoc.get(c.doc.id) || [];
-      list.push({ line, confidence: c.confidence, days: c.days, reasons: c.reasons });
+      list.push({ line, confidence: c.confidence, days: c.days, reasons: c.reasons, word: c.word });
       byDoc.set(c.doc.id, list);
     }
   }

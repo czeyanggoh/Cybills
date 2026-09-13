@@ -17,6 +17,8 @@ import {
   suggestionFor,
   matchesByDoc,
   payableKind,
+  nameMatchIn,
+  matchReason,
 } from '../src/lib/bankMatch.js';
 
 let failures = 0;
@@ -154,6 +156,27 @@ check('a foreign document at its restated figure', candidatesFor(line({ amount: 
   check('a document with one line: one match, firm', m.get('a').map((x) => [x.line.date, x.confidence]), [['2026-08-20', 'firm']]);
   check('a document two lines could pay: both listed, the nearer firm, the other left for a person', m.get('g').map((x) => [x.line.date, x.confidence]), [['2026-08-19', 'firm'], ['2026-08-26', 'possible']]);
   check('a document nothing pays is absent', m.has('none'), false);
+}
+
+// --- the entity's own name, and saying why --------------------------------------
+{
+  // Excellence's own statement: the narrative names the PAYER, which is us.
+  const ivpt = line({ date: '2026-09-02', amount: -3000, description: 'IVPT Excellence AS Pte Ltd' });
+  const proof = doc({ id: 'p', supplier: 'EXCELLENCE A.S PTE. LTD.', date: '2026-09-02', total: '3000' });
+  const own = { ownNames: ['EXCELLENCE A.S PTE. LTD.'] };
+  check('the word that tied them is returned', nameMatchIn('EXCELLENCE A.S PTE. LTD.', ivpt), 'EXCELLENCE');
+  check('…but the entity\'s own name names nobody', nameMatchIn('EXCELLENCE A.S PTE. LTD.', ivpt, own), '');
+  check('a real supplier on the same statement still matches', nameMatchIn('EIVA HR Solutions', line({ description: 'IVPT EIVA HR SOLUTIONS' }), own), 'EIVA');
+  const c = candidatesFor(ivpt, [proof], own);
+  check('without the own-name word it is not "named"', c[0].reasons.includes('name'), false);
+
+  const named = candidatesFor(line({ description: 'FAST A1 CONSULTANCY' }), [doc()])[0];
+  check('a name match says which word', matchReason(named, named.doc), 'Bank text names the supplier (CONSULTANCY)');
+  const numbered = candidatesFor(line({ description: 'INV 20260818' }), [doc({ invoiceNumber: 'INV-20260818' })])[0];
+  check('a number match says the number', matchReason(numbered, numbered.doc), 'Bank text has invoice number INV-20260818');
+  const only = candidatesFor(line({ description: 'CARD 4821' }), [doc()])[0];
+  check('the lone document at that figure says so', matchReason(only, only.doc), 'Only document at this amount within a week');
+  check('a bare money match says only that', matchReason({ reasons: ['amount'] }, doc()), 'Same amount, close date');
 }
 
 if (failures) {

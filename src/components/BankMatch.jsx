@@ -6,7 +6,7 @@ import { costPath } from '@/lib/bills';
 import { formatDate } from '@/lib/date';
 import { useActiveOrganisation, useXeroAccounts } from '@/lib/organisations';
 import { fetchBankOutstanding, matchBankLine, undoBankMatch, dismissBankLine, restoreBankLine } from '@/lib/bankStore';
-import { bankMatches, lineKey, suggestionFor, isMoneyOut, docAmountFor } from '@/lib/bankMatch';
+import { bankMatches, lineKey, suggestionFor, isMoneyOut, docAmountFor, matchReason } from '@/lib/bankMatch';
 import { cn } from '@/lib/utils';
 
 // Bank match, the way Dext does it.
@@ -103,7 +103,9 @@ export default function BankMatch() {
   // Suggestions over the lines still open, against the documents that could pay
   // one. `bankMatches` claims each document for one line.
   const openLines = useMemo(() => state.lines.filter((l) => !recordByKey.has(l.key)), [state.lines, recordByKey]);
-  const matches = useMemo(() => bankMatches(openLines, allDocs), [openLines, allDocs]);
+  // The entity's own name is not evidence of the supplier (bankMatch.js).
+  const ownName = organisation?.name || '';
+  const matches = useMemo(() => bankMatches(openLines, allDocs, { ownNames: [ownName] }), [openLines, allDocs, ownName]);
   const docById = useMemo(() => new Map(allDocs.map((d) => [d.id, d])), [allDocs]);
 
   // Matched lines CYWS no longer lists are still shown under "done": they are
@@ -383,7 +385,7 @@ export default function BankMatch() {
                             {!suggestion ? <option value="">Choose which document this pays…</option> : null}
                             {cands.map((c) => (
                               <option key={c.doc.id} value={c.doc.id}>
-                                {c.confidence === 'firm' ? '★ ' : ''}{c.doc.supplier} · #{c.doc.displayId} · {formatDate(c.doc.date)}
+                                {c.confidence === 'firm' ? '★ ' : ''}{c.doc.supplier} · #{c.doc.displayId} · {formatDate(c.doc.date)} · {matchReason(c, c.doc)}
                               </option>
                             ))}
                           </select>

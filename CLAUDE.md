@@ -2459,6 +2459,20 @@ ONE line (the nearest), so two identical charges a week apart do not both point
 at one receipt. Money in is never matched: a customer paying or a refund is not
 a cost document.
 
+**And a match says WHY.** Every firm match used to read "Names this supplier",
+including the two kinds that name nothing (the document's number in the bank
+text, and being the only document at that figure within a week), so nobody could
+tell which of three it was. `matchReason` (`bankMatch.js`) names it — "Bank text
+names the supplier (EIVA)", "Bank text has invoice number 1653", "Only document
+at this amount within a week" — on the Costs row, the document page and the Bank
+tab. And the entity's OWN name is not evidence: an outgoing transfer's narrative
+often carries the payer ("IVPT Excellence AS Pte Ltd" on Excellence's own UOB
+statement), so a document whose supplier shares a word with the entity was
+reported as named when the bank was naming us. `nameMatchIn` takes `ownNames`
+and drops those words; every caller passes the active entity's name. The
+statement line's description itself is CYWS's, passed through as Xero's bank
+reconciliation report gives it.
+
 **And the inbox does it Dext's way: a Match column, and Autofill payment.**
 The Bank tab is the reconciler's view; the reviewer's is the Costs inbox, where
 Dext puts a bank icon and "Match found" on the ROW of an item whose payment is
