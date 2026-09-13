@@ -5,6 +5,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-dext-dedup-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -61,4 +62,4 @@ const back = await post({ ...row, dextId: '40000000002' });
 check('a deleted document does not hold its id', back.status, 200);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures);

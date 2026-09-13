@@ -1427,12 +1427,25 @@ this one. `publishStatus` (Business settings -> Extraction -> **Publishing**)
 is the entity's answer, and all three places a PERSON presses Publish read it —
 the document page's dialog opens on it, and the inbox's bulk publish and a
 claim's send it — so pressing Publish in two places cannot put two different
-statuses in one ledger. The automatic publish-after-reading has its OWN status,
-`autoPublishStatus` (Extraction -> **Post automatically as**, shown once that
-toggle is on): whether an unchecked read may go straight into the payable ledger
-is a separate judgement from what a person's click posts as. It defaults to
-AUTHORISED (awaiting payment), as the practice asked (13 Sep 2026); an entity
-that wants a check first picks Awaiting approval.
+statuses in one ledger. The automatic publish-after-reading is deliberately NOT
+covered by `publishStatus`.
+
+**Publishing after reading is a SUPPLIER's rule.** Posting unchecked paper
+straight into a live ledger is only safe where the coding is already settled, so
+the supplier rule carries **Publish to Xero after reading** (`autoPublish`:
+`AUTHORISED` / `SUBMITTED` / `never`, '' = follow Extraction settings). A status
+there publishes that supplier's documents at that status on EVERY road — the
+upload (`autoPublishAfterRead`, which asks the rule before the entity's switch)
+and the background read an emailed, link-fetched or WhatsApp'd document gets
+(`publishByRule` in `server/src/autoPublishRule.ts`, called from `autoRead`
+after the settle, and only for a read that found something). `never` keeps a
+supplier out even with the switch on. The entity-wide switch (Extraction ->
+Publish to Xero after reading) is unchanged: uploads only, as SUBMITTED, because
+it covers every supplier, coded or not. Both roads decline rather than guess —
+incomplete, account not in the chart, no tax code, on a claim, a payment proof,
+a bridge entity — and both refuse a document that looks like a DUPLICATE, since
+an approved duplicate posted unattended is a bill paid twice. Covered by
+`npm test` in `server/` (`test/supplier-rule-publish.test.mts`).
 
 ## A receipt image zooms by itself
 

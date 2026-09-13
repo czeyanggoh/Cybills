@@ -6,6 +6,7 @@ import {
   CURRENCIES,
   SUPPLIER_DUE_MODES,
   SUPPLIER_PAID_OPTIONS,
+  SUPPLIER_AUTO_PUBLISH_OPTIONS,
   clearSupplierRule,
   emptySupplierRule,
   matchSupplierRule,
@@ -204,6 +205,24 @@ export default function SupplierRulesModal({
                 {SUPPLIER_PAID_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
               </Select>
             </div>
+
+            {/* A bridge entity's costs never post as bills of their own. */}
+            {!bridge && (
+              <div className="md:col-span-2">
+                <FieldLabel>Publish to Xero after reading</FieldLabel>
+                <div className="max-w-sm">
+                  <Select value={rule.autoPublish || ''} onChange={(v) => set('autoPublish', v)}>
+                    <option value="">Follow Extraction settings</option>
+                    {SUPPLIER_AUTO_PUBLISH_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </Select>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {rule.autoPublish === 'AUTHORISED' || rule.autoPublish === 'SUBMITTED'
+                    ? 'Every document from this supplier — uploaded, emailed or sent on WhatsApp — goes to Xero the moment it has been read, with the rules above applied and nobody checking it first. Skipped (left in the inbox) when it is incomplete, its account isn’t in the chart, or it looks like a duplicate.'
+                    : 'Only a status chosen here publishes emailed and WhatsApp’d documents. Following Extraction settings applies to uploads alone.'}
+                </p>
+              </div>
+            )}
 
             <div>
               <FieldLabel>Extract line items</FieldLabel>

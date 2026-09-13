@@ -26,6 +26,7 @@ import { visionEnabled, claudeEnabled, openaiEnabled, googleEnabled } from './en
 import { fetchDocumentsForLinks, linksIn, n8nEnabled } from './n8n.js';
 import { recordMail, recordLinkFetch, mailById, type MailAttachment, type MailDocument, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender } from './trustedSenders.js';
+import { publishByRule } from './autoPublishRule.js';
 
 const norm = (s: string) => String(s ?? '').trim().toLowerCase();
 
@@ -436,8 +437,17 @@ export async function autoRead(
     // without a tick, which is how the sender is asked for a better photo.
     // `end` is still reported, so the reaction and the caller can tell a blank
     // read from a failed one.
-    void end;
     settleProcessing(scope, billId, 'new');
+  }
+  // The supplier's rule may ask for it to go straight to Xero. After the
+  // settle, so the document is no longer "Processing" when it is posted (and
+  // the settle cannot undo the archive publishing writes), and only for a read
+  // that found something: a blank or failed read has nothing to post.
+  if (end === 'read') {
+    const out = await publishByRule(req, workspaceId(req), scope, realOrgId, billId);
+    if (!out.published && out.reason !== 'no_rule' && out.reason !== 'not_a_cost') {
+      console.warn(`[inbound] supplier rule asked to publish ${billId}, declined: ${out.reason}`);
+    }
   }
 }
 

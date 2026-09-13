@@ -762,7 +762,9 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
             // both double it and make it unclaimable a moment later.
             // And never for somebody who may not publish: the server refuses it,
             // so attempting it would only put a failure on a document that read fine.
-            const posted = claim || !mayPublish ? null : await autoPublishAfterRead(withDefaults);
+            // Nor a document that looks like one already in the book: posted
+            // unchecked, a duplicate is a bill paid twice.
+            const posted = claim || !mayPublish || fin?.duplicate ? null : await autoPublishAfterRead(withDefaults);
             notifyBillsChanged();
             onAdded?.(posted?.bill ?? withDefaults);
             patch(it.id, {

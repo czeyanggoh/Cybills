@@ -2,6 +2,7 @@ import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { isComplete } from '@/lib/costsData';
 import { getExtractionSettings } from '@/lib/extractionSettings';
 import { isPaymentProof } from '@/lib/paymentProof';
+import { matchSupplierRule } from '@/lib/supplierRules';
 import {
   fetchXeroAccounts,
   fetchXeroTaxRates,
@@ -51,8 +52,8 @@ export function xeroBillUrl(invoiceId, shortCode = '', docType = '') {
     : `https://go.xero.com${target}`;
 }
 
-// Post a freshly-read bill to Xero as the entity's "Post automatically as"
-// status (Approved, awaiting payment, by default), so
+// Post a freshly-read bill to Xero — at the status its supplier's rule names,
+// else as Awaiting Approval (Xero's SUBMITTED) when the entity's switch is on — so
 // a document that's been read is already waiting in the ledger rather than
 // sitting here until someone publishes it by hand. Publishing finishes the
 // document: the server archives it, and it can no longer go on an expense
@@ -75,8 +76,13 @@ export function xeroBillUrl(invoiceId, shortCode = '', docType = '') {
 // throws: reading a document must not fail because Xero was unreachable.
 export async function autoPublishAfterRead(bill) {
   try {
-    const settings = getExtractionSettings();
-    if (!settings.publishToXeroAfterReading) return null;
+    // The supplier's rule decides first: a status there publishes at that
+    // status whatever the entity's switch says, and 'never' keeps this
+    // supplier out even with the switch on. Otherwise the switch, as before.
+    const ruled = String(matchSupplierRule(bill?.supplier)?.autoPublish || '');
+    if (ruled === 'never') return null;
+    const ruleStatus = ['AUTHORISED', 'SUBMITTED'].includes(ruled) ? ruled : '';
+    if (!ruleStatus && !getExtractionSettings().publishToXeroAfterReading) return null;
     if (!bill?.id || bill.xeroInvoiceId) return null;
     // A payment proof is never published — it pays invoices, it is not one.
     if (isPaymentProof(bill.type ?? bill.documentType)) return null;
@@ -108,11 +114,9 @@ export async function autoPublishAfterRead(bill) {
       billId: bill.id,
       accountCode,
       taxType,
-      // Business settings → Extraction → "Post automatically as"; Approved
-      // (awaiting payment) unless the entity chose otherwise.
-      status: ['DRAFT', 'SUBMITTED', 'AUTHORISED'].includes(settings.autoPublishStatus)
-        ? settings.autoPublishStatus
-        : 'AUTHORISED',
+      // The supplier rule's status, else Awaiting approval: the entity-wide
+      // switch covers every supplier, coded or not, so it goes to a queue.
+      status: ruleStatus || 'SUBMITTED',
       // No dueDate: the server sets it to the date it actually posts, so the two
       // stay together when a locked period shifts the date.
     });

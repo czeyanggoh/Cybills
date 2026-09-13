@@ -55,6 +55,13 @@ export function emptySupplierRule() {
     dueDays: '',
     description: '',
     extractLineItems: false,
+    // Publish to Xero after reading, and as what: '' = follow Extraction
+    // settings (uploads only, as Awaiting approval), 'AUTHORISED' / 'SUBMITTED'
+    // = publish at that status on EVERY road a document arrives by, 'never' =
+    // not even when the entity's switch is on. Not a field of any document, so
+    // never in supplierRulePatch; read by autoPublish.js and, for emailed and
+    // WhatsApp'd documents, server/src/autoPublishRule.ts.
+    autoPublish: '',
     // The supplier's Singapore GST registration number, typed by a person for
     // the supplier whose number the reader keeps missing. Not a field of any
     // document — it is EVIDENCE the server hands the tax decision when a read
@@ -66,6 +73,11 @@ export function emptySupplierRule() {
 
 export const SUPPLIER_DUE_MODES = DUE_MODES;
 export const SUPPLIER_PAID_OPTIONS = ['Paid', 'Not paid'];
+export const SUPPLIER_AUTO_PUBLISH_OPTIONS = [
+  { value: 'AUTHORISED', label: 'Publish as Approved (awaiting payment)' },
+  { value: 'SUBMITTED', label: 'Publish as Awaiting approval' },
+  { value: 'never', label: 'Never publish automatically' },
+];
 
 // The rule for a supplier NAME — the one it was stored under, or the one
 // written against a differently-cased spelling of the same name.
