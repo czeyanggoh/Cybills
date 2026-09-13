@@ -102,6 +102,13 @@ export function cardFeeRuleFor(line, rules) {
 // The fee inside this line, when the line is this document's money plus the
 // bank's card fee — { percent, fee, accountCode, bankAccount } — or null.
 export function feeFor(doc, line, rules) {
+  // The fee is posted as a line ON THE BILL (so one payment of the line's
+  // amount is what Xero pairs with the statement line), which only makes sense
+  // for a bill in the bank's own currency: an SGD fee cannot be a line of a USD
+  // bill.
+  const bank = String(line?.currency ?? '').trim().toUpperCase();
+  const docCurrency = String(doc?.currency ?? '').trim().toUpperCase();
+  if (bank && docCurrency && bank !== docCurrency) return null;
   const mine = docAmountFor(doc, line);
   if (mine == null) return null;
   const rule = cardFeeRuleFor(line, rules);

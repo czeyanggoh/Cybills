@@ -180,9 +180,10 @@ export type BankLineRecord = {
   paidBefore?: boolean;
   paymentMethodBefore?: string;
   publishedHere?: boolean; // the settle did the publishing, not somebody earlier
-  // The bank's card fee, posted as its own spend beside the payment so the line
-  // reconciles as payment + fee. Undo deletes it with the payment.
-  feeTransactionId?: string;
+  // The bank's card fee, added to the BILL as a No Tax line so that one payment
+  // of the statement amount is what Xero suggests for the line. Undo takes the
+  // line back off after deleting the payment.
+  feeLineItemId?: string;
   fee?: CardFee;
   via: 'browser' | 'cyws';
   at: string;
@@ -482,6 +483,83 @@ export async function settleBillAgainstLine(
   });
 }
 
+// --- the bank's card fee, as a line of the bill ------------------------------------
+// Neither CYWS nor CYBills can reconcile a statement line (Xero's API has no
+// such call): what clears the line is Xero's own suggestion, and Xero only ever
+// suggests ONE transaction of the line's amount. A 17.99 payment beside a 0.18
+// spend never qualified, so every fee line needed Find & Match by hand. The fee
+// therefore goes on the bill itself (the practice's choice), and one payment of
+// 18.17 is what Xero pairs with the 18.17 line.
+//
+// Added by an UPDATE that re-sends the bill's existing lines with their
+// LineItemIDs — Xero replaces a bill's lines with whatever an update sends, so
+// a line left out would be deleted — plus the fee line. Idempotent: a bill that
+// already carries the fee line (a settle re-pressed) is left as it is.
+const FEE_LINE_MARK = 'card fee charged by';
+const keepLine = (li: any) => ({
+  LineItemID: li.LineItemID,
+  Description: li.Description,
+  Quantity: li.Quantity,
+  UnitAmount: li.UnitAmount,
+  AccountCode: li.AccountCode,
+  TaxType: li.TaxType,
+  TaxAmount: li.TaxAmount,
+  ...(Array.isArray(li.Tracking) && li.Tracking.length ? { Tracking: li.Tracking } : {}),
+});
+
+async function addCardFeeLine(
+  organisation: Organisation,
+  invoiceId: string,
+  fee: CardFee
+): Promise<{ ok: true; lineItemId: string } | { ok: false; message: string }> {
+  const invoice = await fetchXeroInvoice(organisation.tenantId, invoiceId);
+  if (!invoice) return { ok: false, message: 'The bill could not be read back from Xero to add the fee to it.' };
+  const existing: any[] = Array.isArray(invoice.LineItems) ? invoice.LineItems : [];
+  const already = existing.find((li) => String(li.Description ?? '').includes(FEE_LINE_MARK));
+  if (already) return { ok: true, lineItemId: String(already.LineItemID ?? '') };
+  const feeLine = {
+    Description: `${fee.percent}% ${FEE_LINE_MARK} ${fee.bankAccount}`,
+    Quantity: 1,
+    UnitAmount: fee.fee,
+    AccountCode: fee.accountCode,
+    TaxType: 'NONE',
+    TaxAmount: 0,
+  };
+  const res = await relay('Invoices', {
+    method: 'POST',
+    tenantId: organisation.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { Invoices: [{ InvoiceID: invoiceId, LineItems: [...existing.map(keepLine), feeLine] }] },
+  });
+  const inv = res.ok ? res.data?.Invoices?.[0] : null;
+  const errs: string[] = (inv?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+  if (!res.ok || !inv || errs.length) {
+    return { ok: false, message: errs.length ? errs.join(' ') : res.ok ? 'Xero refused the fee line.' : (res as any).message };
+  }
+  const added = (Array.isArray(inv.LineItems) ? inv.LineItems : []).find((li: any) => String(li.Description ?? '').includes(FEE_LINE_MARK));
+  return { ok: true, lineItemId: String(added?.LineItemID ?? '') };
+}
+
+// Take the fee line back off a bill whose payment was just undone, so the bill
+// is again the document's own figure. Best-effort: the payment is gone either
+// way, and a line Xero will not remove is said in the undo's reply.
+async function removeCardFeeLine(organisation: Organisation, invoiceId: string, lineItemId: string): Promise<string> {
+  const invoice = await fetchXeroInvoice(organisation.tenantId, invoiceId);
+  if (!invoice) return 'The bill could not be read back to remove its card fee line.';
+  const existing: any[] = Array.isArray(invoice.LineItems) ? invoice.LineItems : [];
+  const kept = existing.filter((li) => (lineItemId ? String(li.LineItemID) !== lineItemId : !String(li.Description ?? '').includes(FEE_LINE_MARK)));
+  if (kept.length === existing.length) return '';
+  const res = await relay('Invoices', {
+    method: 'POST',
+    tenantId: organisation.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { Invoices: [{ InvoiceID: invoiceId, LineItems: kept.map(keepLine) }] },
+  });
+  const inv = res.ok ? res.data?.Invoices?.[0] : null;
+  const errs: string[] = (inv?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+  return !res.ok || !inv || errs.length ? `Xero would not remove the card fee line: ${errs.length ? errs.join(' ') : (res as any).message ?? 'it refused.'}` : '';
+}
+
 /**
  * The payment itself, against a bill that is already in Xero: record it from
  * the bank account, on the statement date, for the bill's own figure; read the
@@ -523,11 +601,28 @@ export async function recordPaymentForLine(
   // FOREIGN PER BASE, the same way round as on the invoice (currencyRateFor in
   // xero.ts): it divides the amount by it to reach what the bank moved. USD
   // 17.17 paid as SGD 22.20 is a rate of 0.7734.
+  // The card fee, as a line of the bill, BEFORE the payment: the payment is
+  // then the whole statement amount, the one shape Xero suggests for the line.
+  // Refused, the bill is paid its own figure and the fee is reported, so the
+  // books are right even though that line needs Find & Match.
+  let feeResult: any = null;
+  let feeLineItemId = '';
+  let payAmount = invoiceAmount;
+  if (fee) {
+    const added = await addCardFeeLine(organisation, invoiceId, fee);
+    if (added.ok) {
+      feeLineItemId = added.lineItemId;
+      payAmount = Math.round((invoiceAmount + fee.fee) * 100) / 100;
+      feeResult = { ok: true, amount: fee.fee, percent: fee.percent, accountCode: fee.accountCode, lineItemId: feeLineItemId };
+    } else {
+      feeResult = { ok: false, amount: fee.fee, accountCode: fee.accountCode, message: added.message };
+    }
+  }
   const payment: Record<string, unknown> = {
     Invoice: { InvoiceID: invoiceId },
     Account: account,
     Date: line.date,
-    Amount: invoiceAmount,
+    Amount: payAmount,
     Reference: (line.reference || line.description).slice(0, 255),
   };
   if (line.currency && billCurrency && line.currency !== billCurrency && settledBankAmount > 0) {
@@ -553,51 +648,6 @@ export async function recordPaymentForLine(
   }
   const paymentId = String(record.PaymentID ?? '');
 
-  // The card fee, as a SPEND from the same bank account on the same day, to the
-  // fee account, with no tax — a bank charge carries none. Xero's reconciliation
-  // then matches the one statement line to the payment AND this spend. Against
-  // the supplier's contact (the bill just made one), so it sits beside the
-  // purchase it was charged on. Best-effort: the payment is in the ledger either
-  // way, and a refused fee is reported rather than failing the settlement.
-  let feeResult: any = null;
-  let feeTransactionId = '';
-  if (fee) {
-    const txn = {
-      Type: 'SPEND',
-      Contact: { Name: String(bill.supplier || line.bank_account_name || 'Bank') },
-      BankAccount: account,
-      Date: line.date,
-      Reference: (line.reference || line.description).slice(0, 255),
-      LineAmountTypes: 'NoTax',
-      ...(line.currency ? { CurrencyCode: line.currency } : {}),
-      LineItems: [{
-        Description: `${fee.percent}% card fee charged by ${fee.bankAccount} on ${bill.supplier || 'this purchase'}`,
-        Quantity: 1,
-        UnitAmount: fee.fee,
-        AccountCode: fee.accountCode,
-        TaxType: 'NONE',
-      }],
-    };
-    const posted = await relay('BankTransactions', {
-      method: 'PUT',
-      tenantId: organisation.tenantId,
-      query: { summarizeErrors: 'false' },
-      body: { BankTransactions: [txn] },
-    });
-    const bt = posted.ok ? posted.data?.BankTransactions?.[0] : null;
-    const btErrors: string[] = (bt?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
-    if (!posted.ok || !bt || btErrors.length) {
-      feeResult = {
-        ok: false,
-        amount: fee.fee,
-        accountCode: fee.accountCode,
-        message: btErrors.length ? btErrors.join(' ') : posted.ok ? 'Xero rejected the fee.' : (posted as any).message,
-      };
-    } else {
-      feeTransactionId = String(bt.BankTransactionID ?? '');
-      feeResult = { ok: true, amount: fee.fee, percent: fee.percent, accountCode: fee.accountCode, bankTransactionId: feeTransactionId };
-    }
-  }
 
   // What Xero now says about the bill, read back rather than assumed — the same
   // three fields the webhook and the payments sweep record, through the same
@@ -634,7 +684,7 @@ export async function recordPaymentForLine(
     paymentMethodBefore,
     publishedHere: opts.publishedHere,
     ...(fee ? { fee } : {}),
-    ...(feeTransactionId ? { feeTransactionId } : {}),
+    ...(feeLineItemId ? { feeLineItemId } : {}),
     via: opts.via,
     at: new Date().toISOString(),
     by: opts.by,
@@ -651,7 +701,7 @@ export async function recordPaymentForLine(
       status: xero.xeroStatus,
     },
     published: opts.publishedHere ? { lines: opts.published?.lines, perLine: opts.published?.perLine, attachment: opts.published?.attachment } : null,
-    payment: { paymentId, date: line.date, amount: invoiceAmount, currency: billCurrency, reference: payment.Reference },
+    payment: { paymentId, date: line.date, amount: payAmount, currency: billCurrency, reference: payment.Reference },
     // The bank's card fee posted beside the payment, or why it was not. Null
     // when the line was the bill's money to the cent.
     fee: feeResult,
@@ -714,21 +764,6 @@ export async function applyPendingBankPayment(
  */
 export async function undoSettlement(record: BankLineRecord, organisation: Organisation): Promise<SettleResult> {
   const ws = record.orgId;
-  // The card fee first: were the payment deleted and the fee refused, the fee
-  // would be left standing against a line that is no longer settled.
-  if (record.feeTransactionId) {
-    const gone = await relay(`BankTransactions/${encodeURIComponent(record.feeTransactionId)}`, {
-      method: 'POST',
-      tenantId: organisation.tenantId,
-      body: { BankTransactions: [{ BankTransactionID: record.feeTransactionId, Status: 'DELETED' }] },
-    });
-    if (!gone.ok) {
-      return { status: gone.status >= 500 ? 502 : 409, body: {
-        error: 'fee_not_deleted',
-        message: `Xero would not delete the card fee: ${gone.message}`,
-      } };
-    }
-  }
   if (record.paymentId) {
     const gone = await relay(`Payments/${encodeURIComponent(record.paymentId)}`, {
       method: 'POST',
@@ -744,6 +779,13 @@ export async function undoSettlement(record: BankLineRecord, organisation: Organ
       } };
     }
   }
+  // The card fee line comes off the bill with the payment, so the bill is the
+  // document's own figure again. Only after the payment is gone: Xero will not
+  // change the lines of a bill that is paid.
+  let feeNote = '';
+  if (record.fee && record.invoiceId) {
+    feeNote = await removeCardFeeLine(organisation, record.invoiceId, String(record.feeLineItemId ?? ''));
+  }
   const bill = record.billId ? getBillById(ws, record.billId) : null;
   if (bill) {
     const invoice = record.invoiceId ? await fetchXeroInvoice(organisation.tenantId, record.invoiceId) : null;
@@ -754,7 +796,12 @@ export async function undoSettlement(record: BankLineRecord, organisation: Organ
   saveRecords(loadRecords().filter((r) => r.id !== record.id));
   // The payment is gone from Xero, so the line is free again — for CYWS too.
   queueLineNotice(record, 'released');
-  return { status: 200, body: { ok: true, bill: bill ? getBillById(ws, bill.id) : null } };
+  return { status: 200, body: {
+    ok: true,
+    bill: bill ? getBillById(ws, bill.id) : null,
+    // Set only when a card fee line could not be taken back off the bill.
+    ...(feeNote ? { feeNote } : {}),
+  } };
 }
 
 // --- the outstanding lines, from CYWS ----------------------------------------

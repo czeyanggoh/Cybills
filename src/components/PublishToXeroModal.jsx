@@ -270,14 +270,14 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                 Paid from the bank line: a payment of {bankPayment.payment?.currency} {Number(bankPayment.payment?.amount || 0).toFixed(2)} on{' '}
                 {bankPayment.payment?.date} is recorded against the bill, so the statement line reconciles.
                 {bankPayment.fee?.ok
-                  ? ` The bank’s card fee of ${bankPayment.payment?.currency || ''} ${Number(bankPayment.fee.amount || 0).toFixed(2)} is posted to account ${bankPayment.fee.accountCode}.`
+                  ? ` The bank’s card fee of ${Number(bankPayment.fee.amount || 0).toFixed(2)} is a No Tax line on the bill (account ${bankPayment.fee.accountCode}), so the one payment matches the statement line.`
                   : ''}
               </p>
             )}
             {bankPayment?.ok && bankPayment.fee && !bankPayment.fee.ok && (
               <p className="max-w-sm text-xs text-amber-700">
-                The payment is recorded, but the bank’s card fee of {Number(bankPayment.fee.amount || 0).toFixed(2)} could not be:{' '}
-                {bankPayment.fee.message} Add it as a spend money in Xero so the statement line reconciles.
+                The bill is paid its own figure, but the bank’s card fee of {Number(bankPayment.fee.amount || 0).toFixed(2)} could not be added to it:{' '}
+                {bankPayment.fee.message} Add the fee in Xero, then use Find &amp; Match for the statement line.
               </p>
             )}
             {bankPayment && !bankPayment.ok && (
@@ -375,7 +375,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                     // fee (Bank match → Card fees): say how it splits.
                     const feeAmount = Math.abs(Number(bill.bankMatch.amount) || 0) - (Number(bill.total) || 0);
                     return feeAmount > 0.004
-                      ? ` Of that, ${(Number(bill.total) || 0).toFixed(2)} pays the bill and ${feeAmount.toFixed(2)} is the bank’s card fee, posted to its fee account.`
+                      ? ` The bank added a card fee of ${feeAmount.toFixed(2)}, so the bill goes up with a No Tax fee line for it and one payment of ${Math.abs(Number(bill.bankMatch.amount) || 0).toFixed(2)} matches the statement line.`
                       : '';
                   })()}
                 </p>

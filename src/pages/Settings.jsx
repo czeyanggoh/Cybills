@@ -935,7 +935,7 @@ function Extraction() {
         <Card title="Bank match">
           <Row
             label="Card fees"
-            hint="For a bank that charges a percentage on card spends and takes it in the same statement line. A line on that account that is exactly a document’s total plus this percent (to the cent) is matched to the document; settling it pays the bill its own total and posts the difference as a bank fee to the account chosen here, with no tax, so the statement line reconciles in Xero. A fee match is only suggested on its own when the bank text names the supplier or the invoice number."
+            hint="For a bank that charges a percentage on card spends and takes it in the same statement line. A line on that account that is exactly a document’s total plus this percent (to the cent) is matched to the document; settling it adds the difference to the bill as a No Tax card-fee line (to the account chosen here) and records one payment for the whole statement amount, which Xero then suggests as the match for that line by itself. A fee match is only suggested on its own when the bank text names the supplier or the invoice number."
           >
             <div className="space-y-2">
               {feeRules.map((r, i) => (

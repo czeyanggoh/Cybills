@@ -2477,13 +2477,20 @@ match is suggested on its own only when the bank text names the supplier or the
 number (never promoted for being the only document at that figure, since an
 amount worked out from a percentage is weaker evidence). Settling it
 (`recordPaymentForLine`, shared by the Bank tab, a published Autofill and CYWS's
-run) pays the bill its OWN total and posts the difference as a SPEND from the
-same bank account on the statement date to the fee account, No Tax, against the
-supplier's contact — Xero reconciles the one line against the payment and the
-spend together. The record keeps `feeTransactionId`; Undo deletes the fee
-BEFORE the payment, so a refused delete never leaves a fee standing against an
-unsettled line. A fee Xero refuses is reported beside the payment rather than
-failing it. Covered by `npm test` at the root and in `server/`
+run) adds the fee to the BILL as a No Tax line to the fee account and records
+ONE payment for the whole statement amount. That shape is the point: neither
+CYWS nor CYBills can reconcile a statement line — Xero's API has no such call —
+so what clears the line is Xero's own suggestion, and Xero only ever suggests a
+single transaction of the line's amount. A payment of 17.99 beside a 0.18 spend
+(the first version) was accurate and never suggested, which left every fee line
+to Find & Match by hand. So the bill in Xero is 18.17 against Canva's 17.99
+invoice, by the practice's choice (13 Sep 2026); the CYBills document keeps the
+paper's figure. The line is added by an update that re-sends the bill's existing
+lines with their LineItemIDs, on a bill published a moment ago or long before;
+if Xero refuses it the bill is paid its own figure and the fee is reported for
+Find & Match. Bills in the bank's own currency only (an SGD fee is no line of a
+USD bill). The record keeps `feeLineItemId`, and Undo deletes the payment and
+then takes the fee line back off. Covered by `npm test` at the root and in `server/`
 (`test/bank-match.test.mts`).
 
 **And a match says WHY.** Every firm match used to read "Names this supplier",

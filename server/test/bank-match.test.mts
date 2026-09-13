@@ -49,8 +49,10 @@ let invoicePosts: any[] = [];
 let approvals: any[] = [];
 let payments: any[] = [];
 let deletedPayments: string[] = [];
-const bankTxns: any[] = [];
-const deletedBankTxns: string[] = [];
+// Each bill's lines as Xero holds them, so a card fee added by an update can be
+// read back; and every such update.
+const linesById = new Map<string, any[]>();
+const invoiceUpdates: any[] = [];
 const paidInvoices = new Set<string>();
 let invoiceSeq = 0;
 // What CYWS is told about spent lines, and a switch to make it unreachable.
@@ -108,6 +110,7 @@ const stub = http.createServer((req, res) => {
       const inv = b.Invoices?.[0];
       invoicePosts.push(inv);
       invoiceSeq += 1;
+      linesById.set(`inv-${invoiceSeq}`, (inv?.LineItems ?? []).map((li: any, i: number) => ({ ...li, LineItemID: `inv-${invoiceSeq}-li-${i}` })));
       res.end(JSON.stringify({ Invoices: [{
         InvoiceID: `inv-${invoiceSeq}`, InvoiceNumber: inv?.InvoiceNumber || `BILL-${invoiceSeq}`, Status: inv?.Status, HasErrors: false,
         AmountDue: inv?.LineItems?.[0]?.UnitAmount ?? 0, Total: 0, CurrencyCode: inv?.CurrencyCode || 'SGD',
@@ -118,6 +121,13 @@ const stub = http.createServer((req, res) => {
   if (path.endsWith('/Invoices') && req.method === 'POST') {
     return body((b) => {
       const inv = b.Invoices?.[0];
+      // An update that re-sends LineItems (the card fee) replaces the bill's lines.
+      if (Array.isArray(inv?.LineItems)) {
+        invoiceUpdates.push(inv);
+        const id = String(inv.InvoiceID);
+        linesById.set(id, inv.LineItems.map((li: any, i: number) => ({ ...li, LineItemID: li.LineItemID || `${id}-li-new-${i}` })));
+        return res.end(JSON.stringify({ Invoices: [{ InvoiceID: inv.InvoiceID, Status: 'AUTHORISED', LineItems: linesById.get(id), ValidationErrors: [] }] }));
+      }
       approvals.push(inv);
       res.end(JSON.stringify({ Invoices: [{ InvoiceID: inv?.InvoiceID, Status: inv?.Status, ValidationErrors: [] }] }));
     });
@@ -126,8 +136,11 @@ const stub = http.createServer((req, res) => {
   if (one && req.method === 'GET') {
     const id = one[1];
     const paid = paidInvoices.has(id);
+    const storedLines = linesById.get(id) ?? [];
+    const lineTotal = Math.round(storedLines.reduce((t: number, li: any) => t + (Number(li.UnitAmount) || 0) * (Number(li.Quantity) || 1) + (Number(li.TaxAmount) || 0), 0) * 100) / 100;
     return res.end(JSON.stringify({ Invoices: [{
       InvoiceID: id, InvoiceNumber: 'BILL-X', Status: paid ? 'PAID' : 'AUTHORISED',
+      LineItems: storedLines, Total: lineTotal, AmountDue: paid ? 0 : lineTotal,
       FullyPaidOnDate: paid ? '2026-08-20T00:00:00' : undefined,
       Payments: paid ? [{ PaymentID: 'pay-x', Reference: payments.find((p) => p.Invoice?.InvoiceID === id)?.Reference || '' }] : [],
     }] }));
@@ -148,21 +161,6 @@ const stub = http.createServer((req, res) => {
       const p = payments[n - 1];
       if (p) paidInvoices.delete(String(p.Invoice?.InvoiceID));
       res.end(JSON.stringify({ Payments: [{ PaymentID: del[1], Status: 'DELETED' }] }));
-    });
-  }
-  // The bank's card fee, posted as a spend beside the payment.
-  if (path.endsWith('/BankTransactions') && req.method === 'PUT') {
-    return body((b) => {
-      const t = b.BankTransactions?.[0];
-      bankTxns.push(t);
-      res.end(JSON.stringify({ BankTransactions: [{ BankTransactionID: `bt-${bankTxns.length}`, Status: 'AUTHORISED', ValidationErrors: [] }] }));
-    });
-  }
-  const delTxn = /\/BankTransactions\/([^/]+)$/.exec(path);
-  if (delTxn && req.method === 'POST') {
-    return body(() => {
-      deletedBankTxns.push(delTxn[1]);
-      res.end(JSON.stringify({ BankTransactions: [{ BankTransactionID: delTxn[1], Status: 'DELETED' }] }));
     });
   }
   if (path.includes('/Attachments/')) return res.end(JSON.stringify({ Attachments: [] }));
@@ -426,16 +424,24 @@ check('and the publish tells CYWS the autofilled line is spent too', lineNotices
 
   r = await match(canva.id, UOB);
   check('with UOB’s 1% rule it settles', [r.status, r.body.ok], [200, true]);
+  const feeUpdate = invoiceUpdates[invoiceUpdates.length - 1];
+  const feeLine = (feeUpdate?.LineItems ?? []).find((li: any) => /card fee/i.test(String(li.Description)));
+  check('the fee is added to the BILL as a line', [feeLine?.UnitAmount, feeLine?.AccountCode, feeLine?.TaxType], [0.18, '404', 'NONE']);
+  check('beside the bill’s own lines, sent back with their ids so Xero keeps them', (feeUpdate?.LineItems ?? []).filter((li: any) => li.LineItemID).length >= 1, true);
   const feePay = payments[payments.length - 1];
-  check('the bill is paid its OWN figure, from the UOB account', [feePay?.Amount, feePay?.Account, feePay?.Date], [17.99, { AccountID: 'acct-uob' }, '2026-08-26']);
-  const txn = bankTxns[bankTxns.length - 1];
-  check('the fee is a spend from the same account on the same day', [txn?.Type, txn?.BankAccount, txn?.Date], ['SPEND', { AccountID: 'acct-uob' }, '2026-08-26']);
-  check('of 0.18, to the fee account, with no tax', [txn?.LineItems?.[0]?.UnitAmount, txn?.LineItems?.[0]?.AccountCode, txn?.LineItems?.[0]?.TaxType], [0.18, '404', 'NONE']);
-  check('payment + fee is the statement line', Math.round((feePay?.Amount + txn?.LineItems?.[0]?.UnitAmount) * 100) / 100, 18.17);
-  check('reported, and remembered on the match', [r.body.fee?.ok, r.body.fee?.amount, r.body.match?.feeTransactionId], [true, 0.18, 'bt-1']);
+  // ONE payment of the statement amount: the only shape Xero's reconciliation
+  // suggests on its own for the 18.17 line.
+  check('and ONE payment for the whole statement amount, from UOB, on the statement date', [feePay?.Amount, feePay?.Account, feePay?.Date], [18.17, { AccountID: 'acct-uob' }, '2026-08-26']);
+  check('reported, and the fee line remembered on the match', [r.body.fee?.ok, r.body.fee?.amount, Boolean(r.body.match?.feeLineItemId)], [true, 0.18, true]);
+  const canvaInvoice = r.body.match?.invoiceId;
 
   r = await call(`/api/bank/matches/${r.body.match.id}/undo`, { method: 'POST', headers: ORG });
-  check('undo takes the fee off as well as the payment', [r.status, deletedBankTxns], [200, ['bt-1']]);
+  const afterUndo = invoiceUpdates[invoiceUpdates.length - 1];
+  check('undo deletes the payment and takes the fee line back off the bill', [
+    r.status,
+    afterUndo?.InvoiceID === canvaInvoice,
+    (afterUndo?.LineItems ?? []).some((li: any) => /card fee/i.test(String(li.Description))),
+  ], [200, true, false]);
 
   r = await autofill(canva.id, UOB);
   check('autofill accepts the same fee match', [r.status, r.body.ok], [200, true]);

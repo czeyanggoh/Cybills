@@ -194,6 +194,8 @@ check('a foreign document at its restated figure', candidatesFor(line({ amount: 
   check('another bank account’s rule does not apply', feeFor(canva, line({ ...uob, bank_account_name: 'DBS Current' }), rules), null);
   check('two cents off the fee is not the fee', feeFor(canva, line({ ...uob, amount: -18.19 }), rules), null);
   check('an exact match is not a fee', feeFor(canva, line({ ...uob, amount: -17.99 }), rules), null);
+  // The fee goes on the bill as a line, so it has to be the bank's currency.
+  check('a bill in another currency takes no fee line', feeFor({ ...canva, currency: 'USD', baseCurrency: 'SGD', baseTotal: 17.99 }, uob, rules), null);
 
   check('without the rule the line pays nothing', candidatesFor(uob, [canva], {}), []);
   const withFee = candidatesFor(uob, [canva], { feeRules: rules });
