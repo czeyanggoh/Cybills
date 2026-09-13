@@ -2450,7 +2450,22 @@ IGNORED, which writes nothing to Xero. The document's own `paid` +
 the three Xero fields are read back through `paymentFromInvoice` like the
 webhook's, and the WhatsApp tick turns green. Covered by `npm test` in `server/`
 (`test/bank-match.test.mts`, over real HTTP with one stub standing in for the
-relay and for CYWS). This REPLACED a simulated feed (`bankRecon.js`,
+relay and for CYWS).
+
+**And CYWS is told the line is spent.** A line CYBills has used to record a
+payment would otherwise go on being proposed by CYWS's reconciliation — against
+a Xero bill of the same figure, or another CYBills document — until somebody
+reconciles it in Xero, which is how one statement line gets paid twice. So
+`recordPaymentForLine`, the one function every road ends in (the Bank tab, a
+published autofill, CYWS's own settle), queues a `used` notice and
+`undoSettlement` queues `released` (`queueLineNotice` in `bankMatch.ts`,
+`POST /api/webhooks/cybills/bank-recon/used` at CYWS, which answers a spent line
+`already_posted` in `matchLines` before any leg runs). Queued rather than fired,
+because a notice CYWS never received is a line it may still pay twice: they wait
+in `bank-line-notices`, go oldest first so a `used` and a `released` for one line
+cannot cross, and are retried whenever the Bank tab or the inbox asks for lines —
+dropped only on CYWS's own JSON refusal or after thirty days undelivered.
+Contract: `deploy/BANK-MATCH.md` § What CYBills tells CYWS. This REPLACED a simulated feed (`bankRecon.js`,
 `BankReconcile.jsx`) that seeded bank lines from the documents themselves.
 
 ## Xero via the cyworkspace relay

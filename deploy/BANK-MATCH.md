@@ -236,6 +236,62 @@ paying it twice.
 | `422 not_approved` | Xero would not move a DRAFT/SUBMITTED bill to AUTHORISED, in its own words |
 | `422 payment_refused` | Xero rejected the payment, in its own words; `invoice_id` says the bill IS in the ledger now, so do not post it again |
 
+## What CYBills tells CYWS
+
+A line CYBills has used to record a payment is **spent**: its money is on a
+bill in Xero. Left to itself, CYWS's reconciliation keeps proposing that line —
+against a Xero bill of the same figure, or another CYBills document — until
+somebody reconciles the statement line in Xero, and a second payment for one
+line is exactly what this seam exists to prevent. So CYBills tells CYWS, by every
+road a payment is recorded (the Bank tab, a published autofill, CYWS's own
+settle), and tells it again when an **Undo** frees the line:
+
+```
+POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/bank-recon/used?tenant_id=<uuid>
+     X-API-Key: <WEBHOOK_API_KEY>
+```
+
+```json
+{
+  "action": "used",
+  "key": "2026-08-20|-10900|FAST A1 CONSULTANCY INV-9",
+  "line": {
+    "date": "2026-08-20", "amount": -109.00, "currency": "SGD",
+    "reference": "FAST A1 CONSULTANCY INV-9", "description": "A1 CONSULTANCY",
+    "bank_account_id": "acct-…", "bank_account_name": "DBS Current"
+  },
+  "bill_id": "bill_…", "item_id": "260822111522", "supplier": "A1 Consultancy",
+  "invoice_id": "…", "payment_id": "…", "via": "browser",
+  "at": "2026-08-26T01:02:03.000Z"
+}
+```
+
+- **`action`** is `used` or `released`. A `released` for a line whose `used`
+  named a different `payment_id` is ignored — a later match has spent it again.
+- **The line is identified by its own fields**, not by `key` (which is CYBills'
+  spelling of the same idea): CYWS files it under the key its posted-line ledger
+  already uses — date + signed amount to two places + the reference squashed to
+  letters and digits — so a spent line is found by the same lookup that finds a
+  line CYWS posted itself.
+- **What CYWS does with it**: `matchLines` answers a spent line `already_posted`
+  with a message naming the CYBills document, before any matching leg runs — so
+  neither the unattended run nor the review page proposes it again, and it is
+  never paired with another CYBills candidate.
+- **Delivery is guaranteed by CYBills, in order.** Notices wait in
+  `bank-line-notices` until CYWS answers 2xx, oldest first (a `used` and a
+  `released` for one line must not cross), and are retried whenever the Bank tab
+  or the inbox asks for lines. A 5xx, a 401 or a **bare** 404 (a CYWS that does not
+  have the route yet) waits; a JSON refusal (`tenant_not_found`, `missing_field`)
+  is dropped with a log line, and so is a notice nobody could deliver in thirty
+  days.
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{ok: true, action, key, used}` | recorded (`used` = how many spent lines CYWS holds for the tenant) |
+| 400 | `{error: "missing_field"}` | no `action`, or no usable line (date, non-zero signed amount) |
+| 401 | `{error: "invalid_api_key"}` | |
+| 404 | `{error: "tenant_not_found", …}` | same shape as the other webhooks |
+
 ## The inbox, for reviewers — Dext's Match column
 
 The Costs inbox draws the same lines on the document's own row, the way Dext

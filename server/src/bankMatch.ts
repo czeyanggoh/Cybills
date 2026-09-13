@@ -180,6 +180,146 @@ function saveRecords(items: BankLineRecord[]): void {
 export function recordsFor(orgId: string): BankLineRecord[] {
   return loadRecords().filter((r) => r.orgId === orgId);
 }
+
+// --- telling CYWS which lines are spent -----------------------------------------
+// A line CYBills has used to record a payment is SPENT: its money is on a bill
+// in Xero. CYWS's auto bank reconciliation would otherwise keep proposing it —
+// against a Xero bill of the same figure, or another CYBills document — until
+// somebody reconciles the statement line in Xero, and a second payment for one
+// line is the one outcome this seam exists to prevent. So every settlement, by
+// every road (the Bank tab, a published autofill, CYWS's own settle), sends
+// CYWS a `used` notice, and an Undo sends `released`, which puts the line back in
+// play. Contract: deploy/BANK-MATCH.md § What CYBills tells CYWS.
+//
+// Queued rather than fired: a notice CYWS never received is a line it may still
+// pay twice, so it waits in `bank-line-notices` until CYWS acknowledges it, sent
+// in the order they happened (a `used` then a `released` for the same line must
+// not arrive the other way round) and retried whenever the Bank tab or the inbox
+// asks for lines. Dropped only when CYWS refuses it in its own words (an
+// unknown tenant, a malformed line), or after thirty days nobody could deliver it.
+type LineNotice = {
+  id: string;
+  tenantId: string;
+  action: 'used' | 'released';
+  key: string;
+  line: BankLine;
+  billId: string;
+  itemId: string;
+  supplier: string;
+  invoiceId: string;
+  paymentId: string;
+  via: 'browser' | 'cyws';
+  at: string;
+  tries: number;
+};
+const NOTICES = 'bank-line-notices';
+const NOTICE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function queueLineNotice(record: BankLineRecord, action: 'used' | 'released'): void {
+  if (record.kind !== 'match' || !record.tenantId) return;
+  const bill = record.billId ? getBillById(record.orgId, record.billId) : null;
+  const items = loadCollection<LineNotice>(NOTICES);
+  items.push({
+    id: newId(),
+    tenantId: record.tenantId,
+    action,
+    key: record.key,
+    line: record.line,
+    billId: record.billId ?? '',
+    itemId: bill?.displayId ?? '',
+    supplier: bill?.supplier ?? '',
+    invoiceId: record.invoiceId ?? '',
+    paymentId: record.paymentId ?? '',
+    via: record.via,
+    at: new Date().toISOString(),
+    tries: 0,
+  });
+  saveCollection(NOTICES, items);
+  void flushLineNotices();
+}
+
+let flushing: Promise<void> | null = null;
+/** Send whatever is waiting, oldest first. One flush at a time; never throws. */
+export function flushLineNotices(): Promise<void> {
+  if (!flushing) {
+    flushing = sendPendingNotices()
+      .catch((err) => console.error('[bank] line notices failed', err))
+      .finally(() => { flushing = null; });
+  }
+  return flushing;
+}
+
+async function sendPendingNotices(): Promise<void> {
+  if (!env.CYWORKSPACE_RELAY_URL || !env.CYWORKSPACE_API_KEY) return;
+  // Re-read each round: a notice queued while this flush is running is sent by
+  // it rather than waiting for the next one.
+  for (;;) {
+    const items = loadCollection<LineNotice>(NOTICES);
+    const now = Date.now();
+    const live = items.filter((n) => {
+      const t = Date.parse(n.at);
+      return Number.isFinite(t) && now - t < NOTICE_MAX_AGE_MS;
+    });
+    if (live.length !== items.length) {
+      console.error(`[bank] ${items.length - live.length} line notice(s) to CYWS expired undelivered`);
+      saveCollection(NOTICES, live);
+    }
+    const next = live[0];
+    if (!next) return;
+    const outcome = await sendLineNotice(next);
+    const after = loadCollection<LineNotice>(NOTICES);
+    if (outcome === 'retry') {
+      saveCollection(NOTICES, after.map((n) => (n.id === next.id ? { ...n, tries: n.tries + 1 } : n)));
+      return; // CYWS is down or out of date: the rest wait behind this one, in order
+    }
+    saveCollection(NOTICES, after.filter((n) => n.id !== next.id));
+  }
+}
+
+async function sendLineNotice(n: LineNotice): Promise<'sent' | 'retry' | 'dropped'> {
+  const url = new URL(`${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/bank-recon/used`);
+  url.searchParams.set('tenant_id', n.tenantId);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-API-Key': env.CYWORKSPACE_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        action: n.action,
+        key: n.key,
+        line: {
+          date: n.line.date,
+          amount: n.line.amount,
+          currency: n.line.currency,
+          reference: n.line.reference,
+          description: n.line.description,
+          bank_account_id: n.line.bank_account_id,
+          bank_account_name: n.line.bank_account_name,
+        },
+        bill_id: n.billId,
+        item_id: n.itemId,
+        supplier: n.supplier,
+        invoice_id: n.invoiceId,
+        payment_id: n.paymentId,
+        via: n.via,
+        at: n.at,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) return 'sent';
+    const data: any = await res.json().catch(() => null);
+    // Down, a key that does not match yet, or an older CYWS with no such route
+    // (Express's bare 404): all fixable at CYWS's end, so the notice waits.
+    if (res.status >= 500 || res.status === 401 || (res.status === 404 && !data?.error)) {
+      console.error(`[bank] CYWS did not take a line notice (${res.status}); will retry`, data?.error ?? '');
+      return 'retry';
+    }
+    console.error(`[bank] CYWS refused a line notice (${res.status}); dropped`, data?.error ?? '', data?.message ?? '');
+    return 'dropped';
+  } catch (err) {
+    console.error('[bank] could not reach CYWS with a line notice; will retry', err instanceof Error ? err.message : String(err));
+    return 'retry';
+  }
+}
 function newId(): string {
   return `bl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -422,6 +562,8 @@ export async function recordPaymentForLine(
     by: opts.by,
   };
   saveRecords([...loadRecords(), match]);
+  // The line is spent: CYWS's reconciliation must never propose it again.
+  queueLineNotice(match, 'used');
 
   return { status: 200, body: {
     ok: true,
@@ -514,6 +656,8 @@ export async function undoSettlement(record: BankLineRecord, organisation: Organ
     updateBill(ws, bill.id, { paid: Boolean(record.paidBefore), paymentMethod: record.paymentMethodBefore ?? '' });
   }
   saveRecords(loadRecords().filter((r) => r.id !== record.id));
+  // The payment is gone from Xero, so the line is free again — for CYWS too.
+  queueLineNotice(record, 'released');
   return { status: 200, body: { ok: true, bill: bill ? getBillById(ws, bill.id) : null } };
 }
 
@@ -618,6 +762,10 @@ bankRouter.get('/outstanding', async (req, res) => {
   const scope = requireBankEntity(req, res);
   if (!scope) return;
   const { organisation, ws } = scope;
+  // Anything CYWS has not yet been told about spent lines goes first — the
+  // Bank tab and the inbox both ask here, so a notice missed while CYWS was down
+  // is retried by the next person who looks.
+  void flushLineNotices();
   const out = await fetchOutstandingFromCyws(organisation.tenantId);
   const records = recordsFor(ws);
   if (!out.ok) {

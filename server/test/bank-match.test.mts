@@ -51,6 +51,9 @@ let payments: any[] = [];
 let deletedPayments: string[] = [];
 const paidInvoices = new Set<string>();
 let invoiceSeq = 0;
+// What CYWS is told about spent lines, and a switch to make it unreachable.
+const lineNotices: any[] = [];
+let noticesDown = false;
 const stub = http.createServer((req, res) => {
   const url = new URL(String(req.url), 'http://x');
   const path = decodeURIComponent(url.pathname);
@@ -75,6 +78,13 @@ const stub = http.createServer((req, res) => {
       reports: [{ name: 'DBS Current.xlsx', retrieved_at: '2026-08-26T01:00:00.000Z' }],
       lines: [L1, L2, L3, L4, L5],
     }));
+  }
+  if (path === '/api/webhooks/cybills/bank-recon/used' && req.method === 'POST') {
+    return body((b) => {
+      if (noticesDown) { res.statusCode = 503; return res.end(JSON.stringify({ error: 'unavailable' })); }
+      lineNotices.push({ ...b, tenant: url.searchParams.get('tenant_id'), apiKey: req.headers['x-api-key'] });
+      res.end(JSON.stringify({ ok: true }));
+    });
   }
   if (path.endsWith('/Accounts')) {
     return res.end(JSON.stringify({ Accounts: [
@@ -160,6 +170,10 @@ const check = (name: string, got: unknown, want: unknown) => {
   if (!ok) failures++;
   console.log(`${ok ? 'PASS' : `FAIL got=${JSON.stringify(got)} want=${JSON.stringify(want)}`}  ${name}`);
 };
+const waitFor = async (ready: () => boolean) => {
+  for (let i = 0; i < 100 && !ready(); i++) await new Promise((r) => setTimeout(r, 20));
+  return ready();
+};
 const call = async (path: string, init: RequestInit = {}) => {
   const res = await fetch(`${BASE}${path}`, init);
   return { status: res.status, body: (await res.json().catch(() => ({}))) as any };
@@ -220,10 +234,18 @@ check('the document records the bill and what Xero says of it', [stored.xeroInvo
 check('its own Paid toggle is on, from that account', [stored.paid, stored.paymentMethod], [true, 'DBS Current']);
 check('the match is recorded', [r.body.match.kind, r.body.match.billId, r.body.match.via, r.body.match.publishedHere], ['match', a1.id, 'browser', true]);
 const a1Match = r.body.match;
+await waitFor(() => lineNotices.length >= 1);
+const used1 = lineNotices[0];
+check(
+  'CYWS is told the line is spent, so its reconciliation never proposes it again',
+  [used1?.action, used1?.tenant, used1?.apiKey, used1?.key, used1?.line?.reference, used1?.line?.amount, used1?.payment_id, used1?.invoice_id, used1?.supplier],
+  ['used', 'tenant-1', 'relay-key', l1.key, 'FAST A1 CONSULTANCY INV-9', -109, 'pay-1', 'inv-1', 'A1 Consultancy']
+);
 
 r = await match(a1.id, l1);
 check('the same line again is already settled', [r.status, r.body.already_settled], [200, true]);
 check('and made no second payment', payments.length, 1);
+check('nor a second notice', lineNotices.length, 1);
 
 r = await match(grab.id, l1);
 check('another document against a settled line is refused', [r.status, r.body.error], [409, 'line_already_matched']);
@@ -264,6 +286,12 @@ check('the document is back to awaiting payment, still published', [stored.xeroI
 check('and its Paid toggle back to what it was', [stored.paid, stored.paymentMethod], [false, '']);
 r = await call('/api/bank/outstanding', { headers: ORG });
 check('the match is forgotten', r.body.records.some((x: any) => x.id === a1Match.id), false);
+await waitFor(() => lineNotices.some((n) => n.action === 'released'));
+check(
+  'and CYWS is told the line is free again, after it was told it was spent',
+  lineNotices.filter((n) => n.key === l1.key).map((n) => [n.action, n.payment_id]),
+  [['used', 'pay-1'], ['released', 'pay-1']]
+);
 
 // --- ignoring a line ---------------------------------------------------------------
 r = await call('/api/bank/lines/dismiss', { method: 'POST', headers: ORG, body: JSON.stringify({ line: l3 }) });
@@ -296,12 +324,25 @@ check('another client’s ledger is refused', [r.status, r.body.error], [409, 't
 r = await settle(grab.id, { tenant_id: 'tenant-1' });
 check('a settle with no line is refused', [r.status, r.body.error], [400, 'missing_field']);
 // CYWS's own shape: signed_amount / payment_date, and the contact it made first.
+// CYWS's notice route is down for this one, so the notice has to wait.
+noticesDown = true;
 r = await settle(grab.id, { tenant_id: 'tenant-1', contact_id: 'contact-9', line: { payment_date: L2.date, signed_amount: L2.amount, reference: L2.reference, bank_account_id: 'acct-dbs', bank_account_name: 'DBS Current', bank_account_currency: 'SGD' } });
 check('CYWS settles a receipt: published and paid', [r.status, r.body.ok, r.body.match.via], [200, true, 'cyws']);
 check('the bill names the contact CYWS made, by id', invoicePosts[2]?.Contact, { ContactID: 'contact-9' });
 check('the payment is on the statement date for the receipt’s figure', [payments[3]?.Date, payments[3]?.Amount, payments[3]?.Account], ['2026-08-21', 28.3, { AccountID: 'acct-dbs' }]);
 r = await settle(grab.id, { tenant_id: 'tenant-1', line: L2 });
 check('the run re-pressed finds its settlement rather than paying twice', [r.status, r.body.already_settled, payments.length], [200, true, 4]);
+await new Promise((res) => setTimeout(res, 150));
+const grabKey = l2.key;
+check('a notice CYWS could not take is not lost…', lineNotices.some((n) => n.key === grabKey), false);
+noticesDown = false;
+await call('/api/bank/outstanding', { headers: ORG });
+await waitFor(() => lineNotices.some((n) => n.key === grabKey));
+check(
+  '…it is delivered the next time anybody asks for lines',
+  lineNotices.filter((n) => n.key === grabKey).map((n) => [n.action, n.via]),
+  [['used', 'cyws']]
+);
 r = await call('/api/payments/bank-candidates?tenant_id=tenant-1', { headers: KEY });
 check('and the settled receipt is no longer a candidate', (r.body.candidates ?? []).map((c: any) => c.supplier), ['A1 Consultancy']);
 
@@ -341,6 +382,8 @@ stored = getBillById(book1, af.id)!;
 check('the document is paid in Xero and the pending line is spent', [stored.xeroStatus, stored.bankMatch, stored.paid], ['PAID', undefined, true]);
 r = await call('/api/bank/outstanding', { headers: ORG });
 check('the settlement is on record, as the publish’s', r.body.records.some((x: any) => x.kind === 'match' && x.billId === af.id && x.publishedHere === true), true);
+await waitFor(() => lineNotices.some((n) => n.line?.reference === 'AUTOFILL CO'));
+check('and the publish tells CYWS the autofilled line is spent too', lineNotices.find((n) => n.line?.reference === 'AUTOFILL CO')?.action, 'used');
 
 stub.close();
 if (failures) {
