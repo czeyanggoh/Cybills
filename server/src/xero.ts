@@ -1006,6 +1006,18 @@ export type LineBuild =
   | { kind: 'lines'; lines: Array<Record<string, unknown>> }
   | { kind: 'mismatch'; reason: 'total' | 'tax'; linesTotal: number; linesTax: number };
 
+// A cent per row, at most five: how far a breakdown may sit from its document
+// and still be the same money, because each row is rounded to the cent on its
+// own (208.29 + 208.29 + 208.28 = 624.86 against a stated 624.87). The
+// difference is put on the largest line, so what Xero receives is the
+// document's exact total and tax — the paper's figures, never the rows' rounded
+// ones. Mirrored by roundingToleranceCents in src/lib/bills.js, which decides
+// whether the Publish dialog lets it through.
+export const roundingToleranceCents = (rowCount: number) => Math.min(5, Math.max(1, Number(rowCount) || 0));
+
+// The index of the largest value — where a rounding cent is least visible.
+const largestAt = (xs: number[]) => xs.reduce((best, x, i) => (Math.abs(x) > Math.abs(xs[best]) ? i : best), 0);
+
 export async function perLineItems(
   bill: Bill,
   opts: { accountCode: string; taxType: string; tenantId: string; fallbackDescription: string }
@@ -1017,13 +1029,19 @@ export async function perLineItems(
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
   const totals = rows.map((r) => c(parseAmount(r.total) || parseAmount(r.net) + parseAmount(r.tax)));
   const rowTax = rows.map((r) => c(parseAmount(r.tax)));
+  const tolerance = roundingToleranceCents(rows.length);
   const mismatch = (reason: 'total' | 'tax'): LineBuild => ({
     kind: 'mismatch',
     reason,
     linesTotal: sum(totals) / 100,
     linesTax: sum(rowTax) / 100,
   });
-  if (sum(totals) !== c(parseAmount(bill.total))) return mismatch('total');
+  const billTotal = c(parseAmount(bill.total));
+  const totalOff = billTotal - sum(totals);
+  if (Math.abs(totalOff) > tolerance) return mismatch('total');
+  // Within rounding: the largest line carries the difference, so the lines add
+  // up to the document's total exactly.
+  if (totalOff !== 0) totals[largestAt(totals)] += totalOff;
 
   const [codes, cats, rateTypes] = await Promise.all([
     activeAccountCodes(opts.tenantId),
@@ -1046,7 +1064,14 @@ export async function perLineItems(
   const carriesNoTax = (i: number) => ownType[i] !== null && (ownType[i]!.code === 'NONE' || ownType[i]!.rate === 0);
 
   const billTax = c(parseAmount(bill.tax));
-  let taxes = rowTax;
+  let taxes = [...rowTax];
+  // Rows that carry their own tax within rounding of the document's: the
+  // largest-tax line takes the difference (its net moves the other way, so its
+  // total stands), and Xero gets the document's GST to the cent.
+  const taxOff = billTax - sum(taxes);
+  if (taxOff !== 0 && taxes.some((t) => t !== 0) && billTax !== 0 && Math.abs(taxOff) <= tolerance) {
+    taxes[largestAt(taxes)] += taxOff;
+  }
   if (sum(taxes) !== billTax) {
     // Only the "document states one GST figure" case is recoverable. Rows that
     // carry SOME tax but not the bill's are a disagreement, not a gap.

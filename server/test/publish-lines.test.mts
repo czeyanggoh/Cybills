@@ -85,6 +85,27 @@ const taxOff = await built(bill({ total: '218', tax: '18', lineItems: [row({ tot
 check('per-row tax that disagrees -> mismatch', [taxOff.kind, (taxOff as any).reason], ['mismatch', 'tax']);
 check('tax mismatch reports the rows\u2019 tax', (taxOff as any).linesTax, 14);
 
+// 6b) A cent of rounding is not a contradiction. The C.K. Tang invoice: three
+//     rows each rounded to the cent carry 624.86 of GST against a stated 624.87.
+//     It posts \u2014 and Xero gets the DOCUMENT's figures, not the rows' rounded ones.
+lines = await linesOf(bill({ total: '7567.85', tax: '624.87', lineItems: [
+  row({ total: '2522.62', net: '2314.33', tax: '208.29' }),
+  row({ total: '2522.62', net: '2314.33', tax: '208.29' }),
+  row({ total: '2522.61', net: '2314.33', tax: '208.28' }),
+] }));
+check('a cent of tax rounding still posts as lines', lines?.length, 3);
+check('\u2026with the document\u2019s exact tax', sum(lines, 'TaxAmount'), 624.87);
+check('\u2026and its exact total', Math.round((sum(lines, 'UnitAmount') + sum(lines, 'TaxAmount')) * 100) / 100, 7567.85);
+
+lines = await linesOf(bill({ total: '109.01', tax: '9', lineItems: [row({ total: '60' }), row({ total: '49' })] }));
+check('a cent of total rounding still posts', lines?.length, 2);
+check('\u2026and adds up to the document to the cent', Math.round((sum(lines, 'UnitAmount') + sum(lines, 'TaxAmount')) * 100) / 100, 109.01);
+
+const wide = await built(bill({ total: '7567.85', tax: '625.07', lineItems: [
+  row({ total: '2522.62', tax: '208.29' }), row({ total: '2522.62', tax: '208.29' }), row({ total: '2522.61', tax: '208.28' }),
+] }));
+check('twenty cents is not rounding: still refused', [wide.kind, (wide as any).reason], ['mismatch', 'tax']);
+
 // 7) Accounts: a line's own category is used when Xero has it, else the
 //    document's chosen account — never a code Xero would reject.
 lines = await linesOf(bill({ total: '200', lineItems: [row({ total: '100', category: '313A - Outlet Rental' }), row({ total: '100', category: '999 - Gone' })] }));

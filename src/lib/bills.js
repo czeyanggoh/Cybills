@@ -221,6 +221,15 @@ export async function fetchExtractLines(imageBase64, mediaType, accounts) {
 // single stated GST figure is apportioned across them. This is here so the
 // publish dialog can say which of the two will happen BEFORE anyone presses the
 // button; a bill quietly losing its breakdown is the surprise worth avoiding.
+// How far a breakdown may sit from its own document and still be the same
+// money: a cent per row, at most five. Each row's figures are rounded to the
+// cent on their own, so three rows printed as 208.29 / 208.29 / 208.28 add up to
+// 624.86 against a stated GST of 624.87 — rounding, not a contradiction. Anything
+// wider is still refused. Mirrored by roundingToleranceCents in server/src/xero.ts,
+// which puts the difference on the largest line so what Xero receives is the
+// document's exact total and tax.
+export const roundingToleranceCents = (rowCount) => Math.min(5, Math.max(1, Number(rowCount) || 0));
+
 export function lineItemsPostable(lineItems, total, tax) {
   const rows = Array.isArray(lineItems) ? lineItems : [];
   const c = (v) => Math.round((Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0) * 100);
@@ -228,20 +237,31 @@ export function lineItemsPostable(lineItems, total, tax) {
   const billTotal = c(total);
   const billTax = c(tax);
   const rowTax = rows.reduce((t, r) => t + c(r.tax), 0);
+  const tolerance = roundingToleranceCents(rows.length);
   const out = {
     rows: rows.length,
     linesTotal: linesTotal / 100,
     linesTax: rowTax / 100,
     outBy: (billTotal - linesTotal) / 100,
     hasProjects: rows.some((r) => String(r.project || '').trim() || String(r.project2 || '').trim()),
+    // The rounding absorbed on the largest line, when there is any — signed,
+    // document minus rows, so the dialog can say how much.
+    roundingTotal: 0,
+    roundingTax: 0,
     postable: false,
     reason: '',
   };
   if (!rows.length) return { ...out, reason: 'no-rows' };
-  if (linesTotal !== billTotal) return { ...out, reason: 'total' };
-  // Rows carrying SOME tax that isn't the document's is a disagreement, not a
-  // gap to fill — only "the document states one GST figure" is recoverable.
-  if (rowTax !== billTax && (rowTax !== 0 || billTax === 0)) return { ...out, reason: 'tax' };
+  if (Math.abs(billTotal - linesTotal) > tolerance) return { ...out, reason: 'total' };
+  out.roundingTotal = (billTotal - linesTotal) / 100;
+  if (rowTax !== billTax) {
+    // Rows carrying no tax against one stated GST figure: shared across them at
+    // publish. Rows carrying tax within rounding of the document's: the
+    // difference goes on the largest line. Anything else is a disagreement.
+    if (rowTax === 0 && billTax !== 0) return { ...out, postable: true };
+    if (billTax === 0 || Math.abs(billTax - rowTax) > tolerance) return { ...out, reason: 'tax' };
+    out.roundingTax = (billTax - rowTax) / 100;
+  }
   return { ...out, postable: true };
 }
 

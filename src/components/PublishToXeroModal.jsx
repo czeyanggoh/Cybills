@@ -386,6 +386,13 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                   <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                     As <span className="font-medium text-foreground">{lines.rows} line items</span>, each with its own
                     account{lines.hasProjects ? ' and project' : ''} — they add up to the document&rsquo;s total.
+                    {(lines.roundingTax || lines.roundingTotal) ? (
+                      <>
+                        {' '}The rows are {money(Math.abs(lines.roundingTax || lines.roundingTotal))} off by rounding, so the
+                        difference goes on the largest line and Xero gets this document&rsquo;s exact{' '}
+                        {lines.roundingTax ? 'tax' : 'total'}.
+                      </>
+                    ) : null}
                   </p>
                 ) : (
                   <p className="rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-xs text-amber-800">

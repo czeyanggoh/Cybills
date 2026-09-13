@@ -299,7 +299,14 @@ line — a nicer breakdown is never worth changing a published total. Line items
 that CONTRADICT the document (they don't add up to its total, or their tax
 doesn't add up to its tax) are refused outright, 422, in the dialog and in the
 API: a breakdown that disagrees with its own paper is a mistake to fix, not to
-post around. Covered by `npm test` in `server/`.
+post around. ROUNDING is not a contradiction: each row is rounded to the cent on
+its own, so three rows can carry 624.86 of GST against a stated 624.87. A cent
+per row, at most five (`roundingToleranceCents`, in `src/lib/bills.js` for the
+dialog and `server/src/xero.ts` for the post), is accepted on the total and on
+the tax, and the difference is put on the LARGEST line — for tax its net moves
+the other way, so its total stands — so what Xero receives is the document's
+exact total and GST, never the rows' rounded sum. The dialog says how much.
+Covered by `npm test` in `server/`.
 
 **A read outlives the page that started it.** Reading takes ten to thirty
 seconds and a reviewer moves on to the next document rather than watching it, so
