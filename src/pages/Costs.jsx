@@ -1439,10 +1439,21 @@ export default function Costs() {
     // to refuse — but publishing it here claims THIS client's input tax on
     // somebody else's supply, and nothing else in this dialog would say so.
     const misfiled = targets.filter((d) => d.entityCheck?.status === 'mismatch');
+    // The same note the single Publish dialog gives: a bank-matched bill has its
+    // payment recorded the moment it is posted, and is posted Approved whatever
+    // status is set, because Xero refuses a payment on anything less. A credit
+    // note carries no payment (postBillToXero applies it to ACCPAY only).
+    const bankMatched = targets.filter((d) => d.bankMatch && !isCreditNote(d));
     if (
       !window.confirm(
         `Publish ${targets.length} document(s) to Xero as ${publishStatusLabel(publishStatus).toLowerCase()} bills?\n\n` +
           'This writes to the live ledger and finishes each document — it archives, and can no longer go on an expense claim.' +
+          (bankMatched.length
+            ? `\n\nPayment will be applied to ${bankMatched.length} of them` +
+              ` (${bankMatched.slice(0, 3).map((d) => `${d.supplier || 'Unknown supplier'} ${d.bankMatch.currency} ${Math.abs(Number(d.bankMatch.amount) || 0).toFixed(2)} from ${d.bankMatch.bankAccountName || 'the bank account'} on ${d.bankMatch.date}`).join('; ')}` +
+              `${bankMatched.length > 3 ? '; …' : ''}).` +
+              ` ${bankMatched.length === 1 ? 'It is' : 'They are'} posted Approved and then paid, so ${bankMatched.length === 1 ? 'it ends' : 'they end'} up Paid in Xero and the statement line${bankMatched.length === 1 ? '' : 's'} reconcile.`
+            : '') +
           (misfiled.length
             ? `\n\n${misfiled.length} of them ${misfiled.length === 1 ? 'is' : 'are'} billed to another company` +
               ` (${misfiled.slice(0, 3).map((d) => d.entityCheck.billedTo).join(', ')}).` +
@@ -1486,7 +1497,7 @@ export default function Costs() {
     setRunning('');
     setSelected(new Set());
     setMergeNote(
-      `Published ${done} document${done === 1 ? '' : 's'} to Xero as draft bills.` +
+      `Published ${done} document${done === 1 ? '' : 's'} to Xero as ${publishStatusLabel(publishStatus).toLowerCase()} bills.` +
         (failed.length ? ` ${failed.length} could not be published (${failed.slice(0, 3).join(', ')}).` : '') +
         (skipped.published ? ` ${skipped.published} already published.` : '') +
         (skipped.claimed ? ` ${skipped.claimed} on an expense claim.` : '') +
