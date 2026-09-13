@@ -27,7 +27,7 @@ import ComboSelect from '@/components/ComboSelect';
 // figures have since been corrected here. They ask the same questions — account
 // code, tax code, date — and the difference is only whether the answer creates a
 // bill or restates one, so a second dialog would be the same form twice, drifting.
-export default function PublishToXeroModal({ open, onClose, bill, onPublished, mode = 'publish' }) {
+export default function PublishToXeroModal({ open, onClose, bill, onPublished, onNext, mode = 'publish' }) {
   const updating = mode === 'update';
   const { data: organisations = [] } = useOrganisations();
   const [organisationId, setOrganisationId] = useState('');
@@ -308,13 +308,35 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
                   Open in Xero <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               ) : null}
-              <button
-                type="button"
-                onClick={onClose}
-                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-              >
-                Done
-              </button>
+              {/* After a first publish the reviewer chooses: stay on the bill they
+                  just posted, or carry on down the list. Closing the dialog is
+                  always "stay" — nothing moves the page unless asked. */}
+              {onNext && !updating ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted"
+                  >
+                    Back to this document
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { onClose?.(); onNext(); }}
+                    className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                  >
+                    Next document
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                >
+                  Done
+                </button>
+              )}
             </div>
           </div>
         ) : (

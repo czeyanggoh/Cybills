@@ -1286,11 +1286,14 @@ export default function CostDetail() {
     }
   };
 
+  // The page takes the published document back and STAYS on it. Moving on the
+  // instant the publish succeeded put the next document under the success
+  // dialog, so closing it left the reviewer somewhere else with no way back to
+  // the bill they had just posted. The dialog now offers both: Back to this
+  // document, or Next document (onNext below).
   const onPublished = ({ bill }) => {
     if (bill) setPersisted(billToDoc({ ...bill, hasFile: Boolean(bill.storageKey) }));
     notifyBillsChanged();
-    // Move on to the next inbox item once the publish dialog reports success.
-    goToNextInbox();
   };
 
   // Grab the current receipt's bytes (so the split's new item shares the image).
@@ -2823,6 +2826,9 @@ export default function CostDetail() {
         onClose={() => setPublishOpen(false)}
         bill={{ id: doc.id, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType, bankMatch: doc.bankMatch }}
         onPublished={onPublished}
+        // A first publish finishes the document, so moving on is offered; a
+        // correction sent to an existing bill is not, which is just Done.
+        onNext={publishMode === 'publish' ? goToNextInbox : undefined}
         mode={publishMode}
       />
 
