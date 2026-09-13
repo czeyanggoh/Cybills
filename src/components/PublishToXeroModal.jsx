@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { X, ChevronDown, CheckCircle2 } from 'lucide-react';
+import { X, ChevronDown, CheckCircle2, ExternalLink } from 'lucide-react';
+import { xeroBillUrl } from '@/lib/autoPublish';
 import {
   useOrganisations,
   getActiveOrganisationId,
@@ -7,6 +8,7 @@ import {
   fetchXeroTaxRates,
   publishBillToXero,
   updateBillInXero,
+  useXeroShortCode,
 } from '@/lib/organisations';
 import { lineItemsPostable } from '@/lib/bills';
 import { isCreditNote, totalOk } from '@/lib/readiness';
@@ -52,6 +54,20 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
   const [rebilled, setRebilled] = useState(null);
   // The bank payment recorded from the inbox's Autofill, or why it was not.
   const [bankPayment, setBankPayment] = useState(null);
+  // Xero's short code for the ledger, so "Open in Xero" is a deep link that
+  // opens the right organisation rather than whichever one the browser last had.
+  const xeroShortCode = useXeroShortCode();
+
+  // Escape closes the dialog, at any step — once the bill is posted there is
+  // nothing left to lose by closing, and before that the form is still here.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
   // A company that isn't GST-registered publishes everything as No Tax, whatever
   // the bill still carries — the last gate before a stale code reaches Xero.
   const gstRegistered = useGstRegistered();
@@ -291,13 +307,25 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
                 “Send file to Xero” on the document, or attach it by hand in Xero.
               </p>
             )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="mt-2 inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              Done
-            </button>
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+              {done.invoiceId ? (
+                <a
+                  href={xeroBillUrl(done.invoiceId, xeroShortCode, done.docType)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted"
+                >
+                  Open in Xero <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              ) : null}
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Done
+              </button>
+            </div>
           </div>
         ) : (
           <>
