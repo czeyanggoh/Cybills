@@ -25,7 +25,7 @@ import {
   postingCodesFrom,
   taxRatesForOrg,
 } from './xero.js';
-import { bankRules, cardFeeRules, readLine, recordsFor, settleBillAgainstLine } from './bankMatch.js';
+import { bankRules, cardFeeRules, readLine, recordsFor, repairStaleMatches, settleBillAgainstLine } from './bankMatch.js';
 
 // Payables: the half of a document's life that happens in CYWorkspace.
 //
@@ -491,6 +491,9 @@ paymentsRouter.get('/bank-candidates', async (req, res) => {
       .map((r: any) => ({ bank_account: String(r?.bankAccount ?? '').trim(), percent: Number(String(r?.percent ?? '').replace(/[^0-9.]/g, '')), account: String(r?.accountCode ?? '').trim() }))
       .filter((r) => r.bank_account && r.percent > 0 && r.account)
       .map(({ bank_account, percent }) => ({ bank_account, percent }));
+    // A stale match (its document no longer linked to the bill it paid) must not
+    // keep that document out of the list, nor its line spent.
+    repairStaleMatches(ws);
     const settled = new Set(recordsFor(ws).filter((r) => r.kind === 'match').map((r) => r.billId));
     const mine = listBills(ws).filter((b) => rules.matchable(b) && !settled.has(b.id));
     if (!mine.length) continue;

@@ -170,7 +170,7 @@ const stub = http.createServer((req, res) => {
 await new Promise<void>((r) => stub.listen(4655, '127.0.0.1', r));
 process.env.CYWORKSPACE_RELAY_URL = 'http://127.0.0.1:4655';
 
-const { insertBill, getBillById } = await import('../src/store.ts');
+const { insertBill, getBillById, clearBillPosted } = await import('../src/store.ts');
 const { dataScopeForOrg } = await import('../src/organisations.ts');
 await import('../src/index.ts');
 await new Promise((r) => setTimeout(r, 200));
@@ -460,6 +460,27 @@ check('and the publish tells CYWS the autofilled line is spent too', lineNotices
   check('and the match on it is forgotten, so the line is outstanding again', r.body.records.some((x: any) => x.kind === 'match' && x.billId === canva.id), false);
   const freed = await waitFor(() => lineNotices.some((n) => n.action === 'released' && n.line?.reference === UOB.reference));
   check('and CYWS is told the line is free', freed, true);
+}
+
+// --- a stale match repairs itself -------------------------------------------------
+// A document whose Xero link was cleared BEFORE clearing forgot its matches: the
+// record outlived the bill, held the line as settled, and nothing could release
+// it. Reading the lines releases it.
+{
+  const stale = bill({ supplier: 'Stale Co', invoiceNumber: 'ST-1', category: '493 - Travel - National', taxRate: 'No Tax', total: '33', tax: '0', date: '2026-08-27' });
+  const STALE = { date: '2026-08-28', amount: -33, currency: 'SGD', reference: 'STALE CO ST-1', description: '', bank_account_id: 'acct-dbs', bank_account_name: 'DBS Current' };
+  r = await match(stale.id, STALE);
+  check('settled', [r.status, r.body.ok], [200, true]);
+  // The old road: the link cleared in the store, with no bank-match cleanup.
+  clearBillPosted(book1, stale.id);
+  r = await call('/api/bank/outstanding', { headers: ORG });
+  check('reading the lines releases the match whose bill is gone', r.body.records.some((x: any) => x.kind === 'match' && x.billId === stale.id), false);
+  const staleDoc = getBillById(book1, stale.id)!;
+  check('and puts the document’s Paid back, since the match was what set it', [staleDoc.paid, staleDoc.paymentMethod], [false, '']);
+  const released = await waitFor(() => lineNotices.some((n) => n.action === 'released' && n.line?.reference === STALE.reference));
+  check('and tells CYWS the line is free', released, true);
+  r = await call('/api/bank/outstanding', { headers: ORG });
+  check('the other matches stand', r.body.records.filter((x: any) => x.kind === 'match').length >= 1, true);
 }
 
 stub.close();

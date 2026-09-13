@@ -2503,7 +2503,14 @@ bank matches on that document (`forgetMatchesForBill`): the match record used to
 outlive the bill it paid, so the statement line still read as settled on the Bank
 tab and in the inbox, and CYWS still held it as spent. The document's Paid and
 payment method go back to what they were before the match, and CYWS is sent a
-`released` notice. Nothing goes to Xero: clearing the link is local.
+`released` notice. Nothing goes to Xero: clearing the link is local. The
+matches that went stale BEFORE that existed — and any other way a document can
+lose its bill (deleted, or published again as a different bill) — repair
+themselves: `repairStaleMatches` runs wherever the records are read (the lines
+route and CYWS's `bank-candidates`) and releases a match whose document is gone,
+unlinked, or linked to a different Xero bill than the one the match paid. It
+puts Paid and the payment method back only while they still say what the match
+set, so a person's later change is kept.
 
 **And a match says WHY.** Every firm match used to read "Names this supplier",
 including the two kinds that name nothing (the document's number in the bank

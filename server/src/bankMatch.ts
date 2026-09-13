@@ -778,6 +778,45 @@ export function forgetMatchesForBill(ws: string, billId: string): number {
 }
 
 /**
+ * Repair matches that no longer describe anything: the document is gone, or it
+ * is no longer linked to the Xero bill the match paid (its link was cleared
+ * before Clear Xero link forgot matches, or it has since been published again
+ * as a different bill). Such a record held the statement line as settled —
+ * on the Bank tab, in the inbox, and at CYWS — with no bill behind it, and no
+ * button could release it: the document offered no Clear link any more, and
+ * Undo tries to delete a payment Xero no longer has.
+ *
+ * Run wherever the records are read (the lines route, CYWS's candidates), so a
+ * stale match clears itself the next time anybody looks. Nothing goes to Xero.
+ * The document's Paid and payment method are put back only while they still
+ * say what the match set — a person who has changed them since keeps their
+ * change.
+ */
+export function repairStaleMatches(ws: string): number {
+  const all = loadRecords();
+  const stale = all.filter((r) => {
+    if (r.orgId !== ws || r.kind !== 'match') return false;
+    const bill = r.billId ? getBillById(ws, r.billId) : null;
+    if (!bill) return true;
+    if (!bill.xeroInvoiceId) return true;
+    return Boolean(r.invoiceId) && bill.xeroInvoiceId !== r.invoiceId;
+  });
+  if (!stale.length) return 0;
+  saveRecords(all.filter((r) => !stale.includes(r)));
+  for (const r of stale) {
+    const bill = r.billId ? getBillById(ws, r.billId) : null;
+    const method = String(bill?.paymentMethod ?? '');
+    const untouched = method === String(r.line?.bank_account_name ?? '') || method === String(r.paymentMethodBefore ?? '');
+    if (bill && bill.paid && untouched) {
+      updateBill(ws, bill.id, { paid: Boolean(r.paidBefore), paymentMethod: String(r.paymentMethodBefore ?? '') });
+    }
+    queueLineNotice(r, 'released');
+  }
+  console.log(`[bank] released ${stale.length} stale match(es) in ${ws}: their documents are no longer linked to the bill the match paid`);
+  return stale.length;
+}
+
+/**
  * Undo a settlement: delete the payment in Xero, record what the bill says
  * now, put the document's Paid toggle back, and forget the match. The bill
  * stays published — publishing is not undone by unmatching, and the line goes
@@ -929,6 +968,9 @@ bankRouter.get('/outstanding', async (req, res) => {
   // Anything CYWS has not yet been told about spent lines goes first — the
   // Bank tab and the inbox both ask here, so a notice missed while CYWS was down
   // is retried by the next person who looks.
+  // A match whose document is no longer linked to the bill it paid is released
+  // before the records are read, so the line shows as outstanding again.
+  repairStaleMatches(ws);
   void flushLineNotices();
   const out = await fetchOutstandingFromCyws(organisation.tenantId);
   const records = recordsFor(ws);
