@@ -372,6 +372,7 @@ export function billToDoc(b) {
     paysBillsAuto: Boolean(b.paysBillsAuto),
     customer: b.customer || '',
     project: b.project || '',
+    project2: b.project2 || '',
     cardLast4: b.cardLast4 || '',
     // A Mileage document's own two figures; its total is derived from them
     // (src/lib/mileage.js). Zero on every ordinary document.

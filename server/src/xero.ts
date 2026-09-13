@@ -1072,11 +1072,11 @@ export async function perLineItems(
       TaxType: ownType[i]?.code || opts.taxType,
       TaxAmount: taxes[i] / 100,
     };
-    // The line's own projects, falling back to the document's for the first
-    // category — a row that says nothing is still part of this bill.
+    // The line's own projects, falling back to the document's in each category —
+    // a row that says nothing is still part of this bill.
     const tracking = trackingAcross(cats, [
       String(row.project ?? '').trim() || String(bill.project ?? ''),
-      String(row.project2 ?? ''),
+      String(row.project2 ?? '').trim() || String(bill.project2 ?? ''),
     ]);
     if (tracking.length) line.Tracking = tracking;
     return line;
@@ -1188,10 +1188,16 @@ async function buildBillInvoice(
     TaxType: opts.taxType,
     TaxAmount: tax,
   };
-  // Tag the line with the doc's project (PIC tracking category) when set.
-  if (bill.project) {
-    const tracking = trackingFor(await firstTrackingCategory(organisation.tenantId), bill.project);
-    if (tracking) line.Tracking = tracking;
+  // Tag the line with the doc's options in BOTH tracking categories — the first
+  // ("Outlets") and the second ("Staff") — each kept only when it is a live
+  // option of its own category. The second used to exist only on line items, so
+  // a single-total document had nowhere to say who a cost was for.
+  if (bill.project || bill.project2) {
+    const tracking = trackingAcross(await trackingCategories(organisation.tenantId), [
+      String(bill.project ?? ''),
+      String(bill.project2 ?? ''),
+    ]);
+    if (tracking.length) line.Tracking = tracking;
   }
 
   // A bill with its own line items posts as those lines — each with its own

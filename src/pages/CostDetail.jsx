@@ -228,6 +228,7 @@ function initialData(doc) {
     mileageRate: doc.mileageRate ? String(doc.mileageRate) : '',
     customer: doc.customer ?? '',
     project: doc.project ?? '',
+    project2: doc.project2 ?? '',
     projectReason: doc.projectReason ?? '',
     note: doc.note ?? '',
     dueDate: doc.dueDate ?? '',
@@ -653,7 +654,7 @@ export default function CostDetail() {
     taxRateEdited: 'taxRateEdited',
     description: 'description', user: 'owner',
     paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
-    customer: 'customer', rebillable: 'rebillable', project: 'project', projectReason: 'projectReason', cardLast4: 'cardLast4',
+    customer: 'customer', rebillable: 'rebillable', project: 'project', project2: 'project2', projectReason: 'projectReason', cardLast4: 'cardLast4',
     dueDate: 'dueDate', distanceKm: 'distanceKm', mileageRate: 'mileageRate',
   };
   // Naming the supplier by hand applies that supplier's standing rule.
@@ -1063,6 +1064,7 @@ export default function CostDetail() {
           paid: data.paid,
           customer: data.customer,
           project: data.project,
+          project2: data.project2,
           projectReason: data.projectReason,
           lineItems: data.lineItems,
         });
@@ -2225,6 +2227,15 @@ export default function CostDetail() {
                   className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </Field>
+              {/* The org's SECOND tracking category ("Staff"), for the whole
+                  document. It used to exist only per line item, so a document
+                  with one total had nowhere to say it. Offered only where the
+                  linked Xero org actually has a second category. */}
+              {project2Options.length > 0 && (
+                <Field label={singular(projectLabels.project2)}>
+                  <ComboSelect value={data.project2 || ''} options={project2Options} onChange={(v) => set('project2', v)} />
+                </Field>
+              )}
               <Field label="Description">
                 <textarea
                   rows={2}

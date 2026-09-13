@@ -5,7 +5,7 @@ import { addToList, removeFromList, renameInList, setListVisible, setMetaField, 
 import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, useTargetAccounts, updateXeroCategoryDescription, getActiveOrganisationId, isStandaloneOrg, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useCategoryAccounts, setCategoryAccount } from '@/lib/categoryAccounts';
-import { useProjectLabels, setProjectLabels, DEFAULT_PROJECT_LABELS, singular } from '@/lib/projectLabels';
+import { useProjectLabels, useProjectLabelDefaults, setProjectLabels, singular } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import { useAutoSave } from '@/lib/useAutoSave';
 import SaveStatus from '@/components/SaveStatus';
@@ -517,14 +517,18 @@ function ProjectsTab({ index, bridge, label }) {
 // the API, in the CSV headers and in the Xero tracking category it posts to.
 function ListNameField({ index, label }) {
   const key = index === 0 ? 'project' : 'project2';
-  const fallback = index === 0 ? DEFAULT_PROJECT_LABELS.project : DEFAULT_PROJECT_LABELS.project2;
+  // The Xero tracking category's own name ("Outlets"), else the plain default.
+  const defaults = useProjectLabelDefaults();
+  const fallback = defaults[key];
   const [value, setValue] = useState(label);
   const ref = useRef(null);
   useEffect(() => { setValue(label); }, [label]);
   const commit = () => {
     const next = value.trim() || fallback;
     setValue(next);
-    if (next !== label) setProjectLabels({ [key]: next });
+    // Blank, or the Xero name itself, stores nothing — the list then keeps
+    // following Xero if the category is renamed there.
+    if (next !== label) setProjectLabels({ [key]: value.trim() }, defaults);
   };
   return (
     <label className="mb-4 flex flex-wrap items-center gap-3 text-sm">

@@ -148,6 +148,10 @@ export type Bill = {
   };
   customer?: string; // Xero customer contact the cost is allocated to
   project?: string; // Xero tracking option (project) the cost is allocated to
+  // The option of the org's SECOND tracking category ("Staff", say), set by hand.
+  // Posted beside `project` on a single-line bill, and the fallback for a line
+  // item that names none of its own.
+  project2?: string;
   cardLast4?: string; // last 4 digits of the payment card (a merge-match signal)
   // A Mileage document's own two figures: the distance driven, read off the
   // map route / odometer / log it is a record of, and the rate per km it is
@@ -994,6 +998,7 @@ const EDITABLE: (keyof Bill)[] = [
   'customer',
   'rebillable',
   'project',
+  'project2',
   'cardLast4',
   'distanceKm',
   'mileageRate',

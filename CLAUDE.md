@@ -281,7 +281,14 @@ READ per line: `extract-lines` is given the org's project list and asks which
 one each row is for, taken from what the row names or from the section heading
 above it (one laundry invoice bills Tangs, Vivo City and Four Seasons in three
 blocks — every row on the document's single project would throw that away).
-`project2` is set by hand. On publish,
+`project2` is set by hand, per line and — since a single-total document had
+nowhere to say it — on the document itself (Allocation, shown where the org has
+a second category), posted beside `project` on a one-line bill and used as the
+fallback for a line naming none. What the two lists are CALLED defaults to the
+tracking categories' own names in Xero ("Outlets", "Staff"), not "Projects"
+(`useProjectLabelDefaults`, `projectLabels.js`); a typed name still wins, and a
+stored generic "Projects" is read as nothing, because the first version saved
+the defaults whenever either label was renamed. On publish,
 `perLineItems` (`xero.ts`) posts those rows as the Xero bill's line items
 instead of one summary line, each with its own account code and tracking. It
 does so ONLY when the rows are provably the same money as the document: they

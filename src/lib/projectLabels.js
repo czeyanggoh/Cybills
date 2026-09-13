@@ -1,50 +1,86 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { blobStore } from '@/lib/blobStore';
-import { ORGANISATION_EVENT } from '@/lib/organisations';
+import { ORGANISATION_EVENT, getActiveOrganisationId, useOrganisations, useXeroTracking } from '@/lib/organisations';
 
 // What THIS entity calls its two project lists.
 //
-// "Projects" is Xero's word for a tracking category, and for an entity linked to
-// Xero it is the right one — the list is Xero's and so is the name. A BRIDGE
-// entity has no Xero and no tracking categories, so the list is its own, and so
-// is what it is for: Red Alpha's is a secondment PO number, and calling that
-// column "Projects" made people look for something that isn't there.
+// For an entity linked to Xero the lists ARE its tracking categories, so the
+// default name is the category's own — "Outlets", "Staff" — read live from
+// Xero. Showing "Projects" above a list Xero calls Outlets made people look for
+// a list that isn't there. Only where there is no Xero to ask (a BRIDGE entity,
+// which keeps its own lists) does the plain "Projects" / "Projects 2" stand in.
 //
-// So the label is the entity's to set. The stored FIELD is still `project` /
-// `project2` everywhere — the document, the API, the Xero tracking category it
-// posts to, the CSV headers an accountant imports against. Only the word on
-// screen changes, which is the only part that was ever wrong.
+// The entity may still type its own word over either. The stored FIELD is
+// `project` / `project2` everywhere — the document, the API, the Xero tracking
+// category it posts to, the CSV headers an accountant imports against. Only the
+// word on screen changes.
 const KEY = 'cybills.project-labels.v1';
 export const PROJECT_LABELS_EVENT = 'cybills:project-labels-changed';
 const emit = () => window.dispatchEvent(new Event(PROJECT_LABELS_EVENT));
 // Per entity, and NOT inherited from the workspace-wide blob: this names one
 // entity's own list, so borrowing another company's word for it is worse than
-// falling back to the plain default.
+// falling back to the default.
 const store = blobStore(KEY, {}, emit, { perOrg: true, inheritLegacy: false });
 
 export const DEFAULT_PROJECT_LABELS = { project: 'Projects', project2: 'Projects 2' };
 
-const clean = (v, fallback) => String(v ?? '').trim() || fallback;
-
-export function getProjectLabels() {
+// What was TYPED for each list, or ''. The generic words count as nothing: the
+// first version of this saved the resolved labels whenever either was renamed,
+// so a stored "Projects" is almost always a default somebody never chose — and
+// honouring it would hide the Xero name this is meant to show.
+function typedLabels() {
   const saved = store.get();
   const o = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  const own = (k) => {
+    const v = String(o[k] ?? '').trim();
+    return v === DEFAULT_PROJECT_LABELS[k] ? '' : v;
+  };
+  return { project: own('project'), project2: own('project2') };
+}
+
+export function getProjectLabels(defaults = DEFAULT_PROJECT_LABELS) {
+  const typed = typedLabels();
   return {
-    project: clean(o.project, DEFAULT_PROJECT_LABELS.project),
-    project2: clean(o.project2, DEFAULT_PROJECT_LABELS.project2),
+    project: typed.project || defaults.project || DEFAULT_PROJECT_LABELS.project,
+    project2: typed.project2 || defaults.project2 || DEFAULT_PROJECT_LABELS.project2,
   };
 }
 
-export function setProjectLabels(next) {
-  const now = getProjectLabels();
-  store.set({ ...now, ...next });
+// Save what was typed. Blank — or the default itself — stores nothing, so the
+// list keeps following its Xero name if that is renamed in Xero later.
+export function setProjectLabels(next, defaults = DEFAULT_PROJECT_LABELS) {
+  const typed = typedLabels();
+  for (const [k, v] of Object.entries(next || {})) {
+    const s = String(v ?? '').trim();
+    typed[k] = s === defaults[k] || s === DEFAULT_PROJECT_LABELS[k] ? '' : s;
+  }
+  store.set(typed);
   emit();
 }
 
+// The names the active entity's Xero gives its two tracking categories, else
+// the plain defaults. A bridge entity's tracking call is refused, which leaves
+// the defaults — the right answer for a list it keeps itself.
+export function useProjectLabelDefaults() {
+  const { data: organisations = [] } = useOrganisations();
+  const orgId = (organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0])?.id || '';
+  const { data: categories } = useXeroTracking(orgId);
+  const first = String(categories?.[0]?.name ?? '').trim();
+  const second = String(categories?.[1]?.name ?? '').trim();
+  return useMemo(
+    () => ({
+      project: first || DEFAULT_PROJECT_LABELS.project,
+      project2: second || DEFAULT_PROJECT_LABELS.project2,
+    }),
+    [first, second]
+  );
+}
+
 export function useProjectLabels() {
-  const [labels, setLabels] = useState(getProjectLabels);
+  const defaults = useProjectLabelDefaults();
+  const [version, setVersion] = useState(0);
   useEffect(() => {
-    const sync = () => setLabels(getProjectLabels());
+    const sync = () => setVersion((n) => n + 1);
     window.addEventListener(PROJECT_LABELS_EVENT, sync);
     // Switching entity switches the setting with it, so the labels have to
     // follow — otherwise the page keeps the previous entity's word for its list.
@@ -54,13 +90,14 @@ export function useProjectLabels() {
       window.removeEventListener(ORGANISATION_EVENT, sync);
     };
   }, []);
-  return labels;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => getProjectLabels(defaults), [defaults, version]);
 }
 
 // The singular form, for a field that names ONE of them ("Project" on a
 // document, not "Projects" the list). A label ending in "s" loses it; anything
 // else is left exactly as typed, because guessing at English plurals is how
-// "PO" would become "P".
+// "PO" would become "P". "Outlets" becomes "Outlet"; "Staff" stays "Staff".
 export function singular(label) {
   const s = String(label ?? '').trim();
   return /[^s]s$/.test(s) ? s.slice(0, -1) : s;
