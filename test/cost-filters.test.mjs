@@ -33,7 +33,7 @@ const keep = (rows, picked, ctx) => ids(applyCostFilters(rows, picked, ctx));
 check('two chips each', FILTER_IDS.every((id) => COST_FILTERS[id].options.length === 2), true);
 {
   const rows = [
-    doc({ id: 'a', status: 'ready', tax: '9', taxRate: 'Standard-Rated Purchases', category: 'Meals', note: 'x', paid: true, xeroInvoiceId: 'x1', project: 'Admin', lineItems: [{ description: 'l' }], duplicateOfId: 'b', currency: 'USD' }),
+    doc({ id: 'a', status: 'ready', tax: '9', taxRate: 'Standard-Rated Purchases', category: 'Meals', note: 'x', paid: true, project: 'Admin', lineItems: [{ description: 'l' }], duplicateOfId: 'b', currency: 'USD' }),
     doc({ id: 'b', status: 'new' }),
   ];
   const ctx = { flags: { a: true }, baseCurrency: 'SGD — Singapore, Dollars' };

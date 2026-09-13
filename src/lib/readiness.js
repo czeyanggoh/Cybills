@@ -64,7 +64,10 @@ export function missingFields(d) {
 // 'review' is here for the rows written while it was a status; nothing sets it
 // any more.
 export const INBOX_STATUSES = ['new', 'viewed', 'review', 'ready'];
-export const isInInbox = (d) => INBOX_STATUSES.includes(d?.status);
+// A document already in Xero is never work in the inbox, whatever status it
+// carries — publishing archives it, but a stale save could leave one sitting in
+// Ready, where it inflated the Ready and Costs counts as work still to do.
+export const isInInbox = (d) => INBOX_STATUSES.includes(d?.status) && !d?.xeroInvoiceId;
 
 // The two halves of the inbox, and they are halves: every document waiting on
 // nobody is Ready, every other one is waiting on a person — the reader could
@@ -99,7 +102,8 @@ export const inCostsTab = (d) => isProcessing(d) || isInInbox(d);
 // Every document the book holds that somebody could still act on — inbox and
 // archive together. This is the ARCHIVED tab's "All costs" reach rather than
 // the Costs tab's; the only thing left out is a document still being read.
-export const inCostsList = (d) => isInInbox(d) || isArchived(d);
+// A published document is always in it, whatever status it was left with.
+export const inCostsList = (d) => isInInbox(d) || isArchived(d) || (isPublished(d) && !isMergedAway(d));
 
 // Merged away into another document. The combined document is the cost now, so
 // this is not a document any more and no list shows it — but the ROW survives,
@@ -135,7 +139,7 @@ export const isSetAside = (d) => d?.status === 'archived' && !isPublished(d);
 // find. They are still reachable as the merged document's own provenance
 // (`mergedFrom`, and Unmerge restores them).
 export const inCostsAll = (d) =>
-  inCostsTab(d) || (isArchived(d) && !isSetAside(d) && !isMergedAway(d));
+  inCostsTab(d) || (isArchived(d) && !isSetAside(d) && !isMergedAway(d)) || (isPublished(d) && !isMergedAway(d));
 
 // The working half of that list: nothing has carried this document's figures
 // into Xero yet, so somebody still has to.

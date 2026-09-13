@@ -213,5 +213,16 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
     missingFields({ ...base, type: 'Invoice', total: '-530' }), ['Total']);
 }
 
+// A document already in Xero is never counted as work, even when a stale save
+// left it in Ready — but it is still in the history views.
+{
+  const stuck = doc({ status: 'ready', xeroInvoiceId: 'inv-1' });
+  check('a published document in Ready is not Ready', isReady(stuck), false);
+  check('…nor To review, nor in the inbox', [needsReview(stuck), isInInbox(stuck)], [false, false]);
+  check('…nor in the Costs tab count', inCostsTab(stuck), false);
+  check('…but it is still under All costs', [inCostsAll(stuck), inCostsList(stuck)], [true, true]);
+  check('…and never unpublished', isUnpublished(stuck), false);
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
 process.exit(failures ? 1 : 0);
