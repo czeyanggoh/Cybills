@@ -335,10 +335,10 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
                   payment, and it is the irreversible half. */}
               {!updating && bill?.bankMatch && (
                 <p className="rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900">
-                  <span className="font-medium">Bank match.</span> A payment of {bill.bankMatch.currency}{' '}
+                  <span className="font-medium">Payment will be applied.</span> {bill.bankMatch.currency}{' '}
                   {Math.abs(Number(bill.bankMatch.amount) || 0).toFixed(2)} from {bill.bankMatch.bankAccountName || 'the bank account'} on{' '}
-                  {bill.bankMatch.date} is recorded against the bill as it is published, so the statement line reconciles in Xero. It
-                  publishes as Awaiting payment for that reason, whatever status is picked below.
+                  {bill.bankMatch.date} is recorded against the bill straight after it is posted, so it ends up Paid in Xero
+                  and the statement line reconciles.
                 </p>
               )}
               {/* The paper names somebody else. Said again HERE because this is
@@ -458,15 +458,24 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, m
 
                   <label className="flex items-center gap-3 text-sm">
                     <span className="w-28 shrink-0 text-muted-foreground">{updating ? 'Status' : 'Post as'}</span>
-                    <div className="relative flex-1">
-                      <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectClass}>
-                        {updating && <option value="">Leave as it is</option>}
-                        {PUBLISH_STATUSES.map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    </div>
+                    {/* A bank-matched bill is posted Approved whatever is picked
+                        (Xero refuses a payment on a draft), then paid — so a
+                        dropdown here would offer a choice that does nothing. */}
+                    {!updating && bill?.bankMatch ? (
+                      <span className="flex h-9 flex-1 items-center rounded-md border bg-muted/40 px-3 text-sm">
+                        Approved, then paid from {bill.bankMatch.bankAccountName || 'the matched bank account'}
+                      </span>
+                    ) : (
+                      <div className="relative flex-1">
+                        <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectClass}>
+                          {updating && <option value="">Leave as it is</option>}
+                          {PUBLISH_STATUSES.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      </div>
+                    )}
                   </label>
                 </>
               )}
