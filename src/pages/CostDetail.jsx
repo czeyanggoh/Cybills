@@ -13,6 +13,7 @@ import {
   Info,
   ExternalLink,
   Link2 as LinkIcon,
+  Archive as ArchiveIcon,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -903,11 +904,19 @@ export default function CostDetail() {
     navigate(costPath(next ?? nextId));
   };
 
-  // After an action that finishes with this document (Add to expense claim,
-  // Publish to Xero), jump to the next item still in the Costs inbox so the
-  // reviewer can keep working without going Back each time. Falls back to the
-  // previous item, then to the inbox list when nothing else is left.
+  // After an action that finishes with this document (Archive, Delete, Add to
+  // expense claim, Publish to Xero), jump to the next item so the reviewer can
+  // keep working without going Back each time. The next item in the list they
+  // opened it FROM — the same one Previous / Next walk ("7 / 21") — else the
+  // previous one; only a document opened with no list behind it falls back to
+  // the inbox order, and then to the Costs list when nothing else is left.
   const goToNextInbox = () => {
+    const walkedId = walk.next ?? walk.prev;
+    if (walkedId !== null && walkedId !== undefined && String(walkedId) !== String(id)) {
+      const target = inboxAllDocs.find((d) => String(d.id) === String(walkedId));
+      navigate(costPath(target ?? walkedId));
+      return;
+    }
     const rows = rowsFor(inboxAllDocs, 'inbox');
     const i = rows.findIndex((d) => String(d.id) === String(id));
     const next = i !== -1 ? (rows[i + 1] ?? rows[i - 1]) : rows[0];
@@ -1188,6 +1197,28 @@ export default function CostDetail() {
     await persistStatus('archived');
     goToNextInbox();
   };
+
+  // Archiving finishes with this document too, so it moves on to the next one in
+  // the list rather than dropping the reviewer back at the top of Costs.
+  //
+  // Set aside by hand = archived with no Xero bill of its own. A published
+  // document is archived as well, but its chip is "Open in Xero" and pulling it
+  // back into the inbox would make it look like unpublished work.
+  const setAside = doc?.persisted && doc.status === 'archived' && !doc.xeroInvoiceId;
+  const archiveDoc = async () => {
+    await persistStatus('archived');
+    goToNextInbox();
+  };
+  // Back into the inbox. 'new' rather than 'ready': readiness is derived, so the
+  // server moves a complete document straight on to Ready by itself.
+  const unarchiveDoc = async () => {
+    await persistStatus('new');
+  };
+  const archiveControl = setAside ? (
+    <TopButton onClick={unarchiveDoc} title="Put this document back in the Costs inbox">Unarchive</TopButton>
+  ) : (
+    <TopButton onClick={archiveDoc}>Archive</TopButton>
+  );
 
   // Publish to Xero (persisted bills only — the server posts the SAVED bill,
   // so flush any on-screen edits first, keeping the current workflow status).
@@ -1846,7 +1877,17 @@ export default function CostDetail() {
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        {doc.status === 'ready' ? (
+        {setAside ? (
+          // Said where the status always is. Without it an archived document
+          // wore "Missing: Category" and an Archive button, which reads exactly
+          // like a document nobody had touched.
+          <span
+            title="Set aside in Archived — not in the Costs inbox. Unarchive puts it back."
+            className="inline-flex h-8 items-center gap-1 rounded-md border border-amber-600/40 bg-amber-50 px-3 text-sm text-amber-900"
+          >
+            <ArchiveIcon className="h-4 w-4" /> Archived
+          </span>
+        ) : doc.status === 'ready' ? (
           <span className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm text-foreground">
             <CheckCircle2 className="h-4 w-4" /> In Ready
           </span>
@@ -1951,7 +1992,7 @@ export default function CostDetail() {
         )}
         <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
         {doc.mergedFrom?.length > 0 && <TopButton onClick={doUnmerge}>Unmerge</TopButton>}
-        <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
+        {archiveControl}
         <div className="relative">
           <TopButton onClick={() => setMoveOpen((o) => !o)}>
             Move to <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', moveOpen && 'rotate-180')} />
@@ -2565,7 +2606,7 @@ export default function CostDetail() {
                     Add to expense claim
                   </TopButton>
                 )}
-                <TopButton onClick={() => saveWithStatus('archived')}>Archive</TopButton>
+                {archiveControl}
                 <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
               </div>
             </div>
