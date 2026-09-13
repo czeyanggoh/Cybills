@@ -987,6 +987,10 @@ function Extraction() {
         <Row label="Receipts"><SelectBox value={form.payReceipts} onChange={(v) => set('payReceipts', v)} options={PAID_OPTIONS} /></Row>
         <Row label="Invoices"><SelectBox value={form.payInvoices} onChange={(v) => set('payInvoices', v)} options={PAID_OPTIONS} /></Row>
         <Row label="Credit notes"><SelectBox value={form.payCreditNotes} onChange={(v) => set('payCreditNotes', v)} options={PAID_OPTIONS} /></Row>
+        <p className="text-sm text-muted-foreground">
+          A document typed <span className="font-medium text-foreground">Payment proof</span> — a transfer
+          confirmation, a PayNow screenshot — is always Paid, and codes to No Tax: that is what the paper proves.
+        </p>
       </Card>
 
       <div className="flex items-center justify-end gap-3">

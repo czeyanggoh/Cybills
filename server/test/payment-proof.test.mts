@@ -1,0 +1,166 @@
+// A payment proof is evidence that money was SENT, not a bill for it: typed so,
+// a document is paid and states no tax, on every road it arrives by. Driven over
+// real HTTP against the real server with a stubbed reader, so what is asserted
+// is what the reader is offered and what the store ends up holding.
+import http from 'node:http';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-payment-proof-'));
+process.env.BILLS_DATA_DIR = DATA_DIR;
+process.env.SESSION_SECRET = 'test-session-secret';
+process.env.OPENAI_API_KEY = 'test-key';
+process.env.OPENAI_EXTRACT_MODEL = 'gpt-4o-stub';
+process.env.LLM_PROVIDER = 'openai';
+process.env.ANTHROPIC_API_KEY = '';
+process.env.PORT = '4672';
+
+// --- stub reader -------------------------------------------------------------
+let answer: Record<string, unknown> = {};
+let schemas: any[] = [];
+const stub = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => (body += c));
+  req.on('end', () => {
+    const parsed = JSON.parse(body || '{}');
+    schemas.push(parsed.text?.format?.schema ?? parsed.text?.format ?? null);
+    const out = JSON.stringify(answer);
+    res.setHeader('content-type', 'application/json');
+    res.end(
+      JSON.stringify({
+        id: 'resp_1',
+        object: 'response',
+        status: 'completed',
+        model: 'gpt-4o-stub',
+        output_text: out,
+        output: [{ type: 'message', id: 'msg_1', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: out, annotations: [] }] }],
+        usage: { input_tokens: 100, output_tokens: 50, input_tokens_details: { cached_tokens: 0 } },
+      })
+    );
+  });
+});
+await new Promise<void>((r) => stub.listen(4671, '127.0.0.1', r));
+process.env.OPENAI_BASE_URL = 'http://127.0.0.1:4671';
+
+const { insertBill, getBillById } = await import('../src/store.ts');
+const { dataScopeForOrg } = await import('../src/organisations.ts');
+await import('../src/index.ts');
+await new Promise((r) => setTimeout(r, 200));
+
+const BASE = 'http://127.0.0.1:4672';
+const scope = dataScopeForOrg('');
+
+let failures = 0;
+const check = (name: string, got: unknown, want: unknown) => {
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  if (!ok) failures++;
+  console.log(`${ok ? 'PASS' : `FAIL got=${JSON.stringify(got)} want=${JSON.stringify(want)}`}  ${name}`);
+};
+
+const REASON = 'Payment proof — a transfer or payment confirmation states no tax. Any GST is on the invoice it pays and is claimed there, not here.';
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const baseAnswer = {
+  supplier: 'A1 Consultancy Pte Ltd', date: '2026-08-26', documentType: 'Payment proof', distanceKm: 0, invoiceNumber: 'REF20260826ABC',
+  currency: 'SGD', total: 109, tax: 0, category: 'Uncategorised', categoryReason: 'A transfer to a consultancy.',
+  description: 'Payment to A1 Consultancy, ref 20260826ABC',
+  dueDate: '', period: '', cardLast4: '', baseCurrency: '', baseTotal: 0, baseTax: 0, exchangeRate: 0,
+  supplierGstRegNo: '', taxLabel: '', billedTo: '', billedToRegNo: '', lineItems: [],
+};
+
+const read = async (ans: Record<string, unknown>) => {
+  answer = ans;
+  const res = await fetch(`${BASE}/api/costs/extract`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageBase64: PNG, mediaType: 'image/png', accounts: [{ code: '429', name: 'General Expenses', description: 'Anything else' }] }),
+  });
+  return ((await res.json()) as any)?.data ?? null;
+};
+
+// --- what the reader is offered ----------------------------------------------
+const d = await read(baseAnswer);
+const schema = schemas[0];
+const props = schema?.properties ?? schema?.schema?.properties ?? {};
+check('the reader is offered "Payment proof" as a document type', props.documentType?.enum, ['Receipt', 'Invoice', 'Payment proof', 'Mileage', 'Other']);
+check('and told what one is', String(props.documentType?.description || '').includes('evidence that money was SENT'), true);
+check('a transfer confirmation reads as a payment proof', d?.documentType, 'Payment proof');
+check('with the payee as the supplier', d?.supplier, 'A1 Consultancy Pte Ltd');
+
+// --- the upload road: finalize lands it paid and at No Tax ------------------
+const fresh = () =>
+  insertBill({
+    orgId: scope, kind: 'cost', status: 'processing', supplier: '', invoiceNumber: '', documentType: 'Receipt',
+    currency: 'SGD', date: '', category: '', total: 0, tax: 0, fileHash: `h${Math.random()}`, fileName: 'transfer.png',
+    categoryReason: '', projectReason: '', taxRate: '', taxRateReason: '', description: '', createdBy: '',
+    storageKey: '', contentType: '',
+  } as any);
+const processing = fresh();
+let res = await fetch(`${BASE}/api/costs/bills/${processing.id}/finalize`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  // The browser sends whatever tax the reader made of it; the type overrules.
+  body: JSON.stringify({ ...baseAnswer, tax: 9, checkDuplicates: false }),
+});
+let body = (await res.json()) as any;
+check('finalize marks it paid — that is what the paper proves', body.bill?.paid, true);
+check('and records no tax, whatever the reader made of it', body.bill?.tax, 0);
+check('coded No Tax', body.bill?.taxRate, 'No Tax');
+check('with the reason', body.bill?.taxRateReason, REASON);
+check('the total is the money transferred', body.bill?.total, 109);
+
+// --- the page: typing a receipt as a payment proof ---------------------------
+const patch = async (id: string, fields: Record<string, unknown>) => {
+  const r = await fetch(`${BASE}/api/costs/bills/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  });
+  return ((await r.json()) as any)?.bill;
+};
+const receipt = insertBill({
+  orgId: scope, kind: 'cost', status: 'new', supplier: 'A1 Consultancy Pte Ltd', invoiceNumber: '', documentType: 'Receipt',
+  currency: 'SGD', date: '2026-08-26', category: '429 - General Expenses', total: 109, tax: 9, fileHash: 'h2', fileName: 'r.png',
+  categoryReason: '', projectReason: '', taxRate: 'INPUTY24', taxRateReason: 'read', description: '', createdBy: '',
+  storageKey: '', contentType: '', paid: false, ruleFields: ['taxRate'],
+} as any);
+let b = await patch(receipt.id, { documentType: 'Payment proof' });
+check('typed as a payment proof, a receipt becomes paid', b?.paid, true);
+check('at No Tax', [b?.taxRate, b?.tax], ['No Tax', 0]);
+check('a supplier rule that owned the code no longer does', b?.ruleFields ?? [], []);
+check('the total never moves', b?.total, 109);
+
+b = await patch(receipt.id, { paid: false });
+check('unticking Paid afterwards sticks — the type is not in that write', b?.paid, false);
+
+b = await patch(receipt.id, { supplier: 'A1 Consultancy' });
+check('an ordinary edit leaves it alone', [b?.paid, b?.taxRate], [false, 'No Tax']);
+
+// --- a code somebody picked by hand is theirs ----------------------------------
+const picked = insertBill({
+  orgId: scope, kind: 'cost', status: 'new', supplier: 'A1 Consultancy Pte Ltd', invoiceNumber: '', documentType: 'Receipt',
+  currency: 'SGD', date: '2026-08-26', category: '429 - General Expenses', total: 109, tax: 9, fileHash: 'h3', fileName: 'r.png',
+  categoryReason: '', projectReason: '', taxRate: 'INPUTY24', taxRateReason: 'read', description: '', createdBy: '',
+  storageKey: '', contentType: '',
+} as any);
+b = await patch(picked.id, { documentType: 'Payment proof', taxRate: 'INPUTY24', taxRateEdited: true, taxRateReason: 'INPUTY24 — chosen by hand.', tax: '9' });
+check('a hand-picked code survives the type — only Paid is written', [b?.paid, b?.taxRate, b?.tax], [true, 'INPUTY24', 9]);
+
+// --- a document already in Xero is left as the ledger has it ------------------
+const published = insertBill({
+  orgId: scope, kind: 'cost', status: 'archived', supplier: 'A1 Consultancy Pte Ltd', invoiceNumber: '', documentType: 'Receipt',
+  currency: 'SGD', date: '2026-08-26', category: '429 - General Expenses', total: 109, tax: 9, fileHash: 'h4', fileName: 'r.png',
+  categoryReason: '', projectReason: '', taxRate: 'INPUTY24', taxRateReason: 'read', description: '', createdBy: '',
+  storageKey: '', contentType: '', xeroInvoiceId: 'inv-1', paid: false,
+} as any);
+await patch(published.id, { documentType: 'Payment proof' });
+const after = getBillById(scope, published.id);
+check('a published document keeps its figures — Update in Xero is the road', [after?.paid ?? false, after?.taxRate, after?.tax], [false, 'INPUTY24', 9]);
+
+stub.close();
+if (failures) {
+  console.error(`\n${failures} failure(s)`);
+  process.exit(1);
+}
+console.log('\nAll payment-proof tests passed.');
+process.exit(0);

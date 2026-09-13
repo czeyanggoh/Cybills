@@ -91,7 +91,7 @@ const read = async (ans: Record<string, unknown>) => {
 let d = await read(baseAnswer);
 const schema = schemas[0];
 const props = schema?.properties ?? schema?.schema?.properties ?? {};
-check('the reader is offered "Mileage" as a document type', props.documentType?.enum, ['Receipt', 'Invoice', 'Mileage', 'Other']);
+check('the reader is offered "Mileage" as a document type', props.documentType?.enum, ['Receipt', 'Invoice', 'Payment proof', 'Mileage', 'Other']);
 check('and asked for the distance in km', props.distanceKm?.type, 'number');
 check('a map route reads as a mileage document', d?.documentType, 'Mileage');
 check('carrying its distance', d?.distanceKm, 13);

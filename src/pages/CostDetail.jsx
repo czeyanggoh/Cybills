@@ -55,6 +55,7 @@ import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
 import { useAutoSave } from '@/lib/useAutoSave';
 import { isMileage, mileagePatch, mileageSummary } from '@/lib/mileage';
+import { isPaymentProof, paymentProofPatch } from '@/lib/paymentProof';
 import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { useXeroShortCode } from '@/lib/organisations';
@@ -169,6 +170,7 @@ function ReceiptPreview({ doc, imageUrl, previewType }) {
 const DOC_TYPES = [
   'Receipt',
   'Invoice',
+  'Payment proof',
   'Credit note/refund',
   'Statement/remittance advice',
   'Expense statement',
@@ -851,6 +853,14 @@ export default function CostDetail() {
   // carries, at the entity's rate; switching out of it leaves the figures where
   // they are — the total was real money either way.
   const setType = (value) => {
+    // Typed as a payment proof, the document is paid — that is what the paper
+    // proves — and states no tax, unless a code was picked by hand. The server
+    // applies the same rule to the write (keepPaymentProofInStep).
+    if (isPaymentProof(value)) {
+      const p = paymentProofPatch({ ...data, type: value }, noTaxName);
+      const { baseTax: _baseTax, ...rest } = p;
+      return setMany({ type: value, ...rest, ...(p.tax != null ? { tax: '0.00' } : {}) });
+    }
     if (!isMileage(value)) return set('type', value);
     const p = mileagePatch(mileageDoc(), { type: value }, extractionSettings.mileageRate);
     const patch = { type: value, ...mileageStrings(p) };

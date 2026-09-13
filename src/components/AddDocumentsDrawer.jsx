@@ -39,6 +39,7 @@ import {
 } from '@/lib/extractionSettings';
 import { foldTaxIntoCost } from '@/lib/lineItems';
 import { splitByPrintedRate, linesAgreeWithTotal } from '@/lib/taxRateRules';
+import { paymentProofPatch } from '@/lib/paymentProof';
 import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere, canPublishToXero } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 import { coveringNote } from '@/lib/coveringNote';
@@ -550,6 +551,10 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
         }
       }
       p.paid = defaultPaidFor(settings, cur?.documentType);
+      // A payment proof is paid and states no tax, whatever the reader made of
+      // it and whatever the paid-by-default settings say — the same rule the
+      // page's Type field and the server's writes apply.
+      Object.assign(p, paymentProofPatch({ ...cur, ...p, taxRate: p.taxRate ?? cur?.taxRate }, noTaxRateName(visibleTaxRates)));
       // Due date, in order of what the evidence supports:
       //   1. the date printed on the document (or what its stated terms resolve
       //      to) — the supplier's own answer, so nothing beats it

@@ -94,8 +94,9 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       },
       documentType: {
         type: 'string',
-        enum: ['Receipt', 'Invoice', 'Mileage', 'Other'],
+        enum: ['Receipt', 'Invoice', 'Payment proof', 'Mileage', 'Other'],
         description:
+          '"Payment proof" is evidence that money was SENT rather than a bill for it: a bank transfer confirmation, a PayNow / PayLah / GIRO screenshot, an internet-banking "transfer successful" page, a card-payment notification. The PAYEE is the supplier, the amount transferred is the total, tax is 0 (a transfer states none), and the transaction reference is the document number. A merchant\'s receipt or an invoice stamped PAID is NOT a payment proof — those are a Receipt or an Invoice. ' +
           '"Mileage" is a RECORD OF A JOURNEY rather than a purchase: a map route screenshot (Google Maps "16 min (13 km)", a Waze route, an Apple Maps trip), an odometer photo, a line off a mileage log. Nobody was paid and no amount is printed — the claimant is reimbursed per kilometre afterwards. A taxi, ride-hailing or fuel receipt is NOT mileage: those are purchases with a supplier and a total, so they are a Receipt.',
       },
       distanceKm: {
@@ -287,7 +288,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
 const ReceiptSchema = z.object({
   supplier: z.string(),
   date: z.string(),
-  documentType: z.enum(['Receipt', 'Invoice', 'Mileage', 'Other']),
+  documentType: z.enum(['Receipt', 'Invoice', 'Payment proof', 'Mileage', 'Other']),
   distanceKm: z.number().optional().default(0),
   invoiceNumber: z.string(),
   currency: z.string(),
@@ -784,6 +785,9 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'and where no customer is named at all — a till receipt, a card slip — it must be an empty string rather than a guess taken from elsewhere on the page. ' +
     'Where the document restates its own totals in a SECOND currency for tax purposes — a Singapore GST-registered supplier billing in foreign currency has to show what the supply is worth in SGD — read `baseCurrency`, `baseTotal`, `baseTax` and `exchangeRate` off that block exactly as printed. ' +
     '`total` and `tax` stay in the BILLING currency: the block is the same money said again for the tax authority, never a second charge, so never add the two together. ' +
+    'A PAYMENT PROOF — a bank transfer confirmation, a PayNow / PayLah / GIRO screenshot, an internet-banking "transfer successful" page, a card-payment notification — is evidence that money was sent, not a bill: set `documentType` to "Payment proof", ' +
+    'take the PAYEE (the recipient) as `supplier`, the amount transferred as `total`, 0 as `tax` (a transfer states none — any GST is on the invoice it pays), the transaction reference as `invoiceNumber`, and describe it as a payment ("Payment to A1 Consultancy, ref 20260826ABC"). ' +
+    'A merchant\'s receipt or an invoice stamped PAID is a Receipt or an Invoice, not a payment proof. ' +
     'A MILEAGE record — a map route screenshot, an odometer photo, a mileage log — is a journey, not a purchase: set `documentType` to "Mileage", read `distanceKm` off it, ' +
     'leave `supplier` empty unless a name is actually printed, leave `total` and `tax` at 0 unless an amount is printed, and describe the journey in `description` (origin → destination, e.g. "Drive: Work (ST Engineering Jurong East) → MacRitchie Reservoir Park, 13 km"). ' +
     'The amount is worked out afterwards from the distance at the company\'s rate per km — never invent one. ' +

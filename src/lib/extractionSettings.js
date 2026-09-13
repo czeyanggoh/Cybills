@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { isPaymentProof } from './paymentProof.js';
 import { blobStore } from '@/lib/blobStore';
 
 // Business settings → Extraction. A shared, server-backed settings blob that
@@ -120,8 +121,11 @@ export function useExtractionSettings() {
 
 // The default paid flag for a freshly-added document, by its document type.
 // Credit notes / receipts / invoices each have their own setting; anything else
-// follows the receipts default.
+// follows the receipts default. A PAYMENT PROOF is paid whatever the settings
+// say: the settings are about documents that MAY have been paid, and this one
+// is the proof that it was (src/lib/paymentProof.js).
 export function defaultPaidFor(settings, documentType) {
+  if (isPaymentProof(documentType)) return true;
   const t = String(documentType || '').toLowerCase();
   const pick = t.includes('credit') ? settings.payCreditNotes
     : t.includes('invoice') ? settings.payInvoices

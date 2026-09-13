@@ -886,6 +886,29 @@ prints beside the description on the claim page and its PDF, "13 km × SGD
 `npm test` in `server/` (`test/mileage.test.mts`, over real HTTP with a stubbed
 reader).
 
+**A payment proof is evidence that money was SENT, not a bill for it.** A bank
+transfer confirmation, a PayNow / PayLah / GIRO screenshot, an internet-banking
+"transfer successful" page — what somebody hands in when the invoice went to
+somebody else, or never came. Typed as a Receipt it arrived Not paid by default,
+waiting on a payment that had already happened, with whatever tax the reader
+made of a page that states none. So **Payment proof** is a Type of its own
+(`src/lib/paymentProof.js`, pure, `npm test` at the root, loaded server-side by
+`server/src/paymentProof.ts` the way `mileage.ts` is), and the type says two
+things about the document, applied on every road it arrives by: it is **paid** —
+`defaultPaidFor` says so whatever the Paid-by-default settings say for receipts
+and invoices, since those are about documents that MAY have been paid — and it
+carries **no tax**, coded No Tax under the entity's own name with its reason,
+because a transfer states none and any GST is on the invoice it pays. A code a
+person picked by hand is theirs, as everywhere. The reader is offered the type
+and told the PAYEE is the supplier, the amount transferred the total and the
+reference the document number; a merchant's receipt or an invoice stamped PAID
+is still a Receipt or an Invoice. `keepPaymentProofInStep` runs only on a write
+that SETS the type (finalize, the background read, a PATCH carrying it) so
+unticking Paid afterwards, because the transfer bounced, sticks. It is otherwise
+a cost like any other: if the invoice it pays is also in the book, the duplicate
+check and merge detection are what pair the two. Covered by `npm test` in
+`server/` (`test/payment-proof.test.mts`, over real HTTP with a stubbed reader).
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

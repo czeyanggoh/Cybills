@@ -12,6 +12,7 @@ import { keepMotorVehicleNoTax } from './motorVehicle.js';
 import { insertBill, updateBill, settleProcessing, getBillById, setBillEmailLink, attachFetchedFile } from './store.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
+import { keepPaymentProofInStep } from './paymentProof.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
 import { runExtraction } from './extract.js';
@@ -379,6 +380,9 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     // A mileage record is priced at the entity's rate per km — its total is
     // distance × rate, never a figure the reader found on the paper.
     await keepMileageInStep(ws, realOrgId, getBillById(scope, billId), patch);
+    // A payment proof is paid and states no tax — after the supplier rule, so
+    // a rule's tax code does not claim GST on a transfer confirmation.
+    await keepPaymentProofInStep(getBillById(scope, billId), patch);
     // A motor vehicle expense is No Tax — decided AFTER the supplier rule has
     // laid its category and its tax code over the read, since either can be
     // the half that makes it one, and a rule's code must not claim its GST.

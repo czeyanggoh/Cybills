@@ -35,6 +35,7 @@ import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 import { makeEntityCheck } from './entityCheck.js';
 import { syncWhatsappReaction } from './waReactions.js';
 import { keepMileageInStep } from './mileage.js';
+import { keepPaymentProofInStep } from './paymentProof.js';
 import { channelById } from './waChannels.js';
 import { senderIdentity } from './waSender.js';
 
@@ -759,6 +760,9 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   const explicitStatus = typeof b.status === 'string';
   const orgId = orgIdFor(req);
   await keepMileageInStep(workspaceId(req), orgScope(req), getBillById(orgId, req.params.id), patch);
+  // Typed as a payment proof — the page's Type field, Bulk edit — it is paid
+  // and states no tax; only a write carrying the type is touched.
+  await keepPaymentProofInStep(getBillById(orgId, req.params.id), patch);
   // Moved onto a motor vehicle account — the page's picker, the inline cell,
   // Bulk edit — it is No Tax, unless this very write is a person picking a code.
   await keepMotorVehicleNoTax(getBillById(orgId, req.params.id), patch);
@@ -945,6 +949,8 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   if (b.distanceKm != null) patch.distanceKm = parseAmount(b.distanceKm);
   if (b.mileageRate != null) patch.mileageRate = parseAmount(b.mileageRate);
   await keepMileageInStep(workspaceId(req), orgScope(req), getBillById(orgId, req.params.id), patch);
+  // A payment proof lands paid and at No Tax, whatever the reader made of it.
+  await keepPaymentProofInStep(getBillById(orgId, req.params.id), patch);
 
   const updated = updateBill(orgId, req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'not_found' });
