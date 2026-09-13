@@ -68,6 +68,52 @@ export function amountsAgree(doc, line) {
   return CENTS(mine) === Math.abs(CENTS(line?.amount));
 }
 
+// A CARD FEE the bank adds on top of the purchase. UOB charges 1% on some
+// debit-card spends and takes it in the same statement line, so a Canva receipt
+// of SGD 17.99 clears the bank as 18.17 — never the same money to the cent, and
+// so never matched. An entity says which bank account does it, at what percent,
+// and to which account the fee posts (Business settings → Extraction → Bank
+// match → Card fees), and a line on that account whose amount is EXACTLY the
+// document's plus that percent, rounded to the cent (a cent either way), is the
+// document's payment plus a fee. Nothing is guessed: no rule, no fee match.
+//
+// `rules` are the entity's `cardFeeRules`: { bankAccount, percent, accountCode }.
+// The bank account is matched by the line's account name (or code), and the fee
+// account may be stored as a chart label ("404 - Bank Fees") or a bare code.
+const feeCodeOf = (label) => {
+  const s = String(label ?? '').trim();
+  const m = /^([A-Za-z0-9]*\d[A-Za-z0-9]*)\s*-\s/.exec(s);
+  return m ? m[1] : s;
+};
+
+export function cardFeeRuleFor(line, rules) {
+  const name = String(line?.bank_account_name ?? '').trim().toLowerCase();
+  const code = String(line?.bank_account_code ?? '').trim().toLowerCase();
+  for (const r of rules || []) {
+    const acct = String(r?.bankAccount ?? '').trim().toLowerCase();
+    const percent = Number(String(r?.percent ?? '').replace(/[^0-9.]/g, ''));
+    const accountCode = feeCodeOf(r?.accountCode);
+    if (!acct || !(percent > 0) || !accountCode) continue;
+    if (acct === name || (code && acct === code)) return { percent, accountCode, bankAccount: String(r.bankAccount).trim() };
+  }
+  return null;
+}
+
+// The fee inside this line, when the line is this document's money plus the
+// bank's card fee — { percent, fee, accountCode, bankAccount } — or null.
+export function feeFor(doc, line, rules) {
+  const mine = docAmountFor(doc, line);
+  if (mine == null) return null;
+  const rule = cardFeeRuleFor(line, rules);
+  if (!rule) return null;
+  const docCents = CENTS(mine);
+  const bankCents = Math.abs(CENTS(line?.amount));
+  if (docCents <= 0 || bankCents <= docCents) return null;
+  const expected = Math.round(docCents * (1 + rule.percent / 100));
+  if (Math.abs(bankCents - expected) > 1) return null;
+  return { percent: rule.percent, fee: (bankCents - docCents) / 100, accountCode: rule.accountCode, bankAccount: rule.bankAccount };
+}
+
 // A document a bank line could pay: a VENDOR INVOICE or a RECEIPT. The other
 // kinds are not costs a line settles — a PAYMENT PROOF is the bank's own record
 // that a line was paid (matched, it would publish a transfer confirmation as a
@@ -198,7 +244,11 @@ export function candidatesFor(line, docs, opts = {}) {
   const out = [];
   for (const doc of docs || []) {
     if (!matchable(doc)) continue;
-    if (!amountsAgree(doc, line)) continue;
+    // The same money to the cent — or, on an account whose bank adds a card fee,
+    // the document's money plus exactly that fee (feeFor).
+    const exact = amountsAgree(doc, line);
+    const fee = exact ? null : feeFor(doc, line, opts.feeRules);
+    if (!exact && !fee) continue;
     if (!inWindow(doc, line)) continue;
     // The word itself, not just whether one was found: it is what the page
     // shows as the reason, so a person can see WHICH word tied the two.
@@ -209,11 +259,15 @@ export function candidatesFor(line, docs, opts = {}) {
     const reasons = ['amount'];
     if (numbered) reasons.push('number');
     if (named) reasons.push('name');
-    out.push({ doc, days, reasons, word, confidence: named || numbered ? 'firm' : 'possible' });
+    if (fee) reasons.push('fee');
+    out.push({ doc, days, reasons, word, fee, confidence: named || numbered ? 'firm' : 'possible' });
   }
   // A lone document at this figure within a week of the line is firm even
-  // unnamed — most card narratives name nobody a person would recognise.
-  if (out.length === 1 && out[0].confidence === 'possible' && Math.abs(out[0].days) <= 7) {
+  // unnamed — most card narratives name nobody a person would recognise. Not
+  // for a match that needed a card fee to agree: an amount worked out from a
+  // percentage is weaker evidence than one that simply matches, so it has to be
+  // NAMED (supplier or number) to be suggested on its own.
+  if (out.length === 1 && out[0].confidence === 'possible' && !out[0].fee && Math.abs(out[0].days) <= 7) {
     out[0].confidence = 'firm';
     out[0].reasons.push('only');
   }
@@ -262,12 +316,18 @@ export function bankMatches(lines, docs, opts = {}) {
 // and being the only document at that figure) — so nobody could tell which of
 // the three it was, or see that the word was the entity's own name.
 export function matchReason(match, doc) {
-  const r = match?.reasons || [];
-  if (r.includes('elsewhere')) return 'Also fits a closer payment — check which is right';
-  if (r.includes('number')) return `Bank text has invoice number ${String(doc?.invoiceNumber ?? '').trim()}`.trim();
-  if (r.includes('name')) return match?.word ? `Bank text names the supplier (${match.word})` : 'Bank text names the supplier';
-  if (r.includes('only')) return 'Only document at this amount within a week';
-  return 'Same amount, close date';
+  const base = (() => {
+    const r = match?.reasons || [];
+    if (r.includes('elsewhere')) return 'Also fits a closer payment — check which is right';
+    if (r.includes('number')) return `Bank text has invoice number ${String(doc?.invoiceNumber ?? '').trim()}`.trim();
+    if (r.includes('name')) return match?.word ? `Bank text names the supplier (${match.word})` : 'Bank text names the supplier';
+    if (r.includes('only')) return 'Only document at this amount within a week';
+    return 'Same amount, close date';
+  })();
+  // The fee is part of WHY the money agrees, so it is said beside the reason —
+  // the line is not this document's figure, and a person should see why not.
+  const f = match?.fee;
+  return f ? `${base} · incl. ${f.percent}% card fee ${Number(f.fee).toFixed(2)}` : base;
 }
 
 // The one document a line SUGGESTS — its first firm candidate, or null. A
@@ -292,7 +352,7 @@ export function matchesByDoc(lines, docs, opts = {}) {
     if (!line) continue;
     for (const c of cands) {
       const list = byDoc.get(c.doc.id) || [];
-      list.push({ line, confidence: c.confidence, days: c.days, reasons: c.reasons, word: c.word });
+      list.push({ line, confidence: c.confidence, days: c.days, reasons: c.reasons, word: c.word, fee: c.fee });
       byDoc.set(c.doc.id, list);
     }
   }

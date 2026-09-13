@@ -38,6 +38,8 @@ import {
   setEmailSuffix,
   useInvalidateOrganisations,
   useIsPrimaryOrganisation,
+  useXeroBankAccounts,
+  useCategoryOptions,
 } from '@/lib/organisations';
 import { useMailStatus, connectMailbox, disconnectMailbox, sendTestEmail } from '@/lib/mailSettings';
 import { useInboundConfig } from '@/lib/inboundSettings';
@@ -859,6 +861,13 @@ function Extraction() {
   // — the visible rates from the managed Tax-rates list — plus a "None" option.
   const taxRateOptions = ['— None —', ...useVisibleTaxRates().map((t) => t.name)];
 
+  // Card fees a bank adds on top of a card spend (UOB's 1%): which account, what
+  // percent, and the account the fee posts to.
+  const bankAccountOptions = useXeroBankAccounts();
+  const feeAccountOptions = useCategoryOptions();
+  const feeRules = Array.isArray(form.cardFeeRules) ? form.cardFeeRules : [];
+  const setFeeRule = (i, patch) => set('cardFeeRules', feeRules.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
   return (
     <div className="space-y-6">
       <DocumentReaderCard value={form.readerProvider} onChange={(v) => set('readerProvider', v)} />
@@ -916,6 +925,51 @@ function Extraction() {
           <TextInput value={String(form.mileageRate ?? '')} onChange={(v) => set('mileageRate', v)} placeholder="e.g. 0.60" />
         </Row>
       </Card>
+
+      {/* A bank that adds a card fee in the same statement line (UOB's 1% on
+          some debit-card spends) makes a receipt of 17.99 clear as 18.17, which
+          never matches to the cent. Said once per bank account here, and bank
+          match does the rest: the bill is paid its own figure and the fee is
+          posted beside it. A bridge entity has no bank feed of its own. */}
+      {!bridge && (
+        <Card title="Bank match">
+          <Row
+            label="Card fees"
+            hint="For a bank that charges a percentage on card spends and takes it in the same statement line. A line on that account that is exactly a document’s total plus this percent (to the cent) is matched to the document; settling it pays the bill its own total and posts the difference as a bank fee to the account chosen here, with no tax, so the statement line reconciles in Xero. A fee match is only suggested on its own when the bank text names the supplier or the invoice number."
+          >
+            <div className="space-y-2">
+              {feeRules.map((r, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-2">
+                  <div className="min-w-[10rem] flex-1">
+                    <SelectBox value={r.bankAccount || ''} onChange={(v) => setFeeRule(i, { bankAccount: v })} options={['', ...bankAccountOptions]} />
+                  </div>
+                  <div className="w-20">
+                    <TextInput value={String(r.percent ?? '')} onChange={(v) => setFeeRule(i, { percent: v })} placeholder="1" />
+                  </div>
+                  <span className="text-sm text-muted-foreground">% to</span>
+                  <div className="min-w-[12rem] flex-1">
+                    <SelectBox value={r.accountCode || ''} onChange={(v) => setFeeRule(i, { accountCode: v })} options={['', ...feeAccountOptions]} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => set('cardFeeRules', feeRules.filter((_, j) => j !== i))}
+                    className="text-sm text-muted-foreground hover:text-destructive"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => set('cardFeeRules', [...feeRules, { bankAccount: '', percent: '', accountCode: '' }])}
+                className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted"
+              >
+                Add card fee
+              </button>
+            </div>
+          </Row>
+        </Card>
+      )}
 
       <Card title="Tax">
         <Row label="Extract tax" hint="Extract the tax value from new costs and sales documents.">

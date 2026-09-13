@@ -19,6 +19,8 @@ import {
   payableKind,
   nameMatchIn,
   matchReason,
+  feeFor,
+  cardFeeRuleFor,
 } from '../src/lib/bankMatch.js';
 
 let failures = 0;
@@ -177,6 +179,28 @@ check('a foreign document at its restated figure', candidatesFor(line({ amount: 
   const only = candidatesFor(line({ description: 'CARD 4821' }), [doc()])[0];
   check('the lone document at that figure says so', matchReason(only, only.doc), 'Only document at this amount within a week');
   check('a bare money match says only that', matchReason({ reasons: ['amount'] }, doc()), 'Same amount, close date');
+}
+
+// --- a card fee the bank adds on top ------------------------------------------------
+{
+  // UOB takes 1% on some debit-card spends in the same line: a Canva receipt of
+  // SGD 17.99 clears as 18.17.
+  const uob = line({ date: '2026-08-26', amount: -18.17, description: 'Canva* 04983-44591559 Sydney MISC DR - DEBIT CARD', bank_account_name: 'UOB SGD' });
+  const canva = doc({ id: 'c', supplier: 'Canva Pty Ltd', total: '17.99', date: '2026-08-24', invoiceNumber: '04983-44591559-1' });
+  const rules = [{ bankAccount: 'UOB SGD', percent: '1', accountCode: '404 - Bank Fees' }];
+  check('the rule for the line’s bank account', cardFeeRuleFor(uob, rules), { percent: 1, accountCode: '404', bankAccount: 'UOB SGD' });
+  check('17.99 plus 1% is 18.17: a fee of 0.18', feeFor(canva, uob, rules), { percent: 1, fee: 0.18, accountCode: '404', bankAccount: 'UOB SGD' });
+  check('no rule, no fee — nothing is guessed', feeFor(canva, uob, []), null);
+  check('another bank account’s rule does not apply', feeFor(canva, line({ ...uob, bank_account_name: 'DBS Current' }), rules), null);
+  check('two cents off the fee is not the fee', feeFor(canva, line({ ...uob, amount: -18.19 }), rules), null);
+  check('an exact match is not a fee', feeFor(canva, line({ ...uob, amount: -17.99 }), rules), null);
+
+  check('without the rule the line pays nothing', candidatesFor(uob, [canva], {}), []);
+  const withFee = candidatesFor(uob, [canva], { feeRules: rules });
+  check('with it, the receipt is a firm match by name', [withFee.length, withFee[0]?.confidence, withFee[0]?.reasons], [1, 'firm', ['amount', 'name', 'fee']]);
+  check('and says the fee', matchReason(withFee[0], canva), 'Bank text names the supplier (CANVA) · incl. 1% card fee 0.18');
+  const unnamed = candidatesFor(line({ ...uob, description: 'MISC DR - DEBIT CARD' }), [canva], { feeRules: rules });
+  check('a fee match that names nobody is never promoted to firm', unnamed[0]?.confidence, 'possible');
 }
 
 if (failures) {

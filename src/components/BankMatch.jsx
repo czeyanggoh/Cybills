@@ -5,6 +5,7 @@ import { useCostsDocs } from '@/lib/costsData';
 import { costPath } from '@/lib/bills';
 import { formatDate } from '@/lib/date';
 import { useActiveOrganisation, useXeroAccounts } from '@/lib/organisations';
+import { useExtractionSettings } from '@/lib/extractionSettings';
 import { fetchBankOutstanding, matchBankLine, undoBankMatch, dismissBankLine, restoreBankLine } from '@/lib/bankStore';
 import { bankMatches, lineKey, suggestionFor, isMoneyOut, docAmountFor, matchReason } from '@/lib/bankMatch';
 import { cn } from '@/lib/utils';
@@ -105,7 +106,9 @@ export default function BankMatch() {
   const openLines = useMemo(() => state.lines.filter((l) => !recordByKey.has(l.key)), [state.lines, recordByKey]);
   // The entity's own name is not evidence of the supplier (bankMatch.js).
   const ownName = organisation?.name || '';
-  const matches = useMemo(() => bankMatches(openLines, allDocs, { ownNames: [ownName] }), [openLines, allDocs, ownName]);
+  // The bank's card fee, where the entity has said an account adds one.
+  const feeRules = useExtractionSettings().cardFeeRules;
+  const matches = useMemo(() => bankMatches(openLines, allDocs, { ownNames: [ownName], feeRules }), [openLines, allDocs, ownName, feeRules]);
   const docById = useMemo(() => new Map(allDocs.map((d) => [d.id, d])), [allDocs]);
 
   // Matched lines CYWS no longer lists are still shown under "done": they are

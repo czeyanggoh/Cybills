@@ -95,6 +95,12 @@ export const DEFAULT_EXTRACTION_SETTINGS = {
   // the entity sets it: there is no statutory figure to default to, and a rate
   // invented here would price real claims.
   mileageRate: '',
+  // Card fees a bank adds on top of a card spend, in the same statement line —
+  // UOB's 1% on some debit-card purchases. [{ bankAccount, percent, accountCode }]:
+  // a line on that account that is exactly a document's money plus that percent
+  // is matched to it, and settled as the bill's payment plus a fee spend to that
+  // account (src/lib/bankMatch.js feeFor, server/src/bankMatch.ts). Empty = none.
+  cardFeeRules: [],
 };
 
 const emit = () => window.dispatchEvent(new Event(EXTRACTION_SETTINGS_EVENT));

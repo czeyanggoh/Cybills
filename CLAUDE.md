@@ -2466,6 +2466,26 @@ ONE line (the nearest), so two identical charges a week apart do not both point
 at one receipt. Money in is never matched: a customer paying or a refund is not
 a cost document.
 
+**A bank's card fee is part of the line, not a different figure.** UOB takes
+1% on some debit-card spends in the same statement line, so a Canva receipt of
+SGD 17.99 clears as 18.17 and never matched to the cent. An entity says, per
+bank account, that it does — Extraction -> **Bank match -> Card fees**
+(`cardFeeRules`: `{ bankAccount, percent, accountCode }`) — and `feeFor`
+(`bankMatch.js`) then accepts a line that is EXACTLY the document plus that
+percent, a cent either way. Nothing is guessed: no rule, no fee match, and a fee
+match is suggested on its own only when the bank text names the supplier or the
+number (never promoted for being the only document at that figure, since an
+amount worked out from a percentage is weaker evidence). Settling it
+(`recordPaymentForLine`, shared by the Bank tab, a published Autofill and CYWS's
+run) pays the bill its OWN total and posts the difference as a SPEND from the
+same bank account on the statement date to the fee account, No Tax, against the
+supplier's contact — Xero reconciles the one line against the payment and the
+spend together. The record keeps `feeTransactionId`; Undo deletes the fee
+BEFORE the payment, so a refused delete never leaves a fee standing against an
+unsettled line. A fee Xero refuses is reported beside the payment rather than
+failing it. Covered by `npm test` at the root and in `server/`
+(`test/bank-match.test.mts`).
+
 **And a match says WHY.** Every firm match used to read "Names this supplier",
 including the two kinds that name nothing (the document's number in the bank
 text, and being the only document at that figure within a week), so nobody could

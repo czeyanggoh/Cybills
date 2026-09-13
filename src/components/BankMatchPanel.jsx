@@ -5,6 +5,7 @@ import { useBankLines, invalidateBankLines, autofillBankPayment, clearBankPaymen
 import { matchesByDoc, lineKey, matchReason } from '@/lib/bankMatch';
 import { notifyBillsChanged } from '@/lib/bills';
 import { useActiveOrganisation } from '@/lib/organisations';
+import { useExtractionSettings } from '@/lib/extractionSettings';
 import { cn } from '@/lib/utils';
 
 // The Bank match block on the document page — Dext's, in the Details tab:
@@ -39,13 +40,15 @@ export default function BankMatchPanel({ doc, onChanged }) {
   const pending = doc?.bankMatch || null;
   // The entity's own name is not evidence of the supplier (bankMatch.js).
   const ownName = useActiveOrganisation()?.name || '';
+  // The bank's card fee, where the entity has said an account adds one.
+  const feeRules = useExtractionSettings().cardFeeRules;
 
   const matches = useMemo(() => {
     if (!doc?.id || pending) return [];
     const done = new Set(bank.records.map((r) => r.key));
     const open = bank.lines.filter((l) => !done.has(l.key || lineKey(l)));
-    return open.length ? matchesByDoc(open, [doc], { ownNames: [ownName] }).get(doc.id) || [] : [];
-  }, [doc, pending, bank.lines, bank.records, ownName]);
+    return open.length ? matchesByDoc(open, [doc], { ownNames: [ownName], feeRules }).get(doc.id) || [] : [];
+  }, [doc, pending, bank.lines, bank.records, ownName, feeRules]);
 
   if (!pending && !matches.length) return null;
 

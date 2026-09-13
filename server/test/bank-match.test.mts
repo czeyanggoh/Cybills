@@ -49,6 +49,8 @@ let invoicePosts: any[] = [];
 let approvals: any[] = [];
 let payments: any[] = [];
 let deletedPayments: string[] = [];
+const bankTxns: any[] = [];
+const deletedBankTxns: string[] = [];
 const paidInvoices = new Set<string>();
 let invoiceSeq = 0;
 // What CYWS is told about spent lines, and a switch to make it unreachable.
@@ -146,6 +148,21 @@ const stub = http.createServer((req, res) => {
       const p = payments[n - 1];
       if (p) paidInvoices.delete(String(p.Invoice?.InvoiceID));
       res.end(JSON.stringify({ Payments: [{ PaymentID: del[1], Status: 'DELETED' }] }));
+    });
+  }
+  // The bank's card fee, posted as a spend beside the payment.
+  if (path.endsWith('/BankTransactions') && req.method === 'PUT') {
+    return body((b) => {
+      const t = b.BankTransactions?.[0];
+      bankTxns.push(t);
+      res.end(JSON.stringify({ BankTransactions: [{ BankTransactionID: `bt-${bankTxns.length}`, Status: 'AUTHORISED', ValidationErrors: [] }] }));
+    });
+  }
+  const delTxn = /\/BankTransactions\/([^/]+)$/.exec(path);
+  if (delTxn && req.method === 'POST') {
+    return body(() => {
+      deletedBankTxns.push(delTxn[1]);
+      res.end(JSON.stringify({ BankTransactions: [{ BankTransactionID: delTxn[1], Status: 'DELETED' }] }));
     });
   }
   if (path.includes('/Attachments/')) return res.end(JSON.stringify({ Attachments: [] }));
@@ -384,6 +401,45 @@ r = await call('/api/bank/outstanding', { headers: ORG });
 check('the settlement is on record, as the publish’s', r.body.records.some((x: any) => x.kind === 'match' && x.billId === af.id && x.publishedHere === true), true);
 await waitFor(() => lineNotices.some((n) => n.line?.reference === 'AUTOFILL CO'));
 check('and the publish tells CYWS the autofilled line is spent too', lineNotices.find((n) => n.line?.reference === 'AUTOFILL CO')?.action, 'used');
+
+// --- a card fee the bank adds on top -------------------------------------------------
+// UOB takes 1% on some debit-card spends in the same statement line: a Canva
+// receipt of SGD 17.99 clears as 18.17. Last in the file, because a document
+// matched and undone here goes back to being a candidate for the lists above.
+{
+  const { loadCollection, saveCollection } = await import('../src/jsonStore.ts');
+  const { WORKSPACE_ID } = await import('../src/workspace.ts');
+  const canva = bill({
+    supplier: 'Canva Pty Ltd', invoiceNumber: '04983-44591559-1', documentType: 'Receipt', category: '429 - General Expenses',
+    taxRate: 'Standard-Rated Purchases', total: '17.99', tax: '1.49', date: '2026-08-24',
+  });
+  const UOB = { date: '2026-08-26', amount: -18.17, currency: 'SGD', reference: 'Canva* 04983-44591559 Sydney', description: 'MISC DR - DEBIT CARD', bank_account_id: 'acct-uob', bank_account_name: 'UOB SGD' };
+
+  r = await match(canva.id, UOB);
+  check('without a card-fee rule, a line of 18.17 does not pay 17.99', [r.status, r.body.error], [422, 'amount_mismatch']);
+
+  const settingKey = 'cybills.extraction-settings.v1::org-1';
+  saveCollection('settings', [
+    ...loadCollection<any>('settings').filter((s: any) => s.key !== settingKey),
+    { workspaceId: WORKSPACE_ID, key: settingKey, value: { cardFeeRules: [{ bankAccount: 'UOB SGD', percent: '1', accountCode: '404 - Bank Fees' }] } },
+  ]);
+
+  r = await match(canva.id, UOB);
+  check('with UOB’s 1% rule it settles', [r.status, r.body.ok], [200, true]);
+  const feePay = payments[payments.length - 1];
+  check('the bill is paid its OWN figure, from the UOB account', [feePay?.Amount, feePay?.Account, feePay?.Date], [17.99, { AccountID: 'acct-uob' }, '2026-08-26']);
+  const txn = bankTxns[bankTxns.length - 1];
+  check('the fee is a spend from the same account on the same day', [txn?.Type, txn?.BankAccount, txn?.Date], ['SPEND', { AccountID: 'acct-uob' }, '2026-08-26']);
+  check('of 0.18, to the fee account, with no tax', [txn?.LineItems?.[0]?.UnitAmount, txn?.LineItems?.[0]?.AccountCode, txn?.LineItems?.[0]?.TaxType], [0.18, '404', 'NONE']);
+  check('payment + fee is the statement line', Math.round((feePay?.Amount + txn?.LineItems?.[0]?.UnitAmount) * 100) / 100, 18.17);
+  check('reported, and remembered on the match', [r.body.fee?.ok, r.body.fee?.amount, r.body.match?.feeTransactionId], [true, 0.18, 'bt-1']);
+
+  r = await call(`/api/bank/matches/${r.body.match.id}/undo`, { method: 'POST', headers: ORG });
+  check('undo takes the fee off as well as the payment', [r.status, deletedBankTxns], [200, ['bt-1']]);
+
+  r = await autofill(canva.id, UOB);
+  check('autofill accepts the same fee match', [r.status, r.body.ok], [200, true]);
+}
 
 stub.close();
 if (failures) {

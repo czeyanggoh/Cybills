@@ -919,8 +919,9 @@ export default function Costs() {
   const bankMatchesByDoc = useMemo(() => {
     const done = new Set(bank.records.map((r) => r.key));
     const open = bank.lines.filter((l) => !done.has(l.key || bankLineKey(l)));
-    return open.length ? matchesByDoc(open, allDocs, { ownNames: [bankOwnName] }) : new Map();
-  }, [bank.lines, bank.records, allDocs, bankOwnName]);
+    // …and the bank's card fee, where the entity has said an account adds one.
+    return open.length ? matchesByDoc(open, allDocs, { ownNames: [bankOwnName], feeRules: settings.cardFeeRules }) : new Map();
+  }, [bank.lines, bank.records, allDocs, bankOwnName, settings.cardFeeRules]);
 
   const flagAssignments = useFlagAssignments();
   const categoryOptions = useCategoryOptions();

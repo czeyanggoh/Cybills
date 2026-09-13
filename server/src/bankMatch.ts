@@ -27,6 +27,7 @@ import {
 } from './xero.js';
 import { canAccessOrg, effectiveRoleFor, isBusinessAdminRole, memberForSession } from './users.js';
 import { syncWhatsappReaction } from './waReactions.js';
+import { readSetting } from './settings.js';
 
 // Bank match: settling a bank statement line against the document it pays.
 //
@@ -81,7 +82,11 @@ type BankRules = {
   docAmountFor: (doc: unknown, line: unknown) => number | null;
   isMoneyOut: (line: unknown) => boolean;
   matchable: (doc: unknown) => boolean;
+  // The bank's card fee inside a line, when the line is the document's money
+  // plus exactly the entity's configured percent for that bank account.
+  feeFor: (doc: unknown, line: unknown, rules: unknown) => CardFee | null;
 };
+export type CardFee = { percent: number; fee: number; accountCode: string; bankAccount: string };
 let rules: BankRules | null = null;
 let triedRules = false;
 export async function bankRules(): Promise<BankRules | null> {
@@ -94,7 +99,8 @@ export async function bankRules(): Promise<BankRules | null> {
       typeof mod?.lineKey === 'function' &&
       typeof mod?.docAmountFor === 'function' &&
       typeof mod?.isMoneyOut === 'function' &&
-      typeof mod?.matchable === 'function'
+      typeof mod?.matchable === 'function' &&
+      typeof mod?.feeFor === 'function'
         ? (mod as BankRules)
         : null;
   } catch (e) {
@@ -102,6 +108,15 @@ export async function bankRules(): Promise<BankRules | null> {
     rules = null;
   }
   return rules;
+}
+
+// The entity's card-fee rules (Business settings → Extraction → Bank match →
+// Card fees): which bank account adds a fee on a card spend, at what percent,
+// and which account the fee posts to. Read from the same extraction-settings
+// blob the page writes, so the page and the server match the same lines.
+export function cardFeeRules(organisation: { id: string }): unknown[] {
+  const s = readSetting<{ cardFeeRules?: unknown }>(WORKSPACE_ID, 'cybills.extraction-settings.v1', organisation.id);
+  return Array.isArray(s?.cardFeeRules) ? (s!.cardFeeRules as unknown[]) : [];
 }
 
 // --- one statement line ------------------------------------------------------
@@ -165,6 +180,10 @@ export type BankLineRecord = {
   paidBefore?: boolean;
   paymentMethodBefore?: string;
   publishedHere?: boolean; // the settle did the publishing, not somebody earlier
+  // The bank's card fee, posted as its own spend beside the payment so the line
+  // reconciles as payment + fee. Undo deletes it with the payment.
+  feeTransactionId?: string;
+  fee?: CardFee;
   via: 'browser' | 'cyws';
   at: string;
   by: string;
@@ -379,7 +398,11 @@ export async function settleBillAgainstLine(
   // restated itself in (see docAmountFor), or not at all.
   const mine = mod.docAmountFor(bill, line);
   const cents = (n: number) => Math.round(n * 100);
-  if (mine == null || cents(mine) !== Math.abs(cents(line.amount))) {
+  // …or the document's money plus exactly the bank's card fee, on an account
+  // the entity has said adds one (feeFor). The payment is still the bill's own
+  // figure; the fee is posted beside it in recordPaymentForLine.
+  const settledWithFee = mine != null && cents(mine) !== Math.abs(cents(line.amount)) && Boolean(mod.feeFor(bill, line, cardFeeRules(organisation)));
+  if (mine == null || (cents(mine) !== Math.abs(cents(line.amount)) && !settledWithFee)) {
     return { status: 422, body: {
       error: 'amount_mismatch',
       message: mine == null
@@ -487,6 +510,13 @@ export async function recordPaymentForLine(
   const billCurrency = String(bill.currency ?? '').trim().toUpperCase();
   const invoiceAmount = parseAmount(bill.total);
   const bankAmount = Math.abs(line.amount);
+  // The bank's card fee inside this line, if the entity has one for this
+  // account and the line is exactly the document plus it. The payment stays the
+  // bill's own figure; the fee is its own spend, so the line reconciles as both.
+  const rulesMod = await bankRules();
+  const fee = rulesMod ? rulesMod.feeFor(bill, line, cardFeeRules(organisation)) : null;
+  // What the bank moved for the BILL, fee excluded — the figure a rate carries.
+  const settledBankAmount = fee ? Math.round((bankAmount - fee.fee) * 100) / 100 : bankAmount;
   // Amount in the INVOICE's currency — Xero applies a payment to a bill in the
   // bill's own currency — and, where the bank account is in another, the rate
   // that carries the bank's figure onto it. Xero's CurrencyRate on a payment is
@@ -500,8 +530,8 @@ export async function recordPaymentForLine(
     Amount: invoiceAmount,
     Reference: (line.reference || line.description).slice(0, 255),
   };
-  if (line.currency && billCurrency && line.currency !== billCurrency && bankAmount > 0) {
-    payment.CurrencyRate = Number((invoiceAmount / bankAmount).toFixed(6));
+  if (line.currency && billCurrency && line.currency !== billCurrency && settledBankAmount > 0) {
+    payment.CurrencyRate = Number((invoiceAmount / settledBankAmount).toFixed(6));
   }
   const paid = await relay('Payments', {
     method: 'PUT',
@@ -522,6 +552,52 @@ export async function recordPaymentForLine(
     } };
   }
   const paymentId = String(record.PaymentID ?? '');
+
+  // The card fee, as a SPEND from the same bank account on the same day, to the
+  // fee account, with no tax — a bank charge carries none. Xero's reconciliation
+  // then matches the one statement line to the payment AND this spend. Against
+  // the supplier's contact (the bill just made one), so it sits beside the
+  // purchase it was charged on. Best-effort: the payment is in the ledger either
+  // way, and a refused fee is reported rather than failing the settlement.
+  let feeResult: any = null;
+  let feeTransactionId = '';
+  if (fee) {
+    const txn = {
+      Type: 'SPEND',
+      Contact: { Name: String(bill.supplier || line.bank_account_name || 'Bank') },
+      BankAccount: account,
+      Date: line.date,
+      Reference: (line.reference || line.description).slice(0, 255),
+      LineAmountTypes: 'NoTax',
+      ...(line.currency ? { CurrencyCode: line.currency } : {}),
+      LineItems: [{
+        Description: `${fee.percent}% card fee charged by ${fee.bankAccount} on ${bill.supplier || 'this purchase'}`,
+        Quantity: 1,
+        UnitAmount: fee.fee,
+        AccountCode: fee.accountCode,
+        TaxType: 'NONE',
+      }],
+    };
+    const posted = await relay('BankTransactions', {
+      method: 'PUT',
+      tenantId: organisation.tenantId,
+      query: { summarizeErrors: 'false' },
+      body: { BankTransactions: [txn] },
+    });
+    const bt = posted.ok ? posted.data?.BankTransactions?.[0] : null;
+    const btErrors: string[] = (bt?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+    if (!posted.ok || !bt || btErrors.length) {
+      feeResult = {
+        ok: false,
+        amount: fee.fee,
+        accountCode: fee.accountCode,
+        message: btErrors.length ? btErrors.join(' ') : posted.ok ? 'Xero rejected the fee.' : (posted as any).message,
+      };
+    } else {
+      feeTransactionId = String(bt.BankTransactionID ?? '');
+      feeResult = { ok: true, amount: fee.fee, percent: fee.percent, accountCode: fee.accountCode, bankTransactionId: feeTransactionId };
+    }
+  }
 
   // What Xero now says about the bill, read back rather than assumed — the same
   // three fields the webhook and the payments sweep record, through the same
@@ -557,6 +633,8 @@ export async function recordPaymentForLine(
     paidBefore,
     paymentMethodBefore,
     publishedHere: opts.publishedHere,
+    ...(fee ? { fee } : {}),
+    ...(feeTransactionId ? { feeTransactionId } : {}),
     via: opts.via,
     at: new Date().toISOString(),
     by: opts.by,
@@ -574,6 +652,9 @@ export async function recordPaymentForLine(
     },
     published: opts.publishedHere ? { lines: opts.published?.lines, perLine: opts.published?.perLine, attachment: opts.published?.attachment } : null,
     payment: { paymentId, date: line.date, amount: invoiceAmount, currency: billCurrency, reference: payment.Reference },
+    // The bank's card fee posted beside the payment, or why it was not. Null
+    // when the line was the bill's money to the cent.
+    fee: feeResult,
     match,
     bill: getBillById(ws, bill.id),
   } };
@@ -594,7 +675,7 @@ export async function applyPendingBankPayment(
   billId: string,
   invoiceId: string,
   by: string
-): Promise<{ ok: boolean; skipped?: boolean; error?: string; message?: string; payment?: any; match?: BankLineRecord }> {
+): Promise<{ ok: boolean; skipped?: boolean; error?: string; message?: string; payment?: any; fee?: any; match?: BankLineRecord }> {
   const bill = getBillById(ws, billId);
   const pending = bill?.bankMatch;
   if (!bill || !pending) return { ok: true, skipped: true };
@@ -618,7 +699,7 @@ export async function applyPendingBankPayment(
   try {
     const out = await recordPaymentForLine(organisation, ws, bill, line, invoiceId, { publishedHere: true, via: 'browser', by });
     if (out.status !== 200) return { ok: false, error: String(out.body?.error ?? 'payment_failed'), message: String(out.body?.message ?? '') };
-    return { ok: true, payment: out.body.payment, match: out.body.match };
+    return { ok: true, payment: out.body.payment, fee: out.body.fee, match: out.body.match };
   } catch (err) {
     console.error('[bank] pending payment failed', err);
     return { ok: false, error: 'payment_failed', message: err instanceof Error ? err.message : String(err) };
@@ -633,6 +714,21 @@ export async function applyPendingBankPayment(
  */
 export async function undoSettlement(record: BankLineRecord, organisation: Organisation): Promise<SettleResult> {
   const ws = record.orgId;
+  // The card fee first: were the payment deleted and the fee refused, the fee
+  // would be left standing against a line that is no longer settled.
+  if (record.feeTransactionId) {
+    const gone = await relay(`BankTransactions/${encodeURIComponent(record.feeTransactionId)}`, {
+      method: 'POST',
+      tenantId: organisation.tenantId,
+      body: { BankTransactions: [{ BankTransactionID: record.feeTransactionId, Status: 'DELETED' }] },
+    });
+    if (!gone.ok) {
+      return { status: gone.status >= 500 ? 502 : 409, body: {
+        error: 'fee_not_deleted',
+        message: `Xero would not delete the card fee: ${gone.message}`,
+      } };
+    }
+  }
   if (record.paymentId) {
     const gone = await relay(`Payments/${encodeURIComponent(record.paymentId)}`, {
       method: 'POST',
@@ -889,7 +985,10 @@ bankRouter.post('/autofill', async (req, res) => {
   }
   const mine = mod.docAmountFor(bill, line);
   const cents = (n: number) => Math.round(n * 100);
-  if (mine == null || cents(mine) !== Math.abs(cents(line.amount))) {
+  // The same money, or the document's plus the bank's card fee (feeFor) — the
+  // same rule the settle holds, so what publish later records was accepted here.
+  const withFee = mine != null && cents(mine) !== Math.abs(cents(line.amount)) && Boolean(mod.feeFor(bill, line, cardFeeRules(organisation)));
+  if (mine == null || (cents(mine) !== Math.abs(cents(line.amount)) && !withFee)) {
     return res.status(422).json({
       error: 'amount_mismatch',
       message: mine == null

@@ -269,6 +269,15 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               <p className="max-w-sm text-xs text-muted-foreground">
                 Paid from the bank line: a payment of {bankPayment.payment?.currency} {Number(bankPayment.payment?.amount || 0).toFixed(2)} on{' '}
                 {bankPayment.payment?.date} is recorded against the bill, so the statement line reconciles.
+                {bankPayment.fee?.ok
+                  ? ` The bank’s card fee of ${bankPayment.payment?.currency || ''} ${Number(bankPayment.fee.amount || 0).toFixed(2)} is posted to account ${bankPayment.fee.accountCode}.`
+                  : ''}
+              </p>
+            )}
+            {bankPayment?.ok && bankPayment.fee && !bankPayment.fee.ok && (
+              <p className="max-w-sm text-xs text-amber-700">
+                The payment is recorded, but the bank’s card fee of {Number(bankPayment.fee.amount || 0).toFixed(2)} could not be:{' '}
+                {bankPayment.fee.message} Add it as a spend money in Xero so the statement line reconciles.
               </p>
             )}
             {bankPayment && !bankPayment.ok && (
@@ -361,6 +370,14 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                   {Math.abs(Number(bill.bankMatch.amount) || 0).toFixed(2)} from {bill.bankMatch.bankAccountName || 'the bank account'} on{' '}
                   {bill.bankMatch.date} is recorded against the bill straight after it is posted, so it ends up Paid in Xero
                   and the statement line reconciles.
+                  {(() => {
+                    // A line larger than the bill is the bill plus the bank's card
+                    // fee (Bank match → Card fees): say how it splits.
+                    const feeAmount = Math.abs(Number(bill.bankMatch.amount) || 0) - (Number(bill.total) || 0);
+                    return feeAmount > 0.004
+                      ? ` Of that, ${(Number(bill.total) || 0).toFixed(2)} pays the bill and ${feeAmount.toFixed(2)} is the bank’s card fee, posted to its fee account.`
+                      : '';
+                  })()}
                 </p>
               )}
               {/* The paper names somebody else. Said again HERE because this is
