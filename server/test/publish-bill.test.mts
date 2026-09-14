@@ -4,7 +4,7 @@
 // goes up as one summary line, and a bill whose lines contradict it is refused
 // outright rather than posted around.
 import http from 'node:http';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -98,9 +98,27 @@ const stub = http.createServer((req, res) => {
     });
     return;
   }
+  // The attachment upload. What Xero answers is the test's to choose, because
+  // one of its refusals has to be told from the others.
+  if (path.includes('/Attachments/')) {
+    let seen = 0;
+    req.on('data', (c) => (seen += c.length));
+    req.on('end', () => {
+      attachedBytes = seen;
+      if (attachmentReply) {
+        res.statusCode = attachmentReply.status;
+        res.end(JSON.stringify(attachmentReply.body));
+        return;
+      }
+      res.end(JSON.stringify({ Attachments: [{ AttachmentID: 'att-1' }] }));
+    });
+    return;
+  }
   res.statusCode = 404;
   res.end(JSON.stringify({ error: 'not_found', path }));
 });
+let attachmentReply: { status: number; body: unknown } | null = null;
+let attachedBytes = 0;
 let creditPosted: any = null;
 await new Promise<void>((r) => stub.listen(4602, '127.0.0.1', r));
 process.env.CYWORKSPACE_RELAY_URL = 'http://127.0.0.1:4602';
@@ -328,6 +346,53 @@ check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 
   // misread, and it stays refused rather than being quietly posted as either.
   const neg = await publish(bill({ documentType: 'Invoice', total: '-530' }).id);
   check('negative invoice: refused, not posted as a credit note', [neg.status, neg.body.missing], [400, ['a total above 0']]);
+}
+
+// 8) The file that rides with the bill, and the one refusal that is not about
+//    the file at all. Xero answers an attachment upload 401
+//    AuthorizationUnsuccessful when the grant was never given
+//    `accounting.attachments` — the bill itself posted a second earlier on that
+//    same token, so the bytes, the name and the document are all beside the
+//    point, and the byte count the other failures carry only sends the reader
+//    to look at the file.
+{
+  mkdirSync(join(DATA_DIR, 'files'), { recursive: true });
+  writeFileSync(join(DATA_DIR, 'files', 'gan-0847.pdf'), Buffer.from('%PDF-1.4 not really a pdf'));
+  const withFile = () => bill({
+    total: '109', tax: '9',
+    fileName: 'Invoice_GAN-0847.pdf', storageKey: 'local:gan-0847.pdf', contentType: 'application/pdf',
+  }).id;
+
+  attachmentReply = null;
+  attachedBytes = 0;
+  let out = await publish(withFile());
+  check('attachment: the file goes up with the bill', [out.body.attachment.ok, attachedBytes], [true, 25]);
+
+  attachmentReply = {
+    status: 401,
+    body: {
+      error: 'xero_api_failed',
+      upstream_status: 401,
+      message: 'xero_api_failed: 401 /api.xro/2.0/Invoices/inv-1/Attachments/Invoice_GAN-0847.pdf -> '
+        + '{ "Type": null, "Title": "Unauthorized", "Status": 401, "Detail": "AuthorizationUnsuccessful" }',
+    },
+  };
+  out = await publish(withFile());
+  check('scope refusal: the bill is still in the ledger', [out.status, out.body.invoice.invoiceId], [200, 'inv-1']);
+  check('scope refusal: the attachment is reported failed', out.body.attachment.ok, false);
+  check('scope refusal: it names the scope and the reconnect',
+    [/accounting\.attachments/.test(out.body.attachment.error), /reconnected/.test(out.body.attachment.error)],
+    [true, true]);
+  check('scope refusal: it does not send anybody to look at the file',
+    /bytes/.test(out.body.attachment.error), false);
+
+  // Every other refusal keeps the byte count, which is what tells a body that
+  // was dropped in transit from one that was produced empty here.
+  attachmentReply = { status: 400, body: { error: 'xero_api_failed', message: 'xero_api_failed: 400 -> The file to be attached must have some content.' } };
+  out = await publish(withFile());
+  check('other refusal: still says how much CYBills sent',
+    /CYBills sent 25 bytes of application\/pdf/.test(out.body.attachment.error), true);
+  attachmentReply = null;
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

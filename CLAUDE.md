@@ -2661,6 +2661,24 @@ Env (server/.env): `CYWORKSPACE_RELAY_URL` (on the VPS use
 (same value as cyworkspace's `WEBHOOK_API_KEY`). Xero endpoints 503 until the
 key is set, so deploys are safe before the env is configured.
 
+**Adding an attachment is its own Xero scope, and its refusal said the wrong
+thing.** A bill posts, and a moment later the same token on the same tenant is
+refused the file with `401 AuthorizationUnsuccessful` — which is neither a lost
+token nor a bad sign-in: `accounting.attachments.read` may READ a bill's
+attachments, and only `accounting.attachments` may add one, so a grant carrying
+the first alone publishes perfectly and can never attach. CYBills holds no
+credentials, so the fix is cyworkspace's scope list, and it needs a RECONNECT to
+take — a refresh token keeps the scopes it was granted with. What CYBills owns is
+saying so: `attachmentRefusal` (`xero.ts`) recognises that one answer and names
+the scope and the reconnect, in place of the byte count. The count is the right
+diagnosis for a body that went MISSING (Xero reporting ContentLength 0 against
+thousands of bytes sent means the relay dropped them), and it is exactly the
+wrong one here, where nothing about the document, the file or the bytes is at
+fault — it sent the reader to look at a file that was never the problem. Both
+roads a file goes up by say it, the bill's and the claim PDF's, or one missing
+scope would be explained two ways. Covered by `npm test` in `server/`
+(`test/publish-bill.test.mts`).
+
 **Xero talks back: a paid bill says so itself.** A published bill's Paid field
 was only ever ticked by hand, so a bill settled in Xero stayed unpaid here until
 somebody noticed. Xero's invoice webhook is the notice — but it says only that
