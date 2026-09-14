@@ -779,6 +779,29 @@ async function customerContactId(tenantId: string, name: string): Promise<string
   return String(contact?.ContactID ?? '');
 }
 
+// Why Xero refused an attachment, where its own words would send somebody to the
+// wrong place. There is one such refusal and it is the whole of this function:
+// a 401 whose Detail is AuthorizationUnsuccessful.
+//
+// It is not a failed sign-in and not a lost token — the bill itself posted a
+// second earlier on that same token, to that same tenant. Xero answers an
+// attachment UPLOAD that way when the grant carries `accounting.attachments.read`
+// and not `accounting.attachments`: reading a bill's attachments and adding one
+// are two scopes, and only the second can POST. Nothing about this document, this
+// file or these bytes is at fault, so the byte count every other failure carries
+// here would only send the reader to look at the file — which is exactly what it
+// did. The fix is at the relay, which owns the OAuth client and the consent, and
+// it needs a RECONNECT to take: a refresh token keeps the scopes it was granted
+// with, so adding the scope alone changes nothing for a connection already made.
+function attachmentRefusal(status: number, message: string): string {
+  if (status === 401 && /AuthorizationUnsuccessful/i.test(String(message))) {
+    return 'Xero refused the upload: this connection may read attachments but not add them. '
+      + 'The Xero app needs the accounting.attachments scope, and Xero has to be reconnected in '
+      + 'CYWorkspace once it has it — a connection keeps the scopes it was granted with.';
+  }
+  return '';
+}
+
 // Put the original document on a Xero invoice — or credit note, which takes
 // attachments under its own endpoint. Best-effort by design: every caller has
 // already posted the record, and a failed upload must not undo that.
@@ -807,9 +830,11 @@ async function attachBillFile(
       contentType: file.contentType,
     });
     if (!att.ok) {
-      // The byte count is the whole diagnosis: if Xero reports ContentLength 0
-      // while this says we sent thousands, the body was dropped in transit (the
-      // relay), not produced empty here.
+      // The byte count is the whole diagnosis for a body that went missing: if
+      // Xero reports ContentLength 0 while this says we sent thousands, the
+      // bytes were dropped in transit (the relay), not produced empty here. A
+      // refusal that has nothing to do with the bytes says so instead.
+      const refused = attachmentRefusal(att.status, att.message);
       console.error(
         '[xero] bill attachment failed',
         att.status,
@@ -818,7 +843,7 @@ async function attachBillFile(
       );
       return {
         ok: false,
-        error: `${att.message} (CYBills sent ${file.bytes.length} bytes of ${file.contentType})`,
+        error: refused || `${att.message} (CYBills sent ${file.bytes.length} bytes of ${file.contentType})`,
         bytes: file.bytes.length,
       };
     }
@@ -2162,7 +2187,9 @@ async function attachClaimPdf(
       contentType: 'application/pdf',
     });
     if (!att.ok) console.error('[xero] claim PDF attach failed', att.status, att.message);
-    return att.ok ? { ok: true } : { ok: false, error: att.message };
+    // Same refusal, same sentence: a claim's PDF goes up the same road as a
+    // bill's file, so the two must not explain one missing scope differently.
+    return att.ok ? { ok: true } : { ok: false, error: attachmentRefusal(att.status, att.message) || att.message };
   } catch (err) {
     console.error('[xero] claim PDF attach error', err);
     return { ok: false, error: 'attach_failed' };
