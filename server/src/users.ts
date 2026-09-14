@@ -1541,6 +1541,13 @@ function applyEditable(user: User, b: Partial<User>, ws: string) {
   // access off) is fixed too. Changing an address is its own deliberate act.
   const keepEmail = user.email && !String(b.email ?? '').trim() ? user.email : '';
   for (const k of EDITABLE) if (k in b) (user as Record<string, unknown>)[k] = (b as Record<string, unknown>)[k];
+  // The practice fields reach here only when the caller runs the practice (the
+  // PATCH route filters them), and they have to be WRITTEN once they do: they
+  // used to be let through and then dropped, so "All clients" reported success
+  // and the colleague kept the one client they had.
+  if ('practice' in b) user.practice = Boolean(b.practice);
+  if ('practiceRole' in b && typeof b.practiceRole === 'string') user.practiceRole = b.practiceRole;
+  if ('allClients' in b) user.allClients = b.allClients === true;
   if (keepEmail) user.email = keepEmail;
   if (internalEmail) user.email = internalEmail;
   if ('firstName' in b || 'lastName' in b) {
