@@ -1336,8 +1336,11 @@ claimsRouter.get('/:id/pdf', async (req, res) => {
     }
   }
   const org = claim.orgId === WORKSPACE_ID ? primaryOrgId() : claim.orgId;
-  const sharing = readSetting<{ imageSharing?: boolean }>(WORKSPACE_ID, 'cybills.export-settings.v1', org)?.imageSharing !== false;
-  const bytes = await claimPdfBytes(claim as never, appOrigin(req), { imageSharing: sharing });
+  const exportSettings = readSetting<{ imageSharing?: boolean; claimSignatureBoxes?: boolean }>(WORKSPACE_ID, 'cybills.export-settings.v1', org);
+  const bytes = await claimPdfBytes(claim as never, appOrigin(req), {
+    imageSharing: exportSettings?.imageSharing !== false,
+    signatures: exportSettings?.claimSignatureBoxes === true,
+  });
   if (!bytes) return res.status(502).json({ error: 'pdf_unavailable' });
   const name = `${String(claim.name || 'expense-claim').replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')}.pdf`;
   res.setHeader('Content-Type', 'application/pdf');

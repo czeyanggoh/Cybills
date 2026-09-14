@@ -79,7 +79,7 @@ function summarise(txns) {
 // Build the expense-claim PDF document (mirrors Dext's export, plus a final
 // "Approval history" page built from the claim's activity log). Returns the
 // jsPDF doc so callers can open, download, or (in tests) serialise it.
-export function buildClaimDoc(claim, links = {}, origin = ORIGIN) {
+export function buildClaimDoc(claim, links = {}, origin = ORIGIN, { signatures = false } = {}) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
   const title = `${claim.claimFor}'s Expense Claim`.toUpperCase();
   const totalExp = '{tp}';
@@ -262,12 +262,42 @@ export function buildClaimDoc(claim, links = {}, origin = ORIGIN) {
   doc.text(n2(claim.total), tc.total, y, { align: 'right' });
   y += 40;
 
-  // No signature block. Two ruled lines for an employee and an approver to sign
-  // are a paper form's way of recording who agreed to this, and nothing here is
-  // a paper form: the claim is submitted, routed to a named approver and
-  // approved in the app, and the page that follows is that trail with the names
-  // and timestamps on it. Printing blank lines beside it invites somebody to
-  // treat the real approval as unfinished.
+  // Signature boxes are OPT-IN, per entity (Business settings -> Exports ->
+  // "Signature boxes in expense claim PDFs"). The claim is approved in the app
+  // and the page that follows is that trail, so by default nothing is printed
+  // that invites somebody to treat the real approval as unfinished — but some
+  // clients file a signed paper copy as well, and for them the boxes are what
+  // the printout is for.
+  if (signatures) {
+    const boxH = 100;
+    ensure(boxH + 30);
+    section('SIGNATURES');
+    const gap = 24;
+    const boxW = (RIGHT - M - gap) / 2;
+    const box = (x, label, name) => {
+      doc.setDrawColor(170);
+      doc.setLineWidth(0.7);
+      doc.rect(x, y, boxW, boxH);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(70);
+      doc.text(label, x + 10, y + 16);
+      // The line to sign on, then who and when beneath it.
+      doc.setDrawColor(200);
+      doc.line(x + 10, y + 62, x + boxW - 10, y + 62);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(90);
+      doc.text(`Name: ${name || ''}`, x + 10, y + 78);
+      doc.text('Date:', x + 10, y + 92);
+      doc.setDrawColor(200);
+      doc.line(x + 36, y + 93, x + boxW / 2, y + 93);
+      doc.setTextColor(20);
+    };
+    box(M, 'CLAIMED BY', claim.claimFor);
+    box(M + boxW + gap, 'APPROVED BY', claim.approver);
+    y += boxH + 20;
+  }
 
   // ---- Approval history (added page) ----------------------------------
   nextPage();
@@ -338,9 +368,9 @@ async function claimShareLinks(claim) {
 // emailed PDF wants beside the figures. Returns '' if rendering fails.
 export async function buildClaimPdfBase64(claim) {
   try {
-    const { loadFile, links, origin } = await browserContext(claim);
+    const { loadFile, links, origin, signatures } = await browserContext(claim);
     const out = await PDFDocument.create();
-    await addReportPages(out, claim, links, origin);
+    await addReportPages(out, claim, links, origin, signatures);
     await appendAttachments(out, loadFile, claim);
     const bytes = await out.save();
     let bin = '';
@@ -447,8 +477,8 @@ async function appendAttachments(out, loadFile, claim) {
 }
 
 // Copy the CYBills report (jsPDF) pages into a pdf-lib doc.
-async function addReportPages(out, claim, links, origin) {
-  const bytes = buildClaimDoc(claim, links, origin).output('arraybuffer');
+async function addReportPages(out, claim, links, origin, signatures = false) {
+  const bytes = buildClaimDoc(claim, links, origin, { signatures }).output('arraybuffer');
   const report = await PDFDocument.load(bytes);
   const pages = await out.copyPages(report, report.getPageIndices());
   pages.forEach((p) => out.addPage(p));
@@ -471,10 +501,10 @@ export async function assembleClaimPdf(claim, { detailLevel = 'with_receipts', c
 // out of assembleClaimPdf so exporting a LIST of claims produces the same pages
 // in the same order as exporting each one singly — two builders would drift,
 // and the drift would show up as one claim's report looking unlike the next.
-async function addClaimTo(out, claim, detailLevel, { loadFile, links, origin }) {
+async function addClaimTo(out, claim, detailLevel, { loadFile, links, origin, signatures = false }) {
   const before = out.getPageCount();
   if (detailLevel !== 'receipts') {
-    await addReportPages(out, claim, links, origin);
+    await addReportPages(out, claim, links, origin, signatures);
     // The claim's own paperwork rides with the report, at every level that has
     // one: it is what the approver reads beside the figures, not a receipt.
     await appendAttachments(out, loadFile, claim);
@@ -487,13 +517,20 @@ async function addClaimTo(out, claim, detailLevel, { loadFile, links, origin }) 
   }
   // Never nothing: a claim whose receipts all failed to resolve still gets its
   // report, so it cannot vanish silently out of a combined file.
-  if (out.getPageCount() === before) await addReportPages(out, claim, links, origin);
+  if (out.getPageCount() === before) await addReportPages(out, claim, links, origin, signatures);
 }
 
 // What the browser supplies when a caller hasn't said otherwise: its own
-// session-backed fetch, and share links minted for this claim's receipts.
+// session-backed fetch, share links minted for this claim's receipts, and the
+// entity's choice about signature boxes.
 async function browserContext(claim) {
-  return { loadFile: fetchLoadFile, links: await claimShareLinks(claim), origin: ORIGIN };
+  const { getExportSettings } = await import('./exportSettings.js');
+  return {
+    loadFile: fetchLoadFile,
+    links: await claimShareLinks(claim),
+    origin: ORIGIN,
+    signatures: !!getExportSettings().claimSignatureBoxes,
+  };
 }
 
 /**
@@ -511,9 +548,9 @@ async function browserContext(claim) {
  * put in front of them: the reader of this document is somewhere else entirely,
  * so a bare path resolves against nothing.
  */
-export async function assembleClaimBytes(claim, { detailLevel = 'with_receipts', loadFile, links = {}, origin = '' } = {}) {
+export async function assembleClaimBytes(claim, { detailLevel = 'with_receipts', loadFile, links = {}, origin = '', signatures = false } = {}) {
   const out = await PDFDocument.create();
-  await addClaimTo(out, claim, detailLevel, { loadFile, links, origin });
+  await addClaimTo(out, claim, detailLevel, { loadFile, links, origin, signatures });
   return out.save();
 }
 

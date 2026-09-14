@@ -37,6 +37,10 @@ export const DEFAULT_EXPORT_SETTINGS = {
   pdfOrder: 'Date (old to new)',
   hideProject: false,
   hideProject2: false,
+  // Claimed-by / Approved-by boxes to sign on the expense claim report. Off by
+  // default: the approval is recorded in the app, and the boxes are for the
+  // clients who also keep a signed paper copy.
+  claimSignatureBoxes: false,
   // Image sharing
   // Whether an export's Image column (and a claim PDF's Item ID) links to the
   // source document. The link is signed and expires, so it opens for somebody

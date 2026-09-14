@@ -24,6 +24,7 @@ type ClaimPdfModule = {
       loadFile: (ref: FileRef) => Promise<{ contentType: string; bytes: ArrayBuffer } | null>;
       links?: Record<string, string>;
       origin?: string;
+      signatures?: boolean;
     },
   ) => Promise<Uint8Array>;
 };
@@ -120,7 +121,7 @@ function receiptLinks(claim: PdfClaim, sharingOn: boolean): Record<string, strin
 export async function claimPdfBytes(
   claim: PdfClaim,
   origin: string,
-  { imageSharing = true }: { imageSharing?: boolean } = {},
+  { imageSharing = true, signatures = false }: { imageSharing?: boolean; signatures?: boolean } = {},
 ): Promise<Uint8Array | null> {
   const mod = await load();
   if (!mod) return null;
@@ -130,6 +131,7 @@ export async function claimPdfBytes(
       loadFile: loaderFor(claim),
       links: receiptLinks(claim, imageSharing),
       origin,
+      signatures,
     });
   } catch (e) {
     console.error('[claimPdfDoc] could not build the claim PDF', e);

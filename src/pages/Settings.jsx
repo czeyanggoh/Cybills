@@ -1168,6 +1168,12 @@ function Exports() {
         </Row>
         <Row label="Hide Project in expense claim PDFs"><Toggle on={form.hideProject} onChange={(v) => set('hideProject', v)} /></Row>
         <Row label="Hide Project 2 in expense claim PDFs"><Toggle on={form.hideProject2} onChange={(v) => set('hideProject2', v)} /></Row>
+        <Row
+          label="Signature boxes in expense claim PDFs"
+          hint="Adds “Claimed by” and “Approved by” boxes to sign, below the transactions on the claim report. For a signed paper copy — the approval in CYBills is recorded either way."
+        >
+          <Toggle on={form.claimSignatureBoxes} onChange={(v) => set('claimSignatureBoxes', v)} />
+        </Row>
       </Card>
 
       <Card title="Image sharing">
