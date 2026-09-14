@@ -1886,6 +1886,31 @@ that id, so pressing the button again adopts the group it may already have made.
 A fresh id would have made a second one, in front of the client, with nothing to
 say which was real.
 
+**CYBot never adds a number; people join by invite link.** Adding numbers that
+have never spoken to CYBot to groups is the pattern WhatsApp enforces against,
+and CYBot is the one WAHA number every client's group runs on, so one
+enforcement stops collection everywhere. `createChannel` asks for the group
+`invite_only: true` with NO numbers in the request (so not even a CYWS that
+ignores the flag can add anybody; an older one answers `participant_required`,
+read as `invite_unsupported`), keeps the returned `inviteLink` on the channel,
+and the connect route EMAILS it to the person (`whatsappInviteEmail`, skipped for
+an internal `@cybills.local` identity). Never as a WhatsApp message from CYBot,
+which is the same unsolicited contact by another road. A link the create could
+not read is fetched later through CYWS's `invite-link` (`ensureInviteLink`).
+The numbers typed are still stored in `participantsRequested`, as who the group is
+FOR, but `participantsKnown` stays false, so no shortfall is ever reported. "Add
+this number to the group" became **Send the invite for this number**: same
+group, number stored as theirs, link emailed; `add-participants` is no longer
+called. `POST /api/whatsapp/channels/:id/invite` (`{email?, send?}`) fetches or
+re-sends the link, refusing adopted and closed groups the way the add does. Anyone
+holding the link can join and send bills into that person's book, so it is blanked
+in `GET /channels` for anyone who is not a manager and never put in `/directory`.
+`WhatsappInviteLink.jsx` is the card: Copy, Share (the ADMIN's own WhatsApp) and
+Email invite. Joiners are ordinary members; **Make everyone an admin** promotes
+them. The paragraphs below that speak of adding numbers, `participants_added` and
+promote-on-create describe groups opened before this. Covered by `npm test` in
+`server/` (`test/whatsapp-add-participant.test.mts`, `test/whatsapp.test.mts`).
+
 **A group belongs to a PERSON.** The ordinary way to open one is their own page
 (Users / Colleagues -> Edit details -> **Connect to WhatsApp**): one group, one
 person in it, named with their own CYBills address (`astrid4@cybills.sg`) — the

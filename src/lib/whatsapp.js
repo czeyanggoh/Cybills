@@ -131,6 +131,9 @@ export function useWhatsappForUser(userId) {
 // wrong number — a real WhatsApp group, so it is never implied by anything else.
 // Without it, calling this for somebody already connected saves the number and
 // returns the group they have.
+//
+// Resolves to the whole answer: the channel, plus `invite` (whether the invite
+// link was emailed, and to whom) and `inviteError` (why there is no link yet).
 export async function connectWhatsappForUser({ userId, mobile, replace = false }) {
   const res = await fetch('/api/whatsapp/channels/user', {
     method: 'POST',
@@ -138,7 +141,7 @@ export async function connectWhatsappForUser({ userId, mobile, replace = false }
     body: JSON.stringify({ userId, mobile, replace }),
   });
   const data = await res.json().catch(() => null);
-  if (res.ok) return data.channel;
+  if (res.ok) return data;
   const err = new Error(data?.message || 'Could not connect WhatsApp.');
   err.code = data?.error || '';
   err.retryable = Boolean(data?.retryable);
@@ -157,6 +160,10 @@ export async function connectWhatsappForUser({ userId, mobile, replace = false }
 // The server stores the number as theirs too, exactly as connecting does, so a
 // bill arriving from it is matched back to them rather than landing on the
 // entity's General account.
+//
+// Nobody is ADDED to the group: CYBot adding numbers is what WhatsApp enforces
+// against. The person is emailed the group's invite link instead (`invite`), and
+// `inviteLink` comes back for passing on by hand.
 export async function addWhatsappParticipant({ submissionId, mobile }) {
   const res = await fetch(`/api/whatsapp/channels/${encodeURIComponent(submissionId)}/participants`, {
     method: 'POST',
@@ -169,6 +176,27 @@ export async function addWhatsappParticipant({ submissionId, mobile }) {
   err.code = data?.error || '';
   err.retryable = Boolean(data?.retryable);
   err.rejected = data?.rejected ?? [];
+  throw err;
+}
+
+// The group's invite link, and an email carrying it.
+//
+// CYBot never adds anybody to a collection group — adding numbers that have
+// never spoken to it is what WhatsApp enforces against, and the number is shared
+// by every client's group. People join by the link instead. `email` sends it
+// there; without one it goes to the person the group was opened for; `send:
+// false` fetches the link and emails nobody.
+export async function sendWhatsappInvite({ submissionId, email = '', send = true }) {
+  const res = await fetch(`/api/whatsapp/channels/${encodeURIComponent(submissionId)}/invite`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ email, send }),
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok) return data;
+  const err = new Error(data?.message || 'Could not get the group’s invite link.');
+  err.code = data?.error || '';
+  err.retryable = Boolean(data?.retryable);
   throw err;
 }
 

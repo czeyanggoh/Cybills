@@ -24,7 +24,18 @@ The group is created the other way round:
 ```
 CYBills  →  POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/create-group
             (X-API-Key: CYWORKSPACE_API_KEY — the same key the Xero relay uses)
+            { "submission_id": "...", "subject": "...", "invite_only": true }
 ```
+
+**CYBot never adds anybody to a group.** Adding numbers that have never spoken
+to CYBot to groups is the pattern WhatsApp enforces against, and CYBot is the one
+number every client's group runs on, so one enforcement would stop collection for
+all of them. The group is opened EMPTY (`invite_only: true`, and no numbers in
+the request at all, so not even a CYWS that ignores the flag can add them), the
+answer carries the group's `invite_link`, and CYBills EMAILS that link to the
+person. It is never sent as a WhatsApp message from CYBot, which would be the
+same unsolicited contact by another road. The card shows the link with Copy,
+Share (opens the admin's own WhatsApp) and Email invite.
 
 ## Hand these to the CYWS operator
 
@@ -43,8 +54,10 @@ read out of the app and handed over without anyone having VPS access.
 ## Setting a group up
 
 **One person, from their own page** is the ordinary way: **Users / Colleagues →
-Manage → Edit details → Connect to WhatsApp**. It opens a group containing just
-them, named with their own CYBills address (`astrid4@cybills.sg`) — the same
+Manage → Edit details → Connect to WhatsApp**. It opens a group for them and
+emails them its invite link (to their own address; somebody with no mailbox gets
+nothing sent, and the link is on the card to pass on), named with their own
+CYBills address (`astrid4@cybills.sg`) — the same
 pipe under a second name, since a bill sent to that address and one sent into
 that group are filed under exactly the same person. The number typed there is
 saved as part of connecting: it is what a bill arriving from that number is
@@ -57,8 +70,10 @@ one.
 
 **Changing that number later** saves fine and takes effect for matching, but it
 cannot move the group — WhatsApp has no way to swap a number inside one. It can
-hold both, though, so the card offers **Add this number to the group** first:
-same group, same submission id, same thread, one more person in it. **Open a new
+hold both, though, so the card offers **Send the invite for this number** first:
+same group, same submission id, same thread, and the person is emailed the link
+to join from the new number (CYBills fetches it through `invite-link`, below, if
+the group has none stored). **Open a new
 group with this number** is the fallback for when the group is pointed at the
 wrong person altogether, and is the only thing that ever creates a second one.
 The old group is then marked replaced rather than deleted: CYWS still files its
@@ -73,28 +88,26 @@ group.** Enter the numbers in full international format (digits only —
 `6591234567`, not `91234567`; a leading zero is refused rather than guessed at
 too, because no country code starts with one).
 
-This creates a **real WhatsApp group** and adds real people to it. It is the
+This creates a **real WhatsApp group**, with nobody but CYBot in it. It is the
 only thing in CYBills that can, and it happens only on that button — never on
-load, never as a side effect, never in a loop.
+load, never as a side effect, never in a loop. The numbers typed are who the
+group is FOR; nobody is added, and each group's row carries its invite link.
 
-Two things to expect:
+Things to expect:
 
-- **Everyone put in goes in as an ADMIN** (`promote_participants: true` on
-  create-group, `promote: true` on add-participants). A collection group has to
-  keep working when CYBot is not looking at it: only an admin can add somebody
-  WhatsApp declined to add, rename the group, or take a person out of it — which
-  is the instruction the shortfall below ends with, and one an ordinary member
-  cannot follow. A CYWS that ignores the flag is not an error; the group's own
-  card carries **Make everyone an admin** for exactly that case.
-- **Somebody may not be added.** WhatsApp silently refuses to add a user whose
-  privacy settings disallow it, and answers as though nothing happened. That is
-  not an error, and the card says so — but usually only as a count. WhatsApp
-  returns **LIDs** in `participants_added` (`217630539546875`), the opaque
-  per-user ids it uses so a group doesn't leak everyone's number, and no phone
-  number will ever match one. So a name is claimed only when a returned id
-  really is one of the numbers we sent; otherwise all that is honestly known is
-  how many are short. Whoever is missing has to be added from inside the group
-  — CYWS's API mints no invite link.
+- **People join as ordinary members.** Only an admin can add somebody, rename
+  the group, or take a person out of it, and the group has to keep working when
+  CYBot is not looking at it — so the group's card carries **Make everyone an
+  admin**, which promotes whoever has joined.
+- **The link can be missing.** CYWS may make the group and fail to read its link
+  in the same breath; the group still opens, the response says why, and the card
+  offers **Get invite link** (`invite-link`, below).
+- **Anyone holding the link can join**, and a bill sent into a person's group is
+  filed under that person. So the link is emailed only to the person, shown only
+  to those who administer the group, and never put in `/directory`.
+- **Groups opened before invite links** were made by adding numbers, and may
+  still show WhatsApp's old shortfall ("added 1 of 2"). The fix is now the same
+  card's invite link rather than adding somebody from inside the group.
 - **A failed attempt is resumable.** The submission id is written to disk
   *before* the call goes out, because the dangerous failure is not "the call
   failed" but "the call succeeded and the answer was lost". Pressing the button
@@ -318,7 +331,34 @@ POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/rename-group   (X-API-Key
   log. Nothing about filing depends on it: a bill sent into the group files under
   the person the CHANNEL names, never under its subject.
 
+## A group's invite link
+
+```
+POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/invite-link   (X-API-Key, same key)
+{ "submission_id": "CYB-org_red00001-a1b2c3d4" }
+```
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{data: {chat_id, invite_link}}` | `https://chat.whatsapp.com/<code>`. |
+| 400 | `{error: "submission_id_required"}` | |
+| 401 | `{error: "invalid_api_key"}` | |
+| 404 | `{error: "unknown_submission"}` | No group at CYWS under that id. A 404 with NO `error` is a CYWS without the route, reported as `invite_route_unavailable`. |
+| 502 | `{error: "invite_link_failed"}` | WhatsApp refused — only an admin of the group may read it. Retryable. |
+| 503 | `{error: "invite_link_unavailable"}` | The CYBot number is not on WAHA. |
+
+CYBills stores the link on the channel and reuses it, so this is asked only for a
+group that has none: one whose create could not read it, or one opened before
+invite links. Behind it, WAHA's `GET /api/{session}/groups/{id}/invite-code`.
+CYBills-side: `POST /api/whatsapp/channels/:id/invite` (`{email?, send?}`) gets
+the link and emails it — to the typed address, else to the person the group is
+for — and refuses an adopted or closed group exactly as the add does.
+
 ## Adding a number to a group
+
+> **No longer called by CYBills.** A number for an existing group is now sent the
+> group's invite link instead (see above), for the same enforcement reason CYBot
+> no longer adds anybody. The route below stays in CYWS for older callers.
 
 A person changes their phone and two things are true at once: they are reachable
 on the new number, and the group holds the old one. WhatsApp cannot swap a

@@ -8,6 +8,7 @@ import { useWhatsappForUser, connectWhatsappForUser, addWhatsappParticipant } fr
 import { cn } from '@/lib/utils';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
+import WhatsappInviteLink from '@/components/WhatsappInviteLink';
 
 // "Extract by email" — the user's inbound address plus any Gmail forwarding
 // confirmation CYBills is holding for them to click.
@@ -175,7 +176,21 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
     setError(null);
     setNote(null);
     try {
-      await connectWhatsappForUser({ userId: user.id, mobile, replace });
+      const out = await connectWhatsappForUser({ userId: user.id, mobile, replace });
+      // Nobody is added to the group — they join by its invite link — so what
+      // happened to the LINK is the news.
+      if (out?.invite?.sent) {
+        setNote({ ok: true, text: `Group opened, and its invite link emailed to ${out.invite.email}. They join by tapping it.` });
+      } else if (out?.inviteError) {
+        setNote({ ok: false, text: `Group opened, but its invite link couldn’t be read: ${out.inviteError}` });
+      } else if (!out?.unchanged) {
+        setNote({
+          ok: true,
+          text: out?.invite
+            ? `Group opened. The invite email to ${out.invite.email} didn’t go (${out.invite.error}) — copy the link below and send it yourself.`
+            : 'Group opened. Copy the invite link below and send it to them.',
+        });
+      }
     } catch (err) {
       setError(err);
     } finally {
@@ -200,12 +215,15 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
       const out = await addWhatsappParticipant({ submissionId: channel.submissionId, mobile });
       setNote(
         out.already
-          ? { ok: true, text: 'That number is already in the group.' }
-          : out.addedNow
-            ? { ok: true, text: `${out.mobile} is in the group, and bills from it are filed under ${user.name || 'them'}.` }
+          ? { ok: true, text: 'That number is already on the group.' }
+          : out.invite?.sent
+            ? {
+                ok: true,
+                text: `${out.mobile} is stored against ${user.name || 'them'}, and the group’s invite link was emailed to ${out.invite.email}.`,
+              }
             : {
-                ok: false,
-                text: `WhatsApp didn’t add ${out.mobile} — their privacy settings may not allow it. Somebody already in the group can add them; CYBills has stored the number either way.`,
+                ok: true,
+                text: `${out.mobile} is stored against ${user.name || 'them'}. Send them the invite link below so they can join from that number.`,
               }
       );
     } catch (err) {
@@ -241,8 +259,8 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
         <MessageCircle className="h-4 w-4" strokeWidth={1.75} /> Connect to WhatsApp
       </div>
       <p className="text-xs text-muted-foreground">
-        Opens a WhatsApp group with {user.name || 'this person'}. Bills they send into it are read and filed
-        under them — no sign-in, no app.
+        Opens a WhatsApp group for {user.name || 'this person'} and emails them its invite link. Bills they send
+        into it are read and filed under them — no sign-in, no app.
       </p>
       <label className="sr-only" htmlFor="wa-mobile">Mobile number</label>
       <div className="flex items-center gap-2">
@@ -279,15 +297,18 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           <span className="font-medium text-foreground">Connected</span> — {channel.subject}
           {/* Which number the group actually holds. Without it, a mismatch below
               is an accusation with nothing to check it against. */}
-          {inGroup ? <> · opened with <span className="font-mono">{inGroup}</span></> : null}
+          {inGroup ? <> · opened for <span className="font-mono">{inGroup}</span></> : null}
           {/* Numbers put in afterwards. Named separately from the one it was
               opened with, because that is the honest history of the group —
               and because it is the pair of them together that says why the
               mismatch warning is no longer up. */}
           {alsoInGroup.length ? (
-            <> · also added <span className="font-mono">{alsoInGroup.join(', ')}</span></>
+            <> · also for <span className="font-mono">{alsoInGroup.join(', ')}</span></>
           ) : null}
           {channel.received ? ` · ${channel.received} ${channel.received === 1 ? 'bill' : 'bills'} so far` : ''}
+          <div className="mt-2">
+            <WhatsappInviteLink channel={channel} canManage={canManage && enabled} onDone={reload} defaultEmail={user.email} />
+          </div>
           {/* Everyone CYBot puts in a group goes in as an admin now, so this is
               here for the groups opened before that — and for the ordinary case
               of somebody having been added from inside WhatsApp since. */}
@@ -326,8 +347,8 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
             <span>
               <span className="font-medium">Save</span> stores this number, and bills sent from it are filed
               under {user.name || 'them'} from then on. It doesn&rsquo;t change the group, though — that one was
-              opened with <span className="font-mono">{inGroup}</span> and WhatsApp has no way to swap a number
-              inside a group. It can hold both, though.
+              opened for <span className="font-mono">{inGroup}</span>, and they have to join it again from the new
+              number.
             </span>
           </p>
           {/* Two ways out, and they are not equals. Adding keeps ONE
@@ -344,7 +365,7 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
               disabled={Boolean(busy) || !enabled || !canManage}
               className="inline-flex h-8 items-center rounded-md bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
             >
-              {busy === 'add' ? 'Adding…' : 'Add this number to the group'}
+              {busy === 'add' ? 'Sending…' : 'Send the invite for this number'}
             </button>
             <button
               type="button"
@@ -356,8 +377,9 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
             </button>
           </div>
           <p className="pl-5 text-xs text-amber-800/80 dark:text-amber-200/70">
-            Adding keeps the group and everyone in it, and stores the number against {user.name || 'them'}. A
-            new group is a second conversation — the old one keeps collecting until it is closed.
+            Sending the invite keeps the group and everyone in it, stores the number against{' '}
+            {user.name || 'them'} and emails them the link to join from it. A new group is a second conversation —
+            the old one keeps collecting until it is closed.
           </p>
         </div>
       )}
