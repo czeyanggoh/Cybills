@@ -64,13 +64,17 @@ export default function WhatsappInviteLink({ channel, canManage, onDone, default
       {link ? (
         <>
           <div className="flex items-center gap-2">
-            <input
-              readOnly
-              value={link}
-              onFocus={(e) => e.target.select()}
-              className="h-8 min-w-0 flex-1 rounded-md border bg-muted/30 px-2 font-mono text-xs outline-none"
-              aria-label="Invite link"
-            />
+            {/* A real link: on a phone it opens WhatsApp straight into the
+                group, on a desktop WhatsApp's own join page. */}
+            <a
+              href={link}
+              target="_blank"
+              rel="noreferrer"
+              title={link}
+              className="flex h-8 min-w-0 flex-1 items-center truncate rounded-md border bg-muted/30 px-2 font-mono text-xs text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+            >
+              <span className="truncate">{link}</span>
+            </a>
             <button
               type="button"
               onClick={copy}
