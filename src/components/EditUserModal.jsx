@@ -278,7 +278,7 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           <button
             type="button"
             onClick={() => connect(false)}
-            disabled={Boolean(busy) || loading || !enabled || !canManage || !mobile.trim()}
+            disabled={Boolean(busy) || loading || !enabled || !canManage}
             className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {busy === 'connect' ? 'Connecting…' : channel ? 'Try again' : 'Connect'}
@@ -289,7 +289,8 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
           nothing. A leading 0 is a national trunk prefix and is refused rather
           than guessed at — no country code starts with one. */}
       <p className="text-xs text-muted-foreground">
-        Country code first, digits only — <code>6591234567</code>, not <code>91234567</code>.
+        Mobile number is optional — they join by the invite link either way. If you give one: country code first,
+        digits only — <code>6591234567</code>, not <code>91234567</code>.
       </p>
 
       {open ? (

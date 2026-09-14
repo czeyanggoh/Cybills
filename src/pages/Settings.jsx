@@ -1311,7 +1311,7 @@ function WhatsappCollectionCard() {
   const form = (
     <div className="mt-4 space-y-3 border-t pt-4">
       <div>
-        <label htmlFor="wa-numbers" className="text-sm font-medium">WhatsApp numbers</label>
+        <label htmlFor="wa-numbers" className="text-sm font-medium">WhatsApp numbers <span className="font-normal text-muted-foreground">(optional)</span></label>
         <p className="mt-1 text-xs text-muted-foreground">
           Who the group is for. Full international format, digits only — <code>6591234567</code>, not{' '}
           <code>91234567</code>. Several go on separate lines. Nobody is added: the group opens with an invite link
@@ -1340,7 +1340,7 @@ function WhatsappCollectionCard() {
         <button
           type="button"
           onClick={create}
-          disabled={busy || !numbers.trim()}
+          disabled={busy}
           className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {busy ? 'Creating…' : pending ? 'Try again' : 'Create the group'}

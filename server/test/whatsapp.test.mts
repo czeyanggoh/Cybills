@@ -289,6 +289,20 @@ check('and exactly one group is live', replaced.channels.filter((c: any) => c.st
 check('the old one is still on file', replaced.channels.some((c: any) => c.status === 'replaced'), true);
 check('under its own id, so its messages still land', replaced.channels.length, 2);
 
+// No number at all. Nobody is added to a group any more — they join by link —
+// so a group needs no number to open, and the stored one is left alone.
+{
+  const { ensure: roster, save: saveRoster, full } = await import('../src/users.ts');
+  const items = roster('cybm');
+  const noPhone = full({ name: 'No Phone', email: 'nophone@example.com', organisationId: 'org_one0001', login: 'No' }, 'cybm');
+  items.push(noPhone);
+  saveRoster(items);
+  r = await post('channels/user', { userId: noPhone.id, mobile: '' });
+  check('a person with no number can still be connected', [r.status, r.body.channel?.status], [200, 'open']);
+  check('with no number recorded against the group', r.body.channel?.participantsRequested, []);
+  check('and the invite still goes to their address', r.body.invite?.email, 'nophone@example.com');
+}
+
 r = await post('channels/user', { userId: 'nobody', mobile: '6591112222' });
 check('a person CYBills has no row for is refused', r.status, 404);
 

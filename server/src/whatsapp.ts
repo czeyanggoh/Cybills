@@ -811,16 +811,20 @@ whatsappRouter.post('/channels/user', async (req, res) => {
   if (!mayManagePerson(req, person.user, person.orgId)) return res.status(403).json({ error: 'not_an_admin' });
   if (!person.orgId) return res.status(400).json({ error: 'org_required' });
 
+  // The number is OPTIONAL now. Nobody is added to the group — they join by its
+  // invite link — and a person's own group files under them whoever sends, so
+  // the group needs no number to exist. One typed is still stored (it names the
+  // sender in the thread), and one that cannot be a number is still refused.
   const asked = String(req.body?.mobile ?? person.user.mobile ?? '').trim();
   const mobile = normaliseMobile(asked);
-  if (!mobile) {
+  if (asked && !mobile) {
     return res.status(400).json({
       error: 'participant_required',
       message: MESSAGES.participant_required,
-      rejected: asked ? [asked] : [],
+      rejected: [asked],
     });
   }
-  if (normaliseMobile(person.user.mobile) !== mobile) {
+  if (mobile && normaliseMobile(person.user.mobile) !== mobile) {
     const items = ensureUsers(ws);
     const row = items.find((u) => u.id === userId);
     if (row) {
@@ -860,7 +864,7 @@ whatsappRouter.post('/channels/user', async (req, res) => {
   const org = getOrganisation(ws, person.orgId);
   const me = memberForSession(req);
   const result = await createChannel(ws, person.orgId, {
-    participants: [mobile],
+    participants: mobile ? [mobile] : [],
     subject: subjectFor(person.user, org?.name || person.orgId),
     createdBy: me?.email ?? '',
     userId,
@@ -1015,7 +1019,9 @@ whatsappRouter.post('/channels', async (req, res) => {
   // Name the number that was wrong rather than refusing the lot silently: a
   // typo'd digit and a number in national format look identical in a toast.
   const rejected = asked.filter((p) => !normaliseMobile(p));
-  if (!participants.length) {
+  // Optional, as on a person's group: nobody is added, people join by link. A
+  // number typed wrong is still named back rather than quietly dropped.
+  if (rejected.length) {
     return res.status(400).json({
       error: 'participant_required',
       message: MESSAGES.participant_required,
