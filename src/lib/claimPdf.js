@@ -43,6 +43,25 @@ const LINK = [37, 99, 235];
 
 const n2 = (v) => Number(v || 0).toFixed(2);
 
+// jsPDF's built-in Helvetica only speaks Latin-1. One character past that — an
+// arrow, an en dash, a curly quote, all things a reader or a person types into a
+// description — and jsPDF writes the WHOLE string as UTF-16, which that font
+// then draws byte by byte: "→" comes out as `!"` and every letter of the line
+// gains a gap after it. So those are folded to their plain equivalents, and
+// anything else outside Latin-1 becomes "?" rather than spoiling its line.
+const PDF_FOLD = {
+  '→': '->', '←': '<-', '↔': '<->', '⇒': '=>',
+  '–': '-', '—': '-', '‒': '-', '−': '-', '‐': '-', '‑': '-',
+  '‘': "'", '’': "'", '‚': "'", '“': '"', '”': '"', '„': '"',
+  '…': '...', '•': '-', ' ': ' ', ' ': ' ', ' ': ' ', '​': '',
+  '€': 'EUR',
+};
+export function pdfText(v) {
+  if (typeof v !== 'string') return v;
+  if (!/[^\x00-\xff]/.test(v)) return v;
+  return v.replace(/[^\x00-\xff]/g, (ch) => PDF_FOLD[ch] ?? '?');
+}
+
 // A claim PDF is opened from a mail client or a file, not from inside the app,
 // so an item's link has to carry the host — a bare /costs/… path resolves
 // against nothing and is why the Item ID looked like a link but did nothing.
@@ -81,6 +100,14 @@ function summarise(txns) {
 // jsPDF doc so callers can open, download, or (in tests) serialise it.
 export function buildClaimDoc(claim, links = {}, origin = ORIGIN, { signatures = false } = {}) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  // Every string reaches the page through pdfText. Wrapped here once rather than
+  // at each call, because the one that is missed is the one a reader types an
+  // arrow into — and measuring (splitTextToSize, getTextWidth) has to see the
+  // same string that is drawn, or a wrapped line is cut at the wrong width.
+  for (const fn of ['text', 'textWithLink', 'splitTextToSize', 'getTextWidth']) {
+    const orig = doc[fn].bind(doc);
+    doc[fn] = (s, ...rest) => orig(Array.isArray(s) ? s.map(pdfText) : pdfText(s), ...rest);
+  }
   const title = `${claim.claimFor}'s Expense Claim`.toUpperCase();
   const totalExp = '{tp}';
   let page = 0;
