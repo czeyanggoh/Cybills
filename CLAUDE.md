@@ -2831,15 +2831,23 @@ session those people do not have yet, and finishing enrolment is what gives them
 one. Google sign-in is untouched: that branch is only ever reached through the
 password form.
 
-**A trusted browser is asked once, then not again for 30 days** (`cyb_trust`,
-its own cookie). Without it a second factor on a daily tool is a tax, and the
-way people pay a tax like that is by choosing a worse password. The token names
-ONE person and the moment their factor was enrolled, so it cannot be replayed
-for somebody else, and a reset or a re-enrolment silently retires every browser
-trusted before it — which is what you want on the day the laptop is the thing
-that went missing. A RECOVERY code never trusts the browser it was used on,
-whatever the checkbox said: reaching for one is what it looks like when the
-phone is missing, and also what it looks like when the account is being taken.
+**A trusted browser is asked once, then not again** (`cyb_trust`, its own
+cookie). Without it a second factor on a daily tool is a tax, and the way people
+pay a tax like that is by choosing a worse password. The token names ONE person
+and the moment their factor was enrolled, so it cannot be replayed for somebody
+else, and a reset or a re-enrolment silently retires every browser trusted
+before it — which is what you want on the day the laptop is the thing that went
+missing. That enrolment stamp is what ENDS a trust, and it is deliberately the
+only thing that does: the token carries no expiry, because a date in it would
+only ever put the prompt back on a machine that was already trusted, which the
+person answering it can do nothing about and learns nothing from. The cookie has
+to name one — browsers cap a persistent cookie at 400 days and drop a session
+cookie when the window closes — so it is written for that cap and REWRITTEN on
+every sign-in it carries, which rolls it forward: a browser in daily use is
+never asked again, one left alone for over a year asks once. A RECOVERY code
+never trusts the browser it was used on, whatever the checkbox said: reaching
+for one is what it looks like when the phone is missing, and also what it looks
+like when the account is being taken.
 
 `/api/users/login/totp` is allowlisted past the session guard, and has to be:
 whoever is standing at the code prompt has no session yet, which is the entire

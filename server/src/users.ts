@@ -1956,27 +1956,34 @@ function readChallenge(token: string): string {
 }
 
 // --- Trusting a browser -------------------------------------------------------
-// Asked for a code once, then not again on this machine for a month. Without it
-// a second factor on a daily tool is a tax rather than a safeguard, and the way
-// people pay a tax like that is by picking a worse password.
+// Asked for a code once on this machine, then not again. Without it a second
+// factor on a daily tool is a tax rather than a safeguard, and the way people
+// pay a tax like that is by picking a worse password.
 //
 // The token names ONE person and the moment their second factor was set up, so
 // it cannot be replayed for somebody else, and resetting or re-enrolling a
 // person's 2FA silently retires every browser they had trusted — which is what
-// you want on the day the laptop is the thing that went missing.
+// you want on the day the laptop is the thing that went missing. That
+// enrolment stamp, not a clock, is what ends a trust: a date in the token
+// would only ever put back the prompt on a machine that was already trusted,
+// which the person answering it can do nothing about and learns nothing from.
 const TRUST_COOKIE = 'cyb_trust';
-const TRUST_TTL_SECONDS = 30 * 24 * 60 * 60;
+// The token itself carries no expiry. The COOKIE has to name one — browsers
+// cap a persistent cookie at 400 days and discard a session cookie the moment
+// the window closes — so it is written for the cap and RE-WRITTEN on every
+// sign-in this browser is trusted through (`trustBrowser` again in the trusted
+// branch of /login), which rolls it forward. A browser in daily use is
+// therefore never asked again; one left alone for over a year asks once.
+const TRUST_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
 
 function trustBrowser(res: Response, user: User): void {
-  const token = jwt.sign({ sub: user.id, kind: 'trust', at: user.totpEnabledAt ?? '' }, env.SESSION_SECRET, {
-    expiresIn: TRUST_TTL_SECONDS,
-  });
+  const token = jwt.sign({ sub: user.id, kind: 'trust', at: user.totpEnabledAt ?? '' }, env.SESSION_SECRET);
   res.cookie(TRUST_COOKIE, token, {
     httpOnly: true,
     secure: env.isProd,
     sameSite: 'lax' as const,
     path: '/',
-    maxAge: TRUST_TTL_SECONDS * 1000,
+    maxAge: TRUST_COOKIE_MAX_AGE_MS,
   });
 }
 
@@ -2012,8 +2019,12 @@ usersRouter.post('/login', (req, res) => {
   // half of it. No session is set here.
   if (user.totpSecret) {
     // …unless this browser has been trusted, which is the whole point of the
-    // checkbox: asked once, then not again on this machine for a month.
+    // checkbox: asked once, then not again on this machine.
     if (browserIsTrusted(req, user)) {
+      // Written again so the cookie's own 400-day cap keeps moving ahead of a
+      // browser that is actually being used. Nothing about the trust changes —
+      // it is the same claim under the same enrolment.
+      trustBrowser(res, user);
       setSession(res, { sub: user.id, email: user.email, name: user.name });
       return res.json({ user: publicUser(user), trusted: true });
     }
@@ -2061,7 +2072,7 @@ usersRouter.post('/login/totp', (req, res) => {
     // Deliberately not trusted, whatever the checkbox said. A recovery code is
     // what somebody reaches for when the second factor is not to hand, which is
     // also what it looks like when the account is being taken — so it buys one
-    // session, not a month of not being asked.
+    // session, not a standing pass on this machine.
     return res.json({ user: publicUser(user), usedRecoveryCode: true, recoveryCodesLeft: left.length });
   }
   return res.status(401).json({ error: 'invalid_code' });

@@ -172,6 +172,15 @@ check('an expired challenge is refused', r.body.error, 'challenge_expired');
   check('asking to be trusted sets a second cookie', cookies.includes('cyb_trust='), true);
   const trust = /cyb_trust=[^;]+/.exec(cookies)?.[0] ?? '';
 
+  // The trust does not lapse on a date. What ends it is the enrolment stamp it
+  // names — a reset or a re-enrolment, asserted a few lines below — so the
+  // token carries no `exp` at all, and a clock can never put the prompt back on
+  // a machine somebody already answered it on.
+  const claims = JSON.parse(
+    Buffer.from(trust.split('=')[1].split('.')[1], 'base64url').toString('utf8')
+  );
+  check('the trust token carries no expiry', claims.exp, undefined);
+
   // The password alone is enough on THIS browser now, and only this one.
   const again = await fetch('http://127.0.0.1:4639/api/users/login', {
     method: 'POST',
@@ -181,6 +190,13 @@ check('an expired challenge is refused', r.body.error, 'challenge_expired');
   const body = (await again.json()) as any;
   check('a trusted browser is not asked for a code', Boolean(body.user), true);
   check('and says that is why', body.trusted, true);
+
+  // The COOKIE has to name a date — a browser caps a persistent one at 400 days
+  // — so every sign-in it carries writes it again, which rolls that cap forward
+  // and is what makes a browser in daily use never asked again.
+  const rolled = again.headers.get('set-cookie') ?? '';
+  check('and the trust is written again, rolling its cookie forward', rolled.includes('cyb_trust='), true);
+  check('for the longest a browser will keep one', /Max-Age=(\d+)/.exec(/cyb_trust=[^,]*/.exec(rolled)?.[0] ?? '')?.[1], String(400 * 24 * 60 * 60));
 
   // It names one person, so it cannot be carried to somebody else's sign-in.
   const other = await fetch('http://127.0.0.1:4639/api/users/login', {
