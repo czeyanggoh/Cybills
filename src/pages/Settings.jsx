@@ -1278,7 +1278,6 @@ function WhatsappCollectionCard() {
   const organisation = useActiveOrganisation();
   const [{ channels, enabled, canManage, loading }, reload] = useWhatsappChannels();
   const [open, setOpen] = useState(false);
-  const [numbers, setNumbers] = useState('');
   const [subject, setSubject] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -1293,9 +1292,8 @@ function WhatsappCollectionCard() {
     setBusy(true);
     setError(null);
     try {
-      const participants = numbers.split(/[\s,;]+/).map((n) => n.trim()).filter(Boolean);
-      await createWhatsappChannel({ participants, subject: subject.trim() });
-      setNumbers('');
+      // No numbers: nobody is added, people join by the group's invite link.
+      await createWhatsappChannel({ participants: [], subject: subject.trim() });
       setSubject('');
       setOpen(false);
       reload();
@@ -1310,22 +1308,10 @@ function WhatsappCollectionCard() {
 
   const form = (
     <div className="mt-4 space-y-3 border-t pt-4">
-      <div>
-        <label htmlFor="wa-numbers" className="text-sm font-medium">WhatsApp numbers <span className="font-normal text-muted-foreground">(optional)</span></label>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Who the group is for. Full international format, digits only — <code>6591234567</code>, not{' '}
-          <code>91234567</code>. Several go on separate lines. Nobody is added: the group opens with an invite link
-          to send them.
-        </p>
-        <textarea
-          id="wa-numbers"
-          rows={2}
-          value={numbers}
-          onChange={(e) => setNumbers(e.target.value)}
-          placeholder="6591234567"
-          className="mt-2 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-      </div>
+      <p className="text-xs text-muted-foreground">
+        The group opens with nobody in it. Its invite link appears on the group&rsquo;s row below, to send to the
+        people who hold this entity&rsquo;s invoices.
+      </p>
       <div>
         <label htmlFor="wa-subject" className="text-sm font-medium">Group name</label>
         <input

@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink, MessageCircle, AlertTriangle } from 'lucide-react';
+import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink, MessageCircle } from 'lucide-react';
 import { rolesFor, roleTier, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
 import { useOrganisations, useBridgeEntity } from '@/lib/organisations';
 import { cleanHandle, inboundAddress, entityAddress, addressTail, suffixForUser } from '@/lib/inboundAddress';
-import { useWhatsappForUser, connectWhatsappForUser, addWhatsappParticipant } from '@/lib/whatsapp';
+import { useWhatsappForUser, connectWhatsappForUser } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
@@ -156,11 +156,11 @@ function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
 
 // "Connect to WhatsApp" — this person's own bill collection group.
 //
-// The number lives in this card rather than up with the name fields, the way
-// the inbound address lives in the one above: its whole job in CYBills is
-// WhatsApp. It is what the group is opened with AND what a bill arriving from
-// that number is matched back to, which is why one field does both.
-function ConnectWhatsapp({ user, mobile, setMobile }) {
+// Just a button. Nobody is added to the group — CYBot adding numbers is what
+// WhatsApp enforces against — so there is no number to type: the group opens,
+// its invite link is emailed to them and shown here to pass on, and a person's
+// own group files bills under them whoever sends.
+function ConnectWhatsapp({ user }) {
   const [{ channel, alsoCollecting, enabled, canManage, loading }, reload] = useWhatsappForUser(user.id);
   // Which button is working, not merely that one is: three of them share this
   // card and each has its own word for what it is doing.
@@ -171,12 +171,15 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
   // makes the mismatch warning — and the button with it — disappear.
   const [note, setNote] = useState(null);
 
-  const connect = async (replace = false) => {
-    setBusy(replace ? 'replace' : 'connect');
+  const connect = async () => {
+    setBusy('connect');
     setError(null);
     setNote(null);
     try {
-      const out = await connectWhatsappForUser({ userId: user.id, mobile, replace });
+      // An explicit empty number: left out, the server falls back to the stored
+      // one, and a stored number in the wrong format would refuse a connect
+      // there is no longer a box on this card to fix.
+      const out = await connectWhatsappForUser({ userId: user.id, mobile: '' });
       // Nobody is added to the group — they join by its invite link — so what
       // happened to the LINK is the news.
       if (out?.invite?.sent) {
@@ -203,55 +206,7 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
     }
   };
 
-  // Put this number in the group that already exists, rather than opening a
-  // second one. WhatsApp cannot swap a number inside a group, but it can hold
-  // both — and a group holding both keeps one conversation and one thread,
-  // which a second group does not.
-  const addToGroup = async () => {
-    setBusy('add');
-    setError(null);
-    setNote(null);
-    try {
-      const out = await addWhatsappParticipant({ submissionId: channel.submissionId, mobile });
-      setNote(
-        out.already
-          ? { ok: true, text: 'That number is already on the group.' }
-          : out.invite?.sent
-            ? {
-                ok: true,
-                text: `${out.mobile} is stored against ${user.name || 'them'}, and the group’s invite link was emailed to ${out.invite.email}.`,
-              }
-            : {
-                ok: true,
-                text: `${out.mobile} is stored against ${user.name || 'them'}. Send them the invite link below so they can join from that number.`,
-              }
-      );
-    } catch (err) {
-      setError(err);
-    } finally {
-      setBusy('');
-      reload();
-    }
-  };
-
   const open = channel?.status === 'open';
-  // A number changed after the fact does not move the group — the person in it
-  // stays whoever was added. Worth saying before Save, not after.
-  //
-  // Compared against the number the group was OPENED with, not against what
-  // WhatsApp echoed back: that comes back as a LID, an opaque per-user id, and
-  // no phone number will ever match one.
-  //
-  // Against ALL of them, not only the first: a group can hold several now (see
-  // "Add this number to the group"), and measuring against the one it was
-  // opened with would leave the warning up over a number that is demonstrably
-  // in there.
-  const numbers = channel?.participantsRequested ?? [];
-  const inGroup = numbers[0] || '';
-  const alsoInGroup = numbers.slice(1);
-  const digits = String(mobile || '').replace(/\D+/g, '');
-  const holds = (n) => Boolean(n) && (digits.endsWith(n) || n.endsWith(digits));
-  const drifted = open && inGroup && digits && !numbers.some(holds);
 
   return (
     <div className="space-y-3 rounded-lg border p-4">
@@ -262,50 +217,20 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
         Opens a WhatsApp group for {user.name || 'this person'} and emails them its invite link. Bills they send
         into it are read and filed under them — no sign-in, no app.
       </p>
-      <label className="sr-only" htmlFor="wa-mobile">Mobile number</label>
-      <div className="flex items-center gap-2">
-        <input
-          id="wa-mobile"
-          type="tel"
-          value={mobile}
-          onChange={(e) => { setMobile(e.target.value); setError(null); }}
-          placeholder="6591234567"
-          spellCheck={false}
-          autoComplete="tel"
-          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-        {!open && (
-          <button
-            type="button"
-            onClick={() => connect(false)}
-            disabled={Boolean(busy) || loading || !enabled || !canManage}
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {busy === 'connect' ? 'Connecting…' : channel ? 'Try again' : 'Connect'}
-          </button>
-        )}
-      </div>
-      {/* Full international format, or WhatsApp simply adds nobody and says
-          nothing. A leading 0 is a national trunk prefix and is refused rather
-          than guessed at — no country code starts with one. */}
-      <p className="text-xs text-muted-foreground">
-        Mobile number is optional — they join by the invite link either way. If you give one: country code first,
-        digits only — <code>6591234567</code>, not <code>91234567</code>.
-      </p>
+      {!open && (
+        <button
+          type="button"
+          onClick={connect}
+          disabled={Boolean(busy) || loading || !enabled || !canManage}
+          className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-4 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {busy === 'connect' ? 'Connecting…' : channel ? 'Try again' : 'Connect'}
+        </button>
+      )}
 
       {open ? (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">Connected</span> — {channel.subject}
-          {/* Which number the group actually holds. Without it, a mismatch below
-              is an accusation with nothing to check it against. */}
-          {inGroup ? <> · opened for <span className="font-mono">{inGroup}</span></> : null}
-          {/* Numbers put in afterwards. Named separately from the one it was
-              opened with, because that is the honest history of the group —
-              and because it is the pair of them together that says why the
-              mismatch warning is no longer up. */}
-          {alsoInGroup.length ? (
-            <> · also for <span className="font-mono">{alsoInGroup.join(', ')}</span></>
-          ) : null}
           {channel.received ? ` · ${channel.received} ${channel.received === 1 ? 'bill' : 'bills'} so far` : ''}
           <div className="mt-2">
             <WhatsappInviteLink channel={channel} canManage={canManage && enabled} onDone={reload} defaultEmail={user.email} />
@@ -332,57 +257,6 @@ function ConnectWhatsapp({ user, mobile, setMobile }) {
         <p className={cn('text-xs', note.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400')}>
           {note.text}
         </p>
-      )}
-
-      {/* The number and the group are two separate things, and the warning that
-          used to sit here said so without giving anybody anywhere to go: it
-          reported a mismatch, offered no action (the Connect button is hidden
-          once a group is open), and stayed up after Save — which reads exactly
-          like the number failing to save, and was reported as one.
-
-          So it says what Save does, and the group gets a button of its own. */}
-      {drifted && (
-        <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-50 px-3 py-2.5 dark:bg-amber-500/10">
-          <p className="flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-200">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>
-              <span className="font-medium">Save</span> stores this number, and bills sent from it are filed
-              under {user.name || 'them'} from then on. It doesn&rsquo;t change the group, though — that one was
-              opened for <span className="font-mono">{inGroup}</span>, and they have to join it again from the new
-              number.
-            </span>
-          </p>
-          {/* Two ways out, and they are not equals. Adding keeps ONE
-              conversation — same group, same thread, same submission id, one
-              more person in it — where a second group splits the paperwork
-              across two chats in front of a client and leaves somebody to
-              work out which is current. So the additive one leads, and the
-              other stays for the case it was written for: the group is
-              pointed at the wrong person altogether. */}
-          <div className="flex flex-wrap items-center gap-2 pl-5">
-            <button
-              type="button"
-              onClick={addToGroup}
-              disabled={Boolean(busy) || !enabled || !canManage}
-              className="inline-flex h-8 items-center rounded-md bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {busy === 'add' ? 'Sending…' : 'Send the invite for this number'}
-            </button>
-            <button
-              type="button"
-              onClick={() => connect(true)}
-              disabled={Boolean(busy) || !enabled || !canManage}
-              className="inline-flex h-8 items-center rounded-md border border-amber-700/40 bg-background px-3 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              {busy === 'replace' ? 'Opening…' : 'Open a new group with this number'}
-            </button>
-          </div>
-          <p className="pl-5 text-xs text-amber-800/80 dark:text-amber-200/70">
-            Sending the invite keeps the group and everyone in it, stores the number against{' '}
-            {user.name || 'them'} and emails them the link to join from it. A new group is a second conversation —
-            the old one keeps collecting until it is closed.
-          </p>
-        </div>
       )}
 
       {/* Conversations of their own that were pointed at CYBills rather than
@@ -462,7 +336,9 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
   // address.
   const suffix = suffixForUser(user, organisations);
   const [handle, setHandle] = useState(user?.emailHandle || '');
-  const [mobile, setMobile] = useState(user?.mobile || '');
+  // No longer edited here (the WhatsApp card has no number box — people join by
+  // invite link), but still sent back on Save so the stored number is kept.
+  const mobile = user?.mobile || '';
   const [handleError, setHandleError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -595,7 +471,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
               {/* The other road a bill travels. Same shape as the card above on
                   purpose: they are the two ways paperwork reaches CYBills
                   without anybody signing in. */}
-              <ConnectWhatsapp user={user} mobile={mobile} setMobile={setMobile} />
+              <ConnectWhatsapp user={user} />
             </div>
           ) : (
             <div className="space-y-5">

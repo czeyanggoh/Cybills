@@ -1898,10 +1898,13 @@ an internal `@cybills.local` identity). Never as a WhatsApp message from CYBot,
 which is the same unsolicited contact by another road. A link the create could
 not read is fetched later through CYWS's `invite-link` (`ensureInviteLink`).
 The numbers typed are still stored in `participantsRequested`, as who the group is
-FOR, but `participantsKnown` stays false, so no shortfall is ever reported. "Add
-this number to the group" became **Send the invite for this number**: same
-group, number stored as theirs, link emailed; `add-participants` is no longer
-called. `POST /api/whatsapp/channels/:id/invite` (`{email?, send?}`) fetches or
+FOR, but `participantsKnown` stays false, so no shortfall is ever reported. **The
+number box is gone from both cards**: a person's card is a Connect button (it
+sends `mobile: ''` so a badly formatted stored number cannot refuse it), and the
+entity form asks only for a group name. The number-changed warning and its
+"Open a new group with this number" went with it. The server route
+`/channels/:id/participants` survives for an API caller (stores the number,
+emails the link), but `add-participants` is no longer called by anything. `POST /api/whatsapp/channels/:id/invite` (`{email?, send?}`) fetches or
 re-sends the link, refusing adopted and closed groups the way the add does. Anyone
 holding the link can join and send bills into that person's book, so it is blanked
 in `GET /channels` for anyone who is not a manager and never put in `/directory`.
