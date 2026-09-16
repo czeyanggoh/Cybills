@@ -285,7 +285,10 @@ function OrganisationSwitcher() {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
-          <div className="absolute left-0 top-full z-20 mt-1 w-72 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+          {/* Capped to the window: a practice holds more entities than fit on
+              screen, and a menu taller than the viewport can't be scrolled to. */}
+          <div className="absolute left-0 top-full z-20 mt-1 flex max-h-[calc(100dvh-6rem)] w-72 flex-col overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {organisations.length === 0 && (
               <p className="px-3 py-2 text-sm text-muted-foreground">
                 No organisations yet. Link one to a Xero organisation to start publishing bills.
@@ -327,8 +330,9 @@ function OrganisationSwitcher() {
                 </button>
               </div>
             ))}
+            </div>
             {canManageEntities && (
-              <div className="mt-1 border-t pt-1">
+              <div className="mt-1 shrink-0 border-t pt-1">
                 <button
                   type="button"
                   onClick={() => {
