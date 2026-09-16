@@ -582,6 +582,21 @@ says how many; a DELETED document does not hold its id, so it can be brought
 back. Covered by `npm test` at the root and in `server/`
 (`test/dext-import-dedup.test.mts`).
 
+**Dext's expense claims come across as claims.** Dext exports a claim as a row
+of its own (Type "Expense claim", the claimant as Supplier and Owner, no
+category, no invoice number — an ordinary receipt Dext typed "Expense claim"
+has both) and its items as rows with Status "claimed", and nothing in either
+names which claim an item was on. The import takes several CSVs at once so the
+two sit side by side, and `planClaims` (`dextImport.js`, pure, `npm test`)
+rebuilds each claim from that person's claimed items only where they add up to
+its total TO THE CENT (a foreign item at its "Total (SGD)"), and only where
+exactly one set does; otherwise the claim is named on the screen and its items
+import as plain documents. A claim is all-or-nothing, created as a draft named
+`Expense claim (Dext <id>)`, which is how a re-import skips it
+(`importedClaimIds`). And a claim now counts a foreign item at the SGD figure
+it restates itself in (`claimMoney` in `claims.ts`, mirrored by
+`docToClaimTxn`) — it used to add AUD 264 to SGD as 264.
+
 ## Merge detection: which uploads are really one document
 
 Two separate uploads are often one cost, and the two ways that happens do not

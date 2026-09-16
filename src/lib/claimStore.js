@@ -43,7 +43,7 @@ function shape(c) {
   return { ...c, transactions, history, net: sum('net'), tax: sum('tax'), total: sum('total') };
 }
 
-async function fetchClaims() {
+export async function fetchClaims() {
   try {
     const res = await fetch('/api/claims', { headers: orgHeaders() });
     if (!res.ok) return [];
@@ -228,8 +228,13 @@ export async function deleteClaims(ids) {
 
 // Build a claim transaction row from a cost document's edited fields (pure).
 export function docToClaimTxn(doc, data, actor) {
-  const total = Number(data.total) || 0;
-  const tax = Number(data.tax) || 0;
+  // A claim is in SGD, so a foreign receipt counts at the SGD figure it restates
+  // itself in (the server's liveTxns applies the same rule to the live document).
+  const own = String(data.currency || '').toUpperCase();
+  const base = own && own !== 'SGD' && String(data.baseCurrency || '').toUpperCase() === 'SGD'
+    && data.baseTotal !== '' && data.baseTotal != null;
+  const total = Number(base ? data.baseTotal : data.total) || 0;
+  const tax = Number(base ? data.baseTax : data.tax) || 0;
   return {
     itemId: String(doc.id),
     // The document's number, kept on the line: a claim exported months later
