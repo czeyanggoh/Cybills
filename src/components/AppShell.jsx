@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  Receipt,
   ShoppingCart,
   Tag,
   Plus,
@@ -38,6 +37,7 @@ import { canManageBusiness, canManageUsers } from '@/lib/userStore';
 import { isPracticeTeam, canManagePractice } from '@/lib/practiceStore';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
 import AddDocumentsDrawer from './AddDocumentsDrawer';
+import BrandMark from './BrandMark';
 import AddOrganisationModal from './AddOrganisationModal';
 import RemoveOrganisationModal from './RemoveOrganisationModal';
 import ApprovalReminderBanner from './ApprovalReminderBanner';
@@ -455,7 +455,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
             )}
           >
             <div className={cn('flex h-14 shrink-0 items-center gap-2 border-b', showLabels ? 'px-4' : 'justify-center px-0')}>
-              <Receipt className="h-5 w-5 shrink-0" />
+              <BrandMark className="h-7 w-7 shrink-0" />
               {showLabels && <span className="text-sm font-semibold tracking-tight">CYBills</span>}
             </div>
             {!settingsCol && (
@@ -641,7 +641,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
           <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col overflow-y-auto bg-card shadow-xl">
             <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
               <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
-                <Receipt className="h-5 w-5" /> CYBills
+                <BrandMark className="h-7 w-7" /> CYBills
               </span>
               <button type="button" onClick={() => setMobileNav(false)} className="text-muted-foreground hover:text-foreground" aria-label="Close menu">
                 <X className="h-5 w-5" />
