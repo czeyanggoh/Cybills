@@ -21,11 +21,15 @@ import { claimedBillIds, fileAutoClaim } from './claims.js';
 // account, a frequency it rolls forward by, an option to sweep in items still
 // sitting in the inbox, and a per-user switch saying who is on the schedule.
 //
-// A claim is filed when a period ENDS, not while it is running: until the
-// claims-end date has passed, the current period's documents stay in the Costs
-// inbox where they can still be corrected. The day after it passes, each
-// enabled person's eligible documents (dated on or before that end date) become
-// their claim, and the end date rolls on to the next period.
+// A document goes onto its period's claim as soon as it is eligible, not when
+// the period ends. Holding the current month's receipts in the inbox until the
+// 1st made the switch look broken — somebody enrolled, uploaded a receipt and
+// watched nothing happen for three weeks. The running period's claim is a DRAFT,
+// and a draft claim tracks its live documents (claims.ts), so a correction made
+// on the document afterwards still reaches it. When the claims-end date passes,
+// that period's claim is topped up one last time (late arrivals dated inside it)
+// and the end date rolls on to the next period. A document dated AFTER the
+// running period's end waits for its own period.
 //
 // There is no background worker: the sweep runs on the bills fetch every list
 // in the app already makes (the same self-healing pattern as
@@ -42,8 +46,11 @@ export type AutoClaimSettings = {
   endDate: string; // ISO YYYY-MM-DD — when the CURRENT claims period ends
   endOfMonth: boolean; // keep the end date pinned to the last day of the month
   frequency: Frequency;
-  includeInbox: boolean; // sweep in items still in the inbox, not just Ready ones
+  includeInbox: boolean; // Dext's "Include existing inbox items": what was already there when a person was switched on
   userIds: string[]; // roster users the schedule files claims for
+  // When each person was switched on. Everything they submit from then on is
+  // claimed; what was already sitting in their inbox only with includeInbox.
+  enrolledAt?: Record<string, string>;
   lastRunAt: string;
 };
 
@@ -110,6 +117,7 @@ function putSettings(ws: string, orgId: string, patch: Partial<AutoClaimSettings
       frequency: 'monthly',
       includeInbox: false,
       userIds: [],
+      enrolledAt: {},
       lastRunAt: '',
     };
     items.push(rec);
@@ -165,13 +173,15 @@ function prettyDay(iso: string): string {
 }
 
 // --- The sweep --------------------------------------------------------------
-// Which documents a period can claim. Ready items always; inbox items (still
-// being worked on) only when the account asked for them. Everything else is
-// deliberately out: a document already claimed or archived, one published to
-// Xero (the ledger has it — claiming it would pay the cost twice), a sales
-// document, and anything still being read.
-const READY_ONLY = ['ready'];
-const WITH_INBOX = ['new', 'review', 'ready'];
+// Which documents a period can claim — Dext's rule: "any new items submitted by
+// users with Auto Expense claims are automatically added to their open claim",
+// whatever state they are in, and the documents that were ALREADY in somebody's
+// inbox when they were switched on only when "Include existing inbox items" says
+// so. Everything else is deliberately out: a document already claimed or
+// archived, one published to Xero (the ledger has it — claiming it would pay
+// the cost twice), a sales document, and anything still being read (it is
+// claimed the moment the read settles, with the fields the read found).
+const CLAIMABLE = new Set(['new', 'review', 'ready']);
 
 // The day a document counts against — its own date when the reader determined
 // one, else the day it was uploaded. Keeps an undated receipt out of limbo.
@@ -212,12 +222,11 @@ export type AutoRunResult = { claims: number; items: number; periods: number; en
 // File one ended period: every enabled person's eligible documents dated on or
 // before `periodEnd` become their claim for it.
 function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd: string): { claims: number; items: number } {
-  const statuses = new Set(s.includeInbox ? WITH_INBOX : READY_ONLY);
   const claimed = claimedBillIds(s.orgId);
   const eligible = listBills(s.orgId).filter(
     (b) =>
       (b.kind || 'cost') === 'cost' &&
-      statuses.has(b.status) &&
+      CLAIMABLE.has(b.status) &&
       !b.xeroInvoiceId &&
       !claimed.has(b.id) &&
       billDay(b) <= periodEnd
@@ -229,7 +238,10 @@ function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd:
   for (const user of roster) {
     const keys = new Set(ownerKeys(user));
     if (!keys.size) continue;
-    const mine = eligible.filter((b) => keys.has(norm(b.owner || b.createdBy)));
+    const since = s.includeInbox ? '' : s.enrolledAt?.[user.id] || '';
+    const mine = eligible.filter(
+      (b) => keys.has(norm(b.owner || b.createdBy)) && (!since || String(b.createdAt || '') >= since)
+    );
     if (!mine.length) continue; // never file an empty claim
     const filed = fileAutoClaim(ws, s.orgId, {
       claimFor: user.name || user.email,
@@ -247,21 +259,27 @@ function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd:
 
 // Run the schedule for one bills scope. Files every period that has ended since
 // the last run (a gap of months still produces one claim per period, not one
-// giant claim), then leaves the end date on the period now running.
+// giant claim), leaves the end date on the period now running, and files that
+// period's eligible documents onto its draft claim straight away.
 export function runAutoClaims(ws: string, orgId: string): AutoRunResult {
   const s = getSettings(ws, orgId);
   if (!s || !isIsoDay(s.endDate) || !s.userIds.length) {
     return { claims: 0, items: 0, periods: 0, endDate: s?.endDate || '' };
   }
-  // Nothing to do until a period has actually ended. Checked before any roster
-  // or bills work, because this runs on every bills fetch the app makes.
   const today = todayIso();
-  if (s.endDate >= today) return { claims: 0, items: 0, periods: 0, endDate: s.endDate };
   const wanted = new Set(s.userIds);
   // Re-checked here, not just at save time: someone enrolled before they moved
   // entity (or joined the practice) must stop filing, not keep going quietly.
   const roster = eligibleUsers(ws, orgId).filter((u) => wanted.has(u.id));
   if (!roster.length) return { claims: 0, items: 0, periods: 0, endDate: s.endDate };
+  // Enrolled before enrolment dates were kept: count them as enrolled now, so
+  // an inbox they already had is not swept in unasked (Dext's default).
+  const missing = roster.filter((u) => !s.enrolledAt?.[u.id]);
+  if (missing.length) {
+    const enrolledAt = { ...(s.enrolledAt || {}) };
+    for (const u of missing) enrolledAt[u.id] = nowIso();
+    Object.assign(s, putSettings(ws, orgId, { enrolledAt }));
+  }
 
   let periodEnd = s.endDate;
   let claims = 0;
@@ -277,7 +295,15 @@ export function runAutoClaims(ws: string, orgId: string): AutoRunResult {
     periods += 1;
     periodEnd = nextPeriodEnd(periodEnd, s.frequency, s.endOfMonth);
   }
-  if (periodEnd !== s.endDate) putSettings(ws, orgId, { endDate: periodEnd, lastRunAt: nowIso() });
+  // The period still running files too — onto its own draft claim, the same
+  // one it will be topped up on when it ends. Not counted as a period: nothing
+  // rolled over.
+  const running = filePeriod(ws, s, roster, periodEnd);
+  claims += running.claims;
+  items += running.items;
+  if (periodEnd !== s.endDate || running.items) {
+    putSettings(ws, orgId, { endDate: periodEnd, lastRunAt: nowIso() });
+  }
   return { claims, items, periods, endDate: periodEnd };
 }
 
@@ -335,6 +361,11 @@ autoClaimsRouter.put('/', (req, res) => {
   const userIds: string[] = (Array.isArray(b.userIds) ? b.userIds : [])
     .map((id: unknown) => String(id))
     .filter((id: string) => known.has(id));
+  // A person switched on now is enrolled now; one already on keeps their date,
+  // so re-saving the dialog never pulls in an inbox they had before.
+  const prev = getSettings(ws, autoScope(req));
+  const enrolledAt: Record<string, string> = {};
+  for (const id of new Set(userIds)) enrolledAt[id] = prev?.enrolledAt?.[id] || nowIso();
   const saved = putSettings(ws, autoScope(req), {
     // On End of month the stored date IS the month end, so what the dialog shows
     // and what the schedule fires on can never drift apart.
@@ -343,6 +374,7 @@ autoClaimsRouter.put('/', (req, res) => {
     frequency,
     includeInbox: Boolean(b.includeInbox),
     userIds: [...new Set(userIds)],
+    enrolledAt,
   });
   // Saving a date that is already in the past should take effect now, not on the
   // next bills fetch.

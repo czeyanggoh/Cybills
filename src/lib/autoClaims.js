@@ -3,7 +3,7 @@ import { notifyClaimsChanged } from '@/lib/claimStore';
 import { notifyBillsChanged } from '@/lib/bills';
 
 // Auto Expense claims — the schedule that files each person's finished cost
-// documents into an expense claim for them when a claims period ends (Dext's
+// documents into an expense claim for them, period by period (Dext's
 // "Manage Auto Expense claims"). The server owns the schedule and the sweep;
 // this is just the settings dialog's read/write.
 

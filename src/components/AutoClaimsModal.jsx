@@ -6,8 +6,8 @@ import { cn } from '@/lib/utils';
 
 // Manage Auto Expense claims — Dext's dialog: when the current claims period
 // ends, how often it repeats, whether items still in the inbox come along, and
-// which people are on the schedule. The claims themselves are filed server-side
-// the day after a period ends.
+// which people are on the schedule. The claims themselves are filed server-side,
+// each document onto its period's claim as soon as it is eligible.
 
 // How far the claims-end date moves each time a period is filed, in words.
 const NEXT_IN = { weekly: 'a week', fortnightly: 'a fortnight', monthly: 'a month' };
@@ -119,22 +119,23 @@ export default function AutoClaimsModal({ open, onClose }) {
           </label>
 
           <div className="flex items-center justify-between gap-4 text-sm">
-            <span className="font-medium">Include inbox items</span>
+            <span className="font-medium">Include existing inbox items</span>
             <div className="w-56">
               <Toggle
                 on={Boolean(settings.includeInbox)}
                 onToggle={() => set({ includeInbox: !settings.includeInbox })}
-                label="Include inbox items"
+                label="Include existing inbox items"
               />
             </div>
           </div>
 
           {/* What the schedule will actually do, in words — the dates alone don't say it. */}
           <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-            The day after {settings.endDate ? formatClaimDate(settings.endDate) : 'the end date'}, everyone switched on
-            below gets an expense claim holding their{' '}
-            {settings.includeInbox ? 'inbox and Ready' : 'Ready'} cost documents dated on or before it. The end date
-            then moves on {NEXT_IN[settings.frequency] || 'a period'}
+            Every cost document submitted by somebody switched on below is added to their open expense claim as
+            soon as it has been read{settings.includeInbox ? ', along with what was already in their inbox' : ''}.
+            The claim covers documents dated on or before{' '}
+            {settings.endDate ? formatClaimDate(settings.endDate) : 'the end date'}; the day after it, that claim
+            closes and the end date moves on {NEXT_IN[settings.frequency] || 'a period'}
             {settings.endOfMonth ? ', staying on the last day of the month' : ''}. Claims are never created empty.
           </p>
 

@@ -1319,6 +1319,18 @@ Covered by `npm test` at the root and in `server/`
 (`test/claim-end-date.test.mts`, over real HTTP because the rule reads the
 caller's role out of their session).
 
+**Auto Expense claims file a document as soon as it is read, Dext's way.**
+They used to wait for the claims-end date to pass, so a receipt uploaded on the
+21st sat in the inbox until the 1st and the switch looked broken. Now every
+cost document an enrolled person submits (new, review or ready, never while
+still processing) goes onto their open DRAFT claim for the running period on
+the next listing (`runAutoClaims`, `server/src/autoClaims.ts`). A draft tracks
+its live documents, so corrections still reach it. When the period ends, its
+claim is topped up once more and the end date rolls on. **Include existing
+inbox items** means what Dext means: what was ALREADY in the person's inbox
+when they were switched on (`enrolledAt` per user), not "Ready only vs inbox".
+Covered by `npm test` in `server/` (`test/auto-claims.test.mts`).
+
 Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
 field, set on the document or across a selection in Bulk edit; readiness is
 derived, so a "Move to ready" button could only ever agree with the server or
