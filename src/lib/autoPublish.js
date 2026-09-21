@@ -2,6 +2,7 @@ import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { isComplete } from '@/lib/costsData';
 import { getExtractionSettings } from '@/lib/extractionSettings';
 import { isPaymentProof } from '@/lib/paymentProof';
+import { isAdvanceDocument } from '@/lib/prepayment';
 import { matchSupplierRule } from '@/lib/supplierRules';
 import {
   fetchXeroAccounts,
@@ -86,6 +87,8 @@ export async function autoPublishAfterRead(bill) {
     if (!bill?.id || bill.xeroInvoiceId) return null;
     // A payment proof is never published — it pays invoices, it is not one.
     if (isPaymentProof(bill.type ?? bill.documentType)) return null;
+    // Nor a quotation / pro-forma — it is recorded as a prepayment, not a bill.
+    if (isAdvanceDocument(bill.type ?? bill.documentType)) return null;
     if (['archived', 'deleted', 'merged'].includes(String(bill.status || ''))) return null;
     // On an expense claim, this cost reaches Xero as a line of the claim's bill.
     // Publishing it separately would post it twice.

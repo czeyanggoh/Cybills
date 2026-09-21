@@ -82,7 +82,7 @@ const read = async (ans: Record<string, unknown>) => {
 const d = await read(baseAnswer);
 const schema = schemas[0];
 const props = schema?.properties ?? schema?.schema?.properties ?? {};
-check('the reader is offered "Payment proof" as a document type', props.documentType?.enum, ['Receipt', 'Invoice', 'Payment proof', 'Mileage', 'Other']);
+check('the reader is offered "Payment proof" as a document type', props.documentType?.enum, ['Receipt', 'Invoice', 'Payment proof', 'Quotation', 'Pro-forma invoice', 'Mileage', 'Other']);
 check('and told what one is', String(props.documentType?.description || '').includes('evidence that money was SENT'), true);
 check('a transfer confirmation reads as a payment proof', d?.documentType, 'Payment proof');
 check('with the payee as the supplier', d?.supplier, 'A1 Consultancy Pte Ltd');

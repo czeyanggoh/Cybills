@@ -94,9 +94,10 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       },
       documentType: {
         type: 'string',
-        enum: ['Receipt', 'Invoice', 'Payment proof', 'Mileage', 'Other'],
+        enum: ['Receipt', 'Invoice', 'Payment proof', 'Quotation', 'Pro-forma invoice', 'Mileage', 'Other'],
         description:
           '"Payment proof" is evidence that money was SENT rather than a bill for it: a bank transfer confirmation, a PayNow / PayLah / GIRO screenshot, an internet-banking "transfer successful" page, a card-payment notification. The PAYEE is the supplier, the amount transferred is the total, tax is 0 (a transfer states none), and the transaction reference is the document number. A merchant\'s receipt or an invoice stamped PAID is NOT a payment proof — those are a Receipt or an Invoice. ' +
+          '"Quotation" is a supplier\'s QUOTE — titled Quotation, Quote or Estimate, usually with a validity date — and "Pro-forma invoice" is one titled Pro-forma / Proforma invoice: both ask for money BEFORE the tax invoice is issued and neither is a tax invoice. The quote\'s own number (QUO-2609239) is the document number. A document titled Tax Invoice or Invoice is an Invoice even when it mentions an earlier quotation. ' +
           '"Mileage" is a RECORD OF A JOURNEY rather than a purchase: a map route screenshot (Google Maps "16 min (13 km)", a Waze route, an Apple Maps trip), an odometer photo, a line off a mileage log. Nobody was paid and no amount is printed — the claimant is reimbursed per kilometre afterwards. A taxi, ride-hailing or fuel receipt is NOT mileage: those are purchases with a supplier and a total, so they are a Receipt.',
       },
       distanceKm: {
@@ -288,7 +289,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
 const ReceiptSchema = z.object({
   supplier: z.string(),
   date: z.string(),
-  documentType: z.enum(['Receipt', 'Invoice', 'Payment proof', 'Mileage', 'Other']),
+  documentType: z.enum(['Receipt', 'Invoice', 'Payment proof', 'Quotation', 'Pro-forma invoice', 'Mileage', 'Other']),
   distanceKm: z.number().optional().default(0),
   invoiceNumber: z.string(),
   currency: z.string(),
@@ -788,6 +789,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'A PAYMENT PROOF — a bank transfer confirmation, a PayNow / PayLah / GIRO screenshot, an internet-banking "transfer successful" page, a card-payment notification — is evidence that money was sent, not a bill: set `documentType` to "Payment proof", ' +
     'take the PAYEE (the recipient) as `supplier`, the amount transferred as `total`, 0 as `tax` (a transfer states none — any GST is on the invoice it pays), the transaction reference as `invoiceNumber`, and describe it as a payment ("Payment to A1 Consultancy, ref 20260826ABC"). ' +
     'A merchant\'s receipt or an invoice stamped PAID is a Receipt or an Invoice, not a payment proof. ' +
+    'A QUOTATION (titled Quotation / Quote / Estimate) or a PRO-FORMA INVOICE is a request to pay in advance, not a tax invoice: set `documentType` to "Quotation" or "Pro-forma invoice", take the quote\'s number as `invoiceNumber` and its grand total as `total`. ' +
     'A MILEAGE record — a map route screenshot, an odometer photo, a mileage log — is a journey, not a purchase: set `documentType` to "Mileage", read `distanceKm` off it, ' +
     'leave `supplier` empty unless a name is actually printed, leave `total` and `tax` at 0 unless an amount is printed, and describe the journey in `description` (origin → destination, e.g. "Drive: Work (ST Engineering Jurong East) → MacRitchie Reservoir Park, 13 km"). ' +
     'The amount is worked out afterwards from the distance at the company\'s rate per km — never invent one. ' +
@@ -1378,7 +1380,7 @@ export const vaultRouter = Router();
 // of a few hundred tokens a document. The browser applies the answer through
 // the ordinary PATCH (keepPaymentProofInStep), so the same rule holds however
 // the type was set.
-const CLASSIFY_TYPES = ['Receipt', 'Invoice', 'Payment proof', 'Credit note/refund', 'Mileage', 'Other'] as const;
+const CLASSIFY_TYPES = ['Receipt', 'Invoice', 'Payment proof', 'Quotation', 'Pro-forma invoice', 'Credit note/refund', 'Mileage', 'Other'] as const;
 const ClassifySchema = z.object({
   documentType: z.enum(CLASSIFY_TYPES),
   reason: z.string(),
@@ -1388,6 +1390,8 @@ const CLASSIFY_PROMPT =
   '- "Payment proof": evidence that money was SENT rather than a bill for it — a bank transfer confirmation, a PayNow / PayLah / GIRO / FAST screenshot, an internet-banking "transfer successful" or "payment successful" page, a card-payment notification, a remittance advice the PAYER produced. It names a payee and an amount transferred and shows no line items, no tax and no supplier letterhead.\n' +
   '- "Receipt": a merchant\'s own record of a sale — a till receipt, a card slip from the merchant\'s terminal, an e-receipt or order confirmation from the seller. A receipt stamped or marked PAID is still a Receipt.\n' +
   '- "Invoice": a supplier\'s bill or tax invoice asking for or recording payment, on the supplier\'s letterhead, whether or not it is marked paid.\n' +
+  '- "Quotation": a supplier\'s quote or estimate, asking to be paid or confirmed before the work — not a tax invoice.\n' +
+  '- "Pro-forma invoice": a document titled pro-forma / proforma invoice, asking for payment in advance — not a tax invoice.\n' +
   '- "Credit note/refund": a supplier\'s credit note or a refund confirmation.\n' +
   '- "Mileage": a record of a journey — a map route, an odometer photo, a mileage log — with no purchase.\n' +
   '- "Other": anything else.\n' +

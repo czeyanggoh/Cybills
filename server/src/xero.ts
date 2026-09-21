@@ -17,6 +17,7 @@ import { claimForBill, getClaimForXero, markClaimXeroPayment, publishedClaims, s
 import { appOrigin, canPublishToXero, memberForSession } from './users.js';
 import { syncWhatsappReaction } from './waReactions.js';
 import { isPaymentProofDoc } from './paymentProof.js';
+import { isAdvanceDoc } from './prepayment.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -1482,6 +1483,16 @@ export async function postBillToXero(
       message: 'This is a payment proof — evidence that money was sent, not a bill — so it is not published to Xero. It marks the invoices it pays as paid instead.',
     } };
   }
+  // A quotation or pro-forma is paid IN ADVANCE of its tax invoice: published
+  // as a bill, the same spending would be posted again when the invoice comes.
+  // It is recorded as a prepayment (an overpayment to the supplier) instead,
+  // and the invoice that follows uses it up (prepayment.ts).
+  if (!bill.xeroInvoiceId && (await isAdvanceDoc(bill))) {
+    return { status: 422, body: {
+      error: 'advance_document',
+      message: 'This is a quotation / pro-forma invoice, not a tax invoice, so it is not published as a bill. Once it is paid, record it as a prepayment to the supplier; the tax invoice that follows is published and the prepayment applied to it.',
+    } };
+  }
   if (bill.xeroInvoiceId && opts.force !== true) {
     return { status: 409, body: {
       error: 'already_posted',
@@ -1531,7 +1542,13 @@ export async function postBillToXero(
   // approved as a bill gets. Said in the reply (`statusForced`) so the dialog
   // can say it too.
   const pendingPayment = docType === 'ACCPAY' && Boolean(bill.bankMatch);
-  const status = pendingPayment ? 'AUTHORISED' : opts.status;
+  // An invoice that follows a quotation already paid in advance uses that
+  // prepayment up the moment it exists — and Xero allocates an overpayment to
+  // nothing short of an AUTHORISED bill. Only a FIRM match does this by itself
+  // (src/lib/prepayment.js); anything weaker is offered on the document page.
+  const prepay = docType === 'ACCPAY' ? await import('./prepayment.js') : null;
+  const firmPrepayment = prepay ? await prepay.firmPrepaymentFor(workspace, bill) : null;
+  const status = pendingPayment || firmPrepayment ? 'AUTHORISED' : opts.status;
   const payload = { ...prepared.payload, Status: status };
   const endpoint = xeroEndpointFor(docType);
   const noun = docType === 'ACCPAYCREDIT' ? 'credit note' : 'bill';
@@ -1593,6 +1610,26 @@ export async function postBillToXero(
   // statement line reconciles in Xero. Loaded on demand — bankMatch.ts imports
   // this module — and never allowed to fail the publish: the bill is in the
   // ledger either way, and a refusal is reported beside it.
+  // The quotation paid in advance, applied to the bill it was paid towards.
+  // Never allowed to fail the publish: the bill is in the ledger either way,
+  // and a refusal is reported beside it for somebody to apply by hand.
+  let prepayment: any = null;
+  if (prepay && firmPrepayment) {
+    try {
+      const applied = await prepay.allocatePrepayment(organisation, workspace, firmPrepayment.doc.id, bill.id, {
+        by: String(memberForSession(req)?.email ?? ''),
+        auto: true,
+      });
+      prepayment = applied.status === 200
+        ? { ok: true, amount: applied.body.amount, reference: applied.body.reference, fromId: applied.body.fromId, fromDisplayId: applied.body.fromDisplayId, invoiceRemaining: applied.body.invoiceRemaining }
+        : { ok: false, reference: firmPrepayment.reference, fromId: firmPrepayment.doc.id, message: applied.body?.message ?? 'Xero did not apply the prepayment.' };
+      updated = getBillById(workspace, bill.id) ?? updated;
+    } catch (err) {
+      console.error('[xero] prepayment allocation failed', err);
+      prepayment = { ok: false, reference: firmPrepayment.reference, fromId: firmPrepayment.doc.id, message: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   let bankPayment: any = null;
   if (pendingPayment) {
     try {
@@ -1648,10 +1685,69 @@ export async function postBillToXero(
     // The bank payment recorded from the inbox's autofill, or why it was not.
     // Null when the document carried none.
     bankPayment,
-    statusForced: pendingPayment && opts.status !== 'AUTHORISED',
+    // The quotation paid in advance and applied to this bill, or why it was not.
+    // Null when there was none to apply.
+    prepayment,
+    statusForced: (pendingPayment || Boolean(firmPrepayment)) && opts.status !== 'AUTHORISED',
     bill: updated,
   } };
 }
+
+// POST /api/xero/organisations/:id/record-prepayment — a quotation / pro-forma
+// paid in advance goes to Xero as an overpayment to its supplier.
+// { billId, bankAccountCode, bankAccountName?, date?, amount? }
+xeroRouter.post('/organisations/:id/record-prepayment', async (req, res) => {
+  if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const b = req.body ?? {};
+  const workspace = bookFor(req);
+  const bill = getBillById(workspace, String(b.billId ?? ''));
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  const { recordPrepayment } = await import('./prepayment.js');
+  const out = await recordPrepayment(organisation, workspace, bill, {
+    bankAccountCode: String(b.bankAccountCode ?? ''),
+    bankAccountName: String(b.bankAccountName ?? ''),
+    date: String(b.date ?? ''),
+    amount: b.amount,
+    by: String(memberForSession(req)?.email ?? ''),
+  });
+  res.status(out.status).json(out.body);
+});
+
+// POST /api/xero/organisations/:id/undo-prepayment { billId } — take an unused
+// prepayment back out of Xero.
+xeroRouter.post('/organisations/:id/undo-prepayment', async (req, res) => {
+  if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const workspace = bookFor(req);
+  const bill = getBillById(workspace, String(req.body?.billId ?? ''));
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  const { undoPrepayment } = await import('./prepayment.js');
+  const out = await undoPrepayment(organisation, workspace, bill);
+  res.status(out.status).json(out.body);
+});
+
+// POST /api/xero/organisations/:id/apply-prepayment { billId, fromId, amount? }
+// — apply a recorded prepayment to an invoice already in Xero: the road for a
+// match that was not firm enough to apply itself on publish.
+xeroRouter.post('/organisations/:id/apply-prepayment', async (req, res) => {
+  if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const workspace = bookFor(req);
+  const { allocatePrepayment } = await import('./prepayment.js');
+  const out = await allocatePrepayment(organisation, workspace, String(req.body?.fromId ?? ''), String(req.body?.billId ?? ''), {
+    by: String(memberForSession(req)?.email ?? ''),
+    auto: false,
+    amount: req.body?.amount,
+  });
+  res.status(out.status).json(out.body);
+});
 
 xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
   if (notConfigured(res)) return;

@@ -40,6 +40,7 @@ import {
 import { foldTaxIntoCost } from '@/lib/lineItems';
 import { splitByPrintedRate, linesAgreeWithTotal } from '@/lib/taxRateRules';
 import { paymentProofPatch } from '@/lib/paymentProof';
+import { advancePatch } from '@/lib/prepayment';
 import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere, canPublishToXero } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 import { coveringNote } from '@/lib/coveringNote';
@@ -555,6 +556,8 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
       // it and whatever the paid-by-default settings say — the same rule the
       // page's Type field and the server's writes apply.
       Object.assign(p, paymentProofPatch({ ...cur, ...p, taxRate: p.taxRate ?? cur?.taxRate }, noTaxRateName(visibleTaxRates)));
+      // A quotation / pro-forma is not a tax invoice: No Tax, the same rule.
+      Object.assign(p, advancePatch({ ...cur, ...p, taxRate: p.taxRate ?? cur?.taxRate }, noTaxRateName(visibleTaxRates)));
       // Due date, in order of what the evidence supports:
       //   1. the date printed on the document (or what its stated terms resolve
       //      to) — the supplier's own answer, so nothing beats it

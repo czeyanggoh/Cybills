@@ -390,6 +390,11 @@ export function billToDoc(b) {
     paidByProof: b.paidByProof || null,
     paysBills: Array.isArray(b.paysBills) ? b.paysBills : [],
     paysBillsAuto: Boolean(b.paysBillsAuto),
+    // A quotation paid in advance, recorded in Xero as an overpayment to the
+    // supplier, and the invoices it has been applied to; on an invoice, the
+    // prepayments it used (src/lib/prepayment.js).
+    prepayment: b.prepayment || null,
+    prepaymentsApplied: Array.isArray(b.prepaymentsApplied) ? b.prepaymentsApplied : [],
     customer: b.customer || '',
     project: b.project || '',
     project2: b.project2 || '',

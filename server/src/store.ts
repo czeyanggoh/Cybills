@@ -297,6 +297,41 @@ export type Bill = {
     auto: boolean;
     before: { paid: boolean; paymentMethod: string };
   };
+  // A QUOTATION or PRO-FORMA paid in advance (src/lib/prepayment.js), recorded
+  // in Xero as an OVERPAYMENT to the supplier rather than published as a bill.
+  // On the quotation: the overpayment, where the money came from, and each
+  // invoice it has since been allocated against. On each invoice: the
+  // prepayments it used. Their own writers (setBillPrepayment /
+  // recordPrepaymentAllocation), never EDITABLE — both are records of what Xero
+  // was told.
+  prepayment?: {
+    overpaymentId: string;
+    bankTransactionId: string;
+    amount: number;
+    currency: string;
+    date: string;
+    reference: string;
+    bankAccount: { code: string; name: string };
+    contactId: string;
+    recordedAt: string;
+    recordedBy: string;
+    allocations: PrepaymentAllocation[];
+    // What the document said before recording made it Paid and set it aside,
+    // so taking the prepayment back out of Xero puts it back.
+    before?: { status: string; paid: boolean; paymentMethod: string };
+  };
+  prepaymentsApplied?: Array<PrepaymentAllocation & { fromId: string; fromDisplayId: string; reference: string; overpaymentId: string }>;
+};
+
+export type PrepaymentAllocation = {
+  billId: string;
+  displayId: string;
+  invoiceId: string;
+  amount: number;
+  date: string;
+  at: string;
+  by: string;
+  auto: boolean;
 };
 
 // What the caller knows about an incoming upload before it is stored.
@@ -680,6 +715,7 @@ export function findDuplicate(orgId: string, cand: Candidate, excludeId?: string
       b.status !== 'deleted' &&
       b.status !== 'merged' &&
       !isPaymentProofType(b.documentType) &&
+      !isAdvanceType(b.documentType) &&
       b.id !== excludeId &&
       (cutoff < 0 || i < cutoff)
   );
@@ -827,6 +863,15 @@ export function isCreditNote(b: { documentType?: unknown }): boolean {
 // bill — which is what proofMatch.js pairs, not what the duplicate check flags.
 export function isPaymentProofType(type: unknown): boolean {
   return String(type ?? '').trim().toLowerCase().replace(/[\s_-]+/g, ' ') === 'payment proof';
+}
+
+// A quotation or pro-forma (src/lib/prepayment.js, whose isAdvanceDocument this
+// mirrors for the synchronous store). Never a duplicate of the invoice that
+// follows it: the two share a supplier and often an amount, and they are the
+// advance and the bill it is used up by.
+export function isAdvanceType(type: unknown): boolean {
+  const t = String(type ?? '').trim().toLowerCase().replace(/[\s_-]+/g, ' ');
+  return ['quotation', 'quote', 'pro forma invoice', 'proforma invoice', 'pro forma', 'proforma'].includes(t);
 }
 
 // The total a document needs to be complete. A bill's must be above 0; a
@@ -1476,6 +1521,46 @@ export function unapplyPaymentProof(orgId: string, proofId: string, by: string):
   proof.proofAutoDeclined = true;
   persist(bills);
   return { proof, invoices };
+}
+
+// Record (or, with null, forget) the Xero overpayment a quotation was paid as.
+export function setBillPrepayment(orgId: string, id: string, prepayment: Bill['prepayment'] | null): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  if (prepayment) bill.prepayment = prepayment;
+  else delete bill.prepayment;
+  persist(bills);
+  return bill;
+}
+
+// An overpayment allocated against an invoice's Xero bill: written on BOTH
+// documents in one pass, so the quotation's remaining balance and the invoice's
+// record of what it used cannot disagree. Null when either is missing.
+export function recordPrepaymentAllocation(
+  orgId: string,
+  fromId: string,
+  invoiceBillId: string,
+  alloc: Omit<PrepaymentAllocation, 'billId' | 'displayId'>
+): { from: Bill; invoice: Bill } | null {
+  const bills = load();
+  const from = bills.find((b) => b.orgId === orgId && b.id === fromId);
+  const invoice = bills.find((b) => b.orgId === orgId && b.id === invoiceBillId);
+  if (!from?.prepayment || !invoice) return null;
+  const entry: PrepaymentAllocation = { ...alloc, billId: invoice.id, displayId: invoice.displayId || '' };
+  from.prepayment.allocations = [...(from.prepayment.allocations || []), entry];
+  invoice.prepaymentsApplied = [
+    ...(invoice.prepaymentsApplied || []),
+    {
+      ...entry,
+      fromId: from.id,
+      fromDisplayId: from.displayId || '',
+      reference: from.prepayment.reference,
+      overpaymentId: from.prepayment.overpaymentId,
+    },
+  ];
+  persist(bills);
+  return { from, invoice };
 }
 
 export function updateBill(orgId: string, id: string, patch: Partial<Bill>): Bill | null {

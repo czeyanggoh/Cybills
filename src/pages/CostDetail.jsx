@@ -65,6 +65,8 @@ import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { formatDate } from '@/lib/date';
 import BankMatchPanel from '@/components/BankMatchPanel';
 import PaymentProofPanel from '@/components/PaymentProofPanel';
+import PrepaymentPanel from '@/components/PrepaymentPanel';
+import { isAdvanceDocument, advancePatch, firmPrepayment, ADVANCE_TYPES } from '@/lib/prepayment';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
 import { prepareUpload } from '@/lib/image';
@@ -174,6 +176,9 @@ const DOC_TYPES = [
   'Receipt',
   'Invoice',
   'Payment proof',
+  // Paid before the tax invoice exists: recorded in Xero as a prepayment to the
+  // supplier rather than published as a bill (src/lib/prepayment.js).
+  ...ADVANCE_TYPES,
   'Credit note/refund',
   'Statement/remittance advice',
   'Expense statement',
@@ -897,6 +902,13 @@ export default function CostDetail() {
       const { baseTax: _baseTax, ...rest } = p;
       return setMany({ type: value, ...rest, ...(p.tax != null ? { tax: '0.00' } : {}) });
     }
+    // A quotation / pro-forma is not a tax invoice: No Tax, with its reason,
+    // unless a code was picked by hand. The server applies the same rule.
+    if (isAdvanceDocument(value)) {
+      const p = advancePatch({ ...data, type: value }, noTaxName);
+      const { baseTax: _baseTax, ...rest } = p;
+      return setMany({ type: value, ...rest, ...(p.tax != null ? { tax: '0.00' } : {}) });
+    }
     if (!isMileage(value)) return set('type', value);
     const p = mileagePatch(mileageDoc(), { type: value }, extractionSettings.mileageRate);
     const patch = { type: value, ...mileageStrings(p) };
@@ -1318,6 +1330,14 @@ export default function CostDetail() {
   // dialog, so closing it left the reviewer somewhere else with no way back to
   // the bill they had just posted. The dialog now offers both: Back to this
   // document, or Next document (onNext below).
+  // The quotation paid in advance that publishing this invoice will use up by
+  // itself, said in the dialog before the click (src/lib/prepayment.js).
+  const prepaymentMatch = (() => {
+    if (!doc?.persisted || doc.xeroInvoiceId || doc.prepaymentsApplied?.length) return null;
+    const hit = firmPrepayment({ ...doc, type: data.type, supplier: data.supplier, total: data.total, date: data.date, invoiceNumber: data.invoiceNumber, description: data.description, note: data.note }, inboxAllDocs);
+    return hit ? { reference: hit.reference, amount: hit.amountCents / 100, currency: hit.doc.prepayment.currency } : null;
+  })();
+
   const onPublished = ({ bill }) => {
     if (bill) setPersisted(billToDoc({ ...bill, hasFile: Boolean(bill.storageKey) }));
     notifyBillsChanged();
@@ -2020,7 +2040,9 @@ export default function CostDetail() {
             // of its own, and a plain category with no account code in it. The
             // claim IS how these costs reach the parent's ledger, so the button
             // isn't offered rather than offered and refused.
-            !bridge && mayPublish && (
+            // A quotation / pro-forma is recorded as a prepayment instead
+            // (Payment section), never published as a bill.
+            !bridge && mayPublish && !isAdvanceDocument(data.type) && (
               <TopButton
                 onClick={openPublish}
                 disabled={Boolean(claimForItem)}
@@ -2561,6 +2583,24 @@ export default function CostDetail() {
                   />
                 </div>
               )}
+              {/* A quotation paid in advance (record it as a prepayment in
+                  Xero), or the invoice that uses one up. */}
+              {persisted && (
+                <div className="col-span-full">
+                  <PrepaymentPanel
+                    doc={{ ...persisted, type: data.type || persisted.type, supplier: data.supplier, total: data.total, date: data.date, invoiceNumber: data.invoiceNumber, currency: data.currency || persisted.currency }}
+                    book={inboxAllDocs}
+                    mayPublish={mayPublish}
+                    onChanged={async () => {
+                      const bill = await fetchBillById(persisted.id);
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+                    }}
+                  />
+                </div>
+              )}
               {/* The reviewer's own flag, in Dext's sense: "this was already
                   settled when it was captured, so publish it as paid". It is
                   NOT what Xero reports about the bill afterwards — that is the
@@ -2882,7 +2922,7 @@ export default function CostDetail() {
       <PublishToXeroModal
         open={publishOpen}
         onClose={() => setPublishOpen(false)}
-        bill={{ id: doc.id, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType, bankMatch: doc.bankMatch }}
+        bill={{ id: doc.id, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType, bankMatch: doc.bankMatch, prepaymentMatch }}
         onPublished={onPublished}
         // A first publish finishes the document, so moving on is offered; a
         // correction sent to an existing bill is not, which is just Done.

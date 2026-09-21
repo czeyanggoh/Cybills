@@ -1005,6 +1005,45 @@ field on every document it touched to do that one thing. Covered by `npm test`
 in `server/` (`test/payment-proof.test.mts`, over real HTTP with a stubbed
 reader).
 
+**A quotation paid in advance is a PREPAYMENT, and the invoice after it uses
+it up.** A supplier asks for the money before the tax invoice exists ("Windee
+quotation QUO-2609239, S$999, please pay to confirm"); published as a bill, the
+same spending would go into the ledger twice, once now and again when the
+invoice comes. So **Quotation** and **Pro-forma invoice** are Types of their own
+(`src/lib/prepayment.js`, pure, `npm test` at the root, loaded server-side by
+`server/src/prepayment.ts` the way `paymentProof.ts` loads its module). The type
+codes the document No Tax with its reason (a quotation is not a tax invoice; the
+GST is claimed on the invoice that follows), keeps it out of the duplicate check,
+Bank match and proof matching, and `postBillToXero` refuses it (422
+`advance_document`), so no road publishes one. What the page offers instead, in
+the Payment section (`PrepaymentPanel.jsx`), is **Record prepayment in Xero**:
+a `SPEND-OVERPAYMENT` bank transaction to the supplier's contact (by NAME, the
+same contact the invoice will post to), from the bank account it was paid out of,
+on the date paid, for the total or a smaller deposit, carrying "Quotation
+QUO-2609239" as its reference (`POST /api/xero/organisations/:id/record-prepayment`).
+The quotation is then Paid from that account and set aside, and the overpayment
+is kept on it (`prepayment`, its own writer, never EDITABLE). **Undo** deletes it
+in Xero while nothing has been applied from it.
+
+**The invoice that follows uses it up on publish.** `prepaymentCandidates` ties an
+invoice to a recorded prepayment with money left when the invoice QUOTES the
+quotation's number anywhere on it, or comes from the same supplier (legal forms
+ignored), in the same currency. Only a FIRM tie acts by itself — the number
+quoted, or the supplier's ONLY open prepayment with the invoice dated on or after
+it was paid — and only while it is the only firm one. Then `postBillToXero`
+publishes AUTHORISED whatever was asked (Xero allocates an overpayment to nothing
+less; said in the dialog beforehand and as `statusForced`), and allocates the
+overpayment against the new bill (`PUT Overpayments/{id}/Allocations`) for what
+is left of it, capped at the invoice's total, so a deposit smaller than the
+invoice leaves the rest to pay and one larger stays on the contact for the next.
+Never allowed to fail the publish: a refusal comes back as `prepayment` in Xero's
+own words. Anything weaker is offered on the invoice's page as **Apply** once
+the bill is in Xero (`/apply-prepayment`), and recording a quotation applies
+itself to an invoice already published that it firmly belongs to. Both documents
+remember the allocation (`prepayment.allocations`, `prepaymentsApplied`, one
+writer for the pair). Covered by `npm test` in `server/`
+(`test/prepayment.test.mts`, over real HTTP against a stub relay).
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

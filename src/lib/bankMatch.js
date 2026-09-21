@@ -133,7 +133,7 @@ export function feeFor(doc, line, rules) {
 export function payableKind(type) {
   const t = String(type ?? '').trim().toLowerCase();
   if (!t || t === 'other') return true;
-  if (/credit|payment proof|mileage|statement|remittance|delivery|atm|expense statement/.test(t)) return false;
+  if (/credit|payment proof|mileage|statement|remittance|delivery|atm|expense statement|quot|pro.?forma/.test(t)) return false;
   return /receipt|invoice/.test(t);
 }
 

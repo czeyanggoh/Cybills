@@ -38,6 +38,7 @@ import { useExtractionSettings, noTaxRateName, publishStatusLabel } from '@/lib/
 import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument, retypeIfPaymentProof } from '@/lib/reRead';
 import { isPaymentProof } from '@/lib/paymentProof';
+import { isAdvanceDocument } from '@/lib/prepayment';
 import { isMileage } from '@/lib/mileage';
 import { isCreditNote } from '@/lib/readiness';
 import { formatKm } from '@/lib/mileage';
@@ -1427,14 +1428,15 @@ export default function Costs() {
       published: picked.filter((d) => d.xeroInvoiceId).length,
       claimed: picked.filter((d) => !d.xeroInvoiceId && d.status === 'expenseclaim').length,
       // A payment proof pays invoices; it is never one (xero.ts refuses it too).
-      proofs: picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && isPaymentProof(d.type)).length,
+      // Nor is a quotation / pro-forma: it is recorded as a prepayment.
+      proofs: picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && (isPaymentProof(d.type) || isAdvanceDocument(d.type))).length,
     };
-    const targets = picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && !isPaymentProof(d.type) && isComplete(d));
+    const targets = picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && !isPaymentProof(d.type) && !isAdvanceDocument(d.type) && isComplete(d));
     const incomplete = picked.length - targets.length - skipped.published - skipped.claimed - skipped.proofs;
     if (!targets.length) {
       setMergeNote(
         'Nothing to publish — a document must have a supplier, a date, a real category and a total above 0, ' +
-          'and not already be published, on an expense claim, or a payment proof.'
+          'and not already be published, on an expense claim, a payment proof or a quotation.'
       );
       return;
     }

@@ -41,6 +41,7 @@ import { makeEntityCheck } from './entityCheck.js';
 import { syncWhatsappReaction } from './waReactions.js';
 import { keepMileageInStep } from './mileage.js';
 import { isPaymentProofDoc, keepPaymentProofInStep } from './paymentProof.js';
+import { isAdvanceDoc, keepAdvanceInStep } from './prepayment.js';
 import { autoApplyPaymentProofs, proofMatchRules, unappliedProof } from './proofMatch.js';
 import { channelById } from './waChannels.js';
 import { senderIdentity } from './waSender.js';
@@ -780,6 +781,8 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   // Typed as a payment proof — the page's Type field, Bulk edit — it is paid
   // and states no tax; only a write carrying the type is touched.
   await keepPaymentProofInStep(getBillById(orgId, req.params.id), patch);
+  // Typed as a quotation / pro-forma — not a tax invoice, so No Tax.
+  await keepAdvanceInStep(getBillById(orgId, req.params.id), patch);
   // Moved onto a motor vehicle account — the page's picker, the inline cell,
   // Bulk edit — it is No Tax, unless this very write is a person picking a code.
   await keepMotorVehicleNoTax(getBillById(orgId, req.params.id), patch);
@@ -1108,6 +1111,8 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   await keepMileageInStep(workspaceId(req), orgScope(req), getBillById(orgId, req.params.id), patch);
   // A payment proof lands paid and at No Tax, whatever the reader made of it.
   await keepPaymentProofInStep(getBillById(orgId, req.params.id), patch);
+  // A quotation / pro-forma lands at No Tax: it is not a tax invoice.
+  await keepAdvanceInStep(getBillById(orgId, req.params.id), patch);
 
   const updated = updateBill(orgId, req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'not_found' });
@@ -1117,7 +1122,8 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   // Never for a payment proof: it shares a supplier, a total and often a date
   // with the invoice it pays, and the two are the payment and the bill — which
   // proofMatch.ts pairs — not one document uploaded twice.
-  const dup = (await isPaymentProofDoc(updated)) ? null : findDuplicate(
+  // Nor for a quotation, which the invoice after it resembles for the same reason.
+  const dup = (await isPaymentProofDoc(updated)) || (await isAdvanceDoc(updated)) ? null : findDuplicate(
     orgId,
     { fileHash: '', supplier: updated.supplier, invoiceNumber: updated.invoiceNumber, total: updated.total, date: updated.date, kind: updated.kind },
     updated.id

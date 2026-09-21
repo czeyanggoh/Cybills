@@ -54,6 +54,8 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   const [rebilled, setRebilled] = useState(null);
   // The bank payment recorded from the inbox's Autofill, or why it was not.
   const [bankPayment, setBankPayment] = useState(null);
+  // The quotation paid in advance and applied to the bill, or why it was not.
+  const [prepayment, setPrepayment] = useState(null);
   // Xero's short code for the ledger, so "Open in Xero" is a deep link that
   // opens the right organisation rather than whichever one the browser last had.
   const xeroShortCode = useXeroShortCode();
@@ -224,6 +226,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
       setPostedLines(Number(result.lines) || 0);
       setAttachment(result.attachment ?? null);
       setBankPayment(result.bankPayment ?? null);
+      setPrepayment(result.prepayment ?? null);
       setRebilled(result.rebilled ?? null);
       onPublished?.(result);
     } catch (err) {
@@ -278,6 +281,20 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               <p className="max-w-sm text-xs text-amber-700">
                 The bill is paid its own figure, but the bank’s card fee of {Number(bankPayment.fee.amount || 0).toFixed(2)} could not be added to it:{' '}
                 {bankPayment.fee.message} Add the fee in Xero, then use Find &amp; Match for the statement line.
+              </p>
+            )}
+            {prepayment?.ok && (
+              <p className="max-w-sm text-xs text-muted-foreground">
+                The prepayment on {prepayment.reference || 'the quotation'} ({Number(prepayment.amount || 0).toFixed(2)}) is applied to the bill
+                {Number(prepayment.invoiceRemaining) > 0.004
+                  ? `, leaving ${Number(prepayment.invoiceRemaining).toFixed(2)} still to pay.`
+                  : ', so nothing is left to pay on it.'}
+              </p>
+            )}
+            {prepayment && !prepayment.ok && (
+              <p className="max-w-sm text-xs text-amber-700">
+                The bill posted, but the prepayment on {prepayment.reference || 'the quotation'} could not be applied: {prepayment.message} Apply it
+                from this document’s Payment section, or in Xero.
               </p>
             )}
             {bankPayment && !bankPayment.ok && (
@@ -364,6 +381,16 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               {/* The inbox's Autofill payment: the bank line this document is
                   paid against. Said HERE because the publish is what writes the
                   payment, and it is the irreversible half. */}
+              {/* A quotation paid in advance that this invoice uses up: applied
+                  straight after the bill is posted, which is why it posts
+                  Approved (Xero applies an overpayment to nothing less). */}
+              {!updating && bill?.prepaymentMatch && (
+                <p className="rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900">
+                  <span className="font-medium">Prepayment will be applied.</span> {bill.prepaymentMatch.currency}{' '}
+                  {Number(bill.prepaymentMatch.amount || 0).toFixed(2)} paid in advance on {bill.prepaymentMatch.reference || 'the quotation'} is
+                  applied to the bill straight after it is posted.
+                </p>
+              )}
               {!updating && bill?.bankMatch && (
                 <p className="rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900">
                   <span className="font-medium">Payment will be applied.</span> {bill.bankMatch.currency}{' '}
@@ -510,6 +537,10 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                     {!updating && bill?.bankMatch ? (
                       <span className="flex h-9 flex-1 items-center rounded-md border bg-muted/40 px-3 text-sm">
                         Approved, then paid from {bill.bankMatch.bankAccountName || 'the matched bank account'}
+                      </span>
+                    ) : !updating && bill?.prepaymentMatch ? (
+                      <span className="flex h-9 flex-1 items-center rounded-md border bg-muted/40 px-3 text-sm">
+                        Approved, then the prepayment applied
                       </span>
                     ) : (
                       <div className="relative flex-1">

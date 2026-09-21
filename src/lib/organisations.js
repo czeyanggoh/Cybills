@@ -800,6 +800,30 @@ export async function syncXeroPayments(organisationId) {
   return body;
 }
 
+// A quotation / pro-forma paid in advance: recorded in Xero as an overpayment
+// to the supplier, taken back out while unused, and applied to an invoice's
+// bill (server/src/prepayment.ts). One helper, three routes.
+async function postPrepayment(organisationId, route, payload, fallback) {
+  const res = await fetch(`/api/xero/organisations/${organisationId}/${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = /** @type {any} */ (new Error(body.message || fallback));
+    err.code = body.error;
+    throw err;
+  }
+  return body;
+}
+export const recordPrepayment = (organisationId, payload) =>
+  postPrepayment(organisationId, 'record-prepayment', payload, 'Could not record the prepayment in Xero.');
+export const undoPrepayment = (organisationId, billId) =>
+  postPrepayment(organisationId, 'undo-prepayment', { billId }, 'Could not take the prepayment back out of Xero.');
+export const applyPrepayment = (organisationId, billId, fromId) =>
+  postPrepayment(organisationId, 'apply-prepayment', { billId, fromId }, 'Could not apply the prepayment in Xero.');
+
 export async function publishBillToXero(organisationId, payload) {
   const res = await fetch(`/api/xero/organisations/${organisationId}/publish-bill`, {
     method: 'POST',

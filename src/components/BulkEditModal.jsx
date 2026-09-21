@@ -27,7 +27,7 @@ const FIELDS = [
   // Hidden in a bridge entity: it has no tax codes of its own, and its claims
   // post with No Tax at the full amount, so one set here could never be used.
   { key: 'taxRate', label: 'Tax rate', kind: 'combo', source: 'taxRates', xeroOnly: true },
-  { key: 'documentType', label: 'Type', kind: 'select', options: ['Invoice', 'Receipt', 'Payment proof', 'Credit note', 'Statement', 'Other'] },
+  { key: 'documentType', label: 'Type', kind: 'select', options: ['Invoice', 'Receipt', 'Payment proof', 'Quotation', 'Pro-forma invoice', 'Credit note', 'Statement', 'Other'] },
   { key: 'description', label: 'Description', kind: 'text' },
   { key: 'paymentMethod', label: 'Payment method', kind: 'combo', source: 'paymentMethods' },
   { key: 'paid', label: 'Paid', kind: 'bool' },
