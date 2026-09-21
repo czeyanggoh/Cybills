@@ -18,6 +18,7 @@ import { appOrigin, canPublishToXero, memberForSession } from './users.js';
 import { syncWhatsappReaction } from './waReactions.js';
 import { isPaymentProofDoc } from './paymentProof.js';
 import { isAdvanceDoc } from './prepayment.js';
+import { dayRate } from './fx.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -935,34 +936,6 @@ async function currenciesFor(tenantId: string): Promise<Set<string> | null> {
   if (base) codes.add(base);
   orgCurrencies.set(tenantId, { at: Date.now(), codes });
   return codes;
-}
-
-// The day's rate from `from` into `to`, as base per 1 foreign (the way a
-// document prints it). CYBills holds no rates of its own, so this asks the
-// ECB reference rates (Frankfurter; `FX_RATES_URL` points elsewhere) for the
-// document's own date — a weekend or holiday answers with the last working
-// day's, which is what "the rate of the day" means for one. 0 = no answer.
-const fxRates = new Map<string, number>();
-async function dayRate(from: string, to: string, date: string): Promise<number> {
-  const today = new Date().toISOString().slice(0, 10);
-  const day = /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today ? date : 'latest';
-  const key = `${from}>${to}@${day}`;
-  const hit = fxRates.get(key);
-  if (hit) return hit;
-  const root = String(process.env.FX_RATES_URL || 'https://api.frankfurter.app').replace(/\/+$/, '');
-  try {
-    const res = await fetch(`${root}/${day}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return 0;
-    const rate = Number((await res.json())?.rates?.[to]);
-    if (!(rate > 0)) return 0;
-    if (day !== 'latest') fxRates.set(key, rate);
-    return rate;
-  } catch (err) {
-    console.error('[xero] exchange rate lookup failed', from, to, day, err);
-    return 0;
-  }
 }
 
 // A foreign-currency document headed for an org that cannot hold its currency
@@ -2307,12 +2280,28 @@ async function buildClaimInvoice(
     const bill = getBillByIdAny(String(t.itemId));
     const desc = String(t.description || bill?.description || '').trim();
     const supplier = String(t.supplier || bill?.supplier || '').trim();
-    return (
+    const text =
       xeroLineDescription(supplier, String(t.itemId), desc) ||
       [t.supplier, t.category].filter(Boolean).join(' — ') ||
-      'Expense'
-    );
+      'Expense';
+    // A foreign receipt counted in the claim's currency says what it was and
+    // at what rate, so the ledger shows where the figure came from.
+    return t.origCurrency && t.fxRate
+      ? `${text} (${t.origCurrency} ${Number(t.origTotal || 0).toFixed(2)} @ ${t.fxRate})`
+      : text;
   };
+  // A foreign receipt with no rate would post its own figure as the claim's
+  // currency — USD 25 as SGD 25. Refused and named instead.
+  const noRate = (claim.transactions ?? []).filter((t) => t.fxMissing);
+  if (noRate.length) {
+    return { ok: false as const, status: 422, body: {
+      error: 'no_exchange_rate',
+      lines: noRate.map((t) => `${t.supplier || 'Item'} ${t.origCurrency ?? ''} ${t.origTotal ?? ''}`.trim()).slice(0, 10),
+      message:
+        `${noRate.length} item(s) on this claim are in another currency and no rate could be found to convert them to ${claim.currency || 'SGD'}. ` +
+        'Unapprove the claim and approve it again to retry, or enter the item’s own ' + (claim.currency || 'SGD') + ' total on the document.',
+    } };
+  }
   const tc = await firstTrackingCategory(target.tenantId);
   // A bridge entity's claims carry NO TAX.
   //
@@ -2438,6 +2427,32 @@ async function buildClaimInvoice(
   const claimLink = xeroInvoiceUrl(`${appOrigin(req)}/expense-claims/${encodeURIComponent(claim.id)}?org=${encodeURIComponent(organisation.id)}`);
   if (claimLink) payload.Url = claimLink;
   if (claim.currency) payload.CurrencyCode = claim.currency;
+  // A claim in a currency the receiving Xero cannot hold (no multi-currency)
+  // is posted in its base currency at the day's rate for the claim's date —
+  // the same rule a bill follows (inPostableCurrency).
+  const claimCcy = String(claim.currency ?? '').trim().toUpperCase();
+  const base = claimCcy ? await baseCurrencyFor(target.tenantId) : '';
+  if (claimCcy && base && base !== claimCcy) {
+    const held = await currenciesFor(target.tenantId);
+    if (held && !held.has(claimCcy)) {
+      const rate = await dayRate(claimCcy, base, date);
+      if (!(rate > 0)) {
+        return { ok: false as const, status: 422, body: {
+          error: 'no_exchange_rate',
+          message: `${target.name || 'This Xero organisation'} has no multi-currency, so this ${claimCcy} claim has to be posted in ${base} — and no ${claimCcy}→${base} rate could be found for ${date}. Try again shortly.`,
+        } };
+      }
+      const r2 = (n: number) => Math.round(n * rate * 100) / 100;
+      payload.LineItems = postable.map((l: any) => ({
+        ...l,
+        UnitAmount: r2(Number(l.UnitAmount) || 0),
+        TaxAmount: r2(Number(l.TaxAmount) || 0),
+      }));
+      const first: any = (payload.LineItems as any[])[0];
+      if (first) first.Description = `${first.Description} (${claimCcy} claim @ ${Number(rate.toFixed(6))} ${base}/${claimCcy})`;
+      payload.CurrencyCode = base;
+    }
+  }
   return { ok: true, payload, lines: postable.length };
 }
 

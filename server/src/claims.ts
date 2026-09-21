@@ -22,6 +22,7 @@ import { referenceFor, numberFor } from './claimRef.js';
 import { claimPdfBytes } from './claimPdfDoc.js';
 import { shareToken, verifyShareToken } from './shareLinks.js';
 import { readSetting } from './settings.js';
+import { peekDayRate, warmDayRates } from './fx.js';
 import { readSession } from './auth.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
@@ -48,6 +49,16 @@ type Txn = {
   // the document's, derived from these (src/lib/mileage.js).
   distanceKm?: string;
   mileageRate?: string;
+  // A foreign receipt's working, where the claim's figure is not the
+  // receipt's own: "USD 25.00 @ 1.3144" — its currency and total as printed,
+  // the rate, and where the rate came from ('document' = the receipt's own
+  // restatement, 'day' = the day's ECB rate for the receipt's date). fxMissing
+  // says no rate could be had, so the figure is still the receipt's own.
+  origCurrency?: string;
+  origTotal?: string;
+  fxRate?: string;
+  fxSource?: string;
+  fxMissing?: boolean;
   net: string;
   tax: string;
   total: string;
@@ -544,13 +555,50 @@ export const claimsRouter = Router();
 // claim's currency (baseTotal, Dext's "Total (SGD)"), that is the figure; a
 // foreign document with no restatement keeps its own, as before, since there
 // is no rate here to convert it by.
-function claimMoney(bill: { currency?: string; total?: number; tax?: number; baseCurrency?: string; baseTotal?: number; baseTax?: number }, currency: string): { total?: number; tax?: number } {
+type ClaimMoney = { total?: number; tax?: number; fx?: Pick<Txn, 'origCurrency' | 'origTotal' | 'fxRate' | 'fxSource' | 'fxMissing'> };
+function claimMoney(
+  bill: { currency?: string; total?: number; tax?: number; baseCurrency?: string; baseTotal?: number; baseTax?: number; date?: string },
+  currency: string
+): ClaimMoney {
   const own = String(bill.currency || '').toUpperCase();
   const want = String(currency || 'SGD').toUpperCase();
-  if (own && own !== want && String(bill.baseCurrency || '').toUpperCase() === want && bill.baseTotal != null) {
-    return { total: bill.baseTotal, tax: bill.baseTax ?? 0 };
+  if (!own || own === want) return { total: bill.total, tax: bill.tax };
+  const total = Number(bill.total) || 0;
+  const working = (rate: number, source: string) => ({
+    origCurrency: own,
+    origTotal: total.toFixed(2),
+    fxRate: String(Number(rate.toFixed(6))),
+    fxSource: source,
+  });
+  if (String(bill.baseCurrency || '').toUpperCase() === want && bill.baseTotal != null) {
+    const base = Number(bill.baseTotal) || 0;
+    return { total: bill.baseTotal, tax: bill.baseTax ?? 0, fx: total ? working(base / total, 'document') : undefined };
   }
-  return { total: bill.total, tax: bill.tax };
+  // No figure of its own in the claim's currency: the day's rate for the
+  // receipt's date (fx.ts), warmed before anything reads a claim. Counting a
+  // USD 25.00 receipt as 25.00 of the claim's SGD is the one answer that is
+  // certainly wrong, so a rate that could not be had is SAID on the line.
+  const rate = peekDayRate(own, want, bill.date);
+  if (!(rate > 0)) return { total: bill.total, tax: bill.tax, fx: { origCurrency: own, origTotal: total.toFixed(2), fxMissing: true } };
+  const cents = (n: number) => Math.round(n * 100) / 100;
+  return { total: cents(total * rate), tax: cents((Number(bill.tax) || 0) * rate), fx: working(rate, 'day') };
+}
+
+// The rates a set of claims' foreign items will be converted at, asked for up
+// front so liveTxns (synchronous) finds them cached.
+async function warmClaimRates(claims: Claim[], extraItemIds: string[] = []): Promise<void> {
+  const wants: Array<{ from: string; to: string; date: unknown }> = [];
+  const add = (orgId: string, itemId: string, to: string) => {
+    const bill = getBillById(orgId, itemId);
+    if (!bill || !bill.currency) return;
+    wants.push({ from: bill.currency, to, date: bill.date });
+  };
+  for (const c of claims) {
+    if (c.approvalStatus === 'approved') continue;
+    for (const t of c.transactions) add(c.orgId, String(t.itemId), c.currency || 'SGD');
+    for (const id of extraItemIds) add(c.orgId, id, c.currency || 'SGD');
+  }
+  await warmDayRates(wants);
 }
 
 function liveTxns(c: Claim): Txn[] {
@@ -570,6 +618,11 @@ function liveTxns(c: Claim): Txn[] {
       net: String(money.total != null ? Number(money.total) - Number(money.tax || 0) : t.net),
       tax: String(money.tax ?? t.tax),
       total: String(money.total ?? t.total),
+      origCurrency: money.fx?.origCurrency,
+      origTotal: money.fx?.origTotal,
+      fxRate: money.fx?.fxRate,
+      fxSource: money.fx?.fxSource,
+      fxMissing: money.fx?.fxMissing,
     };
   });
 }
@@ -605,17 +658,15 @@ function claimVisibleTo(ws: string, owners: Set<string> | null, me: string, c: C
   return addressIn(owners, emailForName(ws, c.claimFor));
 }
 
-claimsRouter.get('/', (req, res) => {
+claimsRouter.get('/', async (req, res) => {
   const org = orgIdFor(req);
   const ws = workspaceId(req);
   // With reports: a claim routed to somebody for a decision has to reach them.
   const owners = visibleOwnersFor(req, orgScope(req), true);
   const me = normaliseAddress(memberForSession(req)?.email);
-  res.json({
-    claims: load()
-      .filter((c) => c.orgId === org && !c.deleted && claimVisibleTo(ws, owners, me, c))
-      .map(withLiveItems),
-  });
+  const mine = load().filter((c) => c.orgId === org && !c.deleted && claimVisibleTo(ws, owners, me, c));
+  await warmClaimRates(mine);
+  res.json({ claims: mine.map(withLiveItems) });
 });
 
 // GET /api/claims/:id/where — which entity a claim belongs to.
@@ -797,12 +848,14 @@ function noteChangeAfterSubmit(req: Request, claim: Claim, by: string, what: str
 // Allowed until the claim is APPROVED — you can still add to a claim that's
 // awaiting approval (the total changes, so the approver re-reviews). Only an
 // approved claim is locked, to keep its total stable for payment.
-claimsRouter.post('/:id/items', (req, res) => {
+claimsRouter.post('/:id/items', async (req, res) => {
   // Building a claim is the other half of raising one, so it asks the same
   // privilege. Removing and recategorising do NOT: taking a receipt back off a
   // claim is undoing, and somebody who should not have added it must still be
   // able to.
   if (!mayCreateClaims(req, res)) return;
+  const incomingIds = (Array.isArray(req.body?.items) ? req.body.items : []).map((t: any) => String(t?.itemId ?? ''));
+  await warmClaimRates(load().filter((c) => c.id === req.params.id), incomingIds);
   return mutate(req, res, (claim, me) => {
     if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
     const incoming: Txn[] = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -859,6 +912,10 @@ claimsRouter.post('/:id/items', (req, res) => {
     // however the item arrived (Costs list, document page, moved from another
     // claim) and can't be lost to a half-finished round of requests.
     markBillsClaimed(claimed);
+    // Stored as the claim counts them — a foreign receipt at its figure in the
+    // claim's currency — not as the browser happened to send them, so the total
+    // an approval email quotes is the total the claim is worth.
+    if (added) claim.transactions = liveTxns(claim);
     if (added) noteChangeAfterSubmit(req, claim, me.name, `${added} item(s) added`);
   });
 });
@@ -1111,8 +1168,11 @@ const decidedFor = (claim: Claim, me: { email: string; name: string }): string =
 const byLine = (claim: Claim, me: { email: string; name: string }): string =>
   decidedFor(claim, me) ? `${me.name} on behalf of ${decidedFor(claim, me)}` : me.name;
 
-claimsRouter.post('/:id/approve', (req, res) =>
-  mutate(req, res, (claim, me) => {
+claimsRouter.post('/:id/approve', async (req, res) => {
+  // The figures frozen by approval include foreign items at the day's rate,
+  // so those rates are asked for first.
+  await warmClaimRates(load().filter((c) => c.id === req.params.id));
+  return mutate(req, res, (claim, me) => {
     const blocked = ensureApprover(req, claim, me, res);
     if (blocked) return blocked;
     // Record the figures being approved, rather than leaving the snapshot taken
@@ -1128,8 +1188,8 @@ claimsRouter.post('/:id/approve', (req, res) =>
     claim.decisionReason = '';
     claim.history.unshift({ text: `This claim was approved by ${byLine(claim, me)}`, by: me.name, at: nowIso() });
     notifyClaimant(req, claim, 'approved');
-  })
-);
+  });
+});
 
 claimsRouter.post('/:id/reject', (req, res) =>
   mutate(req, res, (claim, me) => {

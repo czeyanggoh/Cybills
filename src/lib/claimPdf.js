@@ -20,7 +20,7 @@ import { claimAttachmentUrl, costPath, costFileUrl } from './itemId.js';
 import { pdfDate, claimRef, claimExportName, claimsExportName, cleanHistoryText } from './exportFormat.js';
 import { claimDateFor } from './claimReference.js';
 import { approvalHistory } from './approvalHistory.js';
-import { mileageSummary } from './mileage.js';
+import { lineWorking } from './claimFx.js';
 
 // A4 LANDSCAPE in points, with a comfortable margin.
 //
@@ -262,7 +262,7 @@ export function buildClaimDoc(claim, links = {}, origin = ORIGIN, { signatures =
     // A mileage item's working goes with it — "13 km × SGD 0.60/km" — since the
     // approver reading this PDF has no other way of seeing how the total was
     // arrived at.
-    const note = [t.description, mileageSummary(t.distanceKm, t.mileageRate, claim.currency)].filter(Boolean).join(' — ');
+    const note = [t.description, lineWorking(t, claim.currency)].filter(Boolean).join(' — ');
     if (note) {
       doc.setFont('helvetica', 'italic');
       doc.setFontSize(8);

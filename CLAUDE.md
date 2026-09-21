@@ -597,6 +597,23 @@ import as plain documents. A claim is all-or-nothing, created as a draft named
 it restates itself in (`claimMoney` in `claims.ts`, mirrored by
 `docToClaimTxn`) — it used to add AUD 264 to SGD as 264.
 
+**A foreign receipt with no restatement is converted, not counted as
+printed.** A USD 25.00 receipt on a SGD claim added 25.00 to it. `claimMoney`
+now falls back to the day's ECB rate for the RECEIPT's date (`server/src/fx.ts`,
+shared with the bill road; `warmClaimRates` asks before `liveTxns` reads, since
+it is synchronous — on the list, add-items and approve). The line carries its
+working (`origCurrency` / `origTotal` / `fxRate` / `fxSource`: `document` or
+`day`), printed beside the description on the claim page and in its PDF
+(`lineWorking` in `src/lib/claimFx.js`, which also carries the mileage working)
+and on the Xero line ("… (USD 25.00 @ 1.3144)"). Add-items stores the converted
+figures, so an approval email quotes what the claim is worth. A rate that could
+not be had leaves the receipt's own figure and says so (`fxMissing`), and
+publishing refuses such a claim (422 `no_exchange_rate`) rather than posting USD
+as SGD. A claim raised IN a currency the receiving Xero lacks (no multi-currency)
+posts in its base currency at the day's rate for the claim's date, noted on the
+first line. Covered by `npm test` at the root (`claim-fx`) and in `server/`
+(`test/claim-foreign-currency.test.mts`).
+
 ## Merge detection: which uploads are really one document
 
 Two separate uploads are often one cost, and the two ways that happens do not
