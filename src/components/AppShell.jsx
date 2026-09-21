@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  Receipt,
   ShoppingCart,
   Tag,
   Plus,
@@ -38,6 +37,7 @@ import { canManageBusiness, canManageUsers } from '@/lib/userStore';
 import { isPracticeTeam, canManagePractice } from '@/lib/practiceStore';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
 import AddDocumentsDrawer from './AddDocumentsDrawer';
+import BrandMark from './BrandMark';
 import AddOrganisationModal from './AddOrganisationModal';
 import RemoveOrganisationModal from './RemoveOrganisationModal';
 import ApprovalReminderBanner from './ApprovalReminderBanner';
@@ -285,7 +285,10 @@ function OrganisationSwitcher() {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
-          <div className="absolute left-0 top-full z-20 mt-1 w-72 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+          {/* Capped to the window: a practice holds more entities than fit on
+              screen, and a menu taller than the viewport can't be scrolled to. */}
+          <div className="absolute left-0 top-full z-20 mt-1 flex max-h-[calc(100dvh-6rem)] w-72 flex-col overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {organisations.length === 0 && (
               <p className="px-3 py-2 text-sm text-muted-foreground">
                 No organisations yet. Link one to a Xero organisation to start publishing bills.
@@ -327,8 +330,9 @@ function OrganisationSwitcher() {
                 </button>
               </div>
             ))}
+            </div>
             {canManageEntities && (
-              <div className="mt-1 border-t pt-1">
+              <div className="mt-1 shrink-0 border-t pt-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -451,7 +455,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
             )}
           >
             <div className={cn('flex h-14 shrink-0 items-center gap-2 border-b', showLabels ? 'px-4' : 'justify-center px-0')}>
-              <Receipt className="h-5 w-5 shrink-0" />
+              <BrandMark className="h-7 w-7 shrink-0" />
               {showLabels && <span className="text-sm font-semibold tracking-tight">CYBills</span>}
             </div>
             {!settingsCol && (
@@ -637,7 +641,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
           <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col overflow-y-auto bg-card shadow-xl">
             <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
               <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
-                <Receipt className="h-5 w-5" /> CYBills
+                <BrandMark className="h-7 w-7" /> CYBills
               </span>
               <button type="button" onClick={() => setMobileNav(false)} className="text-muted-foreground hover:text-foreground" aria-label="Close menu">
                 <X className="h-5 w-5" />

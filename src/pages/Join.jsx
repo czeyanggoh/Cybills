@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { CheckCircle2, Clock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import BrandMark from '@/components/BrandMark';
 import { joinCompany, fetchJoinPeople, fetchJoinCompanies, REPORTING_OFFICER } from '@/lib/userStore';
 import { mobileError, MOBILE_HINT } from '@/lib/mobile';
 
@@ -119,7 +120,7 @@ export default function Join() {
       <div className="mx-auto max-w-3xl px-6 py-10">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid h-7 w-7 place-items-center rounded-md bg-foreground text-background">$</span>
+            <BrandMark className="h-7 w-7" />
             CYBills
           </div>
           <button type="button" onClick={signOut} className="text-sm text-muted-foreground underline-offset-4 hover:underline">

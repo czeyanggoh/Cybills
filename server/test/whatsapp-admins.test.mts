@@ -1,20 +1,16 @@
-// Everyone in a collection group is an ADMIN of it.
+// Everyone in a collection group can be made an ADMIN of it.
 //
 // A group CYBot opens has to keep working when CYBot is not looking at it. Only
 // an admin of a WhatsApp group can add somebody to it, rename it, or take
-// somebody out — and every shortfall this app reports ends in exactly that
-// instruction ("somebody already in the group has to add them", because CYWS
-// mints no invite link), which an ordinary member cannot follow. So the people
-// CYBills puts into a group go in as admins, on both roads a person is added
-// by, and a group opened before that can be repaired.
+// somebody out. Groups are now opened invite-only — CYBot adding numbers is
+// what WhatsApp enforces against — so people join by link as ordinary members,
+// and this button is how they become admins.
 //
-// What is pinned here: the ask travels with the group being MADE rather than as
-// a step somebody remembers, it travels with a number added to an existing
-// group, the repair promotes whoever the group holds without naming anybody
-// (WhatsApp answers with LIDs, and an entity-wide group can hold a member added
-// from inside WhatsApp whose number was never typed here), pressing it twice is
-// safe, and the two kinds of group CYBills has no business editing are refused
-// — the same two the rename and the add paths refuse.
+// What is pinned here: nothing is promoted (or added) as a group is made, the
+// button promotes whoever the group holds without naming anybody (WhatsApp
+// answers with LIDs, and people join without their number being typed here),
+// pressing it twice is safe, and the two kinds of group CYBills has no business
+// editing are refused — the same two the rename and the add paths refuse.
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,6 +73,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   }
+  if (url.includes('/api/webhooks/cybills/invite-link')) {
+    return new Response(JSON.stringify({ data: { invite_link: 'https://chat.whatsapp.com/AstridGroup' } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
   if (url.includes('/api/webhooks/cybills/promote-participants')) {
     promoteCalls.push(body);
     return new Response(JSON.stringify(promoteReply.body), {
@@ -124,33 +123,29 @@ const post = async (path: string, body: unknown, headers: Record<string, string>
 };
 
 // --- Opening a group ---------------------------------------------------------
-// Asked for as the group is MADE, not as a step afterwards: a step afterwards
-// is one somebody has to remember, and the person who forgets it is the one who
-// then cannot add their colleague.
+// Opened invite-only: nobody is in it to promote as it is made, and nobody is
+// added afterwards either. People join by the link as ordinary members, which is
+// what the button is for.
 let r = await post('channels/user', { userId: astrid.id, mobile: '6594247700' }, ORG);
 const group = r.body.channel.submissionId as string;
-check('the group is asked for with its members as admins', createCalls.at(-1).promote_participants, true);
-check('and what WhatsApp made an admin is kept', channelById(group)?.participantsPromoted, ['217630539546800']);
-check('counted rather than named, like everything else WhatsApp answers with', r.body.channel.participantsPromotedCount, 1);
+check('the group is opened invite-only', createCalls.at(-1).invite_only, true);
+check('so nothing is promoted as it is made', channelById(group)?.participantsPromoted ?? [], []);
 
-// --- Adding a number to that group -------------------------------------------
-// The same reasoning: somebody added to a collection group holds the client's
-// paperwork, and the next thing asked of them is to add a colleague WhatsApp
-// would not add for us.
+// --- A number for that group -------------------------------------------------
+// Sent the invite link, never added — so there is no add to promote on.
 r = await post(`channels/${group}/participants`, { mobile: '6592961171' }, ORG);
-check('a number added to an existing group goes in as an admin', addCalls.at(-1).promote, true);
-check('and the answer says so', r.body.promotedNow, 1);
-check('both admins are on the record', channelById(group)?.participantsPromoted, ['217630539546800', '217630539546801']);
+check('a number for an existing group is not added', addCalls.length, 0);
+check('it is sent the link instead', r.body.inviteLink, 'https://chat.whatsapp.com/AstridGroup');
 
-// --- The repair for a group opened before any of this -------------------------
+// --- Promoting whoever has joined ---------------------------------------------
 r = await post(`channels/${group}/admins`, {}, ORG);
 check('promoting succeeds', r.status, 200);
 check('CYWS is asked for THAT group, by submission id', promoteCalls.at(-1), { submission_id: group });
-// Who is in the group is WhatsApp's answer, not ours: it hands back LIDs, and an
-// entity-wide group can hold somebody added from inside WhatsApp whose number
-// was never typed here. So nobody is named in the request.
+// Who is in the group is WhatsApp's answer, not ours: it hands back LIDs, and
+// people join by link without their number ever being typed here. So nobody is
+// named in the request.
 check('and nobody is named in it', Object.keys(promoteCalls.at(-1)), ['submission_id']);
-check('a newly promoted person is added to the record', channelById(group)?.participantsPromoted?.length, 3);
+check('a newly promoted person is added to the record', channelById(group)?.participantsPromoted?.length, 1);
 
 // Pressing it again. Promoting an existing admin changes nothing at WhatsApp's
 // end, so CYWS reports promoting nobody — which must not read as everybody
@@ -158,7 +153,7 @@ check('a newly promoted person is added to the record', channelById(group)?.part
 promoteReply = { status: 200, body: { data: { participants_promoted: [] } } };
 r = await post(`channels/${group}/admins`, {}, ORG);
 check('a second press is a 200 that changed nobody', [r.status, r.body.promotedNow], [200, 0]);
-check('and takes nothing away from the record', channelById(group)?.participantsPromoted?.length, 3);
+check('and takes nothing away from the record', channelById(group)?.participantsPromoted?.length, 1);
 promoteReply = { status: 200, body: { data: { participants_promoted: ['217630539546875'] } } };
 
 // --- A CYWS that has never heard of the route --------------------------------

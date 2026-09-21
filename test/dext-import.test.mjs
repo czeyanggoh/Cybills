@@ -6,7 +6,7 @@
 // row. So the rules that decide those are pinned here.
 import {
   parseCsv, isoDate, amount, parseDextExport, matchFiles, billPayload, patchPayload, cleanCategory,
-  importedDextIds, planImport,
+  importedDextIds, planImport, planClaims, isClaimRow, claimName, importedClaimIds,
 } from '../src/lib/dextImport.js';
 
 let failures = 0;
@@ -64,6 +64,7 @@ check('the fields Dext already decided come across', rows[0], {
   category: 'Transport - Taxi',
   taxRate: '',
   documentType: 'Expense claim',
+  status: 'processed',
   customer: '',
   project: 'ASTP 01',
   paymentMethod: 'Visa',
@@ -183,6 +184,54 @@ const plan = planImport(itemRows.rows, held);
 check('a row already in the book is skipped', plan.alreadyImported.map((r) => r.receiptId), ['555000222']);
 check('a second row of one id in the file is skipped', plan.repeated.map((r) => r.receiptId), ['555000111']);
 check('the first of it, and a row with no id, still import', plan.toImport.map((r) => r.receiptId), ['555000111', '']);
+
+// --- Expense claims -------------------------------------------------------------
+// Dext exports the claims and their items as two lists with nothing linking
+// them but the person and the money, so the matching is pinned here.
+const H = 'Receipt ID,Type,Date,Invoice Number,Supplier,Category,Total,Currency,Total (SGD),Status,Owner';
+const csv = (...lines) => parseDextExport([H, ...lines].join('\n')).rows;
+const CLAIMS = csv(
+  '1001,Expense claim,23-Sep-2026,,Sandra Yeow,,439.97,SGD,439.97,processed,Sandra Yeow',
+  '1002,Expense claim,23-Sep-2026,,Eason Chang,,17.97,SGD,17.97,processed,Eason Chang',
+  '1003,Expense claim,23-Sep-2026,,Nobody Here,,50.00,SGD,50.00,processed,Nobody Here',
+);
+const ITEMS = csv(
+  '2001,Invoice,26-Aug-2026,R1,Redmart,Office,24.15,SGD,24.15,claimed,Sandra Yeow',
+  '2002,Receipt,27-Aug-2026,S1,Super Simple,Meals,29.30,SGD,29.30,claimed,Sandra Yeow',
+  '2003,Invoice,09-Sep-2026,K1,Kojiro,Meals,264.00,AUD,241.19,claimed,Sandra Yeow',
+  '2004,Invoice,15-Sep-2026,B1,Bathers,Meals,77.00,AUD,69.87,claimed,Sandra Yeow',
+  '2005,Receipt,16-Sep-2026,A1,Airbot,Repairs,75.46,SGD,75.46,claimed,Sandra Yeow',
+  '2006,Invoice,14-Sep-2026,P1,Petrol,Transport,57.60,MYR,17.97,claimed,Eason Chang',
+  '2007,Receipt,14-Sep-2026,G1,Grab,Transport,17.97,SGD,17.97,processed,Eason Chang',
+);
+check('a claim row is recognised', isClaimRow(CLAIMS[0]), true);
+check('an item is not a claim', isClaimRow(ITEMS[0]), false);
+check('a receipt Dext typed "Expense claim" is still a receipt', isClaimRow(rows[0]), false);
+const cp = planClaims([...CLAIMS, ...ITEMS]);
+check('claims whose items add up are built, from two files, a foreign item at its SGD figure',
+  cp.claims.map((c) => [c.row.receiptId, c.claimFor, c.items.map((i) => i.receiptId)]),
+  [['1001', 'Sandra Yeow', ['2001', '2002', '2003', '2004', '2005']], ['1002', 'Eason Chang', ['2006']]]);
+check('a claim nobody has claimed items for is named, not guessed', cp.unmatched.map((u) => [u.row.receiptId, u.reason]), [['1003', 'no_items']]);
+
+const twoWays = planClaims(csv(
+  '1,Expense claim,1-Sep-2026,,A,,10.00,SGD,10.00,processed,A',
+  '2,Receipt,1-Sep-2026,,X,,10.00,SGD,10.00,claimed,A',
+  '3,Receipt,1-Sep-2026,,Y,,10.00,SGD,10.00,claimed,A',
+));
+check('two receipts that could each be the claim is left to a person', [twoWays.claims.length, twoWays.unmatched[0]?.reason], [0, 'ambiguous']);
+
+const split = planClaims(csv(
+  '1,Expense claim,31-Aug-2026,,A,,30.00,SGD,30.00,processed,A',
+  '2,Expense claim,30-Sep-2026,,A,,5.00,SGD,5.00,processed,A',
+  '3,Receipt,1-Aug-2026,,X,,10.00,SGD,10.00,claimed,A',
+  '4,Receipt,2-Aug-2026,,Y,,20.00,SGD,20.00,claimed,A',
+  '5,Receipt,1-Sep-2026,,Z,,5.00,SGD,5.00,claimed,A',
+));
+check('one person with two claims gets each its own items', split.claims.map((c) => c.items.map((i) => i.receiptId)), [['3', '4'], ['5']]);
+const off = planClaims(csv('1,Expense claim,1-Sep-2026,,A,,10.01,SGD,10.01,processed,A', '2,Receipt,1-Sep-2026,,X,,10.00,SGD,10.00,claimed,A'));
+check('a cent out matches nothing', off.unmatched[0]?.reason, 'no_match');
+check('an imported claim is recognised again by its name',
+  [...importedClaimIds([{ name: claimName({ receiptId: '1001' }) }, { name: 'Travel' }, { name: 'Expense claim (Dext 9)', deleted: true }])], ['1001']);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

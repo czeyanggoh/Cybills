@@ -60,6 +60,20 @@ export type WaChannel = {
   // said rather than assumed either way. Absent on rows written before adoption
   // existed, all of which we opened.
   adopted?: boolean;
+  // Opened EMPTY and joined by invite link, rather than by CYBot adding the
+  // numbers. Adding numbers that have never spoken to CYBot is the pattern
+  // WhatsApp enforces against, and one enforcement takes down the number every
+  // client's group runs on. `participantsRequested` still lists the numbers the
+  // group is FOR — they are what the card compares a changed number against —
+  // but nobody was asked of WhatsApp, so `participantsKnown` stays false.
+  // Absent on rows opened before invites existed, all of which added numbers.
+  invite?: boolean;
+  // `https://chat.whatsapp.com/<code>`. Anyone holding it can join the group and
+  // send bills into somebody's book, so it goes only to the person (by email)
+  // and to those who administer them — never to the CYWS directory.
+  inviteLink?: string;
+  // The last time the link was emailed, and whether the mailbox took it.
+  lastInvite?: { email: string; at: string; sent: boolean; error?: string };
   createdAt: string;
   createdBy: string;
   openedAt: string;

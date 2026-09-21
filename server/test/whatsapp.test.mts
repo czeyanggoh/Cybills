@@ -28,8 +28,9 @@ writeFileSync(
 // --- The far end, stubbed ----------------------------------------------------
 // Every outbound call CYBills makes here: the create-group request to CYWS, and
 // the signed file link it falls back to when the shared bucket isn't readable.
-type CreateCall = { submission_id: string; participants: string[]; subject: string };
+type CreateCall = { submission_id: string; participants?: string[]; subject: string; invite_only?: boolean };
 const createCalls: CreateCall[] = [];
+let inviteAsks = 0;
 let createReply: { status: number; body: unknown } = { status: 200, body: null };
 let fileFetches = 0;
 
@@ -45,6 +46,13 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     lidAsks.push(JSON.parse(String(init?.body ?? '{}')).lid);
     return new Response(JSON.stringify(lidReply.body), {
       status: lidReply.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (url.includes('/api/webhooks/cybills/invite-link')) {
+    inviteAsks++;
+    return new Response(JSON.stringify({ data: { invite_link: 'https://chat.whatsapp.com/Fetched' } }), {
+      status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
   }
@@ -138,10 +146,9 @@ createReply = {
       chat_id: '120363000@g.us',
       subject: 'CYBills - Acme Pte Ltd',
       submission_id: firstId,
-      // WhatsApp silently refused the second number: its owner's privacy
-      // settings disallow being added. Not an error — but not silent either.
-      participants_added: ['60123456789'],
-      participants_requested: ['60123456789', '6591234567'],
+      participants_added: [],
+      participants_requested: [],
+      invite_link: 'https://chat.whatsapp.com/AcmeGroup',
       already_existed: false,
     },
   },
@@ -150,8 +157,14 @@ r = await post('channels', { participants: ['60123456789', '(65) 9123-4567'] }, 
 check('the retry succeeds', r.status, 200);
 check('reusing the id, so no second group is made', createCalls[1].submission_id, firstId);
 check('the chat id comes back to be stored', r.body.channel.chatId, '120363000@g.us');
-check('the number WhatsApp would not add is surfaced', r.body.channel.participantsMissing, ['6591234567']);
-check('and counted', r.body.channel.addedShortfall, 1);
+// Nobody is ADDED. CYBot adding numbers that have never spoken to it is what
+// WhatsApp enforces against, so the group is opened empty and joined by link —
+// and the numbers never reach CYWS, so not even an older one can add them.
+check('the group is asked for invite-only', createCalls[1].invite_only, true);
+check('with no numbers in the request', createCalls[1].participants, undefined);
+check('the invite link is kept', r.body.channel.inviteLink, 'https://chat.whatsapp.com/AcmeGroup');
+check('the numbers are still what the group is for', r.body.channel.participantsRequested, ['60123456789', '6591234567']);
+check('and nobody is reported refused — nobody was asked', r.body.channel.participantsMissing, []);
 check('only one channel exists for the entity', createCalls.length, 2);
 
 const submissionId = firstId;
@@ -178,31 +191,37 @@ check('an adopted group opens', r.body.channel.status, 'open');
 check('and claims nobody was refused', r.body.channel.participantsMissing, []);
 check('because it never said who is in it', r.body.channel.participantsKnown, false);
 
-// --- What WhatsApp actually answers with --------------------------------------
-// It does not hand back phone numbers. `participants_added` comes back as LIDs
-// — opaque per-user ids — so against the numbers we asked with, every person
-// who WAS added looks like a stranger. That is how somebody sitting in the
-// group on her own phone got reported as having refused to join it.
+// --- A CYWS too old to open a group by invite ---------------------------------
+// It never heard of `invite_only`, so it asks for the numbers CYBills no longer
+// sends. Reported as needing an update, not as WhatsApp refusing — pressing the
+// button again will not help.
+createReply = { status: 400, body: { error: 'participant_required' } };
+r = await post('channels', { participants: ['6582534031'], subject: 'CYBills - Old CYWS' }, { 'X-Org-Id': 'org_one0001' });
+check('an older CYWS is named as one', r.body.error, 'invite_unsupported');
+check('and is not offered as retryable', r.body.retryable, false);
+
+// The update lands, and the group is made — but its link could not be read at
+// the moment it was. It is asked for again rather than left without one.
 createReply = {
   status: 200,
   body: {
     data: {
       chat_id: '120363999@g.us',
-      subject: 'CYBills - Lids',
+      subject: 'CYBills - Old CYWS',
       submission_id: 'x',
-      participants_added: ['217630539546875', '176940472352839'],
-      participants_requested: ['6582534031'],
+      participants_added: [],
+      participants_requested: [],
+      invite_link: '',
       already_existed: false,
     },
   },
 };
-r = await post('channels', { participants: ['6582534031'], subject: 'CYBills - Lids' }, { 'X-Org-Id': 'org_one0001' });
-check('an id that is not a phone number accuses nobody', r.body.channel.participantsMissing, []);
-check('nor counts anyone short — two ids for one person asked for', r.body.channel.addedShortfall, 0);
-// And the LIDs themselves never reach the page: two 15-digit numbers under
-// "In the group" tell the reader nothing about whose they are.
-check('the opaque ids are reported only as a count', r.body.channel.participantsAddedCount, 2);
+const asksBefore = inviteAsks;
+r = await post('channels', { participants: ['6582534031'], subject: 'CYBills - Old CYWS' }, { 'X-Org-Id': 'org_one0001' });
+check('the group opens', r.body.channel.status, 'open');
+check('with no link yet, which the listing offers to fetch', r.body.channel.inviteLink, '');
 check('what is shown is what we asked with', r.body.channel.participantsRequested, ['6582534031']);
+check('the entity route asks CYWS nothing about links unprompted', inviteAsks, asksBefore);
 
 // --- Connecting one person ---------------------------------------------------
 // The ordinary case: a group is a conversation with SOMEBODY, opened from their
@@ -229,6 +248,11 @@ const callsBefore = createCalls.length;
 // group and it is filed under exactly the same person.
 check('named for their own CYBills address', r.body.channel.subject, 'astrid4@cybills.sg');
 check('and tied to them', r.body.channel.userId, dean.id);
+// The group opens with no link, so it is fetched, and emailed to their own
+// address. No mailbox on this deploy: reported, not claimed.
+check('its invite link is fetched', r.body.channel.inviteLink, 'https://chat.whatsapp.com/Fetched');
+check('and emailed to them', r.body.invite?.email, 'astridy2004@gmail.com');
+check('which a deploy with no mailbox says did not go', r.body.invite?.sent, false);
 check('the number is stored as typed', ensure('cybm').find((u) => u.id === dean.id)?.mobile, '+65 9111 2222');
 
 // --- Changing a connected person's number ------------------------------------
@@ -264,6 +288,20 @@ check('and exactly one group is live', replaced.channels.filter((c: any) => c.st
 // under its submission id, and they have to keep arriving.
 check('the old one is still on file', replaced.channels.some((c: any) => c.status === 'replaced'), true);
 check('under its own id, so its messages still land', replaced.channels.length, 2);
+
+// No number at all. Nobody is added to a group any more — they join by link —
+// so a group needs no number to open, and the stored one is left alone.
+{
+  const { ensure: roster, save: saveRoster, full } = await import('../src/users.ts');
+  const items = roster('cybm');
+  const noPhone = full({ name: 'No Phone', email: 'nophone@example.com', organisationId: 'org_one0001', login: 'No' }, 'cybm');
+  items.push(noPhone);
+  saveRoster(items);
+  r = await post('channels/user', { userId: noPhone.id, mobile: '' });
+  check('a person with no number can still be connected', [r.status, r.body.channel?.status], [200, 'open']);
+  check('with no number recorded against the group', r.body.channel?.participantsRequested, []);
+  check('and the invite still goes to their address', r.body.invite?.email, 'nophone@example.com');
+}
 
 r = await post('channels/user', { userId: 'nobody', mobile: '6591112222' });
 check('a person CYBills has no row for is refused', r.status, 404);

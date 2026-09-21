@@ -136,6 +136,8 @@ export function parseDextExport(text) {
     // Dext prints the code it used ("NONE"), which is what CYBills stores.
     taxRate: cell(r, 'Tax Code'),
     documentType: cell(r, 'Type'),
+    // "claimed" is how an item on an expense claim says so (see planClaims).
+    status: cell(r, 'Status'),
     customer: cell(r, 'Customer'),
     project: cell(r, 'Project'),
     paymentMethod: cell(r, 'Payment Method'),
@@ -277,4 +279,114 @@ export function patchPayload(row) {
   if (row.dueDate) patch.dueDate = row.dueDate;
   if (row.note) patch.note = row.note;
   return patch;
+}
+
+// --- Expense claims -------------------------------------------------------------
+// Dext exports a claim as a row of its own — Type "Expense claim", the claimant
+// in Supplier and Owner, the claim's total — and its items as ordinary rows
+// with Status "claimed". Nothing in either file says WHICH claim an item was
+// on, so the link is rebuilt from the only two facts both carry: the person
+// (Owner) and the money. A claim takes that person's claimed items only where
+// they add up to its total TO THE CENT, and only where exactly one set of them
+// does — two sets that fit is a choice, and putting a receipt on the wrong
+// claim pays it under the wrong period. Anything unsettled is left off a claim
+// and named, and its items still import as ordinary documents.
+
+// Dext also types an ordinary receipt raised through its expense app
+// "Expense claim", so the Type alone does not make a row the claim. The claim
+// itself is the one that names a PERSON as its supplier (the claimant, the same
+// name as its Owner) and carries no category or invoice number of its own.
+const sameName = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+export const isClaimRow = (row) =>
+  /^expense claim$/i.test(String(row?.documentType ?? '').trim())
+  && !row.category && !row.invoiceNumber
+  && (!row.supplier || !row.owner || sameName(row.supplier, row.owner));
+const isClaimedItem = (row) => !isClaimRow(row) && /^claimed$/i.test(String(row?.status ?? '').trim());
+
+// What a row is worth in SGD cents: the restatement where there is one (an AUD
+// receipt on an SGD claim counts at its SGD figure, which is what Dext summed),
+// else its own total.
+const cents = (row) => {
+  const v = row.baseTotal ? row.baseTotal : row.total;
+  const n = Number(v);
+  return v && Number.isFinite(n) ? Math.round(n * 100) : null;
+};
+const personKey = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+// Every way to hand each claim a disjoint set of `items` summing to its total,
+// stopping at two — all that is needed is "none", "exactly one" or "several".
+// Items of one amount are interchangeable in the sum but not as evidence: two
+// 10.00 receipts are two different documents, so that counts as several.
+const MAX_ITEMS = 24;
+function assignments(claims, items) {
+  const found = [];
+  const pick = (ci, free, acc) => {
+    if (found.length > 1) return;
+    if (ci === claims.length) { found.push(acc); return; }
+    const want = cents(claims[ci]);
+    const walk = (start, sum, chosen) => {
+      if (found.length > 1) return;
+      if (sum === want && chosen.length) {
+        const taken = new Set(chosen);
+        pick(ci + 1, free.filter((i) => !taken.has(i)), [...acc, chosen]);
+        return;
+      }
+      for (let k = start; k < free.length; k += 1) {
+        const c = cents(free[k]);
+        if (c === null || c <= 0 || sum + c > want) continue;
+        walk(k + 1, sum + c, [...chosen, free[k]]);
+      }
+    };
+    walk(0, 0, []);
+  };
+  pick(0, items, []);
+  return found;
+}
+
+export function planClaims(rows) {
+  const claimRows = (rows || []).filter(isClaimRow);
+  const byPerson = new Map();
+  for (const row of rows || []) {
+    if (!isClaimedItem(row)) continue;
+    const k = personKey(row.owner);
+    if (!byPerson.has(k)) byPerson.set(k, []);
+    byPerson.get(k).push(row);
+  }
+  const people = new Map();
+  for (const c of claimRows) {
+    const k = personKey(c.owner || c.supplier);
+    if (!people.has(k)) people.set(k, []);
+    people.get(k).push(c);
+  }
+  const claims = [];
+  const unmatched = [];
+  for (const [k, theirs] of people) {
+    const usable = theirs.filter((c) => k && (cents(c) ?? 0) > 0);
+    theirs.filter((c) => !usable.includes(c)).forEach((c) => unmatched.push({ row: c, reason: 'no_total' }));
+    if (!usable.length) continue;
+    const items = byPerson.get(k) || [];
+    const fail = (reason) => usable.forEach((c) => unmatched.push({ row: c, reason }));
+    if (!items.length) { fail('no_items'); continue; }
+    if (items.length > MAX_ITEMS) { fail('too_many'); continue; }
+    const ways = assignments(usable, items);
+    if (ways.length === 1) {
+      usable.forEach((c, i) => claims.push({ row: c, claimFor: c.owner || c.supplier, items: ways[0][i] }));
+    } else fail(ways.length ? 'ambiguous' : 'no_match');
+  }
+  return { claims, unmatched, claimRows };
+}
+
+// What the claim is called here. It carries the Dext Item ID so a second import
+// of the same export recognises it (importedClaimIds) — a claim has no field of
+// its own for that, and a person reading the name loses nothing.
+export const claimName = (row) => `Expense claim (Dext ${row.receiptId})`;
+
+export function importedClaimIds(claims) {
+  const ids = new Set();
+  for (const c of claims || []) {
+    if (c?.deleted) continue;
+    const m = /\(Dext (\d+)\)/.exec(String(c?.name ?? ''));
+    if (m) ids.add(m[1]);
+  }
+  return ids;
 }

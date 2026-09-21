@@ -47,6 +47,7 @@ import { cleanSuffix, addressTail, entityAddress } from '@/lib/inboundAddress';
 import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig, sendTestDelivery } from '@/lib/whatsapp';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
+import WhatsappInviteLink from '@/components/WhatsappInviteLink';
 import {
   useExtractionSettings,
   saveExtractionSettings,
@@ -1269,14 +1270,14 @@ function PaymentStatusCard({ organisation }) {
 // into a WhatsApp group, CYWorkspace classifies each attachment, and the
 // supplier bills among them land in this entity's Costs inbox.
 //
-// The button makes a REAL WhatsApp group and adds real phone numbers to it, so
-// it is the only thing in the app that can: nothing here creates one on load,
-// on save, or as a side effect of anything else.
+// The button makes a REAL WhatsApp group, so it is the only thing in the app that
+// can: nothing here creates one on load, on save, or as a side effect of anything
+// else. Nobody is added to it — CYBot adding numbers is what WhatsApp enforces
+// against — so the people join by its invite link, shown on the group's row.
 function WhatsappCollectionCard() {
   const organisation = useActiveOrganisation();
   const [{ channels, enabled, canManage, loading }, reload] = useWhatsappChannels();
   const [open, setOpen] = useState(false);
-  const [numbers, setNumbers] = useState('');
   const [subject, setSubject] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -1291,9 +1292,8 @@ function WhatsappCollectionCard() {
     setBusy(true);
     setError(null);
     try {
-      const participants = numbers.split(/[\s,;]+/).map((n) => n.trim()).filter(Boolean);
-      await createWhatsappChannel({ participants, subject: subject.trim() });
-      setNumbers('');
+      // No numbers: nobody is added, people join by the group's invite link.
+      await createWhatsappChannel({ participants: [], subject: subject.trim() });
       setSubject('');
       setOpen(false);
       reload();
@@ -1308,21 +1308,10 @@ function WhatsappCollectionCard() {
 
   const form = (
     <div className="mt-4 space-y-3 border-t pt-4">
-      <div>
-        <label htmlFor="wa-numbers" className="text-sm font-medium">WhatsApp numbers</label>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Full international format, digits only — <code>6591234567</code>, not <code>91234567</code>. Several
-          go on separate lines.
-        </p>
-        <textarea
-          id="wa-numbers"
-          rows={2}
-          value={numbers}
-          onChange={(e) => setNumbers(e.target.value)}
-          placeholder="6591234567"
-          className="mt-2 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-      </div>
+      <p className="text-xs text-muted-foreground">
+        The group opens with nobody in it. Its invite link appears on the group&rsquo;s row below, to send to the
+        people who hold this entity&rsquo;s invoices.
+      </p>
       <div>
         <label htmlFor="wa-subject" className="text-sm font-medium">Group name</label>
         <input
@@ -1337,7 +1326,7 @@ function WhatsappCollectionCard() {
         <button
           type="button"
           onClick={create}
-          disabled={busy || !numbers.trim()}
+          disabled={busy}
           className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {busy ? 'Creating…' : pending ? 'Try again' : 'Create the group'}
@@ -1377,14 +1366,14 @@ function WhatsappCollectionCard() {
               <MessageCircle className="h-4 w-4" strokeWidth={1.75} /> Collect bills in a WhatsApp group
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              CYBot opens a WhatsApp group with the people who hold this entity&rsquo;s invoices. Anything they
-              send into it is read, and the supplier bills among them arrive in the Costs inbox. Receipts,
-              sales invoices and everything else are left where they are.
+              CYBot opens a WhatsApp group, and the people who hold this entity&rsquo;s invoices join it by its
+              invite link. Anything they send into it is read, and the supplier bills among them arrive in the
+              Costs inbox. Receipts, sales invoices and everything else are left where they are.
             </p>
           </div>
           {/* A status, said as one. Boxed and button-sized it read as something
-              to click — and there is nothing to click: WhatsApp has no link that
-              opens a group by its id, and CYWorkspace mints no invite link. */}
+              to click — and there is nothing to click here: each group's invite
+              link is on its own row below. */}
           <span className="shrink-0 pt-1 text-sm text-muted-foreground">
             {openGroups.length
               ? `${openGroups.length} group${openGroups.length === 1 ? '' : 's'}`
@@ -1437,6 +1426,7 @@ function WhatsappCollectionCard() {
                       that predate it: a member added from inside WhatsApp comes
                       in as an ordinary one, and this is the only way to find out
                       that everybody already is an admin. */}
+                  <WhatsappInviteLink channel={g} canManage={canManage} onDone={reload} />
                   <PromoteWhatsappAdmins channel={g} canManage={canManage} onDone={reload} />
                   <CloseWhatsappGroup channel={g} canManage={canManage} onClosed={reload} />
                 </div>
@@ -1449,8 +1439,8 @@ function WhatsappCollectionCard() {
                 
                 Named only when WhatsApp gave back something we can match to a
                 number we sent; otherwise all that is honestly known is how many
-                are short. There is no invite link to offer — CYWS's API doesn't
-                mint one — so the instruction is what can actually be done. */}
+                are short. Only ever up on a group opened before invite links —
+                nobody is added to one opened since, so nothing can fall short. */}
             {channel && (channel.participantsMissing.length > 0 || channel.addedShortfall > 0) && (
               <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1468,7 +1458,7 @@ function WhatsappCollectionCard() {
                       that don&rsquo;t allow being added to groups.
                     </>
                   )}{' '}
-                  Someone already in the group has to add them from inside WhatsApp.
+                  Send them the group&rsquo;s invite link instead.
                 </span>
               </div>
             )}

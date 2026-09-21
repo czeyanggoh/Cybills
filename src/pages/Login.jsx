@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Receipt } from 'lucide-react';
+import BrandMark from '@/components/BrandMark';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { requestPasswordReset } from '@/lib/userStore';
@@ -146,9 +146,7 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-background p-6">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg border">
-            <Receipt className="h-5 w-5" strokeWidth={1.75} />
-          </div>
+          <BrandMark className="h-12 w-12" />
           <div>
             <h1 className="text-lg font-semibold tracking-tight">Sign in to CYBills</h1>
             <p className="mt-1 text-sm text-muted-foreground">Your billing workspace</p>

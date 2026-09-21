@@ -537,10 +537,27 @@ export const claimsRouter = Router();
 // being assembled and should track its documents; after it, it is a decision
 // somebody made about a specific sum, and that sum must not move underneath
 // them. Non-destructive either way — nothing here is written back.
+// What a document is worth ON THE CLAIM, which is in the claim's currency. A
+// receipt from a trip abroad (AUD 264.00) was counted at its own figure, so a
+// claim read AUD, MYR and SGD as one currency and added them up — 264 dollars
+// of a dinner paid as 241.19 SGD. Where the document restates itself in the
+// claim's currency (baseTotal, Dext's "Total (SGD)"), that is the figure; a
+// foreign document with no restatement keeps its own, as before, since there
+// is no rate here to convert it by.
+function claimMoney(bill: { currency?: string; total?: number; tax?: number; baseCurrency?: string; baseTotal?: number; baseTax?: number }, currency: string): { total?: number; tax?: number } {
+  const own = String(bill.currency || '').toUpperCase();
+  const want = String(currency || 'SGD').toUpperCase();
+  if (own && own !== want && String(bill.baseCurrency || '').toUpperCase() === want && bill.baseTotal != null) {
+    return { total: bill.baseTotal, tax: bill.baseTax ?? 0 };
+  }
+  return { total: bill.total, tax: bill.tax };
+}
+
 function liveTxns(c: Claim): Txn[] {
   return c.transactions.map((t) => {
     const bill = getBillById(c.orgId, String(t.itemId));
     if (!bill) return t; // a sample/demo row with no document behind it
+    const money = claimMoney(bill, c.currency || 'SGD');
     return {
       ...t,
       supplier: bill.supplier ?? t.supplier,
@@ -550,9 +567,9 @@ function liveTxns(c: Claim): Txn[] {
       project: bill.project ?? t.project,
       distanceKm: bill.distanceKm != null ? String(bill.distanceKm) : t.distanceKm,
       mileageRate: bill.mileageRate != null ? String(bill.mileageRate) : t.mileageRate,
-      net: String(bill.total != null ? Number(bill.total) - Number(bill.tax || 0) : t.net),
-      tax: String(bill.tax ?? t.tax),
-      total: String(bill.total ?? t.total),
+      net: String(money.total != null ? Number(money.total) - Number(money.tax || 0) : t.net),
+      tax: String(money.tax ?? t.tax),
+      total: String(money.total ?? t.total),
     };
   });
 }

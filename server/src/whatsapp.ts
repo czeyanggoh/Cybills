@@ -15,8 +15,10 @@ import {
   memberForSession,
   appOrigin,
   groupSubjectFor,
+  isInternalAddress,
   type User,
 } from './users.js';
+import { sendMail, whatsappInviteEmail } from './mailer.js';
 import { insertBill, listBills, displayIdOf, listBillsAcrossScopes, setBillWhatsappSender } from './store.js';
 import { getBill, putBill, putBillFile } from './storage.js';
 import { readSetting } from './settings.js';
@@ -88,6 +90,10 @@ type CreateGroupOk = {
   // without it, and everything else about the group still works — the button on
   // the group's own card is what fixes it afterwards.
   participants_promoted?: string[];
+  // `https://chat.whatsapp.com/<code>` for an invite-only group. May be empty
+  // when CYWS made the group but could not read its link; /invite-link asks
+  // again.
+  invite_link?: string;
   already_existed: boolean;
 };
 
@@ -117,14 +123,15 @@ const MESSAGES: Record<string, string> = {
   group_promote_unavailable: 'The WhatsApp service on CYWS is not available. Tell the CYWS operator — retrying will not help.',
   promote_route_unavailable:
     'This deployment’s CYWorkspace cannot change who is an admin of a group yet. Tell the CYWS operator, or promote them from inside the group.',
+  invite_unsupported:
+    'This deployment’s CYWorkspace cannot open a group by invite link yet. Tell the CYWS operator — CYBills no longer has CYBot add numbers directly.',
+  invite_link_failed: 'WhatsApp would not hand over the group’s invite link. Try again in a moment.',
+  invite_link_unavailable: 'The WhatsApp service on CYWS is not available. Tell the CYWS operator — retrying will not help.',
+  invite_route_unavailable:
+    'This deployment’s CYWorkspace cannot read a group’s invite link yet. Tell the CYWS operator.',
 };
 
-async function askForGroup(body: {
-  submission_id: string;
-  participants: string[];
-  subject: string;
-  promote_participants: boolean;
-}): Promise<CreateResult> {
+async function askForGroup(body: { submission_id: string; subject: string; invite_only: true }): Promise<CreateResult> {
   const url = `${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/create-group`;
   let res: Response;
   try {
@@ -153,7 +160,11 @@ async function askForGroup(body: {
   }
   const payload = (await res.json().catch(() => null)) as { data?: CreateGroupOk; error?: string } | null;
   if (res.ok && payload?.data?.chat_id) return { ok: true, data: payload.data };
-  const error = String(payload?.error ?? 'group_create_failed');
+  // No numbers are sent any more, so a CYWS asking for one is a CYWS that has
+  // never heard of `invite_only` — a different person's problem, and not one
+  // pressing the button again will solve.
+  const raw = String(payload?.error ?? 'group_create_failed');
+  const error = raw === 'participant_required' ? 'invite_unsupported' : raw;
   return {
     ok: false,
     status: res.status,
@@ -223,17 +234,17 @@ export async function createChannel(
   }
   saveChannels(items);
 
+  // INVITE-ONLY: CYBot opens the group with nobody in it and the people join by
+  // its link. The numbers are not sent at all. CYBot adding numbers that have
+  // never spoken to it is exactly what WhatsApp enforces against, and an
+  // enforcement takes down the one number every client's group runs on — so
+  // not even a CYWS too old to know the flag may be handed numbers to add. It
+  // answers `participant_required` instead, which is reported as needing an
+  // update.
   const res = await askForGroup({
     submission_id: channel.id,
-    participants: opts.participants,
     subject: opts.subject,
-    // Everyone CYBills puts into a collection group goes in as an ADMIN. Only
-    // an admin can add somebody WhatsApp declined to add, rename the group, or
-    // take a person out of it — so with CYBot the only one, every shortfall
-    // this app reports ends in an instruction nobody in the group can carry
-    // out. Asked for as part of making the group rather than as a step
-    // afterwards, because a step afterwards is one somebody has to remember.
-    promote_participants: true,
+    invite_only: true,
   });
 
   if (!res.ok) {
@@ -241,28 +252,17 @@ export async function createChannel(
     return { ...res, channel: channelById(channel.id) };
   }
 
-  // `participants_added` can legitimately be SHORTER than what was asked for:
-  // WhatsApp silently refuses to add someone whose privacy settings disallow
-  // it. That is not an error and must not read as one — but it must not pass
-  // unsaid either, or a client sits waiting to be added to a group they will
-  // never see. Both lists are kept, and the UI names the difference.
-  //
-  // An adopted group (`already_existed`) returns empty participant arrays, so
-  // what was recorded the first time is left alone.
-  const adopted = res.data.already_existed;
-  const added = adopted ? channel.participantsAdded : res.data.participants_added ?? [];
-  // Only what WhatsApp acknowledged, like everything else here. An older CYWS
-  // sends nothing back at all, which reads as "nobody was promoted" rather than
-  // as an error — the group is open and collecting either way, and the card's
-  // own button is how somebody asks again.
-  const promoted = adopted ? channel.participantsPromoted ?? [] : res.data.participants_promoted ?? [];
+  // Nobody was asked of WhatsApp, so there is nothing to measure a shortfall
+  // against: `participantsKnown` stays false, which is how the card knows not to
+  // report the numbers as refused. The link can come back empty when CYWS made
+  // the group and could not read it; `ensureInviteLink` asks again.
   const updated = patchChannel(channel.id, {
     chatId: res.data.chat_id,
     subject: res.data.subject || channel.subject,
     status: 'open',
-    participantsAdded: added,
-    participantsPromoted: promoted,
-    participantsKnown: channel.participantsKnown || !adopted,
+    invite: true,
+    inviteLink: res.data.invite_link || channel.inviteLink || '',
+    participantsKnown: false,
     openedAt: channel.openedAt || new Date().toISOString(),
     lastError: '',
   });
@@ -311,6 +311,89 @@ export function addedShortfall(c: WaChannel): number {
   return Math.max(0, c.participantsRequested.length - c.participantsAdded.length);
 }
 
+// --- Invite links --------------------------------------------------------------
+// People join a collection group by its link; CYBot never adds a number. Adding
+// numbers that have never spoken to CYBot to groups is what WhatsApp enforces
+// against, and the number is shared by every client's group, so one enforcement
+// would stop collection for all of them. A link the person taps is them joining.
+//
+// The link goes to the person by EMAIL (never a WhatsApp message from CYBot,
+// which would be the same unsolicited contact by another road), and is shown on
+// the card for whoever administers them to pass on by hand.
+
+type InviteLinkResult =
+  | { ok: true; link: string }
+  | { ok: false; status: number; error: string; message: string; retryable: boolean };
+
+/** Ask CYWS for a group's invite link. REPORTED: somebody is waiting on it. */
+async function askForInviteLink(submissionId: string): Promise<InviteLinkResult> {
+  if (!env.CYWORKSPACE_RELAY_URL || !env.CYWORKSPACE_API_KEY) {
+    return { ok: false, status: 503, error: 'whatsapp_not_configured', message: 'CYWorkspace is not connected on this deployment.', retryable: false };
+  }
+  const url = `${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/invite-link`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-API-Key': env.CYWORKSPACE_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ submission_id: submissionId }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    console.error('[whatsapp] CYWS unreachable (invite-link)', err);
+    return { ok: false, status: 502, error: 'relay_unreachable', message: MESSAGES.relay_unreachable, retryable: true };
+  }
+  const payload = (await res.json().catch(() => null)) as
+    | { data?: { invite_link?: string }; error?: string; message?: string }
+    | null;
+  const link = String(payload?.data?.invite_link ?? '');
+  if (res.ok && link) return { ok: true, link };
+  // A bare 404 is a CYWS that has never heard of the route, told apart from one
+  // that cannot find the group — the same distinction the other routes make.
+  const error = res.ok
+    ? 'invite_link_failed'
+    : !payload?.error && res.status === 404
+      ? 'invite_route_unavailable'
+      : String(payload?.error ?? 'invite_link_failed');
+  return {
+    ok: false,
+    status: res.ok ? 502 : res.status,
+    error,
+    message: String(payload?.message ?? MESSAGES[error] ?? `CYWorkspace returned ${res.status}.`),
+    retryable: error === 'invite_link_failed' || error === 'relay_unreachable',
+  };
+}
+
+/** The stored link, else a fresh one from CYWS (and stored). */
+async function ensureInviteLink(channel: WaChannel): Promise<InviteLinkResult> {
+  if (channel.inviteLink) return { ok: true, link: channel.inviteLink };
+  const out = await askForInviteLink(channel.id);
+  if (out.ok) patchChannel(channel.id, { inviteLink: out.link });
+  return out;
+}
+
+/** Where an invite can be emailed: a real mailbox. A person added without one
+ * carries an internal `@cybills.local` identity that nothing is ever sent to. */
+function inviteAddressFor(user: User | null | undefined): string {
+  const email = String(user?.email ?? '').trim();
+  return email.includes('@') && !isInternalAddress(email) ? email : '';
+}
+
+/** Email the link, and record whether the mailbox took it. Never throws: the
+ * group exists either way and the card offers the link to copy. */
+async function emailInvite(
+  channel: WaChannel,
+  link: string,
+  to: { email: string; name: string },
+  ctx: { orgName: string; inviterName: string }
+): Promise<NonNullable<WaChannel['lastInvite']>> {
+  const mail = whatsappInviteEmail({ name: to.name, url: link, groupName: channel.subject, orgName: ctx.orgName, inviterName: ctx.inviterName });
+  const result = await sendMail({ to: { email: to.email, name: to.name || undefined }, subject: mail.subject, html: mail.html });
+  const lastInvite = { email: to.email, at: new Date().toISOString(), sent: result.sent, ...(result.sent ? {} : { error: result.error || 'not_sent' }) };
+  patchChannel(channel.id, { lastInvite });
+  return lastInvite;
+}
+
 const publicChannel = (c: WaChannel) => ({
   submissionId: c.id,
   orgId: c.orgId,
@@ -332,6 +415,12 @@ const publicChannel = (c: WaChannel) => ({
   participantsMissing: participantsMissing(c),
   addedShortfall: addedShortfall(c),
   participantsKnown: c.participantsKnown,
+  // Joined by link rather than added. The link itself is blanked for anybody
+  // who does not administer the group (GET /channels): holding it is enough to
+  // join and send bills into somebody's book.
+  invite: Boolean(c.invite),
+  inviteLink: c.inviteLink ?? '',
+  lastInvite: c.lastInvite ?? null,
   createdAt: c.createdAt,
   createdBy: c.createdBy,
   lastError: c.lastError,
@@ -685,6 +774,7 @@ whatsappRouter.get('/channels', (req, res) => {
   // just arrived through — was not on the page at all. A replaced group is left
   // out: it is superseded, and its successor is right there.
   const people = ensureUsers(ws);
+  const manage = mayManage(req, orgId);
   const mine = channelsForOrg(ws, orgId).filter((c) => c.status !== 'replaced');
   for (const id of new Set(mine.map((c) => c.userId).filter(Boolean))) {
     const person = people.find((u: User) => u.id === id);
@@ -694,10 +784,13 @@ whatsappRouter.get('/channels', (req, res) => {
     channels: mine
       .map((c) => ({
         ...publicChannel(c),
+        // Holding the link is enough to join and send bills in, so only those
+        // who administer the entity see it.
+        ...(manage ? {} : { inviteLink: '' }),
         personName: c.userId ? people.find((u: User) => u.id === c.userId)?.name ?? '' : '',
       })),
     enabled: whatsappEnabled,
-    canManage: mayManage(req, orgId),
+    canManage: manage,
   });
 });
 
@@ -718,16 +811,20 @@ whatsappRouter.post('/channels/user', async (req, res) => {
   if (!mayManagePerson(req, person.user, person.orgId)) return res.status(403).json({ error: 'not_an_admin' });
   if (!person.orgId) return res.status(400).json({ error: 'org_required' });
 
+  // The number is OPTIONAL now. Nobody is added to the group — they join by its
+  // invite link — and a person's own group files under them whoever sends, so
+  // the group needs no number to exist. One typed is still stored (it names the
+  // sender in the thread), and one that cannot be a number is still refused.
   const asked = String(req.body?.mobile ?? person.user.mobile ?? '').trim();
   const mobile = normaliseMobile(asked);
-  if (!mobile) {
+  if (asked && !mobile) {
     return res.status(400).json({
       error: 'participant_required',
       message: MESSAGES.participant_required,
-      rejected: asked ? [asked] : [],
+      rejected: [asked],
     });
   }
-  if (normaliseMobile(person.user.mobile) !== mobile) {
+  if (mobile && normaliseMobile(person.user.mobile) !== mobile) {
     const items = ensureUsers(ws);
     const row = items.find((u) => u.id === userId);
     if (row) {
@@ -767,7 +864,7 @@ whatsappRouter.post('/channels/user', async (req, res) => {
   const org = getOrganisation(ws, person.orgId);
   const me = memberForSession(req);
   const result = await createChannel(ws, person.orgId, {
-    participants: [mobile],
+    participants: mobile ? [mobile] : [],
     subject: subjectFor(person.user, org?.name || person.orgId),
     createdBy: me?.email ?? '',
     userId,
@@ -780,7 +877,28 @@ whatsappRouter.post('/channels/user', async (req, res) => {
       channel: result.channel ? publicChannel(result.channel) : null,
     });
   }
-  res.json({ ok: true, channel: publicChannel(result.channel), mobile, replaced: Boolean(live) });
+  // The link goes to them by email as the group opens. A person with no mailbox
+  // gets nothing sent, and the card offers the link to pass on by hand.
+  const linkOut = await ensureInviteLink(result.channel);
+  const inviteTo = inviteAddressFor(person.user);
+  const invite =
+    linkOut.ok && inviteTo
+      ? await emailInvite(result.channel, linkOut.link, { email: inviteTo, name: person.user.name || '' }, {
+          orgName: org?.name || '',
+          inviterName: me?.name || '',
+        })
+      : null;
+  const fresh = channelById(result.channel.id) ?? result.channel;
+  res.json({
+    ok: true,
+    channel: publicChannel(fresh),
+    mobile,
+    replaced: Boolean(live),
+    invite,
+    // Said rather than swallowed: the group is open, but nobody can join it
+    // until the link is had, and the card's button is how somebody asks again.
+    inviteError: linkOut.ok ? '' : linkOut.message,
+  });
 });
 
 // POST /api/whatsapp/channels/attach — body { user_id, chat_id, subject? }.
@@ -901,7 +1019,9 @@ whatsappRouter.post('/channels', async (req, res) => {
   // Name the number that was wrong rather than refusing the lot silently: a
   // typo'd digit and a number in national format look identical in a toast.
   const rejected = asked.filter((p) => !normaliseMobile(p));
-  if (!participants.length) {
+  // Optional, as on a person's group: nobody is added, people join by link. A
+  // number typed wrong is still named back rather than quietly dropped.
+  if (rejected.length) {
     return res.status(400).json({
       error: 'participant_required',
       message: MESSAGES.participant_required,
@@ -1060,53 +1180,9 @@ whatsappRouter.post('/channels/:submissionId/close', async (req, res) => {
 // with the paperwork split across the two.
 //
 // So this is the non-destructive half of "Open a new group with this number":
-// same group, same submission id, same thread, one more person in it.
-
-/** Ask CYWS to add numbers to a group it already holds. REPORTED, not
- * best-effort: somebody pressed a button and is waiting to hear whether the
- * number is in the group. */
-async function askToAddParticipants(body: { submission_id: string; participants: string[]; promote: boolean }): Promise<
-  { ok: true; added: string[]; promoted: string[] } | { ok: false; status: number; error: string; message: string; retryable: boolean }
-> {
-  if (!env.CYWORKSPACE_RELAY_URL || !env.CYWORKSPACE_API_KEY) {
-    return { ok: false, status: 503, error: 'whatsapp_not_configured', message: 'CYWorkspace is not connected on this deployment.', retryable: false };
-  }
-  const url = `${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/add-participants`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'X-API-Key': env.CYWORKSPACE_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch (err) {
-    console.error('[whatsapp] CYWS unreachable (add-participants)', err);
-    return { ok: false, status: 502, error: 'relay_unreachable', message: MESSAGES.relay_unreachable, retryable: true };
-  }
-  const payload = (await res.json().catch(() => null)) as
-    | { data?: { participants_added?: string[]; participants_promoted?: string[] }; error?: string; message?: string }
-    | null;
-  if (res.ok) {
-    return {
-      ok: true,
-      added: payload?.data?.participants_added ?? [],
-      promoted: payload?.data?.participants_promoted ?? [],
-    };
-  }
-  // A 404 with no error of its own is not "unknown submission" — it is a CYWS
-  // that has never heard of this route, which is a different person's problem
-  // and a different sentence. Told apart here rather than reported as WhatsApp
-  // refusing, which would have somebody pressing the button all afternoon.
-  const error = !payload?.error && res.status === 404 ? 'route_unavailable' : String(payload?.error ?? 'add_participants_failed');
-  return {
-    ok: false,
-    status: res.status,
-    error,
-    message: String(payload?.message ?? MESSAGES[error] ?? `CYWorkspace returned ${res.status}.`),
-    retryable: error === 'add_participants_failed' || error === 'relay_unreachable',
-  };
-}
+// same group, same submission id, same thread, one more person in it. The
+// person is sent the group's INVITE LINK rather than added — CYBot putting a
+// number into a group is what WhatsApp enforces against (see Invite links).
 
 // POST /api/whatsapp/channels/:submissionId/participants — body { mobile }
 //
@@ -1154,34 +1230,24 @@ whatsappRouter.post('/channels/:submissionId/participants', async (req, res) => 
     return res.json({ ok: true, channel: publicChannel(channel), already: true, mobile, addedNow: 0 });
   }
 
-  // Added AS AN ADMIN, exactly as the group's first members were: a person put
-  // into a collection group is somebody who holds the client's paperwork, and
-  // the next thing anybody asks of them is to add a colleague WhatsApp would
-  // not add for us — which an ordinary member cannot do.
-  const out = await askToAddParticipants({ submission_id: channel.id, participants: [mobile], promote: true });
-  if (!out.ok) {
-    patchChannel(channel.id, { lastError: out.message });
-    return res.status(out.status).json({ error: out.error, message: out.message, retryable: out.retryable });
+  // Nobody is ADDED: the person is sent the group's invite link and joins by it.
+  // The link is had first, so a failure records nothing — neither the number on
+  // the group nor the number as theirs — and pressing again is a clean retry.
+  const linkOut = await ensureInviteLink(channel);
+  if (!linkOut.ok) {
+    patchChannel(channel.id, { lastError: linkOut.message });
+    return res.status(linkOut.status).json({ error: linkOut.error, message: linkOut.message, retryable: linkOut.retryable });
   }
 
-  // Both lists are kept, as they are when the group is made: WhatsApp silently
-  // refuses to add somebody whose privacy settings disallow it, and answers as
-  // though nothing happened. `participantsKnown` is deliberately NOT raised
-  // here — a group whose membership we were never told stays unknown, and
-  // claiming otherwise on the strength of one added number would report
-  // everybody else in it as missing.
+  // Recorded as a number the group is FOR, which is what takes the card's
+  // mismatch warning down. `participantsKnown` is not raised: nobody was asked
+  // of WhatsApp, so there is nothing to measure a shortfall against.
   const row = channelById(channel.id) as WaChannel;
-  const merged = [...row.participantsAdded, ...out.added.filter((a) => !row.participantsAdded.includes(a))];
-  const admins = row.participantsPromoted ?? [];
-  const mergedAdmins = [...admins, ...out.promoted.filter((a) => !admins.includes(a))];
-  const updated = patchChannel(channel.id, {
-    participantsRequested: [...row.participantsRequested, mobile],
-    participantsAdded: merged,
-    participantsPromoted: mergedAdmins,
-    lastError: '',
-  });
+  patchChannel(channel.id, { participantsRequested: [...row.participantsRequested, mobile], lastError: '' });
 
-  // Stored as theirs, so a bill arriving from it is matched back to them.
+  // Stored as theirs, so a bill arriving from it is matched back to them — and
+  // the link emailed to them, where they have a mailbox.
+  let invite: WaChannel['lastInvite'] | null = null;
   if (channel.userId) {
     const ws = workspaceId(req);
     const person = personFor(ws, channel.userId);
@@ -1193,22 +1259,74 @@ whatsappRouter.post('/channels/:submissionId/participants', async (req, res) => 
         saveUsers(items);
       }
     }
+    const to = inviteAddressFor(person?.user);
+    if (person && to) {
+      invite = await emailInvite(channelById(channel.id) as WaChannel, linkOut.link, { email: to, name: person.user.name || '' }, {
+        orgName: getOrganisation(ws, person.orgId)?.name || '',
+        inviterName: memberForSession(req)?.name || '',
+      });
+    }
   }
 
+  const updated = channelById(channel.id);
   res.json({
     ok: true,
     channel: updated ? publicChannel(updated) : publicChannel(channel),
     mobile,
-    // Whether this number demonstrably landed. WhatsApp hands back LIDs, so an
-    // EMPTY list is the only thing that can be read as a refusal — a non-empty
-    // one is somebody, and it is this call's only candidate.
-    addedNow: out.added.length,
-    // And whether it went in as an admin. Nothing here fails over it — the
-    // number is in the group, which is what was asked for — but an older CYWS
-    // that cannot promote says nothing, and a card that claimed otherwise would
-    // be inventing it.
-    promotedNow: out.promoted.length,
+    inviteLink: linkOut.link,
+    invite,
   });
+});
+
+// POST /api/whatsapp/channels/:submissionId/invite — body { email?, send? }
+//
+// The group's invite link, and (unless `send: false`) an email carrying it: to
+// `email` when one is given, else to the person the group was opened for. How a
+// link is fetched for a group opened before invites existed, and how one is sent
+// again to somebody who lost the first. An entity-wide group has nobody to send
+// to unless an address is typed, so it usually just gets the link to pass on.
+whatsappRouter.post('/channels/:submissionId/invite', async (req, res) => {
+  if (!whatsappEnabled) return res.status(503).json({ error: 'whatsapp_not_configured' });
+  const found = channelForAdmin(req, String(req.params.submissionId ?? ''));
+  if (found.error) return res.status(found.error.status).json(found.error.body);
+  const channel = found.channel;
+
+  // The same two refusals the add makes, for the same reasons: a closed group is
+  // one nothing reads, and an adopted one is the client's own to share.
+  if (channel.status !== 'open' || !channel.chatId) {
+    return res.status(409).json({ error: 'channel_not_open', message: 'There is no open group to invite anybody to.' });
+  }
+  if (channel.adopted) {
+    return res.status(409).json({
+      error: 'channel_adopted',
+      message: 'This is the client’s own group, pointed at CYBills rather than opened by CYBot. Share its link from inside it.',
+    });
+  }
+
+  const typed = String(req.body?.email ?? '').trim();
+  if (typed && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(typed) || isInternalAddress(typed))) {
+    return res.status(400).json({ error: 'invalid_email', message: `${typed} is not an address an invite can be sent to.` });
+  }
+
+  const linkOut = await ensureInviteLink(channel);
+  if (!linkOut.ok) {
+    patchChannel(channel.id, { lastError: linkOut.message });
+    return res.status(linkOut.status).json({ error: linkOut.error, message: linkOut.message, retryable: linkOut.retryable });
+  }
+
+  const ws = workspaceId(req);
+  const person = channel.userId ? personFor(ws, channel.userId) : null;
+  const to = typed || inviteAddressFor(person?.user);
+  const invite =
+    req.body?.send !== false && to
+      ? await emailInvite(channelById(channel.id) as WaChannel, linkOut.link, { email: to, name: typed ? '' : person?.user.name || '' }, {
+          orgName: getOrganisation(ws, channel.orgId)?.name || '',
+          inviterName: memberForSession(req)?.name || '',
+        })
+      : null;
+
+  const updated = channelById(channel.id) ?? channel;
+  res.json({ ok: true, channel: publicChannel(updated), inviteLink: linkOut.link, invite });
 });
 
 // --- Making the people in a group admins --------------------------------------

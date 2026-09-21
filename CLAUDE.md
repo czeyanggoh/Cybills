@@ -582,6 +582,21 @@ says how many; a DELETED document does not hold its id, so it can be brought
 back. Covered by `npm test` at the root and in `server/`
 (`test/dext-import-dedup.test.mts`).
 
+**Dext's expense claims come across as claims.** Dext exports a claim as a row
+of its own (Type "Expense claim", the claimant as Supplier and Owner, no
+category, no invoice number — an ordinary receipt Dext typed "Expense claim"
+has both) and its items as rows with Status "claimed", and nothing in either
+names which claim an item was on. The import takes several CSVs at once so the
+two sit side by side, and `planClaims` (`dextImport.js`, pure, `npm test`)
+rebuilds each claim from that person's claimed items only where they add up to
+its total TO THE CENT (a foreign item at its "Total (SGD)"), and only where
+exactly one set does; otherwise the claim is named on the screen and its items
+import as plain documents. A claim is all-or-nothing, created as a draft named
+`Expense claim (Dext <id>)`, which is how a re-import skips it
+(`importedClaimIds`). And a claim now counts a foreign item at the SGD figure
+it restates itself in (`claimMoney` in `claims.ts`, mirrored by
+`docToClaimTxn`) — it used to add AUD 264 to SGD as 264.
+
 ## Merge detection: which uploads are really one document
 
 Two separate uploads are often one cost, and the two ways that happens do not
@@ -1885,6 +1900,34 @@ failed" but "the call succeeded and the answer was lost": CYWS is idempotent on
 that id, so pressing the button again adopts the group it may already have made.
 A fresh id would have made a second one, in front of the client, with nothing to
 say which was real.
+
+**CYBot never adds a number; people join by invite link.** Adding numbers that
+have never spoken to CYBot to groups is the pattern WhatsApp enforces against,
+and CYBot is the one WAHA number every client's group runs on, so one
+enforcement stops collection everywhere. `createChannel` asks for the group
+`invite_only: true` with NO numbers in the request (so not even a CYWS that
+ignores the flag can add anybody; an older one answers `participant_required`,
+read as `invite_unsupported`), keeps the returned `inviteLink` on the channel,
+and the connect route EMAILS it to the person (`whatsappInviteEmail`, skipped for
+an internal `@cybills.local` identity). Never as a WhatsApp message from CYBot,
+which is the same unsolicited contact by another road. A link the create could
+not read is fetched later through CYWS's `invite-link` (`ensureInviteLink`).
+The numbers typed are still stored in `participantsRequested`, as who the group is
+FOR, but `participantsKnown` stays false, so no shortfall is ever reported. **The
+number box is gone from both cards**: a person's card is a Connect button (it
+sends `mobile: ''` so a badly formatted stored number cannot refuse it), and the
+entity form asks only for a group name. The number-changed warning and its
+"Open a new group with this number" went with it. The server route
+`/channels/:id/participants` survives for an API caller (stores the number,
+emails the link), but `add-participants` is no longer called by anything. `POST /api/whatsapp/channels/:id/invite` (`{email?, send?}`) fetches or
+re-sends the link, refusing adopted and closed groups the way the add does. Anyone
+holding the link can join and send bills into that person's book, so it is blanked
+in `GET /channels` for anyone who is not a manager and never put in `/directory`.
+`WhatsappInviteLink.jsx` is the card: Copy, Share (the ADMIN's own WhatsApp) and
+Email invite. Joiners are ordinary members; **Make everyone an admin** promotes
+them. The paragraphs below that speak of adding numbers, `participants_added` and
+promote-on-create describe groups opened before this. Covered by `npm test` in
+`server/` (`test/whatsapp-add-participant.test.mts`, `test/whatsapp.test.mts`).
 
 **A group belongs to a PERSON.** The ordinary way to open one is their own page
 (Users / Colleagues -> Edit details -> **Connect to WhatsApp**): one group, one

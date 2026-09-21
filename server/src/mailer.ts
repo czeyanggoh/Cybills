@@ -311,6 +311,24 @@ export function inviteEmail(o: {
   };
 }
 
+// The invite link to a WhatsApp collection group. CYBot opens the group empty
+// and this is how a person gets into it: adding their number directly is the
+// pattern WhatsApp enforces against, and a link they tap is them joining.
+export function whatsappInviteEmail(o: { name: string; url: string; groupName: string; orgName?: string; inviterName?: string }) {
+  const org = o.orgName ? ` for ${esc(o.orgName)}` : '';
+  const from = o.inviterName ? `${esc(o.inviterName)} has set up` : 'We have set up';
+  return {
+    subject: 'Join your CYBills WhatsApp group',
+    html: layout({
+      heading: `Hi ${esc(o.name.split(' ')[0] || 'there')},`,
+      body: `<p style="margin:0">${from} a WhatsApp group${org} for sending in your bills and receipts: <strong>${esc(o.groupName)}</strong>.</p>
+       <p style="margin:14px 0 0">Open this link on your phone to join. After that, send photos or PDFs of your invoices into the group, and they are filed for you. No sign-in needed.</p>`,
+      cta: { label: 'Join the WhatsApp group', url: o.url },
+      footnote: 'Anyone with this link can join the group, so please don&rsquo;t forward it. If you weren&rsquo;t expecting this you can ignore this email.',
+    }),
+  };
+}
+
 // Sent to a claimant's direct manager when their claim is submitted for approval
 // or updated with a new item (so the total changed and needs a re-review).
 export function approvalRequestEmail(o: {
