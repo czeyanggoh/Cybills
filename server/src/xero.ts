@@ -916,6 +916,145 @@ async function currencyRateFor(bill: Bill, tenantId: string): Promise<number> {
   return 1 / printed; // foreign per 1 base, which is what Xero divides by
 }
 
+// The currencies this Xero org can post in. An org WITHOUT multi-currency (a
+// Standard plan, or one never switched on) holds its base currency alone, and
+// refuses a bill in any other — so a MYR Grab receipt could not be published at
+// all. Cached briefly, since a currency can be added in Xero at any time; only
+// a real answer is cached, and an unreadable one is `null` — "don't know",
+// which leaves the bill in its own currency exactly as before.
+const orgCurrencies = new Map<string, { at: number; codes: Set<string> }>();
+async function currenciesFor(tenantId: string): Promise<Set<string> | null> {
+  const hit = orgCurrencies.get(tenantId);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.codes;
+  const result = await relay('Currencies', { tenantId });
+  if (!result.ok) return null;
+  const codes = new Set<string>(
+    (result.data?.Currencies ?? []).map((c: any) => String(c.Code ?? '').trim().toUpperCase()).filter(Boolean)
+  );
+  const base = await baseCurrencyFor(tenantId);
+  if (base) codes.add(base);
+  orgCurrencies.set(tenantId, { at: Date.now(), codes });
+  return codes;
+}
+
+// The day's rate from `from` into `to`, as base per 1 foreign (the way a
+// document prints it). CYBills holds no rates of its own, so this asks the
+// ECB reference rates (Frankfurter; `FX_RATES_URL` points elsewhere) for the
+// document's own date — a weekend or holiday answers with the last working
+// day's, which is what "the rate of the day" means for one. 0 = no answer.
+const fxRates = new Map<string, number>();
+async function dayRate(from: string, to: string, date: string): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today ? date : 'latest';
+  const key = `${from}>${to}@${day}`;
+  const hit = fxRates.get(key);
+  if (hit) return hit;
+  const root = String(process.env.FX_RATES_URL || 'https://api.frankfurter.app').replace(/\/+$/, '');
+  try {
+    const res = await fetch(`${root}/${day}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return 0;
+    const rate = Number((await res.json())?.rates?.[to]);
+    if (!(rate > 0)) return 0;
+    if (day !== 'latest') fxRates.set(key, rate);
+    return rate;
+  } catch (err) {
+    console.error('[xero] exchange rate lookup failed', from, to, day, err);
+    return 0;
+  }
+}
+
+// A foreign-currency document headed for an org that cannot hold its currency
+// is posted in the org's BASE currency instead, converted at the rate of the
+// day. The document's own SGD restatement wins where it printed one (the
+// supplier's exact figures, which is what the GST was charged at); otherwise
+// the day's rate from `dayRate`. Every figure is converted — total, tax and each
+// line — and the lines are then made to add up to the converted total and tax
+// to the cent, on the largest line, so perLineItems holds them to the same
+// standard as a bill that never moved.
+//
+// `bill` untouched means nothing to do: the org takes the currency, the
+// currency list could not be read (post as before and let Xero answer), or the
+// document is already in the base currency. Only the POSTED copy is converted;
+// the document keeps the paper's own currency and figures.
+type Converted = { from: string; to: string; rate: number; total: number; source: 'document' | 'day' };
+async function inPostableCurrency(
+  bill: Bill,
+  tenantId: string
+): Promise<{ ok: true; bill: Bill; converted: Converted | null } | { ok: false; status: number; body: any }> {
+  const from = String(bill.currency ?? '').trim().toUpperCase();
+  if (!from) return { ok: true, bill, converted: null };
+  const base = await baseCurrencyFor(tenantId);
+  if (!base || base === from) return { ok: true, bill, converted: null };
+  const codes = await currenciesFor(tenantId);
+  if (!codes || codes.has(from)) return { ok: true, bill, converted: null };
+
+  const cents = (n: number) => Math.round(n * 100);
+  const total = parseAmount(bill.total);
+  const tax = parseAmount(bill.tax);
+  const printedBase = String(bill.baseCurrency ?? '').trim().toUpperCase() === base && parseAmount(bill.baseTotal) > 0;
+  let rate: number;
+  let newTotal: number;
+  let newTax: number;
+  let source: Converted['source'];
+  if (printedBase && total) {
+    newTotal = cents(parseAmount(bill.baseTotal));
+    newTax = tax ? cents(parseAmount(bill.baseTax)) : 0;
+    rate = newTotal / 100 / total;
+    source = 'document';
+  } else {
+    rate = await dayRate(from, base, String(bill.date ?? ''));
+    if (!(rate > 0)) {
+      return { ok: false, status: 422, body: {
+        error: 'no_exchange_rate',
+        message: `This Xero organisation has no multi-currency, so this ${from} document has to be posted in ${base} — and no ${from}→${base} rate could be found for ${bill.date || 'its date'}. Try again shortly, or enter the ${base} total on the document.`,
+      } };
+    }
+    newTotal = cents(total * rate);
+    newTax = cents(tax * rate);
+    source = 'day';
+  }
+  // Tax on the paper but none in base (a restatement without its tax line):
+  // convert the tax at the same rate rather than lose it.
+  if (tax && !newTax) newTax = cents(tax * rate);
+
+  const largest = (xs: number[]) => xs.reduce((best, x, i) => (Math.abs(x) > Math.abs(xs[best]) ? i : best), 0);
+  let lineItems = bill.lineItems;
+  if (Array.isArray(bill.lineItems) && bill.lineItems.length) {
+    const rows = bill.lineItems;
+    const t = rows.map((r) => cents((parseAmount(r.total) || parseAmount(r.net) + parseAmount(r.tax)) * rate));
+    const x = rows.map((r) => cents(parseAmount(r.tax) * rate));
+    // The lines only have to meet the converted total if they met the paper's —
+    // a breakdown that contradicted its document still does, and is refused.
+    const paperOff = cents(total) - rows.reduce((s, r) => s + cents(parseAmount(r.total) || parseAmount(r.net) + parseAmount(r.tax)), 0);
+    if (paperOff === 0) t[largest(t)] += newTotal - t.reduce((a, b) => a + b, 0);
+    if (x.some((v) => v !== 0)) {
+      const paperTaxOff = cents(tax) - rows.reduce((s, r) => s + cents(parseAmount(r.tax)), 0);
+      if (paperTaxOff === 0) x[largest(x)] += newTax - x.reduce((a, b) => a + b, 0);
+    }
+    const s = (c: number) => (c / 100).toFixed(2);
+    lineItems = rows.map((r, i) => ({ ...r, total: s(t[i]), tax: s(x[i]), net: s(t[i] - x[i]) }));
+  }
+
+  return {
+    ok: true,
+    bill: {
+      ...bill,
+      currency: base,
+      total: newTotal / 100,
+      tax: newTax / 100,
+      lineItems,
+      // Nothing left to restate: the posted copy IS in base currency.
+      baseCurrency: '',
+      baseTotal: 0,
+      baseTax: 0,
+      exchangeRate: 0,
+    } as Bill,
+    converted: { from, to: base, rate, total, source },
+  };
+}
+
 type TrackingCat = { name: string; options: Set<string> };
 
 // The org's ACTIVE tracking categories in Xero's own order — [0] is the "PIC"
@@ -1204,11 +1343,16 @@ async function buildBillInvoice(
   source: Bill,
   opts: { accountCode: string; taxType: string; dueDate?: unknown; description?: unknown; contactId?: string }
 ): Promise<
-  | { ok: true; payload: Record<string, unknown>; lines: number; perLine: boolean; docType: XeroDocType }
+  | { ok: true; payload: Record<string, unknown>; lines: number; perLine: boolean; docType: XeroDocType; converted: Converted | null }
   | { ok: false; status: number; body: any }
 > {
   const docType: XeroDocType = isCreditNote(source) ? 'ACCPAYCREDIT' : 'ACCPAY';
-  const bill = docType === 'ACCPAYCREDIT' ? creditNoteFacingUp(source) : source;
+  const facing = docType === 'ACCPAYCREDIT' ? creditNoteFacingUp(source) : source;
+  // An org without multi-currency posts everything in its base currency.
+  const postable = await inPostableCurrency(facing, organisation.tenantId);
+  if (!postable.ok) return postable;
+  const bill = postable.bill;
+  const converted = postable.converted;
   const total = parseAmount(bill.total);
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
   const date = String(bill.date ?? '');
@@ -1276,6 +1420,12 @@ async function buildBillInvoice(
     } };
   }
   const lineItems = built.kind === 'lines' ? built.lines : [line];
+  // Said on the bill itself, so whoever reads the ledger can see the paper was
+  // in another currency and at what rate it came across.
+  if (converted && lineItems[0]) {
+    const note = `(${converted.from} ${converted.total.toFixed(2)} @ ${Number(converted.rate.toFixed(6))} ${converted.to}/${converted.from})`;
+    lineItems[0] = { ...lineItems[0], Description: `${String(lineItems[0].Description ?? '').trim()} ${note}`.trim() };
+  }
 
   // Named by ID when the caller has one, by NAME otherwise. Xero matches a
   // contact given only a name, and CREATES one when the name is new — which is
@@ -1309,7 +1459,7 @@ async function buildBillInvoice(
   if (currencyRate) payload.CurrencyRate = currencyRate;
   // `lines`/`perLine` are how it went up — the document's own breakdown, or one
   // summary line — which the caller reports back to the dialog.
-  return { ok: true as const, payload, lines: lineItems.length, perLine: built.kind === 'lines', docType };
+  return { ok: true as const, payload, lines: lineItems.length, perLine: built.kind === 'lines', docType, converted };
 }
 
 // A credit note with its amounts the way Xero wants them: positive. The sign
@@ -1680,6 +1830,8 @@ export async function postBillToXero(
     // How it went up: the document's own lines, or one summary line.
     lines: prepared.lines,
     perLine: prepared.perLine,
+    // Posted in the org's base currency because it has no multi-currency.
+    converted: prepared.converted,
     attachment,
     rebilled,
     // The bank payment recorded from the inbox's autofill, or why it was not.

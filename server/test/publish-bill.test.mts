@@ -45,6 +45,18 @@ const stub = http.createServer((req, res) => {
     res.end(JSON.stringify({ Organisations: [{ Name: 'Demo Co', BaseCurrency: 'SGD' }] }));
     return;
   }
+  // The org holds SGD and USD, and nothing else: no MYR, so a MYR document
+  // has to come across in SGD.
+  if (path.endsWith('/Currencies')) {
+    res.end(JSON.stringify({ Currencies: [{ Code: 'SGD' }, { Code: 'USD' }] }));
+    return;
+  }
+  // The day's exchange rate, standing in for Frankfurter.
+  if (path.startsWith('/fx/')) {
+    fxAsked = String(req.url);
+    res.end(JSON.stringify({ amount: 1, base: 'MYR', date: '2026-09-18', rates: { SGD: 0.305 } }));
+    return;
+  }
   if (path.endsWith('/Contacts')) {
     res.end(JSON.stringify({ Contacts: [{ ContactID: 'contact-cybiz', Name: 'CY-Biz Pte. Ltd.' }] }));
     return;
@@ -118,10 +130,12 @@ const stub = http.createServer((req, res) => {
   res.end(JSON.stringify({ error: 'not_found', path }));
 });
 let attachmentReply: { status: number; body: unknown } | null = null;
+let fxAsked = '';
 let attachedBytes = 0;
 let creditPosted: any = null;
 await new Promise<void>((r) => stub.listen(4602, '127.0.0.1', r));
 process.env.CYWORKSPACE_RELAY_URL = 'http://127.0.0.1:4602';
+process.env.FX_RATES_URL = 'http://127.0.0.1:4602/fx';
 
 const express = (await import('express')).default;
 const { xeroRouter } = await import('../src/xero.ts');
@@ -297,6 +311,38 @@ check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 
     }).id
   );
   check('a rate into another currency is not sent', out.posted.CurrencyRate, undefined);
+}
+
+// 5d) A currency the org does not hold (no multi-currency) is posted in the
+//     BASE currency, converted at the day's rate for the document's date — the
+//     lines made to add up to the converted total, the rate said on the bill.
+{
+  const out = await publish(
+    bill({
+      supplier: 'Grab', currency: 'MYR', date: '2026-09-20', total: '309', tax: '0',
+      description: 'Sandra - transportation',
+      lineItems: [row({ total: '100.10' }), row({ total: '208.90' })],
+    }).id
+  );
+  check('no multi-currency: published', out.status, 200);
+  check('no multi-currency: asked the rate for the document date', fxAsked, '/fx/2026-09-20?from=MYR&to=SGD');
+  check('no multi-currency: posted in SGD', out.posted.CurrencyCode, 'SGD');
+  check('no multi-currency: no CurrencyRate sent', out.posted.CurrencyRate, undefined);
+  const sum = out.posted.LineItems.reduce((a: number, l: any) => a + Math.round((l.UnitAmount + l.TaxAmount) * 100), 0);
+  check('no multi-currency: lines add up to 309 x 0.305', sum / 100, 94.25);
+  check('no multi-currency: the rate is said on the bill', /\(MYR 309\.00 @ 0\.305 SGD\/MYR\)/.test(out.posted.LineItems[0].Description), true);
+  check('no multi-currency: the reply says so', [out.body.converted?.from, out.body.converted?.to], ['MYR', 'SGD']);
+
+  // A currency the org DOES hold goes up as it always has.
+  const usd = await publish(bill({ currency: 'USD', total: '50', tax: '0' }).id);
+  check('a held currency is not converted', [usd.posted.CurrencyCode, usd.body.converted], ['USD', null]);
+
+  // The document's own SGD restatement beats the day's rate.
+  fxAsked = '';
+  const printed = await publish(
+    bill({ currency: 'MYR', total: '100', tax: '0', baseCurrency: 'SGD', baseTotal: '30.10', baseTax: '0', exchangeRate: '0.301' }).id
+  );
+  check('restated document: its own SGD figure', [printed.posted.CurrencyCode, printed.posted.LineItems[0].UnitAmount, fxAsked], ['SGD', 30.1, '']);
 }
 
 // 6) A credit note. Typed as one and carrying the minus the paper shows, it

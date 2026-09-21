@@ -883,6 +883,20 @@ stated one):
   stated one) and never the bare number — 1.2930 and 0.7734 are twins, and the
   value alone will never tell you they have been swapped.
 
+**An org without multi-currency is posted in its base currency.** Xero refuses
+a bill in a currency the org doesn't hold, so a MYR Grab receipt in a SGD-only
+Xero could not be published at all. `inPostableCurrency` (`xero.ts`, inside
+`buildBillInvoice`, so publish and Update in Xero agree) reads the org's
+`Currencies`; a document in one it lacks goes up in the base currency — at the
+document's own restatement where it printed one, else at the day's rate for the
+document's date (ECB via Frankfurter, `FX_RATES_URL` to override; a weekend
+takes the last working day's). Total, tax and every line are converted, the
+lines trued to the converted total on the largest line, and the first line's
+description says "(MYR 309.00 @ 0.305 SGD/MYR)". Only the POSTED copy moves:
+the document keeps the paper's currency and figures. An unreadable currency list
+posts as before; no rate at all is 422 `no_exchange_rate`. Covered by
+`publish-bill.test.mts`.
+
 The document page shows the pair the way Dext does — **Total amount (SGD)**
 editable, **Tax amount (SGD)** derived — because the three parts are one fact:
 editing the base total re-derives the tax and the rate from the document's own
