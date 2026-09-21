@@ -443,6 +443,7 @@ export async function settleBillAgainstLine(
       taxType,
       status: 'AUTHORISED',
       contactId: opts.contactId,
+      payingLine: line,
     });
     if (out.status !== 200) return out;
     published = out.body;
@@ -650,7 +651,18 @@ export async function recordPaymentForLine(
     Reference: (line.reference || line.description).slice(0, 255),
   };
   if (line.currency && billCurrency && line.currency !== billCurrency && settledBankAmount > 0) {
-    payment.CurrencyRate = Number((invoiceAmount / settledBankAmount).toFixed(6));
+    // A Xero with no multi-currency holds this bill in the BANK's currency
+    // (inPostableCurrency, xero.ts), so it is paid the bank's figure as it
+    // stands. Asked of the bill itself rather than assumed.
+    const posted = await fetchXeroInvoice(organisation.tenantId, invoiceId);
+    const postedIn = String(posted?.CurrencyCode ?? '').trim().toUpperCase();
+    // A bill converted at another rate before it met this line is not
+    // quietly paid a different figure: Xero's refusal comes back as it is.
+    if (postedIn && postedIn === String(line.currency).toUpperCase()) {
+      payment.Amount = settledBankAmount;
+    } else {
+      payment.CurrencyRate = Number((invoiceAmount / settledBankAmount).toFixed(6));
+    }
   }
   const paid = await relay('Payments', {
     method: 'PUT',

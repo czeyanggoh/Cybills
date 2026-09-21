@@ -2599,6 +2599,20 @@ amount leaves a part-paid bill nobody asked for. The payment is for the BILL's
 own figure in its own currency, with `CurrencyRate` (foreign per base, the same
 way round as the invoice's) carrying the bank's figure onto it.
 
+**A card line that states the foreign amount ties a foreign document.** An
+Amex line for a USD purchase reads "−SGD 32.86 … Foreign Spend Amount: 25.00
+USD", and a USD 25.00 receipt with no SGD restatement was "No document at this
+amount". `foreignAmountsIn` / `paysForeignAmount` (`bankMatch.js`) read an
+amount with a currency code beside it off the line's text, and where that is
+the document's own currency and total to the cent, `docAmountFor` answers with
+the line's figure — the bank's statement, not our conversion. The reason says
+"bank states USD 25.00". Publishing such a document into a Xero without that
+currency (`inPostableCurrency`) takes the BANK's SGD figure as the bill total
+(`source: 'bank'`, from the settle's line or a pending autofill), and
+`recordPaymentForLine` reads the posted bill's currency and pays the bank
+amount with no rate when the bill is already in the bank's currency. Covered by
+`test/bank-match.test.mjs` and `publish-bill.test.mts`.
+
 **A suggestion is the money, the window and a NAME.** 'firm' when the bank text
 names the supplier or the document number — or the document is the only one at
 that figure within a week, which is what a card slip beside its receipt looks

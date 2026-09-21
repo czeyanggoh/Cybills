@@ -333,6 +333,17 @@ check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 
   check('no multi-currency: the rate is said on the bill', /\(MYR 309\.00 @ 0\.305 SGD\/MYR\)/.test(out.posted.LineItems[0].Description), true);
   check('no multi-currency: the reply says so', [out.body.converted?.from, out.body.converted?.to], ['MYR', 'SGD']);
 
+  // Being paid against a card line that states the USD amount, the bill takes
+  // the BANK's SGD figure, so bill and payment are one amount.
+  fxAsked = '';
+  const carded = await publish(
+    bill({
+      supplier: 'HighLevel LLC', currency: 'GBP', date: '2026-09-14', total: '25', tax: '0',
+      bankMatch: { key: 'k', date: '2026-09-14', amount: -32.86, currency: 'SGD', reference: '', description: 'HIGHLEVEL LLC · Foreign Spend Amount: 25.00 GBP', bankAccountId: 'acc', bankAccountName: 'Amex', bankAccountCode: '', paidBefore: false, paymentMethodBefore: '', at: '', by: '' },
+    }).id
+  );
+  check('card line: posted at the bank figure', [carded.posted?.CurrencyCode, carded.posted?.LineItems?.[0]?.UnitAmount, carded.body.converted?.source, fxAsked], ['SGD', 32.86, 'bank', '']);
+
   // A currency the org DOES hold goes up as it always has.
   const usd = await publish(bill({ currency: 'USD', total: '50', tax: '0' }).id);
   check('a held currency is not converted', [usd.posted.CurrencyCode, usd.body.converted], ['USD', null]);

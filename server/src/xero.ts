@@ -978,10 +978,27 @@ async function dayRate(from: string, to: string, date: string): Promise<number> 
 // currency list could not be read (post as before and let Xero answer), or the
 // document is already in the base currency. Only the POSTED copy is converted;
 // the document keeps the paper's own currency and figures.
-type Converted = { from: string; to: string; rate: number; total: number; source: 'document' | 'day' };
+type Converted = { from: string; to: string; rate: number; total: number; source: 'document' | 'bank' | 'day' };
+// The bank statement line a document is being paid against, where there is one
+// — a card line for a foreign purchase states what it cost in the bank's
+// currency, which is the truest rate there is.
+export type PayingLine = { amount: number; currency: string; description?: string; reference?: string };
+let paysForeignAmountFn: ((doc: unknown, line: unknown) => boolean) | null | undefined;
+async function paysForeignAmount(doc: unknown, line: unknown): Promise<boolean> {
+  if (paysForeignAmountFn === undefined) {
+    try {
+      const mod: any = await import(new URL('../../src/lib/bankMatch.js', import.meta.url).href);
+      paysForeignAmountFn = typeof mod?.paysForeignAmount === 'function' ? mod.paysForeignAmount : null;
+    } catch {
+      paysForeignAmountFn = null;
+    }
+  }
+  return paysForeignAmountFn ? paysForeignAmountFn(doc, line) : false;
+}
 async function inPostableCurrency(
   bill: Bill,
-  tenantId: string
+  tenantId: string,
+  payingLine?: PayingLine | null
 ): Promise<{ ok: true; bill: Bill; converted: Converted | null } | { ok: false; status: number; body: any }> {
   const from = String(bill.currency ?? '').trim().toUpperCase();
   if (!from) return { ok: true, bill, converted: null };
@@ -998,11 +1015,19 @@ async function inPostableCurrency(
   let newTotal: number;
   let newTax: number;
   let source: Converted['source'];
+  const lineCurrency = String(payingLine?.currency ?? '').trim().toUpperCase();
   if (printedBase && total) {
     newTotal = cents(parseAmount(bill.baseTotal));
     newTax = tax ? cents(parseAmount(bill.baseTax)) : 0;
     rate = newTotal / 100 / total;
     source = 'document';
+  } else if (payingLine && lineCurrency === base && total && (await paysForeignAmount(bill, payingLine))) {
+    // What the bank actually took for it, so the bill and its payment are one
+    // figure and the statement line reconciles.
+    newTotal = Math.abs(cents(payingLine.amount));
+    rate = newTotal / 100 / total;
+    newTax = cents(tax * rate);
+    source = 'bank';
   } else {
     rate = await dayRate(from, base, String(bill.date ?? ''));
     if (!(rate > 0)) {
@@ -1341,7 +1366,7 @@ async function buildBillInvoice(
   req: any,
   organisation: { id: string; tenantId: string },
   source: Bill,
-  opts: { accountCode: string; taxType: string; dueDate?: unknown; description?: unknown; contactId?: string }
+  opts: { accountCode: string; taxType: string; dueDate?: unknown; description?: unknown; contactId?: string; payingLine?: PayingLine | null }
 ): Promise<
   | { ok: true; payload: Record<string, unknown>; lines: number; perLine: boolean; docType: XeroDocType; converted: Converted | null }
   | { ok: false; status: number; body: any }
@@ -1349,7 +1374,7 @@ async function buildBillInvoice(
   const docType: XeroDocType = isCreditNote(source) ? 'ACCPAYCREDIT' : 'ACCPAY';
   const facing = docType === 'ACCPAYCREDIT' ? creditNoteFacingUp(source) : source;
   // An org without multi-currency posts everything in its base currency.
-  const postable = await inPostableCurrency(facing, organisation.tenantId);
+  const postable = await inPostableCurrency(facing, organisation.tenantId, opts.payingLine);
   if (!postable.ok) return postable;
   const bill = postable.bill;
   const converted = postable.converted;
@@ -1621,6 +1646,9 @@ export async function postBillToXero(
     // The Xero contact this bill belongs to, when the caller has already made one.
     contactId?: string;
     force?: boolean;
+    // The bank line it is being paid against (the settle road); a pending
+    // autofill on the document is read without being named.
+    payingLine?: PayingLine | null;
   }
 ): Promise<{ status: number; body: any }> {
   // A payment proof is evidence that money was sent, not a bill: published, it
@@ -1682,6 +1710,7 @@ export async function postBillToXero(
     dueDate: opts.dueDate,
     description: opts.description,
     contactId: opts.contactId,
+    payingLine: opts.payingLine ?? (bill.bankMatch ? { amount: bill.bankMatch.amount, currency: bill.bankMatch.currency, description: bill.bankMatch.description, reference: bill.bankMatch.reference } : null),
   });
   if (!prepared.ok) return { status: prepared.status, body: prepared.body };
   const docType = prepared.docType;

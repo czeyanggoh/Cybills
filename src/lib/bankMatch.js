@@ -58,7 +58,45 @@ export function docAmountFor(doc, line) {
   if (!bank || !docCurrency || bank === docCurrency) return amountOf(doc?.total);
   const base = String(doc?.baseCurrency ?? '').trim().toUpperCase();
   if (base === bank && amountOf(doc?.baseTotal) > 0) return amountOf(doc?.baseTotal);
+  // The BANK's own word for it: a card line for a foreign purchase states the
+  // original amount beside the converted one ("Foreign Spend Amount: 25.00
+  // USD" on an Amex line). Where that is the document's own currency and
+  // total to the cent, the line's figure IS what the document cost in the
+  // bank's currency — stated by the bank, not converted by us.
+  if (paysForeignAmount(doc, line)) return Math.abs(amountOf(line?.amount));
   return null;
+}
+
+// The original-currency amounts a card line states for a foreign purchase:
+// "Foreign Spend Amount: 25.00 USD", "USD 25.00", "25.00 USD". Only amounts
+// with a currency code beside them count, and never the bank's own currency.
+export function foreignAmountsIn(line) {
+  const bank = String(line?.currency ?? '').trim().toUpperCase();
+  const text = [line?.description, line?.reference, line?.payee].filter(Boolean).join(' ');
+  const out = [];
+  const num = String.raw`(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)`;
+  const patterns = [
+    new RegExp(String.raw`\b([A-Z]{3})\s*\$?\s*` + num + String.raw`(?![\d.])`, 'g'),
+    new RegExp(String.raw`(?<![\d.,])` + num + String.raw`\s*([A-Z]{3})\b`, 'g'),
+  ];
+  for (const [i, re] of patterns.entries()) {
+    for (const m of text.matchAll(re)) {
+      const currency = i === 0 ? m[1] : m[2];
+      const amount = Number(String(i === 0 ? m[2] : m[1]).replace(/,/g, ''));
+      if (currency === bank || !(amount > 0)) continue;
+      out.push({ currency, amount });
+    }
+  }
+  return out;
+}
+
+// Whether this line states, in the document's own currency, exactly the
+// document's total — the bank saying "this is that purchase".
+export function paysForeignAmount(doc, line) {
+  const docCurrency = String(doc?.currency ?? '').trim().toUpperCase();
+  const total = CENTS(Math.abs(amountOf(doc?.total)));
+  if (!docCurrency || !total) return false;
+  return foreignAmountsIn(line).some((f) => f.currency === docCurrency && CENTS(f.amount) === total);
 }
 
 // Whether this line's money and the document's are the same to the cent.
@@ -267,6 +305,7 @@ export function candidatesFor(line, docs, opts = {}) {
     if (numbered) reasons.push('number');
     if (named) reasons.push('name');
     if (fee) reasons.push('fee');
+    if (paysForeignAmount(doc, line)) reasons.push('foreign');
     out.push({ doc, days, reasons, word, fee, confidence: named || numbered ? 'firm' : 'possible' });
   }
   // A lone document at this figure within a week of the line is firm even
@@ -334,7 +373,12 @@ export function matchReason(match, doc) {
   // The fee is part of WHY the money agrees, so it is said beside the reason —
   // the line is not this document's figure, and a person should see why not.
   const f = match?.fee;
-  return f ? `${base} · incl. ${f.percent}% card fee ${Number(f.fee).toFixed(2)}` : base;
+  const withFee = f ? `${base} · incl. ${f.percent}% card fee ${Number(f.fee).toFixed(2)}` : base;
+  // A foreign purchase: the money agrees only because the bank states the
+  // document's own amount beside its converted one — say which.
+  return (match?.reasons || []).includes('foreign')
+    ? `${withFee} · bank states ${String(doc?.currency ?? '').toUpperCase()} ${Math.abs(amountOf(doc?.total)).toFixed(2)}`
+    : withFee;
 }
 
 // The one document a line SUGGESTS — its first firm candidate, or null. A

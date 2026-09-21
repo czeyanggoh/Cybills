@@ -21,6 +21,7 @@ import {
   matchReason,
   feeFor,
   cardFeeRuleFor,
+  foreignAmountsIn,
 } from '../src/lib/bankMatch.js';
 
 let failures = 0;
@@ -123,6 +124,19 @@ check('a short number is no evidence', numberInBankText(doc({ invoiceNumber: '91
 check('money in matches nothing', candidatesFor(line({ amount: 109 }), [doc()]), []);
 check('a different amount matches nothing', candidatesFor(line({ amount: -110 }), [doc()]), []);
 check('outside the window matches nothing', candidatesFor(line({ date: '2026-12-01' }), [doc()]), []);
+// A card line for a foreign purchase states the original amount beside the
+// converted one (Amex: "Foreign Spend Amount: 25.00 USD"). That is the bank
+// saying which purchase it is, so the document's own USD total ties to it.
+{
+  const amex = line({ amount: -32.86, date: '2026-09-14', description: 'SANDRA YEOW · HIGHLEVEL LLC · DALLAS · Foreign Spend Amount: 25.00 USD' });
+  const hl = doc({ currency: 'USD', total: '25.00', supplier: 'HighLevel LLC', date: '2026-09-14' });
+  check('foreign spend stated by the bank: the line is the document in SGD', docAmountFor(hl, amex), 32.86);
+  check('a different USD figure does not tie', docAmountFor(doc({ currency: 'USD', total: '26.00' }), amex), null);
+  check('a different currency does not tie', docAmountFor(doc({ currency: 'EUR', total: '25.00' }), amex), null);
+  check('USD before the amount reads too', foreignAmountsIn(line({ description: 'CANVA USD 12.95' })), [{ currency: 'USD', amount: 12.95 }]);
+  const [c] = candidatesFor(amex, [hl]);
+  check('foreign spend: a firm match, and says so', [c?.confidence, matchReason(c, hl)], ['firm', 'Bank text names the supplier (HIGHLEVEL) · bank states USD 25.00']);
+}
 check('a foreign document at its restated figure', candidatesFor(line({ amount: -22.2, description: 'MICROSOFT' }), [doc({ currency: 'USD', total: '17.17', baseCurrency: 'SGD', baseTotal: 22.2, supplier: 'Microsoft Regional Sales' })]).map((c) => c.confidence), ['firm']);
 
 // --- across the whole list ---------------------------------------------------
