@@ -159,3 +159,65 @@ rather than posting a second copy for somebody to find and void.
 `tenant_mismatch` is not a formality. One key opens every client's book here, so
 without the check a mis-set tenant in a payment run would post one client's bill
 into another client's accounts, and both sides would look fine.
+
+## A quotation paid in advance: `kind: "prepayment"`
+
+A supplier who wants money before the tax invoice exists sends a **quotation**
+or a **pro-forma invoice**. It is paid like any other line in the bank file, but
+it is **never a bill**: published as one, the same spending would be posted
+again when the tax invoice arrives, and CYBills' single publish path refuses it
+(`422 advance_document`). So every row in `GET /api/payments/bills` carries a
+`kind`:
+
+- `"bill"`: publish it at commit (§ publish), as before.
+- `"prepayment"`: **do not publish it.** It needs no category, so its
+  `account_code` and `tax_type` are blank and it is `postable` once it has a
+  supplier, a date and a total. Put it in the bank file like any other line.
+  When the run is **posted to Xero**, record it with § prepay instead of
+  including it in the batch payment.
+
+`POST …/publish` on a prepayment row answers `409 prepayment_document`.
+
+### `POST /api/payments/bills/<id>/prepay`
+
+```json
+{ "tenant_id": "…", "contact_id": "…", "bank_account_id": "<Xero AccountID>",
+  "date": "2026-09-22", "amount": 999, "reference": "PV260922-001",
+  "bank_account_name": "UOB 380-323-746-6" }
+```
+
+This records a Xero **`SPEND-OVERPAYMENT`** on `contact_id`, from
+`bank_account_id`, on `date`, for `amount`, with no tax. It is the same thing the
+document page's **Record prepayment in Xero** button does. The overpayment's
+Reference is `Quotation QUO-… · PV…`. The quotation is marked Paid from that
+account and archived. The tax invoice that follows is published Approved, and
+the overpayment is allocated against it automatically.
+
+- `tenant_id`, `contact_id` and `bank_account_id` are required, and
+  `contact_id` must be the contact that holds the bank details. The bill route
+  requires this for the same reason: named by string, Xero makes a second
+  contact.
+- `date` defaults to today. `amount` defaults to the document's total. A smaller
+  amount is a deposit, and more than the total is refused.
+- The call is made when the payment is **posted**, not when the run is
+  committed. Until then neither the bank account nor the date is known, and the
+  overpayment *is* the payment.
+- **Idempotent.** A quotation already recorded answers
+  `200 { "already_recorded": true, "prepayment": { … } }` and records nothing
+  more.
+
+```json
+{ "ok": true, "bill_id": "…",
+  "prepayment": { "overpaymentId": "…", "bankTransactionId": "…", "amount": 999,
+                  "currency": "SGD", "date": "2026-09-22", "contactId": "…", … },
+  "applied": [] }
+```
+
+| refusal | meaning |
+|---|---|
+| `400 missing_field` | no `tenant_id` / `contact_id` / `bank_account_id` |
+| `409 tenant_mismatch` | the document belongs to a different client's ledger |
+| `409 not_prepayment` | not a quotation / pro-forma: publish it instead |
+| `409 not_payable` | archived, marked paid or published since the list was read |
+| `400 amount_too_large` / `no_amount` | the amount is more than the total, or not above 0 |
+| `422 xero_validation_failed` | Xero refused the overpayment (its words in `message`) |

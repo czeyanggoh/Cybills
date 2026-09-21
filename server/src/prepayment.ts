@@ -106,7 +106,24 @@ export async function recordPrepayment(
   organisation: Org,
   ws: string,
   bill: Bill,
-  opts: { bankAccountCode: string; bankAccountName?: string; date?: string; amount?: unknown; by: string }
+  opts: {
+    bankAccountCode?: string;
+    // Xero's AccountID for the bank account — what a machine caller holds (a
+    // bank account in Xero need not have a Code at all).
+    bankAccountId?: string;
+    bankAccountName?: string;
+    date?: string;
+    amount?: unknown;
+    // The Xero contact to hold the overpayment on. A payment run names the one
+    // it saved the payee's bank details on; without it the supplier's NAME is
+    // matched, and Xero creates a contact for a name it has not seen.
+    contactId?: string;
+    // Added to the Reference Xero shows (a payment run's PV number), after the
+    // quotation's own number, which stays first so the overpayment still says
+    // which paper it was paid against.
+    reference?: string;
+    by: string;
+  }
 ): Promise<Out> {
   if (!(await isAdvanceDoc(bill))) {
     return { status: 422, body: { error: 'not_advance', message: 'Only a quotation or a pro-forma invoice is recorded as a prepayment. Set the document’s Type first.' } };
@@ -122,7 +139,9 @@ export async function recordPrepayment(
     return { status: 400, body: { error: 'no_supplier', message: 'Name the supplier first — the prepayment is held on their contact in Xero.' } };
   }
   const code = String(opts.bankAccountCode ?? '').trim();
-  if (!code) return { status: 400, body: { error: 'no_bank_account', message: 'Pick the bank account the quotation was paid from.' } };
+  const accountId = String(opts.bankAccountId ?? '').trim();
+  const contactId = String(opts.contactId ?? '').trim();
+  if (!code && !accountId) return { status: 400, body: { error: 'no_bank_account', message: 'Pick the bank account the quotation was paid from.' } };
   const date = ISO.test(String(opts.date ?? '')) ? String(opts.date) : today();
   const total = parseAmount(bill.total);
   const asked = opts.amount === undefined || opts.amount === '' ? total : parseAmount(opts.amount);
@@ -137,12 +156,15 @@ export async function recordPrepayment(
 
   const transaction: Record<string, unknown> = {
     Type: 'SPEND-OVERPAYMENT',
-    Contact: { Name: supplier },
-    BankAccount: { Code: code },
+    Contact: contactId ? { ContactID: contactId } : { Name: supplier },
+    BankAccount: accountId ? { AccountID: accountId } : { Code: code },
     Date: date,
     // The quotation's own number, so the overpayment says in Xero which paper
     // it was paid against — and so the invoice that quotes it can find it.
-    Reference: (reference ? `${label} ${reference}` : `${label} prepayment`).slice(0, 255),
+    Reference: [reference ? `${label} ${reference}` : `${label} prepayment`, String(opts.reference ?? '').trim()]
+      .filter(Boolean)
+      .join(' · ')
+      .slice(0, 255),
     LineAmountTypes: 'NoTax',
     LineItems: [
       {
@@ -179,7 +201,10 @@ export async function recordPrepayment(
     currency: String(record.CurrencyCode ?? currency),
     date,
     reference,
-    bankAccount: { code, name: String(opts.bankAccountName ?? record.BankAccount?.Name ?? '').trim() },
+    bankAccount: {
+      code: code || String(record.BankAccount?.Code ?? ''),
+      name: String(opts.bankAccountName || record.BankAccount?.Name || '').trim(),
+    },
     contactId: String(record.Contact?.ContactID ?? ''),
     recordedAt: new Date().toISOString(),
     recordedBy: opts.by,

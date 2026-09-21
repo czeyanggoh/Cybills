@@ -25,6 +25,7 @@ import {
   postingCodesFrom,
   taxRatesForOrg,
 } from './xero.js';
+import { isAdvanceDoc, loadPrepaymentRules, recordPrepayment } from './prepayment.js';
 import { bankRules, cardFeeRules, readLine, recordsFor, repairStaleMatches, settleBillAgainstLine } from './bankMatch.js';
 
 // Payables: the half of a document's life that happens in CYWorkspace.
@@ -115,7 +116,7 @@ const INBOX_STATUSES = new Set(['new', 'viewed', 'review', 'ready']);
 //   - not marked PAID. This is the one that matters most: most of what CYBills
 //     collects is receipts — money already handed over at the merchant — and a
 //     receipt in a payment run pays the same supplier a second time.
-function payable(b: Bill): boolean {
+function payable(b: Bill, advance = false): boolean {
   if (b.kind !== 'cost') return false;
   if (!INBOX_STATUSES.has(String(b.status ?? ''))) return false;
   if (b.xeroInvoiceId) return false;
@@ -123,7 +124,25 @@ function payable(b: Bill): boolean {
   // A credit note is money the supplier owes US. It is not a bill to pay, and
   // in a payment run it would read as one — a positive line for a refund.
   if (isCreditNote(b)) return false;
+  // A QUOTATION or PRO-FORMA the supplier wants paid up front. It is paid like
+  // any other line in the bank file, but it is never a bill: the run records it
+  // as a prepayment (§ POST /bills/:id/prepay) and the tax invoice that follows
+  // uses it up. No category is asked of it — nothing is posted to an account —
+  // only what the overpayment needs: who, when, and how much.
+  if (advance) {
+    if (b.prepayment?.overpaymentId) return false;
+    const supplier = String(b.supplier ?? '').trim();
+    return Boolean(supplier) && supplier.toLowerCase() !== 'unknown supplier'
+      && Boolean(String(b.date ?? '').trim()) && parseAmount(b.total) > 0;
+  }
   return costComplete(b);
+}
+
+// Whether a document is a quotation / pro-forma, asked synchronously once the
+// shared rules are loaded (src/lib/prepayment.js via prepayment.ts).
+async function advanceTest(): Promise<(b: Bill) => boolean> {
+  const r = await loadPrepaymentRules();
+  return (b) => Boolean(r && r.isAdvanceDocument(b.documentType));
 }
 
 // One payable document, as CYWS needs it: enough to show the row, enough to
@@ -133,11 +152,17 @@ function payableRow(
   req: any,
   organisation: Organisation,
   bill: Bill,
-  posting: ReturnType<typeof postingCodesFrom>
+  posting: ReturnType<typeof postingCodesFrom>,
+  advance = false
 ) {
   const itemId = displayIdOf(bill.id) || bill.id;
   return {
     id: bill.id,
+    // 'bill' is published AUTHORISED at commit (§ publish); 'prepayment' is a
+    // quotation / pro-forma paid in advance, recorded as a Xero overpayment
+    // once the run's bank account and date are known (§ prepay). A
+    // 'prepayment' row is never published — CYBills refuses it.
+    kind: advance ? 'prepayment' : 'bill',
     item_id: itemId,
     org_id: organisation.id,
     org_name: organisation.name,
@@ -196,15 +221,22 @@ paymentsRouter.get('/bills', async (req, res) => {
   }
 
   const bills: ReturnType<typeof payableRow>[] = [];
+  const isAdvance = await advanceTest();
   for (const organisation of organisations) {
-    const candidates = listBills(dataScopeForOrg(organisation.id)).filter(payable);
+    const candidates = listBills(dataScopeForOrg(organisation.id)).filter((b) => payable(b, isAdvance(b)));
     if (!candidates.length) continue;
     const [accounts, rates] = await Promise.all([
       accountsForOrg(WORKSPACE_ID, organisation.id),
       taxRatesForOrg(WORKSPACE_ID, organisation.id),
     ]);
     for (const bill of candidates) {
-      bills.push(payableRow(req, organisation, bill, postingCodesFrom(bill, accounts, rates)));
+      // A prepayment posts to no account and carries no tax code, so the chart
+      // has nothing to refuse it for.
+      const advance = isAdvance(bill);
+      const posting = advance
+        ? ({ ok: true, accountCode: '', taxType: '' } as ReturnType<typeof postingCodesFrom>)
+        : postingCodesFrom(bill, accounts, rates);
+      bills.push(payableRow(req, organisation, bill, posting, advance));
     }
   }
 
@@ -423,6 +455,16 @@ paymentsRouter.post('/bills/:id/publish', async (req, res) => {
     });
   }
 
+  // A quotation is paid, not published: § prepay. Said before the payable
+  // check so a caller working from an older listing learns which route it
+  // wanted rather than that the document vanished.
+  if (await isAdvanceDoc(bill)) {
+    return res.status(409).json({
+      error: 'prepayment_document',
+      message: `“${bill.supplier || 'This document'}” is a quotation / pro-forma, not a tax invoice, so it is not published as a bill. It is recorded as a prepayment to the supplier when the payment is posted to Xero.`,
+    });
+  }
+
   // The document is not payable at all — archived, on a claim, merged, or
   // marked paid. The listing already leaves those out, so reaching here means
   // the run is working from a stale list; say so rather than posting it.
@@ -449,6 +491,78 @@ paymentsRouter.post('/bills/:id/publish', async (req, res) => {
     contactId,
   });
   return res.status(out.status).json(out.body);
+});
+
+// POST /api/payments/bills/:id/prepay
+// Body: { tenant_id, contact_id, bank_account_id, date, amount?, reference?,
+//         bank_account_name? }
+//
+// A quotation or pro-forma paid in a payment run. It goes to Xero as a
+// SPEND-OVERPAYMENT on the supplier's contact, from the bank account the run
+// paid it out of, on the payment date — the same act as the document page's
+// "Record prepayment in Xero" (prepayment.ts), so the tax invoice that follows
+// uses it up on publish exactly as it would one recorded by hand. Called when
+// the run is POSTED to Xero, not when it is committed: until then neither the
+// bank account nor the date is known, and the overpayment IS the payment.
+//
+// `amount` below the total is a deposit on a larger quotation. `contact_id` is
+// required for the reason publish requires it — the contact holding the bank
+// details, never a second one Xero makes from a name.
+//
+// Idempotent: a quotation already recorded answers with the prepayment it has,
+// so a re-pressed Post to Xero does not record the supplier's credit twice.
+paymentsRouter.post('/bills/:id/prepay', async (req, res) => {
+  if (unauthorised(req, res)) return;
+  const b = req.body ?? {};
+  const tenantId = String(b.tenant_id ?? '').trim();
+  const contactId = String(b.contact_id ?? '').trim();
+  const bankAccountId = String(b.bank_account_id ?? '').trim();
+  if (!tenantId || !contactId || !bankAccountId) {
+    return res.status(400).json({
+      error: 'missing_field',
+      message: 'tenant_id, contact_id and bank_account_id are required.',
+    });
+  }
+
+  const bill = getBillByIdAny(req.params.id);
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  const organisation = listOrganisations(WORKSPACE_ID).find((o) => dataScopeForOrg(o.id) === bill.orgId);
+  if (!organisation) {
+    return res.status(404).json({ error: 'organisation_not_found', message: 'This document belongs to no linked entity.' });
+  }
+  if (organisation.tenantId.trim().toLowerCase() !== tenantId.toLowerCase()) {
+    return res.status(409).json({
+      error: 'tenant_mismatch',
+      message: `This document belongs to “${organisation.name}”, which isn’t the Xero organisation you named.`,
+    });
+  }
+  if (!(await isAdvanceDoc(bill))) {
+    return res.status(409).json({
+      error: 'not_prepayment',
+      message: `“${bill.supplier || 'This document'}” is not a quotation / pro-forma. Publish it as a bill instead.`,
+    });
+  }
+  if (bill.prepayment?.overpaymentId) {
+    return res.json({ ok: true, already_recorded: true, prepayment: bill.prepayment, bill_id: bill.id });
+  }
+  if (!payable(bill, true)) {
+    return res.status(409).json({
+      error: 'not_payable',
+      message: `“${bill.supplier || 'This document'}” is no longer waiting to be paid — it has been archived, marked paid or published since the list was read.`,
+    });
+  }
+
+  const out = await recordPrepayment(organisation, dataScopeForOrg(organisation.id), bill, {
+    bankAccountId,
+    bankAccountName: String(b.bank_account_name ?? ''),
+    contactId,
+    date: String(b.date ?? ''),
+    amount: b.amount,
+    reference: String(b.reference ?? ''),
+    by: 'cyworkspace',
+  });
+  if (out.status !== 200) return res.status(out.status).json(out.body);
+  return res.json({ ok: true, prepayment: out.body.prepayment, applied: out.body.applied, bill_id: bill.id });
 });
 
 // --- Bank match, the machine half ---------------------------------------------

@@ -1075,6 +1075,19 @@ remember the allocation (`prepayment.allocations`, `prepaymentsApplied`, one
 writer for the pair). Covered by `npm test` in `server/`
 (`test/prepayment.test.mts`, over real HTTP against a stub relay).
 
+**A quotation can be paid in a CYWS payment run.** The payables list used to
+offer an unpaid quotation as a bill, and committing the run asked CYBills to
+publish it. That was refused, but only after CYWS had made the contact and put
+the line in a bank file. Each payables row now carries `kind`
+(`bill` / `prepayment`). A prepayment row needs no category, and `publish`
+answers `409 prepayment_document`. `POST /api/payments/bills/:id/prepay`
+records the overpayment through the same `recordPrepayment`. It takes CYWS's
+`contact_id` (the contact with the bank details, never a name match) and the
+run's own bank `AccountID` and payment date, because CYWS calls it when the run
+is POSTED to Xero, not when it is committed. It is idempotent on the recorded
+overpayment. Contract: `deploy/PAYABLES.md` § A quotation paid in advance.
+Covered by `test/payables-prepay.test.mts`.
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate
