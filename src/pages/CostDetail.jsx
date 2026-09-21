@@ -14,6 +14,7 @@ import {
   ExternalLink,
   Link2 as LinkIcon,
   Archive as ArchiveIcon,
+  Loader2,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -534,6 +535,32 @@ export default function CostDetail() {
       else setData(initialData(pd));
     });
   }, [job]);
+
+  // Being read on the SERVER (an emailed or WhatsApp'd document, or an upload
+  // whose read is still running): the Costs row says Processing, so the page
+  // must too — otherwise it shows "Missing: …" on a document nobody has had the
+  // chance to fill in yet, and the next keystroke races the read. Nothing in
+  // this browser will hear when that read ends, so ask the server until the
+  // status moves on, then take the document back as the job-settle path does.
+  const serverReading = Boolean(persisted && persisted.status === 'processing' && !persisted.xeroInvoiceId);
+  useEffect(() => {
+    if (!serverReading || job) return undefined;
+    const docId = persisted.id;
+    const started = Date.now();
+    let stopped = false;
+    const timer = setInterval(async () => {
+      // sweepStuckProcessing is the server's backstop; five minutes is ours.
+      if (Date.now() - started > 5 * 60 * 1000) { clearInterval(timer); return; }
+      const fresh = await fetchBillById(docId).catch(() => null);
+      if (stopped || !mounted.current || !fresh || fresh.status === 'processing') return;
+      clearInterval(timer);
+      const pd = billToDoc(fresh);
+      setPersisted(pd);
+      setData(initialData(pd));
+      notifyBillsChanged();
+    }, 4000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [serverReading, job, persisted?.id]);
 
   // Not GST-registered: force the document onto No Tax with no GST split out,
   // and persist it. The picker offers nothing else, but a document coded before
@@ -1911,6 +1938,13 @@ export default function CostDetail() {
             <CheckCircle2 className="h-4 w-4" /> Published
             {xeroPaidStatus(doc) ? <span className="text-green-700/80">· {xeroPaidStatus(doc).label}</span> : null}
           </span>
+        ) : serverReading ? (
+          <span
+            title="The document is still being read. The fields fill in by themselves when it finishes."
+            className="inline-flex h-8 items-center gap-1 rounded-md border bg-muted px-3 text-sm text-muted-foreground"
+          >
+            <Loader2 className="h-4 w-4 animate-spin" /> Processing
+          </span>
         ) : setAside ? (
           // Said where the status always is. Without it an archived document
           // wore "Missing: Category" and an Archive button, which reads exactly
@@ -2150,7 +2184,7 @@ export default function CostDetail() {
               <button
                 type="button"
                 onClick={imageUrl && visionEnabled ? reReadExisting : onUploadClick}
-                disabled={Boolean(job)}
+                disabled={Boolean(job) || serverReading}
                 className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
               >
                 {visionEnabled ? <Sparkles className="h-4 w-4" strokeWidth={2} /> : <Upload className="h-4 w-4" strokeWidth={2} />}
@@ -2158,7 +2192,7 @@ export default function CostDetail() {
                     reads the document is a setting somebody made in Business
                     settings once, and naming it here made the control read as a
                     choice between two of them. */}
-                {extracting
+                {extracting || serverReading
                   ? 'Reading receipt…'
                   : imageUrl
                     ? visionEnabled ? 'Re-read receipt' : 'Replace file'
@@ -2613,7 +2647,11 @@ export default function CostDetail() {
               {linesNoteBlock}
 
               <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
-                {doc.status === 'ready' ? (
+                {serverReading ? (
+                  <span className="inline-flex h-9 items-center gap-1 rounded-md border bg-muted px-3 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Processing
+                  </span>
+                ) : doc.status === 'ready' ? (
                   <span className="inline-flex h-9 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm font-medium text-foreground">
                     <CheckCircle2 className="h-4 w-4" /> In Ready
                   </span>
