@@ -7,7 +7,7 @@ import {
   setBillPrepayment,
   updateBill,
 } from './store.js';
-import { relay } from './xero.js';
+import { attachBillFileTo, relay } from './xero.js';
 
 // A quotation or pro-forma PAID IN ADVANCE, and the invoice that uses it up.
 //
@@ -212,6 +212,12 @@ export async function recordPrepayment(
     before: { status: String(bill.status ?? ''), paid: Boolean(bill.paid), paymentMethod: String(bill.paymentMethod ?? '') },
   };
   setBillPrepayment(ws, bill.id, prepayment);
+  // The quotation itself goes on the overpayment's bank transaction: until the
+  // tax invoice arrives that is the only record of this money in Xero, and a
+  // prepayment with no paper behind it is what an auditor asks about.
+  // Best-effort like a bill's attachment — the money is already recorded, and a
+  // failed upload is reported on the reply rather than undoing it.
+  const attachment = await attachBillFileTo(organisation.tenantId, 'BankTransactions', prepayment.bankTransactionId, bill);
   // Paid, from that account, and out of the working list: its money is in Xero
   // now, held on the supplier's contact until the invoice arrives.
   const patch: Partial<Bill> = { paid: true };
@@ -223,7 +229,7 @@ export async function recordPrepayment(
   // anything: apply to it now rather than leaving the money sitting there.
   const applied = await applyToPublishedInvoices(organisation, ws, bill.id, opts.by);
 
-  return { status: 200, body: { ok: true, prepayment, applied, bill: getBillById(ws, bill.id) } };
+  return { status: 200, body: { ok: true, prepayment, applied, attachment, bill: getBillById(ws, bill.id) } };
 }
 
 /**

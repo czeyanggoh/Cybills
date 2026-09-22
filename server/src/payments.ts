@@ -562,7 +562,7 @@ paymentsRouter.post('/bills/:id/prepay', async (req, res) => {
     by: 'cyworkspace',
   });
   if (out.status !== 200) return res.status(out.status).json(out.body);
-  return res.json({ ok: true, prepayment: out.body.prepayment, applied: out.body.applied, bill_id: bill.id });
+  return res.json({ ok: true, prepayment: out.body.prepayment, applied: out.body.applied, attachment: out.body.attachment ?? null, bill_id: bill.id });
 });
 
 // --- Bank match, the machine half ---------------------------------------------

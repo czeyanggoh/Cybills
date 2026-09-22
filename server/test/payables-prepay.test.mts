@@ -40,7 +40,8 @@ const stub = http.createServer((req, res) => {
   let raw = '';
   req.on('data', (c) => (raw += c));
   req.on('end', () => {
-    const body = raw ? JSON.parse(raw) : null;
+    let body: any = null;
+    try { body = raw ? JSON.parse(raw) : null; } catch { body = { raw_length: raw.length, content_type: req.headers['content-type'] }; }
     seen.push({ method: String(req.method), path, body });
     res.setHeader('content-type', 'application/json');
     if (path === 'Accounts') return res.end(JSON.stringify({ Accounts: [{ Code: '429', Name: 'General Expenses', Status: 'ACTIVE', Type: 'EXPENSE', TaxType: 'NONE' }] }));
@@ -52,6 +53,9 @@ const stub = http.createServer((req, res) => {
         Contact: { ContactID: t.Contact.ContactID }, BankAccount: { AccountID: t.BankAccount.AccountID, Code: '090', Name: 'UOB 380-323-746-6' },
       }] }));
     }
+    if (path.startsWith('BankTransactions/') && path.includes('/Attachments/') && req.method === 'POST') {
+      return res.end(JSON.stringify({ Attachments: [{ AttachmentID: 'att-1' }] }));
+    }
     res.statusCode = 404;
     res.end(JSON.stringify({ error: 'not_found', path }));
   });
@@ -60,6 +64,7 @@ await new Promise<void>((r) => stub.listen(4665, '127.0.0.1', r));
 process.env.CYWORKSPACE_RELAY_URL = 'http://127.0.0.1:4665';
 
 const { insertBill, getBillById } = await import('../src/store.ts');
+const { putBillFile } = await import('../src/storage.ts');
 const { dataScopeForOrg } = await import('../src/organisations.ts');
 await import('../src/index.ts');
 await new Promise((r) => setTimeout(r, 200));
@@ -81,11 +86,12 @@ const post = async (path: string, body: unknown, headers: Record<string, string>
 };
 
 const book = dataScopeForOrg('org-1');
+const stored = await putBillFile(book, 'quote-hash', 'application/pdf', Buffer.from('%PDF-1.4 quotation'));
 // No category: a quotation posts to no account, so none is asked of it.
 const quote = insertBill({
   orgId: book, kind: 'cost', status: 'new', supplier: 'Windee Private Limited', invoiceNumber: 'QUO-2609239',
   documentType: 'Quotation', currency: 'SGD', date: '2026-09-19', category: '', description: 'Window works',
-  total: '999', tax: '0',
+  total: '999', tax: '0', storageKey: stored.storageKey, contentType: stored.contentType, fileName: 'QUO-2609239.pdf',
 } as any);
 const incomplete = insertBill({
   orgId: book, kind: 'cost', status: 'new', supplier: 'Unknown supplier', documentType: 'Quotation',
@@ -125,6 +131,8 @@ check('for the deposit paid, without tax', [sent?.LineAmountTypes, sent?.LineIte
 check('carrying the quotation number, then the PV', sent?.Reference, 'Quotation QUO-2609239 · PV260922-001');
 const q = getBillById(book, quote.id)!;
 check('the quotation keeps the overpayment', [q.prepayment?.overpaymentId, q.prepayment?.amount, q.prepayment?.contactId], ['op-1', 500, 'c-windee']);
+const upload = seen.find((s) => s.method === 'POST' && s.path.startsWith('BankTransactions/bt-1/Attachments/'));
+check('the quotation is attached to the overpayment’s bank transaction', [Boolean(upload), upload?.body?.content_type, r.body.attachment?.ok], [true, 'application/pdf', true]);
 check('…and is Paid, from that account, and set aside', [q.paid, q.paymentMethod, q.status], [true, 'UOB 380-323-746-6', 'archived']);
 
 const puts = seen.filter((s) => s.path === 'BankTransactions').length;

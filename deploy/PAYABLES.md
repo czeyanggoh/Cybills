@@ -189,8 +189,10 @@ again when the tax invoice arrives, and CYBills' single publish path refuses it
 This records a Xero **`SPEND-OVERPAYMENT`** on `contact_id`, from
 `bank_account_id`, on `date`, for `amount`, with no tax. It is the same thing the
 document page's **Record prepayment in Xero** button does. The overpayment's
-Reference is `Quotation QUO-… · PV…`. The quotation is marked Paid from that
-account and archived. The tax invoice that follows is published Approved, and
+Reference is `Quotation QUO-… · PV…`. The quotation's own file is attached to
+the overpayment's bank transaction in Xero (best-effort, reported as
+`attachment` on the reply — a failed upload does not undo the payment). The
+quotation is marked Paid from that account and archived. The tax invoice that follows is published Approved, and
 the overpayment is allocated against it automatically.
 
 - `tenant_id`, `contact_id` and `bank_account_id` are required, and
@@ -210,7 +212,7 @@ the overpayment is allocated against it automatically.
 { "ok": true, "bill_id": "…",
   "prepayment": { "overpaymentId": "…", "bankTransactionId": "…", "amount": 999,
                   "currency": "SGD", "date": "2026-09-22", "contactId": "…", … },
-  "applied": [] }
+  "applied": [], "attachment": { "ok": true, "bytes": 48213 } }
 ```
 
 | refusal | meaning |

@@ -813,6 +813,19 @@ async function attachBillFile(
   bill: Bill,
   docType: XeroDocType = xeroDocTypeOf(bill)
 ): Promise<{ ok: boolean; error?: string; bytes?: number } | null> {
+  return attachBillFileTo(tenantId, xeroEndpointFor(docType), invoiceId, bill);
+}
+
+// The same upload onto any Xero record that takes attachments — a quotation's
+// prepayment goes on the SPEND-OVERPAYMENT bank transaction that holds it
+// (prepayment.ts), which is the only place in Xero that paper can live until
+// the tax invoice arrives.
+export async function attachBillFileTo(
+  tenantId: string,
+  endpoint: 'Invoices' | 'CreditNotes' | 'BankTransactions',
+  invoiceId: string,
+  bill: Bill
+): Promise<{ ok: boolean; error?: string; bytes?: number } | null> {
   if (!invoiceId) return null;
   try {
     const file = await billFileBytes(bill);
@@ -825,7 +838,7 @@ async function attachBillFile(
       return { ok: false, error: 'The stored file read back empty, so there was nothing to send.', bytes: 0 };
     }
     const name = attachmentName(bill, file.contentType);
-    const att = await relay(`${xeroEndpointFor(docType)}/${invoiceId}/Attachments/${encodeURIComponent(name)}`, {
+    const att = await relay(`${endpoint}/${invoiceId}/Attachments/${encodeURIComponent(name)}`, {
       method: 'POST',
       tenantId,
       rawBody: file.bytes,
