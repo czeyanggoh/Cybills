@@ -434,13 +434,29 @@ export default function CostDetail() {
   // Previous / Next walk that list and never anything else. Ids the book no
   // longer holds (deleted since the list was drawn) are dropped rather than
   // navigated to.
+  // A document on an expense claim walks that CLAIM's items instead — in the
+  // order the claim page showed them (rememberWalk there), else the order they
+  // were added — since a claimed document is in no Costs list to walk.
+  const claimWalkIds = claimForItem
+    ? (() => {
+        const items = (claimForItem.transactions || []).map((t) => String(t.itemId));
+        const onClaim = new Set(items);
+        const shown = readWalk(`claim:${claimForItem.id}`).filter((v) => onClaim.has(v));
+        return (shown.length === items.length ? shown : items).join('|');
+      })()
+    : '';
   const walk = useMemo(() => {
+    if (claimWalkIds) {
+      const ids = claimWalkIds.split('|');
+      const here = ids.find((v) => isItemKey(v, id)) ?? id;
+      return walkPosition(ids, here);
+    }
     const inBook = new Set(inboxAllDocs.map((d) => String(d.id)));
     const remembered = readWalk('costs').filter((v) => inBook.has(v));
     const fromList = walkPosition(remembered, id);
     if (fromList.index !== -1) return fromList;
     return walkPosition(rowsFor(inboxAllDocs, 'inbox').map((d) => d.id), id);
-  }, [inboxAllDocs, id]);
+  }, [inboxAllDocs, id, claimWalkIds]);
   const index = walk.index;
 
   // Reset the form when navigating between documents. Sample docs resolve from

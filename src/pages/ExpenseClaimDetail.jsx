@@ -76,6 +76,7 @@ import { missingFields } from '@/lib/readiness';
 import { cn } from '@/lib/utils';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { lineWorking } from '@/lib/claimFx';
+import { rememberWalk } from '@/lib/listView';
 import ComboSelect from '@/components/ComboSelect';
 import SortTh, { sortRows } from '@/components/SortTh';
 
@@ -1019,7 +1020,12 @@ export default function ExpenseClaimDetail() {
                 {displayRows.map((t) => (
                   <tr
                     key={t.itemId}
-                    onClick={() => navigate(costPath(t.itemId))}
+                    onClick={() => {
+                      // The document page's Previous / Next walk this claim's
+                      // items in the order they are on screen, not the Costs list.
+                      rememberWalk(`claim:${claim.id}`, displayRows.map((r) => r.itemId));
+                      navigate(costPath(t.itemId));
+                    }}
                     className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40"
                   >
                     <td className={densityClass} onClick={(e) => e.stopPropagation()}>
