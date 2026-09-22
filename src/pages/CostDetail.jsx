@@ -459,6 +459,25 @@ export default function CostDetail() {
   }, [inboxAllDocs, id, claimWalkIds]);
   const index = walk.index;
 
+  // Left / Right arrow keys press Previous / Next. Not while typing in a field
+  // (the arrows move the caret there), with a modifier held, or while a popup
+  // is open on top of the page — the arrows belong to whatever is focused.
+  const goRef = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const t = e.target;
+      if (t instanceof HTMLElement && (t.isContentEditable || t.closest('input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"], [role="slider"]'))) return;
+      const popupOpen = [...document.querySelectorAll('.fixed.inset-0')].some((el) => el.getClientRects().length > 0);
+      if (popupOpen) return;
+      e.preventDefault();
+      goRef.current?.(e.key === 'ArrowLeft' ? -1 : 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Reset the form when navigating between documents. Sample docs resolve from
   // the in-memory mock; uploaded bills are fetched by id from the store.
   useEffect(() => {
@@ -969,6 +988,7 @@ export default function CostDetail() {
     const next = inboxAllDocs.find((d) => String(d.id) === nextId);
     navigate(costPath(next ?? nextId));
   };
+  goRef.current = go;
 
   // After an action that finishes with this document (Archive, Delete, Add to
   // expense claim, Publish to Xero), jump to the next item so the reviewer can
@@ -2147,6 +2167,7 @@ export default function CostDetail() {
           <button
             type="button"
             onClick={() => go(-1)}
+            title="Previous (←)"
             disabled={walk.prev === null}
             className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
           >
@@ -2158,6 +2179,7 @@ export default function CostDetail() {
           <button
             type="button"
             onClick={() => go(1)}
+            title="Next (→)"
             disabled={walk.next === null}
             className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
           >
