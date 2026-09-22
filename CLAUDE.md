@@ -2095,6 +2095,28 @@ never heard of the route is told apart from one that cannot find the group, the
 same way the add road tells them apart. Covered by `npm test` in `server/`
 (`test/whatsapp-admins.test.mts`).
 
+**And a collection group's messages can be set to disappear after 7 days.**
+WhatsApp's own group setting, beside Make everyone an admin on every group's
+card (`POST /api/whatsapp/channels/:id/disappearing`, CYWS's
+`set-disappearing`). A collection group is a PIPE rather than a record — by the
+time a bill has been mirrored into the thread and filed as a cost document, CYWS
+holds its bytes in the shared bucket and CYBills holds a document pointing at
+them, and none of that is in WhatsApp — so the chat clearing itself loses
+nothing anybody accounts from, and what it stops is a client's paperwork living
+for ever on the phone of everybody who has ever been in the group, which is the
+one copy neither system can delete. Seven days rather than 24 hours because a
+document that failed to file has to still be in the chat when somebody comes
+looking for it. The four durations WhatsApp takes are held by the ROUTE and the
+reply carries the WORDING back, so a card can never describe a group as
+something other than what was set on it; a refusal records nothing, since what
+is stored is what the group IS. What is stored is also only the last thing
+CYBills SET — anybody in the group can change it from inside WhatsApp — so
+absent means never asked rather than off. The two groups it refuses are the
+promote's two: an ADOPTED conversation is the client's own, and setting their
+messages to delete themselves from an accounting app is the same species of act
+as taking it apart; a CLOSED one is over. Covered by `npm test` in `server/`
+(`test/whatsapp-disappearing.test.mts`).
+
 **A group that already exists is NAMED, not made.** Every button above creates a
 real group, which is wrong for a client who has been sending bills into one of
 their own for months: it puts a second, empty group in front of them and leaves

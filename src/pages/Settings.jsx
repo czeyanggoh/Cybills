@@ -47,6 +47,7 @@ import { cleanSuffix, addressTail, entityAddress } from '@/lib/inboundAddress';
 import { useWhatsappChannels, createWhatsappChannel, useWhatsappConfig, sendTestDelivery } from '@/lib/whatsapp';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
+import WhatsappDisappearing from '@/components/WhatsappDisappearing';
 import WhatsappInviteLink from '@/components/WhatsappInviteLink';
 import {
   useExtractionSettings,
@@ -1428,6 +1429,7 @@ function WhatsappCollectionCard() {
                       that everybody already is an admin. */}
                   <WhatsappInviteLink channel={g} canManage={canManage} onDone={reload} />
                   <PromoteWhatsappAdmins channel={g} canManage={canManage} onDone={reload} />
+                  <WhatsappDisappearing channel={g} canManage={canManage} onDone={reload} />
                   <CloseWhatsappGroup channel={g} canManage={canManage} onClosed={reload} />
                 </div>
               ))}

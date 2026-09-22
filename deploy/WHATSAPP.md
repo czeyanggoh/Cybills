@@ -451,6 +451,56 @@ POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/promote-participants   (X
   client's own, and handing out admin in it from an accounting app is the same
   species of act as taking it apart. A **closed or replaced** collection is over.
 
+## Disappearing messages
+
+WhatsApp's own group setting: every message sent into the group is removed from
+everyone's phone after the time set. A collection group is a **pipe, not a
+record** — by the time a bill has been mirrored into the thread and filed as a
+cost document, CYWS holds its bytes in the shared R2 bucket and CYBills holds a
+document pointing at them, and none of that lives in WhatsApp — so the chat
+clearing itself loses nothing anybody accounts from. What it stops is a client's
+paperwork accumulating for ever on the phone of everybody who has ever been in
+the group, which is the one copy neither system can delete.
+
+**Seven days** is what the button sets: long enough that a document which failed
+to file is still in the chat when somebody comes looking for it. It is on every
+group's own card, beside Make everyone an admin: **Connections → the group's
+row**, or the person's **Edit details → Connect to WhatsApp** → **Set messages
+to disappear after 7 days**.
+
+```
+POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/set-disappearing   (X-API-Key, same key)
+{ "submission_id": "CYB-org_red00001-a1b2c3d4", "duration": 604800 }
+```
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | any JSON | Done. Nothing is read out of it — the duration asked for is the duration set. |
+| 400 | `{error: "submission_id_required"}` | |
+| 401 | `{error: "invalid_api_key"}` | |
+| 404 | `{error: "unknown_submission"}` | No group at CYWS under that id. |
+| 502 | `{error: "disappearing_failed"}` | WhatsApp refused — only an admin of a group may change it. |
+| 503 | `{error: "group_disappearing_unavailable"}` | The CYBot number is not on WAHA. |
+
+- **`duration` is seconds, and only WhatsApp's own four**: `0` (off), `86400`
+  (24 hours), `604800` (7 days), `7776000` (90 days). The list is held by the
+  ROUTE rather than by the browser — they are WhatsApp's durations, not a
+  CYBills setting — and the reply carries the wording back, so a card can never
+  describe a group as something other than what was set on it.
+- **A refusal records nothing.** What CYBills stores is what the group IS, so a
+  record left behind by a failed call would have the card stating a setting the
+  phones in the group have never had.
+- **What is stored is the last thing CYBills set**, not a reading of the group:
+  anybody in the group can change it from inside WhatsApp, and CYBills is never
+  told. Absent is therefore "never asked", which is not the same as off.
+- **A 404 with no `error` of its own is read as an unimplemented route**, not as
+  an unknown group, exactly as on the promote and add roads.
+- **CYBills decides which groups may be set**, and it is the same two refusals
+  the promote, rename and add paths make. An **adopted** conversation is the
+  client's own, and setting their messages to delete themselves from an
+  accounting app is the same species of act as taking it apart. A **closed or
+  replaced** collection is over.
+
 ## Closing a group down
 
 Two acts, offered side by side on every group (Connections → the group's row,
