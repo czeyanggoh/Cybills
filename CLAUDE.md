@@ -407,13 +407,13 @@ judgement. An entity with no such category is asked nothing at all.
 The answer is APPENDED to the description (`withAttendees`), the way the billing
 period is and for the same reason: a reader told to work it into its own sentence
 writes it twice as often as not, and there is then nothing to check. **A meal
-whose guests nobody recorded says THAT** — "— attendees not stated" — because a
-silence there is indistinguishable from a meal whose guests did not matter, and
-it is the line that sends a reviewer to fill them in. Idempotent, since the
-re-read applies it again once a supplier rule has had the last word on the
-category (`readDecisions`); moved OFF a meal category, a document gives the bare
-marker back up, while names already found stay — they are still true of the
-document. Covered by `npm test` at the root and in `server/`
+whose guests nobody recorded says nothing** — its description stays as read. It
+used to append "— attendees not stated", and Cze asked for that to stop (22 Sep
+2026): on every till receipt it was noise rather than a prompt. The old marker
+is taken off wherever a description is composed again (a re-read). Idempotent,
+since the re-read applies it again once a supplier rule has had the last word on
+the category (`readDecisions`); names already found stay, even off a meal
+category — they are still true of the document. Covered by `npm test` at the root and in `server/`
 (`test/attendees.test.mts`, driven over real HTTP so what is asserted is the
 prompt that goes out).
 
@@ -421,7 +421,7 @@ prompt that goes out).
 written by two hands — the reader's on the way in, a person's when they correct
 it — and in the ledger, in an export and in the Costs list the two look
 identical. So a read's own composed sentence carries `*` in front of it
-("* Lunch at Din Tai Fung — attendees not stated"), and a description somebody
+("* Lunch at Din Tai Fung — attendees: 4 pax"), and a description somebody
 rewrites stops saying it the moment they drop the star. `starDescription`
 (`src/lib/description.js`, pure, `npm test` at the root) is applied LAST, after
 the period and the attendees, so the star stands in front of everything the read

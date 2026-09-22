@@ -55,12 +55,13 @@ export function attendeeCategories(labels) {
   return (Array.isArray(labels) ? labels : []).filter((l) => isAttendeeCategory(l));
 }
 
-// What the description says when nobody was recorded. A marker rather than a
-// silence, because a blank there is indistinguishable from a meal that simply
-// had no guests worth naming — and this is the sentence that sends somebody to
-// type them in.
+// The marker earlier reads wrote when nobody was recorded. Nothing writes it any
+// more — a meal with no guest list now keeps its description exactly as read,
+// since the marker read as noise on every till receipt (Cze, 22 Sep 2026) — but
+// descriptions already carrying it lose it the next time they are composed.
 export const NO_ATTENDEES = 'attendees not stated';
-const SUFFIX = / — attendees(?::.*| not stated)$/;
+const MARKER = new RegExp(` — ${NO_ATTENDEES}$`);
+const NAMED = / — attendees:.*$/;
 
 const loose = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -70,21 +71,20 @@ const loose = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
  * Appended rather than asked for inline (the same arrangement `withPeriod` has
  * server-side): a reader told to work the names into its own sentence folds
  * them in twice as often as not, and there would be nothing to check.
- * Idempotent — a description that already carries the suffix keeps the one it
- * has — so the re-read may apply it again after a supplier rule has changed the
- * category. Where the category is NOT one about people, the bare "not stated"
- * marker is taken back off: it was written for a meal, and this is no longer
- * one. Names already found are left, since they are still true of the document.
+ * Idempotent — a description that already names them keeps the names it has —
+ * so the re-read may apply it again after a supplier rule has changed the
+ * category. Nobody recorded means nothing is said: the description is left as
+ * read, and the old "not stated" marker is taken off wherever it is found.
+ * Names already found are left even off a meal category, since they are still
+ * true of the document.
  */
 export function withAttendees(description, attendees, category) {
-  const text = String(description ?? '').trim();
+  const text = String(description ?? '').trim().replace(MARKER, '').trim();
   if (!text) return text;
-  if (!isAttendeeCategory(category)) {
-    return text.replace(new RegExp(` — ${NO_ATTENDEES}$`), '').trim();
-  }
-  if (SUFFIX.test(text)) return text;
+  if (!isAttendeeCategory(category)) return text;
+  if (NAMED.test(text)) return text;
   const who = String(attendees ?? '').trim().slice(0, 160);
-  if (!who) return `${text} — ${NO_ATTENDEES}`;
+  if (!who) return text;
   // The reader said it in its own sentence as well — one telling is enough.
   if (loose(text).includes(loose(who))) return text;
   return `${text} — attendees: ${who}`;

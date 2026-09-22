@@ -56,19 +56,28 @@ check(
   withAttendees('Dinner at Jumbo Seafood', '4 pax', 'Meal Weekday (after 9pm)'),
   'Dinner at Jumbo Seafood — attendees: 4 pax'
 );
-// Nobody wrote it down. Said out loud rather than left silent: a blank there is
-// indistinguishable from a meal whose guests did not matter, and this is the
-// sentence that sends a reviewer to fill them in.
+// Nobody wrote it down, so nothing is said: the description stays as read.
 check(
-  'and the silence is said out loud',
+  'nobody recorded, nothing said',
   withAttendees('Lunch at Din Tai Fung', '', '420 - Entertainment'),
-  `Lunch at Din Tai Fung — ${NO_ATTENDEES}`
+  'Lunch at Din Tai Fung'
+);
+// And the marker earlier reads wrote comes off the next time it is composed.
+check(
+  'the old marker is taken off',
+  withAttendees(`* Lunch at Din Tai Fung — ${NO_ATTENDEES}`, '', '420 - Entertainment'),
+  '* Lunch at Din Tai Fung'
+);
+check(
+  'and replaced by names found on a re-read',
+  withAttendees(`Team lunch — ${NO_ATTENDEES}`, 'the finance team', '420 - Entertainment'),
+  'Team lunch — attendees: the finance team'
 );
 // Everything else is left exactly as it was read. A taxi fare with three people
 // in the car is still a taxi fare.
 check('a taxi keeps its own description', withAttendees('Grab ride Jurong to Raffles', '', 'Transport - Taxi'), 'Grab ride Jurong to Raffles');
 // Nothing to append to. A read that got nothing produces no description, and
-// "attendees not stated" on its own describes nothing at all.
+// "attendees: …" on its own describes nothing at all.
 check('an empty description stays empty', withAttendees('', '', '420 - Entertainment'), '');
 
 // --- Applied twice, because it is --------------------------------------------
@@ -76,11 +85,7 @@ check('an empty description stays empty', withAttendees('', '', '420 - Entertain
 // rule has had the last word on the category. Neither may say it twice.
 const once = withAttendees('Team lunch', 'the finance team', '420 - Entertainment');
 check('idempotent with names', withAttendees(once, 'the finance team', '420 - Entertainment'), once);
-const bare = withAttendees('Team lunch', '', '420 - Entertainment');
-check('idempotent without them', withAttendees(bare, '', '420 - Entertainment'), bare);
-// And a name found on the second pass does not displace the marker written on
-// the first — the description already answers the question, either way.
-check('the first answer stands', withAttendees(bare, 'the finance team', '420 - Entertainment'), bare);
+check('the first answer stands', withAttendees(once, 'somebody else', '420 - Entertainment'), once);
 
 // A reader that worked the people into its own sentence keeps its wording:
 // saying it twice is worse than the prompt being disobeyed.

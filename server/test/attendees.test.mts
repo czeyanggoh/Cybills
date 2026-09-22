@@ -130,20 +130,16 @@ answer = { ...FIELDS, attendees: 'Kai Tan and two of the ARC3 team' };
 r = await read();
 check('who was there is on the description', r.data.description, '* Lunch at Din Tai Fung — attendees: Kai Tan and two of the ARC3 team');
 
-// --- 3) And so is the silence ------------------------------------------------
-// The reader found nothing about the people, which is what an entertainment
-// expense with no guest list actually is: an incomplete record. Said out loud,
-// because a blank there is indistinguishable from a meal whose guests did not
-// matter — and this is the line that sends a reviewer to fill them in.
+// --- 3) Nobody recorded: nothing is said ------------------------------------
 answer = { ...FIELDS, attendees: '' };
 r = await read();
-check('nobody recorded, and it says so', r.data.description, '* Lunch at Din Tai Fung — attendees not stated');
+check('nobody recorded, nothing said', r.data.description, '* Lunch at Din Tai Fung');
 
 // Filler is not an answer. A model told a field must be filled reaches for
 // "N/A", which would publish to the ledger as though somebody had checked.
 answer = { ...FIELDS, attendees: 'N/A' };
 r = await read();
-check('filler is not a guest list', r.data.description, '* Lunch at Din Tai Fung — attendees not stated');
+check('filler is not a guest list', r.data.description, '* Lunch at Din Tai Fung');
 
 // --- 4) Every other cost is left exactly as it was read ----------------------
 answer = { ...FIELDS, supplier: 'Grab', category: '429 - General Expenses', description: 'Grab ride Jurong to Raffles', attendees: '' };
@@ -162,7 +158,7 @@ check('both said, once each', r.data.description, '* Client dinner (August 2026)
 // sentence, and it is never doubled however many times the text is composed.
 answer = { ...FIELDS, description: '* Lunch at Din Tai Fung', attendees: '' };
 r = await read();
-check('the star is not doubled', r.data.description, '* Lunch at Din Tai Fung — attendees not stated');
+check('the star is not doubled', r.data.description, '* Lunch at Din Tai Fung');
 // Even where the reader gave nothing usable and the description was composed
 // from the supplier and the category it was coded to.
 answer = { ...FIELDS, description: '', category: '429 - General Expenses', supplier: 'Singtel', attendees: '' };
@@ -170,7 +166,7 @@ r = await read();
 check('a composed description too', r.data.description, '* Singtel — General Expenses');
 
 // --- 7) A read that got nothing gets no marker -------------------------------
-// There is no description to append to, and "attendees not stated" on its own
+// There is no description to append to, and "attendees: …" on its own
 // describes nothing at all — which is also what tells the inbox this document
 // read as blank.
 answer = { ...FIELDS, supplier: '', description: '', total: 0, attendees: '' };

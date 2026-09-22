@@ -146,8 +146,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       // rather than a line in `description` for the reason `period` is: asked
       // to work it into its own sentence, a reader folds it in twice as often
       // as not, and there is then nothing to check. withAttendees joins the two
-      // (src/lib/attendees.js) — and says so when the answer is nothing, which
-      // is the sentence that sends a reviewer to fill it in.
+      // (src/lib/attendees.js), and says nothing when the answer is nothing.
       attendees: {
         type: 'string',
         description:
@@ -878,9 +877,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       // …and, on a meal or a meeting, who it was for. Appended rather than
       // asked for inline, the same way the period is: a reader told to work
       // both into one sentence writes them twice as often as not. A meal whose
-      // guests were never recorded says THAT instead of falling silent — the
-      // silence is what an incomplete record looks like, and it is the one
-      // thing nobody can reconstruct afterwards.
+      // guests were never recorded keeps its description as read.
       // The star goes on LAST, in front of the whole composed sentence: it says
       // this description was written by a read rather than by a person, so it
       // has to stand in front of everything the read wrote — the period and the
