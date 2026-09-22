@@ -225,6 +225,32 @@ export async function promoteWhatsappAdmins({ submissionId }) {
   throw err;
 }
 
+// Set the group's disappearing messages.
+//
+// WhatsApp's own group setting: every message sent into the group is removed
+// from everyone's phone after the time set. Nothing accounting-shaped is lost —
+// a bill is in the shared bucket and filed as a document within seconds of
+// arriving, and none of that lives in WhatsApp — and what it stops is a client's
+// paperwork sitting for ever on the phone of everybody who has ever been in the
+// group.
+//
+// No duration is sent by default: the durations are WhatsApp's, so the route
+// holds the list and answers with the wording, and a page can never describe a
+// group as something other than what was set on it.
+export async function setWhatsappDisappearing({ submissionId, seconds }) {
+  const res = await fetch(`/api/whatsapp/channels/${encodeURIComponent(submissionId)}/disappearing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify(seconds === undefined ? {} : { seconds }),
+  });
+  const data = await res.json().catch(() => null);
+  if (res.ok) return data;
+  const err = new Error(data?.message || 'Could not set the group\u2019s disappearing messages.');
+  err.code = data?.error || '';
+  err.retryable = Boolean(data?.retryable);
+  throw err;
+}
+
 // Close a collection down. Two acts behind one call, because they are one
 // decision with two answers:
 //

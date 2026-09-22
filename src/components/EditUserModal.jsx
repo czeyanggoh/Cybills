@@ -8,6 +8,7 @@ import { useWhatsappForUser, connectWhatsappForUser } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
 import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
+import WhatsappDisappearing from '@/components/WhatsappDisappearing';
 import WhatsappInviteLink from '@/components/WhatsappInviteLink';
 
 // "Extract by email" — the user's inbound address plus any Gmail forwarding
@@ -240,6 +241,12 @@ function ConnectWhatsapp({ user }) {
               of somebody having been added from inside WhatsApp since. */}
           <div className="mt-2">
             <PromoteWhatsappAdmins channel={channel} canManage={canManage && enabled} onDone={reload} />
+          </div>
+          {/* A collection group is a pipe, not a record: the bill is filed the
+              moment it arrives, so clearing the chat after a week loses nothing
+              and stops a client's paperwork living for ever on every phone. */}
+          <div className="mt-2">
+            <WhatsappDisappearing channel={channel} canManage={canManage && enabled} onDone={reload} />
           </div>
         </div>
       ) : !enabled && !loading ? (

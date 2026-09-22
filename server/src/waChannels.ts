@@ -74,6 +74,16 @@ export type WaChannel = {
   inviteLink?: string;
   // The last time the link was emailed, and whether the mailbox took it.
   lastInvite?: { email: string; at: string; sent: boolean; error?: string };
+  // Disappearing messages, as WhatsApp's own group setting: every message sent
+  // into the group is removed from everyone's phone after this many seconds.
+  // A collection group is a pipe rather than a record — the moment a bill
+  // arrives CYWS has its bytes in the shared bucket and CYBills has a document
+  // pointing at them — so nothing accounting-shaped is lost when the chat
+  // clears itself, and a client's paperwork stops accumulating on the phones of
+  // everybody who was ever in the group. Absent means the group has never been
+  // asked, which is NOT the same as off: WhatsApp's default is off, but CYBills
+  // has never been told what somebody may have set from inside the group.
+  disappearing?: { seconds: number; setAt: string; setBy: string };
   createdAt: string;
   createdBy: string;
   openedAt: string;

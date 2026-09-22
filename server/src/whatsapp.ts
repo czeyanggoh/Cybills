@@ -129,6 +129,11 @@ const MESSAGES: Record<string, string> = {
   invite_link_unavailable: 'The WhatsApp service on CYWS is not available. Tell the CYWS operator — retrying will not help.',
   invite_route_unavailable:
     'This deployment’s CYWorkspace cannot read a group’s invite link yet. Tell the CYWS operator.',
+  disappearing_failed: 'WhatsApp refused to change the group’s disappearing messages. Try again in a moment.',
+  group_disappearing_unavailable:
+    'The WhatsApp service on CYWS is not available. Tell the CYWS operator — retrying will not help.',
+  disappearing_route_unavailable:
+    'This deployment’s CYWorkspace cannot set disappearing messages on a group yet. Tell the CYWS operator, or set it from inside the group.',
 };
 
 async function askForGroup(body: { submission_id: string; subject: string; invite_only: true }): Promise<CreateResult> {
@@ -421,6 +426,12 @@ const publicChannel = (c: WaChannel) => ({
   invite: Boolean(c.invite),
   inviteLink: c.inviteLink ?? '',
   lastInvite: c.lastInvite ?? null,
+  // What CYBills last set the group's disappearing messages to, labelled here
+  // rather than in the browser: the durations are WhatsApp's and the route is
+  // what holds a request to them, so a page that worked the wording out for
+  // itself could say one thing over a group set to another. Null means CYBills
+  // has never asked — not that it is off.
+  disappearing: c.disappearing ? { ...c.disappearing, label: disappearingLabel(c.disappearing.seconds) } : null,
   createdAt: c.createdAt,
   createdBy: c.createdBy,
   lastError: c.lastError,
@@ -1427,6 +1438,123 @@ whatsappRouter.post('/channels/:submissionId/admins', async (req, res) => {
     // are, so it is reported as a number and worded as one rather than as a
     // failure.
     promotedNow: out.promoted.length,
+  });
+});
+
+// --- Disappearing messages ----------------------------------------------------
+// WhatsApp's own group setting: every message sent into the group is removed
+// from everyone's phone after a set time. A collection group is a PIPE, not a
+// record — by the time a bill has been mirrored into the thread and filed as a
+// document, CYWS holds its bytes in the shared bucket and CYBills holds a
+// document pointing at them, and none of that is in WhatsApp — so clearing the
+// chat loses nothing accounting-shaped. What it stops is a client's paperwork
+// accumulating for ever on the phone of everybody who has ever been in the
+// group, which is the copy nobody here can delete.
+//
+// Seven days is the offer, because it is long enough for a document that failed
+// to file to still be in the chat when somebody comes looking for it, and it is
+// one of the four durations WhatsApp actually accepts. The set is closed here
+// and the browser sends no number of its own: WhatsApp defines them, so the
+// route is where they belong, and the reply carries the WORDING so a page can
+// never describe a group as something other than what was set on it.
+const DISAPPEARING_SECONDS: Record<number, string> = {
+  0: 'off',
+  86_400: '24 hours',
+  604_800: '7 days',
+  7_776_000: '90 days',
+};
+const DISAPPEARING_DEFAULT = 604_800;
+const disappearingLabel = (seconds: number) => DISAPPEARING_SECONDS[seconds] ?? `${seconds} seconds`;
+
+async function askToSetDisappearing(body: { submission_id: string; duration: number }): Promise<
+  { ok: true } | { ok: false; status: number; error: string; message: string; retryable: boolean }
+> {
+  if (!env.CYWORKSPACE_RELAY_URL || !env.CYWORKSPACE_API_KEY) {
+    return { ok: false, status: 503, error: 'whatsapp_not_configured', message: 'CYWorkspace is not connected on this deployment.', retryable: false };
+  }
+  const url = `${env.CYWORKSPACE_RELAY_URL.replace(/\/+$/, '')}/api/webhooks/cybills/set-disappearing`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-API-Key': env.CYWORKSPACE_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    console.error('[whatsapp] CYWS unreachable (set-disappearing)', err);
+    return { ok: false, status: 502, error: 'relay_unreachable', message: MESSAGES.relay_unreachable, retryable: true };
+  }
+  if (res.ok) return { ok: true };
+  const payload = (await res.json().catch(() => null)) as { error?: string; message?: string } | null;
+  // A bare 404 is a CYWS that has never heard of the route, not a group it
+  // cannot find — told apart here for the same reason the promote and add roads
+  // tell them apart, because they need different people to fix them.
+  const error = !payload?.error && res.status === 404 ? 'disappearing_route_unavailable' : String(payload?.error ?? 'disappearing_failed');
+  return {
+    ok: false,
+    status: res.status,
+    error,
+    message: String(payload?.message ?? MESSAGES[error] ?? `CYWorkspace returned ${res.status}.`),
+    retryable: error === 'disappearing_failed' || error === 'relay_unreachable',
+  };
+}
+
+// POST /api/whatsapp/channels/:submissionId/disappearing — body { seconds? }
+//
+// Seven days unless another of WhatsApp's durations is named. Same two refusals
+// the promote, rename and add paths make, for the same reasons: a collection
+// CYBills has stopped reading is no longer its to change, and an ADOPTED
+// conversation is the client's own — setting their messages to delete
+// themselves from an accounting app is the same species of act as taking the
+// group apart.
+whatsappRouter.post('/channels/:submissionId/disappearing', async (req, res) => {
+  if (!whatsappEnabled) return res.status(503).json({ error: 'whatsapp_not_configured' });
+  const found = channelForAdmin(req, String(req.params.submissionId ?? ''));
+  if (found.error) return res.status(found.error.status).json(found.error.body);
+  const channel = found.channel;
+
+  const seconds = req.body?.seconds === undefined ? DISAPPEARING_DEFAULT : Number(req.body.seconds);
+  if (!Number.isInteger(seconds) || !(seconds in DISAPPEARING_SECONDS)) {
+    return res.status(400).json({
+      error: 'invalid_duration',
+      message: `WhatsApp takes only ${Object.keys(DISAPPEARING_SECONDS).join(', ')} seconds — ${req.body?.seconds} is not one of them.`,
+    });
+  }
+
+  if (channel.status !== 'open' || !channel.chatId) {
+    return res.status(409).json({
+      error: 'channel_not_open',
+      message: 'There is no open group here — a group CYBills has stopped collecting through is no longer its to change.',
+    });
+  }
+  if (channel.adopted) {
+    return res.status(409).json({
+      error: 'channel_adopted',
+      message:
+        'This is the client’s own group, pointed at CYBills rather than opened by CYBot. Set its disappearing messages from inside it.',
+    });
+  }
+
+  const out = await askToSetDisappearing({ submission_id: channel.id, duration: seconds });
+  if (!out.ok) {
+    patchChannel(channel.id, { lastError: out.message });
+    return res.status(out.status).json({ error: out.error, message: out.message, retryable: out.retryable });
+  }
+
+  // Recorded only once WhatsApp has taken it: what is stored is what the group
+  // IS, and a refusal that left a record would have the card stating a setting
+  // the phones in the group have never had.
+  const updated = patchChannel(channel.id, {
+    disappearing: { seconds, setAt: new Date().toISOString(), setBy: memberForSession(req)?.email || '' },
+    lastError: '',
+  });
+
+  res.json({
+    ok: true,
+    channel: updated ? publicChannel(updated) : publicChannel(channel),
+    seconds,
+    label: disappearingLabel(seconds),
   });
 });
 
