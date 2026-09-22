@@ -103,9 +103,11 @@ const rows = ensure('cybm');
 const general = rows.find((u) => u.id === 'gen_excel')!;
 check('the stray handle is cleared', general.emailHandle, '');
 check('the general account answers to the entity alone', generalUserByEmailSuffix('cybm', 'excelas')?.id, 'gen_excel');
-// Its own stored address is an internal identity — nothing is sent to it — so
-// addressForUser has nothing to build, which is the point of clearing the handle.
-check('and has no address of a person', addressForUser(general), '');
+// Its STORED address is an internal identity and nothing is sent to it, but the
+// row does have an address: the short form standing alone, which is the
+// company's own — the one to put on a supplier's file. Never a dotted one,
+// which is the whole point of clearing the handle.
+check("and its address is the entity's own", addressForUser(general), 'excelas@cybills.sg');
 
 // --- And the freed address reaches the real person ----------------------------
 // The half that would have gone unnoticed: a handle left on the general row is

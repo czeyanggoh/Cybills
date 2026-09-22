@@ -349,8 +349,21 @@ export function localPart(handle: string, suffix: string): string {
 }
 
 // This person's inbound address, exactly as it should be printed for them.
+//
+// The GENERAL account is the one row whose address is not made from a handle.
+// It has none and never gets one — `ensureEmailHandles` skips it, and a handle
+// typed onto it is refused — because what it answers to is the entity's SHORT
+// FORM STANDING ALONE: `cst@cybills.sg`, the company's own address rather than
+// any one person's, which files to the row that already owns the paperwork
+// nobody claimed. That is exactly what `generalUserByEmailSuffix` resolves on
+// the way IN, so it is said here, once, rather than re-derived by each caller:
+// left out, the general row had no address at all and everything that names one
+// after it fell back to something else — which is how its WhatsApp group came
+// to be called "CYBills - General" while the card above it read `cst@cybills.sg`.
 export function addressForUser(u: User, memo?: Map<string, string>): string {
-  const local = localPart(u.emailHandle || '', suffixForUser(u, memo));
+  const suffix = suffixForUser(u, memo);
+  if (u.general) return suffix ? `${suffix}@${INBOUND_MAIL_DOMAIN}` : '';
+  const local = localPart(u.emailHandle || '', suffix);
   return local ? `${local}@${INBOUND_MAIL_DOMAIN}` : '';
 }
 
@@ -702,10 +715,6 @@ export function peopleForOrg(
   managerName: string;
 }> {
   const memo = new Map<string, string>();
-  // The general account has no handle and never gets one — nothing is sent to
-  // its stored address, which is an internal identity. What it DOES answer to is
-  // the entity's short form standing alone, which files exactly here.
-  const suffix = org ? normaliseSuffix(getOrganisation(ws, org)?.emailSuffix || '') : '';
   const rows = ensure(ws);
   const byId = new Map(rows.filter((u) => u.workspaceId === ws && !u.removed).map((u) => [u.id, u]));
   return rows
@@ -719,7 +728,7 @@ export function peopleForOrg(
       // without the upload. '' where there is none to print — an entity that has
       // set no short form has no address of its own, and inventing one from its
       // name would send paperwork nowhere.
-      address: u.general ? (suffix ? `${suffix}@${INBOUND_MAIL_DOMAIN}` : '') : addressForUser(u, memo),
+      address: addressForUser(u, memo),
       // What each entry IS here, because the two questions differ: a colleague
       // from outside is never OFFERED as a document's owner (that's the general
       // account's job), but their name must still resolve on the documents they

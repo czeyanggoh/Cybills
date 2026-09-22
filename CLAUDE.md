@@ -1775,6 +1775,15 @@ a short form somebody's bare handle already answers to. Only an entity with NO
 short form can collide at all: inside one that has a suffix every person's
 address carries the dot that separates the two halves.
 
+That address is the general row's everywhere one is printed, not only in
+Business settings: `addressForUser` answers with it for a general row, so the
+owner picker offers it and the row's **WhatsApp group is named after it** like
+anybody else's. Said only in the directory route, the group fell back to the
+name a row with no handle gets — `CYBills - General`, standing in front of a
+client two inches under a card reading `cst@cybills.sg` — and an entity taking a
+short form renamed everybody's group but its own (the sweep reads the rows with
+handles, which a general row has none of, by design).
+
 The practice's own entity has one too, and it is the case that needed saying out
 loud: a colleague opening CYBM is redirected off the Users page to Colleagues,
 so the General row is there in the data and unreachable in the UI. Colleagues

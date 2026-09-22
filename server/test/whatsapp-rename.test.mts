@@ -217,6 +217,26 @@ await settle();
 check("and is not renamed when their address moves", renames.length, before);
 check('nor is its name touched here', channelById(adopted)?.subject, 'Red Alpha — bills');
 
+// --- The entity's OWN group --------------------------------------------------
+// A general account has no handle and never gets one, so the name fell back to
+// `CYBills - General` — a group standing in front of a client under a label
+// that says nothing, while the Extract-by-email card two inches above it read
+// `redalpha@cybills.sg`. The entity's short form STANDING ALONE is that row's
+// address (it is what `generalUserByEmailSuffix` resolves on the way in), so it
+// is what the group is called, the same one-pipe rule every other group follows.
+r = await call('PUT', '/api/organisations/org_red00001/email-suffix', { suffix: 'redalpha' });
+check('Red Alpha takes a short form', [r.status, r.body.organisation.emailSuffix], [200, 'redalpha']);
+const generalRow = ensure('cybm').find((u) => u.general && u.organisationId === 'org_red00001')!;
+check("the general row's address is the entity's own", addressForUser(generalRow), 'redalpha@cybills.sg');
+const generalGroup = await connect(generalRow.id, '', 'org_red00001');
+check('and its group is named after it', channelById(generalGroup)?.subject, 'redalpha@cybills.sg');
+
+// It moves with the short form like everybody else's, which is the same
+// repair that renames the groups opened under the old fallback name.
+await call('PUT', '/api/organisations/org_red00001/email-suffix', { suffix: 'redalpha2' });
+await settle();
+check("the entity's group follows its address", channelById(generalGroup)?.subject, 'redalpha2@cybills.sg');
+
 // --- A collection that is over -----------------------------------------------
 // Renaming a group CYBills has stopped collecting through would edit a chat
 // that is no longer any of its business.

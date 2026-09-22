@@ -415,9 +415,19 @@ organisationsRouter.put('/:id/email-suffix', (req, res) => {
   // now last week's. Renamed here, from the same `groupSubjectFor` they were
   // opened with, and read AFTER the write so each one gets the address it has
   // now. Not awaited: this is CYWS's business and a page is waiting on ours.
+  //
+  // The entity's own GENERAL account is in that list too, and only because its
+  // address is a real one: the short form standing ALONE is what mail to the
+  // company files under, so the group named after it moves exactly like
+  // everybody else's. It is left out of the clash check above on purpose — it
+  // holds no handle to collide with, and the address it does answer to is the
+  // one `catchOwner` already stands guard over.
+  const renameable = ensureUsers(ws).filter(
+    (u) => !u.removed && orgIdForUser(u) === organisation.id && (u.emailHandle || u.general)
+  );
   void renameChannelsForUsers(
     ws,
-    mine.map((u) => ({ id: u.id, subject: groupSubjectFor(u, organisation.name) }))
+    renameable.map((u) => ({ id: u.id, subject: groupSubjectFor(u, organisation.name) }))
   );
   // How many people it just repointed, so the page can say so rather than
   // leaving somebody to open a roster and count.
