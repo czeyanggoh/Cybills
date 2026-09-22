@@ -5,81 +5,61 @@
 // than only through the pages that call it. `extractionSettings.js` re-exports
 // it for those callers. Its one import is another pure rule of the same kind.
 import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from './motorVehicle.js';
+import { jurisdictionFor, isSingaporeGstRegNo, isAbn, isTaxRegNo } from './gstJurisdiction.js';
+
+// WHICH country's rules — what counts as a registration number, which codes may
+// be reached from a percentage, what the zero code is called, and whether a
+// motor vehicle expense is claimable at all — is the jurisdiction's answer
+// rather than this module's (gstJurisdiction.js). Everything below is the
+// arithmetic, which is the same in both countries. Re-exported here because
+// every caller already reaches for the tax rules through this file.
+export { isSingaporeGstRegNo, isAbn, isTaxRegNo, jurisdictionFor };
 
 // --- Auto-pickable tax codes ------------------------------------------------
 // The ONLY codes CYBills is allowed to choose from arithmetic alone:
-// standard-rated purchases and supplies at 7% / 8% / 9% (the 2022 / 2023 /
-// current vintages), plus No Tax. Everything else the org has in Xero —
-// imports, IGDS, partially exempt traders, reverse charge, bad debt relief,
-// customer accounting — is a judgement call about the underlying transaction
-// that a percentage can't settle, so a percentage never reaches for it.
+// standard-rated purchases and supplies at the jurisdiction's own rates, plus
+// its zero code. Everything else the org has in Xero — imports, IGDS, partially
+// exempt traders, reverse charge, bad debt relief, customer accounting, and an
+// Australian chart's input-taxed and capital codes — is a judgement call about
+// the underlying transaction that a percentage can't settle, so a percentage
+// never reaches for it.
 //
-// Matched on the Xero TaxType (stable: INPUT / INPUTY23 / INPUTY24, OUTPUT /
-// OUTPUTY23 / OUTPUTY24, NONE), falling back to the name for manually-added
-// rates that carry no code. The regexes are anchored so near-misses in the same
-// chart — BLINPUT2 (Disallowed Expenses), EPINPUT, ZERORATEDINPUT — never slip
-// through.
-const AUTO_PURCHASE = { code: /^INPUT(Y\d{2})?$/i, name: /^(\d{4}\s+)?standard[- ]?rated purchases$/i };
-const AUTO_SUPPLY = { code: /^OUTPUT(Y\d{2})?$/i, name: /^(\d{4}\s+)?standard[- ]?rated supplies$/i };
-const AUTO_NO_TAX = { code: /^NONE$/i, name: /^no tax$/i };
-
+// Matched on the Xero TaxType (stable), falling back to the name for
+// manually-added rates that carry no code. The pack's regexes are anchored so
+// near-misses in the same chart never slip through — BLINPUT2 (Disallowed
+// Expenses), EPINPUT and ZERORATEDINPUT in a Singapore one, and the one that
+// would actually cost money, INPUTTAXED in an Australian one.
 const autoMatches = (rule, row) => {
   const code = String(row?.code || '').trim();
   return code ? rule.code.test(code) : rule.name.test(String(row?.name || '').trim());
 };
 
-// Xero's own standard-rated codes for Singapore GST, by rate. These are the
-// same in every Singapore Xero — INPUTY24 IS 9% standard-rated purchases — so
-// when an organisation has written no rule of its own, this is the answer, not
-// a guess. It is the fallback when the org's VISIBLE list can't supply it:
-// switched off in Lists → Tax rates, or the list hadn't loaded. The names are
-// Xero's defaults, used only when the organisation's own row can't be found.
-const STANDARD_CODES = {
-  cost: [
-    { pct: 9, code: 'INPUTY24', name: 'Standard-Rated Purchases' },
-    { pct: 8, code: 'INPUTY23', name: '2023 Standard-Rated Purchases' },
-    { pct: 7, code: 'INPUT', name: '2022 Standard-Rated Purchases' },
-  ],
-  sales: [
-    { pct: 9, code: 'OUTPUTY24', name: 'Standard-Rated Supplies' },
-    { pct: 8, code: 'OUTPUTY23', name: '2023 Standard-Rated Supplies' },
-    { pct: 7, code: 'OUTPUT', name: '2022 Standard-Rated Supplies' },
-  ],
+// The row this organisation uses for "nothing claimed", in the jurisdiction's
+// own order of preference: Singapore's single No Tax, or Australia's GST Free
+// Expenses ahead of BAS Excluded. Falls back to anything zero-rated the pack
+// recognises, so a chart that names its codes unusually still answers.
+const noTaxRow = (list, pack, kind = 'cost') => {
+  const rows = (Array.isArray(list) ? list : []).filter((r) => Number(r?.rate) === 0);
+  for (const pref of pack.noTaxCodes[kind === 'sales' ? 'sales' : 'cost']) {
+    const byCode = rows.find((r) => String(r.code || '').trim().toUpperCase() === pref.code);
+    if (byCode) return byCode;
+    const byName = rows.find((r) => String(r.name || '').trim().toLowerCase() === pref.name.toLowerCase());
+    if (byName) return byName;
+  }
+  return rows.find((r) => autoMatches(pack.auto.noTax, r)) || null;
 };
 
-// --- Is this Singapore GST at all? ------------------------------------------
-// Input tax is claimable only against a Singapore GST-registered supplier who
-// charged GST — IRAS requires the supplier's GST registration number on a tax
-// invoice, simplified ones included. Foreign tax is not claimable; it is part of
+// --- Is this tax claimable here at all? -------------------------------------
+// Input tax is claimable only against a supplier REGISTERED in this
+// jurisdiction who charged its tax. Foreign tax is not claimable; it is part of
 // the cost. The numbers alone cannot tell them apart — Thailand's VAT is 7% and
-// Malaysia's SST 8%, exactly Singapore's 2022 and 2023 rates — so the evidence
+// Malaysia's SST 8%, exactly Singapore's 2022 and 2023 rates, and New Zealand
+// calls its 15% GST by the same name Australia calls its 10% — so the evidence
 // has to be the registration number and what the document calls the tax.
 //
-// Singapore registration numbers are UENs, or an M-number for a GST-only /
-// overseas-vendor registration:
-//   53012345M      business (8 digits + letter)
-//   201614382R     local company (9 digits + letter, year-prefixed)
-//   T08LL1234A     other entities (T/S/R + 2 digits + 2 letters + 4 digits + letter)
-//   M90370287L     GST registration / OVR (M + 8 digits + letter)
-//   M2-0009302-4   the older GST-only registration, still printed by some
-const SG_UEN = [
-  /^\d{8}[A-Z]$/,
-  /^(19|20)\d{7}[A-Z]$/,
-  /^[TSR]\d{2}[A-Z]{2}\d{4}[A-Z]$/,
-  // IRAS issues these to entities with no UEN and they are printed two ways:
-  // the OVR form M90370287L, and the older M2-0009302-4 / MR-8500071-4 (M, one
-  // letter or digit, 7 digits, a check character). Separators are stripped
-  // before matching, so one pattern covers both — and it has to, because an
-  // overseas vendor billing in foreign currency is exactly where the older
-  // form still turns up.
-  /^M[A-Z0-9]\d{7}[A-Z0-9]$/,
-];
-export function isSingaporeGstRegNo(value) {
-  const v = String(value || '').toUpperCase().replace(/[\s.-]/g, '');
-  if (!v) return false;
-  return SG_UEN.some((re) => re.test(v));
-}
-
+// The NUMBER's shape is the jurisdiction's (a UEN or M-number in Singapore, an
+// ABN in Australia); the wording test below is shared, because both countries
+// call it GST and both are billed by suppliers who call it something else.
 // A tax the document itself calls GST. "VAT", "SST", "Sales Tax" and
 // "Consumption Tax" are somebody else's tax, whatever the rate.
 const NOT_GST = /\b(vat|tva|iva|btw|mwst|sst|consumption tax|sales tax|service tax|use tax)\b/i;
@@ -108,9 +88,17 @@ export function looksLikeGst(taxLabel) {
 // registration number the reader couldn't find, or a template that says
 // "excluding VAT" one line above "Total GST", no longer costs the client the
 // input tax it plainly paid.
-export function claimableSgGst({ gstRegNo = '', taxLabel = '', restatedInBase = false } = {}) {
+export function claimableInputTax({ gstRegNo = '', taxLabel = '', restatedInBase = false, country = '' } = {}) {
   if (restatedInBase) return true;
-  return isSingaporeGstRegNo(gstRegNo) && looksLikeGst(taxLabel);
+  return isTaxRegNo(gstRegNo, country) && looksLikeGst(taxLabel);
+}
+
+// The Singapore-only name this was called before there was a second
+// jurisdiction, kept as the way to ask that question explicitly of Singapore —
+// which is what test/tax-rate-rules.test.mjs, the suite that guards every
+// existing book's behaviour, asks it as.
+export function claimableSgGst(args = {}) {
+  return claimableInputTax({ ...args, country: 'Singapore' });
 }
 
 // The percentage the document PRINTS beside its tax — "9% GST", "GST 9%", "GST
@@ -150,7 +138,11 @@ const pctOf = (n) => `${Number(n).toFixed(1)}%`;
 // authority on what a rate is worth. Where they aren't — a server-side write
 // that has no Xero list — the names Xero itself ships for zero-tax codes are
 // recognised, so the check still holds at the point the document is stored.
-const ZERO_TAX_NAMES = /^(no tax|tax exempt(ed)?|exempt( \(?(input|output)s?\)?)?|zero[- ]?rated|no gst|gst free|out of scope)$/i;
+// Deliberately NOT gated by jurisdiction. This asks what a NAME means, and the
+// names do not collide: no Singapore chart has a "BAS Excluded" and no
+// Australian one has a "Zero-Rated Supplies". A check that had to be told which
+// country it was in would be one more place to forget to tell.
+const ZERO_TAX_NAMES = /^(no tax|tax exempt(ed)?|exempt( \(?(input|output|expenses|income)s?\)?)?|zero[- ]?rated|no gst|gst free( (expenses|income|capital))?|input taxed|bas excluded|out of scope)$/i;
 
 export function zeroTaxRate(name, rates) {
   const wanted = String(name || '').trim();
@@ -165,10 +157,8 @@ export function zeroTaxRate(name, rates) {
 // The org's zero-rated "No Tax" code, by name — '' when the list doesn't have
 // one (it's hidden, or Xero isn't connected yet). The single answer for a
 // company that isn't GST-registered, so every screen agrees on it.
-export function noTaxRateName(rates) {
-  const row = (Array.isArray(rates) ? rates : []).find(
-    (r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r),
-  );
+export function noTaxRateName(rates, { country = '', kind = 'cost' } = {}) {
+  const row = noTaxRow(rates, jurisdictionFor(country), kind);
   return row ? row.name : '';
 }
 
@@ -243,18 +233,27 @@ export function taxRateOutcome({
   // vehicle. Either makes it a motor vehicle expense (src/lib/motorVehicle.js).
   category = '',
   motorVehicle = false,
+  // Which country's GST rules to read this document under, as the entity's
+  // Business profile spells it ("Australia"). Singapore when unset, so a book
+  // nobody has answered for behaves exactly as it did before there were two.
+  country = '',
 } = {}) {
   // A motor vehicle expense is No Tax, ahead of everything: the account's own
   // default, the org's "when to use" rules and the printed GST. It is the
   // practice's rule about the expense rather than a reading of the paper, so
   // no amount of GST on a petrol receipt makes it claimable. A company that is
   // not GST-registered is left to its own (silent) answer, which is No Tax too.
+  const pack = jurisdictionFor(country);
   const label = String(category || accountLabel || '');
-  if (gstRegistered && isMotorVehicleExpense({ category: label, motorVehicle: motorVehicle === true, kind })) {
-    const noTax = (Array.isArray(rates) ? rates : []).find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));
+  // And it is Singapore's rule, not a rule about motor vehicles. Australia
+  // claims the GST on fuel and running costs like any other expense, so the
+  // pack decides whether this branch exists at all — applied there it would
+  // quietly strip the credit off every petrol receipt in the book.
+  if (pack.blocksMotorVehicle && gstRegistered && isMotorVehicleExpense({ category: label, motorVehicle: motorVehicle === true, kind })) {
+    const noTax = noTaxRow(rates, pack, kind);
     return {
       name: noTax ? noTax.name : MOTOR_VEHICLE_TAX_RATE,
-      reason: motorVehicleReason({ category: label, motorVehicle: motorVehicle === true }),
+      reason: motorVehicleReason({ category: label, motorVehicle: motorVehicle === true, country: pack.country }),
       claimsTax: false,
       motorVehicle: true,
     };
@@ -295,10 +294,12 @@ function taxRateDecision({
   gstRegNo = '',
   taxLabel = '',
   printedRate = 0,
+  country = '',
 }) {
+  const pack = jurisdictionFor(country);
   const list = Array.isArray(rates) ? rates : [];
   const everything = Array.isArray(allRates) && allRates.length ? allRates : list;
-  const noTax = list.find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));
+  const noTax = noTaxRow(list, pack, kind);
 
   // 0. Not GST-registered: nothing to claim, nothing to analyse. The screens
   //    say so themselves, so no reason is needed here.
@@ -323,9 +324,9 @@ function taxRateDecision({
   const x = num(tax);
   const net = t - x;
   const cur = String(currency || '').toUpperCase().slice(0, 3);
-  const base = String(baseCurrency || 'SGD').toUpperCase().slice(0, 3);
+  const base = String(baseCurrency || pack.currency).toUpperCase().slice(0, 3);
   const isForeign = Boolean(cur) && Boolean(base) && cur !== base;
-  const wanted = kind === 'sales' ? AUTO_SUPPLY : AUTO_PURCHASE;
+  const wanted = kind === 'sales' ? pack.auto.sales : pack.auto.cost;
 
   // The base-currency restatement, kept only when it is internally coherent:
   // a tax inside a total, both positive. A half-read block says nothing.
@@ -399,18 +400,19 @@ function taxRateDecision({
   // Tax IS charged — but only Singapore GST from a registered supplier can be
   // claimed. Without that evidence the tax is part of the cost, not input tax:
   // No Tax, and the amount is not recorded as GST.
-  if (kind !== 'sales' && !claimableSgGst({ gstRegNo, taxLabel, restatedInBase })) {
+  if (kind !== 'sales' && !claimableInputTax({ gstRegNo, taxLabel, restatedInBase, country })) {
     const label = String(taxLabel || '').trim();
-    const why = !isSingaporeGstRegNo(gstRegNo)
+    const why = !pack.isRegNo(gstRegNo)
       ? String(gstRegNo || '').trim()
-        ? `the supplier's registration number (${String(gstRegNo).trim()}) isn't a Singapore one`
-        : 'the document shows no Singapore GST registration number for the supplier'
-      : `the document calls it ${label}, not GST`;
+        ? `the supplier's registration number (${String(gstRegNo).trim()}) isn't ${pack.regNoArticle}`
+        : `the document shows no ${pack.regNoLabel} for the supplier`
+      : `the document calls it ${label}, not ${pack.taxName}`;
     return {
       name: noTax ? noTax.name : '',
       reason:
-        `Tax of ${shown.cur}${shown.tax.toFixed(2)} (${pctOf(pct)}) is on the document, but ${why} — so it isn't Singapore input tax to claim. ` +
-        'Coded No Tax, with the tax left in the cost. If the supplier IS Singapore GST-registered, set the code by hand.',
+        `Tax of ${shown.cur}${shown.tax.toFixed(2)} (${pctOf(pct)}) is on the document, but ${why} — so it isn't ${pack.demonym} input tax to claim. ` +
+        `Coded ${noTax ? noTax.name : 'No Tax'}, with the tax left in the cost. ` +
+        `If the supplier IS registered for ${pack.demonym} ${pack.taxName}, set the code by hand.`,
       claimsTax: false,
       ...facts,
     };
@@ -456,26 +458,30 @@ function taxRateDecision({
   // know: a foreign-currency document at a STANDARD rate is not a document at
   // an unrecognised rate, it is an ordinary Singapore supply whose code this
   // org happens to have switched off in Lists.
-  const std = (STANDARD_CODES[kind === 'sales' ? 'sales' : 'cost'] ?? []).find(
+  const std = (pack.standardCodes[kind === 'sales' ? 'sales' : 'cost'] ?? []).find(
     (c) => Math.abs(c.pct - pct) <= TOLERANCE
   );
 
-  // 3. Foreign-currency invoice at a rate that is not a Singapore one at all.
-  //    Note this is reached only by a document that already PASSED the
-  //    registration-number gate above, so it is a rate question, not a
-  //    jurisdiction one — which is why a standard rate is exempt from it.
+  // 3. Foreign-currency invoice at a rate that is not one of this
+  //    jurisdiction's at all. Note this is reached only by a document that
+  //    already PASSED the registration-number gate above, so it is a rate
+  //    question, not a jurisdiction one — which is why a standard rate is
+  //    exempt from it.
   if (isForeign && !std && noTax) {
     return {
       name: noTax.name,
-      reason: `A ${cur} document taxed at ${pctOf(pct)}, which isn't a rate in this chart — foreign GST isn't Singapore input tax, so nothing is claimed.`,
+      reason:
+        `A ${cur} document taxed at ${pctOf(pct)}, which isn't a rate in this chart — ` +
+        `foreign ${pack.taxName} isn't ${pack.demonym} input tax, so nothing is claimed.`,
       claimsTax: false,
       ...facts,
     };
   }
 
   // 4. Xero's standard code for that rate. The organisation wrote no rule and
-  //    its visible list didn't answer, but 9% purchases are INPUTY24 everywhere
-  //    — leaving that blank helps nobody.
+  //    its visible list didn't answer, but 9% purchases are INPUTY24 in every
+  //    Singapore Xero and 10% ones are INPUT in every Australian one — leaving
+  //    that blank helps nobody.
   if (std) {
     // Prefer what this organisation calls it; fall back to Xero's own name.
     const own = everything.find((r) => String(r.code || '').trim().toUpperCase() === std.code);

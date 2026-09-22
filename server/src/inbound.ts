@@ -225,6 +225,10 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
         taxRates: inputs.taxRates,
         projects: inputs.projects,
         instructions: inputs.instructions,
+        // The country this entity's book is read under, already resolved for
+        // the tax decision — so the emailed document is read by a reader told
+        // exactly what the uploaded one's reader is told.
+        country: inputs.taxCtx.country,
         // The envelope itself, not a paragraph made from it: runExtraction adds
         // the note AND the file name, and has to be able to tell them apart.
         note: envelope,
@@ -389,13 +393,13 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     await keepMileageInStep(ws, realOrgId, getBillById(scope, billId), patch);
     // A payment proof is paid and states no tax — after the supplier rule, so
     // a rule's tax code does not claim GST on a transfer confirmation.
-    await keepPaymentProofInStep(getBillById(scope, billId), patch);
+    await keepPaymentProofInStep(getBillById(scope, billId), patch, { ws, orgId: realOrgId });
     // A quotation / pro-forma is not a tax invoice: No Tax, after the rule too.
-    await keepAdvanceInStep(getBillById(scope, billId), patch);
+    await keepAdvanceInStep(getBillById(scope, billId), patch, { ws, orgId: realOrgId });
     // A motor vehicle expense is No Tax — decided AFTER the supplier rule has
     // laid its category and its tax code over the read, since either can be
     // the half that makes it one, and a rule's code must not claim its GST.
-    await keepMotorVehicleNoTax(getBillById(scope, billId), patch);
+    await keepMotorVehicleNoTax(getBillById(scope, billId), patch, { ws, orgId: realOrgId });
     const saved = updateBill(scope, billId, patch);
     // The read ran. Whether it came back with anything is what decides where
     // the document lands, and it is asked of the SAVED document rather than of

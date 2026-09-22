@@ -1,4 +1,5 @@
 import type { Bill } from './store.js';
+import { zeroCodeName } from './jurisdiction.js';
 
 // A payment proof is paid, carries no tax, and is set aside to Archived,
 // server-side — it is never published (xero.ts refuses one), and its use is the
@@ -59,7 +60,11 @@ export async function isPaymentProofDoc(b: { documentType?: unknown } | null | u
  * `patch` in place; returns whether it wrote anything. Does nothing unless this
  * very write carries the type.
  */
-export async function keepPaymentProofInStep(current: Partial<Bill> | null, patch: Record<string, unknown>): Promise<boolean> {
+export async function keepPaymentProofInStep(
+  current: Partial<Bill> | null,
+  patch: Record<string, unknown>,
+  where: { ws: string; orgId: string } | null = null
+): Promise<boolean> {
   if (!('documentType' in patch)) return false;
   const r = await loadProofRules();
   if (!r) return false;
@@ -67,7 +72,9 @@ export async function keepPaymentProofInStep(current: Partial<Bill> | null, patc
   if (!r.isPaymentProof(doc.documentType)) return false;
   if (doc.xeroInvoiceId) return false;
   if (['deleted', 'merged', 'expenseclaim'].includes(String(doc.status || ''))) return false;
-  const out = r.paymentProofPatch(doc);
+  // The zero code by the name THIS entity's chart gives it: an Australian one
+  // has no "No Tax" row at all, and a code the chart lacks cannot be published.
+  const out = r.paymentProofPatch(doc, where ? await zeroCodeName(where.ws, where.orgId) : undefined);
   if (!Object.keys(out).length) return false;
   Object.assign(patch, out);
   // Set aside, not filed: a transfer confirmation is not a cost to code or

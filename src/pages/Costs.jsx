@@ -33,7 +33,7 @@ import {
   useXeroShortCode,
   useActiveOrganisation,
 } from '@/lib/organisations';
-import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
+import { useGstRegistered, useBusinessProfile, useCountry } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName, publishStatusLabel } from '@/lib/extractionSettings';
 import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument, retypeIfPaymentProof } from '@/lib/reRead';
@@ -933,10 +933,12 @@ export default function Costs() {
   // even for a document coded before the profile said so (opening the document
   // rewrites the stored value).
   const gstRegistered = useGstRegistered();
+  // Which country's GST rules this entity's documents are re-read under.
+  const country = useCountry();
   // The org's own currency, so "Foreign currency" means foreign to THIS entity.
   const baseCurrency = useBusinessProfile().baseCurrency;
   const readerName = useReaderName();
-  const noTaxName = noTaxRateName(taxRates);
+  const noTaxName = noTaxRateName(taxRates, { country });
   const taxRateOptions = gstRegistered ? taxRates.map((t) => t.name) : [noTaxName].filter(Boolean);
 
   // Every tab's rows, so its badge count ties to what the tab actually shows.
@@ -1394,6 +1396,7 @@ export default function Costs() {
       allTaxRates,
       defaultTaxRateCosts: settings.defaultTaxRateCosts,
       mileageRate: settings.mileageRate,
+      country,
     };
     const tally = { ok: 0, blank: 0, nofile: 0, failed: 0 };
     for (let i = 0; i < picked.length; i += 1) {

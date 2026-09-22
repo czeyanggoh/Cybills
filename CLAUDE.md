@@ -1131,6 +1131,85 @@ names the rate, what IS visible at it, and points at Business settings → Lists
 Tax rates. A blank field with no explanation is
 indistinguishable from a bug, which is exactly how one was reported.
 
+**And WHICH country's GST is the entity's own answer.** All of the above was
+Singapore's, in a dozen places, and none of it said so: the shape of a
+supplier's registration, the standard-rated codes and their vintages, what the
+zero code is called, and the practice's rule that a motor vehicle expense is
+never claimable. The practice now keeps Australian books too, and run unchanged
+against one the damage is silent and total — an ABN is not a UEN, so the
+evidence gate refuses every document, codes it No Tax and folds the GST into the
+cost. The client loses 10% on its whole book with nothing on any screen saying a
+rule was applied that does not belong to it.
+
+`src/lib/gstJurisdiction.js` is the country-specific half, one pack per
+jurisdiction (pure, `npm test` at the root), and `taxRateRules.js` asks the pack
+instead of knowing the answer. A pack carries what differs and nothing else: the
+registration number's shape, the codes a percentage may reach for, the
+standard-rated codes by rate, what "nothing claimed" is called, whether a motor
+vehicle expense is blocked, and the WORDS — the reader's prompt, the supplier
+rule dialog's field and its refusal, and the reason sentences are all assembled
+from it, so a reader hunting for a UEN on an Australian invoice and a gate
+refusing the ABN nobody asked it to read cannot be two halves of one bug.
+**Singapore is the default everywhere**: every book that exists is a Singapore
+one, and a jurisdiction nobody has answered for behaves exactly as it did before
+there were two — asserted directly, since that is the whole safety of it.
+
+**Australia's differences are each a real one.** The evidence is an **ABN** —
+eleven digits with a mod-89 checksum, which is the point of preferring it to a
+digit count, since a receipt photographed at an angle produces a plausible
+wrong one. A valid ABN plus a tax the document calls GST is the gate, the same
+shape Singapore's has; the rate question is left to the steps after it, so a
+New Zealand 15% is declined for having no code rather than for its
+registration. `INPUT` is **GST on Expenses at 10%**, not Singapore's 7%
+vintage, and the auto-code regexes are anchored so `INPUTTAXED` — zero-rated,
+one character away — is never reached from a percentage. Nothing claimable
+codes to **GST Free Expenses** rather than BAS Excluded: declining to claim is
+not a claim that the spending never happened, and no Australian chart has a
+"No Tax" at all, so the zero code could not stay a constant. And **the motor
+vehicle rule does not travel** — Australia claims the GST on fuel, parking and
+running costs like any other expense, so `blocksMotorVehicle` gates the branch
+in `taxRateOutcome`, the page's category picker, every server write and the
+listing sweep. Left in, it would strip a real credit off every petrol receipt
+in the book and say Singapore's reason while doing it.
+
+**The country is the entity's Business profile Country, and the server has a
+second way to find it.** That field was always there and nothing read it. It is
+populated from the linked Xero organisation's `CountryCode` — but only when
+somebody OPENS Business settings -> Business profile, so an entity nobody has
+opened that page for sits on the form's Singapore default, indistinguishable
+from a deliberate Singapore. `server/src/jurisdiction.ts` therefore resolves in
+three steps: the profile's Country whenever it is SET; else the linked Xero
+organisation's country, **written back to the profile** so the answer appears
+on the page it belongs on rather than living in a process (a bridge entity has
+no Xero of its own, so it asks the parent whose ledger its claims post into);
+else Singapore. The Xero lookup is remembered per entity for the life of the
+process — it is a relay call against a rate limit that every emailed document
+would otherwise spend, and an organisation's country does not change. It rides
+on `TaxContext` beside `gstRegistered`, so the upload, the re-read and the
+background read all get it from one place, and `/extract` resolves it
+SERVER-side from the caller's entity rather than taking it off the request, the
+same posture `resolveProvider` has and for a stronger reason.
+
+Malaysia and the United Kingdom are in that dropdown with no pack of their own.
+They fall to Singapore — which is what they did before — and the settings page
+**says so under the field** rather than letting the fallback be silent.
+`AUD` was also missing from `CURRENCY_LABEL`, so an Australian org synced from
+Xero kept the SGD label, `baseCurrencyCode` answered SGD, and every AUD document
+on its own book read as FOREIGN currency, which is its own reason to decline the
+tax. Covered by `npm test` at the root (`gst-jurisdiction`) and in `server/`
+(`test/jurisdiction.test.mts`, driven through `autoRead` against a stubbed
+reader whose request is captured, so what is asserted about the prompt is the
+prompt that actually goes out).
+
+Not done, and worth knowing before a real Australian book is coded: a **mixed
+supply** — an Australian till receipt where some lines carry GST and some are
+GST-free, so the tax is less than 1/11th of the total — reaches the
+"left blank, and here is why" step rather than being split. The machinery for
+splitting one exists (`splitByPrintedRate`), but it fires only where the
+document PRINTS a percentage that disagrees with the money, and a supermarket
+receipt prints neither. An ordinary supplier invoice, which is most of what
+CYBills reads, is exactly 10% and unaffected.
+
 ## A workspace an entity doesn't use is not a tab
 
 Most CYBM clients raise their own invoices in Xero and never file a sales

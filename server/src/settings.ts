@@ -27,6 +27,21 @@ export function readSetting<T = unknown>(ws: string, key: string, org = ''): T |
   return (value ?? null) as T | null;
 }
 
+// Write one settings blob server-side, at the per-entity key the client reads.
+// Only for a fact the SERVER establishes and the browser then has to be able to
+// see — the entity's country, read off its linked Xero organisation
+// (jurisdiction.ts). A server-side answer the settings page cannot show is an
+// invisible one, and an invisible answer about which country's GST rules a book
+// is read under is exactly the thing that must not be invisible.
+export function writeSetting(ws: string, key: string, org: string, value: unknown): void {
+  const items = loadCollection<Setting>(COLLECTION);
+  const full = `${key}::${org || 'default'}`;
+  const rec = items.find((s) => s.workspaceId === ws && s.key === full);
+  if (rec) rec.value = value;
+  else items.push({ workspaceId: ws, key: full, value });
+  saveCollection(COLLECTION, items);
+}
+
 // Every entity's copy of one per-entity blob — for a fact that is not the
 // entity's own, like a supplier's GST registration number typed on one client's
 // supplier rule, which is just as true in every other client's book.

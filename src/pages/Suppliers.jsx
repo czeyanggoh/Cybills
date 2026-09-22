@@ -11,6 +11,7 @@ import SupplierMergeModal from '@/components/SupplierMergeModal';
 import { useCategoryOptions, useXeroSuppliers, useXeroCustomers, useXeroProjectOptions, useXeroPaymentMethods, useVisibleTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { noTaxRateName } from '@/lib/extractionSettings';
+import { useCountry } from '@/lib/businessProfile';
 import { useCostsDocs } from '@/lib/costsData';
 import { updateBill } from '@/lib/bills';
 import { CURRENCIES, clearSupplierRule, getSupplierRule, setSupplierRule, supplierRulePatch, supplierRuleCount, useSupplierRules } from '@/lib/supplierRules';
@@ -80,9 +81,13 @@ export default function Suppliers() {
   const paymentMethods = useXeroPaymentMethods();
   const taxRateSource = useVisibleTaxRates();
   const gstRegistered = useGstRegistered();
+  // The one code a business that isn't registered may use, by the name ITS own
+  // chart gives it: "No Tax" in a Singapore book, "GST Free Expenses" in an
+  // Australian one (src/lib/gstJurisdiction.js).
+  const country = useCountry();
   const taxRateOptions = gstRegistered
     ? taxRateSource.map((t) => t.name)
-    : [noTaxRateName(taxRateSource)].filter(Boolean);
+    : [noTaxRateName(taxRateSource, { country })].filter(Boolean);
   const { allDocs, reload } = useCostsDocs();
   const [rulesFor, setRulesFor] = useState('');
   useSupplierRules(); // re-render when a supplier's rules change

@@ -53,7 +53,7 @@ import { readWalk, walkPosition } from '@/lib/listView';
 import { totalOk } from '@/lib/readiness';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { readDecisions } from '@/lib/reRead';
-import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
+import { useGstRegistered, useBaseCurrency, useCountry } from '@/lib/businessProfile';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
 import { useAutoSave } from '@/lib/useAutoSave';
 import { isMileage, mileagePatch, mileageSummary } from '@/lib/mileage';
@@ -76,6 +76,7 @@ import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 import ZoomableImage from '@/components/ZoomableImage';
 import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from '@/lib/motorVehicle';
+import { jurisdictionFor } from '@/lib/gstJurisdiction';
 
 function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
   return (
@@ -314,10 +315,15 @@ export default function CostDetail() {
   // Not GST-registered → every document codes to No Tax and no GST is split out,
   // and the picker offers nothing else.
   const gstRegistered = useGstRegistered();
+  // Which country's GST rules this entity's book is read under — it decides the
+  // zero code's own name as well as the tax decision (gstJurisdiction.js).
+  const country = useCountry();
   const salesEnabled = useSalesEnabled();
   // The entity's own currency, and whether this document was billed in another.
   const baseCurrency = useBaseCurrency();
-  const noTaxName = noTaxRateName(taxRateSource);
+  // The entity's own zero code, by whatever its chart calls it — "No Tax" in a
+  // Singapore book, "GST Free Expenses" in an Australian one.
+  const noTaxName = noTaxRateName(taxRateSource, { country });
   const taxRateOptions = gstRegistered
     ? taxRateSource.map((t) => t.name)
     : [noTaxName].filter(Boolean);
@@ -795,18 +801,21 @@ export default function CostDetail() {
     // Moved onto a motor vehicle account: No Tax, the same as the server holds it
     // (server/src/motorVehicle.ts) — shown here at once, so the form does not
     // keep claiming GST the stored document has already given up. Not where a
-    // person picked the code themselves.
+    // person picked the code themselves, and not at all in a jurisdiction that
+    // CLAIMS that GST: it is Singapore's rule, and Australia's fuel receipts
+    // keep their credit (src/lib/gstJurisdiction.js).
     if (
       key === 'category' &&
+      jurisdictionFor(country).blocksMotorVehicle &&
       !data.taxRateEdited &&
       !data.taxRateCleared &&
       isMotorVehicleExpense({ category: value, motorVehicle: doc?.motorVehicle === true })
     ) {
-      const noTaxName = noTaxRateName(taxRateSource) || MOTOR_VEHICLE_TAX_RATE;
+      const motorNoTax = noTaxRateName(taxRateSource, { country }) || MOTOR_VEHICLE_TAX_RATE;
       setData((d) => ({
         ...d,
-        taxRate: noTaxName,
-        taxRateReason: motorVehicleReason({ category: value }),
+        taxRate: motorNoTax,
+        taxRateReason: motorVehicleReason({ category: value, country }),
         tax: '0.00',
         lineItems: Array.isArray(d.lineItems) && d.lineItems.length ? foldTaxIntoCost(d.lineItems) : d.lineItems,
       }));
@@ -1538,6 +1547,7 @@ export default function CostDetail() {
         patch, rule, descr, supplierName, categoryReason, projectReason, ruleLines,
       } = readDecisions(data, ex, {
         gstRegistered,
+        country,
         taxRates: taxRateSource,
         allTaxRates,
         defaultTaxRateCosts: extractionSettings.defaultTaxRateCosts,

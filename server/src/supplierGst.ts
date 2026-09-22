@@ -28,7 +28,7 @@ import { listBillsAcrossScopes } from './store.js';
 //   - only a number READ off a document counts. One carried over is marked
 //     `supplierGstRegNoRemembered` and is never itself a source, so a number
 //     can only ever travel one step from the paper it was printed on;
-//   - only a number that passes isSingaporeGstRegNo — a foreign registration is
+//   - only a number that passes the entity's own isTaxRegNo — a foreign registration is
 //     the very thing the gate exists to decline, and remembering it would make a
 //     Malaysian supplier's SST claimable by association;
 //   - the supplier is matched by NAME, normalised the way supplier duplicates
@@ -42,11 +42,19 @@ import { listBillsAcrossScopes } from './store.js';
 //
 // The pure rules (the number's shape, the name's normal form) live in the two
 // browser modules and are loaded by path, the way taxRules.ts loads the tax
-// decision, so what counts as a Singapore number cannot differ between here
-// and the gate it feeds.
+// decision, so what counts as a valid number cannot differ between here and the
+// gate it feeds.
+//
+// WHICH shape is valid is the asking entity's jurisdiction (jurisdiction.ts): a
+// UEN in a Singapore book, an ABN in an Australian one. Asked per entity rather
+// than once, because the memory reaches ACROSS books — a supplier's
+// registration is a fact about the supplier, not about whose book it is being
+// read in — and a number remembered from an Australian client is no evidence at
+// all in a Singapore one. A caller with no entity at hand is Singapore, which
+// is what this did before there were two.
 
 type Rules = {
-  isSingaporeGstRegNo: (v: unknown) => boolean;
+  isTaxRegNo: (v: unknown, country?: unknown) => boolean;
   normaliseSupplier: (v: unknown) => string;
 };
 let cache: Rules | null = null;
@@ -59,8 +67,8 @@ async function loadRules(): Promise<Rules | null> {
     const tax = await import(new URL('../../src/lib/taxRateRules.js', import.meta.url).href);
     const sup = await import(new URL('../../src/lib/supplierDuplicates.js', import.meta.url).href);
     cache =
-      typeof tax?.isSingaporeGstRegNo === 'function' && typeof sup?.normaliseSupplier === 'function'
-        ? { isSingaporeGstRegNo: tax.isSingaporeGstRegNo, normaliseSupplier: sup.normaliseSupplier }
+      typeof tax?.isTaxRegNo === 'function' && typeof sup?.normaliseSupplier === 'function'
+        ? { isTaxRegNo: tax.isTaxRegNo, normaliseSupplier: sup.normaliseSupplier }
         : null;
   } catch (e) {
     console.error('[supplierGst] rules unavailable', e);
@@ -70,6 +78,14 @@ async function loadRules(): Promise<Rules | null> {
 }
 
 const compact = (v: string) => v.toUpperCase().replace(/[\s.-]/g, '');
+
+// The jurisdiction whose registration shape counts here. Singapore for a caller
+// with no entity at hand, as everywhere.
+async function countryFor(ctx: RuleContext): Promise<string> {
+  if (!ctx) return 'Singapore';
+  const { countryForOrg } = await import('./jurisdiction.js');
+  return countryForOrg(ctx.ws, ctx.orgId);
+}
 
 // Where a number that was not read off the document came from — stored as
 // `supplierGstRegNoFrom`, and what the tax reason names:
@@ -100,12 +116,13 @@ function sight(seen: Map<string, Vote>, reg: string, at = '') {
 type RuleMap = Record<string, { gstRegNo?: unknown } | undefined>;
 
 // The number a supplier rule names for this supplier, in one rules blob; ''
-// when the rule names none, or one that isn't a Singapore number.
-function ruleNumber(rules: Rules, map: RuleMap | null, key: string): string {
+// when the rule names none, or one that isn't a number this jurisdiction
+// recognises.
+function ruleNumber(rules: Rules, map: RuleMap | null, key: string, country: string): string {
   for (const [name, rule] of Object.entries(map || {})) {
     if (rules.normaliseSupplier(name) !== key) continue;
     const reg = String(rule?.gstRegNo ?? '').trim();
-    if (reg && rules.isSingaporeGstRegNo(reg)) return reg;
+    if (reg && rules.isTaxRegNo(reg, country)) return reg;
   }
   return '';
 }
@@ -114,7 +131,7 @@ function ruleNumber(rules: Rules, map: RuleMap | null, key: string): string {
 // optional here so the memory still works for a caller with no entity at hand.
 export type RuleContext = { ws: string; orgId: string } | null;
 
-// The Singapore GST number known for a supplier from somewhere other than the
+// The registration number known for a supplier from somewhere other than the
 // document in hand, and where it came from. A re-read counts the document's
 // OWN earlier read like any other: that number was printed on this very paper,
 // which is the best evidence there is.
@@ -126,18 +143,19 @@ export async function knownGstRegNo(
   if (!rules) return null;
   const key = rules.normaliseSupplier(supplier);
   if (!key) return null;
+  const country = await countryFor(ctx);
 
   if (ctx) {
     const { readSetting, readSettingAcrossOrgs } = await import('./settings.js');
     // This entity's rule: a person's instruction for this book, so it decides.
-    const own = ruleNumber(rules, readSetting<RuleMap>(ctx.ws, 'cybills.supplier.rules.v1', ctx.orgId), key);
+    const own = ruleNumber(rules, readSetting<RuleMap>(ctx.ws, 'cybills.supplier.rules.v1', ctx.orgId), key, country);
     if (own) return { reg: own, from: 'rule' };
     // Another entity's: the same supplier's registration, typed deliberately by
     // somebody who looked it up — better evidence than any read, as long as the
     // rules that name one agree.
     const typed = new Map<string, Vote>();
     for (const map of readSettingAcrossOrgs<RuleMap>(ctx.ws, 'cybills.supplier.rules.v1')) {
-      const reg = ruleNumber(rules, map, key);
+      const reg = ruleNumber(rules, map, key, country);
       if (reg) sight(typed, reg);
     }
     const other = winner(typed);
@@ -148,7 +166,7 @@ export async function knownGstRegNo(
   for (const b of listBillsAcrossScopes()) {
     if (b.status === 'deleted' || b.supplierGstRegNoRemembered) continue;
     const reg = String(b.supplierGstRegNo || '').trim();
-    if (!reg || !rules.isSingaporeGstRegNo(reg)) continue;
+    if (!reg || !rules.isTaxRegNo(reg, country)) continue;
     if (rules.normaliseSupplier(b.supplier) !== key) continue;
     sight(seen, reg, String(b.createdAt || ''));
   }
@@ -166,7 +184,7 @@ export async function rememberedGstRegNo(supplier: unknown): Promise<string> {
 // A read's answer with the supplier's known number filled in where the read
 // found none that counts.
 //
-// A valid Singapore number read off the paper always stands. Otherwise:
+// A valid number read off the paper always stands. Otherwise:
 //   - THIS entity's supplier rule fills it even over a number the read found
 //     that isn't a Singapore one. Somebody typed that rule for this supplier,
 //     which makes a misread the likelier story, and a rule is an instruction —
@@ -181,7 +199,7 @@ export async function withRememberedGstRegNo<T extends { supplier?: unknown; sup
   const rules = await loadRules();
   const read = String(data.supplierGstRegNo ?? '').trim();
   const asRead = { ...data, supplierGstRegNoRemembered: false, supplierGstRegNoFrom: '' as const };
-  if (read && rules?.isSingaporeGstRegNo(read)) return asRead;
+  if (read && rules?.isTaxRegNo(read, await countryFor(ctx))) return asRead;
   const hit = await knownGstRegNo(data.supplier, ctx);
   if (!hit || (read && hit.from !== 'rule')) return asRead;
   return { ...data, supplierGstRegNo: hit.reg, supplierGstRegNoRemembered: true, supplierGstRegNoFrom: hit.from };

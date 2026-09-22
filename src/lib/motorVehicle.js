@@ -1,5 +1,13 @@
 // A motor vehicle expense incurred in Singapore is No Tax. Always, in every
-// client's book.
+// Singapore client's book.
+//
+// It is SINGAPORE's rule, and that is not a detail: Australia claims the GST on
+// fuel, parking and running costs like any other expense, so whether this rule
+// applies at all is the jurisdiction's answer (gstJurisdiction.js —
+// `blocksMotorVehicle`), asked by taxRateOutcome and by the server's writes and
+// sweeps before either reaches for what is below. Applied to an Australian book
+// it would quietly strip a real credit off every petrol receipt in it, which is
+// the same silent damage it exists to prevent here.
 //
 // The practice's rule, and one CYBills was quietly breaking. Nearly every
 // client's chart already says it: "449 - Motor Vehicle Expenses" defaults to
@@ -65,12 +73,12 @@ export const MOTOR_VEHICLE_TAX_RATE = 'No Tax';
  * is a motor vehicle expense" sends them to the paper — and it says how to make
  * the exception, since a goods vehicle is the real one.
  */
-export function motorVehicleReason({ category = '', motorVehicle = false } = {}) {
+export function motorVehicleReason({ category = '', motorVehicle = false, country = 'Singapore' } = {}) {
   const why = isMotorVehicleCategory(category)
     ? `Coded to ${String(category).trim()}, a motor vehicle account`
     : 'The document is a motor vehicle expense';
   return (
-    `${why}: motor vehicle expenses incurred in Singapore are always No Tax, with any GST left in the cost. ` +
+    `${why}: motor vehicle expenses incurred in ${country || 'Singapore'} are always No Tax, with any GST left in the cost. ` +
     'For a goods vehicle whose GST is claimable, pick the code by hand.'
   );
 }

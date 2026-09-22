@@ -1,4 +1,5 @@
 import type { Bill } from './store.js';
+import { zeroCodeName } from './jurisdiction.js';
 import {
   getBillById,
   listBills,
@@ -70,7 +71,11 @@ export async function isAdvanceDoc(b: { documentType?: unknown } | null | undefi
  * Tax, with its reason. Mutates `patch`; runs only on a write that SETS the type,
  * the way keepPaymentProofInStep does, so a code picked afterwards is kept.
  */
-export async function keepAdvanceInStep(current: Partial<Bill> | null, patch: Record<string, unknown>): Promise<boolean> {
+export async function keepAdvanceInStep(
+  current: Partial<Bill> | null,
+  patch: Record<string, unknown>,
+  where: { ws: string; orgId: string } | null = null
+): Promise<boolean> {
   if (!('documentType' in patch)) return false;
   const r = await loadPrepaymentRules();
   if (!r) return false;
@@ -78,7 +83,8 @@ export async function keepAdvanceInStep(current: Partial<Bill> | null, patch: Re
   if (!r.isAdvanceDocument(doc.documentType)) return false;
   if (doc.xeroInvoiceId || doc.prepayment) return false;
   if (['deleted', 'merged', 'expenseclaim'].includes(String(doc.status || ''))) return false;
-  const out = r.advancePatch(doc);
+  // The zero code by the name THIS entity's chart gives it (jurisdiction.ts).
+  const out = r.advancePatch(doc, where ? await zeroCodeName(where.ws, where.orgId) : undefined);
   if (!Object.keys(out).length) return false;
   Object.assign(patch, out);
   if ('taxRate' in out) {

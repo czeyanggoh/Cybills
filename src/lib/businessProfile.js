@@ -41,6 +41,25 @@ export function getBusinessProfile() {
   };
 }
 
+// WHICH country's GST rules this entity's documents are read under. The Country
+// field is no longer a display detail: it picks the rules pack
+// (src/lib/gstJurisdiction.js) — the shape of a supplier's registration number,
+// the standard-rated codes and rates, what the zero code is called, and whether
+// a motor vehicle expense is claimable at all. Singapore for a profile that has
+// never been filled in, which is what every book was before there were two.
+//
+// The server resolves the same thing for a background read, from this same
+// field, falling back to the linked Xero organisation's country
+// (server/src/jurisdiction.ts) — so an entity nobody has opened this page for
+// is not silently read under the wrong country's rules.
+export function countryOf(profile) {
+  return String(profile?.country || '').trim() || 'Singapore';
+}
+
+export function useCountry() {
+  return countryOf(useBusinessProfile());
+}
+
 // Is the company GST-registered? When it isn't, there's no input tax to claim,
 // so every document it submits codes to "No Tax" and nothing is analysed —
 // see resolveTaxRate in extractionSettings.js. Anything other than an explicit
@@ -87,6 +106,10 @@ export function useBusinessProfile() {
 const COUNTRY_BY_CODE = { SG: 'Singapore', MY: 'Malaysia', GB: 'United Kingdom', AU: 'Australia' };
 const CURRENCY_LABEL = {
   SGD: 'SGD — Singapore, Dollars',
+  // Without this an Australian org synced from Xero kept the SGD label, so
+  // `baseCurrencyCode` answered SGD and every AUD document on its own book read
+  // as FOREIGN currency — which is its own reason to decline the tax.
+  AUD: 'AUD — Australian, Dollars',
   USD: 'USD — US, Dollars',
   MYR: 'MYR — Malaysian, Ringgit',
   GBP: 'GBP — British, Pounds',

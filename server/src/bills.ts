@@ -361,9 +361,11 @@ billsRouter.get('/bills', async (req, res) => {
   void repairZeroTaxAmounts(orgId).catch((err) =>
     console.error('[bills] zero-tax repair failed', err)
   );
-  // A motor vehicle expense is No Tax in every client's book, including the
-  // ones read before the rule existed (motorVehicle.ts).
-  void enforceMotorVehicleNoTax(orgId).catch((err) =>
+  // A motor vehicle expense is No Tax in every SINGAPORE client's book,
+  // including the ones read before the rule existed (motorVehicle.ts). An
+  // Australian entity claims that GST, so the sweep asks which this is and
+  // leaves an Australian book alone.
+  void enforceMotorVehicleNoTax(orgId, { ws: workspaceId(req), orgId: orgScope(req) }).catch((err) =>
     console.error('[bills] motor vehicle sweep failed', err)
   );
   // File any Auto Expense claim whose period has ended. Rides on the fetch every
@@ -781,12 +783,21 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   await keepMileageInStep(workspaceId(req), orgScope(req), getBillById(orgId, req.params.id), patch);
   // Typed as a payment proof — the page's Type field, Bulk edit — it is paid
   // and states no tax; only a write carrying the type is touched.
-  await keepPaymentProofInStep(getBillById(orgId, req.params.id), patch);
+  await keepPaymentProofInStep(getBillById(orgId, req.params.id), patch, {
+    ws: workspaceId(req),
+    orgId: orgScope(req),
+  });
   // Typed as a quotation / pro-forma — not a tax invoice, so No Tax.
-  await keepAdvanceInStep(getBillById(orgId, req.params.id), patch);
+  await keepAdvanceInStep(getBillById(orgId, req.params.id), patch, {
+    ws: workspaceId(req),
+    orgId: orgScope(req),
+  });
   // Moved onto a motor vehicle account — the page's picker, the inline cell,
   // Bulk edit — it is No Tax, unless this very write is a person picking a code.
-  await keepMotorVehicleNoTax(getBillById(orgId, req.params.id), patch);
+  await keepMotorVehicleNoTax(getBillById(orgId, req.params.id), patch, {
+    ws: workspaceId(req),
+    orgId: orgScope(req),
+  });
   // A code that carries no tax means no tax recorded — the same invariant the
   // form applies when somebody picks the code, applied again here so no other
   // caller can store the pair. Reads the rate being SET, else the one the
@@ -1131,9 +1142,15 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   if (b.mileageRate != null) patch.mileageRate = parseAmount(b.mileageRate);
   await keepMileageInStep(workspaceId(req), orgScope(req), getBillById(orgId, req.params.id), patch);
   // A payment proof lands paid and at No Tax, whatever the reader made of it.
-  await keepPaymentProofInStep(getBillById(orgId, req.params.id), patch);
+  await keepPaymentProofInStep(getBillById(orgId, req.params.id), patch, {
+    ws: workspaceId(req),
+    orgId: orgScope(req),
+  });
   // A quotation / pro-forma lands at No Tax: it is not a tax invoice.
-  await keepAdvanceInStep(getBillById(orgId, req.params.id), patch);
+  await keepAdvanceInStep(getBillById(orgId, req.params.id), patch, {
+    ws: workspaceId(req),
+    orgId: orgScope(req),
+  });
 
   const updated = updateBill(orgId, req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'not_found' });

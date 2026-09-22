@@ -22,6 +22,7 @@ import ListsSettings from '@/components/ListsSettings';
 import { cn } from '@/lib/utils';
 import { useCategoryDisplayMode, setCategoryDisplayMode, useCategorySortMode, setCategorySortMode } from '@/lib/categoryDisplay';
 import { useBusinessProfile, saveBusinessProfile, mergeXeroProfile, useBaseCurrency } from '@/lib/businessProfile';
+import { jurisdictionNote } from '@/lib/gstJurisdiction';
 import { useExportSettings, saveExportSettings, EXPORT_COLUMNS, RECEIPT_FORMATS } from '@/lib/exportSettings';
 import { useReviewInstructions, saveReviewInstructions } from '@/lib/reviewInstructions';
 import { useAutoSave } from '@/lib/useAutoSave';
@@ -396,9 +397,12 @@ function BusinessProfile() {
         <Row label="Practice code"><TextInput value={form.practiceCode} onChange={(v) => set('practiceCode', v)} /></Row>
         <Row label="Country of registration" required>
           <SelectBox value={form.country} onChange={(v) => set('country', v)} options={['Singapore', 'Malaysia', 'United Kingdom', 'Australia']} />
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {jurisdictionNote(form.country)}
+          </p>
         </Row>
         <Row label="Base currency">
-          <SelectBox value={form.baseCurrency} onChange={(v) => set('baseCurrency', v)} options={['SGD — Singapore, Dollars', 'USD — US, Dollars', 'MYR — Malaysian, Ringgit', 'GBP — British, Pounds']} />
+          <SelectBox value={form.baseCurrency} onChange={(v) => set('baseCurrency', v)} options={['SGD — Singapore, Dollars', 'AUD — Australian, Dollars', 'USD — US, Dollars', 'MYR — Malaysian, Ringgit', 'GBP — British, Pounds']} />
         </Row>
         <Row label="Account language">
           <SelectBox value={form.language} onChange={(v) => set('language', v)} options={['English', 'Chinese', 'Malay']} />

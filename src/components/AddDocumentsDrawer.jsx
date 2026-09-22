@@ -21,7 +21,7 @@ import {
 } from '@/lib/bills';
 import { prepareUpload } from '@/lib/image';
 import { getExtractionAccounts, useVisibleTaxRates, useManagedTaxRates, useXeroShortCode } from '@/lib/organisations';
-import { useGstRegistered } from '@/lib/businessProfile';
+import { useGstRegistered, useCountry } from '@/lib/businessProfile';
 import { autoPublishAfterRead, xeroBillUrl } from '@/lib/autoPublish';
 import { getCustomerRule } from '@/lib/customerRules';
 import {
@@ -366,6 +366,8 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
   // Unfiltered too — a switched-off code is still the standard one for its rate.
   const allTaxRates = useManagedTaxRates();
   const gstRegistered = useGstRegistered();
+  // Which country's GST rules a freshly-uploaded document is coded under.
+  const country = useCountry();
   const [tab, setTab] = useState('Costs');
   // An entity that has hidden the Sales workspace has nowhere to put a sales
   // document, so it is not offered one to upload — the drawer is the only way
@@ -496,14 +498,17 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           kind,
           accountTaxType: account?.taxType || '',
           accountLabel: account?.code || '',
-          // Only Singapore GST from a registered supplier is claimable.
+          // Only this jurisdiction's GST, from a supplier registered for it,
+          // is claimable — a UEN in a Singapore book, an ABN in an Australian.
           gstRegNo: extracted?.supplierGstRegNo || '',
           taxLabel: extracted?.taxLabel || '',
           printedRate: extracted?.taxRatePrinted || 0,
           gstRegNoRemembered: extracted?.supplierGstRegNoRemembered ? extracted.supplierGstRegNoFrom || 'document' : false,
-          // A motor vehicle expense is No Tax, by its account or by the paper.
+          // A motor vehicle expense is No Tax, by its account or by the paper
+          // — where the jurisdiction blocks it, which Australia does not.
           category: codedTo,
           motorVehicle: extracted?.motorVehicle === true,
+          country,
         });
         claimsTax = outcome.claimsTax !== false;
         rateOutcome = outcome;
@@ -514,7 +519,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
       }
       // Nothing to claim → the tax isn't recorded as GST; it stays inside the
       // cost. Either this business isn't registered, or the supplier's tax
-      // isn't Singapore GST (see claimableSgGst).
+      // isn't this jurisdiction's GST (see claimableInputTax).
       // The base-currency tax follows the tax it restates: the two are one
       // figure said in two currencies, and a document showing 0.00 of GST
       // beside 0.72 of SGD GST is not one anybody can act on. The base TOTAL
@@ -545,7 +550,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           rate: rateOutcome.printedRate,
           category: p.category ?? cur?.category ?? '',
           taxRateName: p.taxRate,
-          noTaxName: noTaxRateName(visibleTaxRates) || 'No Tax',
+          noTaxName: noTaxRateName(visibleTaxRates, { country }) || 'No Tax',
         });
         if (split && !linesAgreeWithTotal(p.lineItems ?? cur?.lineItems, cur?.total)) {
           p.lineItems = split.rows;
@@ -556,9 +561,9 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
       // A payment proof is paid and states no tax, whatever the reader made of
       // it and whatever the paid-by-default settings say — the same rule the
       // page's Type field and the server's writes apply.
-      Object.assign(p, paymentProofPatch({ ...cur, ...p, taxRate: p.taxRate ?? cur?.taxRate }, noTaxRateName(visibleTaxRates)));
+      Object.assign(p, paymentProofPatch({ ...cur, ...p, taxRate: p.taxRate ?? cur?.taxRate }, noTaxRateName(visibleTaxRates, { country })));
       // A quotation / pro-forma is not a tax invoice: No Tax, the same rule.
-      Object.assign(p, advancePatch({ ...cur, ...p, taxRate: p.taxRate ?? cur?.taxRate }, noTaxRateName(visibleTaxRates)));
+      Object.assign(p, advancePatch({ ...cur, ...p, taxRate: p.taxRate ?? cur?.taxRate }, noTaxRateName(visibleTaxRates, { country })));
       // Due date, in order of what the evidence supports:
       //   1. the date printed on the document (or what its stated terms resolve
       //      to) — the supplier's own answer, so nothing beats it

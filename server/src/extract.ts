@@ -7,6 +7,7 @@ import { withRememberedGstRegNo } from './supplierGst.js';
 import { workspaceId } from './workspace.js';
 import { orgScope } from './users.js';
 import { readDocument, resolveProvider, type Provider } from './llm.js';
+import { countryForOrg } from './jurisdiction.js';
 
 // Categories are provided per-request by the client (the org's Category list) so
 // the model classifies into a value that actually exists in the UI. These are
@@ -17,7 +18,13 @@ const DEFAULT_CATEGORIES = ['Uncategorised', 'Others'];
 // categories so the model must return one that maps to a real dropdown value.
 // additionalProperties:false + required on every field is mandatory for strict
 // structured outputs.
-function buildSchema(categories: string[], taxRateNames: string[], projectNames: string[], customerNames: string[] = []) {
+function buildSchema(
+  categories: string[],
+  taxRateNames: string[],
+  projectNames: string[],
+  customerNames: string[] = [],
+  jur: JurisdictionWords = SINGAPORE_WORDS
+) {
   // Tax-rate picking is only offered when the org has written "when to use"
   // rules (Lists → Tax rates). No rules → the fields are left out of the schema
   // entirely, so the model is never asked to guess a tax code.
@@ -115,7 +122,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       currency: {
         type: 'string',
         description:
-          'The 3-letter ISO code the amounts are in, as the document gives it: AUD, USD, MYR, GBP. Do NOT default to SGD — a Singapore business is billed in every currency, and a foreign amount recorded as local money is wrong in the ledger by the whole exchange rate. Where only a SYMBOL is printed, the supplier decides it: "$" beside an ABN or 10% GST is AUD, beside a UEN or 9%/8%/7% GST is SGD, "RM" is MYR, "£" GBP, "€" EUR, and a US address with "$" is USD. Answer SGD only when nothing on the document — code, symbol, tax rate, registration number or address — says otherwise.',
+          `The 3-letter ISO code the amounts are in, as the document gives it: AUD, SGD, USD, MYR, GBP. Do NOT default to ${jur.currency} — a business is billed in every currency, and a foreign amount recorded as local money is wrong in the ledger by the whole exchange rate. Where only a SYMBOL is printed, the supplier decides it: "$" beside an ABN or 10% GST is AUD, beside a UEN or 9%/8%/7% GST is SGD, "RM" is MYR, "£" GBP, "€" EUR, and a US address with "$" is USD. ${jur.currencyHint}.`,
       },
       total: { type: 'number', description: 'Grand total amount' },
       tax: { type: 'number', description: 'Tax / GST amount; 0 if none shown' },
@@ -421,6 +428,12 @@ export type ExtractionInputs = {
   taxRates: TaxRateRef[];
   projects: NamedRule[];
   instructions: string;
+  // Which country's GST rules this entity's book is read under, as the Business
+  // profile spells it (jurisdiction.ts). It decides what the reader is told to
+  // look for as the supplier's registration — a UEN or an ABN — and which
+  // currency it may assume when a document prints only a symbol. Singapore when
+  // unset, which is what every read did before there were two.
+  country?: string;
   // What the sender said about THIS document, whichever road it arrived by: an
   // email's covering message, a WhatsApp caption, and on every road the name
   // they gave the file. Passed as the envelope rather than pre-appended to
@@ -517,6 +530,44 @@ async function loadAttendeeRules(): Promise<AttendeeRules | null> {
     attendeeRules = null;
   }
   return attendeeRules;
+}
+
+// Which country's GST rules this read is for, in the words the prompt needs.
+// Same pure module the tax decision uses (src/lib/gstJurisdiction.js), so the
+// reader is told to look for the very registration the gate will ask for — the
+// alternative is a reader hunting for a UEN on an Australian invoice and a
+// decision refusing the ABN nobody asked it to read.
+type JurisdictionWords = {
+  demonym: string;
+  currency: string;
+  regNoDescription: string;
+  confusable: string;
+  currencyHint: string;
+};
+// The fallback IS Singapore's, word for word what this prompt said before there
+// was a second jurisdiction — so a module that cannot be loaded changes nothing.
+const SINGAPORE_WORDS: JurisdictionWords = {
+  demonym: 'Singapore',
+  currency: 'SGD',
+  regNoDescription: 'a Singapore UEN or GST registration number',
+  confusable: 'a Thai invoice at 7% VAT and a Singapore one at 7% GST look identical in the numbers alone',
+  currencyHint: 'Answer SGD only when nothing on the document — code, symbol, tax rate, registration number or address — says otherwise',
+};
+let jurisdictionMod: { jurisdictionFor?: (c: unknown) => JurisdictionWords } | null = null;
+let jurisdictionTried = false;
+
+async function loadJurisdiction(country: unknown): Promise<JurisdictionWords | null> {
+  if (!jurisdictionTried) {
+    jurisdictionTried = true;
+    try {
+      const url = new URL('../../src/lib/gstJurisdiction.js', import.meta.url).href;
+      jurisdictionMod = (await import(url)) as { jurisdictionFor?: (c: unknown) => JurisdictionWords };
+    } catch (e) {
+      console.error('[extract] jurisdiction rules unavailable', e);
+      jurisdictionMod = null;
+    }
+  }
+  return typeof jurisdictionMod?.jurisdictionFor === 'function' ? jurisdictionMod.jurisdictionFor(country) : null;
 }
 
 // What the sender said about this document, as guidance for the read.
@@ -651,6 +702,10 @@ export function restatement(d: {
 // comes back as { ok:false }. The caller records usage from `outcome`.
 export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionResult> {
   const { accounts, provider, imageBase64, mediaType } = inp;
+  // The jurisdiction's own words for the sentences below. Loaded by path like
+  // every other pure rule module here; Singapore if it cannot be loaded, which
+  // is exactly what this prompt said before there was a second country.
+  const jur = (await loadJurisdiction(inp.country)) ?? SINGAPORE_WORDS;
 
   // Prefer a Xero chart of accounts (with descriptions); otherwise fall back to
   // a plain category list. Either way, always include an "Uncategorised" escape.
@@ -782,13 +837,14 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'A YEAR is the one part that is often not printed at all: a food-delivery or ride-hailing order summary says "Delivered on 30 Sep 12:37" and nothing more. Keep the printed day and month exactly and supply only the year — first from elsewhere on the same document, else the most recent occurrence of that day and month, and a year you supply must never put the date in the future. ' +
     'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
     'pick "Uncategorised" only when none reasonably fit. ' +
-    'Read `supplierGstRegNo` and `taxLabel` from the document exactly as printed. They decide whether the tax charged is Singapore GST a business may claim, ' +
-    'or a foreign tax it may not — a Thai invoice at 7% VAT and a Singapore one at 7% GST look identical in the numbers alone, and only the registration number and the wording tell them apart. ' +
+    `Read \`supplierGstRegNo\` and \`taxLabel\` from the document exactly as printed. They decide whether the tax charged is ${jur.demonym} GST a business may claim, ` +
+    `or a foreign tax it may not — ${jur.confusable} — and only the registration number and the wording tell them apart. ` +
+    `The registration number to read is ${jur.regNoDescription}. ` +
     'The registration number must be the SUPPLIER\'s, never the buyer\'s. ' +
     'Read `billedTo` (and `billedToRegNo` where one is printed) from the party the document is issued TO — the bill-to block, not the letterhead. ' +
     'It is used for one thing only: checking the document is filed under the right company. It never decides the category, the project or anything else, ' +
     'and where no customer is named at all — a till receipt, a card slip — it must be an empty string rather than a guess taken from elsewhere on the page. ' +
-    'Where the document restates its own totals in a SECOND currency for tax purposes — a Singapore GST-registered supplier billing in foreign currency has to show what the supply is worth in SGD — read `baseCurrency`, `baseTotal`, `baseTax` and `exchangeRate` off that block exactly as printed. ' +
+    `Where the document restates its own totals in a SECOND currency for tax purposes — a ${jur.demonym} GST-registered supplier billing in foreign currency has to show what the supply is worth in ${jur.currency} — read \`baseCurrency\`, \`baseTotal\`, \`baseTax\` and \`exchangeRate\` off that block exactly as printed. ` +
     '`total` and `tax` stay in the BILLING currency: the block is the same money said again for the tax authority, never a second charge, so never add the two together. ' +
     'A PAYMENT PROOF — a bank transfer confirmation, a PayNow / PayLah / GIRO screenshot, an internet-banking "transfer successful" page, a card-payment notification — is evidence that money was sent, not a bill: set `documentType` to "Payment proof", ' +
     'take the PAYEE (the recipient) as `supplier`, the amount transferred as `total`, 0 as `tax` (a transfer states none — any GST is on the invoice it pays), the transaction reference as `invoiceNumber`, and describe it as a payment ("Payment to A1 Consultancy, ref 20260826ABC"). ' +
@@ -816,7 +872,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       mediaType,
       maxTokens: 1024,
       schemaName: 'expense_document',
-      schema: buildSchema(categories, taxRateNames, projectNames, customers),
+      schema: buildSchema(categories, taxRateNames, projectNames, customers, jur),
       // Cached per organisation (see stablePrompt above) — the guides run to
       // thousands of tokens and must not be re-bought on every upload.
       systemPrompt: stablePrompt,
@@ -965,6 +1021,11 @@ extractRouter.post('/extract', async (req, res) => {
     // sends the choice along; resolveProvider falls back to the deploy's default
     // when the named one has no API key configured.
     provider: resolveProvider(req.body?.provider),
+    // Which country's rules to read under is the SERVER's answer about the
+    // caller's entity, never a value off the request — the same posture
+    // resolveProvider has, and for a stronger reason: it decides whether a
+    // client claims its input tax.
+    country: await countryForOrg(workspaceId(req), orgScope(req)),
     imageBase64,
     mediaType,
     accounts: parseAccounts(req.body?.accounts),

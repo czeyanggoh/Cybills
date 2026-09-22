@@ -1,5 +1,6 @@
 import { bookRevision, listBills, parseAmount, updateBill, type Bill } from './store.js';
 import { foldLineTaxIntoCost } from './taxRules.js';
+import { packForOrg } from './jurisdiction.js';
 
 // A motor vehicle expense is No Tax, server-side.
 //
@@ -8,6 +9,13 @@ import { foldLineTaxIntoCost } from './taxRules.js';
 // loads its own — a second copy of what counts as a motor vehicle would drift,
 // and the drift would be input tax claimed in one client's return and not in
 // another's for the same petrol receipt.
+//
+// And it is SINGAPORE's rule. Australia claims the GST on fuel, parking and
+// running costs like any other expense, so the entity's jurisdiction is asked
+// first (jurisdiction.ts) and an Australian book is left entirely alone — run
+// over one, every sweep below would strip a real credit off every petrol
+// receipt in it and say Singapore's reason while doing it. An entity with no
+// answer is Singapore, which is what every book was before there were two.
 //
 // The decision in taxRateOutcome covers every READ. What it cannot cover is a
 // document whose category changes AFTER it was read — the page's picker, the
@@ -27,7 +35,7 @@ import { foldLineTaxIntoCost } from './taxRules.js';
 
 type MotorRules = {
   isMotorVehicleExpense: (args: { category?: unknown; motorVehicle?: boolean; kind?: unknown }) => boolean;
-  motorVehicleReason: (args: { category?: unknown; motorVehicle?: boolean }) => string;
+  motorVehicleReason: (args: { category?: unknown; motorVehicle?: boolean; country?: string }) => string;
   MOTOR_VEHICLE_TAX_RATE: string;
 };
 
@@ -64,10 +72,22 @@ const lineTax = (rows: unknown) =>
  * Returns whether it changed anything, and does nothing to a document that is
  * already right, so an ordinary edit costs nothing and the reason a person or
  * an earlier read wrote is not rewritten for the sake of it.
+ *
+ * `where` names the entity whose rules apply. Omitted — a caller with no entity
+ * at hand — it is Singapore, the behaviour before there was a second country.
  */
-export async function keepMotorVehicleNoTax(current: Partial<Bill> | null, patch: Record<string, unknown>): Promise<boolean> {
+export async function keepMotorVehicleNoTax(
+  current: Partial<Bill> | null,
+  patch: Record<string, unknown>,
+  where: { ws: string; orgId: string } | null = null
+): Promise<boolean> {
   const r = await loadMotorRules();
   if (!r) return false;
+  const pack = where ? await packForOrg(where.ws, where.orgId) : null;
+  // Not a rule about motor vehicles — Singapore's rule about them. Where the
+  // jurisdiction claims that GST, there is nothing here to hold.
+  if (pack && !pack.blocksMotorVehicle) return false;
+  const country = pack?.country || 'Singapore';
   const doc = { ...(current || {}), ...patch } as Partial<Bill> & Record<string, unknown>;
   if (doc.xeroInvoiceId) return false;
   if (['deleted', 'merged', 'expenseclaim'].includes(String(doc.status || ''))) return false;
@@ -83,7 +103,7 @@ export async function keepMotorVehicleNoTax(current: Partial<Bill> | null, patch
 
   if (wrongRate) {
     patch.taxRate = r.MOTOR_VEHICLE_TAX_RATE;
-    patch.taxRateReason = r.motorVehicleReason({ category: doc.category, motorVehicle: doc.motorVehicle === true });
+    patch.taxRateReason = r.motorVehicleReason({ category: doc.category, motorVehicle: doc.motorVehicle === true, country });
     // A supplier rule that last wrote the code no longer owns it — or the rule
     // sweep would write its code back on the next listing, and the two would
     // take turns for ever.
@@ -105,15 +125,22 @@ export async function keepMotorVehicleNoTax(current: Partial<Bill> | null, patch
 // existed, and any document whose category was changed by a road that does not
 // write through PATCH. Once per book revision, like the other listing sweeps.
 const sweptAt = new Map<string, number>();
-export async function enforceMotorVehicleNoTax(scope: string): Promise<number> {
+export async function enforceMotorVehicleNoTax(
+  scope: string,
+  where: { ws: string; orgId: string } | null = null
+): Promise<number> {
   const revision = bookRevision();
   if (sweptAt.get(scope) === revision) return 0;
   sweptAt.set(scope, revision);
+  // Asked once for the whole book rather than per document: it is the entity's
+  // answer, and in an Australian one there is nothing to sweep at all.
+  const pack = where ? await packForOrg(where.ws, where.orgId) : null;
+  if (pack && !pack.blocksMotorVehicle) return 0;
   let n = 0;
   for (const b of listBills(scope)) {
     if (b.kind === 'sales' || b.kind === 'supplier_statement') continue;
     const patch: Record<string, unknown> = {};
-    if (!(await keepMotorVehicleNoTax(b, patch))) continue;
+    if (!(await keepMotorVehicleNoTax(b, patch, where))) continue;
     if (updateBill(scope, b.id, patch)) n += 1;
   }
   return n;

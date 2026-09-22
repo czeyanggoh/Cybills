@@ -1,5 +1,6 @@
 import { readSetting } from './settings.js';
 import { accountsForOrg, taxRatesForOrg } from './xero.js';
+import { countryForOrg } from './jurisdiction.js';
 
 // The tax-code decision, server-side.
 //
@@ -11,8 +12,9 @@ import { accountsForOrg, taxRatesForOrg } from './xero.js';
 // drift that must not happen.
 //
 // What this file adds is the CONTEXT that decision needs — the org's tax rates,
-// its chart of accounts and whether it is GST-registered — which a browser has
-// to hand and a background read does not.
+// its chart of accounts, whether it is GST-registered and WHICH COUNTRY'S rules
+// its book is read under — which a browser has to hand and a background read
+// does not.
 
 export type TaxOutcome = {
   name: string;
@@ -33,7 +35,7 @@ type TaxRules = {
   // A code that carries no tax, so a document coded to it records 0 tax. Same
   // module, same reason: the rule about what a tax code IS must have one copy.
   zeroTaxRate?: (name: unknown, rates?: unknown) => boolean;
-  noTaxRateName?: (rates: unknown) => string;
+  noTaxRateName?: (rates: unknown, opts?: Record<string, unknown>) => string;
   // An off-base document as two lines that each carry their own rate, and
   // whether a set of rows is the same money as the document.
   splitByPrintedRate?: (args: Record<string, unknown>) => SplitRows;
@@ -67,6 +69,10 @@ export type TaxContext = {
   gstRegistered: boolean;
   accountTaxTypes: Map<string, string>;
   defaultTaxRateCosts: string;
+  // Which country's GST rules this entity's documents are read under, as the
+  // Business profile spells it (jurisdiction.ts). Singapore unless the entity
+  // says otherwise, so every existing book is unmoved.
+  country: string;
 };
 
 const asStrArray = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x)) : []);
@@ -78,6 +84,7 @@ export const EMPTY_TAX_CONTEXT: TaxContext = {
   gstRegistered: true,
   accountTaxTypes: new Map(),
   defaultTaxRateCosts: '',
+  country: 'Singapore',
 };
 
 // Everything the decision needs for one organisation, merged the way the
@@ -114,6 +121,7 @@ export async function taxContextFor(ws: string, orgId: string): Promise<TaxConte
     gstRegistered: String(profile?.gstRegistered || 'Yes').toLowerCase() !== 'no',
     accountTaxTypes,
     defaultTaxRateCosts: String(settings?.defaultTaxRateCosts || ''),
+    country: await countryForOrg(ws, orgId),
   };
 }
 
@@ -169,9 +177,12 @@ export async function decideTaxRate(
       // Remembered from an earlier document rather than read off this one, so
       // the reason says so (supplierGst.ts).
       gstRegNoRemembered: doc.supplierGstRegNoRemembered === true ? String(doc.supplierGstRegNoFrom || 'document') : false,
-      // A motor vehicle expense is No Tax, by its account or by the paper.
+      // A motor vehicle expense is No Tax, by its account or by the paper —
+      // where the jurisdiction blocks it at all, which Australia does not.
       category,
       motorVehicle: doc.motorVehicle === true,
+      // Which country's rules decide all of the above.
+      country: ctx.country,
     });
   } catch (e) {
     console.error('[taxRules] decision failed', e);
@@ -200,7 +211,7 @@ export async function splitForPrintedRate(
       rate: outcome.printedRate,
       category: String(doc.category ?? ''),
       taxRateName: outcome.name,
-      noTaxName: rules.noTaxRateName?.(ctx.visibleRates) || 'No Tax',
+      noTaxName: rules.noTaxRateName?.(ctx.visibleRates, { country: ctx.country }) || 'No Tax',
     });
   } catch (e) {
     console.error('[taxRules] split failed', e);

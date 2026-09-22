@@ -38,7 +38,17 @@ import { starDescription } from '@/lib/description';
 export function readDecisions(
   current,
   ex,
-  { gstRegistered = true, taxRates = [], allTaxRates = null, defaultTaxRateCosts = '', accounts = [], mileageRate = '' } = {}
+  {
+    gstRegistered = true,
+    taxRates = [],
+    allTaxRates = null,
+    defaultTaxRateCosts = '',
+    accounts = [],
+    mileageRate = '',
+    // Which country's GST rules this entity's book is read under (Business
+    // profile → Country). Singapore when unset, as everywhere.
+    country = '',
+  } = {}
 ) {
   const descr =
     ex.description ||
@@ -80,7 +90,8 @@ export function readDecisions(
     kind: 'cost',
     accountTaxType: account?.taxType || '',
     accountLabel: account?.code || '',
-    // Only Singapore GST from a registered supplier is input tax to claim.
+    // Only this jurisdiction's GST, from a supplier registered for it, is input
+    // tax to claim — a UEN in a Singapore book, an ABN in an Australian one.
     gstRegNo: ex.supplierGstRegNo || '',
     taxLabel: ex.taxLabel || '',
     // The rate the supplier printed beats the one the money implies — see
@@ -91,9 +102,13 @@ export function readDecisions(
     // the reader's judgement of the paper (src/lib/motorVehicle.js).
     category: codedTo,
     motorVehicle: ex.motorVehicle === true,
+    // …and whether that rule applies here at all: Australia claims the GST on
+    // fuel and running costs.
+    country,
   });
   const inferredRate = rate.name;
-  // Tax is RECORDED only when it is Singapore GST this business can claim:
+  // Tax is RECORDED only when it is GST this business can claim in its own
+  // jurisdiction:
   // we aren't registered, or the supplier isn't (or charged a foreign tax), and
   // the amount belongs in the cost rather than in the GST box. The total is
   // untouched either way — the money paid doesn't change.
@@ -169,7 +184,7 @@ export function readDecisions(
           rate: rate.printedRate,
           category: ex.category || current.category || '',
           taxRateName: inferredRate,
-          noTaxName: noTaxRateName(taxRates) || 'No Tax',
+          noTaxName: noTaxRateName(taxRates, { country }) || 'No Tax',
         })
       : null;
   if (split && !linesAgreeWithTotal(current.lineItems, exTotal)) {
