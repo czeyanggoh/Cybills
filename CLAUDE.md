@@ -1107,6 +1107,49 @@ names the rate, what IS visible at it, and points at Business settings → Lists
 Tax rates. A blank field with no explanation is
 indistinguishable from a bug, which is exactly how one was reported.
 
+## The Support Desk is one person's report, not a shared room
+
+An issue raised on the Support Desk carries a SCREENSHOT of the thing that went
+wrong — which is a picture of the book it went wrong in. The boards
+(`server/src/board.ts`) were scoped to the WORKSPACE, one room for every client
+at once, so a bookkeeper's ticket about a receipt was read, screenshot and all,
+by every other company's staff signed into CYBills.
+
+Every issue now names the entity it was raised IN (`orgId`, off `orgScope`, so
+the board is a per-entity API like the rest) and the person who raised it
+(`createdBy`, an ADDRESS off the session — `author` is a display NAME and drifts
+with the roster, which is how a renamed person would lose their own tickets).
+`canSee` is the whole of it, three answers and only two of them shared: their
+OWN, always; a BUSINESS ADMIN's is every issue raised in the entity they run; a
+PRACTICE COLLEAGUE belongs to no single entity but holds client access, so their
+desk is every client they can open — the entity in the header is where they are
+standing, not the bounds of what is theirs. `seesEveryIssue` (`users.ts`, beside
+the rows it reads) is the predicate, and it is deliberately NOT
+`seesEveryDocument`: "Access all documents" is about a book of costs and a
+ticket is not a document, and the Direct manager line that widens a CLAIM to its
+approver does not widen this — a claim is routed to a manager to DECIDE, an
+issue is routed to the practice to fix.
+
+**An issue naming no entity is the practice's own**, unconditionally: the
+Testing checklist, which nobody raised, and anything raised before an issue
+recorded where. Never a client's to read, and that holds even where the caller's
+own scope is '' — the one case a bare comparison would quietly hand it to them.
+
+**And it is a rule rather than a display detail.** Every write goes through the
+one `mutate`, which asks exactly the question the listing asked, so closing,
+assigning, replying to and deleting all narrow together — 404 throughout, never
+403, because whether somebody else's ticket exists is itself not the caller's to
+learn. The issues raised before any of this are repaired on the next listing
+(`backfillRaisers`, the way document owners and stale claim names are): `author`
+is resolved back through `emailForName`, and a name that resolves to nobody is
+left exactly as it is rather than guessed at; where it was raised was never
+recorded, so it is the raiser's own entity. The board SAYS which of the three
+answers it gave (`scope` on the listing), because a desk showing less than the
+whole of it must say so or a colleague's ticket reads as one that went missing,
+and a colleague's cross-client row wears the entity's name. Covered by
+`npm test` in `server/` (`test/support-desk-visibility.test.mts`, over real HTTP
+because the rule reads the caller's role out of their session).
+
 ## A workspace an entity doesn't use is not a tab
 
 Most CYBM clients raise their own invoices in Xero and never file a sales

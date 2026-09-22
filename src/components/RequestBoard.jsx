@@ -2,11 +2,30 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Paperclip, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { prepareUpload } from '@/lib/image';
+import { getActiveOrganisationId, ORGANISATION_EVENT } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
 
-// A shared issue/request board (Support Desk, Feature Requests, Testing). Items
-// are server-backed (/api/board/:board), so everyone in the workspace sees the
-// same tickets; screenshots ride along as data URLs.
+// An issue/request board (Support Desk, Feature Requests, Testing). Items are
+// server-backed (/api/board/:board); screenshots ride along as data URLs.
+//
+// Every request names the entity it is working in, like the rest of the
+// per-entity API, because an issue belongs to the client's book it was raised
+// against: a person sees the issues they raised, a Business Admin every issue
+// in the entity they run, and a practice colleague every client they can open.
+// The server decides all of that (server/src/board.ts) — this only has to say
+// which entity, and say out loud which of the three answers came back.
+function orgHeaders() {
+  const id = getActiveOrganisationId();
+  return id ? { 'X-Org-Id': id } : {};
+}
+
+// What the reader is looking at. A board showing less than the whole desk must
+// say so, or the ticket a colleague filed reads as one that went missing.
+function scopeNote(scope, orgName) {
+  if (scope === 'own') return 'You’re seeing the issues you raised. Your practice team sees them too.';
+  if (scope === 'entity') return `You’re seeing every issue raised in ${orgName || 'this entity'}.`;
+  return 'You’re seeing every issue raised across the clients you can open.';
+}
 
 function fmtTime(iso) {
   if (!iso) return '';
@@ -50,6 +69,7 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
   const [lightbox, setLightbox] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [scope, setScope] = useState({ scope: '', orgName: '' });
   const fileRef = useRef(null);
 
   // Load the board's items from the server; refetch on window focus so a
@@ -59,20 +79,28 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
   // failed write, so a working read can't clear the write's error banner.
   const reload = useCallback(async ({ keepError = false } = {}) => {
     try {
-      const res = await fetch(`/api/board/${board}`);
+      const res = await fetch(`/api/board/${board}`, { headers: orgHeaders() });
       if (!res.ok) { setError(failureMessage(res)); return; }
       const d = await res.json();
       setTickets(Array.isArray(d.items) ? d.items : []);
+      setScope({ scope: d.scope || '', orgName: d.orgName || '' });
       if (!keepError) setError('');
     } catch {
       setError(failureMessage(null));
     }
   }, [board]);
+  // Refetch on window focus so a colleague's new ticket shows up without a
+  // reload, and on an entity change — the board is that entity's, so switching
+  // client while it is open must not leave the previous one's issues on screen.
   useEffect(() => {
     reload();
     const onFocus = () => reload();
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    window.addEventListener(ORGANISATION_EVENT, onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener(ORGANISATION_EVENT, onFocus);
+    };
   }, [reload]);
 
   // One place to hit the board API, then refetch so the list reflects the
@@ -84,7 +112,7 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
       try {
         const res = await fetch(`/api/board/${board}${path}`, {
           method,
-          headers: body ? { 'Content-Type': 'application/json' } : undefined,
+          headers: body ? { 'Content-Type': 'application/json', ...orgHeaders() } : orgHeaders(),
           body: body ? JSON.stringify(body) : undefined,
         });
         if (!res.ok) failure = failureMessage(res);
@@ -127,7 +155,7 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
       try {
         const res = await fetch(`/api/board/${board}/import`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...orgHeaders() },
           body: JSON.stringify({ items }),
         });
         if (!res.ok) { if (alive) setError(failureMessage(res)); return; }
@@ -254,7 +282,10 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
       </div>
       <div className="mb-4 mt-2 h-0.5 w-10 bg-foreground" />
       {viewToggle && <div className="mb-4">{viewToggle}</div>}
-      <p className="mb-4 text-sm text-muted-foreground">{intro}</p>
+      <p className="mb-2 text-sm text-muted-foreground">{intro}</p>
+      {scope.scope && (
+        <p className="mb-4 text-xs text-muted-foreground">{scopeNote(scope.scope, scope.orgName)}</p>
+      )}
 
       {error && (
         <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -320,6 +351,13 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
               )}
               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                 <span>{t.author || '—'}{t.created_at ? ` · ${fmtTime(t.created_at)}` : ''}</span>
+                {/* Only ever set on an issue raised in another entity, which is
+                    a practice colleague's case: their desk spans every client
+                    they can open, and an unlabelled row says nothing about
+                    whose book the screenshot is of. */}
+                {t.orgName && (
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{t.orgName}</span>
+                )}
                 {t.status === 'closed' && (
                   <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">Closed</span>
                 )}

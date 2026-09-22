@@ -2,20 +2,32 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
+import { getOrganisation } from './organisations.js';
+import {
+  canAccessOrg, emailForName, isPracticeColleague, memberByEmail, memberForSession,
+  normaliseAddress, orgScope, seesEveryIssue, type User,
+} from './users.js';
 
 // Support Desk boards — Support tickets, Feature requests, and the Testing
-// checklist — now server-backed + shared across the workspace (same JSON-store
-// pattern as claims/users). So when one person files a ticket, everyone sees it.
+// checklist — server-backed (same JSON-store pattern as claims/users).
+//
+// They were shared across the whole WORKSPACE, which is one room for every
+// client at once: an issue raised by one company's bookkeeper, with a
+// screenshot of that company's book attached to it, was read by every other
+// company's staff. Every issue now names the entity it was raised IN and the
+// person who raised it, and `canSee` below is the whole of who gets it.
 
 type Comment = { author: string; text: string; created_at: string; screenshots: string[] };
 type Item = {
   id: string;
   workspaceId: string;
+  orgId: string; // the client entity it was raised in ('' = the practice's own)
   board: string; // 'support' | 'features' | 'testing'
   text: string;
   screenshots: string[];
   status: string; // 'open' | 'done' | 'closed'
-  author: string;
+  author: string; // display NAME, as the roster spelt it the day it was raised
+  createdBy: string; // the raiser's ADDRESS — an identity, and never rewritten
   created_at: string;
   comments: Comment[];
   assignee: { id: string; name: string } | null;
@@ -72,14 +84,17 @@ const TESTING_SEED: Array<{ text: string; status?: string }> = [
   { text: '🚧 GAP — Bank reconciliation vs a live bank feed: not built (Bank section stores accounts/statements; no live-feed matching).' },
 ];
 
-// Seed the testing board once per workspace, in checklist order.
+// Seed the testing board once per workspace, in checklist order. It is the
+// practice's own QA list — nobody raised it and it names no client — so it
+// carries no entity and no raiser, which is exactly what makes it the
+// practice's to see.
 function ensure(ws: string, board: string): Item[] {
   const items = load();
   if (board === 'testing' && !items.some((x) => x.workspaceId === ws && x.board === 'testing')) {
     TESTING_SEED.forEach((s, i) => {
       items.push({
-        id: randomUUID(), workspaceId: ws, board: 'testing', text: s.text, screenshots: [],
-        status: s.status || 'open', author: '', created_at: nowIso(), comments: [], assignee: null, seq: i, deleted: false,
+        id: randomUUID(), workspaceId: ws, orgId: '', board: 'testing', text: s.text, screenshots: [],
+        status: s.status || 'open', author: '', createdBy: '', created_at: nowIso(), comments: [], assignee: null, seq: i, deleted: false,
       });
     });
     save(items);
@@ -87,16 +102,110 @@ function ensure(ws: string, board: string): Item[] {
   return items;
 }
 
+// --- Who sees which issue ----------------------------------------------------
+// The caller, as the three questions this board asks of them: who they are, the
+// entity they are standing in, and whether they run it.
+type Viewer = {
+  me: User | null;
+  email: string;
+  org: string;
+  practice: boolean;
+  everyIssueHere: boolean;
+};
+
+function viewerFor(req: Request): Viewer {
+  const me = memberForSession(req);
+  const org = orgScope(req);
+  return {
+    me,
+    // The address they signed in under, which is the identity an issue is
+    // raised against. Off the SESSION rather than the roster row alone, so
+    // somebody who has not been added to a roster yet still owns what they
+    // raise once they are.
+    email: normaliseAddress(me?.email || actor(req).email),
+    org,
+    practice: isPracticeColleague(me),
+    everyIssueHere: seesEveryIssue(me, org),
+  };
+}
+
+// An issue is visible three ways, and only two of them are shared.
+function canSee(item: Item, v: Viewer): boolean {
+  if (!v.me) return true; // the sessionless mock/dev context, open like the rest of the app
+  // THEIRS, always — matched on the address they raised it under, which is
+  // never rewritten. `author` is a display name and drifts with the roster, so
+  // a person renamed on the Users page would otherwise lose their own tickets.
+  if (v.email && normaliseAddress(item.createdBy) === v.email) return true;
+  // A PRACTICE COLLEAGUE holds client access rather than belonging to one
+  // entity, so their desk is every client they can open — plus the issues that
+  // name no client at all, which are the practice's own.
+  if (v.practice) return item.orgId ? canAccessOrg(v.me, item.orgId) : true;
+  // Everybody else is standing in ONE entity. A Business Admin runs its book
+  // and sees every issue raised against it; a Standard user sees only the ones
+  // above.
+  //
+  // An issue naming NO entity is the practice's own, unconditionally — the
+  // Testing checklist, and anything raised before an issue recorded where. It
+  // is never a client's to read, and that holds even where the caller's own
+  // scope is '' (nothing linked yet, or their entity since unlinked), which is
+  // the one case a bare === would quietly hand it to them.
+  return v.everyIssueHere && Boolean(item.orgId) && item.orgId === v.org;
+}
+
+// What the caller is looking at, so the board can say so rather than leaving a
+// missing ticket to read as a lost one.
+const scopeOf = (v: Viewer) => (!v.me || v.practice ? 'clients' : v.everyIssueHere ? 'entity' : 'own');
+
+// A colleague's list spans clients, so an issue from an entity other than the
+// one they are standing in says whose it is.
+function decorate(item: Item, ws: string, v: Viewer) {
+  if (!item.orgId || item.orgId === v.org) return item;
+  return { ...item, orgName: getOrganisation(ws, item.orgId)?.name || '' };
+}
+
+// The issues raised before an issue recorded who raised it. All they carry is
+// `author`, a display NAME — the very thing a roster edit moves — so it is
+// resolved back through emailForName, the way a stale claim's claimant is, and
+// a name that resolves to nobody is left exactly as it is rather than guessed
+// at. Where they were raised was never recorded either, so it is the raiser's
+// own entity; a practice colleague's is no client's, which is what '' means.
+// Idempotent: a row that already names its raiser is never touched.
+function backfillRaisers(ws: string, items: Item[]): Item[] {
+  let touched = false;
+  for (const x of items) {
+    if (x.deleted || x.createdBy || !x.author) continue;
+    const email = emailForName(ws, x.author);
+    if (!email) continue;
+    x.createdBy = email;
+    if (!x.orgId) {
+      const u = memberByEmail(ws, normaliseAddress(email));
+      x.orgId = u && !u.practice ? u.organisationId || '' : '';
+    }
+    touched = true;
+  }
+  if (touched) save(items);
+  return items;
+}
+
 export const boardRouter = Router();
 
-// GET /api/board/:board — the board's items. Checklist keeps seed order; tickets
-// and feature requests newest-first.
+// GET /api/board/:board — the board's items, narrowed to the ones this caller
+// may see. Checklist keeps seed order; tickets and feature requests
+// newest-first. `scope` says WHICH of the three answers they got, so the page
+// can tell somebody they are looking at their own issues instead of leaving
+// them to conclude a ticket was lost.
 boardRouter.get('/:board', (req, res) => {
   const ws = workspaceId(req);
   const board = req.params.board;
-  const rows = ensure(ws, board).filter((x) => x.workspaceId === ws && x.board === board && !x.deleted);
+  const v = viewerFor(req);
+  const rows = backfillRaisers(ws, ensure(ws, board))
+    .filter((x) => x.workspaceId === ws && x.board === board && !x.deleted && canSee(x, v));
   rows.sort((a, b) => (board === 'testing' ? a.seq - b.seq : b.created_at.localeCompare(a.created_at)));
-  res.json({ items: rows });
+  res.json({
+    items: rows.map((x) => decorate(x, ws, v)),
+    scope: scopeOf(v),
+    orgName: getOrganisation(ws, v.org)?.name || '',
+  });
 });
 
 // POST /api/board/:board — create an item (ticket / request / extra check).
@@ -108,11 +217,15 @@ boardRouter.post('/:board', (req, res) => {
   // (older tickets filed before the Support Desk went server-side) keeps its
   // original date instead of all showing "just now".
   const createdAt = typeof b.created_at === 'string' && b.created_at ? b.created_at : nowIso();
+  // The entity and the raiser come off the SESSION, never off the body: an
+  // address is an identity here, and a client that could name its own would be
+  // choosing whose desk the issue lands on.
+  const v = viewerFor(req);
   const item: Item = {
-    id: randomUUID(), workspaceId: ws, board: req.params.board,
+    id: randomUUID(), workspaceId: ws, orgId: v.org, board: req.params.board,
     text: String(b.text || ''),
     screenshots: Array.isArray(b.screenshots) ? b.screenshots : [],
-    status: 'open', author: b.author || me.name, created_at: createdAt, comments: [], assignee: null,
+    status: 'open', author: b.author || me.name, createdBy: v.email, created_at: createdAt, comments: [], assignee: null,
     seq: Date.now(), deleted: false,
   };
   const items = load();
@@ -158,8 +271,12 @@ boardRouter.post('/:board/import', (req, res) => {
   const board = req.params.board;
   const incoming = Array.isArray(req.body?.items) ? req.body.items.slice(0, IMPORT_LIMIT) : [];
 
-  const items = ensure(ws, board);
-  const mine = items.filter((x) => x.workspaceId === ws && x.board === board && !x.deleted);
+  const v = viewerFor(req);
+  const items = backfillRaisers(ws, ensure(ws, board));
+  // Only ever merge into an item this caller can already see. Matching on text
+  // against the whole board would let one company's migration quietly adopt
+  // another's ticket — and hand it their screenshots.
+  const mine = items.filter((x) => x.workspaceId === ws && x.board === board && !x.deleted && canSee(x, v));
   const byText = new Map(mine.map((x) => [norm(x.text), x]));
   const maxSeq = mine.reduce((m, x) => Math.max(m, x.seq), 0);
 
@@ -200,8 +317,8 @@ boardRouter.post('/:board/import', (req, res) => {
     }
 
     const item: Item = {
-      id: randomUUID(), workspaceId: ws, board, text, screenshots, status,
-      author: String(raw.author || ''), created_at, comments, assignee,
+      id: randomUUID(), workspaceId: ws, orgId: v.org, board, text, screenshots, status,
+      author: String(raw.author || ''), createdBy: v.email, created_at, comments, assignee,
       seq: maxSeq + 1 + imported, deleted: false,
     };
     items.push(item);
@@ -213,11 +330,15 @@ boardRouter.post('/:board/import', (req, res) => {
   res.json({ imported, merged, skipped: incoming.length - imported - merged });
 });
 
+// Every write goes through here, so the listing's rule is the board's rule
+// rather than a display detail: closing, assigning, replying to and deleting an
+// issue all ask the same question the list asked. 404 rather than 403 — whether
+// somebody else's ticket exists is itself not the caller's to learn.
 function mutate(req: Request, res: Response, fn: (item: Item, me: { email: string; name: string }) => void) {
   const ws = workspaceId(req);
-  const items = load();
+  const items = backfillRaisers(ws, load());
   const item = items.find((x) => x.id === req.params.id && x.workspaceId === ws && x.board === req.params.board);
-  if (!item) return res.status(404).json({ error: 'not_found' });
+  if (!item || !canSee(item, viewerFor(req))) return res.status(404).json({ error: 'not_found' });
   fn(item, actor(req));
   save(items);
   return res.json({ item });

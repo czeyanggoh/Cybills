@@ -940,6 +940,30 @@ export function seesEveryDocument(u: User | null | undefined, orgId: string): bo
   return Boolean((u.privileges as { accessAll?: unknown } | undefined)?.accessAll);
 }
 
+// --- Whose support tickets a person may see ----------------------------------
+// The Support Desk is not a book, so this is not seesEveryDocument's question.
+// An issue is one person's report of something that went wrong in front of
+// them, and it carries their SCREENSHOTS — pictures of a client's own
+// paperwork, taken at the moment it misbehaved. So the default is the narrow
+// one: a person sees the issues they RAISED. Business Admin and User Admin run
+// the entity, so they see every issue raised in it.
+//
+// Deliberately NOT widened by `accessAll`: that toggle is called "Access all
+// documents" and a ticket is not a document. Nor by the Direct manager line
+// that widens a CLAIM to its approver — a claim is routed to a manager for a
+// decision, and an issue is routed to the practice for a fix.
+export function seesEveryIssue(u: User | null | undefined, orgId: string): boolean {
+  if (!u) return true; // the sessionless mock/dev context, open like the rest of the app
+  return effectiveRoleFor(u, orgId) !== 'Standard';
+}
+
+// A working practice colleague. They belong to no single entity — they hold
+// client access to the ones they work on — so the entity in the header is
+// where they are STANDING rather than the bounds of what is theirs to see.
+export function isPracticeColleague(u: User | null | undefined): boolean {
+  return Boolean(u && !u.removed && !u.deactivated && u.practice);
+}
+
 // The addresses a restricted caller's view is confined to. Null when they see
 // the whole book, so the common case builds no set at all and the callers skip
 // filtering entirely.
