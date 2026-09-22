@@ -362,6 +362,30 @@ document's date. Covered by `npm test` at the root (`covering-note`) and in
 `server/` (`file-name-note`, driven over real HTTP so what is asserted is the
 prompt that actually goes out).
 
+**A DATE is read off the paper, and only its YEAR is ever supplied.** A batch
+of GrabFood order summaries came back dated 31 Oct 2025 against receipts that
+said "Delivered on 30 Sep 12:37". Nothing here had moved them — a supplier
+rule's Invoice date only moves a date BACK to the end of the month before and is
+matched per supplier — so it came out of the READ, and the prompt was what had
+nothing to say about this case. An app order summary prints a day and a month
+and **no year**, and the schema asked for ISO `YYYY-MM-DD` while saying only
+"Expand a 2-digit year YY to 20YY" and "empty string if no date is printed": a
+reader that MUST produce a year, told nothing about how, is free to produce a
+date that is on no part of the paper. So the rule is in two halves, in the
+schema's `date` description and in the cached system prompt both. The day and
+month printed are FACTS — never shifted to a month end, a period end or a claim
+period, and never to what the org's Review instructions, a covering message or
+the file name suggest (those three are named, because each is a real road into
+that prompt, and the context block is told it may override the printed GST and
+the coding). And the year is supplied, never the date: from elsewhere on the
+same document first, else the most recent occurrence of that day and month, and
+a supplied year may never put the date in the future. That last one needs
+today's date, which rides on the per-document message rather than the cached
+prompt — in the prompt it would invalidate the cache daily. Covered by
+`npm test` in `server/` (`test/document-date.test.mts`, over real HTTP so what
+is asserted is the system prompt, the schema and the message that actually go
+out).
+
 **A cost can name the client it is recharged to.** `customer` is read like the
 category is: an enum of the org's own active Xero customer contacts
 (`customerOptionsForOrg`, capped at 300 — a long-lived Xero holds thousands and

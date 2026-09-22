@@ -90,7 +90,10 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       date: {
         type: 'string',
         description:
-          'The document/transaction date as ISO YYYY-MM-DD. Printed dates are Singapore format DD/MM/YYYY (day first), e.g. "25/1/2026" and "25/01/26" both mean 2026-01-25. Expand a 2-digit year YY to 20YY (26 → 2026 — NEVER 2019 or 1926). Never invent a month; read it exactly. Empty string if no date is printed.',
+          'The document/transaction date as ISO YYYY-MM-DD. Printed dates are Singapore format DD/MM/YYYY (day first), e.g. "25/1/2026" and "25/01/26" both mean 2026-01-25. Expand a 2-digit year YY to 20YY (26 → 2026 — NEVER 2019 or 1926). ' +
+          'The DAY and MONTH printed are facts: copy them exactly. Never invent a month, and never move the date onto a month end, a period end, or any other date — not for the business context, not for a covering message, not for the file name. ' +
+          'A date printed with NO YEAR is still that day and month: an app order summary says "Delivered on 30 Sep 12:37" and that is 30 September. Keep the day and month and supply only the YEAR — from elsewhere on the SAME document (an order or invoice number carrying one, a validity or payment line), else the most recent 30 September that is not in the future on today\'s date, which this request states. ' +
+          'Empty string only when NO date at all is printed.',
       },
       documentType: {
         type: 'string',
@@ -775,6 +778,8 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'Use the values printed on the document. Capture the invoice/receipt number exactly as printed when present. ' +
     'Never identify a company that is not named on the document. A screenshot of an app receipt is often cropped above its brand, and the layout alone does not say which company it is — returning the wrong merchant is worse than returning none, so leave `supplier` empty rather than pick the best-known brand of that kind. ' +
     'Dates are Singapore format DD/MM/YYYY (day first); a 2-digit year YY means 20YY (so "25/01/26" = 2026-01-25). Read the day and month exactly and output the date as ISO YYYY-MM-DD. ' +
+    'Every date on a document is read off the document. The day and month printed are facts — never shift a date to a month end, a period end, a claim period, or anything the business context, the covering message or the file name suggests. ' +
+    'A YEAR is the one part that is often not printed at all: a food-delivery or ride-hailing order summary says "Delivered on 30 Sep 12:37" and nothing more. Keep the printed day and month exactly and supply only the year — first from elsewhere on the same document, else the most recent occurrence of that day and month, and a year you supply must never put the date in the future. ' +
     'Classify the expense into the single best-matching category from the allowed list provided in the schema; ' +
     'pick "Uncategorised" only when none reasonably fit. ' +
     'Read `supplierGstRegNo` and `taxLabel` from the document exactly as printed. They decide whether the tax charged is Singapore GST a business may claim, ' +
