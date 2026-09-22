@@ -814,13 +814,52 @@ type InboundAttachment = {
 // filed as the document, read as nothing, and — because an attachment had been
 // filed — the link was never followed. Small (a real receipt photo or scan is
 // far bigger) AND either embedded/inline or nameless. PDFs are never decoration.
+//
+// When the mail brings a real document of its OWN (a PDF), an image embedded in
+// its body is decoration at any size up to DECORATION_WITH_DOCUMENT_BYTES: a
+// signature banner rendered at 2x (CUTLAZZ's, under an "ESTP7 W9 Invoice"
+// mail) easily passes 64 KB, and was filed and read as a cost. The small cap
+// stays for a mail with nothing else, where a receipt screenshot pasted into
+// the body is the document.
 const DECORATION_MAX_BYTES = 64 * 1024;
-function isDecorationImage(a: InboundAttachment, readType: string, bytes: number, html: string): boolean {
+const DECORATION_WITH_DOCUMENT_BYTES = 1024 * 1024;
+function isDecorationImage(
+  a: InboundAttachment,
+  readType: string,
+  bytes: number,
+  html: string,
+  mailHasDocument = false
+): boolean {
   if (!/^image\//i.test(readType)) return false;
-  if (bytes >= DECORATION_MAX_BYTES) return false;
+  if (bytes >= (mailHasDocument ? DECORATION_WITH_DOCUMENT_BYTES : DECORATION_MAX_BYTES)) return false;
   const cid = String(a.contentId || '').replace(/^<|>$/g, '');
-  const referenced = Boolean(cid) && html.includes(`cid:${cid}`);
+  // Outlook names a body image's content id after its file
+  // (`cid:image001.png@01DB0C…`), which is how an embedded image is still
+  // recognised on a road that carried no content id at all.
+  const name = String(a.filename || '');
+  const referenced =
+    (Boolean(cid) && html.includes(`cid:${cid}`)) ||
+    (Boolean(name) && name !== 'document' && html.toLowerCase().includes(`cid:${name.toLowerCase()}`));
   return referenced || a.inline === true || a.named === false;
+}
+
+// A pre-parsed attachment from the Worker. postal-mime spells the decoration
+// signals `contentId` / `disposition` / `related`, and the Worker in
+// deploy/EMAIL-INBOUND.md forwarded none of them — so on that road every
+// signature image looked like a document. Read either spelling.
+function preParsedAttachment(a: Record<string, unknown>): InboundAttachment {
+  const filename = typeof a.filename === 'string' ? a.filename : '';
+  const out: InboundAttachment = {
+    filename: filename || 'document',
+    contentType: String(a.contentType || a.mimeType || ''),
+    contentBase64: typeof a.contentBase64 === 'string' ? a.contentBase64 : '',
+  };
+  const cid = a.contentId ?? a.cid;
+  if (typeof cid === 'string' && cid) out.contentId = cid;
+  if (typeof a.inline === 'boolean') out.inline = a.inline;
+  else if (a.disposition === 'inline' || a.related === true) out.inline = true;
+  if (typeof a.named === 'boolean') out.named = a.named;
+  return out;
 }
 type InboundMail = {
   to: string;
@@ -971,6 +1010,12 @@ async function deliverMail(
   const awaiting: string[] = [];
   let created = 0;
   let attachedEmails = 0;
+  // Whether the mail carries a document of its own beside any body images.
+  const mailHasDocument = mail.atts.some((a) => {
+    const t = String(a?.contentType || '');
+    const n = String(a?.filename || '');
+    return /pdf/i.test(t) || /\.pdf$/i.test(n);
+  });
   for (const a of mail.atts) {
     const filename = String(a?.filename || 'document');
     const contentType = String(a?.contentType || '');
@@ -1027,7 +1072,7 @@ async function deliverMail(
     // A logo or signature inside the email is not a document — and filing it
     // would also stop the mail's LINKS being followed, which is where the real
     // receipt often is. Listed, with the reason, and never filed.
-    if (isDecorationImage(a, readType || contentType, bytes.length, String(mail.html || ''))) {
+    if (isDecorationImage(a, readType || contentType, bytes.length, String(mail.html || ''), mailHasDocument)) {
       attachmentRows.push({ fileName: filename, contentType: readType || contentType, bytes: bytes.length, skipped: 'an image inside the email (a logo or signature), not a document' });
       continue;
     }
@@ -1169,7 +1214,9 @@ inboundRouter.post('/email', async (req, res) => {
   // are keyed on when it is there.
   let messageIdFromMime = '';
   // Attachments the caller may pass pre-parsed: { filename, contentType, contentBase64 }.
-  let atts: InboundAttachment[] = Array.isArray(b.attachments) ? b.attachments : [];
+  let atts: InboundAttachment[] = Array.isArray(b.attachments)
+    ? b.attachments.filter((a: unknown) => a && typeof a === 'object').map(preParsedAttachment)
+    : [];
 
   // Preferred path: the Worker forwards the RAW MIME (base64).
   if (typeof b.raw === 'string' && b.raw) {

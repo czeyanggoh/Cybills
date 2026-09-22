@@ -141,5 +141,58 @@ mail = loadMail().find((m) => m.id === '<photo-1@excellenceas.sg>');
 check('a real receipt photo is filed', [out.created, bills.some((b) => b.fileName === 'taxi.png')], [1, true]);
 check('…and its mail is not also asked about by link', mail?.outcome, 'documents');
 
+// --- The Worker's PRE-PARSED road (postal-mime field names) ----------------------
+// The documented Worker forwarded attachments without content id or disposition,
+// so a signature image on that road looked exactly like a document.
+const SIGNATURE = Buffer.concat([PNG_HEAD, Buffer.alloc(150000, 3)]); // a 2x signature banner
+const PDF = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(4000, 4)]);
+const deliverParsed = async (body: Record<string, unknown>) => {
+  const res = await fetch('http://127.0.0.1:4697/api/inbound/email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Inbound-Secret': 'test-inbound-secret' },
+    body: JSON.stringify({ to: 'astrid4@cybills.sg', from: 'tjh@cutlazz.com', ...body }),
+  });
+  return (await res.json()) as Record<string, unknown>;
+};
+out = await deliverParsed({
+  subject: 'ESTP7 W9 Invoice',
+  messageId: '<cutlazz-1@cutlazz.com>',
+  html: '<p>ESTP7 W9 Invoice</p><img src="cid:sig001@cutlazz.com">',
+  attachments: [
+    { filename: 'image001.png', mimeType: 'image/png', contentId: '<sig001@cutlazz.com>', disposition: 'inline', related: true, contentBase64: SIGNATURE.toString('base64') },
+    { filename: 'INV-ESTP7-W9.pdf', mimeType: 'application/pdf', disposition: 'attachment', contentBase64: PDF.toString('base64') },
+  ],
+});
+await new Promise((r) => setTimeout(r, 200));
+bills = listBills('cybm');
+check('pre-parsed: only the invoice is filed, not the signature beside it', [out.created, bills.some((b) => b.fileName === 'INV-ESTP7-W9.pdf'), bills.some((b) => b.fileName === 'image001.png')], [1, true, false]);
+
+// Nothing but the file name to go on: Outlook's content id carries it.
+out = await deliverParsed({
+  subject: 'Invoice',
+  messageId: '<outlook-1@cutlazz.com>',
+  html: '<p>Invoice attached</p><img src="cid:image002.png@01DB0C11.AB12CD30">',
+  attachments: [
+    { filename: 'image002.png', contentType: 'image/png', contentBase64: SIGNATURE.toString('base64') },
+    { filename: 'Invoice 77.pdf', contentType: 'application/pdf', contentBase64: PDF.toString('base64') },
+  ],
+});
+await new Promise((r) => setTimeout(r, 200));
+bills = listBills('cybm');
+check('pre-parsed, no content id: the body image is known by its name in the HTML', [out.created, bills.some((b) => b.fileName === 'image002.png')], [1, false]);
+
+// A large image pasted into a body with NOTHING else is the document.
+out = await deliverParsed({
+  subject: 'Parking receipt',
+  messageId: '<pasted-1@cutlazz.com>',
+  html: '<img src="cid:shot@x">',
+  attachments: [
+    { filename: 'image003.png', mimeType: 'image/png', contentId: '<shot@x>', disposition: 'inline', contentBase64: SIGNATURE.toString('base64') },
+  ],
+});
+await new Promise((r) => setTimeout(r, 200));
+bills = listBills('cybm');
+check('a large pasted screenshot with no other document is still filed', [out.created, bills.some((b) => b.fileName === 'image003.png')], [1, true]);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, server, n8n);

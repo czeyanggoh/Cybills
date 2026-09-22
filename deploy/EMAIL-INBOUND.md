@@ -79,6 +79,11 @@ export default {
       filename: a.filename || 'document',
       contentType: a.mimeType || '',
       contentBase64: toBase64(a.content),
+      // What tells a logo or signature image inside the email apart from a
+      // document sent with it. Without these every signature is filed as a cost.
+      contentId: a.contentId || '',
+      disposition: a.disposition || '',
+      related: Boolean(a.related),
     }));
     await fetch(env.CYBILLS_INBOUND_URL, {
       method: 'POST',

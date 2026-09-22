@@ -1919,7 +1919,15 @@ its own, and `isDecorationImage` skips an IMAGE under 64 KB that is referenced b
 `cid:` in the HTML, inline/related, or nameless ("noname"). It is listed on the
 Email tab row with the reason and never filed, so the mail counts as having
 produced nothing and its links take the usual road (trusted: fetched; else a
-"Trust sender?" document). PDFs and anything larger are always filed. Covered by
+"Trust sender?" document). PDFs are always filed. A mail that carries a PDF of its own
+raises the cap to 1 MB for its body images — a 2x signature banner (CUTLAZZ's)
+passes 64 KB easily — while a mail with nothing else keeps 64 KB, since a
+screenshot pasted into the body IS the document there. The Worker's PRE-PARSED
+road never sent the signals at all, so on it every signature was a cost:
+`preParsedAttachment` reads postal-mime's `contentId` / `disposition` /
+`related` (the Worker in `deploy/EMAIL-INBOUND.md` now forwards them), and an
+image whose file name appears as `cid:<name>` in the HTML (Outlook's
+`cid:image001.png@01DB…`) counts as embedded even with no content id. Covered by
 `npm test` in `server/` (`test/inline-image.test.mts`).
 
 **Only where the attachments produced nothing.** A mail carrying both the
