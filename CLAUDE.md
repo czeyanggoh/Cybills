@@ -1423,6 +1423,28 @@ itself, so a PATCH arriving mid-read would end the state early.
 `sweepStuckProcessing` stays the backstop for the process dying mid-read, not
 for an ordinary return. Covered by `npm test` in `server/`.
 
+**And the backstop counts from the READ, not from the upload.** That sweep's
+one-minute grace was measured from `createdAt`, which is when the document was
+accepted and says nothing about when its read will finish: fifteen receipts
+dropped into the drawer together are created within a second of each other,
+their reads go out in parallel, and a minute later the sweep filed every one
+that had not come back yet into the inbox — as "New" wearing **Needs: Category,
+Total**, which is what a document nobody has read looks like when it is
+FINISHED. Clicking into one offered "Re-read receipt" on a document that was
+being read at that very moment, and the fields then filled in underneath the
+reviewer. So whoever is holding the read SAYS so, every twenty seconds —
+`keepReading` (`src/lib/bills.js`) from the uploading browser, an interval in
+`autoRead` for the reads the server holds itself — and the sweep counts from the
+last thing it heard. `noteReading` / `forgetReading` (`store.ts`) keep those
+beats in MEMORY rather than on the document: it is a fact about a request in
+flight, not about the paper, only the sweep in this same process ever reads it,
+and written to the file it would bump `bookRevision` every few seconds, which is
+the guard that stops each listing re-scanning the whole book for duplicates. A
+restart loses them, which is the right answer — a restart means no read is
+running either, and `createdAt` rescues them as before. A minute of silence is
+still a minute, so a closed tab is rescued exactly as fast as it was. Covered by
+`npm test` in `server/` (`test/processing-heartbeat.test.mts`).
+
 Two rules run through all of them:
 
 - **A tick is what makes a field part of a bulk edit.** An untouched field is not

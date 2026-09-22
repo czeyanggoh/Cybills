@@ -589,8 +589,12 @@ export default function CostDetail() {
     const started = Date.now();
     let stopped = false;
     const timer = setInterval(async () => {
-      // sweepStuckProcessing is the server's backstop; five minutes is ours.
-      if (Date.now() - started > 5 * 60 * 1000) { clearInterval(timer); return; }
+      // sweepStuckProcessing is the server's backstop, and it now counts from
+      // the last sign of life from whoever is doing the reading rather than
+      // from the upload — so a document can legitimately be processing for as
+      // long as its read takes, which for a batch read in parallel is minutes.
+      // Half an hour is ours, and it is only ever there so the timer ends.
+      if (Date.now() - started > 30 * 60 * 1000) { clearInterval(timer); return; }
       const fresh = await fetchBillById(docId).catch(() => null);
       if (stopped || !mounted.current || !fresh || fresh.status === 'processing') return;
       clearInterval(timer);

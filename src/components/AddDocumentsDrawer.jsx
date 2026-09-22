@@ -12,6 +12,7 @@ import {
   addBill,
   updateBill,
   finalizeBill,
+  keepReading,
   notifyBillsChanged,
   describeDuplicate,
   fetchExtractLines,
@@ -671,6 +672,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
 
     created.forEach((it) => {
       void (async () => {
+        let stopReading = () => {};
         try {
           // Dedup on the ORIGINAL file bytes; store a downscaled copy so large
           // photos stay under the server body limit.
@@ -716,6 +718,10 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           }
           const bill = result.bill;
           notifyBillsChanged(); // now visible on the Processing page
+          // From here until the document leaves Processing, this browser is the
+          // only thing that knows the read is still running — so it says so.
+          // Stopped in the finally below, whichever way this ends.
+          stopReading = keepReading(bill.id);
 
           // 2) Read with the configured reader (when available), then finalize — which
           //    applies the fields, re-checks for a duplicate now that
@@ -790,6 +796,8 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           }
         } catch {
           patch(it.id, { status: 'error', error: 'Upload failed' });
+        } finally {
+          stopReading();
         }
       })();
     });
@@ -799,6 +807,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
     const it = items.find((x) => x.id === id);
     if (!it) return;
     patch(id, { status: 'uploading' });
+    let stopReading = () => {};
     try {
       // Reuse the payload built on the first attempt (hash, bytes, fields) so
       // "Add anyway" doesn't re-hash or re-extract.
@@ -813,6 +822,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
       }
       const bill = result.bill;
       notifyBillsChanged(); // in Processing
+      stopReading = keepReading(bill.id); // held in Processing while it reads
       /** @type {any} */
       let fields = {};
       if (visionEnabled && payload.fileBase64 && VISION_MEDIA.includes(payload.mediaType)) {
@@ -832,6 +842,8 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
       patch(id, { status: 'added', bill: fin?.bill ?? bill });
     } catch {
       patch(id, { status: 'error', error: 'Upload failed' });
+    } finally {
+      stopReading();
     }
   };
 

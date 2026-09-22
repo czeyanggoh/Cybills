@@ -9,6 +9,7 @@ import {
   clearBillPosted,
   costComplete,
   sweepStuckProcessing,
+  noteReading,
   archivePublishedWorkingDocs,
   flagDuplicate,
   scanDuplicates,
@@ -974,6 +975,26 @@ billsRouter.delete('/bills/:id', async (req, res) => {
   const fileRemoved = Boolean(removed.storageKey) && !storageKeyInUse(removed.storageKey);
   if (fileRemoved) await deleteBillFile(removed.storageKey);
   res.json({ ok: true, id: removed.id, fileRemoved });
+});
+
+// POST /api/costs/bills/:id/reading — "the read on this document is still
+// running". The browser that uploaded it holds the read, so it is the only one
+// that knows; it pings while it waits, and the stuck-document sweep counts from
+// the last ping rather than from the upload. A batch of receipts read in
+// parallel routinely outlives the one-minute grace, and without this every one
+// that had not come back yet was knocked out of Processing mid-read: the row
+// said "New — Needs: Category, Total", and the page offered "Re-read receipt"
+// on a document that was being read at that moment.
+//
+// Nothing is written to the document and no answer is needed, so it costs a
+// listing nothing. A document that is no longer processing answers so, which is
+// how the caller learns to stop.
+billsRouter.post('/bills/:id/reading', (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  const orgId = orgIdFor(req);
+  const bill = getBillById(orgId, req.params.id);
+  if (!bill || !canReadBill(req, bill)) return res.status(404).json({ error: 'not_found' });
+  res.json({ reading: noteReading(orgId, req.params.id) });
 });
 
 // POST /api/costs/bills/:id/unpublish — forget that this document was published

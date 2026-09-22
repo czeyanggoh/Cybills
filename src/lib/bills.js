@@ -157,6 +157,32 @@ export async function addBill(payload, { force = false } = {}) {
   return res.json();
 }
 
+// Hold a document in "Processing" for as long as THIS browser is reading it.
+//
+// The document is created as processing and the read that follows takes ten to
+// thirty seconds — longer when a batch of receipts goes out together, since they
+// are read in parallel and the reader answers them one behind another. The
+// server's stuck-document sweep is what rescues a read whose tab was closed
+// mid-way, and it used to count from the moment the document was uploaded: a
+// minute in, every receipt still being read was filed into the inbox wearing
+// "New" and "Needs: Category, Total" — the badge of a document the reader got
+// nothing off — and a reviewer clicking into one was offered "Re-read receipt"
+// on a document that was being read at that very moment.
+//
+// So the read says it is still running, and the sweep counts from that instead.
+// Returns the stop function, which every caller must reach: the pings are the
+// only thing keeping the document out of the sweep's hands.
+const READING_PING_MS = 20_000;
+export function keepReading(id) {
+  if (!id) return () => {};
+  const ping = () => {
+    fetch(`/api/costs/bills/${id}/reading`, { method: 'POST', headers: orgHeaders() }).catch(() => {});
+  };
+  ping(); // the read has started NOW, not twenty seconds from now
+  const timer = setInterval(ping, READING_PING_MS);
+  return () => clearInterval(timer);
+}
+
 // Apply the Vision-read fields to a doc created up-front (in Processing), then
 // run the fuzzy duplicate check. Returns { ok, bill, duplicate }.
 // `checkDuplicates:false` (Business settings → Extraction → Duplicate detection

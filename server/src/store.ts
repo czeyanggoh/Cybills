@@ -974,6 +974,7 @@ export function settleProcessing(orgId: string, id: string, landAs: 'new' | 'arc
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
   if (!bill) return null;
+  forgetReading(orgId, id); // whoever was reading it has stopped
   let changed = false;
   if (bill.status === 'processing') {
     bill.status = landAs;
@@ -986,10 +987,47 @@ export function settleProcessing(orgId: string, id: string, landAs: 'new' | 'arc
   return bill;
 }
 
+// A read that is still running SAYS SO, every few seconds, and the sweep below
+// counts from the last thing it heard rather than from the upload.
+//
+// Without it the grace was measured from createdAt, which is the moment the
+// document was accepted and has nothing to do with when its read will finish:
+// fifteen receipts dropped in together are created within a second of each
+// other, their reads go out in parallel, and a minute later the sweep knocked
+// every one of them that had not come back yet out of Processing and into the
+// inbox — wearing "New" and "Needs: Category, Total", which is what a document
+// nobody has read looks like when it is FINISHED. The reviewer clicking in got
+// "Re-read receipt" on a document that was being read at that very moment, and
+// the fields then filled in underneath them.
+//
+// In memory rather than on the document, deliberately. It is a fact about a
+// request in flight, not about the paper, and it is only ever read by the sweep
+// in this same process; written to the file it would bump `bookRevision` every
+// few seconds, which is the guard that stops the listing re-scanning the whole
+// book for duplicates. A restart loses the map, which is the right answer: a
+// restart means no read is running any more either, and createdAt rescues them.
+const readingHeartbeats = new Map<string, number>();
+const heartbeatKey = (orgId: string, id: string) => `${orgId}\u0000${id}`;
+
+// "I am still reading this." Only ever while the document says it is being
+// read — a heartbeat could otherwise hold a settled document in a state it has
+// already left. Answers whether it was taken.
+export function noteReading(orgId: string, id: string): boolean {
+  const bill = load().find((b) => b.orgId === orgId && b.id === id);
+  if (!bill || bill.status !== 'processing') return false;
+  readingHeartbeats.set(heartbeatKey(orgId, id), Date.now());
+  return true;
+}
+
+export function forgetReading(orgId: string, id: string): void {
+  readingHeartbeats.delete(heartbeatKey(orgId, id));
+}
+
 // Rescue documents stuck in "Processing" — the client advances a doc to the
 // inbox right after Vision reads it, but that step is lost if the tab closes
-// mid-read. After a grace period, any still-processing cost is moved to the
-// inbox (and auto-readied if complete), server-side, so nothing gets stuck.
+// mid-read. A minute after the last sign of life from whoever was reading it
+// (see above), any still-processing cost is moved to the inbox (and auto-readied
+// if complete), server-side, so nothing gets stuck.
 // Called on every bills fetch, so it self-heals without a background worker.
 const PROCESSING_GRACE_MS = 60_000;
 export function sweepStuckProcessing(orgId: string): void {
@@ -997,17 +1035,14 @@ export function sweepStuckProcessing(orgId: string): void {
   const now = Date.now();
   let changed = false;
   for (const b of bills) {
-    if (
-      b.orgId === orgId &&
-      b.kind !== 'sales' &&
-      b.status === 'processing' &&
-      b.createdAt &&
-      now - new Date(b.createdAt).getTime() > PROCESSING_GRACE_MS
-    ) {
-      b.status = 'new';
-      applyAutoReady(b);
-      changed = true;
-    }
+    if (b.orgId !== orgId || b.kind === 'sales' || b.status !== 'processing' || !b.createdAt) continue;
+    const key = heartbeatKey(orgId, b.id);
+    const alive = Math.max(new Date(b.createdAt).getTime(), readingHeartbeats.get(key) ?? 0);
+    if (now - alive <= PROCESSING_GRACE_MS) continue;
+    b.status = 'new';
+    applyAutoReady(b);
+    readingHeartbeats.delete(key);
+    changed = true;
   }
   if (changed) persist(bills);
 }

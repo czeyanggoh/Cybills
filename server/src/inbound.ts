@@ -9,7 +9,7 @@ import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './x
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
 import { keepMotorVehicleNoTax } from './motorVehicle.js';
-import { insertBill, updateBill, settleProcessing, getBillById, setBillEmailLink, attachFetchedFile } from './store.js';
+import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile } from './store.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
 import { keepPaymentProofInStep } from './paymentProof.js';
@@ -433,9 +433,16 @@ export async function autoRead(
   envelope: CoveringNote | null = null
 ): Promise<void> {
   let end: ReadEnd = 'failed';
+  // Say so while it runs, the way the uploading browser does. A read of ten to
+  // thirty seconds, a retry after a thrown one, and a provider having a slow
+  // minute add up past the sweep's grace, and it would then file the document
+  // out of Processing while this very call was still reading it.
+  const beat = setInterval(() => { noteReading(scope, billId); }, 20_000);
+  beat.unref?.(); // a heartbeat must never be the reason the process stays up
   try {
     end = await readIntoBill(req, scope, realOrgId, preferred, billId, fileBase64, mediaType, envelope);
   } finally {
+    clearInterval(beat);
     // Into the inbox whatever the read found — a blank read included. A
     // document the reader got nothing off used to be SET ASIDE to Archived on
     // the spot, and Cze asked for that to stop: whether a photo is a document
