@@ -30,9 +30,19 @@ export const DENSITY_CLASS = {
 // single word: "Microsoft Regional Sales Pte Ltd" broken over four lines beside
 // a Status column with room to spare. The widths are preferences, not a fixed
 // layout: a column whose content genuinely needs more still takes it.
+//
+// They are only honoured while the table has ROOM for all of them, which is the
+// other half of it: the shown columns are added up and the table is given that
+// as its min-width (`tableMinWidth`, src/lib/tableWidth.js), so the space is
+// handed out from a row that is wide enough rather than from a row that isn't.
 export const COST_COLUMNS = [
   // Wide enough for "Published to Xero"; the review badges below it wrap.
-  { key: 'status', label: 'Status', primary: true, fixed: true, width: 'w-[150px]' },
+  //
+  // The floor is Supplier's, and for the same reason: this column is the other
+  // one made of wrapping text, so its min-content is one word ("Yang"), and
+  // when the row ran short it was the first to give way — "Billed to / Goh /
+  // Cze / Yang", five lines tall, under a badge that reads perfectly in two.
+  { key: 'status', label: 'Status', primary: true, fixed: true, width: 'w-[150px] min-w-[136px]' },
   { key: 'user', label: 'User', primary: true, width: 'w-[120px]' },
   { key: 'date', label: 'Date', primary: true, width: 'w-[110px]' },
   // The widest of them, and the one that was starved: a supplier's registered

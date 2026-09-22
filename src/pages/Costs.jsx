@@ -68,6 +68,7 @@ import { useBankLines, invalidateBankLines } from '@/lib/bankStore';
 import { matchesByDoc, lineKey as bankLineKey } from '@/lib/bankMatch';
 import { useListView, rememberWalk } from '@/lib/listView';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
+import { tableMinWidth } from '@/lib/tableWidth';
 import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
@@ -1732,7 +1733,12 @@ export default function Costs() {
 
           {/* Table (md and up) */}
           <div className="hidden overflow-x-auto rounded-lg border md:block">
-            <table className="w-full min-w-[1000px] text-sm">
+            {/* The floor is what the shown columns themselves asked for, not a
+                round number: below it an auto-layout table stops honouring the
+                widths and sizes each column from its longest WORD instead — see
+                tableWidth.js. The two fixed cells either side of them are the
+                sticky checkbox (w-24) and the delete button (w-10). */}
+            <table className="w-full text-sm" style={{ minWidth: tableMinWidth(shownColumns, 96 + 40) }}>
               <thead className="border-b bg-muted/40 text-left">
                 <tr className="text-muted-foreground">
                   {/* Sticky: with the optional columns on, the table scrolls
