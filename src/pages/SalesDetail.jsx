@@ -13,7 +13,7 @@ import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 
 import { useCategoryOptions, getExtractionAccounts, useXeroPaymentMethods, useXeroCustomers, useXeroProjectOptions } from '@/lib/organisations';
-import { fetchBills, billToDoc, billFileUrl, itemNumber, updateBill, notifyBillsChanged, salesPath } from '@/lib/bills';
+import { fetchBills, billToDoc, billFileUrl, itemNumber, updateBill, notifyBillsChanged, salesPath, moveBillToWorkspace } from '@/lib/bills';
 import { readWalk } from '@/lib/listView';
 import { isPublished } from '@/lib/readiness';
 import { xeroBillUrl } from '@/lib/autoPublish';
@@ -438,11 +438,29 @@ export default function SalesDetail() {
     }
   };
 
-  const MOVE_DESTS = [
-    { label: 'Costs', to: '/costs' },
-    { label: 'Supplier statements', to: '/supplier-statements' },
-    { label: 'Vault', to: '/vault' },
-  ];
+  // Moving to Costs MOVES the document. It used to navigate to the Costs inbox
+  // and do nothing else, so it read as having moved a document that was still
+  // sitting in Sales — a button that appears to work. The other two entries
+  // were the same navigation and are gone rather than left pretending.
+  const moveToCosts = async () => {
+    setMoveOpen(false);
+    if (
+      !window.confirm(
+        'Move this document to Costs?' +
+          '\n\n' +
+          'Its category and tax code are cleared: an account code and a tax code here mean ' +
+          'the opposite side of the ledger, so neither can come across. It lands in To review ' +
+          'for somebody to code as a cost.'
+      )
+    )
+      return;
+    try {
+      await moveBillToWorkspace(sale.id, 'cost');
+      navigate('/costs');
+    } catch (err) {
+      setAiError(err.message);
+    }
+  };
 
   const net = (Number(data.total || 0) - Number(data.tax || 0)).toFixed(2);
   // Xero has this document's money: the page then states rather than offers.
@@ -483,16 +501,13 @@ export default function SalesDetail() {
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMoveOpen(false)} aria-hidden="true" />
               <div className="absolute left-0 z-20 mt-1 w-48 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
-                {MOVE_DESTS.map((dest) => (
-                  <button
-                    key={dest.label}
-                    type="button"
-                    onClick={() => { setMoveOpen(false); navigate(dest.to); }}
-                    className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-                  >
-                    {dest.label}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  onClick={moveToCosts}
+                  className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                >
+                  Costs
+                </button>
               </div>
             </>
           )}

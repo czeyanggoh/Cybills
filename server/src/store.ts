@@ -1616,6 +1616,42 @@ export function recordPrepaymentAllocation(
   return { from, invoice };
 }
 
+// Move a document between the Costs and Sales workspaces. `kind` is not in
+// EDITABLE and must not be: it is not a field somebody types, it is which side
+// of the transaction the document is, and changing it changes what publishing
+// it DOES. So it has a writer of its own, and that writer takes the tax code
+// with it.
+//
+// The coding does not travel. The account and the tax code are names in the
+// same entity's chart either way, so unlike a move between entities they are
+// not meaningless here — they are WRONG here, which is worse, because they
+// would still post. A purchase code and a supply code are different
+// vocabularies (INPUT vs OUTPUT), and a sales invoice moved to Costs carrying
+// OUTPUT2 would claim input tax under a code that records output tax; the
+// account is the other half of the same mistake, a revenue account standing
+// where an expense account belongs. Both are cleared, with the reason said, and
+// the re-derived readiness puts the document in To review — which is exactly
+// what it is: a document nobody has coded for the workspace it is now in.
+export function moveBillToKind(orgId: string, id: string, kind: 'cost' | 'sales'): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  bill.kind = kind;
+  bill.category = '';
+  bill.categoryReason = `Moved to ${kind === 'sales' ? 'Sales' : 'Costs'}: an account code and a tax code mean the opposite side of the ledger here, so both were cleared.`;
+  bill.taxRate = '';
+  bill.taxRateReason = bill.categoryReason;
+  // Neither marker survives: they say a PERSON chose this code, and nobody
+  // chose a blank — they chose one for the workspace the document has left.
+  bill.taxRateEdited = false;
+  bill.taxRateCleared = false;
+  // Readiness is derived, so clearing the category moves it to To review by
+  // itself rather than being written there.
+  applyAutoReady(bill);
+  persist(bills);
+  return bill;
+}
+
 export function updateBill(orgId: string, id: string, patch: Partial<Bill>): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);

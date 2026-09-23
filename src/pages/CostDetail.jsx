@@ -35,7 +35,7 @@ import { useProjectLabels, singular } from '@/lib/projectLabels';
 import { useUsers, useOwnerNames, canPublishToXero, canCreateClaims } from '@/lib/userStore';
 import { setWhatsappSender } from '@/lib/whatsapp';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, moveBillToWorkspace, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -1233,11 +1233,35 @@ export default function CostDetail() {
   // workspace nobody here can open would archive it out of the inbox and leave
   // it nowhere.
   const MOVE_DESTS = [
-    ...(salesEnabled ? [{ label: 'Sales', to: '/sales' }] : []),
+    ...(salesEnabled ? [{ label: 'Sales', move: 'sales' }] : []),
     { label: 'Supplier statements', to: '/supplier-statements' },
   ];
-  const moveTo = (dest) => {
+  const moveTo = async (dest) => {
     setMoveOpen(false);
+    // Sales MOVES the document. It used to archive it here and navigate to the
+    // Sales tab, so the document was in neither list a reviewer was looking at
+    // — a button that appears to work. The category and tax code cannot come
+    // across: an account code and a tax code mean the opposite side of the
+    // ledger there, and carried over they would still post.
+    if (dest.move) {
+      if (
+        !window.confirm(
+          'Move this document to Sales?' +
+            '\n\n' +
+            'Its category and tax code are cleared: an account code and a tax code there mean ' +
+            'the opposite side of the ledger, so neither can come across. It lands in To review ' +
+            'for somebody to code as a sale.'
+        )
+      )
+        return;
+      try {
+        await moveBillToWorkspace(doc.id, dest.move);
+        navigate('/sales');
+      } catch (err) {
+        window.alert(err.message);
+      }
+      return;
+    }
     saveWithStatus('archived', dest.to);
   };
 

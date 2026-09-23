@@ -715,6 +715,29 @@ export async function moveBillToEntity(id, orgId) {
   return { ok: true, orgName: body.orgName || '', orgId: body.orgId || orgId };
 }
 
+// Move a document between the Costs and Sales workspaces — a sales invoice
+// uploaded on the Costs tab, or a supplier's bill dropped into Sales.
+//
+// The account code and the tax code do NOT come across, and the server says so
+// in the reply: a purchase code and a supply code are different vocabularies,
+// and carried over they would still post — under a code recording the opposite
+// side of the ledger. The document lands in To review, which is what it is.
+//
+// Throws with the server's own message, so the four refusals (published, on a
+// claim, merged away, already there) reach the reviewer as the instruction for
+// undoing them.
+export async function moveBillToWorkspace(id, kind) {
+  const res = await fetch(`/api/costs/bills/${encodeURIComponent(id)}/move-workspace`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ kind }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.message || 'That document could not be moved.');
+  notifyBillsChanged();
+  return body;
+}
+
 // Permanently delete a bill: removes the record AND reclaims its stored file
 // from Cloudflare R2 (or local disk). Destructive — callers confirm first. This
 // is distinct from a soft delete/archive (updateBill with a status change),

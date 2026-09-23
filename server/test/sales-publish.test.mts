@@ -93,7 +93,7 @@ process.env.CYWORKSPACE_RELAY_URL = 'http://127.0.0.1:4632';
 
 const express = (await import('express')).default;
 const { xeroRouter } = await import('../src/xero.ts');
-const { insertBill, getBillById } = await import('../src/store.ts');
+const { insertBill, getBillById, moveBillToKind } = await import('../src/store.ts');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -198,6 +198,26 @@ const publish = async (billId: string, over: Record<string, unknown> = {}) => {
   await publish(doc.id);
   const again = await publish(doc.id);
   check('a second publish is refused', [again.status, again.body?.error], [409, 'already_posted']);
+}
+
+// 6) A document filed into the wrong workspace is MOVED, and its coding does
+//    not travel. Unlike a move between entities — where the codes are names in
+//    a chart the document has left, and so mean nothing — these are names in
+//    the same chart and so are WRONG rather than meaningless, which is worse:
+//    they would still post. A supply code recording output tax standing on a
+//    cost claims input tax under it.
+{
+  const doc = sale({ taxRate: 'GST on Income', category: '200 - Sales' });
+  const moved = moveBillToKind('cybm', doc.id, 'cost');
+  check('the document changes workspace', moved?.kind, 'cost');
+  check('…and arrives uncoded, both halves', [moved?.category, moved?.taxRate], ['', '']);
+  check('…saying why', String(moved?.taxRateReason ?? '').includes('opposite side of the ledger'), true);
+  // Readiness is derived, so clearing the category is what puts it in To
+  // review — it is not written there.
+  check('…waiting on a person, not Ready', moved?.status, 'new');
+  // Nobody chose a blank: they chose a code for the workspace it has left.
+  check('…and no hand-picked marker survives',
+    [moved?.taxRateEdited, moved?.taxRateCleared], [false, false]);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

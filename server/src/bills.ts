@@ -20,6 +20,7 @@ import {
   getBillByIdAny,
   deleteBillHard,
   moveBillToScope,
+  moveBillToKind,
   storageKeyInUse,
   parseAmount,
   setBillWhatsappSender,
@@ -1096,6 +1097,62 @@ billsRouter.post('/bills/:id/move-entity', async (req, res) => {
     // Said out loud because it is the surprising half: an account code and a tax
     // code are names in the chart of the entity the document has just left.
     cleared: ['category', 'taxRate', 'customer', 'project'],
+  });
+});
+
+// POST /api/costs/bills/:id/move-workspace — { kind: 'cost' | 'sales' } — a
+// document filed into the wrong workspace, put in the right one.
+//
+// The Sales page's "Move to" menu used to NAVIGATE to the Costs inbox and do
+// nothing else, so it read as having moved a document that was still sitting
+// where it was — the worst kind of button, one that appears to work.
+//
+// The four refusals are move-entity's four, and for the same reason: each is a
+// state in which the document's money is already accounted for somewhere, and
+// each is one the reviewer can undo first, so the message is the instruction.
+billsRouter.post('/bills/:id/move-workspace', (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  const scope = orgIdFor(req);
+  const bill = getBillById(scope, req.params.id);
+  if (!bill || !canReadBill(req, bill)) return res.status(404).json({ error: 'not_found' });
+
+  const kind = String(req.body?.kind ?? '').trim();
+  if (kind !== 'cost' && kind !== 'sales') {
+    return res.status(400).json({ error: 'invalid_kind', message: 'kind must be "cost" or "sales".' });
+  }
+  if ((bill.kind || 'cost') === kind) {
+    return res.status(400).json({ error: 'same_workspace', message: 'This document is already in that workspace.' });
+  }
+  if (bill.xeroInvoiceId) {
+    return res.status(409).json({
+      error: 'published',
+      message: 'This document is already published to Xero, where it is one side of the ledger or the other. Clear the Xero link (and void it in Xero) before moving it.',
+    });
+  }
+  if (bill.status === 'expenseclaim') {
+    return res.status(409).json({
+      error: 'on_claim',
+      message: 'This document is on an expense claim, which reaches Xero as the claim’s own bill. Take it off the claim first.',
+    });
+  }
+  if (bill.status === 'merged') {
+    return res.status(409).json({
+      error: 'merged',
+      message: 'This document was merged into another one, which now carries its money. Unmerge it first.',
+    });
+  }
+  if (bill.status === 'deleted') return res.status(404).json({ error: 'not_found' });
+
+  const moved = moveBillToKind(scope, bill.id, kind);
+  if (!moved) return res.status(404).json({ error: 'not_found' });
+  res.json({
+    ok: true,
+    bill: { ...moved, hasFile: Boolean(moved.storageKey) },
+    kind,
+    // Said out loud because it is the surprising half: a purchase code and a
+    // supply code are different vocabularies, so neither the account nor the
+    // tax code can come across.
+    cleared: ['category', 'taxRate'],
   });
 });
 
