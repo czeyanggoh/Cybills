@@ -664,6 +664,22 @@ pointed at, with `has_channel` saying whether they already collect through one:
 The entity's GENERAL account is left out — it is the unclaimed-documents bucket,
 not a person. Deactivated and removed rows are left out too. Still no numbers.
 
+And `entities` — every linked entity, as a destination of its own (a group
+that collects for the entity as a whole):
+
+```json
+{
+  "entities": [
+    { "org_id": "org_red00001", "org_name": "Acme Pte Ltd", "has_channel": false }
+  ]
+}
+```
+
+`has_channel` says whether the entity already has an OPEN entity-wide group.
+This is how a chat is pointed at an entity whose roster is the General account
+alone (a sole trader's company): with General left out of `people`, there was
+otherwise nobody to pick.
+
 ## Linking a group that already exists
 
 **Set up the group** and **Connect to WhatsApp** both MAKE a group, every time.
@@ -684,9 +700,16 @@ Answers `{ ok: true, channel: { submissionId, ... } }`. Nothing is opened in
 WhatsApp; the group is CYWS's, and its members are whoever is already in it.
 CYWS stamps the returned id on that chat and starts forwarding.
 
+- **Or an entity instead of a person**: `{ "org_id": "org_red00001", "chat_id": … }`.
+  The channel carries no person — the same as the group **Set up the group**
+  opens — so a sender on the roster files under themselves and anybody else
+  lands on the entity's General account. Name one or the other: both, or
+  neither, is **400 `user_or_org`**; an entity not linked here is **404
+  `unknown_org`**.
 - `subject` is optional — the group's real WhatsApp name, which is what the
   operator on the other side is looking at. Without it the channel is named the
-  way one we opened ourselves would be (the person's CYBills address).
+  way one we opened ourselves would be (the person's CYBills address, or
+  `CYBills - <entity>`).
 - **A person may collect through SEVERAL groups**, and this is the route where
   that is true: their own, opened by CYBot, plus any conversation of theirs that
   was pointed at CYBills. Each gets its own submission id, its own thread and

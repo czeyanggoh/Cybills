@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { env, whatsappEnabled, r2Enabled, googleEnabled } from './env.js';
 import { workspaceId } from './workspace.js';
-import { dataScopeForOrg, getOrganisation, primaryOrgId } from './organisations.js';
+import { dataScopeForOrg, getOrganisation, listOrganisations, primaryOrgId } from './organisations.js';
 import {
   canAccessOrg,
   canManagePractice,
@@ -713,7 +713,20 @@ whatsappRouter.get('/directory', (req, res) => {
         has_channel: connected.has(u.id),
       };
     });
-  res.json({ channels, people });
+  // Every linked ENTITY, as a destination of its own: the group collects for
+  // the entity as a whole, the way the one "Set up the group" opens does. A
+  // sender on the roster still files under themselves; anybody else lands on
+  // the General account, which is what it is for. This is the only way to
+  // point an existing chat at an entity whose roster is the General account
+  // alone — a sole trader's company, say — since the General row is left out
+  // of `people` above and there was then nobody to pick.
+  const entityWide = new Set(all.filter((c) => c.status === 'open' && !c.userId).map((c) => c.orgId));
+  const entities = listOrganisations(ws).map((o) => ({
+    org_id: o.id,
+    org_name: o.name,
+    has_channel: entityWide.has(o.id),
+  }));
+  res.json({ channels, people, entities });
 });
 
 // Whose number this is, and who may connect it. Your own always; otherwise
@@ -912,10 +925,11 @@ whatsappRouter.post('/channels/user', async (req, res) => {
   });
 });
 
-// POST /api/whatsapp/channels/attach — body { user_id, chat_id, subject? }.
+// POST /api/whatsapp/channels/attach — body { user_id | org_id, chat_id, subject? }.
 //
-// Bind a group that ALREADY EXISTS to a person: mint their submission id
-// against it and open nothing in WhatsApp.
+// Bind a group that ALREADY EXISTS to a person — or, with `org_id`, to an
+// entity as a whole — mint a submission id against it and open nothing in
+// WhatsApp.
 //
 // Connecting somebody (above) is the only thing that mints an id, and it makes
 // a real group every time. So a client already talking to us in a group of
@@ -938,11 +952,23 @@ whatsappRouter.post('/channels/attach', (req, res) => {
   }
   const ws = workspaceId(req);
   const userId = String(req.body?.user_id ?? '').trim();
+  const entityId = String(req.body?.org_id ?? '').trim();
   const chatId = String(req.body?.chat_id ?? '').trim();
   if (!chatId) return res.status(400).json({ error: 'chat_id_required' });
-  const person = personFor(ws, userId);
-  if (!person) return res.status(404).json({ error: 'unknown_user' });
-  if (!person.orgId) return res.status(400).json({ error: 'org_required' });
+  // A person OR an entity, never both: naming both leaves it unsaid whether a
+  // stranger's bill should land on that person or on General, and guessing is
+  // how one client's paperwork ends up in somebody's own name.
+  if (userId && entityId) return res.status(400).json({ error: 'user_or_org', message: 'Name a person or an entity, not both.' });
+  if (!userId && !entityId) return res.status(400).json({ error: 'user_or_org', message: 'Name a person or an entity.' });
+  // The entity-wide case: no person on the channel, exactly like the group
+  // "Set up the group" opens, so `ownerFor` files a known sender under
+  // themselves and anybody else on the entity's General account.
+  const entity = entityId ? getOrganisation(ws, entityId) : null;
+  if (entityId && !entity) return res.status(404).json({ error: 'unknown_org' });
+  const person = userId ? personFor(ws, userId) : null;
+  if (userId && !person) return res.status(404).json({ error: 'unknown_user' });
+  const orgId = entity ? entity.id : person!.orgId;
+  if (!orgId) return res.status(400).json({ error: 'org_required' });
 
   const items = loadChannels();
   // A person may collect through MORE THAN ONE group, and this is the route
@@ -978,15 +1004,17 @@ whatsappRouter.post('/channels/attach', (req, res) => {
   }
 
   const channel: WaChannel = {
-    id: mintSubmissionId(person.orgId),
+    id: mintSubmissionId(orgId),
     workspaceId: ws,
-    orgId: person.orgId,
-    userId,
+    orgId,
+    userId: person ? userId : '',
     // CYWS sends the group's real WhatsApp name, which is what the operator
-    // there is looking at. Falls back to the address-derived name a group we
-    // opened ourselves would have carried.
+    // there is looking at. Falls back to the name a group we opened ourselves
+    // would have carried: the person's address, or the entity's own default.
     subject: String(req.body?.subject ?? '').trim()
-      || subjectFor(person.user, getOrganisation(ws, person.orgId)?.name || person.orgId),
+      || (person
+        ? subjectFor(person.user, getOrganisation(ws, orgId)?.name || orgId)
+        : `CYBills - ${entity?.name || orgId}`),
     chatId,
     status: 'open',
     // Somebody else's conversation, borrowed. Recorded now because the moment
@@ -1009,7 +1037,7 @@ whatsappRouter.post('/channels/attach', (req, res) => {
   };
   items.push(channel);
   saveChannels(items);
-  console.log(`[whatsapp] attached existing group ${chatId} to ${person.user.email || userId} as ${channel.id}`);
+  console.log(`[whatsapp] attached existing group ${chatId} to ${person ? person.user.email || userId : `${entity?.name || orgId} (entity-wide)`} as ${channel.id}`);
   res.json({ ok: true, channel: publicChannel(channel) });
 });
 

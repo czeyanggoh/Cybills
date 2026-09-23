@@ -165,6 +165,31 @@ await post(`channels/${adopted}/close`, {}, ORG);
 const after = (await get('directory', KEY)).body.channels as any[];
 check('a closed collection stops being assignable', after.find((c) => c.submission_id === adopted)?.assignable, false);
 
+// --- An existing group pointed at an ENTITY, not a person ----------------------
+// An entity whose roster is the General account alone had nobody in `people`
+// to pick, so its client's group could not be pointed at it at all.
+const listed = (await get('directory', KEY)).body.entities as any[];
+check('the directory lists every linked entity', listed.map((e) => e.org_id), ['org_one0001']);
+check('with no entity-wide group yet', listed[0].has_channel, false);
+
+r = await post('channels/attach', { org_id: 'org_one0001', user_id: dean.id, chat_id: '120363777@g.us' }, KEY);
+check('naming a person AND an entity is refused', [r.status, r.body.error], [400, 'user_or_org']);
+r = await post('channels/attach', { org_id: 'org_nope', chat_id: '120363777@g.us' }, KEY);
+check('an unknown entity is refused', [r.status, r.body.error], [404, 'unknown_org']);
+
+r = await post('channels/attach', { org_id: 'org_one0001', chat_id: '120363777@g.us', subject: 'Acme bills' }, KEY);
+check('an existing group can be attached to the entity', r.status, 200);
+const entityCh = r.body.channel.submissionId as string;
+check('with nobody on it, so strangers land on General', channelById(entityCh)?.userId, '');
+check('filed under that entity', channelById(entityCh)?.orgId, 'org_one0001');
+check('and adopted', r.body.channel.adopted, true);
+
+const again = (await get('directory', KEY)).body;
+check('the entity now says it has a group', again.entities[0].has_channel, true);
+check('and the channel reads as entity-wide', again.channels.find((c: any) => c.submission_id === entityCh)?.entity_wide, true);
+r = await post('channels/attach', { org_id: 'org_one0001', chat_id: '120363777@g.us' }, KEY);
+check('the same chat still cannot be attached twice', [r.status, r.body.error], [409, 'chat_in_use']);
+
 globalThis.fetch = realFetch;
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, server);
