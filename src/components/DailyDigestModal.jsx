@@ -55,13 +55,17 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
   const hours = data?.hours || [8];
   const last = data?.digest?.lastResult;
 
-  const toggleClient = (id) =>
+  // Ticking the first client IS asking for the digest: with the switch left at
+  // its default Off, Save quietly saved a digest that would never be sent.
+  const toggleClient = (id) => {
+    if (!picked[id] && !Object.keys(picked).length) setEnabled(true);
     setPicked((p) => {
       const next = { ...p };
       if (next[id]) delete next[id];
       else next[id] = [];
       return next;
     });
+  };
   const toggleAddress = (id, email) =>
     setPicked((p) => {
       const list = p[id] || [];
@@ -88,7 +92,14 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
     try {
       await saveDigest(colleague.id, payload());
       refresh();
-      onSaved?.(enabled ? `Daily digest on for ${colleague.name} at ${hourLabel(hour)}.` : `Daily digest off for ${colleague.name}.`);
+      const n = Object.keys(picked).length;
+      onSaved?.(
+        !enabled
+          ? `Daily digest off for ${colleague.name}${n ? ' — switch “Send daily” on to start it' : ''}.`
+          : n
+            ? `Daily digest on for ${colleague.name} at ${hourLabel(hour)}.`
+            : `Daily digest for ${colleague.name} has no clients picked, so nothing will be sent.`
+      );
       onClose();
     } catch (e) {
       setNote(e.message);

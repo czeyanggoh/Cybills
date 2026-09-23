@@ -57,7 +57,8 @@ export const sendDigestNow = (userId) =>
 
 // What the Colleagues column says about a digest.
 export function digestLabel(d) {
-  if (!d?.enabled || !d.clients?.length) return 'Off';
+  if (!d?.enabled) return 'Off';
+  if (!d.clients?.length) return 'On · no clients';
   const n = d.clients.length;
   return `${String(d.hour ?? 8).padStart(2, '0')}:00 · ${n} client${n === 1 ? '' : 's'}`;
 }
