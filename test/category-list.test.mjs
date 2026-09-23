@@ -43,6 +43,10 @@ check('…and everything after it is the name', categoryName('200-10 - Sales - P
 // the whole chart read as plain names and nothing in it could be published.
 check('a slashed code is a code', categoryCode('93511/000 - REPAIR & MAINT'), '93511/000');
 check('…and the name is what follows it', categoryName('93511/000 - REPAIR & MAINT'), 'REPAIR & MAINT');
+// A dotted chart ("6.4010 - Accounting fee", CY Business Management's own):
+// refused, every category in the book blocked as "isn't a Xero account code".
+check('a dotted code is a code', categoryCode('6.4010 - Accounting fee'), '6.4010');
+check('…and the name is what follows it', categoryName('6.4010 - Accounting fee'), 'Accounting fee');
 
 // The bug this exists to stop: "Transport" is not an account code, so the label
 // is a name in full. Read as a code it would post a taxi fare to nothing.
@@ -51,6 +55,8 @@ check('…and is its own name, whole', categoryName('Transport - Taxi'), 'Transp
 check('another one', categoryCode('Recall Allowance - Weekend/PH'), '');
 check('…whole', categoryName('ERP - Cashcard'), 'ERP - Cashcard');
 check('a bare category has no code', categoryCode('Uncategorised'), '');
+// The digit is what tells the two apart, dot or no dot.
+check('a dotted NAME is still a name', categoryCode('Offshore L.H - per trip'), '');
 check('a blank is a blank', categoryCode(''), '');
 check('null is not a code', categoryCode(null), '');
 
