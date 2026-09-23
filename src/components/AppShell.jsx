@@ -21,6 +21,7 @@ import {
   Menu,
   MessageCircle,
   Mail,
+  Search,
   Landmark,
   X,
 } from 'lucide-react';
@@ -197,6 +198,7 @@ function OrganisationSwitcher() {
   const [addOpen, setAddOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState(null);
   const [activeId, setActiveId] = useState(getActiveOrganisationId);
+  const [query, setQuery] = useState('');
 
   // Follow the selection wherever it is made. This state was only ever written
   // by the dropdown below, so an entity switched from anywhere ELSE — the
@@ -240,6 +242,20 @@ function OrganisationSwitcher() {
     setActiveId(organisations[0].id);
   }, [activeId, organisations, isFetching]);
 
+  // Typing is only worth offering where scrolling is the alternative: the
+  // practice holds thirty-odd entities, a client holds one or two, and a
+  // search box above a list of two is a control with nothing to do.
+  const searchable = organisations.length >= 8;
+  const needle = query.trim().toLowerCase();
+  // Matched against the tenant's own name as well as ours, because the list
+  // prints both and the one somebody remembers is whichever they read last.
+  const shown =
+    searchable && needle
+      ? organisations.filter((o) =>
+          `${o.name || ''} ${o.tenantName || ''}`.toLowerCase().includes(needle),
+        )
+      : organisations;
+
   const select = (id) => {
     if (id === activeId) {
       setOpen(false);
@@ -272,7 +288,10 @@ function OrganisationSwitcher() {
       </span>
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setQuery('');
+          setOpen((o) => !o);
+        }}
         title={label}
         className="flex min-w-0 items-center gap-1 text-sm font-medium"
       >
@@ -288,13 +307,46 @@ function OrganisationSwitcher() {
           {/* Capped to the window: a practice holds more entities than fit on
               screen, and a menu taller than the viewport can't be scrolled to. */}
           <div className="absolute left-0 top-full z-20 mt-1 flex max-h-[calc(100dvh-6rem)] w-72 flex-col overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+            {searchable && (
+              <div className="relative mx-2 mb-1 shrink-0 border-b">
+                <Search className="pointer-events-none absolute left-1.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={query}
+                  autoFocus
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    // A filter narrowed to one entity is a choice already made,
+                    // so Enter takes it rather than asking for the mouse back.
+                    if (e.key === 'Enter' && shown.length === 1) {
+                      e.preventDefault();
+                      select(shown[0].id);
+                      return;
+                    }
+                    // Escape clears the narrowing first; a second press closes
+                    // the menu through the app-wide handler, which this one
+                    // stands aside for by not calling preventDefault.
+                    if (e.key === 'Escape' && query) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setQuery('');
+                    }
+                  }}
+                  placeholder="Search entities"
+                  className="h-9 w-full bg-transparent pl-7 pr-2 text-sm outline-none placeholder:text-muted-foreground"
+                />
+              </div>
+            )}
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {organisations.length === 0 && (
               <p className="px-3 py-2 text-sm text-muted-foreground">
                 No organisations yet. Link one to a Xero organisation to start publishing bills.
               </p>
             )}
-            {organisations.map((o) => (
+            {organisations.length > 0 && shown.length === 0 && (
+              <p className="px-3 py-2 text-sm text-muted-foreground">No entity matches "{query.trim()}".</p>
+            )}
+            {shown.map((o) => (
               <div
                 key={o.id}
                 className="group flex items-center gap-1 px-1 transition-colors hover:bg-muted"
