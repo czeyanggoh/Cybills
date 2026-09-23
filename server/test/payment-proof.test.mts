@@ -262,7 +262,11 @@ const standingClaimed = insertBill({
 } as any);
 await list();
 check('a proof left in the inbox from before is archived by the listing', [getBillById(scope, standing.id)?.status, getBillById(scope, standing.id)?.proofSetAside], ['archived', true]);
-check('one already in Xero is left where it is', getBillById(scope, standingPublished.id)?.status, 'ready');
+// A PUBLISHED proof is not this sweep's to set aside — proofSetAside is what
+// makes the archiving happen once, and is what it is read by afterwards. Its
+// status is archived all the same, by the rule six lines earlier in the same
+// listing (archivePublishedWorkingDocs): a document in Xero is never in Ready.
+check('one already in Xero is not set aside by this sweep', getBillById(scope, standingPublished.id)?.proofSetAside ?? false, false);
 check('and so is one on an expense claim', getBillById(scope, standingClaimed.id)?.status, 'expenseclaim');
 const pulledOut = await patch(standing.id, { status: 'new' });
 check('somebody can pull it back out', pulledOut?.status, 'new');
