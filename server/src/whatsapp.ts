@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { env, whatsappEnabled, r2Enabled, googleEnabled } from './env.js';
 import { workspaceId } from './workspace.js';
-import { dataScopeForOrg, getOrganisation, listOrganisations, primaryOrgId } from './organisations.js';
+import { dataScopeForOrg, getOrganisation, listOrganisations, primaryOrgId, publishTargetFor } from './organisations.js';
 import {
   canAccessOrg,
   canManagePractice,
@@ -11,6 +11,7 @@ import {
   ensure as ensureUsers,
   save as saveUsers,
   generalUserFor,
+  addressForUser,
   isBusinessAdminRole,
   memberForSession,
   appOrigin,
@@ -698,6 +699,12 @@ whatsappRouter.get('/directory', (req, res) => {
   // opened for it.
   const ws = workspaceId(req);
   const connected = new Set(all.filter((c) => c.status === 'open' && c.userId).map((c) => c.userId));
+  // Each person's and entity's inbound address, and the Xero tenant their bills
+  // reach, so CYWS's AP Mailbox can forward a supplier's email to a PERSON here
+  // (picked by name, filtered to the org it watches for) rather than to a
+  // hand-typed address that a typo turns into mail nobody receives.
+  const memo = new Map<string, string>();
+  const tenantOf = (orgId: string) => publishTargetFor(ws, getOrganisation(ws, orgId))?.tenantId || '';
   const people = ensureUsers(ws)
     .filter((u: User) => !u.removed && !u.deactivated && !u.general)
     .map((u: User) => {
@@ -710,6 +717,8 @@ whatsappRouter.get('/directory', (req, res) => {
         email: u.email || '',
         org_id: orgId,
         org_name: getOrganisation(ws, orgId)?.name || '',
+        tenant_id: tenantOf(orgId),
+        inbound_address: addressForUser(u, memo),
         has_channel: connected.has(u.id),
       };
     });
@@ -721,11 +730,17 @@ whatsappRouter.get('/directory', (req, res) => {
   // alone — a sole trader's company, say — since the General row is left out
   // of `people` above and there was then nobody to pick.
   const entityWide = new Set(all.filter((c) => c.status === 'open' && !c.userId).map((c) => c.orgId));
-  const entities = listOrganisations(ws).map((o) => ({
-    org_id: o.id,
-    org_name: o.name,
-    has_channel: entityWide.has(o.id),
-  }));
+  const entities = listOrganisations(ws).map((o) => {
+    // The entity's own address files to its General account.
+    const general = generalUserFor(ws, o.id);
+    return {
+      org_id: o.id,
+      org_name: o.name,
+      tenant_id: tenantOf(o.id),
+      inbound_address: general ? addressForUser(general, memo) : '',
+      has_channel: entityWide.has(o.id),
+    };
+  });
   res.json({ channels, people, entities });
 });
 

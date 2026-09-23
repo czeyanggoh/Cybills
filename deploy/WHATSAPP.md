@@ -680,6 +680,13 @@ This is how a chat is pointed at an entity whose roster is the General account
 alone (a sole trader's company): with General left out of `people`, there was
 otherwise nobody to pick.
 
+Both `people` and `entities` also carry `inbound_address` (the person's
+`<handle>@cybills.sg`; for an entity, its own address, which files to the
+General account — empty when it has none) and `tenant_id` (the Xero tenant the
+entity's bills are published to, its parent's for a bridge). CYWS's **AP
+Mailbox** uses them to forward a supplier's email to a person here, picked by
+name and filtered to the org it watches for, rather than to a typed address.
+
 ## Linking a group that already exists
 
 **Set up the group** and **Connect to WhatsApp** both MAKE a group, every time.
