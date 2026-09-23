@@ -250,7 +250,10 @@ export type Bill = {
   // with different ids — so every later read, update or attachment has to know
   // which one to ask for. Absent on rows published before credit notes could
   // be, which were all bills.
-  xeroDocType?: 'ACCPAY' | 'ACCPAYCREDIT';
+  // Which of Xero's four records this document went up as — payable or
+  // receivable, invoice or credit note. Absent means ACCPAY: every row
+  // published before there was more than one kind was a supplier bill.
+  xeroDocType?: 'ACCPAY' | 'ACCPAYCREDIT' | 'ACCREC' | 'ACCRECCREDIT';
   xeroTenantId?: string;
   xeroTenantName?: string;
   xeroPostedAt?: string; // ISO timestamp
@@ -430,7 +433,7 @@ function load(): Bill[] {
     // Readiness is now auto-derived: promote already-complete inbox costs into
     // Ready so existing data matches the rule. Promote-only here (never yank a
     // doc already in Ready back) to avoid surprising demotions on deploy.
-    if (b.kind !== 'sales' && b.status === 'new' && costComplete(b)) {
+    if (b.kind !== 'supplier_statement' && b.status === 'new' && costComplete(b)) {
       b.status = 'ready';
       migrated = true;
     }
@@ -884,16 +887,31 @@ export function totalComplete(b: Bill): boolean {
 }
 
 export function costComplete(b: Bill): boolean {
-  const supplier = filled(b.supplier) && String(b.supplier).trim().toLowerCase() !== 'unknown supplier';
+  // The counterparty, whichever end of the paper it was read from: a cost's
+  // supplier, a sales invoice's customer. One stored field, and neither of the
+  // reader's two placeholders is a name. Mirrors src/lib/readiness.js.
+  const supplier =
+    filled(b.supplier) &&
+    !['unknown supplier', 'unknown customer'].includes(String(b.supplier).trim().toLowerCase());
   const category = filled(b.category) && String(b.category).trim().toLowerCase() !== 'uncategorised';
   return supplier && filled(b.date) && category && totalComplete(b);
 }
 
-// Auto-move a cost between the inbox ('new') and 'ready' based on completeness.
-// Only ever toggles those two states — never touches processing/review/archived/
-// expenseclaim/deleted, or sales. Returns true if the status changed.
+// Auto-move a document between the inbox ('new') and 'ready' based on
+// completeness. Only ever toggles those two states — never touches processing/
+// review/archived/expenseclaim/deleted. Returns true if the status changed.
+//
+// Sales documents use the same flow, because readiness is the same question
+// asked of the same four fields: a sales invoice that names its customer, its
+// date, its revenue account and its total is finished, and one that does not is
+// waiting on a person. It used to be costs only, which is why a complete sales
+// invoice sat in the inbox for ever wearing "New" — there was no road to Ready
+// at all, and the Sales page's own "Move to ready" button was the only one.
+// A SUPPLIER STATEMENT is still left alone: it is a reconciliation document
+// with no category and no total of its own, so those four fields say nothing
+// about it.
 function applyAutoReady(b: Bill): boolean {
-  if (b.kind !== 'cost') return false; // only cost docs use the inbox↔ready flow
+  if (b.kind === 'supplier_statement') return false;
   if (b.status === 'new' && costComplete(b)) { b.status = 'ready'; return true; }
   if (b.status === 'ready' && !costComplete(b)) { b.status = 'new'; return true; }
   return false;
@@ -1125,7 +1143,7 @@ export function setBillFile(
 export function markBillPosted(
   orgId: string,
   id: string,
-  info: { xeroInvoiceId: string; xeroDocType?: 'ACCPAY' | 'ACCPAYCREDIT'; xeroTenantId: string; xeroTenantName: string }
+  info: { xeroInvoiceId: string; xeroDocType?: Bill['xeroDocType']; xeroTenantId: string; xeroTenantName: string }
 ): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);

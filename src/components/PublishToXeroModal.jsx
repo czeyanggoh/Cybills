@@ -191,12 +191,25 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   // posts it as 530 of credit either way. Decided by the document's TYPE, and
   // — once it is in Xero — by what it was posted as, since an update has to go
   // to the record that exists.
-  const credit = updating ? bill?.xeroDocType === 'ACCPAYCREDIT' : isCreditNote(bill);
-  const noun = credit ? 'credit note' : 'bill';
+  const credit = updating ? String(bill?.xeroDocType ?? '').endsWith('CREDIT') : isCreditNote(bill);
+  // One dialog for both workspaces, because it is one act: pick the account,
+  // pick the tax code, post it. What differs is which side of the ledger the
+  // document lands on — and that is the server's answer, read from the
+  // document's own workspace — so all that changes here is what it is CALLED.
+  // "Publish this bill" over a page showing a sales invoice names a document
+  // that is not on the screen.
+  const sale = String(bill?.kind ?? 'cost') === 'sales';
+  const noun = credit ? 'credit note' : sale ? 'sales invoice' : 'bill';
   const missing = (() => {
     const out = [];
     const txt = (v) => String(v ?? '').trim();
-    if (!txt(bill?.supplier) || txt(bill?.supplier).toLowerCase() === 'unknown supplier') out.push('a supplier');
+    // The counterparty, called what it is in this workspace: a supplier on a
+    // cost, a customer on a sales invoice. Mirrors missingForPublish on the
+    // server, which refuses in the same words.
+    const party = txt(bill?.supplier).toLowerCase();
+    if (!party || party === 'unknown supplier' || party === 'unknown customer') {
+      out.push(sale ? 'a customer' : 'a supplier');
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(txt(bill?.date))) out.push('a date');
     if (!txt(bill?.category) || txt(bill?.category).toLowerCase() === 'uncategorised') out.push('a category');
     if (!totalOk(bill)) out.push(credit ? 'a total other than 0' : 'a total above 0');

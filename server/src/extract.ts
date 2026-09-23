@@ -428,6 +428,13 @@ export type ExtractionInputs = {
   // MESSAGE was supplied at all — `noteFollowed` is what lets a note beat a
   // standing supplier rule, and a file name is not that kind of thing.
   note?: CoveringNote | null;
+  // Which workspace the document was captured into, which decides WHICH END of
+  // the paper the counterparty is read from. It is never a guess off the page
+  // and must not be: a business's own sales invoice and a supplier's bill are
+  // the same document seen from opposite sides, and the only thing that says
+  // which side you are on is who captured it and where. Absent = a cost, which
+  // is every road but the Sales uploader.
+  kind?: 'cost' | 'sales';
 };
 
 export type CoveringNote = {
@@ -821,7 +828,23 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       // thousands of tokens and must not be re-bought on every upload.
       systemPrompt: stablePrompt,
       prompt:
-        `Extract the purchase/expense details from this ${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. ` +
+        (inp.kind === 'sales'
+          ? // A SALES document is the same paper read from the other side, and
+            // everything the cached prefix says about identifying a supplier is
+            // then pointing at the wrong party: this organisation ISSUED it, so
+            // its own name is on the letterhead and the party worth extracting
+            // is the customer in the bill-to block. Said here, per document,
+            // rather than in the cached prefix — which would split one cache
+            // entry into two, the same reason the PDF/image wording is here.
+            'This is a SALES document: an invoice or credit note THIS BUSINESS ISSUED TO ITS OWN CUSTOMER. ' +
+            'It is read from the other side of the transaction, so `supplier` is the CUSTOMER it is made out to — the bill-to / "Invoice to" / "Sold to" party — and NOT the name on the letterhead, which is this business itself. ' +
+            'Where the document is addressed to nobody at all, leave `supplier` empty rather than fall back to the issuer. ' +
+            '`total` is what the customer was charged and `tax` the GST charged ON that supply (output tax, not input tax). ' +
+            '`invoiceNumber` is this business’s own invoice number, and `category` the REVENUE account the sale belongs to. ' +
+            'Set `documentType` to "Credit note/refund" only where the paper is titled a credit note; an invoice is an "Invoice". ' +
+            'Extract the sales details from this '
+          : 'Extract the purchase/expense details from this ') +
+        `${isPdf ? 'invoice/receipt PDF' : 'receipt or invoice image'}. ` +
         `Today is ${new Date().toISOString().slice(0, 10)}.`,
     });
 
@@ -976,6 +999,9 @@ extractRouter.post('/extract', async (req, res) => {
     projects: parseNamedRules(req.body?.projects),
     instructions: rawInstructions,
     note,
+    // Which workspace this upload is filing into. The Sales uploader says so;
+    // every other road says nothing and is read as a cost, which is what it is.
+    kind: req.body?.kind === 'sales' ? 'sales' : 'cost',
   });
 
   // What this document cost to read. Recorded per call and attributed to the

@@ -127,30 +127,63 @@ export async function fetchXeroInvoice(
   return invoices[0] ?? null;
 }
 
-// Which Xero endpoint a published document lives under. A bill is an Invoice
-// (Type ACCPAY); a credit note is a CreditNote (Type ACCPAYCREDIT), and Xero
-// keeps them in separate endpoints with separate ids — asking Invoices for a
-// credit note's id finds nothing. Absent means a bill: every row published
-// before credit notes could be posted was one.
-export type XeroDocType = 'ACCPAY' | 'ACCPAYCREDIT';
+// Which Xero endpoint a published document lives under, and which way the
+// money runs. Two questions, two axes, four answers:
+//
+//   • WHOSE paper it is — a COST is payable (ACCPAY*), a document out of the
+//     SALES workspace is receivable (ACCREC*). This is the document's `kind`,
+//     decided when it was captured, never guessed from the paper.
+//   • which DIRECTION — an invoice, or the credit note that reverses one
+//     (*CREDIT), which is the document's own type.
+//
+// The endpoint follows the second axis alone: an invoice of either side is an
+// Invoice and a credit note of either side is a CreditNote, and Xero keeps them
+// in separate endpoints with separate ids — asking Invoices for a credit note's
+// id finds nothing. Absent means ACCPAY: every row published before any of this
+// was a supplier bill.
+export type XeroDocType = 'ACCPAY' | 'ACCPAYCREDIT' | 'ACCREC' | 'ACCRECCREDIT';
+const DOC_TYPES: XeroDocType[] = ['ACCPAY', 'ACCPAYCREDIT', 'ACCREC', 'ACCRECCREDIT'];
 export function xeroDocTypeOf(bill: { xeroDocType?: unknown }): XeroDocType {
-  return bill?.xeroDocType === 'ACCPAYCREDIT' ? 'ACCPAYCREDIT' : 'ACCPAY';
+  const stored = String(bill?.xeroDocType ?? '') as XeroDocType;
+  return DOC_TYPES.includes(stored) ? stored : 'ACCPAY';
 }
+// What a document WOULD go up as, read from the document rather than from what
+// it was published as — the answer publish needs before there is anything
+// stored to read. The sales half is the Sales workspace's whole reason for
+// existing: a document the business ISSUED is money owed TO it.
+export function docTypeForBill(bill: { kind?: unknown; documentType?: unknown; type?: unknown }): XeroDocType {
+  const sale = String(bill?.kind ?? 'cost') === 'sales';
+  const credit = isCreditNote(bill as Bill);
+  if (sale) return credit ? 'ACCRECCREDIT' : 'ACCREC';
+  return credit ? 'ACCPAYCREDIT' : 'ACCPAY';
+}
+export const isReceivable = (docType: XeroDocType): boolean => docType.startsWith('ACCREC');
+const isCreditDoc = (docType: XeroDocType): boolean => docType.endsWith('CREDIT');
+// What Xero's own screens call each of the four, for the messages a person
+// reads. "Xero holds this as a bill" is the wrong sentence on the Sales page.
+const DOC_TYPE_NAMES: Record<XeroDocType, string> = {
+  ACCPAY: 'bill',
+  ACCPAYCREDIT: 'supplier credit note',
+  ACCREC: 'sales invoice',
+  ACCRECCREDIT: 'customer credit note',
+};
+const nameOfDocType = (docType: XeroDocType): string => DOC_TYPE_NAMES[docType] ?? 'document';
 function xeroEndpointFor(docType: XeroDocType): 'Invoices' | 'CreditNotes' {
-  return docType === 'ACCPAYCREDIT' ? 'CreditNotes' : 'Invoices';
+  return isCreditDoc(docType) ? 'CreditNotes' : 'Invoices';
 }
 // The record inside Xero's reply, whichever endpoint answered. A CreditNotes
 // reply carries CreditNoteID / CreditNoteNumber where an Invoices reply carries
 // InvoiceID / InvoiceNumber; the rest — Status, Total, Contact, LineItems,
 // Payments, ValidationErrors — is the same shape, which is what lets one
-// publish path serve both.
+// publish path serve all four.
 function xeroRecordFrom(docType: XeroDocType, data: any): { record: Record<string, any> | null; id: string; number: string } {
-  const list = docType === 'ACCPAYCREDIT' ? data?.CreditNotes : data?.Invoices;
+  const credit = isCreditDoc(docType);
+  const list = credit ? data?.CreditNotes : data?.Invoices;
   const record = Array.isArray(list) ? list[0] ?? null : null;
   return {
     record,
-    id: String((docType === 'ACCPAYCREDIT' ? record?.CreditNoteID : record?.InvoiceID) ?? ''),
-    number: String((docType === 'ACCPAYCREDIT' ? record?.CreditNoteNumber : record?.InvoiceNumber) ?? ''),
+    id: String((credit ? record?.CreditNoteID : record?.InvoiceID) ?? ''),
+    number: String((credit ? record?.CreditNoteNumber : record?.InvoiceNumber) ?? ''),
   };
 }
 
@@ -1357,8 +1390,8 @@ async function buildBillInvoice(
   | { ok: true; payload: Record<string, unknown>; lines: number; perLine: boolean; docType: XeroDocType; converted: Converted | null }
   | { ok: false; status: number; body: any }
 > {
-  const docType: XeroDocType = isCreditNote(source) ? 'ACCPAYCREDIT' : 'ACCPAY';
-  const facing = docType === 'ACCPAYCREDIT' ? creditNoteFacingUp(source) : source;
+  const docType: XeroDocType = docTypeForBill(source);
+  const facing = isCreditDoc(docType) ? creditNoteFacingUp(source) : source;
   // An org without multi-currency posts everything in its base currency.
   const postable = await inPostableCurrency(facing, organisation.tenantId, opts.payingLine);
   if (!postable.ok) return postable;
@@ -1446,21 +1479,30 @@ async function buildBillInvoice(
   // "Pte Ltd" would leave the bill against a second, bank-detail-less contact
   // and the payment file with nowhere to send the money.
   const contactId = String(opts.contactId ?? '').trim();
+  // The counterparty is one stored field read from opposite ends of the paper —
+  // the SUPPLIER a bill was received from, the CUSTOMER a sales invoice was
+  // issued to — and it is the Contact either way, which is precisely why it is
+  // one field: the contact Xero needs is the other party to the transaction.
+  const sale = isReceivable(docType);
+  const counterparty = String(bill.supplier ?? '').trim() || (sale ? 'Unknown customer' : 'Unknown supplier');
   const payload: Record<string, unknown> = {
     Type: docType,
-    Contact: contactId ? { ContactID: contactId } : { Name: bill.supplier || 'Unknown supplier' },
+    Contact: contactId ? { ContactID: contactId } : { Name: counterparty },
     Date: date,
     LineAmountTypes: 'Exclusive',
     LineItems: lineItems,
   };
-  if (docType === 'ACCPAYCREDIT') {
+  if (isCreditDoc(docType)) {
     if (bill.invoiceNumber) payload.CreditNoteNumber = bill.invoiceNumber;
   } else {
     payload.DueDate = dueDate;
     if (bill.invoiceNumber) payload.InvoiceNumber = bill.invoiceNumber;
-    // "Go to CYBills" on the bill in Xero — straight back to the document this
-    // was published from, and the original paper attached to it.
-    const backLink = xeroInvoiceUrl(`${appOrigin(req)}/costs/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`);
+    // "Go to CYBills" on the invoice in Xero — straight back to the document
+    // this was published from, and the original paper attached to it. To the
+    // workspace it actually lives in: a sales document opened at /costs/<id>
+    // is a page that finds nothing.
+    const page = sale ? 'sales' : 'costs';
+    const backLink = xeroInvoiceUrl(`${appOrigin(req)}/${page}/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`);
     if (backLink) payload.Url = backLink;
   }
   if (bill.currency) payload.CurrencyCode = bill.currency;
@@ -1538,7 +1580,12 @@ function missingForPublish(bill: Bill): string[] {
   const filled = (v: unknown) => String(v ?? '').trim().length > 0;
   const s = String(bill.supplier ?? '').trim().toLowerCase();
   const c = String(bill.category ?? '').trim().toLowerCase();
-  if (!filled(bill.supplier) || s === 'unknown supplier') out.push('a supplier');
+  // Called what it is: the counterparty is a SUPPLIER on a cost and a CUSTOMER
+  // on a sales invoice, and "this document still needs a supplier" sends
+  // somebody looking for a field the Sales page does not have.
+  if (!filled(bill.supplier) || s === 'unknown supplier' || s === 'unknown customer') {
+    out.push(isReceivable(docTypeForBill(bill)) ? 'a customer' : 'a supplier');
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(bill.date ?? ''))) out.push('a date');
   if (!filled(bill.category) || c === 'uncategorised') out.push('a category');
   // A credit note's total may be typed either way round, so it only has to be
@@ -1637,11 +1684,19 @@ export async function postBillToXero(
     payingLine?: PayingLine | null;
   }
 ): Promise<{ status: number; body: any }> {
+  // Three refusals below are about COSTS, and only costs: a payment proof, a
+  // quotation paid in advance and a receipt sitting on somebody's expense claim
+  // are each a way of paying for one thing twice. None of them is a thing a
+  // document the business ISSUED can be — a sales invoice is not evidence of a
+  // payment made, has no advance to be paid towards, and is on nobody's claim —
+  // so asking those questions of one would at best cost a lookup and at worst
+  // match on a word and refuse a real invoice.
+  const receivable = isReceivable(docTypeForBill(bill));
   // A payment proof is evidence that money was sent, not a bill: published, it
   // would post the same spending a second time beside the invoice it settled.
   // Refused on this one road every publish takes — the button, bulk, the
   // automatic publish and the payables hand-off alike.
-  if (!bill.xeroInvoiceId && (await isPaymentProofDoc(bill))) {
+  if (!receivable && !bill.xeroInvoiceId && (await isPaymentProofDoc(bill))) {
     return { status: 422, body: {
       error: 'payment_proof',
       message: 'This is a payment proof — evidence that money was sent, not a bill — so it is not published to Xero. It marks the invoices it pays as paid instead.',
@@ -1651,7 +1706,7 @@ export async function postBillToXero(
   // as a bill, the same spending would be posted again when the invoice comes.
   // It is recorded as a prepayment (an overpayment to the supplier) instead,
   // and the invoice that follows uses it up (prepayment.ts).
-  if (!bill.xeroInvoiceId && (await isAdvanceDoc(bill))) {
+  if (!receivable && !bill.xeroInvoiceId && (await isAdvanceDoc(bill))) {
     return { status: 422, body: {
       error: 'advance_document',
       message: 'This is a quotation / pro-forma invoice, not a tax invoice, so it is not published as a bill. Once it is paid, record it as a prepayment to the supplier; the tax invoice that follows is published and the prepayment applied to it.',
@@ -1667,7 +1722,7 @@ export async function postBillToXero(
   // On an expense claim, this cost reaches Xero as a line of that claim's bill.
   // Publishing it separately would post it twice, so the two are mutually
   // exclusive: take it off the claim first, or let the claim carry it.
-  const onClaim = claimForBill(workspace, bill.id);
+  const onClaim = receivable ? null : claimForBill(workspace, bill.id);
   if (onClaim) {
     return { status: 409, body: {
       error: 'in_expense_claim',
@@ -1716,7 +1771,15 @@ export async function postBillToXero(
   const status = pendingPayment || firmPrepayment ? 'AUTHORISED' : opts.status;
   const payload = { ...prepared.payload, Status: status };
   const endpoint = xeroEndpointFor(docType);
-  const noun = docType === 'ACCPAYCREDIT' ? 'credit note' : 'bill';
+  // What to call it when something goes wrong, in the words the ledger uses:
+  // Xero calls a payable an ACCPAY *bill* and a receivable an ACCREC *sales
+  // invoice*, and "Xero rejected the bill" on the Sales page names a document
+  // that isn't on the screen.
+  const noun = isCreditDoc(docType)
+    ? 'credit note'
+    : receivable
+      ? 'sales invoice'
+      : 'bill';
 
   // PUT = create-only (POST would upsert); summarizeErrors=false makes Xero
   // return per-record ValidationErrors with a 200 instead of a bare 400.
@@ -2005,10 +2068,10 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
     // few of them, and — with no CREDITNOTE category in Xero's webhooks — this
     // sweep is the ONLY way a credit note's status ever reaches here, so they
     // are not left out for the cost of a call each.
-    const bills = rows.filter((b) => xeroDocTypeOf(b) === 'ACCPAY');
+    const bills = rows.filter((b) => !isCreditDoc(xeroDocTypeOf(b)));
     const invoices = await fetchXeroInvoices(tenantId, bills.map((b) => String(b.xeroInvoiceId)));
     for (const bill of rows) {
-      const credit = xeroDocTypeOf(bill) === 'ACCPAYCREDIT';
+      const credit = isCreditDoc(xeroDocTypeOf(bill));
       let invoice = credit
         ? await fetchXeroCreditNote(tenantId, String(bill.xeroInvoiceId))
         : invoices.get(String(bill.xeroInvoiceId).toLowerCase());
@@ -2147,9 +2210,9 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
     return res.status(409).json({
       error: 'type_changed',
       message:
-        postedAs === 'ACCPAYCREDIT'
-          ? 'This document is in Xero as a credit note, but it is no longer typed as one here. Clear the Xero link and publish it again as a bill (and void the credit note in Xero).'
-          : 'This document is in Xero as a bill, but it is now typed as a credit note here. Clear the Xero link and publish it again as a credit note (and void the bill in Xero).',
+        `This document is in Xero as a ${nameOfDocType(postedAs)}, but it is now a ` +
+        `${nameOfDocType(prepared.docType)} here. Clear the Xero link and publish it again ` +
+        `(and void the ${nameOfDocType(postedAs)} in Xero).`,
     });
   }
   const endpoint = xeroEndpointFor(postedAs);
@@ -2160,7 +2223,7 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
   // knock it back to DRAFT and out of somebody's approval queue.
   const payload: Record<string, unknown> = {
     ...prepared.payload,
-    [postedAs === 'ACCPAYCREDIT' ? 'CreditNoteID' : 'InvoiceID']: bill.xeroInvoiceId,
+    [isCreditDoc(postedAs) ? 'CreditNoteID' : 'InvoiceID']: bill.xeroInvoiceId,
   };
   if (status) payload.Status = status;
 

@@ -63,11 +63,25 @@ function addressKeyFor(id) {
 // is unique, and passing `doc.id` instead throws that away and derives an
 // ambiguous one. A bare id still works (a claim line item holds only that).
 export function costPath(docOrId) {
+  return `/costs/${addressKeyOf(docOrId)}`;
+}
+
+// The same address in the Sales workspace. A document lives on the page of the
+// workspace it was captured into — a sales invoice opened at /costs/<number> is
+// a page that finds nothing — so the two paths are built from one key rather
+// than assembled by hand at each call site. `docPath` is what a caller holding
+// a document of either kind should use.
+export function salesPath(docOrId) {
+  return `/sales/${addressKeyOf(docOrId)}`;
+}
+
+export function docPath(doc) {
+  return String(doc?.kind ?? 'cost') === 'sales' ? salesPath(doc) : costPath(doc);
+}
+
+function addressKeyOf(docOrId) {
   const doc = docOrId && typeof docOrId === 'object' ? docOrId : null;
-  const key = doc
-    ? doc.displayId || addressKeyFor(doc.id ?? doc.itemId)
-    : addressKeyFor(docOrId);
-  return `/costs/${key}`;
+  return doc ? doc.displayId || addressKeyFor(doc.id ?? doc.itemId) : addressKeyFor(docOrId);
 }
 
 // Where a claim's own supporting document is served from.

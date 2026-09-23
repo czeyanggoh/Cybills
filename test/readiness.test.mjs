@@ -22,6 +22,9 @@ import {
   isCreditNote,
   totalOk,
   READY_FIELDS,
+  isSale,
+  counterpartyLabel,
+  readyFieldsFor,
 } from '../src/lib/readiness.js';
 
 let failures = 0;
@@ -222,6 +225,32 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
   check('…nor in the Costs tab count', inCostsTab(stuck), false);
   check('…but it is still under All costs', [inCostsAll(stuck), inCostsList(stuck)], [true, true]);
   check('…and never unpublished', isUnpublished(stuck), false);
+}
+
+// A sales document is the same four fields with the counterparty read from the
+// other end of the paper: a cost names the SUPPLIER it came from, a sales
+// invoice the CUSTOMER it went to. One stored field, one rule, and only the
+// word a person reads differs — so a sales invoice that names its customer is
+// Ready exactly as a coded receipt is, and one that does not says "Customer".
+{
+  const sale = (over = {}) => doc({ kind: 'sales', ...over });
+  check('a sales document is a sale', [isSale(sale()), isSale(doc({}))], [true, false]);
+  check('and its counterparty is the customer',
+    [counterpartyLabel(sale()), counterpartyLabel(doc({}))], ['Customer', 'Supplier']);
+  check('a complete sales invoice is Ready', [isComplete(sale()), isReady(sale())], [true, true]);
+  check('an uncoded one is To review, naming Category',
+    missingFields(sale({ category: '' })), ['Category']);
+  check('and a nameless one asks for a Customer, not a Supplier',
+    missingFields(sale({ supplier: '' })), ['Customer']);
+  check('"Unknown supplier" is no name in either workspace',
+    [missingFields(sale({ supplier: 'Unknown supplier' })), missingFields(doc({ supplier: 'Unknown supplier' }))],
+    [['Customer'], ['Supplier']]);
+  check('…nor is "Unknown customer"', missingFields(sale({ supplier: 'Unknown customer' })), ['Customer']);
+  check('the four fields are named for the workspace',
+    [readyFieldsFor(sale()), readyFieldsFor(doc({}))],
+    [['Customer', 'Date', 'Category', 'Total'], READY_FIELDS]);
+  check('and a sales document walks the same tabs',
+    [inCostsTab(sale()), isUnpublished(sale())], [true, true]);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');

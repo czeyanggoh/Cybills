@@ -59,7 +59,12 @@ export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif
 // lib/coveringNote.js, which reads either off the document into one shape). A
 // re-read has to see it too: read once WITH "recharge this to CY-Biz" and again
 // without it, and the second read quietly undoes the first.
-export async function fetchExtract(imageBase64, mediaType, accounts, note = null) {
+// `kind` is the workspace the document is being captured into, and it decides
+// which END of the paper the counterparty is read from: a cost names the
+// supplier it came from, a sales invoice the customer it went to. Never a guess
+// off the page — the only thing that says which side of a transaction you are
+// on is where the document was filed.
+export async function fetchExtract(imageBase64, mediaType, accounts, note = null, kind = 'cost') {
   // The active org's Review instructions (business context + GST/coding rules)
   // ride along so the model classifies with that context. Best-effort.
   const instructions = await fetchReviewInstructions(getActiveOrganisationId());
@@ -94,6 +99,7 @@ export async function fetchExtract(imageBase64, mediaType, accounts, note = null
       ...(note ? { emailNote: note } : {}),
       taxRates,
       projects,
+      ...(kind === 'sales' ? { kind } : {}),
       // '' = no org preference; the server applies its own default.
       provider: requestedProvider(),
     }),
@@ -475,7 +481,7 @@ export function billToDoc(b) {
 // well as the browser — it builds the same PDF behind a signed link, and this
 // module pulls in React, the org store and the supplier list. Re-exported so
 // every existing caller is unchanged.
-export { displayItemId, itemNumber, costPath, claimAttachmentUrl, costFileUrl } from '@/lib/itemId';
+export { displayItemId, itemNumber, costPath, salesPath, docPath, claimAttachmentUrl, costFileUrl } from '@/lib/itemId';
 // Imported as well as re-exported: `export … from` re-publishes a name without
 // binding it locally, and this module calls displayItemId itself.
 import { displayItemId } from '@/lib/itemId';

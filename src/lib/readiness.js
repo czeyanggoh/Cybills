@@ -18,6 +18,31 @@ const amount = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
 // Surfaced in the UI so users know exactly why something is still in the inbox.
 export const READY_FIELDS = ['Supplier', 'Date', 'Category', 'Total'];
 
+// A document the business ISSUED rather than received: the Sales workspace.
+// Mirrors the server's `kind`, where anything that isn't explicitly 'sales' (or
+// a supplier statement) is a cost — so a row written before the field existed
+// reads as what it is.
+export const isSale = (d) => String(d?.kind ?? 'cost') === 'sales';
+
+// The party at the OTHER end of the transaction, which is one field read from
+// opposite ends of the paper: a cost names the SUPPLIER it was received from, a
+// sales invoice the CUSTOMER it was issued to. They are stored in the same
+// place (`supplier`) deliberately — every rule that reads a counterparty reads
+// it once: readiness, the duplicate check, the export column and the Contact
+// the Xero publish posts against, which is the supplier on a bill and the
+// customer on a sales invoice. Only the WORD differs, and it differs everywhere
+// a person reads it, so it is answered here rather than in each caller.
+export const counterpartyLabel = (d) => (isSale(d) ? 'Customer' : 'Supplier');
+// Neither placeholder counts as a name, whichever workspace the document is
+// in: "Unknown supplier" is what the reader's blank has always been written as,
+// and a sales document that has been through a cost-shaped road carries it too.
+const namedCounterparty = (v) =>
+  has(v) && !['unknown supplier', 'unknown customer'].includes(String(v).trim().toLowerCase());
+
+// The four fields THIS document needs — the same four either way, with the
+// counterparty called what it is.
+export const readyFieldsFor = (d) => [counterpartyLabel(d), 'Date', 'Category', 'Total'];
+
 // A credit note or refund: the supplier owes US, so the money runs the other
 // way and it reaches Xero as a credit note rather than a bill. Decided by the
 // TYPE, never by the sign of the total — a negative total on an ordinary
@@ -41,7 +66,7 @@ export function totalOk(d) {
 // total (see totalOk). Mirrors the server's costComplete so both follow one rule.
 export function isComplete(d) {
   return (
-    named(d?.supplier, 'unknown supplier') &&
+    namedCounterparty(d?.supplier) &&
     has(d?.date) &&
     named(d?.category, 'uncategorised') &&
     totalOk(d)
@@ -51,7 +76,7 @@ export function isComplete(d) {
 // The specific fields still missing on a document (for a per-row explanation).
 export function missingFields(d) {
   const out = [];
-  if (!named(d?.supplier, 'unknown supplier')) out.push('Supplier');
+  if (!namedCounterparty(d?.supplier)) out.push(counterpartyLabel(d));
   if (!has(d?.date)) out.push('Date');
   if (!named(d?.category, 'uncategorised')) out.push('Category');
   if (!totalOk(d)) out.push('Total');

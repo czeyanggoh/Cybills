@@ -316,7 +316,9 @@ export async function reReadDocument(doc, ctx) {
     // A document that arrived with a covering message — forwarded by email, or
     // attached in a WhatsApp bill collection group — keeps it, so a re-read is
     // given the same instruction the first read had.
-    const ex = await fetchExtract(rec.base64, rec.mediaType, ctx.accounts, coveringNote(doc));
+    // Read as what it IS: a sales document re-read as a cost would come back
+    // naming this business as its own supplier.
+    const ex = await fetchExtract(rec.base64, rec.mediaType, ctx.accounts, coveringNote(doc), doc.kind === 'sales' ? 'sales' : 'cost');
     if (!ex) return 'failed';
     const { patch } = readDecisions(doc, ex, ctx);
     await updateBill(doc.id, patch);

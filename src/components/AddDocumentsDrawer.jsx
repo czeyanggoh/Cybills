@@ -737,7 +737,10 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
               // thing they said about the document, and it is the same kind of
               // thing as an emailed covering line — so it travels in the same
               // envelope. The server decides what a name is worth.
-              const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise, coveringNote({ fileName: it.file.name }));
+              // The tab the drawer is on is which side of the transaction this
+              // document is: a Sales upload is read for its CUSTOMER, a cost
+              // for its supplier.
+              const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise, coveringNote({ fileName: it.file.name }), kind);
               if (ex) {
                 fields = { ...ex };
                 if (tab === 'Sales') {
@@ -773,7 +776,18 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
             // so attempting it would only put a failure on a document that read fine.
             // Nor a document that looks like one already in the book: posted
             // unchecked, a duplicate is a bill paid twice.
-            const posted = claim || !mayPublish || fin?.duplicate ? null : await autoPublishAfterRead(withDefaults);
+            // And never a SALES document. Both switches behind this are about
+            // costs — the entity-wide "publish to Xero after reading" covers
+            // every supplier coded or not, and the per-supplier rule is matched
+            // on the counterparty's name, which on a sales invoice is the
+            // CUSTOMER. A rule written about a company we buy from would then
+            // publish an invoice we sent that company, unattended, into a live
+            // ledger. Publishing a sale is a deliberate act until somebody asks
+            // for it not to be.
+            const posted =
+              claim || kind !== 'cost' || !mayPublish || fin?.duplicate
+                ? null
+                : await autoPublishAfterRead(withDefaults);
             notifyBillsChanged();
             onAdded?.(posted?.bill ?? withDefaults);
             patch(it.id, {
