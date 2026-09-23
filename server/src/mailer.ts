@@ -459,3 +459,69 @@ export function passwordChangedEmail(o: { name: string; by?: string }) {
     }),
   };
 }
+
+// The daily digest (digest.ts): a colleague's clients' paperwork still waiting
+// to be paid, one row per document the way Dext's "Unprocessed items requiring
+// payment" lays it out. Its own wrapper rather than `layout`, whose 520px card
+// is built for a paragraph and a button — eleven columns do not fit in it.
+export type DigestRow = {
+  entity: string;
+  type: string;
+  date: string;
+  invoiceNumber: string;
+  supplier: string;
+  category: string;
+  total: string;
+  currency: string;
+  owner: string;
+  description: string;
+  received: string;
+  isNew: boolean;
+  url: string;
+};
+
+export function dailyDigestEmail(o: {
+  name: string;
+  day: string;
+  rows: DigestRow[];
+  newCount: number;
+  unpaidOnly: boolean;
+  settingsUrl: string;
+}) {
+  const th = 'padding:8px 10px;border:1px solid #d1d5db;background:#f3f4f6;font-weight:600;text-align:left;white-space:nowrap';
+  const td = 'padding:7px 10px;border:1px solid #d1d5db;vertical-align:top';
+  const heads = ['Entity', 'Type', 'Date', 'Invoice number', 'Supplier', 'Category', 'Total', 'Currency', 'Owner', 'Description', 'Received', 'Link'];
+  const body = o.rows
+    .map(
+      (r) => `<tr${r.isNew ? ' style="background:#fffbeb"' : ''}>
+        <td style="${td}">${esc(r.entity)}</td>
+        <td style="${td};white-space:nowrap">${esc(r.type)}</td>
+        <td style="${td};white-space:nowrap">${esc(r.date)}</td>
+        <td style="${td}">${esc(r.invoiceNumber)}</td>
+        <td style="${td}">${esc(r.supplier)}</td>
+        <td style="${td}">${esc(r.category)}</td>
+        <td style="${td};text-align:right;white-space:nowrap">${esc(r.total)}</td>
+        <td style="${td}">${esc(r.currency)}</td>
+        <td style="${td}">${esc(r.owner)}</td>
+        <td style="${td}">${esc(r.description)}</td>
+        <td style="${td};white-space:nowrap">${esc(r.received)}${r.isNew ? ' <strong style="color:#b45309">New</strong>' : ''}</td>
+        <td style="${td}"><a href="${esc(r.url)}" style="color:#2563eb">Link</a></td>
+      </tr>`
+    )
+    .join('');
+  const what = o.unpaidOnly ? 'requiring payment' : 'waiting in CYBills';
+  const count = `${o.rows.length} item${o.rows.length === 1 ? '' : 's'}`;
+  const fresh = o.newCount ? `, ${o.newCount} new since the last digest` : '';
+  return {
+    subject: `CYBills: ${count} ${what}${o.newCount ? ` (${o.newCount} new)` : ''} — ${o.day}`,
+    html: `<!doctype html><html><body style="margin:0;padding:24px 12px;background:#fff;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111">
+  <h1 style="margin:0 0 6px;font-size:22px;font-weight:500">Unprocessed CYBills items ${esc(what)}</h1>
+  <p style="margin:0 0 18px;font-size:14px;color:#374151">Hi ${esc(o.name.split(' ')[0] || 'there')}, ${count} from your clients${fresh}. Highlighted rows arrived since the last digest.</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;line-height:1.4">
+    <tr>${heads.map((h) => `<th style="${th}">${h}</th>`).join('')}</tr>
+    ${body}
+  </table>
+  <p style="margin:20px 0 0;font-size:12px;color:#6b7280">Sent daily by CYBills. Change which clients and people this covers under <a href="${esc(o.settingsUrl)}" style="color:#6b7280">Colleagues &rarr; Manage &rarr; Daily digest</a>.</p>
+</body></html>`,
+  };
+}

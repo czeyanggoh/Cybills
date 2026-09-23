@@ -2608,6 +2608,44 @@ Retention is 400 days, so a range reaching past that is showing less than it
 asks for, and the page says that too. Covered by `npm test` at the root and in
 `server/`.
 
+## The daily digest
+
+A colleague looks after several clients and opens most of their books only when
+somebody asks, so once a day CYBills emails them what those clients have sent in
+that is still waiting to be paid — Dext's "Unprocessed items requiring payment",
+one row per document (entity, type, date, number, supplier, category, total,
+currency, owner, description, received, link). Set per colleague on
+**Colleagues -> Daily digest** (the column, or Manage): on/off, the hour in the
+practice's timezone, "Only items requiring payment", and per client either
+everyone or only the people named — "only what finance@dart.com.sg sent in".
+
+**"Under" a person means any of three addresses**: the document's owner, its
+uploader (`createdBy`) and the sender of the email it arrived in. The third is
+the one that matters for a client's shared finance mailbox: mail to the entity's
+own address files under its General account, so the owner never names who sent
+it. The address box takes one that is on no roster for exactly that reason.
+`src/lib/digest.js` (pure, `npm test` at the root) is which documents: a cost in
+the Costs tab (`inCostsTab`), not a credit note or a payment proof, and — unless
+widened — not already marked paid, since a receipt paid at the till needs coding
+rather than paying. Loaded by path in `server/src/digest.ts`, like mileage.
+
+**Access is checked when it SENDS, not only when it is saved**: the dialog offers
+only clients the colleague can open and the route refuses the rest, and a client
+taken away later simply stops appearing the next morning. Standard colleagues set
+their own; Owner / Practice Admin set anybody's.
+
+**The only thing on a clock.** Every other sweep rides on a listing; a morning
+email cannot, so `startDigestClock` ticks every five minutes from `index.ts`. Due
+is decided by DAY (`digestDue`): not twice in a day, and a server that was down at
+08:00 catches up when it comes back. The day is written before the send so two
+ticks cannot both send; a failure is recorded on the row and shown in the dialog
+("Last digest …: not sent — …") rather than retried into somebody's inbox all day,
+and it does not move "new since the last digest" forward, so that day's arrivals
+are still highlighted in the next one. A day with nothing to report sends
+nothing — a daily "nothing" email trains people to ignore the one that matters.
+**Send one now** sends even when empty and does not count as the day's digest.
+Covered by `npm test` in `server/` (`test/daily-digest.test.mts`).
+
 ## A bridge entity (Red Alpha - ST Engineering)
 
 Some people who submit costs don't work for any client entity CYBills holds. ST

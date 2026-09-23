@@ -15,6 +15,7 @@ import { claimsRouter } from './claims.js';
 import { autoClaimsRouter } from './autoClaims.js';
 import { usersRouter, memberForSession, canAccessOrg } from './users.js';
 import { practiceRouter } from './practice.js';
+import { digestRouter, startDigestClock } from './digest.js';
 import { mailRouter } from './mail.js';
 import { settingsRouter, adoptLegacySettings } from './settings.js';
 import { boardRouter } from './board.js';
@@ -202,6 +203,10 @@ app.use('/api/bank', bankRouter);
 // connected-client list with what each has cost in Claude API usage.
 app.use('/api/practice', practiceRouter);
 
+// The daily digest a colleague is emailed about their clients' paperwork still
+// waiting to be paid — the subscriptions, and the clock that sends them.
+app.use('/api/digests', digestRouter);
+
 // Connecting the Microsoft 365 sending mailbox (delegated Mail.Send). 503s
 // until the GRAPH_* app-registration vars are set.
 app.use('/api/mail', mailRouter);
@@ -223,4 +228,7 @@ app.listen(env.PORT, () => {
   // the entity it actually describes. Idempotent, so it no-ops after the first.
   const adopted = adoptLegacySettings();
   if (adopted) console.log(`[cybills] primary organisation adopted ${adopted} legacy setting(s)`);
+  // Nothing else here runs on a clock: every other sweep rides on a listing
+  // somebody makes. A morning email cannot wait for somebody to open the app.
+  startDigestClock();
 });

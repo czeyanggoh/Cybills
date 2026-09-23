@@ -12,6 +12,7 @@
 // because the pair that decides the endpoint and the pair that decides the
 // section of Xero are not the same pair, and a document posted under the wrong
 // one is a real figure in the wrong half of somebody's ledger.
+import { finish } from './support.mts';
 import http from 'node:http';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -223,4 +224,4 @@ const publish = async (billId: string, over: Record<string, unknown> = {}) => {
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 server.close();
 stub.close();
-process.exit(failures ? 1 : 0);
+await finish(failures, server);

@@ -4,6 +4,8 @@ import AppShell from '@/components/AppShell';
 import AddColleagueModal from '@/components/AddColleagueModal';
 import ClientAccessModal from '@/components/ClientAccessModal';
 import EditUserModal from '@/components/EditUserModal';
+import DailyDigestModal from '@/components/DailyDigestModal';
+import { useDigests, digestLabel } from '@/lib/digestStore';
 import {
   useColleagues,
   usePractice,
@@ -21,7 +23,7 @@ const managesPractice = (c) => c.practiceRole === 'Owner' || c.practiceRole === 
 
 // Per-row "Manage" dropdown. Same fixed-position placement trick as the Users
 // page: the table scrolls, and a clipped axis clips the menu with it.
-function ManageMenu({ colleague, onEdit, onAccess, onToast }) {
+function ManageMenu({ colleague, onEdit, onAccess, onDigest, onToast }) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef(null);
   const [pos, setPos] = useState(null);
@@ -90,6 +92,7 @@ function ManageMenu({ colleague, onEdit, onAccess, onToast }) {
             <button type="button" className={item} onClick={() => run(() => onEdit('details'))}>Edit colleague details</button>
             <button type="button" className={item} onClick={() => run(onAccess)}>Client access</button>
             <button type="button" className={item} onClick={() => run(() => onEdit('privileges'))}>Edit privileges</button>
+            <button type="button" className={item} onClick={() => run(onDigest)}>Daily digest</button>
             <button type="button" className={item} onClick={() => run(sendInvite)}>
               {colleague.invitedAt ? 'Resend invitation' : 'Send invitation'}
             </button>
@@ -136,6 +139,8 @@ export default function Colleagues() {
   const [addOpen, setAddOpen] = useState(false);
   const [edit, setEdit] = useState(null); // { colleague, mode }
   const [access, setAccess] = useState(null); // colleague
+  const [digest, setDigest] = useState(null); // colleague
+  const { data: digests = {} } = useDigests();
   const [toast, setToast] = useState('');
   const { data: colleagues = [], isLoading, error } = useColleagues();
   const { data: practice } = usePractice();
@@ -262,6 +267,7 @@ export default function Colleagues() {
               <th className="px-3 py-2.5 font-medium">Manage practice&apos;s business</th>
               <th className="px-3 py-2.5 font-medium">Direct manager</th>
               <th className="px-3 py-2.5 font-medium">Client access</th>
+              <th className="px-3 py-2.5 font-medium">Daily digest</th>
               <th className="px-3 py-2.5 font-medium">Last login</th>
               <th className="px-3 py-2.5 font-medium">Manage</th>
             </tr>
@@ -305,12 +311,24 @@ export default function Colleagues() {
                     {clientAccessLabel(c)}
                   </button>
                 </td>
+                {/* The email this colleague gets each morning about what their
+                    clients have sent in and is still waiting to be paid. */}
+                <td className="px-3 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setDigest(c)}
+                    className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-sm transition-colors hover:bg-muted"
+                  >
+                    {digestLabel(digests[c.id])}
+                  </button>
+                </td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{c.lastLogin}</td>
                 <td className="px-3 py-3">
                   <ManageMenu
                     colleague={c}
                     onEdit={(mode) => setEdit({ colleague: c, mode })}
                     onAccess={() => setAccess(c)}
+                    onDigest={() => setDigest(c)}
                     onToast={showToast}
                   />
                 </td>
@@ -318,7 +336,7 @@ export default function Colleagues() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={9} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {error
                     ? 'Only the practice team can see colleagues.'
                     : isLoading
@@ -347,6 +365,13 @@ export default function Colleagues() {
         colleague={access}
         onClose={() => setAccess(null)}
         onSaved={(label) => showToast(`Client access updated for ${access?.name} — ${label}.`)}
+      />
+      <DailyDigestModal
+        key={digest ? `digest-${digest.id}` : 'digest-closed'}
+        open={Boolean(digest)}
+        colleague={digest}
+        onClose={() => setDigest(null)}
+        onSaved={showToast}
       />
       <EditUserModal
         key={edit ? `${edit.colleague.id}-${edit.mode}` : 'closed'}
