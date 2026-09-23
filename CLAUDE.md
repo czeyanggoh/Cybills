@@ -1161,6 +1161,107 @@ says whether the server has answered at all (`ready()`, settled on a refusal or
 an unreachable server too, or the guard waits for ever) — distinct from holding
 a value, since an entity that has never saved one settles on the fallback.
 
+## The Sales workspace: the same act, the other side of the ledger
+
+Sales could capture a document, read it and list it, and then had nowhere to
+send it: every publish path built an ACCPAY bill, so a client's own invoice
+could only ever end in a CSV. The page was a list of its own invention too — an
+Inbox/Processing/To review/Ready/Archive strip over a status only its own
+toolbar could write, no scope toggle, no derived readiness, no bulk actions —
+and its document page resolved SAMPLE rows first, so `/sales/s1` rendered a
+fabricated receipt, Previous/Next walked that array, and nothing typed into any
+field was ever saved.
+
+**The counterparty is ONE field read from opposite ends of the paper.** A cost
+names the SUPPLIER it was received from; a sales invoice names the CUSTOMER it
+was issued to, and both live in `supplier`. That is the whole reason it is one
+field: the Contact Xero needs is the other party to the transaction either way,
+so readiness, the duplicate check, the export column and the publish all read it
+once. Only the WORD differs, so `counterpartyLabel` (`readiness.js`) answers it
+and everything a person reads says "Customer" in Sales — the "Needs: …" badge,
+the publish dialog, the server's own refusal (`missingForPublish`). Neither of
+the reader's placeholders ("Unknown supplier", "Unknown customer") counts as a
+name in either workspace.
+
+**And the READ is told which side it is on.** It was not, so it read a sales
+invoice for its supplier — which on paper the business issued is the business
+itself, which is how the Customer column came to print the client's own name.
+`kind` rides on `/extract`, in the PER-DOCUMENT message rather than the cached
+system prefix (which would split one cache entry into two, the same reason the
+PDF/image wording lives there), and it travels on the upload and on a re-read —
+a re-read without it would quietly undo the first read.
+
+**One publish path, not two.** `XeroDocType` is now two axes rather than one:
+payable or receivable (the document's WORKSPACE, decided when it was captured
+and never guessed from the paper) and invoice or credit note (its own type),
+which is four records. The ENDPOINT follows the second axis alone — an invoice
+of either side is an `Invoice`, a credit note of either side a `CreditNote` —
+and that is what lets `buildBillInvoice` serve all four. Two copies would drift,
+and the drift would be a wrong figure in a live ledger. `docTypeForBill` reads
+the document; `xeroDocTypeOf` reads what it was PUBLISHED as, which is what an
+update has to go to. The back-link is `/sales/<id>` for a sale, and
+`xeroBillUrl` points at Xero's Accounts Receivable pages, where the payable ones
+know nothing of the id.
+
+**The three cost-only refusals are skipped for a receivable.** A payment proof,
+a quotation paid in advance and a receipt on somebody's expense claim are each a
+way of paying for one thing twice, and a sales invoice can be none of them.
+
+**Readiness is derived for sales too**, which it never was: `applyAutoReady`
+returned early on anything that wasn't a cost, so a complete sales invoice sat
+in the inbox wearing "New" for ever and the only road to Ready was a button.
+Supplier statements are still left alone — no category, no total, so those four
+fields say nothing about them.
+
+**Auto-publish-after-reading deliberately does NOT cover it.** Both switches
+behind it are about costs: the entity-wide one covers every supplier coded or
+not, and the per-supplier rule is matched on the counterparty's NAME, which on a
+sales invoice is the customer. A rule written about a company we buy from would
+otherwise publish an invoice we sent that company, unattended, into a live
+ledger. Publishing a sale is a deliberate act until somebody asks for it not to
+be.
+
+**The page mirrors Costs**, because it is the same act: the same tabs with the
+same meanings (the working list is exactly the three after it added together),
+the same Unpublished / All scope toggle counted on the tab it is drawn on, the
+same derived badges, `useListView` so coming back lands where you left, and a
+toolbar of buttons each acting on only the half of the selection it can move and
+each leaving a published document alone. Every column heading sorts. Shared
+rather than copied twice over: `ScopeToggle` is a component both tabs use, and
+`useDocsOfKind` is the one loader, so the polling while a read is in flight is
+true of Sales without a second copy that could quietly stop noticing a finished
+read. The publish dialog is the SAME dialog — one act, one form — and only what
+it is CALLED changes. No "Move to ready" on either page: readiness is derived,
+so the button could only agree with the server or be overruled a moment later.
+
+**What Sales does not get**: merge detection, duplicate review, expense claims,
+bank matching, payment proofs and prepayments. Each is a question about money
+going OUT, and none can be asked of an invoice you sent.
+
+**And "Move to" MOVES the document.** It navigated: Sales -> Costs took you to
+the Costs inbox and left the document in Sales, and Costs -> Sales ARCHIVED it
+here first, so it was in neither list. `kind` is not in `EDITABLE` and must not
+be — it is not a field somebody types, it is which side of the transaction the
+document is, and changing it changes what publishing it DOES — so it has a
+writer of its own (`moveBillToKind`, `POST /api/costs/bills/:id/move-workspace`)
+and that writer takes the coding with it. The coding cannot travel, for the
+OPPOSITE reason to a move between entities: there the codes are names in a chart
+the document has left and so mean nothing, here they are names in the same
+chart and so are WRONG rather than meaningless, which is worse because they
+would still post — a supply code standing on a cost claims input tax under a
+code that records output tax. Both cleared, the reason said, and the document
+lands in To review. Four refusals, move-entity's four, each said before the
+click.
+
+Covered by `npm test` at the root (`readiness`) and in `server/`
+(`test/sales-publish.test.mts`, over real HTTP against a stub relay, so what is
+asserted is the payload that actually goes to Xero).
+
+Still a shell: the **Customers** page (Add new customer / Import from CSV /
+Actions do nothing; the list is the entity's Xero contacts and only the
+per-customer Category/Project cells write anything), and Sales has no filter
+popover, no column customisation and no approvals step.
+
 ## The Costs inbox's bulk actions
 
 Every bulk action is a **button**. The "Move to" and "Actions" dropdowns this
