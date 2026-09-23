@@ -73,6 +73,7 @@ import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 import SortTh from '@/components/SortTh';
+import ScopeToggle from '@/components/ScopeToggle';
 
 // Type-to-find category dropdown styled to match the row cells. `options` is
 // the active org's live Xero chart (bundled fallback), which runs to hundreds
@@ -119,45 +120,6 @@ const TABS = [
 // "which month of this subscription is missing?" — filter the supplier across
 // All costs and the published invoices are there to count. On ARCHIVED it is
 // how far back the set-aside pile reaches.
-const SCOPES = [
-  { key: 'unpublished', label: 'Unpublished' },
-  { key: 'all', label: 'All costs' },
-];
-
-function ScopeToggle({ scope, setScope, counts }) {
-  return (
-    <div className="mb-3 inline-flex rounded-md border p-0.5" role="group" aria-label="Which costs to show">
-      {SCOPES.map((s) => {
-        const active = scope === s.key;
-        return (
-          <button
-            key={s.key}
-            type="button"
-            aria-pressed={active}
-            onClick={() => setScope(s.key)}
-            className={cn(
-              'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded px-3 text-sm transition-colors',
-              active
-                ? 'bg-foreground font-medium text-background'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
-          >
-            {s.label}
-            <span
-              className={cn(
-                'rounded-full px-1.5 text-xs',
-                active ? 'bg-background/20 text-background' : 'bg-muted text-muted-foreground'
-              )}
-            >
-              {counts[s.key] ?? 0}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 // `published` distinguishes the two ways a document leaves the inbox for
 // Archive: published to Xero, or carried by an expense claim. Both are finished
 // states, and each rules the other out — so the row says which one it is.
@@ -875,7 +837,7 @@ export default function Costs() {
   // landing on an unfiltered Unpublished each time meant redoing it per row.
   const [tab, setTab] = useListView('costs', 'tab', 'all');
   // Which half of the combined list the Costs tab is showing. Defaults to the
-  // work still to do — see SCOPES.
+  // work still to do — see ScopeToggle.
   const [scope, setScope] = useListView('costs', 'scope', 'unpublished');
   const settings = useExtractionSettings();
   // What a publish posts as, this entity's own answer — the same one the

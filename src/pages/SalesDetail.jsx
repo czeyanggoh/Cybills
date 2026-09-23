@@ -1,18 +1,23 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, ChevronDown, Flag, Sparkles, Upload, FileText } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Flag, Sparkles, Upload, FileText, ExternalLink } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import SalesSubnav from '@/components/SalesSubnav';
 import SplitItemModal from '@/components/SplitItemModal';
 import CustomerRulesModal from '@/components/CustomerRulesModal';
 import AddCategoryModal from '@/components/AddCategoryModal';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
+import PublishToXeroModal from '@/components/PublishToXeroModal';
 import { currencyLabel } from '@/lib/customerRules';
 import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
-import { SALES, getSale } from '@/data/sales';
+
 import { useCategoryOptions, getExtractionAccounts, useXeroPaymentMethods, useXeroCustomers, useXeroProjectOptions } from '@/lib/organisations';
-import { fetchBills, billToDoc, billFileUrl, itemNumber, updateBill, notifyBillsChanged } from '@/lib/bills';
+import { fetchBills, billToDoc, billFileUrl, itemNumber, updateBill, notifyBillsChanged, salesPath } from '@/lib/bills';
+import { readWalk } from '@/lib/listView';
+import { isPublished } from '@/lib/readiness';
+import { xeroBillUrl } from '@/lib/autoPublish';
+import { useXeroShortCode } from '@/lib/organisations';
 import {
   getSalesHistory,
   recordViewed,
@@ -30,23 +35,52 @@ function billDocToSale(d) {
   return {
     id: d.id,
     persisted: true,
+    doc: d,
     itemId: itemNumber(d),
     createdAt: d.createdAt,
     user: d.user,
     type: d.type,
     date: d.date,
+    // One stored field read from the other end of the paper: a cost's supplier
+    // is a sales invoice's CUSTOMER.
     customer: d.supplier,
     ref: d.invoiceNumber || itemNumber(d),
-    dueDate: '',
+    dueDate: d.dueDate || '',
     category: d.category,
-    project: '',
+    project: d.project || '',
+    description: d.description || '',
     currency: d.currency,
     total: d.total,
     tax: d.tax,
+    paid: Boolean(d.paid),
+    paymentMethod: d.paymentMethod || '',
     hasFile: d.hasFile,
     contentType: d.contentType,
   };
 }
+
+// Which stored field each form field writes to. The form was built on its own
+// vocabulary ("customer", "ref") over a document that stores "supplier" and
+// "invoiceNumber", and for a long time it wrote to neither: every edit lived in
+// React state and was lost the moment somebody navigated away. This is the map
+// that makes an edit a SAVE.
+const BILL_FIELD = {
+  type: 'documentType',
+  date: 'date',
+  customer: 'supplier',
+  ref: 'invoiceNumber',
+  dueDate: 'dueDate',
+  category: 'category',
+  project: 'project',
+  description: 'description',
+  currency: 'currency',
+  total: 'total',
+  tax: 'tax',
+  paymentMethod: 'paymentMethod',
+};
+// The Currency field shows a label ("SGD — Singapore, Dollars"); what is stored
+// is the code the ledger posts in.
+const currencyCode = (v) => String(v ?? '').trim().slice(0, 3).toUpperCase();
 
 function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false }) {
   return (
@@ -149,11 +183,11 @@ function initialData(s) {
     dueDate: s.dueDate,
     category: s.category,
     project: s.project,
-    description: '',
-    currency: `${s.currency} — Singapore, Dollars`,
+    description: s.description ?? '',
+    currency: s.currency ? `${s.currency} — Singapore, Dollars` : '',
     total: s.total,
     tax: s.tax,
-    paymentMethod: '',
+    paymentMethod: s.paymentMethod ?? '',
   };
 }
 
@@ -208,25 +242,28 @@ export default function SalesDetail() {
   const projectOptions = useXeroProjectOptions();
   const customerOptions = useXeroCustomers();
   const fileInputRef = useRef(null);
-  const mockSale = getSale(id);
+  const shortCode = useXeroShortCode();
   const [persistedSale, setPersistedSale] = useState(null);
-  // Only sample rows resolve synchronously; persisted uploads are fetched.
-  const [resolving, setResolving] = useState(!mockSale);
+  // Every document on this page is a real one now: the sample rows this page
+  // used to resolve first are gone, so /sales/<id> can no longer render a
+  // fabricated invoice nobody uploaded.
+  const [resolving, setResolving] = useState(true);
   const [tab, setTab] = useState('details');
   const [moveOpen, setMoveOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [catModalOpen, setCatModalOpen] = useState(false);
   const [pmModalOpen, setPmModalOpen] = useState(false);
-  const [paid, setPaid] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+
   const paymentMethods = useXeroPaymentMethods();
   const [imageUrl, setImageUrl] = useState('');
   const [previewType, setPreviewType] = useState('image');
   const [extracting, setExtracting] = useState(false);
   const [aiError, setAiError] = useState('');
-  const [data, setData] = useState(() => initialData(mockSale ?? {}));
+  const [data, setData] = useState(() => initialData({}));
 
-  const sale = mockSale ?? persistedSale;
+  const sale = persistedSale;
   useSalesEvents(); // re-render when this document's activity log changes
 
   // Log the first view of this document (idempotent), once it has resolved.
@@ -237,7 +274,6 @@ export default function SalesDetail() {
   // Resolve a persisted sales upload by id, prefill its fields, and show its
   // stored file. Runs only when this id isn't one of the sample rows.
   useEffect(() => {
-    if (mockSale) return;
     let live = true;
     (async () => {
       const doc = (await fetchBills()).map(billToDoc).find((b) => b.id === id);
@@ -256,9 +292,46 @@ export default function SalesDetail() {
     return () => {
       live = false;
     };
-  }, [id, mockSale]);
+  }, [id]);
 
-  const index = SALES.findIndex((s) => String(s.id) === String(id));
+  // An edit on this page is a SAVE. It was React state alone — type a customer,
+  // a total or a date, navigate away, and the document still said what the
+  // reader had made of it. Debounced, because these are onChange handlers and
+  // a keystroke is not a decision; flushed on unmount so leaving the page mid
+  // typing still lands.
+  const pending = useRef({});
+  const timer = useRef(null);
+  const flush = () => {
+    const patch = pending.current;
+    pending.current = {};
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    if (!saleId.current || !Object.keys(patch).length) return;
+    updateBill(saleId.current, patch).then(notifyBillsChanged).catch(() => {});
+  };
+  const saveField = (field, value) => {
+    if (!field) return;
+    pending.current[field] = value;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(flush, 600);
+  };
+  // The id the pending patch belongs to, held in a ref so a flush on unmount
+  // cannot write one document's edits onto whichever one is open next.
+  const saleId = useRef(null);
+  useEffect(() => {
+    // Moving to another document flushes what is outstanding for this one
+    // FIRST, then adopts the new id.
+    flush();
+    saleId.current = sale?.persisted ? sale.id : null;
+  }, [sale?.id, sale?.persisted]);
+  useEffect(() => flush, []); // leaving the page saves what was typed
+
+  // Previous / Next walk the list the reviewer actually came from — filtered,
+  // sorted and all — which the Sales page records on every render. They used to
+  // walk an array of sample documents, so on a real upload the counter read
+  // "0 / 3" and neither arrow went anywhere.
+  const walk = readWalk('sales');
+  const index = walk.findIndex((w) => String(w) === String(sale?.id ?? id));
 
   if (!sale) {
     return (
@@ -270,7 +343,22 @@ export default function SalesDetail() {
     );
   }
 
-  const set = (k, v) => setData((d) => ({ ...d, [k]: v }));
+  // Paid is the document's own field, not this page's state: it was local and
+  // started at No on every load, so it said "not paid" about an invoice
+  // somebody had marked paid a minute before.
+  const paid = Boolean(sale?.paid);
+  const togglePaid = () => {
+    if (!sale?.persisted) return;
+    const next = !paid;
+    setPersistedSale((cur) => (cur ? { ...cur, paid: next, doc: { ...cur.doc, paid: next } } : cur));
+    updateBill(sale.id, { paid: next }).then(notifyBillsChanged).catch(() => {});
+  };
+
+  const set = (k, v) => {
+    setData((d) => ({ ...d, [k]: v }));
+    const field = BILL_FIELD[k];
+    if (field) saveField(field, field === 'currency' ? currencyCode(v) : v);
+  };
   // Category changes are logged to the activity timeline (Dext-style).
   const setCategory = (v) => {
     recordCategory(sale.id, data.category, v, sale.user);
@@ -288,8 +376,8 @@ export default function SalesDetail() {
     if (rule.category) recordCategory(sale.id, data.category, rule.category, sale.user);
   };
   const go = (delta) => {
-    const next = SALES[index + delta];
-    if (next) navigate(`/sales/${next.id}`);
+    const next = walk[index + delta];
+    if (next) navigate(salesPath(next));
   };
 
   // Move this document to a workflow state. Persisted uploads update on the
@@ -357,6 +445,9 @@ export default function SalesDetail() {
   ];
 
   const net = (Number(data.total || 0) - Number(data.tax || 0)).toFixed(2);
+  // Xero has this document's money: the page then states rather than offers.
+  const published = isPublished(sale?.doc);
+  const xeroLink = published ? xeroBillUrl(sale.doc.xeroInvoiceId, shortCode, sale.doc.xeroDocType) : '';
 
   return (
     <AppShell subnav={<SalesSubnav />}>
@@ -366,7 +457,24 @@ export default function SalesDetail() {
           <ChevronLeft className="h-4 w-4" /> Back
         </TopButton>
         <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        <TopButton onClick={() => moveTo('ready', 'Ready')}>Move to ready</TopButton>
+        {/* Readiness is derived from the document (readiness.js), the same as
+            on Costs, so there is no "Move to ready" here: a button could only
+            ever agree with the server or be overruled by it a moment later.
+            What the page was actually missing is the road to the ledger. */}
+        {published ? (
+          xeroLink && (
+            <a
+              href={xeroLink}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-muted"
+            >
+              Open in Xero <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )
+        ) : (
+          <TopButton onClick={() => setPublishOpen(true)}>Publish to Xero</TopButton>
+        )}
         <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
         <TopButton onClick={() => moveTo('archived', 'Archive')}>Archive</TopButton>
         <div className="relative">
@@ -406,11 +514,11 @@ export default function SalesDetail() {
           >
             <ChevronLeft className="h-4 w-4" /> Previous
           </button>
-          <span className="tabular-nums text-muted-foreground">{index + 1} / {SALES.length}</span>
+          <span className="tabular-nums text-muted-foreground">{index + 1} / {walk.length}</span>
           <button
             type="button"
             onClick={() => go(1)}
-            disabled={index < 0 || index >= SALES.length - 1}
+            disabled={index < 0 || index >= walk.length - 1}
             className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
           >
             Next <ChevronRight className="h-4 w-4" />
@@ -481,7 +589,11 @@ export default function SalesDetail() {
 
               <SectionHeading>Item details</SectionHeading>
               <Field label="Item ID"><Input value={sale.itemId} readOnly /></Field>
-              <Field label="Document owner"><Input value={data.user} onChange={(v) => set('user', v)} /></Field>
+              {/* A person is resolved from an ADDRESS (peopleForOrg), so a name
+                  typed here resolves to nobody. It was an editable box that
+                  saved nothing at all, which reads as the page being broken;
+                  reassigning a document is the owner picker's job. */}
+              <Field label="Document owner"><Input value={data.user} readOnly /></Field>
               <Field label="Type"><Input value={data.type} onChange={(v) => set('type', v)} /></Field>
               <Field label="Date"><Input value={data.date} onChange={(v) => set('date', v)} /></Field>
               <Field label="Customer">
@@ -526,7 +638,7 @@ export default function SalesDetail() {
 
               <SectionHeading>Payment</SectionHeading>
               <Field label="Paid">
-                <button type="button" onClick={() => setPaid((p) => !p)} className="flex items-center gap-2 pt-1">
+                <button type="button" onClick={() => togglePaid()} className="flex items-center gap-2 pt-1">
                   <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', paid ? 'justify-end bg-foreground' : 'justify-start border')}>
                     <span className={cn('h-4 w-4 rounded-full', paid ? 'bg-background' : 'bg-muted-foreground/50')} />
                   </span>
@@ -601,6 +713,34 @@ export default function SalesDetail() {
         open={pmModalOpen}
         onClose={() => setPmModalOpen(false)}
         onAdded={(pm) => set('paymentMethod', pm.label)}
+      />
+
+      {/* The same dialog the Costs page opens, because it is the same act:
+          pick the account, pick the tax code, post it. `kind` is what makes it
+          say "sales invoice", and the server decides from the document's own
+          workspace that the record is an ACCREC rather than an ACCPAY. */}
+      <PublishToXeroModal
+        open={publishOpen}
+        onClose={() => setPublishOpen(false)}
+        bill={{
+          id: sale?.id,
+          kind: 'sales',
+          supplier: data.customer,
+          type: data.type,
+          total: data.total,
+          tax: data.tax,
+          currency: currencyCode(data.currency),
+          date: data.date,
+          dueDate: data.dueDate,
+          category: data.category,
+          taxRate: sale?.doc?.taxRate,
+          lineItems: sale?.doc?.lineItems,
+          xeroDocType: sale?.doc?.xeroDocType,
+        }}
+        onPublished={() => {
+          notifyBillsChanged();
+          navigate('/sales');
+        }}
       />
     </AppShell>
   );

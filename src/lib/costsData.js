@@ -66,17 +66,24 @@ function listFor(docs, key) {
   return [];
 }
 
-// Loads the real Costs document set (persisted bills) and keeps it in sync with
-// upload / edit events. (Seed/demo sample rows were removed — the list shows
-// only real uploaded documents.)
-export function useCostsDocs() {
+// Loads one workspace's real document set (persisted bills) and keeps it in
+// sync with upload / edit events. (Seed/demo sample rows were removed — the
+// lists show only real uploaded documents.)
+//
+// One workspace's documents, live. The Costs tab and the Sales tab are the
+// same list of the same book asked for one `kind` or the other, and everything
+// below — the polling while a read is in flight, the slow background refresh
+// for a document somebody else emailed in, the re-map when the roster loads —
+// is true of both. Two copies of it would drift in exactly the way that is
+// invisible: a Sales inbox that quietly stopped noticing a finished read.
+export function useDocsOfKind(kind) {
   const [uploaded, setUploaded] = useState([]);
 
   const reload = useCallback(async () => {
-    // Only cost-workspace bills belong in Costs; sales uploads have kind==='sales'
-    // and supplier statements have kind==='supplier_statement'.
-    setUploaded((await fetchBills()).map(billToDoc).filter((d) => d.kind === 'cost'));
-  }, []);
+    // Each workspace shows only its own: a bill you received is not an invoice
+    // you issued, and a supplier statement is neither.
+    setUploaded((await fetchBills()).map(billToDoc).filter((d) => d.kind === kind));
+  }, [kind]);
 
   useEffect(() => {
     reload();
@@ -128,6 +135,15 @@ export function useCostsDocs() {
   }, [reload]);
 
   return { allDocs: uploaded, sampleDocs: [], uploaded, reload };
+}
+
+export function useCostsDocs() {
+  return useDocsOfKind('cost');
+}
+
+// The Sales workspace's own documents. Same loader, same events, same polling.
+export function useSalesDocs() {
+  return useDocsOfKind('sales');
 }
 
 // Live counts for every Costs tab + the subnav badges, derived from real rows.
