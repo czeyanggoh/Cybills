@@ -682,8 +682,8 @@ otherwise nobody to pick.
 
 Both `people` and `entities` also carry `inbound_address` (the person's
 `<handle>@cybills.sg`; for an entity, its own address, which files to the
-General account — empty when it has none) and `tenant_id` (the Xero tenant the
-entity's bills are published to, its parent's for a bridge). CYWS's **AP
+General account — empty when it has none) and `tenant_id` (the entity's OWN Xero
+tenant — empty for a bridge, whose people are not the parent's staff). CYWS's **AP
 Mailbox** uses them to forward a supplier's email to a person here, picked by
 name and filtered to the org it watches for, rather than to a typed address.
 

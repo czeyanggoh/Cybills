@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { env, whatsappEnabled, r2Enabled, googleEnabled } from './env.js';
 import { workspaceId } from './workspace.js';
-import { dataScopeForOrg, getOrganisation, listOrganisations, primaryOrgId, publishTargetFor } from './organisations.js';
+import { dataScopeForOrg, getOrganisation, listOrganisations, primaryOrgId } from './organisations.js';
 import {
   canAccessOrg,
   canManagePractice,
@@ -704,7 +704,9 @@ whatsappRouter.get('/directory', (req, res) => {
   // (picked by name, filtered to the org it watches for) rather than to a
   // hand-typed address that a typo turns into mail nobody receives.
   const memo = new Map<string, string>();
-  const tenantOf = (orgId: string) => publishTargetFor(ws, getOrganisation(ws, orgId))?.tenantId || '';
+  // The entity's OWN tenant: a bridge (no Xero org of its own) answers '', so
+  // its secondees are not offered as the parent org's staff.
+  const tenantOf = (orgId: string) => getOrganisation(ws, orgId)?.tenantId || '';
   const people = ensureUsers(ws)
     .filter((u: User) => !u.removed && !u.deactivated && !u.general)
     .map((u: User) => {
