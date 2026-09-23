@@ -217,7 +217,7 @@ comes back in one shape. Notable differences it papers over:
 - OpenAI's structured outputs are **strict** — every property of every object
   must be in `required` — so `strictify()` tightens a copy of the schema on the
   way out (Anthropic accepts the looser original).
-- A reasoning model (`gpt-5*`, `o*`) spends part of its output budget thinking,
+- A reasoning model (`gpt-5*`, `gpt-6*`, `o*`) spends part of its output budget thinking,
   so the cap is raised and `reasoning.effort` is sent only to those families.
 - OpenAI counts cached tokens inside `input_tokens`; they're subtracted back out
   so the 0.1x cache rate isn't charged on top of the full input rate.
@@ -265,7 +265,7 @@ parts sum to the whole exactly). Rows printed gross have it taken back out
 instead, and a document that breaks tax down per row is left as printed.
 
 Env (server/.env): `ANTHROPIC_API_KEY` + `ANTHROPIC_EXTRACT_MODEL` (default
-`claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-5`),
+`claude-sonnet-5`), `OPENAI_API_KEY` + `OPENAI_EXTRACT_MODEL` (default `gpt-6-sol`),
 `OPENAI_REASONING_EFFORT` (default `low`), optional `OPENAI_BASE_URL` for an
 OpenAI-compatible gateway, and `LLM_PROVIDER` for the deploy-wide default —
 **`openai`** unless the env says otherwise, so an entity that has never touched

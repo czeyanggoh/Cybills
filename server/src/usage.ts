@@ -48,6 +48,15 @@ const LIST_PRICES: Record<string, { input: number; output: number }> = {
   'claude-sonnet-5': { input: 3, output: 15 },
   'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-haiku-4-5': { input: 1, output: 5 },
+  // GPT-5.6 Sol is at its promotional rate (to at least 21 Nov 2026; $5/$30
+  // after). Each tier needs its own row: longest prefix wins, so without them
+  // "gpt-5.6-sol" would be priced as the far cheaper gpt-5.
+  'gpt-6-astra': { input: 10, output: 50 },
+  'gpt-6-sol': { input: 2, output: 10 },
+  'gpt-6-luna': { input: 0.1, output: 0.5 },
+  'gpt-5.6-sol': { input: 4, output: 20 },
+  'gpt-5.6-terra': { input: 2, output: 12 },
+  'gpt-5.6-luna': { input: 0.2, output: 1.2 },
   'gpt-5': { input: 1.25, output: 10 },
   'gpt-5-mini': { input: 0.25, output: 2 },
   'gpt-5-nano': { input: 0.05, output: 0.4 },

@@ -50,10 +50,10 @@ export const env = {
   // and PDFs against the same JSON schema, through the Responses API, so a
   // document read by either provider comes back in one shape.
   OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
-  // Defaults to gpt-5 — cheaper per token than the Claude default and strong on
-  // messy scans. Set OPENAI_EXTRACT_MODEL=gpt-5-mini to trade some accuracy for
-  // cost/speed. Whatever you pick must accept image + PDF input.
-  OPENAI_EXTRACT_MODEL: process.env.OPENAI_EXTRACT_MODEL ?? 'gpt-5',
+  // Defaults to gpt-6-sol — half GPT-5.6 Sol's price per token, faster, and level
+  // with it on reading. Set OPENAI_EXTRACT_MODEL=gpt-6-luna to trade some
+  // accuracy for cost/speed. Whatever you pick must accept image + PDF input.
+  OPENAI_EXTRACT_MODEL: process.env.OPENAI_EXTRACT_MODEL ?? 'gpt-6-sol',
   // How hard a reasoning model thinks before answering. Extraction is a reading
   // task, not a puzzle, so 'low' keeps it quick; raise to 'medium' if invoices
   // with awkward layouts are being misread. Ignored by non-reasoning models.

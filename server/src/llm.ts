@@ -118,7 +118,7 @@ function strictify(node: unknown): unknown {
 
 // Reasoning models take a `reasoning` block and would reject it otherwise, so
 // it's sent only to the families that have one.
-const isReasoningModel = (model: string) => /^(gpt-5|o\d)/i.test(model.trim());
+const isReasoningModel = (model: string) => /^(gpt-[56]|o\d)/i.test(model.trim());
 
 const REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high']);
 
