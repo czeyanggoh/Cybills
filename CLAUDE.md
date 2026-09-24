@@ -1338,6 +1338,21 @@ the colleague, `decidedFor` the named approver, and the history line reads
 refused exactly as before. Covered by `npm test` in `server/`
 (`test/claim-approve-practice.test.mts`).
 
+**And so may the entity's own Business Admin, without anybody being asked.**
+They run the book the claim posts into and publish to it, so a claim routed to
+a manager, or never submitted at all (every Dext import arrives as a draft),
+left the one person who could settle it looking at a greyed-out Publish.
+`mayOverride` (`claims.ts`, mirrored by `iMayOverride` on the claim page) is the
+practice OR a Business Admin of THIS entity (`effectiveRoleFor`), never on their
+own claim. A draft or rejected claim may be approved DIRECTLY by them — the
+trail says "approved directly by …, without being submitted for approval" — and
+only after Submit's own checks (`refuseUndecidable`: incomplete items, a claim
+made out to the general account), since skipping the request must not skip what
+it checks. Anybody else gets 409 `not_submitted`; an approved claim is 409
+`already_approved`. On the page: **Approve** beside Submit for approval, and the
+publish button becomes **Approve & publish**, which confirms and does both.
+Covered by `test/claim-approve-practice.test.mts`.
+
 **An approved claim can be UNAPPROVED, back to awaiting approval.** Approval
 locks a claim — its total must not drift once it is on its way to payment — and
 until now the lock had no key: a mistake found afterwards could only be fixed

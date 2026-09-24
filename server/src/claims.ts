@@ -601,6 +601,14 @@ async function warmClaimRates(claims: Claim[], extraItemIds: string[] = []): Pro
   await warmDayRates(wants);
 }
 
+// A money figure as the two-decimal string a claim line carries; a blank or
+// unreadable one is left as it was rather than turned into 0.00.
+function cents(v: unknown): string {
+  const s = String(v ?? '').trim();
+  const n = Number(s);
+  return s && Number.isFinite(n) ? n.toFixed(2) : s;
+}
+
 function liveTxns(c: Claim): Txn[] {
   return c.transactions.map((t) => {
     const bill = getBillById(c.orgId, String(t.itemId));
@@ -615,9 +623,10 @@ function liveTxns(c: Claim): Txn[] {
       project: bill.project ?? t.project,
       distanceKm: bill.distanceKm != null ? String(bill.distanceKm) : t.distanceKm,
       mileageRate: bill.mileageRate != null ? String(bill.mileageRate) : t.mileageRate,
-      net: String(money.total != null ? Number(money.total) - Number(money.tax || 0) : t.net),
-      tax: String(money.tax ?? t.tax),
-      total: String(money.total ?? t.total),
+      // To the cent: total − tax in floating point is 42.050000000000004.
+      net: money.total != null ? (Number(money.total) - Number(money.tax || 0)).toFixed(2) : cents(t.net),
+      tax: cents(money.tax ?? t.tax),
+      total: cents(money.total ?? t.total),
       origCurrency: money.fx?.origCurrency,
       origTotal: money.fx?.origTotal,
       fxRate: money.fx?.fxRate,
@@ -1043,6 +1052,50 @@ function missingOnItem(orgId: string, t: Txn): string[] {
   return out;
 }
 
+// What stops a claim being put in front of anybody for a decision: an item
+// that is incomplete, or a claim made out to nobody. Shared by Submit and by a
+// Business Admin approving a draft DIRECTLY — skipping the request for
+// approval must not also skip what the request would have checked.
+function refuseUndecidable(req: Request, claim: Claim, res: Response, when: string): Response | void {
+  // Submitting asks a person to approve a specific sum, and they approve what
+  // the claim SAYS. An item with no date gave them nothing to check it
+  // against — was it this period, was it already claimed — while the row wore
+  // a "Ready" badge. Every other route to the ledger already refuses an
+  // incomplete document; this is the same standard at the point a human is
+  // asked to sign off.
+  const incomplete = (claim.transactions ?? [])
+    .map((t) => ({ t, missing: missingOnItem(claim.orgId, t) }))
+    .filter((x) => x.missing.length);
+  if (incomplete.length) {
+    return res.status(422).json({
+      error: 'incomplete_items',
+      count: incomplete.length,
+      items: incomplete.slice(0, 10).map((x) => ({
+        itemId: x.t.displayId || x.t.itemId,
+        supplier: x.t.supplier || 'Unknown supplier',
+        missing: x.missing,
+      })),
+      message:
+        `${incomplete.length} item${incomplete.length === 1 ? '' : 's'} on this claim ${incomplete.length === 1 ? 'is' : 'are'} incomplete — ` +
+        `${incomplete[0].t.supplier || 'one'} needs ${incomplete[0].missing.join(', ')}. ` +
+        `Fill those in ${when}.`,
+    });
+  }
+  // A claim is money paid back to a PERSON. The general account is what owns
+  // the documents nobody claimed — the company's own paperwork — so a claim
+  // made out to it has nobody to reimburse and nobody whose manager could
+  // approve it. Most often it means the documents were uploaded by a
+  // colleague from outside the entity and never attributed to anyone.
+  if (isGeneralPerson(workspaceId(req), claim.orgId, claim.claimFor)) {
+    return res.status(422).json({
+      error: 'claim_for_general',
+      message:
+        'This claim is made out to the general account, which is not a person — there is nobody to pay it back to. ' +
+        'Set "Claim for" to whoever paid, adding them under Users first if they are not on the roster yet.',
+    });
+  }
+}
+
 claimsRouter.post('/:id/submit', (req, res) =>
   mutate(req, res, (claim, me) => {
     // An APPROVED claim is a decision somebody made about a specific sum, and
@@ -1062,43 +1115,8 @@ claimsRouter.post('/:id/submit', (req, res) =>
           'so the approval that is being undone is recorded.',
       });
     }
-    // Submitting asks a person to approve a specific sum, and they approve what
-    // the claim SAYS. An item with no date gave them nothing to check it
-    // against — was it this period, was it already claimed — while the row wore
-    // a "Ready" badge. Every other route to the ledger already refuses an
-    // incomplete document; this is the same standard at the point a human is
-    // asked to sign off.
-    const incomplete = (claim.transactions ?? [])
-      .map((t) => ({ t, missing: missingOnItem(claim.orgId, t) }))
-      .filter((x) => x.missing.length);
-    if (incomplete.length) {
-      return res.status(422).json({
-        error: 'incomplete_items',
-        count: incomplete.length,
-        items: incomplete.slice(0, 10).map((x) => ({
-          itemId: x.t.displayId || x.t.itemId,
-          supplier: x.t.supplier || 'Unknown supplier',
-          missing: x.missing,
-        })),
-        message:
-          `${incomplete.length} item${incomplete.length === 1 ? '' : 's'} on this claim ${incomplete.length === 1 ? 'is' : 'are'} incomplete — ` +
-          `${incomplete[0].t.supplier || 'one'} needs ${incomplete[0].missing.join(', ')}. ` +
-          'Fill those in before asking somebody to approve the claim.',
-      });
-    }
-    // A claim is money paid back to a PERSON. The general account is what owns
-    // the documents nobody claimed — the company's own paperwork — so a claim
-    // made out to it has nobody to reimburse and nobody whose manager could
-    // approve it. Most often it means the documents were uploaded by a
-    // colleague from outside the entity and never attributed to anyone.
-    if (isGeneralPerson(workspaceId(req), claim.orgId, claim.claimFor)) {
-      return res.status(422).json({
-        error: 'claim_for_general',
-        message:
-          'This claim is made out to the general account, which is not a person — there is nobody to pay it back to. ' +
-          'Set "Claim for" to whoever paid, adding them under Users first if they are not on the roster yet.',
-      });
-    }
+    const refused = refuseUndecidable(req, claim, res, 'before asking somebody to approve the claim');
+    if (refused) return refused;
     const manager = directManagerFor(workspaceId(req), claim.claimFor);
     if (!manager) {
       return res.status(400).json({ error: 'no_manager', claimant: claim.claimFor });
@@ -1137,6 +1155,17 @@ const isNamedApprover = (claim: Claim, me: { email: string; name: string }): boo
 const isClaimantOf = (claim: Claim, me: { email: string; name: string }): boolean =>
   Boolean(me.name && claim.claimFor && norm(me.name) === norm(claim.claimFor));
 
+// Who may decide a claim whoever it names: the practice (entity access was
+// already checked by the X-Org-Id guard, so being on the team is the whole of
+// the question) and the entity's own BUSINESS ADMIN, who runs the book the
+// claim posts into and publishes to it anyway. Never on their own claim.
+function mayOverride(req: Request, claim: Claim, me: { email: string; name: string }): boolean {
+  const member = memberForSession(req);
+  if (!member || member.deactivated || isClaimantOf(claim, me)) return false;
+  if (member.practice) return true;
+  return effectiveRoleFor(member, orgScope(req)) === 'Business Admin';
+}
+
 function ensureApprover(
   req: Request,
   claim: Claim,
@@ -1150,14 +1179,11 @@ function ensureApprover(
   if (!claim.approverEmail && !claim.approver) {
     const member = memberForSession(req);
     if (!member) return; // mock/dev — no real auth to gate on
-    if (isAdminRole(member.role) && !isClaimantOf(claim, me)) return;
+    if (isAdminRole(effectiveRoleFor(member, orgScope(req))) && !isClaimantOf(claim, me)) return;
     return res.status(403).json({ error: 'not_approver', approver: claim.approver });
   }
   if (isNamedApprover(claim, me)) return;
-  // The practice, on the approver's behalf. Entity access was already checked
-  // by the X-Org-Id guard, so being on the team is the whole of the question.
-  const member = memberForSession(req);
-  if (member && member.practice && !member.deactivated && !isClaimantOf(claim, me)) return;
+  if (mayOverride(req, claim, me)) return;
   return res.status(403).json({ error: 'not_approver', approver: claim.approver });
 }
 
@@ -1173,8 +1199,23 @@ claimsRouter.post('/:id/approve', async (req, res) => {
   // so those rates are asked for first.
   await warmClaimRates(load().filter((c) => c.id === req.params.id));
   return mutate(req, res, (claim, me) => {
-    const blocked = ensureApprover(req, claim, me, res);
-    if (blocked) return blocked;
+    if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'already_approved' });
+    // A claim nobody has asked about (a draft, or one rejected and not sent
+    // again) may be approved DIRECTLY — but only by somebody who could override
+    // the approver anyway, and only if it would have passed Submit.
+    const direct = claim.approvalStatus !== 'awaiting_approval';
+    if (direct) {
+      const member = memberForSession(req);
+      if (member && isClaimantOf(claim, me)) return res.status(403).json({ error: 'not_approver', approver: claim.approver });
+      if (member && !mayOverride(req, claim, me)) {
+        return res.status(409).json({ error: 'not_submitted', message: 'Submit this claim for approval first.' });
+      }
+      const refused = refuseUndecidable(req, claim, res, 'before approving the claim');
+      if (refused) return refused;
+    } else {
+      const blocked = ensureApprover(req, claim, me, res);
+      if (blocked) return blocked;
+    }
     // Record the figures being approved, rather than leaving the snapshot taken
     // when the items were ADDED to resurface. Freezing without this froze the
     // wrong thing: a receipt whose date was fixed after it was claimed showed
@@ -1186,7 +1227,13 @@ claimsRouter.post('/:id/approve', async (req, res) => {
     claim.decidedFor = decidedFor(claim, me);
     claim.decidedAt = nowIso();
     claim.decisionReason = '';
-    claim.history.unshift({ text: `This claim was approved by ${byLine(claim, me)}`, by: me.name, at: nowIso() });
+    claim.history.unshift({
+      text: direct
+        ? `This claim was approved directly by ${byLine(claim, me)}, without being submitted for approval`
+        : `This claim was approved by ${byLine(claim, me)}`,
+      by: me.name,
+      at: nowIso(),
+    });
     notifyClaimant(req, claim, 'approved');
   });
 });

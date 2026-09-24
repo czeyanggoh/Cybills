@@ -70,6 +70,14 @@ writeFileSync(
       // Approved already, and one of those published: its bill is in Xero.
       { ...claimRow('astrid-approved', 'Astrid Test'), approvalStatus: 'approved', decidedBy: 'Martin Lim', decidedAt: new Date(2).toISOString() },
       { ...claimRow('astrid-published', 'Astrid Test'), approvalStatus: 'approved', decidedBy: 'Martin Lim', decidedAt: new Date(2).toISOString(), xeroInvoiceId: 'inv-1' },
+      // Drafts nobody has submitted (a Dext import, say), and a claim routed to
+      // somebody who is not the entity's Business Admin.
+      { ...claimRow('draft-1', 'Astrid Test'), approvalStatus: '', approver: '', approverEmail: '' },
+      { ...claimRow('draft-2', 'Astrid Test'), approvalStatus: '', approver: '', approverEmail: '' },
+      { ...claimRow('draft-martin', 'Martin Lim'), approvalStatus: '', approver: '', approverEmail: '' },
+      { ...claimRow('draft-incomplete', 'Astrid Test'), approvalStatus: '', approver: '', approverEmail: '',
+        transactions: [{ itemId: 'i-2', date: '', supplier: 'Grab', category: 'Transport - Taxi', net: '10', tax: '0', total: '10' }] },
+      { ...claimRow('routed-other', 'Astrid Test'), approver: 'Other Person', approverEmail: 'other@redalpha.example' },
     ],
   })
 );
@@ -181,6 +189,38 @@ r = await post('/astrid-2/reject', as('martin@redalpha.example', 'Martin Lim'), 
 check('a claim can still be rejected', r.body.claim?.approvalStatus, 'rejected');
 r = await post('/astrid-2/submit', ASTRID_SESSION);
 check('and a rejected claim may be sent again', r.status === 409, false);
+
+// --- A Business Admin decides whoever the claim names --------------------------
+// The entity's own Business Admin runs the book the claim posts into and may
+// publish to it, so waiting on a named approver (or on nobody at all, for a
+// claim that was never submitted) blocked the one person who could settle it.
+const MARTIN = as('martin@redalpha.example', 'Martin Lim');
+r = await post('/routed-other/approve', MARTIN);
+check("a Business Admin may approve a claim routed to somebody else", r.status, 200);
+check('on behalf of that approver', r.body.claim?.history?.[0]?.text, 'This claim was approved by Martin Lim on behalf of Other Person');
+
+r = await post('/draft-1/approve', MARTIN);
+check('and may approve a claim nobody submitted', r.status, 200);
+check('which is approved', r.body.claim?.approvalStatus, 'approved');
+check('for nobody else', r.body.claim?.decidedFor, '');
+check('and the trail says it skipped the request', r.body.claim?.history?.[0]?.text,
+  'This claim was approved directly by Martin Lim, without being submitted for approval');
+
+r = await post('/draft-1/approve', MARTIN);
+check('an approved claim is not approved twice', r.body.error, 'already_approved');
+
+r = await post('/draft-2/approve', as('other@redalpha.example', 'Other Person'));
+check('a Standard user cannot approve a draft directly', r.status, 409);
+check('and is told to submit it', r.body.error, 'not_submitted');
+
+r = await post('/draft-martin/approve', MARTIN);
+check('a Business Admin cannot approve their own claim', r.status, 403);
+
+r = await post('/draft-incomplete/approve', MARTIN);
+check('skipping Submit does not skip its checks', r.body.error, 'incomplete_items');
+
+r = await post('/draft-2/approve', as('kai@cy-bm.sg', 'Kai Tan'));
+check('a practice colleague may approve a draft directly too', r.status, 200);
 
 server.close();
 if (failures) {

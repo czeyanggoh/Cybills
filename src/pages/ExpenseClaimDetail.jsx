@@ -50,7 +50,7 @@ import {
   CLAIM_ATTACHMENT_ACCEPT,
 } from '@/lib/claimStore';
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
-import { useUsers, canManageUsers, isAdminAccess, canPublishToXero, canCreateClaims } from '@/lib/userStore';
+import { useUsers, canManageUsers, canManageBusiness, isAdminAccess, canPublishToXero, canCreateClaims } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import {
@@ -456,6 +456,62 @@ export default function ExpenseClaimDetail() {
   const locked = claim.approvalStatus === 'approved';
   const submitted = claim.approvalStatus === 'awaiting_approval';
 
+  // Only the assigned approver may approve/reject (enforced server-side too) —
+  // or a practice colleague on their behalf. The practice runs the book the
+  // claim posts into, so a CYBM colleague may decide a client's claim when the
+  // named approver is away or never signs in here; the decision is recorded as
+  // made on that person's behalf. When no specific approver is set, the decision
+  // falls to a Business/User Admin. Never the claimant approving their own claim,
+  // whoever they are (mirrors the server's ensureApprover rule).
+  const meEmail = (user?.email || '').toLowerCase();
+  const meName = (user?.name || '').toLowerCase();
+  const iAmClaimant = Boolean(meName && claim.claimFor && claim.claimFor.toLowerCase() === meName);
+  const iAmAdmin = canManageUsers(membership, googleEnabled);
+  // Who may decide whoever the claim names — the practice, and the entity's own
+  // Business Admin, who runs the book it posts into. Never on their own claim.
+  // They may also approve a claim nobody has submitted yet (mirrors the
+  // server's mayOverride).
+  const iMayOverride =
+    !iAmClaimant && (isPracticeTeam(membership, googleEnabled) || canManageBusiness(membership, googleEnabled));
+  const iAmNamedApprover =
+    (claim.approverEmail && meEmail && claim.approverEmail.toLowerCase() === meEmail) ||
+    (claim.approver && meName && claim.approver.toLowerCase() === meName);
+  const iAmApprover =
+    iAmNamedApprover ||
+    iMayOverride ||
+    (!claim.approverEmail && !claim.approver && iAmAdmin && !iAmClaimant);
+  const decidingFor = iAmApprover && !iAmNamedApprover && claim.approver ? claim.approver : '';
+  const decide = async (fn) => {
+    setPayNote('');
+    try {
+      await fn(claim.id);
+      return true;
+    } catch (e) {
+      setPayNote(
+        e.code === 'not_approver'
+          ? `Only ${claim.approver || 'the assigned approver'} can approve this claim.`
+          : e.serverMessage || 'Could not update the claim.'
+      );
+      return false;
+    }
+  };
+  // A Business Admin publishing a claim nobody has approved: approving it is
+  // part of the act, so it is one button rather than two, and it says so first.
+  const approveAndPublish = async () => {
+    if (
+      !window.confirm(
+        `Approve this claim and publish it to Xero?
+
+` +
+          (submitted && claim.approver
+            ? `It is waiting on ${claim.approver}; it will be recorded as approved by you on their behalf.`
+            : 'It has not been submitted for approval; it will be recorded as approved directly by you.')
+      )
+    )
+      return;
+    if (await decide(approveClaim)) await publishXero();
+  };
+
   // Publish to Xero, in every state. An unapproved claim can't post — a claim
   // is a bill payable to an employee, and approval is the thing that says the
   // company owes it, so the server refuses one outright. Rather than hide the
@@ -497,7 +553,15 @@ export default function ExpenseClaimDetail() {
           : 'Published to Xero'}
       <ExternalLink className="h-3.5 w-3.5" />
     </a>
-  ) : !mayPublish ? null : (
+  ) : !mayPublish ? null : !locked && iMayOverride ? (
+    <TopButton
+      disabled={publishing}
+      title="Approve this claim yourself and post it to Xero as a bill payable to the employee"
+      onClick={approveAndPublish}
+    >
+      {publishing ? 'Publishing…' : 'Approve & publish'}
+    </TopButton>
+  ) : (
     <TopButton
       disabled={!locked || publishing}
       title={
@@ -642,38 +706,6 @@ export default function ExpenseClaimDetail() {
 
   const otherClaims = claims.filter((c) => c.id !== claim.id && !c.archived && !c.deleted);
 
-  // Only the assigned approver may approve/reject (enforced server-side too) —
-  // or a practice colleague on their behalf. The practice runs the book the
-  // claim posts into, so a CYBM colleague may decide a client's claim when the
-  // named approver is away or never signs in here; the decision is recorded as
-  // made on that person's behalf. When no specific approver is set, the decision
-  // falls to a Business/User Admin. Never the claimant approving their own claim,
-  // whoever they are (mirrors the server's ensureApprover rule).
-  const meEmail = (user?.email || '').toLowerCase();
-  const meName = (user?.name || '').toLowerCase();
-  const iAmClaimant = Boolean(meName && claim.claimFor && claim.claimFor.toLowerCase() === meName);
-  const iAmAdmin = canManageUsers(membership, googleEnabled);
-  const iAmNamedApprover =
-    (claim.approverEmail && meEmail && claim.approverEmail.toLowerCase() === meEmail) ||
-    (claim.approver && meName && claim.approver.toLowerCase() === meName);
-  const iAmApprover =
-    iAmNamedApprover ||
-    (!iAmClaimant && isPracticeTeam(membership, googleEnabled)) ||
-    (!claim.approverEmail && !claim.approver && iAmAdmin && !iAmClaimant);
-  const decidingFor = iAmApprover && !iAmNamedApprover && claim.approver ? claim.approver : '';
-  const decide = async (fn) => {
-    setPayNote('');
-    try {
-      await fn(claim.id);
-    } catch (e) {
-      setPayNote(
-        e.code === 'not_approver'
-          ? `Only ${claim.approver || 'the assigned approver'} can approve this claim.`
-          : 'Could not update the claim.'
-      );
-    }
-  };
-
   // A document uploaded from this page goes onto THIS claim rather than into the
   // Costs inbox for somebody to find and add — which is what "Add items" used to
   // mean, and the round trip was the whole of the complaint. The drawer hands
@@ -777,9 +809,15 @@ export default function ExpenseClaimDetail() {
               Rejected{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}{claim.decidedFor ? ` for ${claim.decidedFor}` : ''}
             </span>
             <TopButton onClick={() => setApprovalOpen(true)}>Re-submit for approval</TopButton>
+            {iMayOverride && <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>}
           </>
         ) : (
-          <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>
+          <>
+            <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>
+            {/* A Business Admin need not ask anybody: the claim is approved
+                directly, and the history says it was never submitted. */}
+            {iMayOverride && <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>}
+          </>
         )}
         {publishBtn}
         <TopButton onClick={async () => { await archiveClaims([claim.id], true).catch(() => {}); navigate('/expense-claims'); }}>Archive</TopButton>

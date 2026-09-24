@@ -37,7 +37,20 @@ function fmtAt(at) {
 function shape(c) {
   // A line records the document's number when it is added, so the claim keeps
   // showing the right one even after the document itself is gone.
-  const transactions = (c.transactions || []).map((t) => ({ ...t, displayId: t.displayId || displayItemId(t.itemId) }));
+  // Every amount to the cent, whatever was stored: a line written as total − tax
+  // in floating point read 42.050000000000004 on the page, the PDF and the CSV.
+  const cents = (v) => {
+    const s = String(v ?? '').trim();
+    const n = Number(s);
+    return s && Number.isFinite(n) ? n.toFixed(2) : v;
+  };
+  const transactions = (c.transactions || []).map((t) => ({
+    ...t,
+    net: cents(t.net),
+    tax: cents(t.tax),
+    total: cents(t.total),
+    displayId: t.displayId || displayItemId(t.itemId),
+  }));
   const sum = (k) => transactions.reduce((n, t) => n + Number(t[k] || 0), 0).toFixed(2);
   const history = (c.history || []).map((e) => ({ ...e, text: cleanHistoryText(e.text), at: fmtAt(e.at) }));
   return { ...c, transactions, history, net: sum('net'), tax: sum('tax'), total: sum('total') };
@@ -66,6 +79,7 @@ async function post(path, body) {
     err.code = b.error;
     err.approver = b.approver;
     err.claimant = b.claimant;
+    err.serverMessage = b.message;
     throw err;
   }
   return res.json();

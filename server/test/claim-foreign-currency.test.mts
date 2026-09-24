@@ -117,13 +117,13 @@ const check = (name: string, got: unknown, want: unknown) => {
 const list = await (await fetch('http://127.0.0.1:4633/api/claims')).json();
 const open = list.claims.find((c: any) => c.id === 'c-open');
 const line = (b: any) => open.transactions.find((t: any) => t.itemId === b.id);
-check('USD receipt: counted at the day rate, not as SGD', line(usd).total, '32.5');
+check('USD receipt: counted at the day rate, not as SGD', line(usd).total, '32.50');
 check('…and says so', [line(usd).origCurrency, line(usd).origTotal, line(usd).fxRate, line(usd).fxSource], ['USD', '25.00', '1.3', 'day']);
 check('…asked for the receipt\'s own date', fxAsked.some((u) => u.startsWith('/fx/2026-09-14?from=USD&to=SGD')), true);
-check('restated receipt: its own SGD figure, no lookup', [line(restated).total, line(restated).fxSource], ['22.2', 'document']);
-check('SGD receipt: untouched', [line(sgd).total, line(sgd).origCurrency], ['12', undefined]);
+check('restated receipt: its own SGD figure, no lookup', [line(restated).total, line(restated).fxSource], ['22.20', 'document']);
+check('SGD receipt: untouched', [line(sgd).total, line(sgd).origCurrency], ['12.00', undefined]);
 const noRate = list.claims.find((c: any) => c.id === 'c-norate').transactions[0];
-check('no rate to be had: kept as printed, and flagged', [noRate.total, noRate.fxMissing], ['100', true]);
+check('no rate to be had: kept as printed, and flagged', [noRate.total, noRate.fxMissing], ['100.00', true]);
 
 // 2) Publishing a claim that still carries an unconverted item is refused.
 const publish = async (claimId: string) => {
