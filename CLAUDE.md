@@ -1353,7 +1353,11 @@ it checks. Anybody else gets 409 `not_submitted`; an approved claim is 409
 claims list too, acting on the ticked claims it may decide, one at a time with
 each refusal named), and the
 publish button becomes **Approve & publish**, which confirms and does both.
-Covered by `test/claim-approve-practice.test.mts`.
+The list's **Publish to Xero** does the same in bulk: an approved claim is
+published as it stands, an unapproved one is approved first where the caller
+may decide it and skipped otherwise, each with its PDF, one at a time
+(`approveClaim` resolves with the approved claim so the PDF prints the
+approval). Covered by `test/claim-approve-practice.test.mts`.
 
 **An approved claim can be UNAPPROVED, back to awaiting approval.** Approval
 locks a claim — its total must not drift once it is on its way to payment — and

@@ -203,9 +203,12 @@ export async function submitForApproval(claimId) {
 
 // Approve / reject. The server stamps the acting (signed-in) user and enforces
 // that they are the assigned approver. Throws with code 'not_approver' if not.
+// Resolves with the approved claim, so a caller publishing it next builds the
+// PDF from the claim as approved rather than from the copy it had before.
 export async function approveClaim(claimId) {
-  await post(`/${claimId}/approve`);
+  const r = await post(`/${claimId}/approve`);
   notifyClaimsChanged();
+  return r?.claim ? shape(r.claim) : null;
 }
 export async function rejectClaim(claimId, reason = '') {
   await post(`/${claimId}/reject`, { reason });

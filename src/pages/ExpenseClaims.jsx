@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { useListView } from '@/lib/listView';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock, Download, CheckCircle2 } from 'lucide-react';
+import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock, Download, CheckCircle2, UploadCloud } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
@@ -10,9 +10,13 @@ import AutoClaimsModal from '@/components/AutoClaimsModal';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, approveClaim, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
+import { useClaims, notifyClaimsChanged, archiveClaims, deleteClaims, createClaim, submitForApproval, approveClaim, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
-import { canManageBusiness, isAdminAccess, canCreateClaims, useUsers } from '@/lib/userStore';
+import { canManageBusiness, isAdminAccess, canCreateClaims, canPublishToXero, useUsers } from '@/lib/userStore';
+import { publishClaimToXero } from '@/lib/organisations';
+import { useExtractionSettings, publishStatusLabel } from '@/lib/extractionSettings';
+import { buildClaimPdfBase64 } from '@/lib/claimPdf';
+import { claimExportName } from '@/lib/exportFormat';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import { cn } from '@/lib/utils';
 import { useExportSettings } from '@/lib/exportSettings';
@@ -247,6 +251,7 @@ export default function ExpenseClaims() {
   const [adv, setAdv] = useListView('claims', 'adv', { min: '', max: '', from: '', to: '', claimFor: '', month: '', approver: '' });
   const [approveOpen, setApproveOpen] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [notice, setNotice] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
@@ -419,6 +424,67 @@ A claim not yet submitted is recorded as approved directly by you; one waiting o
       ].filter(Boolean).join(' ')
     );
   };
+  // Publish to Xero, the list's twin of the claim page's button. A claim that
+  // is approved is published as it stands; one that is not is approved first
+  // (Approve & publish) where the caller may decide it, and otherwise skipped
+  // — the server refuses an unapproved claim, since approval is what says the
+  // company owes it. One at a time, each with its PDF, each refusal named.
+  const mayPublish = canPublishToXero(membership, googleEnabled);
+  const publishStatus = useExtractionSettings().publishStatus || 'AUTHORISED';
+  const approvableIds = new Set(approvable.map((c) => c.id));
+  const publishable = mayPublish
+    ? picked.filter((c) => !c.xeroInvoiceId && (c.approvalStatus === 'approved' || approvableIds.has(c.id)))
+    : [];
+  const doPublish = async () => {
+    const n = publishable.length;
+    const toApprove = publishable.filter((c) => c.approvalStatus !== 'approved').length;
+    const orgId = activeOrg?.id || '';
+    if (!n) return;
+    if (!orgId) {
+      setNotice('No Xero organisation is linked. Connect one in the organisation switcher first.');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Publish ${n} claim${n === 1 ? '' : 's'} to Xero as ${publishStatusLabel(publishStatus).toLowerCase()} bill${n === 1 ? '' : 's'}?` +
+          (toApprove ? `
+
+${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be approved by you first.` : '')
+      )
+    )
+      return;
+    setPublishing(true);
+    setNotice('');
+    const failed = [];
+    let done = 0;
+    for (const c of publishable) {
+      let claim = c;
+      try {
+        if (claim.approvalStatus !== 'approved') claim = (await approveClaim(claim.id)) || claim;
+      } catch (e) {
+        failed.push(`${c.claimFor || c.name}: not approved — ${e.serverMessage || e.code || 'refused'}`);
+        continue;
+      }
+      try {
+        const pdfBase64 = await buildClaimPdfBase64(claim);
+        await publishClaimToXero(orgId, { claimId: claim.id, status: publishStatus, pdfBase64, pdfName: claimExportName(claim, 'pdf') });
+        done++;
+      } catch (e) {
+        failed.push(`${c.claimFor || c.name}: ${e.message || 'could not be published'}`);
+      }
+    }
+    notifyClaimsChanged();
+    setPublishing(false);
+    clear();
+    const skipped = picked.length - n;
+    setNotice(
+      [
+        `${done} of ${n} published to Xero.`,
+        skipped ? `${skipped} skipped (already published, or not approved and not yours to approve).` : '',
+        ...failed,
+      ].filter(Boolean).join(' ')
+    );
+  };
   const canArchive = picked.some((c) => !c.archived && !c.xeroInvoiceId);
   const canUnarchive = picked.some((c) => c.archived && !c.xeroInvoiceId);
 
@@ -549,6 +615,20 @@ A claim not yet submitted is recorded as approved directly by you; one waiting o
             )}
           >
             <CheckCircle2 className="h-3.5 w-3.5" /> {approving ? 'Approving…' : 'Approve'}
+          </button>
+        )}
+        {mayPublish && (
+          <button
+            type="button"
+            disabled={!publishable.length || publishing}
+            onClick={doPublish}
+            title={hasSelection && !publishable.length ? 'Nothing ticked can be published: already in Xero, or waiting on its approver.' : ''}
+            className={cn(
+              'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
+              publishable.length && !publishing ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/50'
+            )}
+          >
+            <UploadCloud className="h-3.5 w-3.5" /> {publishing ? 'Publishing…' : 'Publish to Xero'}
           </button>
         )}
         <button
