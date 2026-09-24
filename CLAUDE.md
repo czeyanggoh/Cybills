@@ -1349,7 +1349,9 @@ trail says "approved directly by …, without being submitted for approval" — 
 only after Submit's own checks (`refuseUndecidable`: incomplete items, a claim
 made out to the general account), since skipping the request must not skip what
 it checks. Anybody else gets 409 `not_submitted`; an approved claim is 409
-`already_approved`. On the page: **Approve** beside Submit for approval, and the
+`already_approved`. On the page: **Approve** beside Submit for approval (on the
+claims list too, acting on the ticked claims it may decide, one at a time with
+each refusal named), and the
 publish button becomes **Approve & publish**, which confirms and does both.
 Covered by `test/claim-approve-practice.test.mts`.
 

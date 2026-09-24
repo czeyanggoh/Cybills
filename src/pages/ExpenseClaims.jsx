@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { useListView } from '@/lib/listView';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock, Download } from 'lucide-react';
+import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock, Download, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
@@ -10,9 +10,10 @@ import AutoClaimsModal from '@/components/AutoClaimsModal';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
+import { useClaims, archiveClaims, deleteClaims, createClaim, submitForApproval, approveClaim, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, isAdminAccess, canCreateClaims, useUsers } from '@/lib/userStore';
+import { isPracticeTeam } from '@/lib/practiceStore';
 import { cn } from '@/lib/utils';
 import { useExportSettings } from '@/lib/exportSettings';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
@@ -245,6 +246,8 @@ export default function ExpenseClaims() {
   const [filters, setFilters] = useListView('claims', 'filters', { status: '', paidStatus: '', type: '' });
   const [adv, setAdv] = useListView('claims', 'adv', { min: '', max: '', from: '', to: '', claimFor: '', month: '', approver: '' });
   const [approveOpen, setApproveOpen] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [notice, setNotice] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
 
@@ -381,6 +384,41 @@ export default function ExpenseClaims() {
   // way the Costs toolbar's Archive and Unarchive each carry their own half.
   const submittable = picked.filter((c) => c.approvalStatus !== 'approved');
   const canSubmit = submittable.length > 0;
+  // Approve, for the people who may decide a claim whoever it names — the
+  // practice and the entity's Business Admin (the server's mayOverride). A
+  // draft is approved directly, without being submitted; never their own claim.
+  const mayOverride = isAdmin || isPracticeTeam(membership, googleEnabled);
+  const myName = (user?.name || '').trim().toLowerCase();
+  const approvable = mayOverride
+    ? picked.filter((c) => c.approvalStatus !== 'approved' && !(myName && String(c.claimFor || '').trim().toLowerCase() === myName))
+    : [];
+  const doApprove = async () => {
+    const n = approvable.length;
+    if (!n || !window.confirm(`Approve ${n} claim${n === 1 ? '' : 's'}?
+
+A claim not yet submitted is recorded as approved directly by you; one waiting on somebody else, as approved on their behalf.`)) return;
+    setApproving(true);
+    setNotice('');
+    const failed = [];
+    // One at a time: each is its own decision, and each refusal is named.
+    for (const c of approvable) {
+      try {
+        await approveClaim(c.id);
+      } catch (e) {
+        failed.push(`${c.claimFor || c.name}: ${e.serverMessage || e.code || 'could not be approved'}`);
+      }
+    }
+    setApproving(false);
+    clear();
+    const skipped = picked.length - n;
+    setNotice(
+      [
+        `${n - failed.length} of ${n} approved.`,
+        skipped ? `${skipped} skipped (already approved, or your own).` : '',
+        ...failed,
+      ].filter(Boolean).join(' ')
+    );
+  };
   const canArchive = picked.some((c) => !c.archived && !c.xeroInvoiceId);
   const canUnarchive = picked.some((c) => c.archived && !c.xeroInvoiceId);
 
@@ -474,6 +512,12 @@ export default function ExpenseClaims() {
         })}
       </div>
 
+      {notice && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted px-3 py-2 text-sm text-foreground">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
+        </div>
+      )}
       {/* Toolbar */}
       {/* One scrolling row on a phone rather than several wrapped ones. */}
       <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-x-visible md:pb-0">
@@ -493,6 +537,20 @@ export default function ExpenseClaims() {
           >
             <Send className="h-3.5 w-3.5" /> Submit for approval
           </button>
+        {mayOverride && (
+          <button
+            type="button"
+            disabled={!approvable.length || approving}
+            onClick={doApprove}
+            title={hasSelection && !approvable.length ? 'Nothing ticked can be approved: already approved, or your own claim.' : ''}
+            className={cn(
+              'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
+              approvable.length && !approving ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/50'
+            )}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" /> {approving ? 'Approving…' : 'Approve'}
+          </button>
+        )}
         <button
           type="button"
           disabled={!canArchive}
