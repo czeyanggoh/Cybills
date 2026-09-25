@@ -1840,6 +1840,7 @@ async function fileWhatsappDocument(
     senderNumber: who.number,
     senderUserId: who.userId,
     senderPushName: String(b.sender_name ?? ''),
+    senderStandIn: who.standIn,
     text: String(b.body ?? '').trim().slice(0, 4000),
     sentAt,
     fileName: String(b.file_name ?? ''),
@@ -2227,6 +2228,7 @@ whatsappRouter.get('/threads/:submissionId', (req, res) => {
         // false when the label is a stand-in (the group's own person, a bare
         // push name) rather than a roster row the sender was identified as.
         senderConfirmed: who.confirmed,
+        senderStandIn: who.standIn,
       };
     }),
     canManage: mayManage(req, channel.orgId),

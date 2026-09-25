@@ -334,8 +334,10 @@ function MessageBubble({ m, canManage, busy, onCorrect, onFile, onPreview }) {
             one. It stays on the title, so it is still there to trace by. */}
         {!isOut && m.senderLabel && (
           <p className="mb-0.5 text-[11px] font-semibold text-green-700" title={m.senderId || undefined}>
-            {m.senderLabel}
-            {m.senderNumber && <span className="font-normal"> · {m.senderNumber}</span>}
+            {/* A stand-in is only whose group this is, and so is the number:
+                said as unknown rather than as the person who posted it. */}
+            {m.senderStandIn ? 'Unknown sender' : m.senderLabel}
+            {!m.senderStandIn && m.senderNumber && <span className="font-normal"> · {m.senderNumber}</span>}
           </p>
         )}
 

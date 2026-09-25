@@ -77,6 +77,10 @@ export type Bill = {
     // The push name WhatsApp sent, as sent, so a later repair can start from
     // what was received rather than from a name CYBills itself resolved.
     senderPushName?: string;
+    // true when `senderName` is only the group's own person, standing in
+    // because nothing identified the actual sender (`SenderIdentity.standIn`).
+    // The page then says the sender is unknown rather than naming them.
+    senderStandIn?: boolean;
     text: string;
     sentAt: string;
     fileName: string;
@@ -1297,14 +1301,22 @@ export function markBillWhatsappReaction(orgId: string, id: string, emoji: strin
 // so `whatsapp` is not in EDITABLE and never will be. Only the two identity
 // fields move; the raw sender id, the text and the file name are left as they
 // arrived.
-export function setBillWhatsappSender(orgId: string, id: string, who: { name: string; number: string; userId: string }): boolean {
+export function setBillWhatsappSender(orgId: string, id: string, who: { name: string; number: string; userId: string; standIn?: boolean }): boolean {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
   if (!bill?.whatsapp) return false;
   const wa = bill.whatsapp;
   // Written only on a real change: the listing sweep asks on every load.
-  if (wa.senderName === who.name && wa.senderNumber === who.number && (wa.senderUserId ?? '') === who.userId) return false;
-  bill.whatsapp = { ...wa, senderName: who.name, senderNumber: who.number, senderUserId: who.userId };
+  const standIn = Boolean(who.standIn);
+  if (
+    wa.senderName === who.name &&
+    wa.senderNumber === who.number &&
+    (wa.senderUserId ?? '') === who.userId &&
+    Boolean(wa.senderStandIn) === standIn
+  ) {
+    return false;
+  }
+  bill.whatsapp = { ...wa, senderName: who.name, senderNumber: who.number, senderUserId: who.userId, senderStandIn: standIn };
   persist(bills);
   return true;
 }

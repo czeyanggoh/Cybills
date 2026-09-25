@@ -445,6 +445,10 @@ check('and nothing was fetched', fileFetches, 2);
   check("with nothing else to go on, the group's person stands in", nameless.whatsapp?.senderName, 'Astrid Yang');
   check('with their number', nameless.whatsapp?.senderNumber, '+60123456789');
   check('but not as a confirmed sender', nameless.whatsapp?.senderUserId, '');
+  // And marked as the stand-in it is, so the page says "Unknown sender" rather
+  // than printing the group's person as who posted it.
+  check('and marked as a stand-in', nameless.whatsapp?.senderStandIn, true);
+  check('a push name is not a stand-in', filedByLid.whatsapp?.senderStandIn, false);
 
   // Where CYWS CAN say the number, the sender is the roster row it belongs to.
   lidReply = { status: 200, body: { pn: '60123456789' } };
@@ -709,6 +713,7 @@ check('and names that as the reason', r.body.error, 'no_bucket');
   const unknown = t.body.messages.find((m: any) => m.id === 'MSG-lid2');
   check('an unlearned LID shows its push name', unknown.senderLabel, 'Ken');
   check('and is not claimed as anyone on the roster', unknown.senderConfirmed, false);
+  check('but is not a stand-in either — Ken is what they call themselves', unknown.senderStandIn, false);
 
   const index = await get('threads', { 'X-Org-Id': 'org_one0001' });
   check('the group is listed with its traffic', index.body.threads.find((x: any) => x.submissionId === submissionId)?.messages, 6);

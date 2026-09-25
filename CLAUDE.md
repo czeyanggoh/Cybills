@@ -2582,7 +2582,11 @@ filed from that account and files the next one under them. `senderIdentity`
 answers in a name, a number and a `confirmed` flag: the ACTUAL sender first,
 wherever the number or the learned LID matches a roster row; else the push name
 alone; else the group's own person standing in, never claimed as confirmed —
-and unconfirmed is what puts the picker on the page. The filing path, the
+and unconfirmed is what puts the picker on the page. The stand-in is flagged
+(`standIn`, stored as `senderStandIn`) and the page and the thread print it as
+**Unknown sender** ("sent into Amex Redalpha's group"), not as the name under
+From: in a group more than one person posts into, whose group it is says
+nothing about who pressed send. The filing path, the
 thread route and the entity-wide group's owner rule all go through it, so the
 tab, the thread and the owner cannot disagree. Stored as `senderName` /
 `senderNumber` / `senderUserId` (+ the raw `senderPushName`) on the document's

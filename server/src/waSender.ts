@@ -72,6 +72,11 @@ export type SenderIdentity = {
   /** false when the name is the group's person standing in, or a bare push
    * name — somebody, but not somebody the roster can vouch for. */
   confirmed: boolean;
+  /** true when NOTHING identified the sender and `name` is only the group's
+   * own person. Said apart from `confirmed`, because a push name is at least
+   * what the sender calls themselves, while this is a guess from whose group
+   * it is — and in a group more than one person posts into, the wrong one. */
+  standIn: boolean;
 };
 
 const live = (u: User) => !u.removed && !u.deactivated;
@@ -122,18 +127,19 @@ export function senderIdentity(
       userId: actual.row.id,
       email: actual.row.email || '',
       confirmed: true,
+      standIn: false,
     };
   }
   // A number that is nobody's on the roster, or a push name on its own: real
   // facts about the sender, but not a person CYBills can vouch for.
   if (actual.number || pushName) {
-    return { name: pushName, number: actual.number ? `+${actual.number}` : '', id, userId: '', email: '', confirmed: false };
+    return { name: pushName, number: actual.number ? `+${actual.number}` : '', id, userId: '', email: '', confirmed: false, standIn: false };
   }
   // Nothing identifies them. The group's own person stands in — a group opened
   // for one person is usually that person — but is never claimed as confirmed.
   const person = channel.userId ? users.find((u) => u.id === channel.userId && !u.removed) : null;
   if (person) {
-    return { name: person.name || person.email || '', number: plus(person.mobile || ''), id, userId: '', email: '', confirmed: false };
+    return { name: person.name || person.email || '', number: plus(person.mobile || ''), id, userId: '', email: '', confirmed: false, standIn: true };
   }
-  return { name: '', number: '', id, userId: '', email: '', confirmed: false };
+  return { name: '', number: '', id, userId: '', email: '', confirmed: false, standIn: false };
 }

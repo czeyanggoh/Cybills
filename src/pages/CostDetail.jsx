@@ -2845,8 +2845,21 @@ export default function CostDetail() {
                         matches), so this tab and the WhatsApp thread agree. The
                         id stays reachable in the tooltip, for tracing. */}
                     <dd className="m-0 break-words" title={chat.from || undefined}>
-                      {chat.senderName || chat.senderNumber || 'Unknown'}
-                      {chat.senderName && chat.senderNumber ? (
+                      {/* Nothing identified the sender, and the name on file is
+                          only whose GROUP it is. Printed as "From" it read as a
+                          fact, and in a group several people post into it names
+                          the wrong one — so it is said as the guess it is. */}
+                      {chat.senderStandIn ? (
+                        <>
+                          Unknown sender
+                          {chat.senderName ? (
+                            <span className="ml-2 text-muted-foreground">(sent into {chat.senderName}’s group)</span>
+                          ) : null}
+                        </>
+                      ) : (
+                        chat.senderName || chat.senderNumber || 'Unknown'
+                      )}
+                      {!chat.senderStandIn && chat.senderName && chat.senderNumber ? (
                         <span className="ml-2 text-muted-foreground">{chat.senderNumber}</span>
                       ) : null}
                       {/* Nobody on the roster was identified as the sender: the
@@ -2861,7 +2874,7 @@ export default function CostDetail() {
                           people={teamUsers.filter((u) => !u.deactivated && u.email)}
                           onSaved={(who) =>
                             setPersisted((p) =>
-                              p ? { ...p, whatsapp: { ...p.whatsapp, senderName: who.name, senderNumber: who.number, senderUserId: who.userId } } : p
+                              p ? { ...p, whatsapp: { ...p.whatsapp, senderName: who.name, senderNumber: who.number, senderUserId: who.userId, senderStandIn: false } } : p
                             )
                           }
                         />
@@ -3099,7 +3112,7 @@ function WhatsappSenderPicker({ chat, people, onSaved }) {
         onChange={(e) => pick(e.target.value)}
         aria-label="Who sent this?"
       >
-        <option value="">{chat.senderName ? 'Not confirmed — who sent this?' : 'Who sent this?'}</option>
+        <option value="">{chat.senderName && !chat.senderStandIn ? 'Not confirmed — who sent this?' : 'Who sent this?'}</option>
         {people.map((u) => (
           <option key={u.email} value={u.email}>
             {u.name || u.email}
