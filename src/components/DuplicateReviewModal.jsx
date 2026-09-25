@@ -197,18 +197,22 @@ export default function DuplicateReviewModal({ open, pairs = [], onClose, onReso
                       Archive the new submission
                       <span className="text-xs text-muted-foreground">Out of the inbox, file kept.</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={remove}
-                      className="flex w-full flex-col px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10"
-                    >
-                      Delete the new submission
-                      <span className="text-xs text-destructive/70">Removes the document and its file.</span>
-                    </button>
                   </div>
                 </>
               )}
             </div>
+            {/* Its own button rather than the last line of the menu: clearing a
+                pile of copies is one click per pair, and a copy is usually
+                worth nothing to keep. It still confirms — the file goes too. */}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={remove}
+              title="Removes the document and its file. The one on the left is kept."
+              className="inline-flex h-9 items-center rounded-md border border-destructive/40 px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+            >
+              Delete the new submission
+            </button>
           </div>
         </div>
       </div>
