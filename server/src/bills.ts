@@ -47,6 +47,7 @@ import { isAdvanceDoc, keepAdvanceInStep } from './prepayment.js';
 import { autoApplyPaymentProofs, proofMatchRules, unappliedProof } from './proofMatch.js';
 import { channelById } from './waChannels.js';
 import { senderIdentity } from './waSender.js';
+import { learnLid, lidFor } from './waLids.js';
 
 // Persisted bills + duplicate detection. Mounted at /api/costs alongside the
 // Vision extract router. Works with or without sign-in (the app runs in mock
@@ -138,6 +139,13 @@ export function backfillWhatsappSenders(ws: string, scope: string): void {
     const pushName = wa.senderPushName ?? (wa.senderNumber === undefined ? wa.senderName : '');
     const who = senderIdentity(ws, channel, wa.from, pushName);
     setBillWhatsappSender(scope, b.id, who);
+    // Still a LID nobody has placed: ask CYWS again, which may have learned
+    // the number since the message arrived. Not waited on — learnLid is
+    // throttled per LID and only writes the ledger, and the NEXT listing
+    // re-resolves this row from it.
+    if (!who.userId && /@lid$/i.test(wa.from || '') && !lidFor(wa.from)?.number) {
+      void learnLid(wa.submissionId, wa.from).catch(() => {});
+    }
   }
 }
 

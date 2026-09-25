@@ -39,7 +39,7 @@ import {
 import { renameChannelsForUser } from './waRename.js';
 import { inboundKey, keyMatches } from './inboundKey.js';
 import { normaliseMobile, mobileOf, senderIdentity, type SenderIdentity } from './waSender.js';
-import { learnLid, rememberLid } from './waLids.js';
+import { learnLid, lidFor, rememberLid } from './waLids.js';
 
 // Bill collection over WhatsApp, in partnership with CYWorkspace (CYWS).
 //
@@ -2220,6 +2220,11 @@ whatsappRouter.get('/threads/:submissionId', (req, res) => {
       // so a message can always be traced back to a sender.
       if (m.direction === 'out') return { ...m, senderLabel: 'Us', senderNumber: '', senderId: '', senderConfirmed: true };
       const who = senderIdentity(channel.workspaceId, channel, m.sender, m.senderName);
+      // A LID still unplaced: ask CYWS again (throttled per LID), so a number
+      // it has learned since shows on the next load rather than never.
+      if (!who.number && /@lid$/i.test(m.sender || '') && !lidFor(m.sender)?.number) {
+        void learnLid(channel.id, m.sender).catch(() => {});
+      }
       return {
         ...m,
         senderLabel: who.name || who.number || 'Unknown',

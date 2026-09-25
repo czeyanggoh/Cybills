@@ -21,6 +21,7 @@ writeFileSync(
   JSON.stringify({
     organisations: [
       { id: 'org_one0001', orgId: 'cybm', name: 'Acme Pte Ltd', tenantId: 't-1', tenantName: 'Acme', createdAt: new Date(0).toISOString(), createdBy: '' },
+      { id: 'org_dart0001', orgId: 'cybm', name: 'Dart Consulting', tenantId: 't-2', tenantName: 'Dart', createdAt: new Date(0).toISOString(), createdBy: '' },
     ],
   })
 );
@@ -468,6 +469,46 @@ check('and nothing was fetched', fileFetches, 2);
     { 'X-API-Key': 'inbound-key' }
   );
   check('and is not asked about twice', lidAsks.length, asksBefore);
+
+  // Somebody from ANOTHER client posting into this group — Dean, on Dart's
+  // roster, sending a receipt into Red Alpha's Amex group. CYWS knows his
+  // number; nobody in this entity has it. His name is still worth printing,
+  // but he is not a person here: unconfirmed, never the owner.
+  {
+    const items = ensure('cybm');
+    const base = items.find((u) => u.id === dean.id)!;
+    items.push({
+      ...base,
+      id: 'u_dart_dean',
+      email: 'dean@dart.example',
+      name: 'Dean Gefen',
+      organisationId: 'org_dart0001',
+      mobile: '+65 8120 0805',
+      emailHandle: 'dean',
+      practice: false,
+      practiceRole: undefined,
+      clientAccess: [],
+      allClients: false,
+      extraAccess: [],
+    } as any);
+    save(items);
+  }
+  lidReply = { status: 200, body: { pn: '6581200805' } };
+  await post(
+    'invoice',
+    { ...invoice, message_id: 'clx8f2dart', sender: '888000000000001@lid', sender_name: '' },
+    { 'X-API-Key': 'inbound-key' }
+  );
+  const fromDart = listBills('cybm').find((b) => b.whatsapp?.messageId === 'clx8f2dart')!;
+  check('a number on another entity roster is named', fromDart.whatsapp?.senderName, 'Dean Gefen');
+  check('with the number', fromDart.whatsapp?.senderNumber, '+6581200805');
+  check('but not confirmed as a person in this entity', fromDart.whatsapp?.senderUserId, '');
+  check('and not a stand-in', fromDart.whatsapp?.senderStandIn, false);
+  check('and the document is not his', fromDart.owner !== 'dean@dart.example', true);
+  {
+    const items = ensure('cybm').filter((u) => u.id !== 'u_dart_dean');
+    save(items);
+  }
   lidReply = { status: 404, body: { error: 'not_found' } };
 
   // A number sent BESIDE the LID (`sender_pn`) is taken as read, no call made.

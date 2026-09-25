@@ -2586,7 +2586,14 @@ and unconfirmed is what puts the picker on the page. The stand-in is flagged
 (`standIn`, stored as `senderStandIn`) and the page and the thread print it as
 **Unknown sender** ("sent into Amex Redalpha's group"), not as the name under
 From: in a group more than one person posts into, whose group it is says
-nothing about who pressed send. The filing path, the
+nothing about who pressed send. A LID CYWS could not place when the message
+arrived is ASKED ABOUT AGAIN (at most every 30 minutes per LID, from the
+listing sweep and the thread) — WhatsApp often tells CYWS the number later, and
+asking only at filing time left documents unknown beside a CYWS thread that
+printed the number. A number nobody in THIS entity has is named from any roster
+row carrying it (`nameAnywhere`: Dean on Dart's roster posting into Red Alpha's
+group), or from the name CYWS sent back — a name only, unconfirmed, never the
+owner. The filing path, the
 thread route and the entity-wide group's owner rule all go through it, so the
 tab, the thread and the owner cannot disagree. Stored as `senderName` /
 `senderNumber` / `senderUserId` (+ the raw `senderPushName`) on the document's

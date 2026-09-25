@@ -96,16 +96,32 @@ function actualSender(
   channel: Pick<WaChannel, 'orgId'>,
   sender: string,
   lookup: Lookup,
-): { row: User | null; number: string } {
+): { row: User | null; number: string; learnedName: string } {
   const learned = /@lid$/i.test(sender) ? lookup(sender) : null;
   const inOrg = (u: User) => live(u) && canAccessOrg(u, channel.orgId);
   if (learned?.userId) {
     const row = users.find((u) => u.id === learned.userId && inOrg(u)) ?? null;
-    if (row) return { row, number: learned.number || normaliseMobile(row.mobile || '') };
+    if (row) return { row, number: learned.number || normaliseMobile(row.mobile || ''), learnedName: '' };
   }
   const number = mobileOf(sender) || learned?.number || '';
-  if (!number) return { row: null, number: '' };
-  return { row: users.find((u) => inOrg(u) && normaliseMobile(u.mobile) === number) ?? null, number };
+  const learnedName = learned?.name || '';
+  if (!number) return { row: null, number: '', learnedName };
+  return { row: users.find((u) => inOrg(u) && normaliseMobile(u.mobile) === number) ?? null, number, learnedName };
+}
+
+// A NAME for a number nobody in this entity has, from anywhere on the roster.
+// Somebody posting into Red Alpha's group is often a person from another of
+// the practice's clients (Dean, on Dart's roster), and their number is on a row
+// there. A name only — never the row: they are not a person in THIS entity, so
+// they are not the confirmed sender, own nothing here and approve nothing. The
+// sender put themselves in front of this group by posting in it, so their name
+// tells the reviewer nothing the group did not already show them.
+function nameAnywhere(users: User[], number: string): string {
+  const rows = users.filter((u) => live(u) && u.name && normaliseMobile(u.mobile || '') === number);
+  const names = new Set(rows.map((u) => u.name.trim()));
+  // Two people sharing a number is a typo on one of them; naming either would
+  // be a guess.
+  return names.size === 1 ? [...names][0] : '';
 }
 
 export function senderIdentity(
@@ -133,7 +149,8 @@ export function senderIdentity(
   // A number that is nobody's on the roster, or a push name on its own: real
   // facts about the sender, but not a person CYBills can vouch for.
   if (actual.number || pushName) {
-    return { name: pushName, number: actual.number ? `+${actual.number}` : '', id, userId: '', email: '', confirmed: false, standIn: false };
+    const name = pushName || actual.learnedName || (actual.number ? nameAnywhere(users, actual.number) : '');
+    return { name, number: actual.number ? `+${actual.number}` : '', id, userId: '', email: '', confirmed: false, standIn: false };
   }
   // Nothing identifies them. The group's own person stands in — a group opened
   // for one person is usually that person — but is never claimed as confirmed.

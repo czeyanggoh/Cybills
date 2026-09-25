@@ -59,10 +59,14 @@ export function rememberLid(row: Omit<LidRow, 'at'>): LidRow {
   return stored;
 }
 
-// Asked once per LID per process. An older CYWS has no such route and answers
-// 404 for ever; asking it again on every message would be a call per message
-// for nothing, and a LID that IS resolvable is resolved the first time.
-const asked = new Set<string>();
+// Asked at most once per LID per half hour. Not once for ever: WhatsApp tells
+// CYWS a LID's number LATER as often as not (the next message, a contact
+// sync), so a LID CYWS could not place when the receipt arrived is one it may
+// well place an hour on — and asked only at filing time, the document went on
+// saying "Unknown sender" beside a thread in CYWS that printed the number. Not
+// on every message either: an older CYWS answers 404 for ever.
+const asked = new Map<string, number>();
+const ASK_AGAIN_MS = 30 * 60_000;
 
 /**
  * Learn what a sender id stands for, before the message it came on is filed.
@@ -81,8 +85,9 @@ export async function learnLid(submissionId: string, sender: string, senderPn = 
     rememberLid({ lid, number: pn, userId: '', name: '', source: 'cyws' });
     return;
   }
-  if (asked.has(lid)) return;
-  asked.add(lid);
+  const last = asked.get(lid);
+  if (last !== undefined && Date.now() - last < ASK_AGAIN_MS) return;
+  asked.set(lid, Date.now());
   const answer = await askCywsForLid(submissionId, lid);
   if (answer?.number) rememberLid({ lid, number: answer.number, userId: '', name: answer.name, source: 'cyws' });
 }
