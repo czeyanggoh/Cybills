@@ -105,9 +105,11 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
                     half — each is labelled with the person, the date and the
                     total, and all of that is searchable, so "cze aug" or
                     "41.60" reaches one directly. Nothing is listed until
-                    something is typed. */}
+                    something is typed — or the chevron is pressed, for
+                    somebody who would rather look down the list. */}
                 <ComboSelect
                   variant="search"
+                  browsable
                   value={claim}
                   onChange={setClaim}
                   options={claims.map((c) => c.id)}

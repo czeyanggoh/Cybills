@@ -48,6 +48,11 @@ export default function ComboSelect({
   // enough that reading all of it was never the point, and where being handed
   // every row on click is the thing somebody asked to be rid of.
   variant = 'select',
+  // A search box that can ALSO be dropped open: a chevron on the right lists
+  // every row, for when somebody wants to look rather than to know what to
+  // type. Clicking in the box is still a search, so the list only appears
+  // when it was asked for.
+  browsable = false,
   className = '',
   'aria-label': ariaLabel,
 }) {
@@ -55,6 +60,8 @@ export default function ComboSelect({
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [rect, setRect] = useState(null);
+  // Opened from the chevron: show every row even with nothing typed.
+  const [browsing, setBrowsing] = useState(false);
   const inputRef = useRef(null);
   const listRef = useRef(null);
 
@@ -91,7 +98,7 @@ export default function ComboSelect({
   const searching = variant === 'search';
   // A search box with nothing typed in it has nothing to show. Dropping every
   // row on a click is precisely the dropdown this variant exists to stop being.
-  const listing = open && (!searching || Boolean(query.trim()));
+  const listing = open && (!searching || browsing || Boolean(query.trim()));
 
   const place = useCallback(() => {
     const r = inputRef.current?.getBoundingClientRect();
@@ -132,6 +139,7 @@ export default function ComboSelect({
   };
   const close = () => {
     setOpen(false);
+    setBrowsing(false);
     setQuery('');
   };
 
@@ -182,6 +190,17 @@ export default function ComboSelect({
     sm: 'h-8 min-w-[9rem] rounded pl-8 pr-2',
     xs: 'h-[30px] pl-7 pr-2 text-xs',
   }[size] || 'h-9 pl-9 pr-3';
+  // Room on the right for the chevron.
+  const browseRoom = size === 'md' || size === 'lg' ? 'pr-9' : 'pr-7';
+  const toggleBrowse = (e) => {
+    // Keep focus in the input — a blur would close the list we are opening.
+    e.preventDefault();
+    if (disabled) return;
+    if (listing && browsing) return close();
+    if (!open) start();
+    setBrowsing(true);
+    inputRef.current?.focus();
+  };
 
   return (
     <div className={cn('relative', className)}>
@@ -207,9 +226,26 @@ export default function ComboSelect({
         onKeyDown={onKeyDown}
         className={cn(
           'w-full cursor-text rounded-md border bg-background text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground',
-          searching ? searchBox : box
+          searching ? searchBox : box,
+          searching && browsable && browseRoom
         )}
       />
+      {searching && browsable ? (
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label="Show all"
+          title="Show all"
+          disabled={disabled}
+          onMouseDown={toggleBrowse}
+          className={cn(
+            'absolute top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none',
+            size === 'md' || size === 'lg' ? 'right-2' : 'right-1'
+          )}
+        >
+          <ChevronDown className="h-4 w-4" />
+        </button>
+      ) : null}
       {searching ? (
         <Search
           className={cn(
