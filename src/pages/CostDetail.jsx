@@ -35,7 +35,7 @@ import { useProjectLabels, singular } from '@/lib/projectLabels';
 import { useUsers, useOwnerNames, canPublishToXero, canCreateClaims } from '@/lib/userStore';
 import { setWhatsappSender } from '@/lib/whatsapp';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, moveBillToWorkspace, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
+import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, deleteBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, moveBillToWorkspace, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
 import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
@@ -1306,9 +1306,25 @@ export default function CostDetail() {
   // reviewer got here by walking the inbox and has more of it to walk. So it
   // lands on the next item, the same as Publish and Add to expense claim, and
   // only falls back to the list when there is nothing left to go to.
+  //
+  // PERMANENT, the same act as the Costs list's Delete: the record goes and its
+  // stored file is reclaimed from R2. It used to archive, which left a document
+  // somebody had asked to be rid of sitting in Archived with its file. Archive
+  // is the button beside it for keeping one.
   const deleteDoc = async () => {
-    if (!window.confirm('Delete this document? This removes it from your Costs inbox.')) return;
-    await persistStatus('archived');
+    const inXero = doc.xeroInvoiceId
+      ? `\n\nIt is already published to ${doc.xeroTenantName || 'Xero'} — this does NOT delete or void the bill there.`
+      : '';
+    if (!window.confirm(`Permanently delete this document from ${data.supplier || 'Unknown supplier'}?\n\nThis removes it everywhere and deletes the file from storage — it can't be undone. To keep it out of the inbox but recoverable, use Archive.${inXero}`)) return;
+    if (doc.persisted) {
+      try {
+        await deleteBill(doc.id);
+      } catch {
+        window.alert("Couldn't delete this document. Please try again.");
+        return;
+      }
+      notifyBillsChanged();
+    }
     goToNextInbox();
   };
 
