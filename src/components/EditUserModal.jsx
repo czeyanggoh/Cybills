@@ -10,6 +10,7 @@ import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
 import WhatsappDisappearing from '@/components/WhatsappDisappearing';
 import WhatsappInviteLink from '@/components/WhatsappInviteLink';
+import ConnectDriveFolder from '@/components/ConnectDriveFolder';
 
 // "Extract by email" — the user's inbound address plus any Gmail forwarding
 // confirmation CYBills is holding for them to click.
@@ -479,6 +480,11 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                   purpose: they are the two ways paperwork reaches CYBills
                   without anybody signing in. */}
               <ConnectWhatsapp user={user} />
+              {/* And the third: a folder in their own Google Drive. For the
+                  paperwork that is already a file — a scan, a PDF saved out of
+                  a mail client — where forwarding it anywhere is one step more
+                  than saving it. */}
+              <ConnectDriveFolder user={user} />
             </div>
           ) : (
             <div className="space-y-5">

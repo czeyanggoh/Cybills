@@ -448,6 +448,11 @@ export function billToDoc(b) {
     // sender may be followed, and it is what the row's badge and the page's
     // banner read. Null on everything else.
     emailLink: b.emailLink || null,
+    // The Google Drive file it was, for a document saved into a connected
+    // folder: which folder, and who put it there. Null on everything else,
+    // which is what keeps the Drive tab off a document that has nothing to
+    // show in it.
+    drive: b.drive || null,
     dueDate: b.dueDate || '',
     // Completed on the way in, so a row stored before the server did it — a net
     // with no total — reads as what it is worth rather than as nothing. The

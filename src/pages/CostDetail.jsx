@@ -1666,6 +1666,10 @@ export default function CostDetail() {
   // of what was received, never edited here.
   const chat = doc?.whatsapp || null;
   const chatDate = chat?.sentAt ? fmtStamp(chat.sentAt) : '';
+  // The Google Drive file this document was, for one saved into a connected
+  // folder. The same kind of record, and the thinnest of the three: nobody
+  // writes a covering message to a folder.
+  const driveFile = doc?.drive || null;
   const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
   const lineItemsEdited =
     Array.isArray(lineSnapshot) && JSON.stringify(lineSnapshot) !== JSON.stringify(lineItems);
@@ -2256,7 +2260,10 @@ export default function CostDetail() {
         <div>
           <div className="mb-4 flex items-center justify-between border-b">
             <div className="flex gap-6">
-              {['details', 'email', 'whatsapp', 'note', 'history'].map((t) => (
+              {/* A Drive tab only on a document that came from Drive: it has
+                  nothing to say about any other, and five tabs already say
+                  "not by this road" about two of them. */}
+              {['details', 'email', 'whatsapp', ...(driveFile ? ['drive'] : []), 'note', 'history'].map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -2268,7 +2275,7 @@ export default function CostDetail() {
                       : 'border-transparent text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  {t === 'whatsapp' ? 'WhatsApp' : t}
+                  {t === 'whatsapp' ? 'WhatsApp' : t === 'drive' ? 'Google Drive' : t}
                 </button>
               ))}
             </div>
@@ -2834,13 +2841,51 @@ export default function CostDetail() {
                 </>
               ) : (
                 <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
-                  This document didn&rsquo;t arrive by email — it was uploaded.
+                  This document didn&rsquo;t arrive by email — it was{' '}
+                  {driveFile ? 'saved into a Google Drive folder' : chat ? 'sent in over WhatsApp' : 'uploaded'}.
                   <br />
                   <span className="text-xs">
                     Forwarding one in? Each person has their own address under Users &rarr; Edit &rarr; Extract by email.
                   </span>
                 </p>
               )}
+            </div>
+          )}
+
+          {tab === 'drive' && driveFile && (
+            <div className="text-sm">
+              {/* Where the file came from. There is no message to show — a
+                  folder has none — so this is the whole of the envelope: the
+                  folder, the file as it was named there, and who Drive says
+                  put it there. */}
+              <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
+                <dt className="text-muted-foreground">Folder</dt>
+                <dd className="m-0 break-words">
+                  <a
+                    href={`https://drive.google.com/drive/folders/${encodeURIComponent(driveFile.folderId)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    {driveFile.folderName || 'Google Drive folder'}
+                  </a>
+                </dd>
+                <dt className="text-muted-foreground">File</dt>
+                <dd className="m-0 break-words">{driveFile.fileName || '—'}</dd>
+                <dt className="text-muted-foreground">Saved by</dt>
+                <dd className="m-0 break-words">
+                  {driveFile.addedByName || driveFile.addedBy || 'Not stated by Google Drive'}
+                  {driveFile.addedByName && driveFile.addedBy ? (
+                    <span className="ml-2 text-muted-foreground">{driveFile.addedBy}</span>
+                  ) : null}
+                </dd>
+                <dt className="text-muted-foreground">Date</dt>
+                <dd className="m-0">{driveFile.addedAt ? fmtStamp(driveFile.addedAt) : '—'}</dd>
+              </dl>
+              <p className="mt-4 border-t pt-4 text-muted-foreground">
+                Saved into a folder connected to CYBills, and filed under the person that folder belongs to. Once
+                filed, the file is moved into the folder&rsquo;s &ldquo;Filed&rdquo; subfolder.
+              </p>
             </div>
           )}
 

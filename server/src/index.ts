@@ -23,6 +23,7 @@ import { xeroWebhookRouter } from './xeroWebhook.js';
 import { whatsappRouter } from './whatsapp.js';
 import { paymentsRouter } from './payments.js';
 import { bankRouter } from './bankMatch.js';
+import { driveRouter, startDriveClock } from './drive.js';
 import { scrubFillerText } from './store.js';
 import { verifyShareToken } from './shareLinks.js';
 
@@ -199,6 +200,11 @@ app.use('/api/payments', paymentsRouter);
 // /api/payments (bank-candidates, settle).
 app.use('/api/bank', bankRouter);
 
+// Bill collection through a Google Drive folder: a person shares a folder with
+// CYBills' robot, and what is saved into it is filed under them. Session-guarded
+// like everything a person presses; the looking itself runs on a clock below.
+app.use('/api/drive', driveRouter);
+
 // The practice (CYBM) itself: its colleagues, their client access, and the
 // connected-client list with what each has cost in Claude API usage.
 app.use('/api/practice', practiceRouter);
@@ -231,4 +237,8 @@ app.listen(env.PORT, () => {
   // Nothing else here runs on a clock: every other sweep rides on a listing
   // somebody makes. A morning email cannot wait for somebody to open the app.
   startDigestClock();
+  // The other thing on a clock: nothing calls CYBills when a file is saved into
+  // a Drive folder, so every connected folder is looked in every couple of
+  // minutes. A no-op until the robot's key is configured.
+  startDriveClock();
 });

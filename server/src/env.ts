@@ -155,6 +155,30 @@ export const env = {
   // delivery was answered before the call went out.
   N8N_TIMEOUT_MS: Number(process.env.N8N_TIMEOUT_MS) || 120000,
 
+  // --- Google Drive folders (a third road in) --------------------------------
+  // A person shares a folder in their own Drive with CYBills' ROBOT — a Google
+  // service account — and whatever is saved into it is filed under them. A
+  // service account rather than OAuth on purpose: reading a folder needs a
+  // restricted Drive scope, which Google grants an app's outside users only
+  // after verification and a security assessment, while a folder SHARED with
+  // an address needs nobody's consent screen at all, and works for any Google
+  // account at any client's domain.
+  //
+  // GOOGLE_DRIVE_CREDENTIALS is the service account's JSON key, as downloaded
+  // from Google Cloud — pasted as one line of JSON, or base64 of it (which
+  // survives a .env file's quoting better). GOOGLE_DRIVE_KEY_FILE is a path to
+  // the same file instead. Unset, the road is simply not there. Walkthrough:
+  // deploy/GOOGLE-DRIVE.md.
+  GOOGLE_DRIVE_CREDENTIALS: process.env.GOOGLE_DRIVE_CREDENTIALS ?? '',
+  GOOGLE_DRIVE_KEY_FILE: process.env.GOOGLE_DRIVE_KEY_FILE ?? '',
+  // Where the Drive API is. Only ever changed by a test, which points it at a
+  // stub — the way FX_RATES_URL and OPENAI_BASE_URL can be.
+  GOOGLE_DRIVE_API_URL: (process.env.GOOGLE_DRIVE_API_URL ?? 'https://www.googleapis.com').replace(/\/+$/, ''),
+  // How often every connected folder is looked in. Two minutes: somebody who
+  // has just saved a receipt is not watching a clock, and each look is one
+  // listing call per folder.
+  DRIVE_POLL_SECONDS: Math.max(30, Number(process.env.DRIVE_POLL_SECONDS) || 120),
+
   // The webhook key from the Xero app's Webhooks page (My Apps -> Webhooks).
   // Xero signs every delivery with it (x-xero-signature, HMAC-SHA256 over the
   // RAW body), and that signature is the only thing that says a POST really

@@ -105,6 +105,25 @@ export type Bill = {
     note: string;
     at: string;
   };
+  // The Google Drive file a document was, when it was SAVED into a folder
+  // somebody connected rather than emailed, sent or uploaded. The third
+  // envelope, and the thinnest: nobody writes a covering message to a folder,
+  // so what it records is where the file came from and who put it there — the
+  // answer to "where did this document come from?" a year later. Not EDITABLE,
+  // like `whatsapp`: it is the record of what was received.
+  drive?: {
+    /** The connection (driveFolders.ts) it arrived through. */
+    connectionId: string;
+    folderId: string;
+    folderName: string;
+    fileId: string;
+    fileName: string;
+    /** Who Drive says put the file there, where it says. */
+    addedBy: string;
+    addedByName: string;
+    /** When the file appeared in Drive, as Drive states it. */
+    addedAt: string;
+  };
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   taxRateReason?: string; // why that tax code — the "when to use" rule it matched
   // A PERSON chose to leave the tax rate blank. An empty `taxRate` on its own

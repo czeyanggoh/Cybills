@@ -49,6 +49,8 @@ import CloseWhatsappGroup from '@/components/CloseWhatsappGroup';
 import PromoteWhatsappAdmins from '@/components/PromoteWhatsappAdmins';
 import WhatsappDisappearing from '@/components/WhatsappDisappearing';
 import WhatsappInviteLink from '@/components/WhatsappInviteLink';
+import { DriveRobotAddress, DriveFolderRow } from '@/components/ConnectDriveFolder';
+import { useDriveFolders } from '@/lib/drive';
 import {
   useExtractionSettings,
   saveExtractionSettings,
@@ -804,6 +806,56 @@ function ExtractByWhatsappCard() {
   );
 }
 
+// Business settings → Extraction → "Extract by Google Drive". The third road,
+// and the one with nothing to hand to anybody else: no Worker, no operator, no
+// key. What an entity needs to know is the address a folder is shared with and
+// which folders it is already collecting through — a folder is connected on the
+// page of the person it files under, because that is what connecting one
+// decides.
+function ExtractByDriveCard() {
+  const [{ folders, enabled, robotEmail, canManage, loading }, reload] = useDriveFolders();
+  const { membership, googleEnabled } = useAuth();
+  const practice = isPracticeTeam(membership, googleEnabled);
+  return (
+    <Card title="Extract by Google Drive">
+      <p className="text-sm text-muted-foreground">
+        Anyone here can share a folder in their own Google Drive with CYBills. PDFs and photos saved into it are
+        read and filed under that person, then moved into a &ldquo;Filed&rdquo; folder inside it. A folder is
+        connected on the person&rsquo;s own page (Users → Manage → Edit user details) — the General account&rsquo;s
+        page for a folder that is the company&rsquo;s rather than anybody&rsquo;s.
+      </p>
+      {loading ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : enabled ? (
+        <>
+          <Row label="Share folders with" hint="As an Editor, so filed files can be moved out of the way.">
+            <DriveRobotAddress email={robotEmail} />
+          </Row>
+          {folders.length ? (
+            <div className="space-y-2">
+              {folders.map((f) => (
+                <DriveFolderRow key={f.id} folder={f} canManage={canManage} showPerson onChanged={reload} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No folder is connected in this entity yet.</p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Every connected folder is looked in every couple of minutes. Subfolders are not gone into, and a file that
+            is not a PDF or an image is left where it is, with the reason shown here.
+          </p>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {practice
+            ? 'Not set up on this deployment yet: CYBills needs a Google service account to share folders with. Setup: deploy/GOOGLE-DRIVE.md.'
+            : 'Google Drive collection is set up once for the whole account by the practice, and has not been yet.'}
+        </p>
+      )}
+    </Card>
+  );
+}
+
 // The organisation's own instructions to the reader: what this business does,
 // and the GST and coding rules it wants applied. It sat under Lists, among the
 // dropdowns a document is coded FROM — but it is not a list of anything. It is
@@ -879,6 +931,8 @@ function Extraction() {
       <ExtractByEmailCard />
 
       <ExtractByWhatsappCard />
+
+      <ExtractByDriveCard />
 
       <Card title="Inbox tabs">
         <Row label="Show To review and Ready tabs" hint="Show these tabs in the costs and sales inboxes.">

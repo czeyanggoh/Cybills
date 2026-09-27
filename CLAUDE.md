@@ -2160,6 +2160,80 @@ real HTTP at both ends — the inbound endpoint as the Worker calls it, and a st
 standing in for n8n — so what is asserted is the request that actually goes out
 and the bytes that actually come back).
 
+## Bill collection through a Google Drive folder
+
+The third road a document travels without anybody signing in, and the same
+shape as the other two: a pipe that belongs to ONE person. Somebody shares a
+folder in their OWN Drive with CYBills' robot and pastes its link on their page
+(Users / Colleagues -> Edit details -> **Connect a Google Drive folder**); from
+then on a PDF or photo saved into it is a cost document in their entity's
+inbox, owned by them, read exactly as an emailed attachment is
+(`autoRead`), and the file is moved into a `Filed` subfolder so the folder only
+ever holds what is still waiting. `deploy/GOOGLE-DRIVE.md` is the setup and the
+page an operator is handed.
+
+**A service account, not OAuth.** Reading what somebody drops into a folder
+needs a restricted Drive scope (`drive.file` sees only files the app itself
+created), which Google grants an app's outside users only after verification
+and a security assessment. A folder SHARED with an address needs nobody's
+consent screen and works for a Google account at any client's domain.
+`driveApi.ts` is the client; the token grant is written out (one signed
+assertion, one POST) the way `totp.ts` is, and it honours the key file's own
+`token_uri`, which is what lets the test stand a stub in for Google with no
+test-only switch.
+
+**One robot address serves every client, so connecting is where the care is.**
+A folder shared with it for Dart must not be connectable by somebody at Red
+Alpha who has merely come by the link. So beyond the robot being able to open
+it, the folder has to be owned by or shared with the person it will file under
+or whoever is connecting it (`folder_not_yours`); Owner / Practice Admin are
+excused, since they can open every client's book already. One folder files
+under one person (`folder_in_use`). Who may connect for whom is the WhatsApp
+group's rule (`mayManagePerson`): yourself, the practice, or the entity's
+Business Admin. Somebody else's connection is a 404, never a 403.
+
+**Filed ONCE, by the file's Drive id — the move is a courtesy.** The ledger
+(`drive-files`, in `driveFolders.ts`, a leaf like `waChannels.ts`) is what
+makes a file filed once; moving it out of the folder can fail without anything
+being filed twice. It does fail: Google does not let a service account own
+files in somebody's My Drive, which can extend to the `Filed` folder itself, so
+the subfolder is FOUND where somebody made one (matched loosely — "filed ")
+and made only where nobody has, a refusal is believed for six hours rather than
+asked again every two minutes, and the card says to make the folder by hand. A
+folder disconnected and connected again is a new connection over the same
+files, so `filedAnywhere` is asked before a file is taken as new.
+
+**The bytes decide what a file is**, as on the other two roads
+(`readerMediaType`): a PDF a scanner saved as `application/octet-stream` is
+still a PDF. What is not a document is left where it was put and SAID on the
+card with its reason — a Word file, a Google Doc ("download it as a PDF and
+save that here"), anything over 20 MB — because a file nothing ever happens to,
+with nowhere that says why, is the failure that gets reported. Subfolders are
+not gone into. The rules both sides read are `src/lib/driveFolder.js` (pure,
+`npm test` at the root, loaded by path server-side): what a pasted link names
+— a FILE link carries an id of the same shape and is refused as one — and which
+files are taken.
+
+**The one other thing on a clock.** Nothing calls CYBills when a file is saved,
+so `startDriveClock` looks in every connected folder every
+`DRIVE_POLL_SECONDS` (120). Ten new files per look, three reads at a time, and
+every document in a batch says it is being read for as long as it is WAITING to
+be as well as while it is (`startReads`) — the stuck-processing sweep counts
+from the last thing it heard, and the seventh of ten would otherwise be filed
+out of Processing while it sat in the queue. The poller has no request, so
+`robotRequest` is as much of one as the read wants: the entity to attribute the
+model call to.
+
+The document keeps where it came from (`drive` on the bill: folder, file, who
+Drive says put it there), shown on a **Google Drive** tab that only a document
+from Drive has. The file's NAME is the whole of what the person said about it
+and travels as it does on an upload. Env (server/.env):
+`GOOGLE_DRIVE_CREDENTIALS` (the JSON key, raw or base64) or
+`GOOGLE_DRIVE_KEY_FILE`, `DRIVE_POLL_SECONDS`. Unset, the road is not there.
+Covered by `npm test` at the root (`drive-folder`) and in `server/`
+(`test/drive-folder.test.mts`, over real HTTP against a stub Google, token
+endpoint included).
+
 ## Bill collection over WhatsApp (with CYWorkspace)
 
 The people who hold a client's invoices are not the people who log into CYBills,
