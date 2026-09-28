@@ -137,6 +137,15 @@ check('outside the window matches nothing', candidatesFor(line({ date: '2026-12-
   const [c] = candidatesFor(amex, [hl]);
   check('foreign spend: a firm match, and says so', [c?.confidence, matchReason(c, hl)], ['firm', 'Bank text names the supplier (HIGHLEVEL) · bank states USD 25.00']);
 }
+// A document that restates itself in SGD is still tied by the bank's own
+// foreign amount: the supplier's rate is never the card issuer's (Hostinger
+// restated USD 235.18 as SGD 300.13; Amex took 311.08 and said which purchase).
+{
+  const amex = line({ amount: -311.08, date: '2026-09-22', description: 'PAYPAL *HOSTINGER · Foreign Spend Amount: 235.18 USD' });
+  const h = doc({ currency: 'USD', total: '235.18', baseCurrency: 'SGD', baseTotal: 300.13, supplier: 'Hostinger PTE', date: '2026-09-23' });
+  check('restated document: the bank figure ties it', docAmountFor(h, amex), 311.08);
+  check('restated document: a firm match', candidatesFor(amex, [h]).map((c) => c.confidence), ['firm']);
+}
 check('a foreign document at its restated figure', candidatesFor(line({ amount: -22.2, description: 'MICROSOFT' }), [doc({ currency: 'USD', total: '17.17', baseCurrency: 'SGD', baseTotal: 22.2, supplier: 'Microsoft Regional Sales' })]).map((c) => c.confidence), ['firm']);
 
 // --- across the whole list ---------------------------------------------------

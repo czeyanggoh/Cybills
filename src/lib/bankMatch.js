@@ -56,14 +56,18 @@ export function docAmountFor(doc, line) {
   const bank = String(line?.currency ?? '').trim().toUpperCase();
   const docCurrency = String(doc?.currency ?? '').trim().toUpperCase();
   if (!bank || !docCurrency || bank === docCurrency) return amountOf(doc?.total);
-  const base = String(doc?.baseCurrency ?? '').trim().toUpperCase();
-  if (base === bank && amountOf(doc?.baseTotal) > 0) return amountOf(doc?.baseTotal);
   // The BANK's own word for it: a card line for a foreign purchase states the
   // original amount beside the converted one ("Foreign Spend Amount: 25.00
   // USD" on an Amex line). Where that is the document's own currency and
   // total to the cent, the line's figure IS what the document cost in the
-  // bank's currency — stated by the bank, not converted by us.
+  // bank's currency — stated by the bank, not converted by us. Asked BEFORE
+  // the document's own SGD restatement: that is the supplier's rate for the
+  // GST return, and a card issuer never charges at it (Hostinger restated USD
+  // 235.18 as SGD 300.13; Amex took 311.08 and said so), so asked first it
+  // hid the one line that names the purchase.
   if (paysForeignAmount(doc, line)) return Math.abs(amountOf(line?.amount));
+  const base = String(doc?.baseCurrency ?? '').trim().toUpperCase();
+  if (base === bank && amountOf(doc?.baseTotal) > 0) return amountOf(doc?.baseTotal);
   return null;
 }
 

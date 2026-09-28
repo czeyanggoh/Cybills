@@ -1035,18 +1035,22 @@ async function inPostableCurrency(
   let newTax: number;
   let source: Converted['source'];
   const lineCurrency = String(payingLine?.currency ?? '').trim().toUpperCase();
-  if (printedBase && total) {
+  if (payingLine && lineCurrency === base && total && (await paysForeignAmount(bill, payingLine))) {
+    // What the bank actually took for it, so the bill and its payment are one
+    // figure and the statement line reconciles — ahead of the document's own
+    // restatement, which is the supplier's rate and never the card issuer's,
+    // so a bill posted at it could not be paid the bank's figure. The GST
+    // stays the restated one where there is one: that is the figure for the
+    // return, and only the cost absorbs the difference in rates.
+    newTotal = Math.abs(cents(payingLine.amount));
+    rate = newTotal / 100 / total;
+    newTax = printedBase && tax && parseAmount(bill.baseTax) > 0 ? cents(parseAmount(bill.baseTax)) : cents(tax * rate);
+    source = 'bank';
+  } else if (printedBase && total) {
     newTotal = cents(parseAmount(bill.baseTotal));
     newTax = tax ? cents(parseAmount(bill.baseTax)) : 0;
     rate = newTotal / 100 / total;
     source = 'document';
-  } else if (payingLine && lineCurrency === base && total && (await paysForeignAmount(bill, payingLine))) {
-    // What the bank actually took for it, so the bill and its payment are one
-    // figure and the statement line reconciles.
-    newTotal = Math.abs(cents(payingLine.amount));
-    rate = newTotal / 100 / total;
-    newTax = cents(tax * rate);
-    source = 'bank';
   } else {
     rate = await dayRate(from, base, String(bill.date ?? ''));
     if (!(rate > 0)) {

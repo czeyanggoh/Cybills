@@ -344,6 +344,23 @@ check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 
   );
   check('card line: posted at the bank figure', [carded.posted?.CurrencyCode, carded.posted?.LineItems?.[0]?.UnitAmount, carded.body.converted?.source, fxAsked], ['SGD', 32.86, 'bank', '']);
 
+  // …even where the document restates itself in SGD: the restatement is the
+  // supplier's rate, and a bill posted at it could not be paid the bank's
+  // figure. The GST stays the restated one — that is the return's figure.
+  const restated = await publish(
+    bill({
+      supplier: 'Hostinger PTE', currency: 'GBP', date: '2026-09-23', total: '235.18', tax: '19.42',
+      baseCurrency: 'SGD', baseTotal: '300.13', baseTax: '24.78',
+      bankMatch: { key: 'k2', date: '2026-09-22', amount: -311.08, currency: 'SGD', reference: '', description: 'PAYPAL *HOSTINGER · Foreign Spend Amount: 235.18 GBP', bankAccountId: 'acc', bankAccountName: 'Amex', bankAccountCode: '', paidBefore: false, paymentMethodBefore: '', at: '', by: '' },
+    }).id
+  );
+  const rl = restated.posted?.LineItems ?? [];
+  check('restated + card line: posted at the bank figure, GST as restated', [
+    restated.body.converted?.source,
+    Math.round(rl.reduce((a: number, l: any) => a + (l.UnitAmount + l.TaxAmount) * 100, 0)) / 100,
+    Math.round(rl.reduce((a: number, l: any) => a + l.TaxAmount * 100, 0)) / 100,
+  ], ['bank', 311.08, 24.78]);
+
   // A currency the org DOES hold goes up as it always has.
   const usd = await publish(bill({ currency: 'USD', total: '50', tax: '0' }).id);
   check('a held currency is not converted', [usd.posted.CurrencyCode, usd.body.converted], ['USD', null]);
