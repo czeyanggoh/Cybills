@@ -152,5 +152,19 @@ check(
   'ok'
 );
 
+// A suffix printed after the UEN is still the UEN — "201540520M-PTE-01" on the
+// practice's own invoice was read as another company's number.
+const cybm = { id: 'org-cybm', name: 'CY Business Management Pte. Ltd.', profile: { crn: '201540520M' } };
+check(
+  'a UEN with a suffix is still ours',
+  billedToVerdict({ billedTo: 'CY BUSINESS MANAGEMENT PTE. LTD.', billedToRegNo: '201540520M-PTE-01' }, cybm, []).status,
+  'ok'
+);
+check(
+  'a different UEN is still a mismatch',
+  billedToVerdict({ billedTo: 'CY BUSINESS MANAGEMENT PTE. LTD.', billedToRegNo: '201540521M' }, cybm, []).status,
+  'mismatch'
+);
+
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

@@ -19,11 +19,18 @@ export const settingsRouter = Router();
 // `<key>::<orgId>` and fall back to the workspace-wide blob they used to share
 // (see blobStore.js), so this follows the same two steps — otherwise a setting
 // the user changed before entities existed would read as unset here.
+const ADOPTED_BY_PRIMARY = ['cybills.business-profile.v1'];
+
 export function readSetting<T = unknown>(ws: string, key: string, org = ''): T | null {
   const items = loadCollection<Setting>(COLLECTION);
   const at = (k: string) => items.find((s) => s.workspaceId === ws && s.key === k)?.value;
   const own = at(`${key}::${org || 'default'}`);
-  const value = own ?? at(key);
+  // A blob handed to the primary entity (below) is ONE company's, so it is not
+  // a fallback for anybody else's: every client without a profile of its own
+  // used to read the practice's name and CRN, which made each of them look like
+  // the addressee of the practice's own invoices. The browser never falls back
+  // either (it reads `<key>::<orgId>` exactly), so this is the same answer.
+  const value = own ?? (ADOPTED_BY_PRIMARY.includes(key) ? undefined : at(key));
   return (value ?? null) as T | null;
 }
 
@@ -100,7 +107,6 @@ settingsRouter.put('/:key', (req, res) => {
 // category lists and coding rules, where starting from the practice's is a
 // convenience rather than a wrong answer. Idempotent: no-ops on every boot
 // after the first.
-const ADOPTED_BY_PRIMARY = ['cybills.business-profile.v1'];
 
 export function adoptLegacySettings(): number {
   const primary = primaryOrgId();

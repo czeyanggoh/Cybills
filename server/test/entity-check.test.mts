@@ -25,6 +25,8 @@ writeFileSync(
       { id: 'org-cybm', orgId: 'cybm', name: 'CY Business Management', tenantId: 't-cybm', tenantName: 'CYBM', createdAt: new Date(0).toISOString(), createdBy: '' },
       { id: 'org-red', orgId: 'cybm', name: 'Red Alpha Cybersecurity Pte. Ltd.', tenantId: 't-red', tenantName: 'Red Alpha', createdAt: new Date(1).toISOString(), createdBy: '' },
       { id: 'org-dart', orgId: 'cybm', name: 'Dart Consulting and Training Pte Ltd', tenantId: 't-dart', tenantName: 'Dart Consulting', createdAt: new Date(2).toISOString(), createdBy: '' },
+      // A client that has never filled its Business profile in.
+      { id: 'org-kay', orgId: 'cybm', name: 'Kaylee Siaw', tenantId: 't-kay', tenantName: 'Kaylee Siaw', createdAt: new Date(4).toISOString(), createdBy: '' },
       { id: 'org-ste', orgId: 'cybm', name: 'Red Alpha - ST Engineering', tenantId: '', tenantName: '', kind: 'standalone', parentOrgId: 'org-red', createdAt: new Date(3).toISOString(), createdBy: '' },
     ],
   })
@@ -37,6 +39,9 @@ writeFileSync(
   join(DATA_DIR, 'settings.json'),
   JSON.stringify({
     items: [
+      // The workspace-wide profile from before profiles were per entity: the
+      // PRACTICE's. It must not stand in for a client with none of its own.
+      { workspaceId: 'cybm', key: 'cybills.business-profile.v1', value: { businessName: 'CY Business Management Pte. Ltd.', crn: '201540520M' } },
       { workspaceId: 'cybm', key: 'cybills.business-profile.v1::org-red', value: { businessName: 'Red Alpha Cybersecurity Pte. Ltd.', taxNumber: '201614382R' } },
       { workspaceId: 'cybm', key: 'cybills.business-profile.v1::org-dart', value: { businessName: 'Dart Consulting and Training Pte Ltd', taxNumber: '199912345K' } },
     ],
@@ -109,6 +114,16 @@ const ours = bill({ billedTo: 'Red Alpha Cybersecurity Pte Ltd' });
 const anonymous = bill({ billedTo: '' });
 check('billed to us is fine', (await listed(ours.id, RED)).entityCheck.status, 'ok');
 check('a till receipt is not flagged', (await listed(anonymous.id, RED)).entityCheck.status, 'unknown');
+
+// A client with no profile of its own is not the practice. It used to inherit
+// the practice's name and CRN, so an invoice made out to CYBM offered to move
+// into every client that had never filled its profile in.
+const toPractice = bill({ billedTo: 'CY BUSINESS MANAGEMENT PTE. LTD.', billedToRegNo: '201540520M-PTE-01' });
+check(
+  'a profile-less client is not offered as the practice',
+  (await listed(toPractice.id, RED)).entityCheck.candidates.map((c: any) => c.id),
+  ['org-cybm']
+);
 
 // --- 2) "This is right" settles it for good ---------------------------------
 //

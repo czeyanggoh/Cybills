@@ -123,6 +123,23 @@ export function entityIdentity(entity) {
   };
 }
 
+// Do two registration numbers name the same company? Equal, or one is the
+// other with something printed after it: "201540520M-PTE-01" is the UEN
+// 201540520M with a suffix the paper (or the reader) tacked on, and read as a
+// different number it flagged the practice's own invoice as somebody else's.
+// Nine characters at least — a UEN or GST number is never shorter — so a
+// fragment cannot match a longer number by prefix.
+export function sameRegNo(a, b) {
+  const x = normaliseRegNo(a);
+  const y = normaliseRegNo(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 9 && long.startsWith(short) && /[A-Z]$/.test(short);
+}
+
+const regHit = (regNo, identity) => identity.regNos.some((r) => sameRegNo(regNo, r));
+
 const nameHit = (billedTo, identity, minWords) =>
   identity.names.some((n) => sameCompany(billedTo, n, { minWords }));
 
@@ -134,7 +151,7 @@ function candidatesFor(billedTo, regNo, others) {
   return others
     .map(entityIdentity)
     .filter((o) => !o.standalone)
-    .filter((o) => (regNo && o.regNos.includes(regNo)) || nameHit(billedTo, o, 2))
+    .filter((o) => (regNo && regHit(regNo, o)) || nameHit(billedTo, o, 2))
     .map((o) => ({ id: o.id, name: o.name }));
 }
 
@@ -174,7 +191,7 @@ export function billedToVerdict(doc, entity, others = []) {
   // The registration number first: it is the only identifier that cannot be a
   // trading name, an abbreviation or a misread.
   if (regNo && me.regNos.length) {
-    if (me.regNos.includes(regNo)) {
+    if (regHit(regNo, me)) {
       return { status: 'ok', evidence: 'regNo', billedTo, candidates: [], reason: `Billed to ${billedTo || 'this entity'} — the registration number on it is ${me.name}’s.` };
     }
     return {
