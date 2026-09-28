@@ -29,7 +29,8 @@ type DigestRules = {
   digestRows: (docs: unknown[], o: { addresses?: string[]; unpaidOnly?: boolean; since?: string }) => Array<{ doc: Bill; isNew: boolean }>;
   digestDue: (digest: unknown, today: string, hourNow: number) => boolean;
   digestDays: (value: unknown) => number[];
-  daysPhrase: (value: unknown) => string;
+  daysPhrase: (value: unknown, skipHolidays?: boolean) => string;
+  skipsHolidays: (digest: unknown) => boolean;
   DIGEST_HOURS: number[];
   DEFAULT_DIGEST_HOUR: number;
 };
@@ -51,6 +52,8 @@ export type Digest = {
   // The weekdays it goes out on (0 = Sunday). Absent means every day, which is
   // what every digest saved before the choice existed says.
   days?: number[];
+  // Whether Singapore public holidays are skipped. Absent means yes.
+  skipHolidays?: boolean;
   unpaidOnly: boolean;
   // One entry per client entity; `addresses` empty means everybody in it.
   clients: Array<{ orgId: string; addresses: string[] }>;
@@ -156,7 +159,7 @@ export async function sendDigest(
   }
   const since = digest.lastSentAt || new Date(now.getTime() - 24 * 3600_000).toISOString();
   const rows = await buildDigest(ws, digest, recipient, since);
-  const { daysPhrase } = await loadRules();
+  const { daysPhrase, skipsHolidays } = await loadRules();
   const newCount = rows.filter((r) => r.isNew).length;
   let result: MailResult & { skipped?: string };
   if (!rows.length && !opts.force) {
@@ -168,7 +171,7 @@ export async function sendDigest(
       rows,
       newCount,
       unpaidOnly: digest.unpaidOnly,
-      schedule: daysPhrase(digest.days),
+      schedule: daysPhrase(digest.days, skipsHolidays(digest)),
       settingsUrl: `${env.APP_ORIGIN}/colleagues`,
     });
     result = await sendMail({ to: { email: recipient.email, name: recipient.name }, ...mail });
@@ -241,7 +244,7 @@ function mayEdit(req: Request, res: Response, userId: string): boolean {
 }
 
 const view = (d: Digest | null, userId: string) =>
-  d ?? { userId, enabled: false, hour: 8, days: [1, 2, 3, 4, 5, 6, 0], unpaidOnly: true, clients: [] };
+  d ?? { userId, enabled: false, hour: 8, days: [1, 2, 3, 4, 5, 6, 0], skipHolidays: true, unpaidOnly: true, clients: [] };
 
 // GET /api/digests — every colleague's digest the caller may see, for the
 // Colleagues table's column.
@@ -262,7 +265,7 @@ digestRouter.get('/:userId', async (req, res) => {
   if (!mayEdit(req, res, userId)) return;
   const who = colleague(ws, userId);
   if (!who) return res.status(404).json({ error: 'not_found' });
-  const { DIGEST_HOURS, digestDays } = await loadRules();
+  const { DIGEST_HOURS, digestDays, skipsHolidays } = await loadRules();
   const clients = listOrganisations(ws)
     .filter((o) => canAccessOrg(who, o.id))
     .map((o) => ({
@@ -273,13 +276,13 @@ digestRouter.get('/:userId', async (req, res) => {
         .map((p) => ({ email: p.email, name: p.general ? `General (${p.address || 'unclaimed paperwork'})` : p.name, external: p.external, general: p.general })),
     }));
   const digest = view(digestFor(ws, userId), userId);
-  res.json({ digest: { ...digest, days: digestDays(digest.days) }, clients, hours: DIGEST_HOURS, timezone: env.PRACTICE_TIMEZONE });
+  res.json({ digest: { ...digest, days: digestDays(digest.days), skipHolidays: skipsHolidays(digest) }, clients, hours: DIGEST_HOURS, timezone: env.PRACTICE_TIMEZONE });
 });
 
 const cleanAddresses = (v: unknown): string[] =>
   [...new Set((Array.isArray(v) ? v : []).map((a) => String(a ?? '').trim().toLowerCase()).filter((a) => a.includes('@')))];
 
-// PUT /api/digests/:userId — { enabled, hour, days, unpaidOnly, clients: [{orgId, addresses}] }
+// PUT /api/digests/:userId — { enabled, hour, days, skipHolidays, unpaidOnly, clients: [{orgId, addresses}] }
 digestRouter.put('/:userId', async (req, res) => {
   const ws = WORKSPACE_ID;
   const userId = String(req.params.userId);
@@ -304,6 +307,7 @@ digestRouter.put('/:userId', async (req, res) => {
     hour: DIGEST_HOURS.includes(hour) ? hour : DEFAULT_DIGEST_HOUR,
     // A save that says nothing about the days leaves them as they were.
     days: digestDays(body.days ?? previous?.days),
+    skipHolidays: body.skipHolidays === undefined ? previous?.skipHolidays !== false : body.skipHolidays !== false,
     unpaidOnly: body.unpaidOnly !== false,
     clients,
     updatedAt: new Date().toISOString(),

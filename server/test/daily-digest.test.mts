@@ -92,6 +92,7 @@ r = await api(`/${yuyu.id}`, 'PUT', {
 check('a client she cannot open is not saved', r.body.digest.clients, [{ orgId: 'org_dart', addresses: ['finance@dart.com.sg'] }]);
 check('unpaid only by default', r.body.digest.unpaidOnly, true);
 check('every day until somebody says otherwise', r.body.digest.days, [1, 2, 3, 4, 5, 6, 0]);
+check('public holidays are skipped by default', r.body.digest.skipHolidays, true);
 
 const digest = digestFor('cybm', yuyu.id)!;
 const rows = await buildDigest('cybm', digest, yuyu as any, '2000-01-01T00:00:00Z');
@@ -130,6 +131,17 @@ await runDueDigests(new Date('2026-09-27T04:00:00Z'));
 check('nor on a Sunday', digestFor('cybm', yuyu.id)!.lastSentDay, '2026-09-23');
 await runDueDigests(new Date('2026-09-28T00:30:00Z'));
 check('and Monday it goes out again', digestFor('cybm', yuyu.id)!.lastSentDay, '2026-09-28');
+// 2026-11-09 is Deepavali observed, a Monday.
+await runDueDigests(new Date('2026-11-09T00:30:00Z'));
+check('nothing is attempted on a public holiday', digestFor('cybm', yuyu.id)!.lastSentDay, '2026-09-28');
+await runDueDigests(new Date('2026-11-10T00:30:00Z'));
+check('and the day after it goes out', digestFor('cybm', yuyu.id)!.lastSentDay, '2026-11-10');
+r = await api(`/${yuyu.id}`, 'PUT', { enabled: true, hour: 8, skipHolidays: false, clients: [{ orgId: 'org_dart', addresses: [] }] });
+check('holidays can be switched back on', r.body.digest.skipHolidays, false);
+r = await api(`/${yuyu.id}`, 'PUT', { enabled: true, hour: 8, clients: [{ orgId: 'org_dart', addresses: [] }] });
+check('a save that says nothing about holidays leaves them alone', r.body.digest.skipHolidays, false);
+await runDueDigests(new Date('2026-12-25T00:30:00Z'));
+check('so Christmas is sent like any Friday', digestFor('cybm', yuyu.id)!.lastSentDay, '2026-12-25');
 check('the footer says when it is sent', dailyDigestEmail({ name: 'Kai Test', day: '28 Sep 2026', rows, newCount: 0, unpaidOnly: true, settingsUrl: 'x', schedule: 'on weekdays' }).html.includes('Sent on weekdays by CYBills'), true);
 
 await finish(failures, server);

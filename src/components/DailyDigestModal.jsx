@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Check, Mail } from 'lucide-react';
 import { useDigest, useDigestRefresh, saveDigest, sendDigestNow } from '@/lib/digestStore';
-import { hourLabel, DIGEST_DAYS, DIGEST_WEEKDAYS, dayName, digestDays, daysLabel, daysPhrase } from '@/lib/digest';
+import { hourLabel, DIGEST_DAYS, DIGEST_WEEKDAYS, dayName, digestDays, daysLabel, daysPhrase, skipsHolidays } from '@/lib/digest';
+import { nextPublicHoliday, holidaysKnownFor, HOLIDAYS_KNOWN_THROUGH } from '@/lib/publicHolidays';
+import { todayIso } from '@/lib/claimDate';
 import { cn } from '@/lib/utils';
 
 function Toggle({ on, onToggle, label }) {
@@ -31,6 +33,7 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
   const [enabled, setEnabled] = useState(false);
   const [hour, setHour] = useState(8);
   const [days, setDays] = useState(DIGEST_DAYS);
+  const [skipHolidays, setSkipHolidays] = useState(true);
   const [unpaidOnly, setUnpaidOnly] = useState(true);
   const [picked, setPicked] = useState({}); // orgId -> addresses[]
   const [typed, setTyped] = useState({}); // orgId -> text being typed
@@ -47,6 +50,7 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
     setEnabled(Boolean(data.digest.enabled));
     setHour(data.digest.hour ?? 8);
     setDays(digestDays(data.digest.days));
+    setSkipHolidays(skipsHolidays(data.digest));
     setUnpaidOnly(data.digest.unpaidOnly !== false);
     setPicked(Object.fromEntries((data.digest.clients || []).map((c) => [c.orgId, c.addresses || []])));
   }, [data]);
@@ -89,6 +93,7 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
     enabled,
     hour,
     days,
+    skipHolidays,
     unpaidOnly,
     clients: Object.entries(picked).map(([orgId, addresses]) => ({ orgId, addresses })),
   });
@@ -104,7 +109,7 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
         !enabled
           ? `Daily digest off for ${colleague.name}${n ? ' — switch “Send daily” on to start it' : ''}.`
           : n
-            ? `Daily digest on for ${colleague.name} at ${hourLabel(hour)}, ${daysPhrase(days)}.`
+            ? `Daily digest on for ${colleague.name} at ${hourLabel(hour)}, ${daysPhrase(days, skipHolidays)}.`
             : `Daily digest for ${colleague.name} has no clients picked, so nothing will be sent.`
       );
       onClose();
@@ -137,6 +142,11 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
   };
 
   const count = Object.keys(picked).length;
+  // The next holiday it will skip, so the choice can be checked against a date
+  // somebody knows; and a plain warning once the gazetted list has run out.
+  const today = todayIso();
+  const nextHoliday = nextPublicHoliday(today);
+  const holidaysKnown = holidaysKnownFor(today);
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -201,6 +211,20 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
                 <button type="button" onClick={() => setDays(DIGEST_WEEKDAYS)} className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground">
                   Skip weekends
                 </button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-4 py-3">
+              <button type="button" onClick={() => setSkipHolidays((v) => !v)} className="flex items-center gap-2 text-sm">
+                <Box on={skipHolidays} /> Skip Singapore public holidays
+              </button>
+              {skipHolidays && (
+                <span className={cn('text-xs', holidaysKnown ? 'text-muted-foreground' : 'text-amber-700')}>
+                  {!holidaysKnown
+                    ? `Holidays are only known to the end of ${HOLIDAYS_KNOWN_THROUGH}, so none are skipped yet.`
+                    : nextHoliday
+                      ? `Next: ${nextHoliday.name}, ${new Date(`${nextHoliday.day}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}`
+                      : ''}
+                </span>
               )}
             </div>
           </div>

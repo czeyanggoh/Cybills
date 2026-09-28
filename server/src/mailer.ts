@@ -487,7 +487,7 @@ export function dailyDigestEmail(o: {
   newCount: number;
   unpaidOnly: boolean;
   settingsUrl: string;
-  schedule?: string; // "daily", "on weekdays", "on Mon, Wed"
+  schedule?: string; // "daily", "on weekdays, except public holidays", "on Mon, Wed"
 }) {
   const th = 'padding:8px 10px;border:1px solid #d1d5db;background:#f3f4f6;font-weight:600;text-align:left;white-space:nowrap';
   const td = 'padding:7px 10px;border:1px solid #d1d5db;vertical-align:top';

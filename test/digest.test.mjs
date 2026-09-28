@@ -2,6 +2,7 @@
 import {
   digestAddress, docAddresses, inDigest, digestRows, digestDue, digestDays, weekdayOf, daysLabel, daysPhrase,
 } from '../src/lib/digest.js';
+import { publicHolidayOn, nextPublicHoliday, holidaysKnownFor, SG_PUBLIC_HOLIDAYS } from '../src/lib/publicHolidays.js';
 
 let failures = 0;
 const check = (name, cond) => {
@@ -58,5 +59,29 @@ check('the days are named the way people say them',
   [daysLabel(undefined), daysLabel([1, 2, 3, 4, 5]), daysLabel([0, 6]), daysLabel([5, 1, 3])].join('|') ===
     'Every day|Weekdays|Weekends|Mon, Wed, Fri');
 check('and said in a sentence', [daysPhrase(undefined), daysPhrase([1, 2, 3, 4, 5]), daysPhrase([1, 3])].join('|') === 'daily|on weekdays|on Mon, Wed');
+check('with the holidays when those are skipped', daysPhrase([1, 2, 3, 4, 5], true) === 'on weekdays, except public holidays');
+
+// Public holidays. 2026-11-09 is Deepavali observed (a Monday, the holiday
+// itself being Sunday the 8th); 2026-12-25 is Christmas, a Friday.
+check('a holiday is named', publicHolidayOn('2026-12-25') === 'Christmas Day' && publicHolidayOn('2026-12-24') === '');
+check('a Sunday holiday lists its Monday too', publicHolidayOn('2026-11-08') === 'Deepavali' && publicHolidayOn('2026-11-09') === 'Deepavali (observed)');
+check('every listed day is a real date', Object.keys(SG_PUBLIC_HOLIDAYS).every((d) => weekdayOf(d) !== null));
+check('every observed day is the Monday after a Sunday holiday',
+  Object.entries(SG_PUBLIC_HOLIDAYS).filter(([, n]) => /observed/.test(n)).every(([d]) => {
+    const sunday = new Date(Date.parse(`${d}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    return weekdayOf(d) === 1 && weekdayOf(sunday) === 0 && Boolean(publicHolidayOn(sunday));
+  }));
+check('every Sunday holiday has its Monday listed',
+  Object.keys(SG_PUBLIC_HOLIDAYS).filter((d) => weekdayOf(d) === 0).every((d) => {
+    const monday = new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+    return Boolean(publicHolidayOn(monday));
+  }));
+check('the next holiday is found from any day', nextPublicHoliday('2026-09-28')?.day === '2026-11-08');
+check('past the list, holidays are not known', holidaysKnownFor('2027-06-01') && !holidaysKnownFor('2028-01-03'));
+check('a weekday digest skips a holiday Monday', !digestDue(weekdays, '2026-11-09', 9));
+check('and a holiday Friday', !digestDue(weekdays, '2026-12-25', 9));
+check('and goes out the day after', digestDue(weekdays, '2026-11-10', 9));
+check('an every-day digest skips a Sunday holiday', !digestDue({ enabled: true, hour: 8 }, '2026-11-08', 9));
+check('unless it was asked to go out on holidays', digestDue({ ...weekdays, skipHolidays: false }, '2026-11-09', 9));
 
 process.exit(failures ? 1 : 0);

@@ -13,6 +13,7 @@
 
 import { inCostsTab, isCreditNote, isSale } from './readiness.js';
 import { isPaymentProof } from './paymentProof.js';
+import { publicHolidayOn } from './publicHolidays.js';
 
 // An address as it is compared: lowercased, and taken out of "Name <x@y>".
 export function digestAddress(value) {
@@ -106,15 +107,22 @@ export function daysLabel(value) {
   return days.map(dayName).join(', ');
 }
 
-// And as a sentence says them: "sent daily", "sent on weekdays", "sent on Mon, Wed".
-export function daysPhrase(value) {
+// Whether a digest skips Singapore public holidays. On unless somebody turned
+// it off: a holiday is a day the office is shut exactly as a Saturday is, and
+// the email nobody reads that day is the one Monday's reader skims past.
+export const skipsHolidays = (digest) => digest?.skipHolidays !== false;
+
+// And as a sentence says them: "sent daily", "sent on weekdays", "sent on Mon,
+// Wed", with "except public holidays" when those are skipped.
+export function daysPhrase(value, skipHolidays = false) {
   const label = daysLabel(value);
-  if (label === 'Every day') return 'daily';
-  return `on ${/^Week/.test(label) ? label.toLowerCase() : label}`;
+  const days = label === 'Every day' ? 'daily' : `on ${/^Week/.test(label) ? label.toLowerCase() : label}`;
+  return skipHolidays ? `${days}, except public holidays` : days;
 }
 
-// Whether a digest is due: switched on, a day it goes out on, not yet sent
-// today, and today's hour reached. Measured by DAY rather than by 24 hours, so
+// Whether a digest is due: switched on, a day it goes out on (and not a public
+// holiday, unless it was asked to go out on those), not yet sent today, and
+// today's hour reached. Measured by DAY rather than by 24 hours, so
 // a server restart or a slow tick can never send twice in one day, and one that
 // was down at 08:00 catches up when it comes back rather than skipping the day.
 // A day that is skipped is simply not a day: nothing is recorded for it, so
@@ -123,6 +131,7 @@ export function digestDue(digest, today, hourNow) {
   if (!digest?.enabled) return false;
   const weekday = weekdayOf(today);
   if (weekday !== null && !digestDays(digest.days).includes(weekday)) return false;
+  if (skipsHolidays(digest) && publicHolidayOn(today)) return false;
   if (digest.lastSentDay === today) return false;
   const hour = Number.isInteger(digest.hour) ? digest.hour : DEFAULT_DIGEST_HOUR;
   return hourNow >= hour;

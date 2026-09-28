@@ -2786,6 +2786,17 @@ Saturday is the practice's Saturday. A skipped day records nothing, so Monday's
 digest still marks as new everything that arrived since Friday's. The Colleagues
 column and the email's footer name the days (`daysLabel` / `daysPhrase`).
 
+**And it skips Singapore's public holidays** (`skipHolidays`, absent = skip —
+a holiday is a day the office is shut exactly as a Saturday is; the dialog's
+**Skip Singapore public holidays** turns it off). `src/lib/publicHolidays.js`
+is the MOM-gazetted list, KEPT BY HAND: most of the holidays follow lunar
+calendars and a Polling Day is declared at weeks' notice, so none of it can be
+computed. A Sunday holiday lists its Monday too. `HOLIDAYS_KNOWN_THROUGH` is its
+last year (2027), and past it the dialog says in amber that no holidays are
+known rather than silently skipping none — **add the next year when MOM
+publishes it**, and a Polling Day when one is called. `npm test` checks every
+Sunday holiday has its Monday.
+
 **Access is checked when it SENDS, not only when it is saved**: the dialog offers
 only clients the colleague can open and the route refuses the rest, and a client
 taken away later simply stops appearing the next morning. Standard colleagues set
