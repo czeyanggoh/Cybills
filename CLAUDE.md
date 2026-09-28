@@ -2735,6 +2735,16 @@ the Costs tab (`inCostsTab`), not a credit note or a payment proof, and — unle
 widened — not already marked paid, since a receipt paid at the till needs coding
 rather than paying. Loaded by path in `server/src/digest.ts`, like mileage.
 
+**It goes out on the days ticked** (`days` on the digest, JS weekday numbers,
+absent = every day, which is what every digest saved before the choice says).
+The dialog's **Days** row is seven chips with a **Skip weekends** shortcut; the
+last day left cannot be unticked, and the server reads an empty list as every
+day, since a digest with no day to go out on is never sent and never says why.
+`digestDue` reads the weekday off the practice's own day key (`weekdayOf`), so
+Saturday is the practice's Saturday. A skipped day records nothing, so Monday's
+digest still marks as new everything that arrived since Friday's. The Colleagues
+column and the email's footer name the days (`daysLabel` / `daysPhrase`).
+
 **Access is checked when it SENDS, not only when it is saved**: the dialog offers
 only clients the colleague can open and the route refuses the rest, and a client
 taken away later simply stops appearing the next morning. Standard colleagues set

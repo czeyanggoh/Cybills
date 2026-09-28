@@ -5,7 +5,7 @@ import { WORKSPACE_ID } from './workspace.js';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { listOrganisations, dataScopeForOrg, getOrganisation } from './organisations.js';
 import { listBills, displayIdOf, type Bill } from './store.js';
-import { ensure, memberForSession, canManagePractice, canAccessOrg, peopleForOrg, type User } from './users.js';
+import { ensure, memberForSession, canManagePractice, canAccessOrg, isInternalAddress, peopleForOrg, type User } from './users.js';
 import { sendMail, dailyDigestEmail, type DigestRow, type MailResult } from './mailer.js';
 import { practiceDayKey } from './usage.js';
 
@@ -28,6 +28,8 @@ import { practiceDayKey } from './usage.js';
 type DigestRules = {
   digestRows: (docs: unknown[], o: { addresses?: string[]; unpaidOnly?: boolean; since?: string }) => Array<{ doc: Bill; isNew: boolean }>;
   digestDue: (digest: unknown, today: string, hourNow: number) => boolean;
+  digestDays: (value: unknown) => number[];
+  daysPhrase: (value: unknown) => string;
   DIGEST_HOURS: number[];
   DEFAULT_DIGEST_HOUR: number;
 };
@@ -46,6 +48,9 @@ export type Digest = {
   workspaceId: string;
   enabled: boolean;
   hour: number; // the practice's local hour it goes out at
+  // The weekdays it goes out on (0 = Sunday). Absent means every day, which is
+  // what every digest saved before the choice existed says.
+  days?: number[];
   unpaidOnly: boolean;
   // One entry per client entity; `addresses` empty means everybody in it.
   clients: Array<{ orgId: string; addresses: string[] }>;
@@ -146,11 +151,12 @@ export async function sendDigest(
   opts: { force?: boolean } = {}
 ): Promise<MailResult & { count: number; newCount: number; skipped?: string }> {
   const recipient = colleague(ws, digest.userId);
-  if (!recipient || recipient.deactivated || !recipient.email) {
+  if (!recipient || recipient.deactivated || !recipient.email || isInternalAddress(recipient.email)) {
     return { sent: false, count: 0, newCount: 0, skipped: 'no_recipient' };
   }
   const since = digest.lastSentAt || new Date(now.getTime() - 24 * 3600_000).toISOString();
   const rows = await buildDigest(ws, digest, recipient, since);
+  const { daysPhrase } = await loadRules();
   const newCount = rows.filter((r) => r.isNew).length;
   let result: MailResult & { skipped?: string };
   if (!rows.length && !opts.force) {
@@ -162,6 +168,7 @@ export async function sendDigest(
       rows,
       newCount,
       unpaidOnly: digest.unpaidOnly,
+      schedule: daysPhrase(digest.days),
       settingsUrl: `${env.APP_ORIGIN}/colleagues`,
     });
     result = await sendMail({ to: { email: recipient.email, name: recipient.name }, ...mail });
@@ -234,7 +241,7 @@ function mayEdit(req: Request, res: Response, userId: string): boolean {
 }
 
 const view = (d: Digest | null, userId: string) =>
-  d ?? { userId, enabled: false, hour: 8, unpaidOnly: true, clients: [] };
+  d ?? { userId, enabled: false, hour: 8, days: [1, 2, 3, 4, 5, 6, 0], unpaidOnly: true, clients: [] };
 
 // GET /api/digests — every colleague's digest the caller may see, for the
 // Colleagues table's column.
@@ -255,7 +262,7 @@ digestRouter.get('/:userId', async (req, res) => {
   if (!mayEdit(req, res, userId)) return;
   const who = colleague(ws, userId);
   if (!who) return res.status(404).json({ error: 'not_found' });
-  const { DIGEST_HOURS } = await loadRules();
+  const { DIGEST_HOURS, digestDays } = await loadRules();
   const clients = listOrganisations(ws)
     .filter((o) => canAccessOrg(who, o.id))
     .map((o) => ({
@@ -265,20 +272,21 @@ digestRouter.get('/:userId', async (req, res) => {
         .filter((p) => !p.deactivated)
         .map((p) => ({ email: p.email, name: p.general ? `General (${p.address || 'unclaimed paperwork'})` : p.name, external: p.external, general: p.general })),
     }));
-  res.json({ digest: view(digestFor(ws, userId), userId), clients, hours: DIGEST_HOURS, timezone: env.PRACTICE_TIMEZONE });
+  const digest = view(digestFor(ws, userId), userId);
+  res.json({ digest: { ...digest, days: digestDays(digest.days) }, clients, hours: DIGEST_HOURS, timezone: env.PRACTICE_TIMEZONE });
 });
 
 const cleanAddresses = (v: unknown): string[] =>
   [...new Set((Array.isArray(v) ? v : []).map((a) => String(a ?? '').trim().toLowerCase()).filter((a) => a.includes('@')))];
 
-// PUT /api/digests/:userId — { enabled, hour, unpaidOnly, clients: [{orgId, addresses}] }
+// PUT /api/digests/:userId — { enabled, hour, days, unpaidOnly, clients: [{orgId, addresses}] }
 digestRouter.put('/:userId', async (req, res) => {
   const ws = WORKSPACE_ID;
   const userId = String(req.params.userId);
   if (!mayEdit(req, res, userId)) return;
   const who = colleague(ws, userId);
   if (!who) return res.status(404).json({ error: 'not_found' });
-  const { DIGEST_HOURS, DEFAULT_DIGEST_HOUR } = await loadRules();
+  const { DIGEST_HOURS, DEFAULT_DIGEST_HOUR, digestDays } = await loadRules();
   const body = req.body ?? {};
   const hour = Number(body.hour);
   const seen = new Set<string>();
@@ -294,6 +302,8 @@ digestRouter.put('/:userId', async (req, res) => {
     workspaceId: ws,
     enabled: Boolean(body.enabled),
     hour: DIGEST_HOURS.includes(hour) ? hour : DEFAULT_DIGEST_HOUR,
+    // A save that says nothing about the days leaves them as they were.
+    days: digestDays(body.days ?? previous?.days),
     unpaidOnly: body.unpaidOnly !== false,
     clients,
     updatedAt: new Date().toISOString(),

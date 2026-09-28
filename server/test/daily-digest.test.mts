@@ -91,6 +91,7 @@ r = await api(`/${yuyu.id}`, 'PUT', {
 });
 check('a client she cannot open is not saved', r.body.digest.clients, [{ orgId: 'org_dart', addresses: ['finance@dart.com.sg'] }]);
 check('unpaid only by default', r.body.digest.unpaidOnly, true);
+check('every day until somebody says otherwise', r.body.digest.days, [1, 2, 3, 4, 5, 6, 0]);
 
 const digest = digestFor('cybm', yuyu.id)!;
 const rows = await buildDigest('cybm', digest, yuyu as any, '2000-01-01T00:00:00Z');
@@ -116,5 +117,19 @@ check('a failed send does not move "new since" forward', after.lastSentAt ?? '',
 await runDueDigests(new Date('2026-09-23T05:00:00Z'));
 check('and it is not retried all day', digestFor('cybm', yuyu.id)!.lastResult?.at, '2026-09-23T00:30:00.000Z');
 check('nothing counted as sent', sent, 0);
+
+// Weekdays only. 2026-09-26 is a Saturday, the 28th a Monday; 08:30 in
+// Singapore is 00:30 UTC.
+r = await api(`/${yuyu.id}`, 'PUT', { enabled: true, hour: 8, days: [5, 1, 2, 3, 4, 9], clients: [{ orgId: 'org_dart', addresses: [] }] });
+check('the days are saved Monday first, real ones only', r.body.digest.days, [1, 2, 3, 4, 5]);
+r = await api(`/${yuyu.id}`, 'PUT', { enabled: true, hour: 8, clients: [{ orgId: 'org_dart', addresses: [] }] });
+check('a save that names no days leaves them alone', r.body.digest.days, [1, 2, 3, 4, 5]);
+await runDueDigests(new Date('2026-09-26T00:30:00Z'));
+check('nothing is attempted on a Saturday', digestFor('cybm', yuyu.id)!.lastSentDay, '2026-09-23');
+await runDueDigests(new Date('2026-09-27T04:00:00Z'));
+check('nor on a Sunday', digestFor('cybm', yuyu.id)!.lastSentDay, '2026-09-23');
+await runDueDigests(new Date('2026-09-28T00:30:00Z'));
+check('and Monday it goes out again', digestFor('cybm', yuyu.id)!.lastSentDay, '2026-09-28');
+check('the footer says when it is sent', dailyDigestEmail({ name: 'Kai Test', day: '28 Sep 2026', rows, newCount: 0, unpaidOnly: true, settingsUrl: 'x', schedule: 'on weekdays' }).html.includes('Sent on weekdays by CYBills'), true);
 
 await finish(failures, server);

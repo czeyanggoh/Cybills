@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Check, Mail } from 'lucide-react';
 import { useDigest, useDigestRefresh, saveDigest, sendDigestNow } from '@/lib/digestStore';
-import { hourLabel } from '@/lib/digest';
+import { hourLabel, DIGEST_DAYS, DIGEST_WEEKDAYS, dayName, digestDays, daysLabel, daysPhrase } from '@/lib/digest';
 import { cn } from '@/lib/utils';
 
 function Toggle({ on, onToggle, label }) {
@@ -30,6 +30,7 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
   const refresh = useDigestRefresh();
   const [enabled, setEnabled] = useState(false);
   const [hour, setHour] = useState(8);
+  const [days, setDays] = useState(DIGEST_DAYS);
   const [unpaidOnly, setUnpaidOnly] = useState(true);
   const [picked, setPicked] = useState({}); // orgId -> addresses[]
   const [typed, setTyped] = useState({}); // orgId -> text being typed
@@ -45,6 +46,7 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
     seeded.current = true;
     setEnabled(Boolean(data.digest.enabled));
     setHour(data.digest.hour ?? 8);
+    setDays(digestDays(data.digest.days));
     setUnpaidOnly(data.digest.unpaidOnly !== false);
     setPicked(Object.fromEntries((data.digest.clients || []).map((c) => [c.orgId, c.addresses || []])));
   }, [data]);
@@ -66,6 +68,10 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
       return next;
     });
   };
+  // The last day left cannot be unticked: a digest with no day to go out on is
+  // one that is never sent, and the switch beside it is how that is said.
+  const toggleDay = (d) =>
+    setDays((list) => (list.includes(d) ? (list.length > 1 ? list.filter((x) => x !== d) : list) : digestDays([...list, d])));
   const toggleAddress = (id, email) =>
     setPicked((p) => {
       const list = p[id] || [];
@@ -82,6 +88,7 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
   const payload = () => ({
     enabled,
     hour,
+    days,
     unpaidOnly,
     clients: Object.entries(picked).map(([orgId, addresses]) => ({ orgId, addresses })),
   });
@@ -97,7 +104,7 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
         !enabled
           ? `Daily digest off for ${colleague.name}${n ? ' — switch “Send daily” on to start it' : ''}.`
           : n
-            ? `Daily digest on for ${colleague.name} at ${hourLabel(hour)}.`
+            ? `Daily digest on for ${colleague.name} at ${hourLabel(hour)}, ${daysPhrase(days)}.`
             : `Daily digest for ${colleague.name} has no clients picked, so nothing will be sent.`
       );
       onClose();
@@ -144,28 +151,58 @@ export default function DailyDigestModal({ open, colleague, onClose, onSaved }) 
 
         <div className="flex-1 overflow-auto p-6">
           <p className="mb-4 text-sm text-muted-foreground">
-            Once a day, {colleague.email ? <code>{colleague.email}</code> : colleague.name} is emailed the documents the
+            Once a day on the days ticked below, {colleague.email ? <code>{colleague.email}</code> : colleague.name} is emailed the documents the
             clients below have sent in that are still in the Costs tab — one row each, with a link to the document.
             Nothing is sent on a day with nothing to report.
           </p>
 
-          <div className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-lg border px-4 py-3">
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-medium">Send daily</span>
-              <Toggle on={enabled} onToggle={() => setEnabled((v) => !v)} label="Send daily" />
+          <div className="mb-3 rounded-lg border">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium">Send daily</span>
+                <Toggle on={enabled} onToggle={() => setEnabled((v) => !v)} label="Send daily" />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <span className="font-medium">At</span>
+                <select value={hour} onChange={(e) => setHour(Number(e.target.value))} className="h-8 rounded-md border bg-background px-2 text-sm">
+                  {hours.map((h) => (
+                    <option key={h} value={h}>{hourLabel(h)}</option>
+                  ))}
+                </select>
+                <span className="text-xs text-muted-foreground">{data?.timezone || ''}</span>
+              </label>
+              <button type="button" onClick={() => setUnpaidOnly((v) => !v)} className="flex items-center gap-2 text-sm">
+                <Box on={unpaidOnly} /> Only items requiring payment
+              </button>
             </div>
-            <label className="flex items-center gap-2 text-sm">
-              <span className="font-medium">At</span>
-              <select value={hour} onChange={(e) => setHour(Number(e.target.value))} className="h-8 rounded-md border bg-background px-2 text-sm">
-                {hours.map((h) => (
-                  <option key={h} value={h}>{hourLabel(h)}</option>
-                ))}
-              </select>
-              <span className="text-xs text-muted-foreground">{data?.timezone || ''}</span>
-            </label>
-            <button type="button" onClick={() => setUnpaidOnly((v) => !v)} className="flex items-center gap-2 text-sm">
-              <Box on={unpaidOnly} /> Only items requiring payment
-            </button>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t px-4 py-3">
+              <span className="text-sm font-medium">Days</span>
+              <div className="flex flex-wrap gap-1">
+                {DIGEST_DAYS.map((d) => {
+                  const on = days.includes(d);
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => toggleDay(d)}
+                      aria-pressed={on}
+                      className={cn(
+                        'h-8 w-11 rounded-md border text-sm transition-colors',
+                        on ? 'border-foreground bg-foreground text-background' : 'text-muted-foreground hover:bg-muted'
+                      )}
+                    >
+                      {dayName(d)}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-xs text-muted-foreground">{daysLabel(days)}</span>
+              {daysLabel(days) !== 'Weekdays' && (
+                <button type="button" onClick={() => setDays(DIGEST_WEEKDAYS)} className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground">
+                  Skip weekends
+                </button>
+              )}
+            </div>
           </div>
 
           {last && (

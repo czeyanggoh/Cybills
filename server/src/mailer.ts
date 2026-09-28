@@ -487,6 +487,7 @@ export function dailyDigestEmail(o: {
   newCount: number;
   unpaidOnly: boolean;
   settingsUrl: string;
+  schedule?: string; // "daily", "on weekdays", "on Mon, Wed"
 }) {
   const th = 'padding:8px 10px;border:1px solid #d1d5db;background:#f3f4f6;font-weight:600;text-align:left;white-space:nowrap';
   const td = 'padding:7px 10px;border:1px solid #d1d5db;vertical-align:top';
@@ -521,7 +522,7 @@ export function dailyDigestEmail(o: {
     <tr>${heads.map((h) => `<th style="${th}">${h}</th>`).join('')}</tr>
     ${body}
   </table>
-  <p style="margin:20px 0 0;font-size:12px;color:#6b7280">Sent daily by CYBills. Change which clients and people this covers under <a href="${esc(o.settingsUrl)}" style="color:#6b7280">Colleagues &rarr; Manage &rarr; Daily digest</a>.</p>
+  <p style="margin:20px 0 0;font-size:12px;color:#6b7280">Sent ${esc(o.schedule || 'daily')} by CYBills. Change when it is sent, and which clients and people it covers, under <a href="${esc(o.settingsUrl)}" style="color:#6b7280">Colleagues &rarr; Manage &rarr; Daily digest</a>.</p>
 </body></html>`,
   };
 }

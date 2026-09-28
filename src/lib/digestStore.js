@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { daysLabel } from './digest.js';
 
 // The daily digest a colleague is emailed about their clients' paperwork still
 // waiting to be paid (server/src/digest.ts; which documents is ./digest.js).
@@ -55,10 +56,12 @@ export const saveDigest = (userId, digest) =>
 export const sendDigestNow = (userId) =>
   call(`/api/digests/${encodeURIComponent(userId)}/send`, { method: 'POST' });
 
-// What the Colleagues column says about a digest.
+// What the Colleagues column says about a digest. The days are named only when
+// they are not every day, which is what the column has always meant.
 export function digestLabel(d) {
   if (!d?.enabled) return 'Off';
   if (!d.clients?.length) return 'On · no clients';
   const n = d.clients.length;
-  return `${String(d.hour ?? 8).padStart(2, '0')}:00 · ${n} client${n === 1 ? '' : 's'}`;
+  const days = daysLabel(d.days);
+  return `${String(d.hour ?? 8).padStart(2, '0')}:00${days === 'Every day' ? '' : ` · ${days}`} · ${n} client${n === 1 ? '' : 's'}`;
 }
