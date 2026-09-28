@@ -206,6 +206,36 @@ there, soft-removed, carrying the old name and the shared address — and
 owners are. A name that resolves to nobody is left exactly as it is rather than
 guessed at. Covered by `npm test` in `server/` (`test/identity.test.mts`).
 
+**A colleague nobody signs in as is still somebody a document can name.** "AP
+CYBM" is on the practice team and is not a person: it is a pipe, an address and
+a WhatsApp group bills are sent down. Added with no email it was stored with a
+BLANK address (the Users roster has minted an internal identity for such a
+person since the bridge entity; `POST /api/practice/colleagues` never did), and
+a document's owner is an address, so it could own nothing: a bill sent into
+`ap.cybm@cybills.sg`'s own group fell through `ownerFor` to whoever pressed
+send, and the Document owner picker never offered it. Both roads now mint one
+(`identityFor` in `users.ts`), and `ensureIdentities` gives one on load to every
+live row written without. Nothing is ever sent to it: the invite route and the
+daily digest refuse an internal address the way `sendInvites` always has. And
+giving such a row a real address later moves its documents with it (the PATCH
+route calls `reassignPerson`, the move the join form makes).
+
+**And a colleague has a default project.** Users has always had Project (PIC);
+Colleagues had no such column, and Users redirects to Colleagues in the
+practice's own entity, so its people could not be given one at all. The column
+is **Default project**, and its options are the tracking list of the entity the
+colleague's row LIVES in (the practice's own), never the one that happens to be
+open: a project is a name in one entity's list, and a colleague owns documents
+only in their own. The upload's fallback looked the owner up on the ROSTER,
+which a colleague is never on, so it now asks the directory as well
+(`project` on `GET /api/users/directory`, '' for a colleague working on a client
+from outside). And the background read an emailed, WhatsApp'd or Drive document
+gets had no fallback at all, though the reader is told there is one:
+`readIntoBill` now gives a document nothing allocated its OWNER's default
+(`defaultProjectFor`), after the supplier's rule and the reader, only a name the
+entity's list still has, and never over a project already on the document.
+Covered by `npm test` in `server/` (`test/colleague-default-project.test.mts`).
+
 ## The document reader: Claude or OpenAI
 
 Uploaded receipts, invoices and Vault documents are read by one of two

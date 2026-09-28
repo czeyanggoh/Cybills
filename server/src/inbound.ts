@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import type { Request } from 'express';
-import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberForSession } from './users.js';
+import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberForSession, defaultProjectFor } from './users.js';
 import { dataScopeForOrg, getOrganisation, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
@@ -384,6 +384,25 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     // date to the end of the previous month (src/lib/ruleDate.js), the same as an
     // upload or a re-read gets. The printed due date is left alone.
     await applyRuleInvoiceDate(vendorRule, patch);
+    // Nothing named a project — not the supplier's rule, not the reader, not the
+    // covering note — so the document follows its OWNER's default, which is what
+    // an upload has always done and what the reader is told will happen. A bill
+    // sent down somebody's own pipe (their address, their WhatsApp group, their
+    // Drive folder) is theirs, and "AP" is exactly a pipe with a project of its
+    // own. Only a name the entity's list still has, where the list is to hand.
+    if (!String(patch.project || '').trim()) {
+      const current = getBillById(scope, billId);
+      const mine = defaultProjectFor(ws, realOrgId, String(current?.owner || current?.createdBy || ''));
+      const known = inputs.projects.map((p) => p.name);
+      if (String(current?.project || '').trim()) {
+        // Already allocated — by hand, or by an earlier read. Left alone.
+        delete patch.project;
+        delete patch.projectReason;
+      } else if (mine.project && (!known.length || known.includes(mine.project))) {
+        patch.project = mine.project;
+        patch.projectReason = `Nothing on the document pointed to a project, so it follows ${mine.name || 'its owner'}'s default project.`;
+      }
+    }
     // A mileage record is priced at the entity's rate per km — its total is
     // distance × rate, never a figure the reader found on the paper.
     await keepMileageInStep(ws, realOrgId, getBillById(scope, billId), patch);

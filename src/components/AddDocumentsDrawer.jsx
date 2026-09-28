@@ -42,7 +42,7 @@ import { foldTaxIntoCost } from '@/lib/lineItems';
 import { splitByPrintedRate, linesAgreeWithTotal } from '@/lib/taxRateRules';
 import { paymentProofPatch } from '@/lib/paymentProof';
 import { advancePatch } from '@/lib/prepayment';
-import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere, canPublishToXero } from '@/lib/userStore';
+import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere, canPublishToXero, getDirectory } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 import { coveringNote } from '@/lib/coveringNote';
 
@@ -621,7 +621,8 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
       //   1. a rule set against the supplier (its supplier rules → Project)
       //   2. a project the reader matched — a "When to use" rule, or the
       //      document naming it (Lists → Projects)
-      //   3. the uploader's own assigned project (Users → Project)
+      //   3. the owner's default project (Users → Project, Colleagues →
+      //      Default project)
       // The first two are statements about the DOCUMENT; the last is only about
       // who happened to upload it.
       if (!String(cur?.project || '')) {
@@ -634,10 +635,17 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           p.projectReason = String(extracted?.projectReason || '').trim();
         } else {
           const ownerName = owner || meName;
-          const ownerUser = users.find((u) => u.name === ownerName || u.email === ownerName);
+          // The roster first, then the directory: the roster is the client's
+          // own employees, and in the practice's own entity the owner is a
+          // COLLEAGUE, who is on no roster — so theirs was never found. The
+          // directory carries a project only for somebody who owns documents
+          // here, never for a colleague working on a client from outside.
+          const ownerUser =
+            users.find((u) => u.name === ownerName || u.email === ownerName) ||
+            getDirectory().find((d) => !d.external && (d.name === ownerName || d.email === ownerName));
           if (ownerUser?.project) {
             p.project = ownerUser.project;
-            p.projectReason = `Nothing on the document pointed to a project, so it follows ${ownerName}'s own (Users → Project).`;
+            p.projectReason = `Nothing on the document pointed to a project, so it follows ${ownerName}'s default project.`;
           }
         }
       }

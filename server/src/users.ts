@@ -627,6 +627,27 @@ function internalEmailFor(orgId: string, name: string, taken: Set<string>): stri
   return candidate;
 }
 
+// The identity for somebody being added with no address, measured against the
+// rows already there. Exported for the Colleagues roster, which adds people by
+// its own route: "AP CYBM" is a colleague nobody signs in as — a pipe bills are
+// sent down — and added with a blank address it could own nothing, so what was
+// sent into its own WhatsApp group was filed under whoever pressed send.
+export const identityFor = (items: User[], orgId: string, name: string): string =>
+  internalEmailFor(orgId, name, new Set(items.map((x) => norm(x.email))));
+
+// …and for the people added before that. Runs on load, like the general
+// accounts: a live row with no address at all gets its identity, so it is in
+// the directory and a document arriving through its pipe can name it.
+function ensureIdentities(items: User[], ws: string): boolean {
+  let changed = false;
+  for (const u of items) {
+    if (u.workspaceId !== ws || u.removed || u.general || String(u.email || '').trim()) continue;
+    u.email = identityFor(items, u.organisationId || primaryOrgId(), u.name);
+    changed = true;
+  }
+  return changed;
+}
+
 const isGeneralRow = (u: User, ws: string, org: string) =>
   u.workspaceId === ws && !u.removed && u.general && inOrg(u, org);
 
@@ -713,6 +734,7 @@ export function peopleForOrg(
   role: string;
   managerEmail: string;
   managerName: string;
+  project: string;
 }> {
   const memo = new Map<string, string>();
   const rows = ensure(ws);
@@ -746,7 +768,21 @@ export function peopleForOrg(
       // '' where none is set, or the row it named has since been removed.
       managerEmail: (u.managerId && byId.get(u.managerId)?.email) || '',
       managerName: (u.managerId && byId.get(u.managerId)?.name) || '',
+      // Their default project — what a document of theirs is allocated to when
+      // nothing on it names one. A project is a name in ONE entity's tracking
+      // list, so a colleague working here from outside carries none: theirs is
+      // a name in the practice's own list and means nothing in this one.
+      project: isOutsider(u, org) ? '' : String(u.project || '').trim(),
     }));
+}
+
+// The default project of whoever owns a document in this entity, by their
+// address. '' for nobody, for the general account of an entity that has set
+// none, and for a colleague from outside (see peopleForOrg).
+export function defaultProjectFor(ws: string, org: string, ownerEmail: string): { project: string; name: string } {
+  const want = norm(ownerEmail);
+  const row = want ? peopleForOrg(ws, org).find((p) => norm(p.email) === want) : undefined;
+  return { project: row?.project || '', name: row?.name || '' };
 }
 
 // Resolve whatever a caller called a person — their email, or the display name
@@ -1327,6 +1363,7 @@ export function ensure(ws: string): User[] {
   }
   if (assignOrganisations(items, ws)) changed = true;
   if (ensureGeneralUsers(items, ws)) changed = true;
+  if (ensureIdentities(items, ws)) changed = true;
   if (normalizeRoster(items, ws)) changed = true;
   if (normalizeIdentities(items, ws)) changed = true;
   if (normalizeRoles(items, ws)) changed = true;
@@ -2240,7 +2277,7 @@ usersRouter.post('/:id/invite', async (req, res) => {
   const items = ensure(ws);
   const user = items.find((u) => u.id === req.params.id && u.workspaceId === ws && !u.removed && reachable(u, req));
   if (!user) return res.status(404).json({ error: 'not_found' });
-  if (!user.email) return res.status(400).json({ error: 'no_email' });
+  if (!user.email || isInternalAddress(user.email)) return res.status(400).json({ error: 'no_email' });
 
   const raw = issueToken(user, 'invite');
   user.invitedAt = new Date().toISOString();
@@ -2453,8 +2490,15 @@ usersRouter.patch('/:id', (req, res) => {
       delete filtered.role;
     }
     const from = user.organisationId;
+    const identity = user.email;
     applyEditable(user, filtered, workspaceId(req));
     if (user.organisationId !== from) detachManagerLinks(items, user);
+    // Somebody with no mailbox being given one is the same person under a new
+    // address, so the documents filed under the identity they had come with
+    // them — the same move the join form makes when they claim their own row.
+    if (isInternalAddress(identity) && norm(user.email) !== norm(identity)) {
+      reassignPerson(dataScopeForOrg(from || ''), identity, user.email);
+    }
     // Their WhatsApp collection group is NAMED after the address, because they
     // are one pipe — so an address that moves takes the group with it, rather
     // than leaving it standing under the handle they used to have. Not awaited:

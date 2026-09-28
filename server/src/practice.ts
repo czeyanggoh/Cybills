@@ -7,6 +7,7 @@ import {
   ensure,
   save,
   full,
+  identityFor,
   publicUser,
   sendInvites,
   memberForSession,
@@ -124,9 +125,14 @@ practiceRouter.post('/colleagues', async (req, res) => {
     const clientAccess = Array.isArray(c.clientAccess)
       ? [...new Set(c.clientAccess.map(String))].filter((id) => getOrganisation(ws, id))
       : [];
+    // A colleague added with no address — a shared pipe like "AP", which bills
+    // are sent down and nobody signs in as — still has to be somebody a document
+    // can name, so they get an identity in place of a mailbox (users.ts).
+    const displayName = (String(c.name || '') || `${c.firstName || ''} ${c.lastName || ''}`).trim();
     const colleague = full(
       {
         ...c,
+        email: email || identityFor(items, home, displayName),
         id: undefined,
         practice: true,
         practiceRole: String(c.practiceRole || 'Standard'),

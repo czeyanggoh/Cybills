@@ -14,7 +14,8 @@ import {
 } from '@/lib/practiceStore';
 import { setUserActive, removeUser, setUserPassword, inviteUser, updateUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
-import { useOrganisations } from '@/lib/organisations';
+import ComboSelect from '@/components/ComboSelect';
+import { useOrganisations, useXeroTracking } from '@/lib/organisations';
 import { entityAddress } from '@/lib/inboundAddress';
 
 // Whether this colleague runs the practice's own business (the roster, client
@@ -130,6 +131,38 @@ function ManageMenu({ colleague, onEdit, onAccess, onDigest, onToast }) {
   );
 }
 
+// A colleague's default project: what a document of theirs is allocated to when
+// nothing on it names one. The Users page has always had this column and this
+// page had none, so the practice's own people — whose roster this is, since
+// Users redirects here — could not be given one at all.
+//
+// The options are the tracking list of the entity the colleague's row LIVES in
+// (the practice's own), never the one that happens to be open: a project is a
+// name in one entity's list, and a colleague owns documents only in their own
+// — what they add to a client's book goes to that client's general account.
+function DefaultProject({ colleague, homeOrgId, onToast }) {
+  const { data: categories = [] } = useXeroTracking(homeOrgId);
+  const options = (categories[0]?.options ?? []).map((o) => o.name).filter(Boolean);
+  const current = colleague.project || '';
+  return (
+    <ComboSelect
+      size="xs"
+      className="w-40"
+      aria-label={`Default project for ${colleague.name}`}
+      value={current}
+      // One set since removed from the list is still shown, so opening the
+      // picker never silently changes it.
+      options={['', ...new Set([...options, current].filter(Boolean))]}
+      format={(p) => p || '— None —'}
+      emptyLabel="— None —"
+      onChange={async (v) => {
+        await updateUser(colleague.id, { project: v });
+        onToast(v ? `Default project ${v} set for ${colleague.name}.` : `Default project cleared for ${colleague.name}.`);
+      }}
+    />
+  );
+}
+
 // The practice's own team. Distinct from Users, which is one CLIENT's staff:
 // these people work across clients, and which clients is the "Client access"
 // column — a colleague is a Business Admin inside every one they hold.
@@ -196,7 +229,8 @@ export default function Colleagues() {
   // from that row, its address, is said here; the row itself is on the Users
   // page, which a colleague opening the practice entity is redirected away from.
   const { data: organisations = [] } = useOrganisations();
-  const practiceAddress = entityAddress(organisations.find((o) => o.isPrimary)?.emailSuffix);
+  const practiceOrg = organisations.find((o) => o.isPrimary);
+  const practiceAddress = entityAddress(practiceOrg?.emailSuffix);
 
   return (
     <AppShell>
@@ -258,7 +292,7 @@ export default function Colleagues() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[900px] text-sm">
+        <table className="w-full min-w-[1060px] text-sm">
           <thead className="border-b bg-muted/40 text-left">
             <tr className="text-muted-foreground">
               <th className="px-3 py-2.5 font-medium">Name</th>
@@ -266,6 +300,12 @@ export default function Colleagues() {
               <th className="px-3 py-2.5 font-medium">Role</th>
               <th className="px-3 py-2.5 font-medium">Manage practice&apos;s business</th>
               <th className="px-3 py-2.5 font-medium">Direct manager</th>
+              <th
+                className="px-3 py-2.5 font-medium"
+                title={`What a document of theirs in ${practiceOrg?.name || practiceName} is allocated to when nothing on it names a project.`}
+              >
+                Default project
+              </th>
               <th className="px-3 py-2.5 font-medium">Client access</th>
               <th className="px-3 py-2.5 font-medium">Daily digest</th>
               <th className="px-3 py-2.5 font-medium">Last login</th>
@@ -299,6 +339,9 @@ export default function Colleagues() {
                       <option key={m.id} value={m.id}>{m.name}</option>
                     ))}
                   </select>
+                </td>
+                <td className="px-3 py-3">
+                  <DefaultProject colleague={c} homeOrgId={c.organisationId || practiceOrg?.id || ''} onToast={showToast} />
                 </td>
                 <td className="px-3 py-3">
                   <button
@@ -336,7 +379,7 @@ export default function Colleagues() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={10} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {error
                     ? 'Only the practice team can see colleagues.'
                     : isLoading
