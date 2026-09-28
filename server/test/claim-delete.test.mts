@@ -7,9 +7,8 @@
 // person, wrong period, wrong items — every one of which ends with those receipts
 // needing to go on a different claim.
 //
-// Two boundaries matter as much as the behaviour. Removing ONE ITEM is a
-// different act ("this doesn't belong on this claim") and sends the document to
-// Archive, not to the top of the inbox. And a claim that reached XERO has its
+// Two boundaries matter as much as the behaviour. Removing ONE ITEM hands that
+// document back to Costs the same way. And a claim that reached XERO has its
 // money in the ledger already, so ITS documents are archived rather than offered
 // as work — putting them back would invite publishing the same spending twice.
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -88,9 +87,9 @@ r = await api(`/${claimId}/items/remove`, 'POST', { itemIds: [spared.id] });
 check('removing an item succeeds', r.status, 200);
 const sparedAfter = getBillByIdAny(spared.id);
 check('the document survives', Boolean(sparedAfter), true);
-// Archive, not the inbox: coming off a claim is a decision it doesn't belong
-// there, and putting it back on top of the inbox makes it look like new work.
-check('and goes to Archive', sparedAfter?.status, 'archived');
+// Back in Costs, not Archive: it is still a cost that has to be published or
+// claimed some other way (claim-return-to-costs.test.mts holds the rest).
+check('and goes back to Costs', sparedAfter?.status, 'ready');
 
 // --- Deleting the claim frees its documents ----------------------------------
 r = await api(`/${claimId}`, 'DELETE');
@@ -103,7 +102,7 @@ check('and nothing was destroyed', listBills('cybm').length, 4);
 check('…their files included', getBillByIdAny(doomed.id)?.storageKey, 'r2:bills/cybm/doomed.pdf');
 // The one taken off the claim first was never on it when it went, so it stays
 // where removing an item put it.
-check('the one removed beforehand is untouched', getBillByIdAny(spared.id)?.status, 'archived');
+check('the one removed beforehand is untouched', getBillByIdAny(spared.id)?.status, 'ready');
 // And a document that was never on the claim is nobody's business.
 // 'ready' because it was complete when it was created and has never moved —
 // readiness is derived, so this is where insertBill left it.

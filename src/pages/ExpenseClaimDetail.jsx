@@ -608,10 +608,14 @@ export default function ExpenseClaimDetail() {
   };
 
   // Take one item off the claim. The document isn't deleted — it goes back to
-  // the Costs inbox (removeItemsFromClaim resets its status), so it can be
-  // re-filed, put on another claim, or published on its own.
+  // the Costs inbox, so it can be re-filed, put on another claim, or published
+  // on its own. Except where the claim's bill is already in Xero: its cost is
+  // in the ledger as a line of that bill, so it is set aside instead.
+  const removedTo = claim.xeroInvoiceId
+    ? 'to Archived, because this claim is already published to Xero'
+    : 'back to Costs';
   const removeItem = (t) => {
-    if (!window.confirm(`Remove this item from the claim?\n\n${t.supplier || 'The document'} goes to your Archive — it isn't deleted.`)) return;
+    if (!window.confirm(`Remove this item from the claim?\n\n${t.supplier || 'The document'} goes ${removedTo} — it isn't deleted.`)) return;
     removeItemsFromClaim(claim.id, [t.itemId]).catch(() => {});
     setSelected((sel) => {
       const n = new Set(sel);
@@ -674,7 +678,7 @@ export default function ExpenseClaimDetail() {
 
   const doRemove = async () => {
     if (!selected.size) return;
-    if (!window.confirm(`Remove ${selected.size} item${selected.size === 1 ? '' : 's'} from this claim?\n\nThey go to your Archive — they aren't deleted.`)) return;
+    if (!window.confirm(`Remove ${selected.size} item${selected.size === 1 ? '' : 's'} from this claim?\n\n${selected.size === 1 ? 'It goes' : 'They go'} ${removedTo} — ${selected.size === 1 ? "it isn't" : "they aren't"} deleted.`)) return;
     setActionsOpen(false);
     await removeItemsFromClaim(claim.id, [...selected]).catch(() => {});
     setSelected(new Set());

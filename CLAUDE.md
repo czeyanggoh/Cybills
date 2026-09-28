@@ -1320,14 +1320,25 @@ would not otherwise offer. The claim line is written BEFORE the document's
 status, so a failure leaves the document in the inbox rather than marked as
 claimed by a claim that never took it — which is invisible in both places.
 
-**Removing an ITEM from a claim archives it; DELETING the claim hands its
-documents back to the Costs tab.** Two different acts, and the difference is
-deliberate. Taking one line off says "this doesn't belong on this claim", so the
-document goes to Archive — kept, out of the way, never back at the top of the
-inbox where it reads as new work somebody has to clear again. Losing the whole
-claim says the opposite: the work has to be done again, and work to be done lives
-in the inbox, so those documents come back READY (readiness is derived, so a
-complete one is not presented as something to type in again).
+**Taking an item off a claim, and DELETING the claim, both hand the documents
+back to the Costs tab.** Removing one line used to ARCHIVE it, on the reasoning
+that "this doesn't belong on this claim" should not put it back at the top of the
+inbox. Cze asked for that to stop (28 Sep 2026): a receipt on the wrong claim is
+still a cost that has to be published or claimed some other way, and set aside it
+was a document somebody had to go and find first. So the claim page's × and
+Actions -> Remove, and the document page's **Remove from claim & move to Costs**
+(in the "This item belongs to expense claim …" banner), all go through
+`POST /api/claims/:id/items/remove`, which decides where the documents land —
+the browser no longer follows it with a status write of its own. They come back
+READY where complete (readiness is derived). Three guards: an approved claim is
+locked (409 `claim_locked`, Unapprove first); a document the request names that
+now sits on ANOTHER claim is left alone, because the claim page's **Move** adds
+to the target and then removes from the source through this same route; and a
+document taken off by hand carries `autoClaimDeclined` (store.ts, cleared when it
+next goes onto a claim), which Auto Expense claims honour — they file every inbox
+document of an enrolled person on the next listing, so without it the document
+would be back on the claim before anybody looked at it. Covered by
+`test/claim-return-to-costs.test.mts`.
 
 This REVERSES the original decision, which was to delete them permanently, files
 included, because they were captured to be claimed and had nothing left to be.
@@ -1341,9 +1352,9 @@ Except where the claim reached XERO: its documents are already accounted for, as
 lines of the claim's own bill, so they are ARCHIVED rather than returned. In the
 inbox they would look like unpublished work, and publishing them pays the same
 spending a second time — the same rule that keeps a merged-away document out of
-every list. `returnBillsToInbox` is the writer, beside `unmarkBillsClaimed`
-(which stays as it was, for the single-item case). Both confirmations say which
-of the three will happen, and the claim itself is still only soft-deleted, so the
+every list — and removing a single item from such a claim archives it for the
+same reason. `returnBillsToInbox` is the writer, `unmarkBillsClaimed` the
+archiving one for a claim in Xero. The confirmations say which will happen, and the claim itself is still only soft-deleted, so the
 record of what was claimed outlives it either way. Covered by `npm test` in
 `server/` (`test/claim-delete.test.mts`). Removing an item previously did nothing at all to the document: it
 kept `expenseclaim` with no claim to belong to, which made it invisible in the

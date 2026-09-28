@@ -309,6 +309,11 @@ export type Bill = {
   // what makes the setting-aside happen ONCE: a proof somebody pulls back out
   // of Archived keeps the flag, so nothing puts it back there behind them.
   proofSetAside?: boolean;
+  // Somebody took this document OFF an expense claim and back into Costs, so
+  // Auto Expense claims must not simply file it again (autoClaims.ts). Set by
+  // returnBillsToInbox, cleared when it next goes onto a claim by hand. Its own
+  // writers, never EDITABLE.
+  autoClaimDeclined?: boolean;
   paysBillsAppliedAt?: string;
   paysBillsAppliedBy?: string;
   paysBillsAuto?: boolean;
@@ -1357,36 +1362,31 @@ export function markBillsClaimed(ids: string[]): number {
   for (const bill of bills) {
     if (!wanted.has(bill.id) || bill.status === 'deleted' || bill.status === 'expenseclaim') continue;
     bill.status = 'expenseclaim';
+    // On a claim again, so whatever took it off one before has been answered.
+    if (bill.autoClaimDeclined) bill.autoClaimDeclined = undefined;
     n += 1;
   }
   if (n) persist(bills);
   return n;
 }
 
-// Inverse of markBillsClaimed: take the given bills off a claim.
-//
-// They go to ARCHIVE, not back to the inbox. Taking a receipt off a claim is a
-// decision that it doesn't belong there — putting it back at the top of the
-// inbox makes it look like new work every time, and the reviewer has to deal
-// with it again to make it go away. Archive keeps it, out of the way, one click
-// from being brought back.
-//
-// Never deleted: the claim is not a bin, and the document may well be somebody
-// else's to claim, or belong on a different claim next month.
-// Put a claim's documents back in the Costs tab. Used when the CLAIM goes away
-// entirely, where the documents on it are real costs that still have to be
-// accounted for — they were never the claim's property, only its evidence.
-//
-// The inbox rather than Archive, and that is the difference from
-// unmarkBillsClaimed: taking ONE item off a claim says "this doesn't belong
-// here", so it is set aside; losing the whole claim says the work has to be done
-// again, and work to be done lives in the inbox. Readiness re-derives itself, so
-// a complete document lands straight in Ready rather than as new work to type in.
+// Put a claim's documents back in the Costs tab — when an item is taken off a
+// claim, and when the CLAIM goes away entirely. Either way the documents are
+// real costs that still have to be accounted for: they were never the claim's
+// property, only its evidence, and work to be done lives in the inbox.
+// Readiness re-derives itself, so a complete document lands straight in Ready
+// rather than as new work to type in.
 //
 // Only a document the claim was actually holding. A published one is left where
 // it is by the caller — its money is already in the ledger through the claim's
 // own bill, and offering it as unpublished work is how a cost gets paid twice.
-export function returnBillsToInbox(ids: string[]): number {
+//
+// `declineAutoClaim` is a PERSON taking one document off a claim and back into
+// Costs (the document page's "Remove from claim"). Auto Expense claims file
+// every inbox document of an enrolled person on the next listing, so without
+// the mark the document would be back on the claim it was just taken off
+// before anybody had looked at it.
+export function returnBillsToInbox(ids: string[], opts: { declineAutoClaim?: boolean } = {}): number {
   const wanted = new Set(ids.map(String));
   if (!wanted.size) return 0;
   const bills = load();
@@ -1394,6 +1394,7 @@ export function returnBillsToInbox(ids: string[]): number {
   for (const bill of bills) {
     if (!wanted.has(bill.id) || bill.status !== 'expenseclaim') continue;
     bill.status = 'new';
+    if (opts.declineAutoClaim) bill.autoClaimDeclined = true;
     applyAutoReady(bill);
     n += 1;
   }
@@ -1401,6 +1402,9 @@ export function returnBillsToInbox(ids: string[]): number {
   return n;
 }
 
+// Take bills off a claim whose bill is already in XERO: they go to Archive,
+// because their money is in the ledger as lines of the claim's bill and back in
+// the inbox they would read as unpublished work. Never deleted.
 export function unmarkBillsClaimed(ids: string[]): number {
   const wanted = new Set(ids.map(String));
   if (!wanted.size) return 0;

@@ -22,7 +22,7 @@ import SplitItemModal from '@/components/SplitItemModal';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import PublishToXeroModal from '@/components/PublishToXeroModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
-import { addItemToClaim, createClaim, docToClaimTxn, useClaims } from '@/lib/claimStore';
+import { addItemToClaim, createClaim, docToClaimTxn, removeItemsFromClaim, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { trustSender, fetchDocumentLink } from '@/lib/mailbox';
@@ -376,6 +376,8 @@ export default function CostDetail() {
   const [gstOpen, setGstOpen] = useState(false); // GST-split panel open
   const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
   const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
+  const [claimLeaving, setClaimLeaving] = useState(false); // taking this document off its claim
+  const [claimNote, setClaimNote] = useState(''); // where it went, once it has come off
   const [compareOpen, setCompareOpen] = useState(false); // side-by-side duplicate review
   const [moving, setMoving] = useState(false); // moving this document to another entity
   const { data: organisations } = useOrganisations();
@@ -429,6 +431,52 @@ export default function CostDetail() {
     : claimForItem
       ? `Already on expense claim ${claimRef(claimForItem)}. Take it off that claim first to move it.`
       : '';
+  // Take this document off its claim and put it back in Costs — the claim
+  // page's Remove, offered on the page somebody is already looking at the
+  // document on. Two states the server holds to, said before
+  // the click: an approved claim is locked, and a claim whose bill is already
+  // in Xero sets the document aside instead, because its money is in the
+  // ledger as a line of that bill until the claim is updated there.
+  const claimLocked = claimForItem?.approvalStatus === 'approved';
+  const claimInXero = Boolean(claimForItem?.xeroInvoiceId);
+  const removeFromClaim = async () => {
+    if (!claimForItem || claimLocked || claimLeaving) return;
+    const ref = claimRef(claimForItem);
+    if (
+      !window.confirm(
+        claimInXero
+          ? `Remove this document from expense claim ${ref}?\n\n` +
+              'The claim is already published to Xero, so the document goes to Archived rather than back into Costs: ' +
+              'its cost is in the ledger as a line of the claim’s bill until the claim is updated in Xero.'
+          : `Remove this document from expense claim ${ref} and move it back to Costs?\n\n` +
+              'It comes off the claim and returns to the Costs inbox, where it can be published or added to another claim.'
+      )
+    )
+      return;
+    setClaimLeaving(true);
+    setAiError('');
+    try {
+      // Named the way the CLAIM names it: the line's own itemId is what the
+      // server takes off, and the banner found the claim by the same lookup.
+      const line = (claimForItem.transactions || []).find((t) => isItemKey(t.itemId, id));
+      await removeItemsFromClaim(claimForItem.id, [String(line?.itemId ?? doc.id)]);
+      const fresh = await fetchBillById(doc.id);
+      if (fresh) setPersisted(billToDoc({ ...fresh, hasFile: Boolean(fresh.storageKey ?? fresh.hasFile) }));
+      setClaimNote(
+        claimInXero
+          ? `Removed from expense claim ${ref}. The claim is in Xero, so this document is in Archived — update the claim in Xero to take its line off the bill.`
+          : `Removed from expense claim ${ref} — this document is back in Costs.`
+      );
+    } catch (err) {
+      setAiError(
+        err?.code === 'claim_locked'
+          ? 'That claim is approved, so its items can’t be changed. Unapprove the claim first.'
+          : 'Could not remove this document from the claim — please try again.'
+      );
+    } finally {
+      setClaimLeaving(false);
+    }
+  };
   // Where this document stands in the list it was opened from — the Costs
   // page's rows as they were on screen (rememberWalk), else the inbox — so
   // Previous / Next walk that list and never anything else. Ids the book no
@@ -484,6 +532,7 @@ export default function CostDetail() {
     setImageUrl('');
     setAiError('');
     setLinesNote('');
+    setClaimNote('');
     setLineSnapshot(null); // a new document, a new set of rows to fall back to
     const raw = getDoc(routeId);
     if (raw) {
@@ -1853,6 +1902,29 @@ export default function CostDetail() {
             ) : null}
             {claimForItem.endDate ? ` (${claimForItem.endDate})` : ''}.
           </span>
+          {doc?.persisted && (
+            <button
+              type="button"
+              disabled={claimLocked || claimLeaving}
+              onClick={removeFromClaim}
+              title={
+                claimLocked
+                  ? 'The claim is approved, so its items can’t be changed. Unapprove the claim first.'
+                  : claimInXero
+                    ? 'Take this document off the claim. The claim is in Xero, so it goes to Archived.'
+                    : 'Take this document off the claim and put it back in the Costs inbox'
+              }
+              className="ml-auto inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-md border bg-background px-2.5 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {claimLeaving ? 'Removing…' : claimInXero ? 'Remove from claim' : 'Remove from claim & move to Costs'}
+            </button>
+          )}
+        </div>
+      )}
+      {claimNote && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4" /> {claimNote}
+          <button type="button" onClick={() => setClaimNote('')} className="ml-auto text-emerald-700/70 hover:text-emerald-700">Dismiss</button>
         </div>
       )}
       {splitNote && (

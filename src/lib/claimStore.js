@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { displayItemId, updateBill, notifyBillsChanged, fileToBase64 } from '@/lib/bills';
+import { displayItemId, notifyBillsChanged, fileToBase64 } from '@/lib/bills';
 import { getActiveOrganisationId, ORGANISATION_EVENT } from '@/lib/organisations';
 import { cleanHistoryText } from '@/lib/exportFormat';
 import { toIsoClaimDate } from '@/lib/claimDate';
@@ -166,12 +166,13 @@ export async function addItemToClaim(claimId, txn) {
 }
 
 // Remove items (by itemId) from a claim. Following Dext, the underlying cost
-// documents return to the Costs inbox (status 'new') rather than staying under
-// Archive — the itemId is the bill id. Failures (e.g. demo docs that aren't
-// persisted server-side) are ignored.
+// documents return to the Costs inbox. The SERVER decides where they land —
+// back in Costs (Ready where complete), or Archived when the claim's bill is
+// already in Xero — and marks them so Auto Expense claims do not file them
+// again. This used to follow the remove with a status write of its own, which
+// overrode both of those answers.
 export async function removeItemsFromClaim(claimId, itemIds) {
   await post(`/${claimId}/items/remove`, { itemIds });
-  await Promise.all(itemIds.map((id) => updateBill(id, { status: 'new' }).catch(() => {})));
   notifyClaimsChanged();
   notifyBillsChanged();
 }

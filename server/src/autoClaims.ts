@@ -228,6 +228,9 @@ function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd:
       (b.kind || 'cost') === 'cost' &&
       CLAIMABLE.has(b.status) &&
       !b.xeroInvoiceId &&
+      // Taken off a claim by a person and put back in Costs: filing it again
+      // would undo that on the very next listing.
+      !b.autoClaimDeclined &&
       !claimed.has(b.id) &&
       billDay(b) <= periodEnd
   );

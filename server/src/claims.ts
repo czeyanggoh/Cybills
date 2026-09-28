@@ -934,15 +934,41 @@ claimsRouter.post('/:id/items/remove', (req, res) =>
   mutate(req, res, (claim, me) => {
     if (isLocked(claim)) return res.status(409).json({ error: 'claim_locked' });
     const ids = new Set((Array.isArray(req.body?.itemIds) ? req.body.itemIds : []).map(String));
-    const before = claim.transactions.length;
+    // Only what this claim was actually holding: an id named here that sits on
+    // ANOTHER claim must keep its status, or it is on a claim and in a list.
+    const taken = claim.transactions.filter((t) => ids.has(String(t.itemId))).map((t) => String(t.itemId));
     claim.transactions = claim.transactions.filter((t) => !ids.has(String(t.itemId)));
-    const removed = before - claim.transactions.length;
+    const removed = taken.length;
     if (removed) {
       // The documents come off the claim too. Without this they kept the
       // 'expenseclaim' status with no claim to belong to — invisible in the
       // inbox, invisible in Archive, and unclaimable by anybody else.
-      unmarkBillsClaimed([...ids].map(String));
-      claim.history.unshift({ text: `${removed} item(s) removed from the expense claim`, by: me.name, at: nowIso() });
+      //
+      // BACK IN COSTS, not Archive: the receipt is a real cost that was put on
+      // the wrong claim, and it still has to be published or claimed some
+      // other way — set aside, it was a document somebody had to go and find
+      // before they could do either. Marked so Auto Expense claims do not file
+      // it straight back. Never for a claim whose bill is in Xero — its money
+      // is in the ledger as a line of that bill until the claim is updated
+      // there, and in the inbox it would read as unpublished work. Deleting a
+      // claim draws the same line.
+      //
+      // And not a document that is on ANOTHER claim: Move adds it to the
+      // target before taking it off the source, so by now it is that claim's.
+      const elsewhere = new Set(
+        load()
+          .filter((c) => c.id !== claim.id && c.orgId === claim.orgId && !c.deleted)
+          .flatMap((c) => c.transactions.map((t) => String(t.itemId)))
+      );
+      const freed = taken.filter((id) => !elsewhere.has(id));
+      const toCosts = !claim.xeroInvoiceId;
+      if (toCosts) returnBillsToInbox(freed, { declineAutoClaim: true });
+      else unmarkBillsClaimed(freed);
+      claim.history.unshift({
+        text: `${removed} item(s) removed from the expense claim${toCosts && freed.length ? ' and returned to Costs' : ''}`,
+        by: me.name,
+        at: nowIso(),
+      });
       noteChangeAfterSubmit(req, claim, me.name, `${removed} item(s) removed`);
     }
   })
