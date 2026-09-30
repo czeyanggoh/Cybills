@@ -28,6 +28,16 @@ outside users only after verification and a security assessment.)
    base64 -w0 cybills-robot-key.json
    ```
 
+   That is Linux / macOS. In Windows PowerShell there is no `base64`; this
+   puts the same line on the clipboard (nothing is printed):
+
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("$HOME\Downloads\cybills-robot-key.json")) | Set-Clipboard
+   ```
+
+   Google names the download after the project (`myproject-1a2b3c4d5e6f.json`),
+   so use the file's real name. Then:
+
    ```
    GOOGLE_DRIVE_CREDENTIALS=<that one line>
    ```
