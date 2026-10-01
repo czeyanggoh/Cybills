@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useClaims, unpublishedClaimsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
@@ -78,11 +78,19 @@ function listFor(docs, key) {
 // invisible: a Sales inbox that quietly stopped noticing a finished read.
 export function useDocsOfKind(kind) {
   const [uploaded, setUploaded] = useState([]);
+  // Only the latest fetch may write. An entity switch, a roster load and the
+  // poll can all have one in flight, and an older answer landing last would put
+  // the entity just left back on screen — or rows mapped before the names had
+  // loaded.
+  const seqRef = useRef(0);
 
   const reload = useCallback(async () => {
+    const seq = ++seqRef.current;
+    const bills = await fetchBills();
+    if (seq !== seqRef.current) return;
     // Each workspace shows only its own: a bill you received is not an invoice
     // you issued, and a supplier statement is neither.
-    setUploaded((await fetchBills()).map(billToDoc).filter((d) => d.kind === kind));
+    setUploaded(bills.map(billToDoc).filter((d) => d.kind === kind));
   }, [kind]);
 
   useEffect(() => {

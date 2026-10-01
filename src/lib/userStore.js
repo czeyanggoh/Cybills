@@ -226,22 +226,32 @@ async function fetchUsers() {
 // Warm the roster cache once on load so email→name resolution works before any
 // <useUsers> component mounts; the one-time notify makes lists that already
 // rendered (e.g. the Costs "User" column) re-resolve with real names.
+//
+// Only the LATEST request may write. The load on import and the one an entity
+// switch fires can be in flight together, and whichever answered last used to
+// win — so the entity just left could overwrite the one just opened. Colleagues
+// still resolved (they are in every entity's directory), but the entity's own
+// General account and internal identities read as raw `…@cybills.local`
+// addresses until the page was reloaded.
+let directorySeq = 0;
 async function loadDirectory() {
-  directory = await fetchDirectory();
+  const seq = ++directorySeq;
+  const people = await fetchDirectory();
+  if (seq !== directorySeq) return false;
+  directory = people;
   indexPeople(directory);
+  return true;
 }
 
 // A roster change can add, rename or remove a person, so the name index is
 // rebuilt BEFORE anything re-renders from it — otherwise a just-invited
 // teammate shows as their email local-part until the next reload.
 async function refreshPeople() {
-  await loadDirectory();
-  notifyUsersChanged();
+  if (await loadDirectory()) notifyUsersChanged();
 }
 
 async function warmDirectory() {
-  await loadDirectory();
-  notifyUsersChanged();
+  if (await loadDirectory()) notifyUsersChanged();
 }
 if (typeof window !== 'undefined') {
   warmDirectory();
