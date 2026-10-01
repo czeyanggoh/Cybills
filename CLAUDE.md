@@ -798,6 +798,17 @@ there. What is restored is trusted only as far as its SHAPE (`restoreView`, pure
 value, and anything of the wrong type falls back whole, because a filter object
 from an older release would otherwise show an empty list nobody could explain.
 
+**The table shows fifty rows at a time; the list is still the whole list.**
+All costs grows by every document a client sends, and a few hundred rows each
+carrying two pickers is slow to draw and slower to search by eye. So the Costs
+table (and its phone cards) shows one PAGE — 50, 100, 200 or All, Previous /
+Next at its foot (`ListPager.jsx`) — while Export, the counts and the document
+page's Previous / Next keep reading every row. The page is remembered with
+`useListView` against the narrowing it was turned on (`currentPage` in
+`src/lib/listPage.js`, pure, `npm test`), so a new search or filter starts at
+the top and coming back from a document lands on the page it was opened from.
+The header checkbox ticks the page on screen, never rows nobody can see.
+
 **Archive and Unarchive share the row, and each moves only its own half.**
 Written across the whole selection they would each do real damage: Archive would
 strip `expenseclaim` off a document sitting on a live claim, Unarchive would

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import {
   Plus,
   ChevronDown,
-  SlidersHorizontal,
   Search,
   Filter,
   Settings2,
@@ -67,6 +66,8 @@ import BankMatchCell from '@/components/BankMatchCell';
 import { useBankLines, invalidateBankLines } from '@/lib/bankStore';
 import { matchesByDoc, lineKey as bankLineKey } from '@/lib/bankMatch';
 import { useListView, rememberWalk } from '@/lib/listView';
+import { DEFAULT_PAGE_SIZE, currentPage, pageOf, pageSizeOf } from '@/lib/listPage';
+import ListPager from '@/components/ListPager';
 import { COST_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import { tableMinWidth } from '@/lib/tableWidth';
 import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
@@ -1060,6 +1061,18 @@ export default function Costs() {
   }
   const hasSelection = selected.size > 0;
 
+  // The table shows one page of `rows`; everything else — Export, the walk
+  // below, the counts — reads the whole list (listPage.js). The page is kept
+  // against the narrowing it was turned on, so a new search or filter starts at
+  // the top, and coming back from a document lands on the page it was opened
+  // from.
+  const [pageSize, setPageSize] = useListView('costs', 'pageSize', DEFAULT_PAGE_SIZE);
+  const [pageState, setPageState] = useListView('costs', 'page', { at: '', n: 0 });
+  const narrowKey = JSON.stringify([tab, scope, q, filters, adv, sort]);
+  const at = pageOf(rows.length, pageSizeOf(pageSize), currentPage(pageState, narrowKey));
+  const setPage = (n) => setPageState({ at: narrowKey, n });
+  const pageRows = rows.slice(at.start, at.end);
+
   // The order the rows are on screen in, kept for the document page: its
   // Previous / Next walk THIS list — scoped, filtered and sorted as it stands —
   // so "next" from a row means the row beneath it. Keyed on the ids rather than
@@ -1564,8 +1577,15 @@ export default function Costs() {
       else next.add(id);
       return next;
     });
+  // The header box ticks the PAGE that is on screen, the way a paged mail list
+  // does: ticking it and pressing Delete must never reach rows nobody can see.
+  const pageAllSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.id));
   const toggleAll = () =>
-    setSelected((prev) => (prev.size === rows.length ? new Set() : new Set(rows.map((r) => r.id))));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      pageRows.forEach((r) => (pageAllSelected ? next.delete(r.id) : next.add(r.id)));
+      return next;
+    });
 
   return (
     <AppShell subnav={<CostsSubnav />}>
@@ -1683,7 +1703,7 @@ export default function Costs() {
               you least. Same rows, same selection, same actions. */}
           <div className="md:hidden">
             <DocCardList
-              rows={rows}
+              rows={pageRows}
               selected={selected}
               onToggle={toggle}
               onOpen={(d) => navigate(costPath(d))}
@@ -1708,7 +1728,7 @@ export default function Costs() {
                   <th className="sticky left-0 z-10 w-24 bg-muted/40 px-3 py-2.5">
                     <input
                       type="checkbox"
-                      checked={rows.length > 0 && selected.size === rows.length}
+                      checked={pageAllSelected}
                       onChange={toggleAll}
                       className="h-4 w-4 accent-black"
                     />
@@ -1728,7 +1748,7 @@ export default function Costs() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((d) => (
+                {pageRows.map((d) => (
                   <tr
                     key={d.id}
                     onClick={() => navigate(costPath(d))}
@@ -1784,11 +1804,14 @@ export default function Costs() {
           </div>
 
           {rows.length > 0 && (
-            <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              {selected.size > 0 ? `${selected.size} selected · ` : ''}
-              Showing {rows.length} of {rows.length} documents
-            </p>
+            <ListPager
+              total={rows.length}
+              size={pageSizeOf(pageSize)}
+              setSize={setPageSize}
+              page={at.page}
+              setPage={setPage}
+              prefix={selected.size > 0 ? `${selected.size} selected · ` : ''}
+            />
           )}
         </>
       )}
