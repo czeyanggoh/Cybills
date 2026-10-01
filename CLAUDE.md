@@ -2244,6 +2244,22 @@ asked again every two minutes, and the card says to make the folder by hand. A
 folder disconnected and connected again is a new connection over the same
 files, so `filedAnywhere` is asked before a file is taken as new.
 
+**In Filed a file wears the day and a running number.** `2026-10-01-0003
+Singtel Sep.pdf`: Drive lets two files share a name, so the same invoice saved
+twice sat in Filed as two rows nobody could tell apart, and Cze asked for the
+stamp so a duplicate can still be found (1 Oct 2026). `stampedName` /
+`stampSeq` (`driveFolder.js`, pure, `npm test`) are the rule: the practice's own
+day, a number per FOLDER per day that starts again at 0001, the owner's name
+kept whole behind it, and a name already stamped never stamped twice. The
+rename rides on the move itself (one PATCH, so a file is never left moved under
+its old name), the number is spent only once the move has taken it, and it is
+read back off the ledger across every connection the folder has had
+(`filedNamesIn`), so a reconnected folder carries on rather than handing out
+0001 again. The DOCUMENT keeps the name its owner gave the file — that name is
+what the reader is told, and a date-shaped prefix in front of it is exactly what
+`fileNameHint` exists to keep away from a reader looking for the document's date
+— and the Google Drive tab links to the file by id, whatever it is now called.
+
 **The bytes decide what a file is**, as on the other two roads
 (`readerMediaType`): a PDF a scanner saved as `application/octet-stream` is
 still a PDF. What is not a document is left where it was put and SAID on the

@@ -64,6 +64,39 @@ export const isFiledFolder = (file) =>
   file?.mimeType === FOLDER_MIME &&
   String(file?.name ?? '').trim().toLowerCase() === FILED_FOLDER_NAME.toLowerCase();
 
+// --- The name a filed file wears -------------------------------------------------
+// Moved into "Filed", a file is renamed with the day it was filed and a running
+// number in front of what its owner called it: `2026-10-01-0003 Singtel Sep.pdf`.
+// Two reasons, and both are about the folder being read by a person later. Drive
+// lets two files share a name, so the same invoice saved twice sits in Filed as
+// two rows nobody can tell apart; and sorted by name the folder is then in the
+// order things were filed. The owner's own name is kept whole behind the stamp,
+// so a duplicate still shows as the same words twice.
+//
+// The number runs per folder per day and starts again at 0001 each morning — the
+// date in front of it is what keeps two days' 0001 apart.
+const STAMP = /^(\d{4}-\d{2}-\d{2})-(\d{4,}) /;
+
+export const isStamped = (name) => STAMP.test(String(name ?? ''));
+
+/** The running number a stamped name carries for `day`, or 0 when it carries none for that day. */
+export function stampSeq(name, day) {
+  const m = STAMP.exec(String(name ?? ''));
+  return m && m[1] === day ? Number(m[2]) : 0;
+}
+
+/**
+ * `name` as it is filed on `day` (YYYY-MM-DD) under running number `seq`. A name
+ * that already wears a stamp is left exactly as it is: it was filed once, pulled
+ * back out, and is the same file — a second stamp in front of the first would
+ * say it was filed twice.
+ */
+export function stampedName(name, day, seq) {
+  const raw = String(name ?? '').trim() || 'document';
+  if (isStamped(raw)) return raw;
+  return `${day}-${String(Math.max(1, Number(seq) || 1)).padStart(4, '0')} ${raw}`;
+}
+
 const NATIVE = {
   'application/vnd.google-apps.document': 'a Google Doc',
   'application/vnd.google-apps.spreadsheet': 'a Google Sheet',

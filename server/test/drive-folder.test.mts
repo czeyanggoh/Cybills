@@ -129,6 +129,8 @@ const google = http.createServer((req, res) => {
         const add = url.searchParams.get('addParents');
         const remove = url.searchParams.get('removeParents');
         item.parents = [...item.parents.filter((p) => p !== remove), ...(add ? [add] : [])];
+        const renamed = (JSON.parse(raw || '{}') as { name?: string }).name;
+        if (renamed) item.name = renamed;
         return json(200, { id: item.id });
       }
       if (url.searchParams.get('alt') === 'media') {
@@ -167,6 +169,10 @@ const cookieParser = (await import('cookie-parser')).default;
 const { driveRouter, pollAllFolders } = await import('../src/drive.ts');
 const { listBills } = await import('../src/store.ts');
 const { ensure, save } = await import('../src/users.ts');
+const { practiceDayKey } = await import('../src/usage.ts');
+// The day a file is filed, as the practice's calendar has it — what goes in
+// front of its name in Filed.
+const DAY = practiceDayKey(new Date());
 
 const RED = 'org-red';
 const items = ensure('cybm');
@@ -287,6 +293,12 @@ check('…and out of Processing once the read ended', listBills(RED).map((b) => 
 const filedFolder = created[0];
 check('a Filed folder was made inside it', [created.length, drive.get(filedFolder)?.name, drive.get(filedFolder)?.parents], [1, 'Filed', [DEANNA_FOLDER]]);
 check('…and the filed files moved into it', [drive.get('file_grab_00000000001')!.parents, drive.get('file_photo_0000000002')!.parents], [[filedFolder], [filedFolder]]);
+// Renamed as it is moved: the day and a running number in front of the name its
+// owner gave it, so two files of one name can be told apart in Filed and the
+// folder sorts in the order things were filed.
+check('…each under the day and a running number, its own name kept behind', [drive.get('file_grab_00000000001')!.name, drive.get('file_photo_0000000002')!.name], [`${DAY}-0001 Grab tiffinlabs paid.pdf`, `${DAY}-0002 IMG_4821.png`]);
+check('the document keeps the name its owner gave the file', grab.fileName, 'Grab tiffinlabs paid.pdf');
+check('what is not a document keeps its own name', [drive.get('file_docx_00000000003')!.name, drive.get('file_gdoc_00000000004')!.name], ['notes.docx', 'Invoice draft']);
 check('what is not a document stays where it was put', [drive.get('file_docx_00000000003')!.parents, drive.get('file_gdoc_00000000004')!.parents], [[DEANNA_FOLDER], [DEANNA_FOLDER]]);
 check('a subfolder is not gone into', drive.get('file_deep_00000000006')!.parents, ['subfolder_00000000005']);
 
@@ -308,6 +320,14 @@ put({ id: 'file_new_000000000008', name: 'Singtel Sep.pdf', mimeType: 'applicati
 r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
 check('a file saved later is filed on the next look', [r.body.filed?.length, r.body.filed?.[0]?.name, r.body.moved], [1, 'Singtel Sep.pdf', 1]);
 check('…into the same Filed folder, not a second one', [created.length, drive.get('file_new_000000000008')!.parents], [1, [filedFolder]]);
+check('…under the next number', drive.get('file_new_000000000008')!.name, `${DAY}-0003 Singtel Sep.pdf`);
+
+// The same invoice saved a second time is a different file in Drive, and in
+// Filed the two sit side by side — same words, different numbers — which is
+// what lets somebody see it was sent twice.
+put({ id: 'file_twin_0000000014', name: 'Singtel Sep.pdf', mimeType: 'application/pdf', parents: [DEANNA_FOLDER], bytes: PDF('Singtel September'), owner: 'deanna.chua@redalphacyber.com' });
+r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
+check('a second file of the same name is told apart by its number', drive.get('file_twin_0000000014')!.name, `${DAY}-0004 Singtel Sep.pdf`);
 
 // --- One folder, one person ------------------------------------------------------------------
 drive.get(DEANNA_FOLDER)!.sharedWith = ['martin@redalphacyber.com'];
@@ -347,6 +367,7 @@ check('a file left in place is still filed only once', [r.body.filed?.length, li
 put({ id: 'handmade_filed_000010', name: 'filed ', mimeType: FOLDER, parents: [MARTIN_FOLDER], owner: 'martin@redalphacyber.com' });
 r = await call('POST', `/api/drive/folders/${martins}/check`, BOSS);
 check('a Filed folder made by hand is used', [r.body.moved, drive.get('file_mart_00000000009')!.parents], [1, ['handmade_filed_000010']]);
+check('…and the numbers are the folder’s own, starting at one', drive.get('file_mart_00000000009')!.name, `${DAY}-0001 SPC petrol.pdf`);
 r = await call('GET', '/api/drive/folders?userId=emp_martin', BOSS);
 check('…and the card stops saying otherwise', r.body.folders?.[0]?.filedNote, '');
 mayCreateFolders = true;
@@ -374,6 +395,7 @@ check('shared again, it picks up where it left off', [r.body.ok, r.body.error], 
 put({ id: 'file_clock_0000000011', name: 'Canva Oct.pdf', mimeType: 'application/pdf', parents: [DEANNA_FOLDER], bytes: PDF('Canva'), owner: 'deanna.chua@redalphacyber.com' });
 await pollAllFolders();
 check('the sweep files what nobody pressed a button for', listBills(RED).some((b) => b.fileName === 'Canva Oct.pdf'), true);
+check('…and stamps it like any other', drive.get('file_clock_0000000011')!.name, `${DAY}-0005 Canva Oct.pdf`);
 
 // --- Disconnecting, and connecting again --------------------------------------------------------------------
 // A file the robot could not move is still sitting in the folder. Connecting
@@ -381,6 +403,7 @@ check('the sweep files what nobody pressed a button for', listBills(RED).some((b
 put({ id: 'file_stuck_0000000012', name: 'Stuck.pdf', mimeType: 'application/pdf', parents: [DEANNA_FOLDER], bytes: PDF('stuck'), owner: 'deanna.chua@redalphacyber.com', editable: false });
 r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
 check('a file that cannot be moved is filed and left', [r.body.filed?.length, drive.get('file_stuck_0000000012')!.parents], [1, [DEANNA_FOLDER]]);
+check('…under its own name, a number not spent on it', drive.get('file_stuck_0000000012')!.name, 'Stuck.pdf');
 const countBefore = listBills(RED).length;
 r = await call('DELETE', `/api/drive/folders/${connection}`, DEANNA);
 check('the folder disconnects', [r.status, r.body.folder?.status], [200, 'disconnected']);
@@ -397,5 +420,9 @@ await new Promise((res) => setTimeout(res, 200));
 const names = listBills(RED).map((b) => b.fileName);
 check('…filing what was saved meanwhile', names.filter((n) => n === 'After.pdf').length, 1);
 check('…and not, a second time, what was already filed', names.filter((n) => n === 'Stuck.pdf').length, 1);
+// A new connection over the same Filed folder: the numbers go on from where the
+// last one stopped rather than handing out 0001 a second time.
+await settle(() => drive.get('file_after_0000000013')!.parents[0] !== DEANNA_FOLDER);
+check('…with the running number carried on across the reconnection', drive.get('file_after_0000000013')!.name, `${DAY}-0006 After.pdf`);
 
 await finish(failures, server, google);

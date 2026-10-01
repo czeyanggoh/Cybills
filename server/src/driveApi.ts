@@ -208,11 +208,16 @@ export async function createFolder(parentId: string, name: string): Promise<Driv
   return (await res.json()) as DriveFileMeta;
 }
 
-/** Move a file from one folder into another. Its id, its owner and its sharing all stay as they were. */
-export async function moveFile(id: string, fromFolderId: string, toFolderId: string): Promise<void> {
+/**
+ * Move a file from one folder into another, renaming it in the same breath when
+ * `name` is given — one call, so a file is never left moved under its old name
+ * or renamed where it stood. Its id, its owner and its sharing all stay as they
+ * were.
+ */
+export async function moveFile(id: string, fromFolderId: string, toFolderId: string, name = ''): Promise<void> {
   await call(
     `/drive/v3/files/${encodeURIComponent(id)}?addParents=${encodeURIComponent(toFolderId)}` +
       `&removeParents=${encodeURIComponent(fromFolderId)}&fields=id&${ALL_DRIVES}`,
-    { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+    { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(name ? { name } : {}) }
   );
 }

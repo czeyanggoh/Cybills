@@ -7,6 +7,9 @@ import {
   isFiledFolder,
   driveSkipReason,
   driveStatusLabel,
+  stampedName,
+  stampSeq,
+  isStamped,
   FOLDER_MIME,
 } from '../src/lib/driveFolder.js';
 
@@ -72,6 +75,18 @@ check(
   verdict({ name: 'everything.pdf', mimeType: 'application/pdf', size: String(45 * 1024 * 1024) }),
   'too large to read (45 MB; the limit is 20 MB)'
 );
+
+// --- The name a filed file wears -----------------------------------------------------
+check('the day and a running number in front of its own name', stampedName('Singtel Sep.pdf', '2026-10-01', 3), '2026-10-01-0003 Singtel Sep.pdf');
+check('four digits, and more when a day needs them', [stampedName('a.pdf', '2026-10-01', 12), stampedName('a.pdf', '2026-10-01', 12345)], ['2026-10-01-0012 a.pdf', '2026-10-01-12345 a.pdf']);
+check('the numbers start at one', stampedName('a.pdf', '2026-10-01', 0), '2026-10-01-0001 a.pdf');
+check('a name already stamped is not stamped again', stampedName('2026-09-30-0007 Singtel Sep.pdf', '2026-10-01', 3), '2026-09-30-0007 Singtel Sep.pdf');
+check('a file with no name still gets one', stampedName('', '2026-10-01', 1), '2026-10-01-0001 document');
+check('a date somebody put in a name themselves is not a stamp', [isStamped('2026-10-01 Singtel.pdf'), isStamped('2026-10-01-Singtel.pdf'), isStamped('Invoice 2026-10-01-0003.pdf')], [false, false, false]);
+check('…so it is stamped like any other', stampedName('2026-10-01 Singtel.pdf', '2026-10-01', 2), '2026-10-01-0002 2026-10-01 Singtel.pdf');
+check('the number a stamped name carries for the day', stampSeq('2026-10-01-0003 Singtel Sep.pdf', '2026-10-01'), 3);
+check('…and none for another day', stampSeq('2026-09-30-0007 Singtel Sep.pdf', '2026-10-01'), 0);
+check('…nor for a name with no stamp', stampSeq('Singtel Sep.pdf', '2026-10-01'), 0);
 
 // --- How a connection reads ---------------------------------------------------------
 check('connected', driveStatusLabel({ status: 'connected', lastError: '' }), 'Connected');

@@ -231,7 +231,9 @@ export default function ConnectDriveFolder({ user }) {
       </div>
       <p className="text-xs text-muted-foreground">
         PDFs and photos saved into a connected folder are read and filed under {who}, then moved into a
-        “{FILED_FOLDER_NAME}” folder inside it — so the folder only ever holds what is still waiting.
+        “{FILED_FOLDER_NAME}” folder inside it — so the folder only ever holds what is still waiting. In there each
+        file is renamed with the day it was filed and a running number in front of its own name, so two files of the
+        same name can still be told apart.
       </p>
 
       {!enabled && !loading ? (

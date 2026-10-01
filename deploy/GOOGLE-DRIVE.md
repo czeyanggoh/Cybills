@@ -108,6 +108,27 @@ to connect it.
 What a file *is* is decided from its bytes, not from Drive's label: a PDF a
 scanner saved as `application/octet-stream` is still a PDF.
 
+### The name a filed file wears
+
+As it is moved into `Filed`, a file is renamed with the day it was filed and a
+running number in front of its own name:
+
+```
+2026-10-01-0001 Grab 12 Sep.pdf
+2026-10-01-0002 Singtel Sep.pdf
+2026-10-01-0003 Singtel Sep.pdf      <- the same invoice, saved twice
+2026-10-02-0001 Canva Oct.pdf
+```
+
+Drive lets two files share a name, so without it the same invoice saved twice
+sits in `Filed` as two rows nobody can tell apart; with it they sort together
+and are plainly two. Sorted by name, the folder is also in the order things were
+filed. The number runs per folder per day and starts again at `0001` each
+morning (the practice's timezone); it goes past four digits if a day ever needs
+it. The document in CYBills keeps the name its owner gave the file, and its
+**Google Drive** tab links straight to the file, whatever it is now called.
+Files moved into `Filed` before this existed keep the names they have.
+
 A file is filed **once, by its Drive id**. The move into `Filed` is a courtesy
 to the person looking at their Drive, and it can fail without anything being
 filed twice — a file that could not be moved stays put and is not read again.

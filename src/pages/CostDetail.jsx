@@ -2943,7 +2943,24 @@ export default function CostDetail() {
                   </a>
                 </dd>
                 <dt className="text-muted-foreground">File</dt>
-                <dd className="m-0 break-words">{driveFile.fileName || '—'}</dd>
+                {/* Linked by the file's own id rather than by its name: in
+                    Filed it wears the day and a running number in front of the
+                    name shown here, and the id opens it whatever it is called
+                    and wherever it has been moved. */}
+                <dd className="m-0 break-words">
+                  {driveFile.fileId ? (
+                    <a
+                      href={`https://drive.google.com/file/d/${encodeURIComponent(driveFile.fileId)}/view`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline underline-offset-2 hover:text-foreground"
+                    >
+                      {driveFile.fileName || 'Open in Google Drive'}
+                    </a>
+                  ) : (
+                    driveFile.fileName || '—'
+                  )}
+                </dd>
                 <dt className="text-muted-foreground">Saved by</dt>
                 <dd className="m-0 break-words">
                   {driveFile.addedByName || driveFile.addedBy || 'Not stated by Google Drive'}
@@ -2956,7 +2973,8 @@ export default function CostDetail() {
               </dl>
               <p className="mt-4 border-t pt-4 text-muted-foreground">
                 Saved into a folder connected to CYBills, and filed under the person that folder belongs to. Once
-                filed, the file is moved into the folder&rsquo;s &ldquo;Filed&rdquo; subfolder.
+                filed, the file is moved into the folder&rsquo;s &ldquo;Filed&rdquo; subfolder, with the day it was
+                filed and a running number in front of its name.
               </p>
             </div>
           )}

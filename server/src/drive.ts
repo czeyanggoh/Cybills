@@ -19,6 +19,7 @@ import { readSetting } from './settings.js';
 import { resolveProvider } from './llm.js';
 import { autoRead } from './inbound.js';
 import { workspaceId, WORKSPACE_ID } from './workspace.js';
+import { practiceDayKey } from './usage.js';
 import {
   driveEnabled,
   robotEmail,
@@ -43,6 +44,7 @@ import {
   filedAnywhere,
   recordFile,
   recentFiles,
+  filedNamesIn,
   type DriveFolder,
   type DriveFileRow,
 } from './driveFolders.js';
@@ -73,6 +75,8 @@ type DriveRules = {
   folderIdFromLink: (value: unknown) => string;
   folderLinkFor: (id: string) => string;
   isFiledFolder: (file: unknown) => boolean;
+  stampedName: (name: string, day: string, seq: number) => string;
+  stampSeq: (name: string, day: string) => number;
   driveSkipReason: (file: unknown) => { ignore: boolean; reason: string };
 };
 
@@ -159,6 +163,7 @@ function publicFolder(f: DriveFolder, withFiles = true) {
           name: r.name,
           outcome: r.outcome,
           reason: r.reason,
+          filedName: r.filedName || '',
           billId: r.billId,
           displayId: r.displayId,
           moved: r.moved,
@@ -403,12 +408,21 @@ async function lookIn(connectionId: string): Promise<PollResult> {
   }
   if (filedFolderId && toMove.length) {
     filedNote = '';
+    // The day it is filed, as the practice's calendar has it, and the running
+    // number for that day in THIS folder — carried on from whatever the folder
+    // has already been given today, whichever connection gave it.
+    const day = practiceDayKey(new Date());
+    let seq = filedNamesIn(folder.folderId).reduce((max, n) => Math.max(max, r.stampSeq(n, day)), 0);
     for (const f of toMove) {
       const row = fileRow(folder.id, f.fileId);
       if (!row) continue;
+      const filedName = r.stampedName(f.name, day, seq + 1);
       try {
-        await moveFile(f.fileId, folder.folderId, filedFolderId);
-        recordFile({ ...row, moved: true, at: row.at });
+        await moveFile(f.fileId, folder.folderId, filedFolderId, filedName === f.name ? '' : filedName);
+        // Spent only once the move has taken it: a refused move must not leave
+        // a gap in the numbers for somebody to wonder about.
+        if (filedName !== f.name) seq += 1;
+        recordFile({ ...row, moved: true, filedName, at: row.at });
         out.moved += 1;
       } catch (err) {
         recordFile({ ...row, attempts: row.attempts + 1, at: row.at });

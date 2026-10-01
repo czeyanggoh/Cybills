@@ -52,6 +52,8 @@ export type DriveFileRow = {
   billId: string;
   displayId: string;
   moved: boolean;
+  /** What the file is called in "Filed" — the day and running number in front of its own name. */
+  filedName?: string;
   attempts: number;
   at: string;
 };
@@ -135,6 +137,19 @@ export function recordFile(row: Omit<DriveFileRow, 'id' | 'at'> & { at?: string 
   else items.push(next);
   saveCollection(FILES, items);
   return next;
+}
+
+/**
+ * Every name a file has been filed under in this Drive FOLDER — across every
+ * connection it has ever had, because a folder disconnected and connected again
+ * is a new connection over the same "Filed" subfolder, and the running number
+ * must go on from where the last one stopped rather than hand out 0001 twice.
+ */
+export function filedNamesIn(folderId: string): string[] {
+  const connections = new Set(loadFolders().filter((f) => f.folderId === folderId).map((f) => f.id));
+  return loadFileRows()
+    .filter((r) => connections.has(r.connectionId) && r.filedName)
+    .map((r) => String(r.filedName));
 }
 
 /** The latest rows for a connection, newest first — what its card shows. */
