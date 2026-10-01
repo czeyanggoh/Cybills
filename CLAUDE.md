@@ -807,7 +807,8 @@ page's Previous / Next keep reading every row. The page is remembered with
 `useListView` against the narrowing it was turned on (`currentPage` in
 `src/lib/listPage.js`, pure, `npm test`), so a new search or filter starts at
 the top and coming back from a document lands on the page it was opened from.
-The header checkbox ticks the page on screen, never rows nobody can see.
+The header checkbox ticks the page on screen, never rows nobody can see. The Sales
+tab pages the same way, through the same pager.
 
 **Archive and Unarchive share the row, and each moves only its own half.**
 Written across the whole selection they would each do real damage: Archive would

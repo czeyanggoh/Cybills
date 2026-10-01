@@ -58,6 +58,8 @@ import { formatDate } from '@/lib/date';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { useListView, rememberWalk } from '@/lib/listView';
+import { DEFAULT_PAGE_SIZE, currentPage, pageOf, pageSizeOf } from '@/lib/listPage';
+import ListPager from '@/components/ListPager';
 import { cn } from '@/lib/utils';
 
 // The five tabs the Costs page has, in its order and with its meanings: the
@@ -195,6 +197,16 @@ export default function Sales() {
   const selectedDocs = () => [...selected].map((id) => byId.get(id)).filter(Boolean);
   const hasSelection = selected.size > 0;
 
+  // One page of `rows` on screen, the Costs tab's rule (listPage.js): Export
+  // and the document page's walk still read every row, a new search or sort
+  // starts at the top, and Back lands on the page a document was opened from.
+  const [pageSize, setPageSize] = useListView('sales', 'pageSize', DEFAULT_PAGE_SIZE);
+  const [pageState, setPageState] = useListView('sales', 'page', { at: '', n: 0 });
+  const narrowKey = JSON.stringify([tab, scope, q, sort]);
+  const at = pageOf(rows.length, pageSizeOf(pageSize), currentPage(pageState, narrowKey));
+  const setPage = (n) => setPageState({ at: narrowKey, n });
+  const pageRows = rows.slice(at.start, at.end);
+
   const toggle = (id) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -202,8 +214,14 @@ export default function Sales() {
       else next.add(id);
       return next;
     });
+  // The header box ticks the page on screen, never rows nobody can see.
+  const pageAllSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.id));
   const toggleAll = () =>
-    setSelected((prev) => (prev.size === rows.length ? new Set() : new Set(rows.map((r) => r.id))));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      pageRows.forEach((r) => (pageAllSelected ? next.delete(r.id) : next.add(r.id)));
+      return next;
+    });
 
   const after = async (message) => {
     notifyBillsChanged();
@@ -571,7 +589,7 @@ export default function Sales() {
           {/* Phone: cards. The table below is a thousand pixels wide. */}
           <div className="md:hidden">
             <DocCardList
-              rows={rows}
+              rows={pageRows}
               selected={selected}
               onToggle={toggle}
               onOpen={(d) => navigate(salesPath(d))}
@@ -590,7 +608,7 @@ export default function Sales() {
                   <th className="sticky left-0 z-10 w-16 bg-muted/40 px-3 py-2.5">
                     <input
                       type="checkbox"
-                      checked={rows.length > 0 && selected.size === rows.length}
+                      checked={pageAllSelected}
                       onChange={toggleAll}
                       className="h-4 w-4 accent-black"
                     />
@@ -608,7 +626,7 @@ export default function Sales() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((d) => (
+                {pageRows.map((d) => (
                   <tr
                     key={d.id}
                     onClick={() => navigate(salesPath(d))}
@@ -674,9 +692,14 @@ export default function Sales() {
           </div>
 
           {rows.length > 0 && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              Showing {rows.length} of {rows.length} items
-            </p>
+            <ListPager
+              total={rows.length}
+              size={pageSizeOf(pageSize)}
+              setSize={setPageSize}
+              page={at.page}
+              setPage={setPage}
+              prefix={selected.size > 0 ? `${selected.size} selected · ` : ''}
+            />
           )}
         </>
       )}
