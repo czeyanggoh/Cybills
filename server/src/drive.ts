@@ -77,6 +77,7 @@ type DriveRules = {
   isFiledFolder: (file: unknown) => boolean;
   stampedName: (name: string, day: string, seq: number) => string;
   stampSeq: (name: string, day: string) => number;
+  unstampedName: (name: string) => string;
   driveSkipReason: (file: unknown) => { ignore: boolean; reason: string };
 };
 
@@ -274,16 +275,27 @@ async function lookIn(connectionId: string): Promise<PollResult> {
     const verdict = r.driveSkipReason(child);
     if (verdict.ignore) continue;
     const seen = fileRow(folder.id, child.id);
-    if (seen) {
-      // Filed already and still sitting here: the move is what is outstanding.
+    if (seen && seen.outcome === 'filed' && seen.moved) {
+      // It was moved into Filed and is back in the folder, so a PERSON put it
+      // here. The folder is an inbox: whatever is in it is processed until it is
+      // empty, and putting a file back is how somebody asks for it to be done
+      // again. So it is filed again, as a new document — and if the first one is
+      // still in the book, the duplicate check is what says so. Falls through.
+    } else if (seen) {
+      // Filed already and still sitting here because it could NOT be moved: the
+      // move is what is outstanding. This is the one file in the folder that is
+      // not filed again, and it must not be — it never left, so it would come
+      // back as a new document on every look, for ever.
       if (seen.outcome === 'filed' && !seen.moved && seen.attempts < MAX_TRIES) toMove.push({ fileId: child.id, name: child.name });
       if (!(seen.outcome === 'failed' && seen.attempts < MAX_TRIES)) continue;
     } else {
       // Filed through an EARLIER connection on this same folder — one that was
-      // disconnected, or belonged to somebody else. The document exists; filing
-      // the file again because the connection is new would make a second copy.
+      // disconnected, or belonged to somebody else — and never moved out of it.
+      // Filing it again because the connection is new would make a second copy
+      // of a file nobody touched. (One that WAS moved and has been put back is
+      // filed again, as above.)
       const prior = filedAnywhere(child.id);
-      if (prior) {
+      if (prior && !prior.moved) {
         recordFile({ connectionId: folder.id, fileId: child.id, name: child.name, outcome: 'filed', reason: 'filed earlier', billId: prior.billId, displayId: prior.displayId, moved: false, attempts: 0 });
         toMove.push({ fileId: child.id, name: child.name });
         continue;
@@ -301,6 +313,9 @@ async function lookIn(connectionId: string): Promise<PollResult> {
     taken += 1;
 
     const tries = (seen?.attempts ?? 0) + 1;
+    // What its owner called it. A file coming back out of Filed wears CYBills'
+    // own stamp, which is not part of its name.
+    const ownName = r.unstampedName(child.name) || child.name;
     let bytes: Buffer;
     try {
       bytes = await downloadFile(child.id);
@@ -319,8 +334,8 @@ async function lookIn(connectionId: string): Promise<PollResult> {
     // What the file IS, off its bytes — Drive's label is whatever the uploading
     // app said, and a PDF saved by a scanner as `application/octet-stream` is
     // still a PDF (mediaType.ts).
-    const readType = readerMediaType(child.mimeType, child.name, bytes);
-    if (!readType && !IMAGE_OR_PDF.test(child.mimeType) && !IMAGE_OR_PDF.test(child.name)) {
+    const readType = readerMediaType(child.mimeType, ownName, bytes);
+    if (!readType && !IMAGE_OR_PDF.test(child.mimeType) && !IMAGE_OR_PDF.test(ownName)) {
       const reason = 'not a PDF or image';
       recordFile({ connectionId: folder.id, fileId: child.id, name: child.name, outcome: 'skipped', reason, billId: '', displayId: '', moved: false, attempts: tries });
       out.skipped.push({ name: child.name, reason });
@@ -343,7 +358,7 @@ async function lookIn(connectionId: string): Promise<PollResult> {
       const bill = insertBill({
         orgId: scope,
         fileHash,
-        fileName: child.name,
+        fileName: ownName,
         supplier: '',
         invoiceNumber: '',
         documentType: '',
@@ -361,7 +376,7 @@ async function lookIn(connectionId: string): Promise<PollResult> {
           folderId: folder.folderId,
           folderName: folder.folderName,
           fileId: child.id,
-          fileName: child.name,
+          fileName: ownName,
           addedBy: String(who.emailAddress || ''),
           addedByName: String(who.displayName || ''),
           addedAt: String(child.createdTime || ''),
@@ -373,8 +388,8 @@ async function lookIn(connectionId: string): Promise<PollResult> {
         kind: 'cost',
       });
       recordFile({ connectionId: folder.id, fileId: child.id, name: child.name, outcome: 'filed', reason: '', billId: bill.id, displayId: bill.displayId, moved: false, attempts: 0 });
-      out.filed.push({ billId: bill.id, displayId: bill.displayId, name: child.name });
-      reads.push({ billId: bill.id, base64: bytes.toString('base64'), mediaType: readType || storedType || child.mimeType, fileName: child.name });
+      out.filed.push({ billId: bill.id, displayId: bill.displayId, name: ownName });
+      reads.push({ billId: bill.id, base64: bytes.toString('base64'), mediaType: readType || storedType || child.mimeType, fileName: ownName });
       toMove.push({ fileId: child.id, name: child.name });
     } catch (err) {
       const reason = `could not be filed (${err instanceof Error ? err.message : String(err)})`;
@@ -416,7 +431,10 @@ async function lookIn(connectionId: string): Promise<PollResult> {
     for (const f of toMove) {
       const row = fileRow(folder.id, f.fileId);
       if (!row) continue;
-      const filedName = r.stampedName(f.name, day, seq + 1);
+      // Its own name under THIS filing's stamp. A file filed before and put
+      // back comes in wearing the last one, which is replaced rather than kept:
+      // the name says when it was filed, and it has just been filed again.
+      const filedName = r.stampedName(r.unstampedName(f.name) || f.name, day, seq + 1);
       try {
         await moveFile(f.fileId, folder.folderId, filedFolderId, filedName === f.name ? '' : filedName);
         // Spent only once the move has taken it: a refused move must not leave

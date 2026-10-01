@@ -126,7 +126,9 @@ export const fileRow = (connectionId: string, fileId: string): DriveFileRow | nu
  * were filed once already.
  */
 export const filedAnywhere = (fileId: string): DriveFileRow | null =>
-  loadFileRows().find((r) => r.fileId === fileId && r.outcome === 'filed') ?? null;
+  // The LATEST connection's word on it: rows are appended as connections are
+  // made, and the last one is what most recently happened to the file.
+  [...loadFileRows()].reverse().find((r) => r.fileId === fileId && r.outcome === 'filed') ?? null;
 
 export function recordFile(row: Omit<DriveFileRow, 'id' | 'at'> & { at?: string }): DriveFileRow {
   const items = loadFileRows();

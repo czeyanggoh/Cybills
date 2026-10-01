@@ -10,6 +10,7 @@ import {
   stampedName,
   stampSeq,
   isStamped,
+  unstampedName,
   FOLDER_MIME,
 } from '../src/lib/driveFolder.js';
 
@@ -87,6 +88,10 @@ check('…so it is stamped like any other', stampedName('2026-10-01 Singtel.pdf'
 check('the number a stamped name carries for the day', stampSeq('2026-10-01-0003 Singtel Sep.pdf', '2026-10-01'), 3);
 check('…and none for another day', stampSeq('2026-09-30-0007 Singtel Sep.pdf', '2026-10-01'), 0);
 check('…nor for a name with no stamp', stampSeq('Singtel Sep.pdf', '2026-10-01'), 0);
+
+check('the stamp comes back off for the name its owner gave it', unstampedName('2026-10-01-0003 Singtel Sep.pdf'), 'Singtel Sep.pdf');
+check('…and a name with none is left alone', [unstampedName('Singtel Sep.pdf'), unstampedName('2026-10-01 Singtel.pdf')], ['Singtel Sep.pdf', '2026-10-01 Singtel.pdf']);
+check('a file filed again wears the new stamp in place of the old', stampedName(unstampedName('2026-09-30-0007 Singtel Sep.pdf'), '2026-10-01', 3), '2026-10-01-0003 Singtel Sep.pdf');
 
 // --- How a connection reads ---------------------------------------------------------
 check('connected', driveStatusLabel({ status: 'connected', lastError: '' }), 'Connected');

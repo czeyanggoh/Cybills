@@ -129,6 +129,19 @@ it. The document in CYBills keeps the name its owner gave the file, and its
 **Google Drive** tab links straight to the file, whatever it is now called.
 Files moved into `Filed` before this existed keep the names they have.
 
+### The folder is an inbox: it is processed until it is empty
+
+Whatever is in the folder is filed and moved out. So **a file dragged out of
+`Filed` and back into the folder is filed again**, as a new document, and goes
+back into `Filed` under that filing's own stamp (the old one is replaced, not
+stacked). That is how a file is read again. If the first document is still in
+the book, CYBills' duplicate check flags the pair for review, the same as for
+any document sent twice.
+
+The one file that is *not* filed again is one that was filed but could not be
+moved (see below): it never left the folder, so it would come back as a new
+document every two minutes.
+
 A file is filed **once, by its Drive id**. The move into `Filed` is a courtesy
 to the person looking at their Drive, and it can fail without anything being
 filed twice — a file that could not be moved stays put and is not read again.

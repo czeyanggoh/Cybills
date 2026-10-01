@@ -2250,7 +2250,7 @@ twice sat in Filed as two rows nobody could tell apart, and Cze asked for the
 stamp so a duplicate can still be found (1 Oct 2026). `stampedName` /
 `stampSeq` (`driveFolder.js`, pure, `npm test`) are the rule: the practice's own
 day, a number per FOLDER per day that starts again at 0001, the owner's name
-kept whole behind it, and a name already stamped never stamped twice. The
+kept whole behind it, and never two stamps on one name. The
 rename rides on the move itself (one PATCH, so a file is never left moved under
 its old name), the number is spent only once the move has taken it, and it is
 read back off the ledger across every connection the folder has had
@@ -2259,6 +2259,19 @@ read back off the ledger across every connection the folder has had
 what the reader is told, and a date-shaped prefix in front of it is exactly what
 `fileNameHint` exists to keep away from a reader looking for the document's date
 — and the Google Drive tab links to the file by id, whatever it is now called.
+
+**The folder is an inbox, processed until it is empty.** Cze's rule (1 Oct
+2026), and it corrects the first version, which treated a Drive id as filed for
+good: a file dragged out of Filed and back into the folder sat there for ever
+with nothing saying why, and read as the folder having stopped working. So a
+file that was MOVED and is back is filed again, as a new document, and moved
+out again under that filing's stamp (the old one replaced, not stacked); if the
+first document still stands, the duplicate check is what says so. The ledger
+still holds for the one case it must: a file filed but never moved has not left
+the folder, and filed again it would come back on every look, for ever. Same
+across a reconnection (`filedAnywhere` answers with the LATEST row, and only a
+never-moved one is taken as already filed). The document's own name is the
+owner's, stamp taken back off (`unstampedName`).
 
 **The bytes decide what a file is**, as on the other two roads
 (`readerMediaType`): a PDF a scanner saved as `application/octet-stream` is

@@ -97,6 +97,14 @@ export function stampedName(name, day, seq) {
   return `${day}-${String(Math.max(1, Number(seq) || 1)).padStart(4, '0')} ${raw}`;
 }
 
+/**
+ * The name its owner gave a file, with any filing stamp taken back off. A file
+ * pulled out of "Filed" and filed again is still called what its owner called
+ * it: the stamp is CYBills' own mark, and left on the document's name it would
+ * put a date that is not the document's in front of a reader looking for one.
+ */
+export const unstampedName = (name) => String(name ?? '').replace(STAMP, '');
+
 const NATIVE = {
   'application/vnd.google-apps.document': 'a Google Doc',
   'application/vnd.google-apps.spreadsheet': 'a Google Sheet',

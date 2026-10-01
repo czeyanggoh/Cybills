@@ -329,6 +329,22 @@ put({ id: 'file_twin_0000000014', name: 'Singtel Sep.pdf', mimeType: 'applicatio
 r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
 check('a second file of the same name is told apart by its number', drive.get('file_twin_0000000014')!.name, `${DAY}-0004 Singtel Sep.pdf`);
 
+// --- A filed file put back in the folder -----------------------------------------------
+// The folder is an inbox: whatever is in it is processed until it is empty. So a
+// file dragged out of Filed and back into the folder is filed AGAIN, as a new
+// document — that is what putting it back asks for.
+const billsBeforePutBack = listBills(RED).length;
+drive.get('file_grab_00000000001')!.parents = [DEANNA_FOLDER];
+r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
+check('a filed file put back in the folder is filed again', [r.body.filed?.length, listBills(RED).length], [1, billsBeforePutBack + 1]);
+const again = listBills(RED).filter((b) => b.drive?.fileId === 'file_grab_00000000001');
+check('…as a second document, under the name its owner gave the file, not the stamp', [again.length, again.map((b) => b.fileName)], [2, ['Grab tiffinlabs paid.pdf', 'Grab tiffinlabs paid.pdf']]);
+check('…and moved out again, so the folder empties', drive.get('file_grab_00000000001')!.parents, [filedFolder]);
+check('…under this filing’s number, the old stamp replaced rather than stacked', drive.get('file_grab_00000000001')!.name, `${DAY}-0005 Grab tiffinlabs paid.pdf`);
+r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
+check('…once: the next look finds nothing', [r.body.filed?.length, listBills(RED).length], [0, billsBeforePutBack + 1]);
+await settle(() => listBills(RED).every((b) => b.status !== 'processing'));
+
 // --- One folder, one person ------------------------------------------------------------------
 drive.get(DEANNA_FOLDER)!.sharedWith = ['martin@redalphacyber.com'];
 r = await call('POST', '/api/drive/folders', MARTIN, { userId: 'emp_martin', link: DEANNA_FOLDER });
@@ -395,7 +411,7 @@ check('shared again, it picks up where it left off', [r.body.ok, r.body.error], 
 put({ id: 'file_clock_0000000011', name: 'Canva Oct.pdf', mimeType: 'application/pdf', parents: [DEANNA_FOLDER], bytes: PDF('Canva'), owner: 'deanna.chua@redalphacyber.com' });
 await pollAllFolders();
 check('the sweep files what nobody pressed a button for', listBills(RED).some((b) => b.fileName === 'Canva Oct.pdf'), true);
-check('…and stamps it like any other', drive.get('file_clock_0000000011')!.name, `${DAY}-0005 Canva Oct.pdf`);
+check('…and stamps it like any other', drive.get('file_clock_0000000011')!.name, `${DAY}-0006 Canva Oct.pdf`);
 
 // --- Disconnecting, and connecting again --------------------------------------------------------------------
 // A file the robot could not move is still sitting in the folder. Connecting
@@ -423,6 +439,14 @@ check('…and not, a second time, what was already filed', names.filter((n) => n
 // A new connection over the same Filed folder: the numbers go on from where the
 // last one stopped rather than handing out 0001 a second time.
 await settle(() => drive.get('file_after_0000000013')!.parents[0] !== DEANNA_FOLDER);
-check('…with the running number carried on across the reconnection', drive.get('file_after_0000000013')!.name, `${DAY}-0006 After.pdf`);
+check('…with the running number carried on across the reconnection', drive.get('file_after_0000000013')!.name, `${DAY}-0007 After.pdf`);
+
+// And across a reconnection too: a file the OLD connection moved into Filed,
+// put back in the folder, is filed again by the new one.
+const beforeReturn = listBills(RED).filter((b) => b.drive?.fileId === 'file_new_000000000008').length;
+drive.get('file_new_000000000008')!.parents = [DEANNA_FOLDER];
+await pollAllFolders();
+check('a file an earlier connection filed, put back, is filed again by the new one', listBills(RED).filter((b) => b.drive?.fileId === 'file_new_000000000008').length, beforeReturn + 1);
+check('…while one that never left the folder still is not', listBills(RED).filter((b) => b.fileName === 'Stuck.pdf').length, 1);
 
 await finish(failures, server, google);
