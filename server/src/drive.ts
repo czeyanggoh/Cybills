@@ -45,6 +45,7 @@ import {
   recordFile,
   recentFiles,
   filedNamesIn,
+  moveTriesOf,
   type DriveFolder,
   type DriveFileRow,
 } from './driveFolders.js';
@@ -74,7 +75,9 @@ type DriveRules = {
   MAX_DRIVE_FILE_BYTES: number;
   folderIdFromLink: (value: unknown) => string;
   folderLinkFor: (id: string) => string;
+  NOT_FILED_FOLDER_NAME: string;
   isFiledFolder: (file: unknown) => boolean;
+  isNotFiledFolder: (file: unknown) => boolean;
   stampedName: (name: string, day: string, seq: number) => string;
   stampSeq: (name: string, day: string) => number;
   unstampedName: (name: string) => string;
@@ -156,6 +159,7 @@ function publicFolder(f: DriveFolder, withFiles = true) {
     lastCheckedAt: f.lastCheckedAt,
     lastError: f.lastError,
     filedNote: f.filedNote,
+    notFiledNote: f.notFiledNote || '',
     filed: f.filed,
     lastFiledAt: f.lastFiledAt,
     files: withFiles
@@ -208,6 +212,25 @@ function whyUnreachable(err: unknown): string {
   return `Google Drive could not be reached (${err instanceof Error ? err.message : String(err)}).`;
 }
 
+// The subfolder a look moves files into, made because nobody has made one. A
+// refusal is believed for FILED_RETRY_MS rather than asked again on every look:
+// the likely reasons — view-only access, a robot Google will not let own a
+// folder in somebody's My Drive — do not change by themselves. `error` is set
+// only when this call was refused; a refusal still being believed says nothing
+// new, and the note it left stands.
+async function makeSubfolder(
+  parentId: string,
+  name: string,
+  blockedAt: string
+): Promise<{ id: string; blockedAt: string; error: string }> {
+  if (blockedAt && Date.now() - new Date(blockedAt).getTime() < FILED_RETRY_MS) return { id: '', blockedAt, error: '' };
+  try {
+    return { id: (await createFolder(parentId, name)).id, blockedAt: '', error: '' };
+  } catch (err) {
+    return { id: '', blockedAt: new Date().toISOString(), error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // New files taken per look. A person who drops a year of receipts into the
 // folder gets them ten at a time, two minutes apart, rather than as two hundred
 // model calls started in the same second.
@@ -225,6 +248,8 @@ export type PollResult = {
   skipped: Array<{ name: string; reason: string }>;
   failed: Array<{ name: string; reason: string }>;
   moved: number;
+  /** How many files that cannot be read were moved into "Not filed". */
+  setAside: number;
   waiting: number;
   error: string;
 };
@@ -241,7 +266,7 @@ export function pollFolder(folderId: string): Promise<PollResult> {
 }
 
 async function lookIn(connectionId: string): Promise<PollResult> {
-  const out: PollResult = { ok: false, filed: [], skipped: [], failed: [], moved: 0, waiting: 0, error: '' };
+  const out: PollResult = { ok: false, filed: [], skipped: [], failed: [], moved: 0, setAside: 0, waiting: 0, error: '' };
   const r = await loadRules();
   const folder = folderById(connectionId);
   if (!r || !folder || folder.status !== 'connected') {
@@ -268,6 +293,9 @@ async function lookIn(connectionId: string): Promise<PollResult> {
   const scope = folder.scope;
   const realOrgId = folder.orgId;
   const toMove: Array<{ fileId: string; name: string }> = [];
+  // What cannot be filed, on its way into "Not filed".
+  const toSetAside: Array<{ fileId: string; name: string }> = [];
+  const setAside = (fileId: string, name: string) => toSetAside.push({ fileId, name });
   const reads: Array<{ billId: string; base64: string; mediaType: string; fileName: string }> = [];
   let taken = 0;
 
@@ -275,19 +303,29 @@ async function lookIn(connectionId: string): Promise<PollResult> {
     const verdict = r.driveSkipReason(child);
     if (verdict.ignore) continue;
     const seen = fileRow(folder.id, child.id);
-    if (seen && seen.outcome === 'filed' && seen.moved) {
-      // It was moved into Filed and is back in the folder, so a PERSON put it
-      // here. The folder is an inbox: whatever is in it is processed until it is
-      // empty, and putting a file back is how somebody asks for it to be done
-      // again. So it is filed again, as a new document — and if the first one is
-      // still in the book, the duplicate check is what says so. Falls through.
+    if (seen && seen.moved) {
+      // It was moved out — into Filed, or into Not filed — and is back in the
+      // folder, so a PERSON put it here. The folder is an inbox: whatever is in
+      // it is processed until it is empty, and putting a file back is how
+      // somebody asks for it to be done again. A filed one is filed again, as a
+      // new document (the duplicate check says so if the first still stands);
+      // one that could not be read is looked at again, and goes back into Not
+      // filed if it still cannot. Falls through.
     } else if (seen) {
-      // Filed already and still sitting here because it could NOT be moved: the
-      // move is what is outstanding. This is the one file in the folder that is
-      // not filed again, and it must not be — it never left, so it would come
-      // back as a new document on every look, for ever.
-      if (seen.outcome === 'filed' && !seen.moved && seen.attempts < MAX_TRIES) toMove.push({ fileId: child.id, name: child.name });
-      if (!(seen.outcome === 'failed' && seen.attempts < MAX_TRIES)) continue;
+      // Seen already and still sitting here because it could NOT be moved: the
+      // move is what is outstanding, and this file is not processed again — it
+      // never left, so a filed one would come back as a new document on every
+      // look, for ever.
+      if (seen.outcome === 'filed') {
+        if (moveTriesOf(seen) < MAX_TRIES) toMove.push({ fileId: child.id, name: child.name });
+        continue;
+      }
+      // Not a document, or one that could not be had after every try: set aside.
+      if (seen.outcome === 'skipped' || seen.attempts >= MAX_TRIES) {
+        if (moveTriesOf(seen) < MAX_TRIES) setAside(child.id, child.name);
+        continue;
+      }
+      // A failed read with tries left: try it again, below.
     } else {
       // Filed through an EARLIER connection on this same folder — one that was
       // disconnected, or belonged to somebody else — and never moved out of it.
@@ -304,6 +342,7 @@ async function lookIn(connectionId: string): Promise<PollResult> {
     if (verdict.reason) {
       recordFile({ connectionId: folder.id, fileId: child.id, name: child.name, outcome: 'skipped', reason: verdict.reason, billId: '', displayId: '', moved: false, attempts: 0 });
       out.skipped.push({ name: child.name, reason: verdict.reason });
+      setAside(child.id, child.name);
       continue;
     }
     if (taken >= BATCH) {
@@ -312,7 +351,8 @@ async function lookIn(connectionId: string): Promise<PollResult> {
     }
     taken += 1;
 
-    const tries = (seen?.attempts ?? 0) + 1;
+    // A file put back after being moved out starts its count again.
+    const tries = (seen && !seen.moved ? seen.attempts : 0) + 1;
     // What its owner called it. A file coming back out of Filed wears CYBills'
     // own stamp, which is not part of its name.
     const ownName = r.unstampedName(child.name) || child.name;
@@ -323,12 +363,16 @@ async function lookIn(connectionId: string): Promise<PollResult> {
       const reason = `could not be downloaded (${err instanceof Error ? err.message : String(err)})`;
       recordFile({ connectionId: folder.id, fileId: child.id, name: child.name, outcome: 'failed', reason, billId: '', displayId: '', moved: false, attempts: tries });
       out.failed.push({ name: child.name, reason });
+      // Out of tries: it is not going to be had, so it is set aside rather than
+      // left looking like something still waiting.
+      if (tries >= MAX_TRIES) setAside(child.id, child.name);
       continue;
     }
     if (!bytes.length || bytes.length > r.MAX_DRIVE_FILE_BYTES) {
       const reason = bytes.length ? 'too large to read (the limit is 20 MB)' : 'an empty file';
       recordFile({ connectionId: folder.id, fileId: child.id, name: child.name, outcome: 'skipped', reason, billId: '', displayId: '', moved: false, attempts: tries });
       out.skipped.push({ name: child.name, reason });
+      setAside(child.id, child.name);
       continue;
     }
     // What the file IS, off its bytes — Drive's label is whatever the uploading
@@ -339,6 +383,7 @@ async function lookIn(connectionId: string): Promise<PollResult> {
       const reason = 'not a PDF or image';
       recordFile({ connectionId: folder.id, fileId: child.id, name: child.name, outcome: 'skipped', reason, billId: '', displayId: '', moved: false, attempts: tries });
       out.skipped.push({ name: child.name, reason });
+      setAside(child.id, child.name);
       continue;
     }
 
@@ -395,6 +440,7 @@ async function lookIn(connectionId: string): Promise<PollResult> {
       const reason = `could not be filed (${err instanceof Error ? err.message : String(err)})`;
       recordFile({ connectionId: folder.id, fileId: child.id, name: child.name, outcome: 'failed', reason, billId: '', displayId: '', moved: false, attempts: tries });
       out.failed.push({ name: child.name, reason });
+      if (tries >= MAX_TRIES) setAside(child.id, child.name);
     }
   }
 
@@ -407,18 +453,14 @@ async function lookIn(connectionId: string): Promise<PollResult> {
   let filedNote = folder.filedNote;
   let filedBlockedAt = folder.filedBlockedAt || '';
   if (toMove.length && !filedFolderId) {
-    const blocked = filedBlockedAt && Date.now() - new Date(filedBlockedAt).getTime() < FILED_RETRY_MS;
-    if (!blocked) {
-      try {
-        filedFolderId = (await createFolder(folder.folderId, r.FILED_FOLDER_NAME)).id;
-        filedBlockedAt = '';
-      } catch (err) {
-        filedBlockedAt = now();
-        filedNote =
-          `Filed files are staying where they are: CYBills could not make a “${r.FILED_FOLDER_NAME}” folder here ` +
-          `(${err instanceof Error ? err.message : String(err)}). Make a folder called ${r.FILED_FOLDER_NAME} inside this one ` +
-          `and they will be moved into it; nothing is filed twice either way.`;
-      }
+    const made = await makeSubfolder(folder.folderId, r.FILED_FOLDER_NAME, filedBlockedAt);
+    filedFolderId = made.id;
+    filedBlockedAt = made.blockedAt;
+    if (made.error) {
+      filedNote =
+        `Filed files are staying where they are: CYBills could not make a “${r.FILED_FOLDER_NAME}” folder here ` +
+        `(${made.error}). Make a folder called ${r.FILED_FOLDER_NAME} inside this one ` +
+        `and they will be moved into it; nothing is filed twice either way.`;
     }
   }
   if (filedFolderId && toMove.length) {
@@ -443,8 +485,40 @@ async function lookIn(connectionId: string): Promise<PollResult> {
         recordFile({ ...row, moved: true, filedName, at: row.at });
         out.moved += 1;
       } catch (err) {
-        recordFile({ ...row, attempts: row.attempts + 1, at: row.at });
+        recordFile({ ...row, moveTries: moveTriesOf(row) + 1, at: row.at });
         filedNote = `“${f.name}” was filed but could not be moved into ${r.FILED_FOLDER_NAME} (${err instanceof Error ? err.message : String(err)}). Share the folder with ${robotEmail()} as an Editor.`;
+      }
+    }
+  }
+
+  // And what cannot be filed, into "Not filed", under its own name: the stamp
+  // says when a file was FILED, and these were not. Found where somebody made
+  // the folder, made where nobody has, exactly as Filed is.
+  let notFiledFolderId = children.find((c) => r.isNotFiledFolder(c))?.id || '';
+  let notFiledNote = folder.notFiledNote || '';
+  let notFiledBlockedAt = folder.notFiledBlockedAt || '';
+  if (toSetAside.length && !notFiledFolderId) {
+    const made = await makeSubfolder(folder.folderId, r.NOT_FILED_FOLDER_NAME, notFiledBlockedAt);
+    notFiledFolderId = made.id;
+    notFiledBlockedAt = made.blockedAt;
+    if (made.error) {
+      notFiledNote =
+        `Files CYBills can’t read are staying where they are: it could not make a “${r.NOT_FILED_FOLDER_NAME}” folder here ` +
+        `(${made.error}). Make a folder called ${r.NOT_FILED_FOLDER_NAME} inside this one and they will be moved into it.`;
+    }
+  }
+  if (notFiledFolderId && toSetAside.length) {
+    notFiledNote = '';
+    for (const f of toSetAside) {
+      const row = fileRow(folder.id, f.fileId);
+      if (!row) continue;
+      try {
+        await moveFile(f.fileId, folder.folderId, notFiledFolderId);
+        recordFile({ ...row, moved: true, at: row.at });
+        out.setAside += 1;
+      } catch (err) {
+        recordFile({ ...row, moveTries: moveTriesOf(row) + 1, at: row.at });
+        notFiledNote = `“${f.name}” can’t be read and could not be moved into ${r.NOT_FILED_FOLDER_NAME} (${err instanceof Error ? err.message : String(err)}). Share the folder with ${robotEmail()} as an Editor.`;
       }
     }
   }
@@ -455,6 +529,9 @@ async function lookIn(connectionId: string): Promise<PollResult> {
     filedFolderId,
     filedNote,
     filedBlockedAt,
+    notFiledFolderId,
+    notFiledNote,
+    notFiledBlockedAt,
     ...(out.filed.length ? { filed: folder.filed + out.filed.length, lastFiledAt: now() } : {}),
   });
 
@@ -680,9 +757,10 @@ driveRouter.post('/folders', async (req, res) => {
   });
   if (!canChange) {
     patchFolder(folder.id, {
-      filedNote: `CYBills can read this folder but not change it, so filed files stay where they are. Share it with ${robotEmail()} as an Editor to have them moved into “${r.FILED_FOLDER_NAME}”.`,
+      filedNote: `CYBills can read this folder but not change it, so nothing is moved out of it. Share it with ${robotEmail()} as an Editor to have files moved into “${r.FILED_FOLDER_NAME}” and “${r.NOT_FILED_FOLDER_NAME}”.`,
       // Nothing to ask for until the sharing changes.
       filedBlockedAt: new Date().toISOString(),
+      notFiledBlockedAt: new Date().toISOString(),
     });
   }
   // Whatever is already in it is looked at now rather than in two minutes —

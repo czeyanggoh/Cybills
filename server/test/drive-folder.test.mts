@@ -291,7 +291,9 @@ await settle(() => listBills(RED).every((b) => b.status !== 'processing'));
 check('…and out of Processing once the read ended', listBills(RED).map((b) => b.status), ['new', 'new']);
 
 const filedFolder = created[0];
-check('a Filed folder was made inside it', [created.length, drive.get(filedFolder)?.name, drive.get(filedFolder)?.parents], [1, 'Filed', [DEANNA_FOLDER]]);
+const notFiledFolder = created[1];
+check('a Filed folder was made inside it', [drive.get(filedFolder)?.name, drive.get(filedFolder)?.parents], ['Filed', [DEANNA_FOLDER]]);
+check('…and a Not filed folder beside it, and nothing else', [created.length, drive.get(notFiledFolder)?.name, drive.get(notFiledFolder)?.parents], [2, 'Not filed', [DEANNA_FOLDER]]);
 check('…and the filed files moved into it', [drive.get('file_grab_00000000001')!.parents, drive.get('file_photo_0000000002')!.parents], [[filedFolder], [filedFolder]]);
 // Renamed as it is moved: the day and a running number in front of the name its
 // owner gave it, so two files of one name can be told apart in Filed and the
@@ -299,17 +301,22 @@ check('…and the filed files moved into it', [drive.get('file_grab_00000000001'
 check('…each under the day and a running number, its own name kept behind', [drive.get('file_grab_00000000001')!.name, drive.get('file_photo_0000000002')!.name], [`${DAY}-0001 Grab tiffinlabs paid.pdf`, `${DAY}-0002 IMG_4821.png`]);
 check('the document keeps the name its owner gave the file', grab.fileName, 'Grab tiffinlabs paid.pdf');
 check('what is not a document keeps its own name', [drive.get('file_docx_00000000003')!.name, drive.get('file_gdoc_00000000004')!.name], ['notes.docx', 'Invoice draft']);
-check('what is not a document stays where it was put', [drive.get('file_docx_00000000003')!.parents, drive.get('file_gdoc_00000000004')!.parents], [[DEANNA_FOLDER], [DEANNA_FOLDER]]);
+// The folder is an inbox, processed until it is empty: what CYBills cannot read
+// is moved out too, into Not filed, so it stops looking like something waiting.
+check('what is not a document is moved into Not filed', [drive.get('file_docx_00000000003')!.parents, drive.get('file_gdoc_00000000004')!.parents], [[notFiledFolder], [notFiledFolder]]);
+check('…and nothing is left in the folder but the two subfolders and the one of its own', [...drive.values()].filter((i) => i.parents.includes(DEANNA_FOLDER)).map((i) => i.name).sort(), ['Filed', 'Not filed', 'Old']);
+check('…with no document made of either', listBills(RED).some((b) => ['notes.docx', 'Invoice draft'].includes(b.fileName)), false);
 check('a subfolder is not gone into', drive.get('file_deep_00000000006')!.parents, ['subfolder_00000000005']);
 
 r = await call('GET', '/api/drive/folders?userId=emp_deanna', DEANNA);
 const card = r.body.folders?.[0];
 check('her page shows the folder and what it has filed', [r.body.folders?.length, card?.filed, card?.lastError, card?.filedNote], [1, 2, '', '']);
-const skippedRows = (card?.files ?? []).filter((f: any) => f.outcome === 'skipped').map((f: any) => [f.name, f.reason]).sort();
-check('…and says why the rest were passed over', skippedRows, [
-  ['Invoice draft', 'a Google Doc, not a file — download it as a PDF and save that here'],
-  ['notes.docx', 'not a PDF or image'],
+const skippedRows = (card?.files ?? []).filter((f: any) => f.outcome === 'skipped').map((f: any) => [f.name, f.reason, f.moved]).sort();
+check('…and says why the rest were passed over, and that they were moved', skippedRows, [
+  ['Invoice draft', 'a Google Doc, not a file — download it as a PDF and save that here', true],
+  ['notes.docx', 'not a PDF or image', true],
 ]);
+check('…without a word about Not filed going wrong', card?.notFiledNote, '');
 
 // --- Looking again ----------------------------------------------------------------------
 r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
@@ -319,7 +326,7 @@ check('a second look files nothing twice', [r.status, r.body.filed?.length, list
 put({ id: 'file_new_000000000008', name: 'Singtel Sep.pdf', mimeType: 'application/pdf', parents: [DEANNA_FOLDER], bytes: PDF('Singtel September'), owner: 'deanna.chua@redalphacyber.com' });
 r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
 check('a file saved later is filed on the next look', [r.body.filed?.length, r.body.filed?.[0]?.name, r.body.moved], [1, 'Singtel Sep.pdf', 1]);
-check('…into the same Filed folder, not a second one', [created.length, drive.get('file_new_000000000008')!.parents], [1, [filedFolder]]);
+check('…into the same Filed folder, not a second one', [created.length, drive.get('file_new_000000000008')!.parents], [2, [filedFolder]]);
 check('…under the next number', drive.get('file_new_000000000008')!.name, `${DAY}-0003 Singtel Sep.pdf`);
 
 // The same invoice saved a second time is a different file in Drive, and in
@@ -345,6 +352,18 @@ r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
 check('…once: the next look finds nothing', [r.body.filed?.length, listBills(RED).length], [0, billsBeforePutBack + 1]);
 await settle(() => listBills(RED).every((b) => b.status !== 'processing'));
 
+// --- A file CYBills cannot read, put back -------------------------------------------------
+// Dragged out of Not filed and back in: it is looked at again — and since it
+// still cannot be read, it goes back where it was, with no document made of it.
+drive.get('file_docx_00000000003')!.parents = [DEANNA_FOLDER];
+r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
+check('an unreadable file put back is moved into Not filed again', [r.body.setAside, drive.get('file_docx_00000000003')!.parents], [1, [notFiledFolder]]);
+check('…under its own name, and still no document', [drive.get('file_docx_00000000003')!.name, listBills(RED).some((b) => b.fileName === 'notes.docx')], ['notes.docx', false]);
+// A new unreadable file saved later goes the same way, into the same folder.
+put({ id: 'file_xlsx_00000000015', name: 'claims.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', parents: [DEANNA_FOLDER], bytes: Buffer.from('PK a spreadsheet'), owner: 'deanna.chua@redalphacyber.com' });
+r = await call('POST', `/api/drive/folders/${connection}/check`, DEANNA);
+check('one saved later goes the same way, into the same Not filed', [r.body.setAside, drive.get('file_xlsx_00000000015')!.parents, created.length], [1, [notFiledFolder], 2]);
+
 // --- One folder, one person ------------------------------------------------------------------
 drive.get(DEANNA_FOLDER)!.sharedWith = ['martin@redalphacyber.com'];
 r = await call('POST', '/api/drive/folders', MARTIN, { userId: 'emp_martin', link: DEANNA_FOLDER });
@@ -366,6 +385,7 @@ check('somebody else’s connection is a 404, never a 403', r.status, 404);
 const MARTIN_FOLDER = 'martinFolder_0123456789abcdefghi';
 put({ id: MARTIN_FOLDER, name: 'Martin scans', mimeType: FOLDER, parents: ['root'], owner: 'martin@redalphacyber.com' });
 put({ id: 'file_mart_00000000009', name: 'SPC petrol.pdf', mimeType: 'application/pdf', parents: [MARTIN_FOLDER], bytes: PDF('SPC'), owner: 'martin@redalphacyber.com' });
+put({ id: 'file_mdoc_00000000017', name: 'mileage log.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', parents: [MARTIN_FOLDER], bytes: Buffer.from('PK'), owner: 'martin@redalphacyber.com' });
 mayCreateFolders = false;
 r = await call('POST', '/api/drive/folders', BOSS, { userId: 'emp_martin', link: linkTo(MARTIN_FOLDER) });
 check('an admin connects a folder that is the person’s own', [r.status, r.body.folder?.personName], [200, 'Martin Lim']);
@@ -376,6 +396,7 @@ check('the document is filed all the same', listBills(RED).filter((b) => b.fileN
 check('…and stays where it was saved', drive.get('file_mart_00000000009')!.parents, [MARTIN_FOLDER]);
 r = await call('GET', '/api/drive/folders?userId=emp_martin', BOSS);
 check('…with the card saying why, and what to do', String(r.body.folders?.[0]?.filedNote).includes('Make a folder called Filed'), true);
+check('the file it cannot read stays put too, and the card says so', [drive.get('file_mdoc_00000000017')!.parents, String(r.body.folders?.[0]?.notFiledNote).includes('Make a folder called Not filed')], [[MARTIN_FOLDER], true]);
 r = await call('POST', `/api/drive/folders/${martins}/check`, BOSS);
 check('a file left in place is still filed only once', [r.body.filed?.length, listBills(RED).filter((b) => b.fileName === 'SPC petrol.pdf').length], [0, 1]);
 
@@ -386,6 +407,12 @@ check('a Filed folder made by hand is used', [r.body.moved, drive.get('file_mart
 check('…and the numbers are the folder’s own, starting at one', drive.get('file_mart_00000000009')!.name, `${DAY}-0001 SPC petrol.pdf`);
 r = await call('GET', '/api/drive/folders?userId=emp_martin', BOSS);
 check('…and the card stops saying otherwise', r.body.folders?.[0]?.filedNote, '');
+check('…while Not filed, still missing, is still said', [drive.get('file_mdoc_00000000017')!.parents, String(r.body.folders?.[0]?.notFiledNote).includes('Make a folder called Not filed')], [[MARTIN_FOLDER], true]);
+put({ id: 'handmade_notfiled_0018', name: 'Not  Filed', mimeType: FOLDER, parents: [MARTIN_FOLDER], owner: 'martin@redalphacyber.com' });
+r = await call('POST', `/api/drive/folders/${martins}/check`, BOSS);
+check('a Not filed folder made by hand is used too', [r.body.setAside, drive.get('file_mdoc_00000000017')!.parents], [1, ['handmade_notfiled_0018']]);
+r = await call('GET', '/api/drive/folders?userId=emp_martin', BOSS);
+check('…and that note goes as well', r.body.folders?.[0]?.notFiledNote, '');
 mayCreateFolders = true;
 
 // --- The practice connects one for a client ---------------------------------------------------------

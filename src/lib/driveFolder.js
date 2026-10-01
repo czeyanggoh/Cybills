@@ -15,6 +15,12 @@
 // of moving anything.
 export const FILED_FOLDER_NAME = 'Filed';
 
+// Where a file CYBills cannot read is moved to — a Word document, a Google Doc,
+// a file over the size limit. The folder is an inbox, processed until it is
+// empty, and a file that will never be filed would otherwise sit in it for ever
+// looking like one still waiting.
+export const NOT_FILED_FOLDER_NAME = 'Not filed';
+
 export const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
 // Bigger than this is not read: the reader's own limits are in this region and
@@ -63,6 +69,11 @@ export const folderLinkFor = (id) => (id ? `https://drive.google.com/drive/folde
 export const isFiledFolder = (file) =>
   file?.mimeType === FOLDER_MIME &&
   String(file?.name ?? '').trim().toLowerCase() === FILED_FOLDER_NAME.toLowerCase();
+
+// The same, for "Not filed" — and as loosely: "Not Filed", "not filed ".
+export const isNotFiledFolder = (file) =>
+  file?.mimeType === FOLDER_MIME &&
+  String(file?.name ?? '').trim().replace(/\s+/g, ' ').toLowerCase() === NOT_FILED_FOLDER_NAME.toLowerCase();
 
 // --- The name a filed file wears -------------------------------------------------
 // Moved into "Filed", a file is renamed with the day it was filed and a running

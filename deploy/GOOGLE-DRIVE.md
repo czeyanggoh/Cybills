@@ -100,9 +100,10 @@ to connect it.
 | --- | --- |
 | PDF, PNG, JPEG, GIF, WebP | Filed, read, moved into `Filed`. |
 | HEIC / TIFF | Filed and moved, but not read (the reader cannot take them) — the document says so. |
-| Word, Excel, anything else | Left where it is; the card says "not a PDF or image". |
-| Google Docs / Sheets / Slides | Left where it is; download as PDF and save that. |
-| Over 20 MB | Left where it is. |
+| Word, Excel, anything else | Moved into `Not filed`; the card says "not a PDF or image". |
+| Google Docs / Sheets / Slides | Moved into `Not filed`; download as PDF and save that. |
+| Over 20 MB | Moved into `Not filed`. |
+| Could not be downloaded, three tries running | Moved into `Not filed`, with Google's reason. |
 | Subfolders and shortcuts | Ignored. Subfolders are **not** gone into. |
 
 What a file *is* is decided from its bytes, not from Drive's label: a PDF a
@@ -138,6 +139,14 @@ stacked). That is how a file is read again. If the first document is still in
 the book, CYBills' duplicate check flags the pair for review, the same as for
 any document sent twice.
 
+What CYBills cannot read goes into a **`Not filed`** subfolder beside `Filed`,
+under its own name (no stamp: it was not filed), with the reason on the folder's
+card — otherwise it would sit in the folder for ever looking like something
+still waiting. Put back in the folder, it is looked at again, and goes back into
+`Not filed` if it still cannot be read. `Not filed` is found where somebody
+made one (spelt however they like) and made where nobody has, exactly as
+`Filed` is.
+
 The one file that is *not* filed again is one that was filed but could not be
 moved (see below): it never left the folder, so it would come back as a new
 document every two minutes.
@@ -152,12 +161,12 @@ The file's **name** travels with it, as it does on an upload: "Singtel
 tiffinlabs paid.pdf" tells the reader what the document is *for*, never what it
 says.
 
-## When the `Filed` folder cannot be made
+## When the `Filed` or `Not filed` folder cannot be made
 
 Google does not let a service account own files in somebody's My Drive, and
 depending on the account that can extend to the `Filed` folder itself. When it
-does, the card says so and the fix is one step: **make a folder called `Filed`
-inside the connected folder by hand.** CYBills finds it on the next look and
+does, the card says so and the fix is one step: **make the folder (`Filed`,
+`Not filed`, or both) inside the connected folder by hand.** CYBills finds it on the next look and
 moves what it has filed into it. Folders inside a *shared drive* are owned by
 the drive and never hit this.
 

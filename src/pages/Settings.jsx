@@ -842,7 +842,7 @@ function ExtractByDriveCard() {
           )}
           <p className="text-xs text-muted-foreground">
             Every connected folder is looked in every couple of minutes. Subfolders are not gone into, and a file that
-            is not a PDF or an image is left where it is, with the reason shown here.
+            is not a PDF or an image is moved into a &ldquo;Not filed&rdquo; folder beside it, with the reason shown here.
           </p>
         </>
       ) : (

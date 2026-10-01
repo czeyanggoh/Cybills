@@ -5,6 +5,7 @@ import {
   folderIdFromLink,
   folderLinkFor,
   isFiledFolder,
+  isNotFiledFolder,
   driveSkipReason,
   driveStatusLabel,
   stampedName,
@@ -51,6 +52,12 @@ check('Filed', isFiledFolder({ name: 'Filed', mimeType: FOLDER_MIME }), true);
 check('…as somebody typed it', isFiledFolder({ name: ' filed ', mimeType: FOLDER_MIME }), true);
 check('a FILE called Filed is not it', isFiledFolder({ name: 'Filed', mimeType: 'application/pdf' }), false);
 check('nor a folder called something else', isFiledFolder({ name: 'Filed 2025', mimeType: FOLDER_MIME }), false);
+
+// --- The Not filed subfolder ---------------------------------------------------------
+check('Not filed', isNotFiledFolder({ name: 'Not filed', mimeType: FOLDER_MIME }), true);
+check('…as somebody typed it', [isNotFiledFolder({ name: ' not  Filed ', mimeType: FOLDER_MIME }), isNotFiledFolder({ name: 'NOT FILED', mimeType: FOLDER_MIME })], [true, true]);
+check('Filed is not Not filed, nor the other way round', [isNotFiledFolder({ name: 'Filed', mimeType: FOLDER_MIME }), isFiledFolder({ name: 'Not filed', mimeType: FOLDER_MIME })], [false, false]);
+check('a FILE called Not filed is not it', isNotFiledFolder({ name: 'Not filed', mimeType: 'application/pdf' }), false);
 
 // --- Which files are documents ---------------------------------------------------
 const verdict = (file) => {

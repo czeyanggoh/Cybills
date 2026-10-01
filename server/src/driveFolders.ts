@@ -32,6 +32,10 @@ export type DriveFolder = {
   filedNote: string;
   /** When making the subfolder was last refused, so it is not asked for every two minutes. */
   filedBlockedAt?: string;
+  /** The "Not filed" subfolder, the files that cannot be read, its note and its refusal — Filed's three, again. */
+  notFiledFolderId?: string;
+  notFiledNote?: string;
+  notFiledBlockedAt?: string;
   filed: number;
   lastFiledAt: string;
 };
@@ -51,12 +55,23 @@ export type DriveFileRow = {
   reason: string;
   billId: string;
   displayId: string;
+  /** Out of the folder: into "Filed" for a filed file, into "Not filed" for one that was not. */
   moved: boolean;
   /** What the file is called in "Filed" — the day and running number in front of its own name. */
   filedName?: string;
+  /** Tries at READING it — downloading and filing. */
   attempts: number;
+  /**
+   * Tries at MOVING it, kept apart from the above: a file that took three tries
+   * to download must still get its three tries at being moved. Absent on rows
+   * written before it existed, where a filed row counted its moves in `attempts`.
+   */
+  moveTries?: number;
   at: string;
 };
+
+export const moveTriesOf = (row: DriveFileRow): number =>
+  row.moveTries ?? (row.outcome === 'filed' ? row.attempts : 0);
 
 const FOLDERS = 'drive-folders';
 const FILES = 'drive-files';

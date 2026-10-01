@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Check, Copy, ExternalLink, FolderOpen, RefreshCw } from 'lucide-react';
 import { useDriveForUser, connectDriveFolder, checkDriveFolder, disconnectDriveFolder } from '@/lib/drive';
-import { folderIdFromLink, driveStatusLabel, FILED_FOLDER_NAME } from '@/lib/driveFolder';
+import { folderIdFromLink, driveStatusLabel, FILED_FOLDER_NAME, NOT_FILED_FOLDER_NAME } from '@/lib/driveFolder';
 import { cn } from '@/lib/utils';
 
 // A timestamp as somebody reads it back — short, local, unambiguous.
@@ -59,7 +59,7 @@ export function DriveFolderRow({ folder, canManage, showPerson = false, onChange
         const passed = (out.skipped?.length ?? 0) + (out.failed?.length ?? 0);
         const parts = [
           filed ? `${filed} ${filed === 1 ? 'document' : 'documents'} filed` : 'Nothing new to file',
-          passed ? `${passed} passed over` : '',
+          out.setAside ? `${out.setAside} that can’t be read moved into “${NOT_FILED_FOLDER_NAME}”` : passed ? `${passed} passed over` : '',
           out.waiting ? `${out.waiting} more waiting for the next look` : '',
         ].filter(Boolean);
         setNote({ ok: true, text: `${parts.join(' · ')}.` });
@@ -111,6 +111,7 @@ export function DriveFolderRow({ folder, canManage, showPerson = false, onChange
       </p>
       {folder.lastError && <p className="text-amber-700 dark:text-amber-400">{folder.lastError}</p>}
       {folder.filedNote && <p className="text-amber-700 dark:text-amber-400">{folder.filedNote}</p>}
+      {folder.notFiledNote && <p className="text-amber-700 dark:text-amber-400">{folder.notFiledNote}</p>}
 
       {/* What is sitting in the folder and was NOT filed. Without this a Word
           document saved there is a file nothing ever happens to, with nowhere
@@ -120,7 +121,10 @@ export function DriveFolderRow({ folder, canManage, showPerson = false, onChange
           {passedOver.map((f) => (
             <li key={f.fileId} className="flex gap-1.5">
               <span className="shrink-0 font-medium text-foreground">{f.name}</span>
-              <span className="min-w-0">— not filed: {f.reason}</span>
+              <span className="min-w-0">
+                — not filed: {f.reason}
+                {f.moved ? ` · moved to “${NOT_FILED_FOLDER_NAME}”` : ''}
+              </span>
             </li>
           ))}
         </ul>
@@ -233,7 +237,8 @@ export default function ConnectDriveFolder({ user }) {
         PDFs and photos saved into a connected folder are read and filed under {who}, then moved into a
         “{FILED_FOLDER_NAME}” folder inside it — so the folder only ever holds what is still waiting. In there each
         file is renamed with the day it was filed and a running number in front of its own name, so two files of the
-        same name can still be told apart.
+        same name can still be told apart. Anything CYBills can’t read (a Word file, a Google Doc) is moved into
+        “{NOT_FILED_FOLDER_NAME}” instead, with the reason shown here.
       </p>
 
       {!enabled && !loading ? (
