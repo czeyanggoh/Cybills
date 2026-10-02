@@ -66,16 +66,33 @@ export function nameForEmail(email) {
   return personByKey[String(email).trim().toLowerCase()] || '';
 }
 
+// What to PRINT for a document's owner: their name, else the address itself —
+// except an entity's general account, whose address is an internal identity
+// (`org_….general@cybills.local`) that names no mailbox and means nothing to a
+// reader. It is always called "General" (GENERAL_USER_NAME on the server, which
+// resolves that name back to the row on save), so that is what it reads as even
+// before the directory has answered, or when it could not.
+const GENERAL_ADDRESS = /\.general@cybills\.local$/i;
+export function personLabel(who) {
+  if (!who) return '';
+  return nameForEmail(who) || (GENERAL_ADDRESS.test(String(who).trim()) ? 'General' : String(who));
+}
+
 // Everyone the open entity's documents can name: its own people (including its
 // general account) plus the practice colleagues with access to it, each entry
 // flagged with which it is. Separate from the roster on purpose — see the
 // server's GET /api/users/directory.
+//
+// null on a failure, NOT an empty list: an empty answer would wipe every name
+// already known, and the lists re-map on the notify that follows — which is how
+// a single refused request (a deploy restarting the server as the page loaded)
+// left the whole User column as raw addresses until somebody reloaded.
 async function fetchDirectory() {
   try {
     const { people } = await req('/directory');
     return Array.isArray(people) ? people : [];
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -233,11 +250,27 @@ async function fetchUsers() {
 // still resolved (they are in every entity's directory), but the entity's own
 // General account and internal identities read as raw `…@cybills.local`
 // addresses until the page was reloaded.
+//
+// And a load that FAILS keeps what was there and tries again. The directory is
+// asked for only on import and on an entity switch, so one failure used to
+// stand for the rest of the session while the bills — polled — loaded fine
+// around it.
 let directorySeq = 0;
-async function loadDirectory() {
+let directoryRetry = null;
+const RETRY_DELAYS_MS = [2000, 5000, 15000, 30000, 60000];
+async function loadDirectory(attempt = 0) {
   const seq = ++directorySeq;
+  clearTimeout(directoryRetry);
+  directoryRetry = null;
   const people = await fetchDirectory();
   if (seq !== directorySeq) return false;
+  if (!people) {
+    const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
+    directoryRetry = setTimeout(async () => {
+      if (await loadDirectory(attempt + 1)) notifyUsersChanged();
+    }, delay);
+    return false;
+  }
   directory = people;
   indexPeople(directory);
   return true;

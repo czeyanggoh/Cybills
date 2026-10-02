@@ -3,7 +3,7 @@ import { ShoppingCart, FileText, ExternalLink, Trash2 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import { fetchBills, billFileUrl, updateBill, notifyBillsChanged, BILLS_CHANGED_EVENT } from '@/lib/bills';
-import { nameForEmail } from '@/lib/userStore';
+import { personLabel } from '@/lib/userStore';
 
 // Supplier statements: files uploaded via the Add-documents "Supplier statements"
 // tab (kind='supplier_statement'). Stored server-side like bills but kept out of
@@ -80,7 +80,7 @@ export default function SupplierStatements() {
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-muted-foreground">
-                    {b.owner || b.createdBy ? nameForEmail(b.owner || b.createdBy) || b.owner || b.createdBy : '—'}
+                    {personLabel(b.owner || b.createdBy) || '—'}
                   </td>
                   <td className="px-4 py-2.5 text-muted-foreground">{fmtDate(b.createdAt)}</td>
                   <td className="px-4 py-2.5">

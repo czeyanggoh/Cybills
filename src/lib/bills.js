@@ -1,5 +1,5 @@
 // Client helpers for the persisted-bills API (upload + duplicate detection).
-import { nameForEmail } from '@/lib/userStore';
+import { personLabel } from '@/lib/userStore';
 import { useState, useEffect } from 'react';
 import { getActiveOrganisationId, ORGANISATION_EVENT, getExtractionTaxRates, getExtractionProjects, getExtractionCategories, getExtractionCustomers } from '@/lib/organisations';
 import { supplierNamesFromDocs } from '@/lib/supplierList';
@@ -329,7 +329,7 @@ export function lineItemRows(rows, fallbackCategory = '') {
 // '' when the document records nobody — it was stored with no signed-in user,
 // so there is no owner to name. It used to read "You", which is not a person:
 // every viewer saw it as themselves.
-const ownerName = (who) => (who ? nameForEmail(who) || who : '');
+const ownerName = (who) => personLabel(who);
 
 // Shape a persisted bill into the row/doc form the Costs list + detail expect.
 export function billToDoc(b) {
