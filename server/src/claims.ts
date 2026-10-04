@@ -484,13 +484,25 @@ export function fileAutoClaim(
     ) ?? null;
   const created = !claim;
   if (!claim) {
+    // A period's claim that has been submitted, approved or published and paid
+    // is finished with, so what the person submits next opens ANOTHER claim for
+    // the same period end. Numbered, or the list shows two claims of one name
+    // and nobody can say which of them the ledger has already settled.
+    const earlier = items.filter(
+      (c) =>
+        c.orgId === org &&
+        !c.deleted &&
+        c.auto === true &&
+        c.autoPeriodEnd === f.periodEnd &&
+        c.claimFor.trim().toLowerCase() === key
+    ).length;
     claim = {
       id: randomUUID(),
       workspaceId: ws,
       orgId: org,
       claimFor: f.claimFor,
       type: 'Regular',
-      name: f.name,
+      name: earlier ? `${f.name} (${earlier + 1})` : f.name,
       claimDate: f.periodEnd,
       endDate: f.periodEnd,
       currency: 'SGD',

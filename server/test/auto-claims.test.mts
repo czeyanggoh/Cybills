@@ -100,4 +100,28 @@ saveCollection('autoClaims', s);
 runAutoClaims('cybm', RED);
 check('existing inbox items come along when asked for', claimed(old.id), true);
 
+// Once the period's claim has been approved, published and paid, it is finished:
+// what the person submits next opens ANOTHER auto claim for the same period end,
+// rather than waiting for next month or reopening a claim the ledger has settled.
+type C = {
+  id: string; name: string; auto?: boolean; autoPeriodEnd?: string; approvalStatus: string; archived: boolean;
+  xeroInvoiceId?: string; xeroStatus?: string; transactions: { itemId: string }[];
+};
+const all = loadCollection<C>('claims');
+const first = all.find((c) => c.auto)!;
+Object.assign(first, { approvalStatus: 'approved', xeroInvoiceId: 'inv-1', xeroStatus: 'PAID', archived: true });
+saveCollection('claims', all);
+const afterPaid = bill('After Paid', 'ready');
+const run3 = runAutoClaims('cybm', RED);
+const autos = () => loadCollection<C>('claims').filter((c) => c.auto);
+const second = autos().find((c) => c.id !== first.id);
+check('a submission after the claim is paid opens a new auto claim', [run3.claims, autos().length], [1, 2]);
+check('the new claim is for the same period end', second?.autoPeriodEnd, first.autoPeriodEnd);
+check('and carries the new document, as a draft', [second?.approvalStatus, second?.transactions.map((t) => String(t.itemId))], ['', [afterPaid.id]]);
+check('the paid claim is left as it was', autos().find((c) => c.id === first.id)?.transactions.some((t) => String(t.itemId) === afterPaid.id), false);
+check('the two can be told apart by name', second?.name !== first.name, true);
+const again = bill('After Paid 2', 'ready');
+const run4 = runAutoClaims('cybm', RED);
+check('and the next one joins that new claim', [run4.claims, autos().find((c) => c.id === second?.id)?.transactions.some((t) => String(t.itemId) === again.id)], [0, true]);
+
 await finish(failures);

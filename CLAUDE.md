@@ -1541,6 +1541,10 @@ its live documents, so corrections still reach it. When the period ends, its
 claim is topped up once more and the end date rolls on. **Include existing
 inbox items** means what Dext means: what was ALREADY in the person's inbox
 when they were switched on (`enrolledAt` per user), not "Ready only vs inbox".
+**A finished claim is not reopened.** Only a DRAFT is added to, so once a
+period's claim has been submitted, approved, or published and paid, the
+person's next submission opens another auto claim for the SAME period end,
+numbered ("Auto claim — 31 Oct 2026 (2)") so the two can be told apart.
 Covered by `npm test` in `server/` (`test/auto-claims.test.mts`).
 
 Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
