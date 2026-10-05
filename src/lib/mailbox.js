@@ -221,9 +221,52 @@ export async function sendReply(payload) {
  * a mail on the Email tab that became nothing. For the mail whose paperwork is
  * its own body, where there is no file behind any link to fetch.
  */
-export async function saveEmailAsPdf({ billId, messageId }) {
+export async function saveEmailAsPdf({ billId, messageId, envelope }) {
   const path = billId
     ? `/api/email/documents/${encodeURIComponent(billId)}/pdf`
     : `/api/email/messages/${encodeURIComponent(messageId)}/pdf`;
-  return json(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...orgHeaders() } });
+  // Drawn HERE where the mail's HTML was kept: laying markup out takes a
+  // browser, and the server's own page is the message's text. Anything that
+  // goes wrong on the way falls back to that page rather than to no paper.
+  let pdf = '';
+  try {
+    const html = await fetchMailBody({ billId, messageId });
+    if (html) {
+      const { renderMailPdf } = await import('@/lib/mailPdf');
+      const when = envelope?.date ? new Date(envelope.date) : null;
+      pdf = await renderMailPdf({
+        html,
+        envelope: {
+          subject: envelope?.subject || '',
+          from: envelope?.from || '',
+          to: envelope?.to || '',
+          date:
+            when && !Number.isNaN(when.getTime())
+              ? when.toLocaleString('en-SG', { dateStyle: 'full', timeStyle: 'short' })
+              : envelope?.date || '',
+          caption: `Email received at ${envelope?.to || 'CYBills'}, saved as a PDF by CYBills.`,
+        },
+      });
+    }
+  } catch {
+    pdf = '';
+  }
+  return json(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify(pdf ? { pdf } : {}),
+  });
+}
+
+/**
+ * The HTML part of a mail — the message as it was sent — or '' where only its
+ * text was kept. `{ billId }` for the mail a document arrived in.
+ */
+export async function fetchMailBody({ billId, messageId }) {
+  if (!billId && !messageId) return '';
+  const path = billId
+    ? `/api/email/documents/${encodeURIComponent(billId)}/body`
+    : `/api/email/messages/${encodeURIComponent(messageId)}/body`;
+  const data = await json(path, { headers: orgHeaders() });
+  return String(data.html || '');
 }

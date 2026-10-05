@@ -14,6 +14,7 @@ import {
   untrustSender,
   saveEmailAsPdf,
 } from '@/lib/mailbox';
+import MailBody from '@/components/MailBody';
 
 // What arrived by email, threaded by the person it was addressed to.
 //
@@ -245,7 +246,11 @@ function Thread({ userId }) {
     setBusy(id);
     setNote('');
     try {
-      const out = await saveEmailAsPdf({ messageId: id });
+      const m = messages.find((x) => x.id === id);
+      const out = await saveEmailAsPdf({
+        messageId: id,
+        envelope: m ? { from: m.from, to: m.to, subject: m.subject, date: m.sentAt || m.receivedAt } : null,
+      });
       setNote(`${out.note}${out.reading ? ' — reading it now.' : '.'}`);
       await reload();
     } catch (err) {
@@ -347,8 +352,12 @@ function Message({ m, linkFetchEnabled, replyEnabled, onReplied, busy, onFetch, 
       </div>
 
       <div className="space-y-3 px-4 py-3">
-        {m.text && (
-          <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-sm text-muted-foreground">{m.text}</p>
+        {/* As it was sent, on request: the text is what a list can afford to
+            show for every message, and the laid-out body is one fetch each. */}
+        {m.hasBody ? (
+          <MailBody messageId={m.id} text={m.text} lazy maxHeight="32rem" textClassName="max-h-40 overflow-y-auto text-sm" />
+        ) : (
+          m.text && <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-sm text-muted-foreground">{m.text}</p>
         )}
 
         {/* What it produced. A document links straight through to its own page —

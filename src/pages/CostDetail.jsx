@@ -27,6 +27,7 @@ import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { trustSender, fetchDocumentLink, useDocumentReplies, saveEmailAsPdf } from '@/lib/mailbox';
 import EmailReply from '@/components/EmailReply';
+import MailBody from '@/components/MailBody';
 import { getDoc } from '@/data/docs';
 import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
 import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, useOrganisations, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
@@ -2018,7 +2019,7 @@ export default function CostDetail() {
                 <button
                   type="button"
                   disabled={Boolean(linkBusy)}
-                  onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id }))}
+                  onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id, envelope: doc.email }))}
                   title="Attach the email itself to this document as a PDF, so it goes to Xero with the bill."
                   className="whitespace-nowrap text-xs text-sky-900/70 underline underline-offset-2 hover:text-sky-900 disabled:opacity-60"
                 >
@@ -2917,14 +2918,18 @@ export default function CostDetail() {
                     <dt className="text-muted-foreground">To</dt>
                     <dd className="m-0 break-words">{mail.to || '—'}</dd>
                   </dl>
-                  {/* What the sender actually wrote. Kept as typed — a forwarded
-                      note is evidence about the document, so it is not reflowed
-                      or tidied. */}
-                  {mail.text ? (
-                    <p className="mt-4 whitespace-pre-wrap border-t pt-4 text-muted-foreground">{mail.text}</p>
-                  ) : (
-                    <p className="mt-4 border-t pt-4 text-muted-foreground">The message had no text — just the attachment.</p>
-                  )}
+                  {/* What the sender actually wrote: as it was SENT where the
+                      mail's HTML was kept (an order confirmation is a table,
+                      and its text part is that table flattened), else as
+                      typed — a forwarded note is evidence about the document,
+                      so it is not reflowed or tidied. */}
+                  <div className="mt-4 border-t pt-4">
+                    <MailBody
+                      billId={doc.persisted ? doc.id : ''}
+                      text={mail.text}
+                      empty={<p className="text-muted-foreground">The message had no text — just the attachment.</p>}
+                    />
+                  </div>
                   {/* Answering it, where the caller may see the entity's mail at
                       all (the server says). Under the message rather than in
                       the toolbar: it is an answer to THIS, and what was already
@@ -2937,7 +2942,7 @@ export default function CostDetail() {
                       <button
                         type="button"
                         disabled={Boolean(linkBusy)}
-                        onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id }))}
+                        onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id, envelope: doc.email }))}
                         className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-60"
                       >
                         <FileText className="h-3.5 w-3.5" /> {linkBusy === 'pdf' ? 'Saving…' : 'Save this email as a PDF'}

@@ -151,4 +151,37 @@ check('…owned by the person it was sent to, carrying the message', [made.owner
 r = await api(`/messages/${encodeURIComponent('<pdf-2@dart.com.sg>')}/pdf`);
 check('…once', [r.status, r.body.error], [409, 'already_filed']);
 
+// --- The message as it was sent ----------------------------------------------
+// An order confirmation is laid out in its HTML part, so that part is kept —
+// past the moment a document lands — and the page may hand back the PDF it
+// drew from it.
+const get = async (path: string, org = 'org_one0001') => {
+  const res = await fetch(`http://127.0.0.1:4661/api/email${path}`, { headers: { 'X-Org-Id': org } });
+  return { status: res.status, body: (await res.json()) as Record<string, any> };
+};
+const HTML = '<html><body><h1>Your order request has been received</h1><table><tr><td>Normal Snack Box</td><td>1285.20</td></tr></table></body></html>';
+await deliver({ subject: 'Order request', text: 'Normal Snack Box 1285.20', html: HTML, messageId: '<pdf-3@dart.com.sg>' });
+const id3 = encodeURIComponent('<pdf-3@dart.com.sg>');
+check('the HTML part is kept, in storage rather than on the row', [Boolean(loadMail().find((m) => m.id === '<pdf-3@dart.com.sg>')?.bodyKey), (await get(`/messages/${id3}/body`)).body.html], [true, HTML]);
+check('another entity cannot read it', (await get(`/messages/${id3}/body`, 'org_two0002')).status, 404);
+const listed = (await get(`/threads/${me.id}`)).body.messages.find((m: any) => m.id === '<pdf-3@dart.com.sg>');
+check('a listing says there is a body and does not carry it', [listed.hasBody, 'html' in listed, 'bodyKey' in listed], [true, false, false]);
+check('a mail with no HTML part has none', (await get(`/messages/${encodeURIComponent('<pdf-2@dart.com.sg>')}/body`)).body.html, '');
+
+const post = async (path: string, body: unknown) => {
+  const res = await fetch(`http://127.0.0.1:4661/api/email${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Org-Id': 'org_one0001' },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: (await res.json()) as Record<string, any> };
+};
+r = await post(`/messages/${id3}/pdf`, { pdf: Buffer.from('<html>a sign-in page</html>').toString('base64') });
+check('what the page sends must BE a PDF', [r.status, r.body.error, listBills('cybm').length], [422, 'not_a_pdf', 2]);
+const drawn = Buffer.from(await (await PDFDocument.create().then((p) => (p.addPage(), p.setTitle('Drawn by the page'), p))).save());
+r = await post(`/messages/${id3}/pdf`, { pdf: drawn.toString('base64') });
+const third = listBills('cybm').find((b) => b.id === r.body.document?.billId)!;
+check('the PDF the page drew is the one attached', [r.status, (await PDFDocument.load(await stored(third.storageKey))).getTitle()], [200, 'Drawn by the page']);
+check('…and the body is still there once the document has landed', (await get(`/documents/${third.id}/body`)).body.html, HTML);
+
 await finish(failures, server);

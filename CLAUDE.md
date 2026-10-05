@@ -2273,6 +2273,32 @@ a document that already has a file (409 `has_file`), a mail already filed
 (`already_filed`) and a forwarding confirmation. Business Admin, like the rest
 of the router. Covered by `npm test` in `server/` (`test/email-pdf.test.mts`).
 
+**And a mail is shown, and saved, as it was SENT.** An order confirmation is
+laid out in its HTML part; the text part of the same message is that table
+flattened, every link written out in angle brackets, and the Email tab only
+ever printed the text. So the HTML part is kept: whole, in file storage
+(`mailBody.ts`, `bodyKey` on the mirrored row; 2 MB cap), not on the row, whose
+own `html` is still the capped copy held only while a link waits to be fetched.
+`GET /api/email/documents/:billId/body` and `/messages/:id/body` hand it over
+(falling back to the row's `html` for a mail mirrored before this), and a
+listing carries only `hasBody`. `MailBody.jsx` draws it, on the document's Email
+tab straight away and on the Email tab's thread on request (**Show as sent**,
+one fetch per message), with **Show plain text** beside it. Markup arriving at a
+public catch-all is a stranger's, so `src/lib/mailHtml.js` is three layers:
+parsed inert with DOMParser and stripped of everything that acts (scripts,
+forms, frames, `on*` attributes, non-http links, CSS `url()` / `@import`); a
+CSP on the framed page allowing no script and no remote resource; and an iframe
+sandboxed without scripts or forms. **Remote images are dropped**, the way a
+mail client holds them back: fetching one tells the sender who opened it. Mail
+delivered before bodies were stored, and whose row no longer holds its markup,
+stays plain text. **Save email as PDF draws the same thing**: laying HTML out
+takes a browser and the server has none, so the PAGE draws it
+(`src/lib/mailPdf.js`: a hidden frame, html2canvas, cut into A4 pages at a gap
+between lines, the envelope printed above) and posts `{ pdf }`, which the route
+attaches in place of its own text page only where the bytes are a PDF (422
+`not_a_pdf`). No HTML kept, or anything going wrong while drawing, falls back to
+the text page. It is a picture of the message, so its text cannot be selected.
+
 Env (server/.env): `N8N_FETCH_URL`, `N8N_API_KEY`, `N8N_TIMEOUT_MS` (default
 120s). Unset, the road is simply not there: the mail is still mirrored and the
 document still stands in the inbox with its links, saying so. Covered by `npm test` in `server/` (`test/email-link.test.mts`, driven over
