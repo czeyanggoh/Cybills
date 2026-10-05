@@ -1,3 +1,4 @@
+import { hasCywsAccount } from './cywsAccount.js';
 import { Router, type Request, type Response } from 'express';
 import { randomUUID, randomBytes, createHash, scryptSync, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';
@@ -1700,7 +1701,7 @@ usersRouter.get('/', (req, res) => {
 // settings, `canManageUsers` for the roster, `admin` for either — and the client
 // trusts them rather than re-deriving access from the role string, so the two
 // can't disagree.
-usersRouter.get('/me', (req, res) => {
+usersRouter.get('/me', async (req, res) => {
   const session = readSession(req);
   // No `admin` field on the identity-less branches: the client's fallback
   // (open when Google auth isn't configured) has to stay in charge there, or
@@ -1732,6 +1733,9 @@ usersRouter.get('/me', (req, res) => {
     // The practice surfaces (Colleagues, Clients) — practice team only.
     practice: live && Boolean(user.practice),
     managePractice: live && canManagePractice(user),
+    // The rail's link to CYWorkspace: the practice's own team, and anybody else
+    // who has an account there as well — which is CYWorkspace's to say.
+    cyworkspace: live && (Boolean(user.practice) || (await hasCywsAccount(user.email))),
   });
 });
 

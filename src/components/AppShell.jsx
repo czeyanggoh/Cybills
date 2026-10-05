@@ -88,13 +88,14 @@ const TOP_TABS = [
 // destination — an `href` rather than a `to`, which is the only difference the
 // row makes to the person reading it.
 //
-// Offered to the practice's own team only. cyworkspace is CYBM's tool — it
-// holds the Xero connection and runs the payments — and a client's employee has
-// no account there, so for them the link is a sign-in page they cannot pass.
+// Offered to whoever can sign in at the other end: the practice's own team, and
+// a client's person who has an account there as well (`cyworkspace` on the
+// membership payload, which the server asks cyworkspace for by address). For
+// anybody else the link is a sign-in page they cannot pass.
 const CYWORKSPACE_URL = 'https://cyworkspace.cy-bm.sg/payflow/bills';
 
 const BOTTOM = [
-  { label: 'CYWorkspace', icon: CreditCard, href: CYWORKSPACE_URL, requires: 'practiceTeam' },
+  { label: 'CYWorkspace', icon: CreditCard, href: CYWORKSPACE_URL, requires: 'cyworkspace' },
   { label: 'Clients', icon: Briefcase, to: '/clients', requires: 'practiceTeam' },
   { label: 'Colleagues', icon: UserCog, to: '/colleagues', requires: 'practice' },
   { label: 'Users', icon: Users, to: '/users', requires: 'users' },
@@ -452,6 +453,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
     users: canUsers,
     practiceTeam: isPracticeTeam(membership, googleEnabled),
     practice: canManagePractice(membership, googleEnabled),
+    cyworkspace: isPracticeTeam(membership, googleEnabled) || Boolean(membership?.cyworkspace),
     sales,
   };
   const bottomNav = BOTTOM.filter((item) => !item.requires || allowed[item.requires]);

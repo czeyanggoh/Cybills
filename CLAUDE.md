@@ -3121,6 +3121,17 @@ rather than posting a second copy. Covered by `npm test` in `server/`
 mounting the router directly would never meet the session guard, which is where
 the allowlist that lets these through lives.
 
+**The rail's CYWorkspace link is for whoever can sign in at the other end.**
+It was the practice's own team alone, since for a client's employee the link is
+a sign-in page they cannot pass; a client's person with an account in BOTH apps
+was left without it. Who has an account there is CYWorkspace's to say, so
+`/api/users/me` carries `cyworkspace`: true for a colleague without asking, else
+the answer to `POST /api/webhooks/cybills/has-account` `{ email }` ->
+`{ account }` (`server/src/cywsAccount.ts`, a leaf). Best-effort: no key, an
+older CYWorkspace or one that does not answer inside two seconds all mean no
+link, and the answer is remembered per address (an hour for a yes, five minutes
+for a no). Covered by `npm test` in `server/` (`test/cyworkspace-link.test.mts`).
+
 ## Bank match: settling a statement line against the document it pays
 
 CYWS's **auto bank reconciliation** reads a client's Xero Bank Reconciliation
