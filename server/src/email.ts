@@ -35,6 +35,7 @@ import { mailById, mailForOrg, trustAddressOf, type MailMessage } from './mailTh
 import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
 import { followMessageLinks, saveEmailAsPdf } from './inbound.js';
 import { htmlToText } from './emailPdf.js';
+import { readMailBody } from './mailBody.js';
 import { n8nEnabled } from './n8n.js';
 import { getBillById, type Bill } from './store.js';
 import { getOrganisation } from './organisations.js';
@@ -187,8 +188,11 @@ emailRouter.get('/threads/:userId', (req, res) => {
     // rather than once for the thread: a mailbox receives from everybody, and
     // the question is always about the address that sent THIS one — or, for an
     // email attached to another, the address that delivered it.
-    messages: messages.map((m) => ({
+    messages: messages.map(({ html: _html, bodyKey: _bodyKey, ...m }) => ({
       ...m,
+      // Whether there is a laid-out body to ask for (GET /messages/:id/body).
+      // The markup itself is not sent with a listing.
+      hasBody: Boolean(_bodyKey || _html),
       summary: summaryOf(m),
       senderTrusted: isTrustedSender(ws, orgId, dataScopeForOrg(orgId), trustAddressOf(m)),
       // What somebody here answered, and who an answer written now would go to.
@@ -595,7 +599,18 @@ async function saveAsPdf(req: Request, res: Response, about: { messageId?: strin
   // still held and the text ran out (or was never there), the markup has the
   // rest of the thread — which is where a forwarded order's figures are.
   const cut = envelope.text.length >= 3900 || !envelope.text.trim();
-  const body = message?.html && cut ? htmlToText(message.html) : '';
+  const html = cut ? await readMailBody(message) : '';
+  const body = html ? htmlToText(html) : '';
+
+  // The browser can lay the message's HTML out and this server cannot, so it
+  // may send the page already drawn. Taken only where the bytes ARE a PDF.
+  let rendered: Buffer | null = null;
+  if (typeof req.body?.pdf === 'string' && req.body.pdf) {
+    rendered = Buffer.from(req.body.pdf, 'base64');
+    if (rendered.subarray(0, 5).toString('latin1') !== '%PDF-' || rendered.length > 15 * 1024 * 1024) {
+      return res.status(422).json({ error: 'not_a_pdf', message: 'That is not a PDF this can attach.' });
+    }
+  }
 
   const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', orgId);
   const out = await saveEmailAsPdf(req, {
@@ -607,10 +622,29 @@ async function saveAsPdf(req: Request, res: Response, about: { messageId?: strin
     fill,
     user: person?.user || { email: fill?.owner || fill?.createdBy || '' },
     provider: resolveProvider(settings?.readerProvider),
+    rendered,
   });
   if (!out.ok) return res.status(502).json({ error: 'not_saved', message: out.note });
   res.json({ ok: true, note: out.note, document: out.document, reading: out.reading });
 }
+
+// The message as it was SENT: its HTML part, for the page to draw in a frame
+// that can run nothing. '' where only the text was kept — a mail delivered
+// before bodies were stored, or one that never had an HTML part.
+async function sendBody(req: Request, res: Response, about: { messageId?: string; billId?: string }) {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const found = answering(ws, orgId, about);
+  if (!found) return res.status(404).json({ error: about.billId ? 'unknown_document' : 'unknown_message' });
+  res.json({ html: await readMailBody(found.message) });
+}
+
+// GET /api/email/documents/:billId/body — the mail a document arrived in.
+emailRouter.get('/documents/:billId/body', (req, res) => sendBody(req, res, { billId: String(req.params.billId ?? '') }));
+
+// GET /api/email/messages/:id/body — a mail on the Email tab.
+emailRouter.get('/messages/:id/body', (req, res) => sendBody(req, res, { messageId: String(req.params.id ?? '') }));
 
 // POST /api/email/documents/:billId/pdf — from the document that has no file.
 emailRouter.post('/documents/:billId/pdf', (req, res) => saveAsPdf(req, res, { billId: String(req.params.billId ?? '') }));

@@ -11,6 +11,7 @@ import { withRememberedGstRegNo } from './supplierGst.js';
 import { keepMotorVehicleNoTax } from './motorVehicle.js';
 import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile, type Bill } from './store.js';
 import { emailAsPdf, emailPdfName } from './emailPdf.js';
+import { storeMailBody } from './mailBody.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
 import { keepPaymentProofInStep } from './paymentProof.js';
@@ -746,11 +747,14 @@ export async function saveEmailAsPdf(
     fill: Bill | null;
     user: { email: string };
     provider: Provider;
+    /** The message already drawn as a PDF by the browser, which can lay out
+     *  its HTML; absent, it is written out here from its text. */
+    rendered?: Buffer | null;
   }
 ): Promise<{ ok: boolean; note: string; document: MailDocument | null; reading: boolean }> {
   const fileName = emailPdfName(o.envelope.subject);
   const when = new Date(o.envelope.date);
-  const bytes = await emailAsPdf({
+  const bytes = o.rendered || await emailAsPdf({
     from: o.envelope.from,
     to: o.envelope.to,
     subject: o.envelope.subject,
@@ -1077,6 +1081,9 @@ async function deliverMail(
   // nothing: a link somebody can click themselves is better than a dead end.
   const links = linksIn(mail.text, mail.html);
 
+  // The HTML part, stored whole: it is how the message is shown as it was sent.
+  const bodyKey = await storeMailBody(scope, mail.html);
+
   const mirror = (over: Partial<MailMessage>): MailMessage =>
     recordMail({
       id: messageId,
@@ -1097,6 +1104,7 @@ async function deliverMail(
       linkFetchedAt: '',
       outcome: 'nothing',
       html: '',
+      ...(bodyKey ? { bodyKey } : {}),
       ...(attached ? { forwardedBy: attached.by, forwardedIn: attached.inId } : {}),
       ...over,
     });

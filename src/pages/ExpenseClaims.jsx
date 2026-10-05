@@ -10,7 +10,7 @@ import AutoClaimsModal from '@/components/AutoClaimsModal';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, notifyClaimsChanged, archiveClaims, deleteClaims, createClaim, submitForApproval, approveClaim, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
+import { useClaims, notifyClaimsChanged, archiveClaims, isClaimUnpublished,deleteClaims, createClaim, submitForApproval, approveClaim, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, isAdminAccess, canCreateClaims, canPublishToXero, useUsers } from '@/lib/userStore';
 import { publishClaimToXero } from '@/lib/organisations';
@@ -232,10 +232,9 @@ export default function ExpenseClaims() {
   // Inbox and Archive were two tabs over one pile of claims, exactly as they
   // were on the Costs side before it folded them together. So this follows it:
   // one list, and a control that says how much of it to look at. "Unpublished"
-  // is the working half — every claim whose figures have not reached Xero,
-  // including one archived by hand and never published, which is precisely what
-  // folding the two tabs is for. "All claims" is the same list with the finished
-  // work left in.
+  // is the working half — every claim whose figures have not reached Xero and
+  // that nobody has archived. "All claims" is the same list with the published
+  // and the archived left in.
   // Remembered for the trip to a claim and back: you narrow the list to find
   // something, open it, and come back for the next one. Reset to Unpublished
   // every time, the narrowing had to be redone per row.
@@ -304,10 +303,10 @@ export default function ExpenseClaims() {
   // tab and no draft/awaiting split — one list, sorted newest first (createdAt
   // is an ISO stamp, so a lexical sort is chronological).
   const byNewest = (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
-  // Publishing is what settles a claim, so that — not the archive flag — is what
-  // the working half is measured by. A claim archived by hand and never
-  // published is still work somebody may have to finish, and it stays here.
-  const unpublished = claims.filter((c) => !c.xeroInvoiceId).sort(byNewest);
+  // The working half is what has neither reached Xero nor been set aside. A
+  // claim archived by hand used to stay here, so pressing Archive changed
+  // nothing anybody could see; it is under All claims now, wearing "Archived".
+  const unpublished = claims.filter(isClaimUnpublished).sort(byNewest);
   const everything = [...claims].sort(byNewest);
 
   // Per-claim approval status shown in its column (Dext wording).
@@ -724,6 +723,9 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
                   {c.auto && (
                     <span className="ml-2 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Auto</span>
                   )}
+                  {c.archived && !c.xeroInvoiceId && (
+                    <span className="ml-2 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Archived</span>
+                  )}
                 </div>
               </button>
             </div>
@@ -850,6 +852,13 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
                   {c.auto && (
                     <span className="ml-2 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                       Auto
+                    </span>
+                  )}
+                  {/* Only a claim set aside by hand: a published one is
+                      archived by the publishing, and its Paid status says so. */}
+                  {c.archived && !c.xeroInvoiceId && (
+                    <span className="ml-2 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Archived
                     </span>
                   )}
                 </td>

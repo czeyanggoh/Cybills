@@ -311,13 +311,19 @@ export function inboxClaimsFor(claims, user, isAdmin = false) {
   return visible.filter((c) => !isClaimArchived(c));
 }
 
-// The working half — what the Expense claims page opens on. Publishing is what
-// settles a claim, so a claim archived by hand and never published is still in
-// here; it is work somebody may have to finish. Shared with the subnav badge so
+// The working half — what the Expense claims page opens on: a claim nobody has
+// published and nobody has set aside. It used to keep a claim archived by hand,
+// on the reasoning that it was still work somebody might finish, which made
+// Archive a button that visibly did nothing: the claim stayed exactly where it
+// was, wearing nothing to say it had been archived. An archived claim is under
+// All claims, where Unarchive brings it back. Shared with the subnav badge so
 // the number beside the tab counts the list the tab actually opens.
+export function isClaimUnpublished(c) {
+  return !isClaimArchived(c);
+}
 export function unpublishedClaimsFor(claims, user, isAdmin = false) {
   const visible = isAdmin ? claims || [] : visibleClaimsFor(claims, user);
-  return visible.filter((c) => !c?.xeroInvoiceId);
+  return visible.filter(isClaimUnpublished);
 }
 
 export function visibleClaimsFor(claims, user) {

@@ -60,6 +60,10 @@ export type MailMessage = {
    *  moment a document lands — otherwise every newsletter that ever arrived
    *  would sit in this store at full size for ever. */
   html?: string;
+  /** Where the whole HTML part is stored (mailBody.ts), so the message can be
+   *  SHOWN as it was sent. Kept for good, unlike `html` above: it is a file,
+   *  not a field of this store. */
+  bodyKey?: string;
   /** What n8n said when it was asked to follow them. Empty = never asked. */
   linkNote: string;
   linkFetchedAt: string;
@@ -152,6 +156,7 @@ export function recordMail(row: MailMessage): MailMessage {
     linkNote: row.linkNote || was.linkNote,
     linkFetchedAt: row.linkFetchedAt || was.linkFetchedAt,
     html: row.html || was.html || '',
+    ...(row.bodyKey || was.bodyKey ? { bodyKey: row.bodyKey || was.bodyKey } : {}),
     outcome: documents.length ? 'documents' : row.outcome || was.outcome,
   };
   items[at] = merged;
