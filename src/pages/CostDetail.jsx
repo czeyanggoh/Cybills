@@ -25,7 +25,8 @@ import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { addItemToClaim, createClaim, docToClaimTxn, removeItemsFromClaim, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
-import { trustSender, fetchDocumentLink } from '@/lib/mailbox';
+import { trustSender, fetchDocumentLink, useDocumentReplies } from '@/lib/mailbox';
+import EmailReply from '@/components/EmailReply';
 import { getDoc } from '@/data/docs';
 import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
 import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, useOrganisations, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
@@ -394,6 +395,9 @@ export default function CostDetail() {
   // The key everything server-side is addressed by. Falls back to the URL's key
   // while the document is still loading.
   const id = doc?.id ?? routeId;
+  // What has been answered about the mail this document arrived in. Asked only
+  // of a document that came by email.
+  const [mailReplies, reloadMailReplies] = useDocumentReplies(doc?.email ? doc.id : '');
   // The read running for THIS document, if any — including one started before
   // this page was mounted, or before the reviewer moved away and came back.
   const job = useExtractionJob(id);
@@ -2909,6 +2913,21 @@ export default function CostDetail() {
                     <p className="mt-4 whitespace-pre-wrap border-t pt-4 text-muted-foreground">{mail.text}</p>
                   ) : (
                     <p className="mt-4 border-t pt-4 text-muted-foreground">The message had no text — just the attachment.</p>
+                  )}
+                  {/* Answering it, where the caller may see the entity's mail at
+                      all (the server says). Under the message rather than in
+                      the toolbar: it is an answer to THIS, and what was already
+                      said back belongs beside it. */}
+                  {mailReplies.available && (
+                    <div className="mt-4 border-t pt-4">
+                      <EmailReply
+                        target={{ billId: doc.id }}
+                        replies={mailReplies.replies}
+                        replyAddress={mailReplies.replyAddress}
+                        replyEnabled={mailReplies.replyEnabled}
+                        onSent={reloadMailReplies}
+                      />
+                    </div>
                   )}
                 </>
               ) : (

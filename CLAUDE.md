@@ -2210,6 +2210,40 @@ invoice on one mail is got — because it is the one with a person behind it.
 **Business Admin**, on the route as well as in the rail: it shows everybody's
 mail in the entity, the same bar as the Costs inbox it sits beside.
 
+**And a mail can be ANSWERED from the page it is read on.** A document that
+arrived as a link with no invoice behind it, or as a photo too dark to read,
+ends with somebody asking the sender for something, and that meant leaving
+CYBills to find the email again in a mailbox its addresses do not have.
+**Reply** (`EmailReply.jsx`, one component under the message on the document's
+Email tab and on the Email tab's thread) sends through the deployment's own
+mailbox (`POST /api/email/reply`, `{ billId | messageId, body, to?, cc? }`), so
+what matters is the headers. **To** defaults to whoever sent the original, by
+`trustAddressOf`: for an email attached to another, the person who sent it IN,
+since the From line inside the file is usually a supplier's no-reply address.
+**Reply-To** is the CYBills address the original was delivered to, then the
+person writing: the sender's answer, and whatever they attach, comes back by the
+ordinary inbound road and is filed under the same person, and a copy reaches the
+human, because a mirrored row tells nobody anything has happened. It overrides
+`MAIL_REPLY_TO` for this message alone (`replyTo` on `sendMail`). **In-Reply-To /
+References** name the original's Message-ID (the carrier's, for an attached
+email; none for a mirror id of our own making, `mail_…`), which Graph's JSON
+message cannot carry — it takes custom headers only where they start with `x-` —
+so a reply goes to Graph as MIME (`MailComposer`), and anything Graph refuses
+about that falls through to the ordinary JSON send: unthreaded, with the original
+quoted beneath either way. What was sent is its own collection
+(`mailReplies.ts`, `email-replies`), not a field on the mirrored message, because
+a document emailed in before the mirror existed has an envelope and no row; a
+reply names the message AND its documents, so either page finds it
+(`GET /api/email/documents/:billId/replies`, `replies` on each thread message).
+Recorded only once the send succeeded: a reply shown under a message is a claim
+that the sender was told something. Business Admin like the rest of the router
+(the document page draws nothing for anybody else), an internal
+`@cybills.local` identity is never a recipient, a recipient that is not an
+address is refused rather than dropped, and another entity's message is a 404.
+With no mailbox connected the button is there and disabled, saying so. Covered
+by `npm test` in `server/` (`test/email-reply.test.mts`, over real HTTP in and a
+real SMTP conversation out, so what is asserted is the mail that leaves).
+
 Env (server/.env): `N8N_FETCH_URL`, `N8N_API_KEY`, `N8N_TIMEOUT_MS` (default
 120s). Unset, the road is simply not there: the mail is still mirrored and the
 document still stands in the inbox with its links, saying so. Covered by `npm test` in `server/` (`test/email-link.test.mts`, driven over

@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 import { env, mailConfigured, smtpConfigured } from './env.js';
 import {
   readRefreshToken,
@@ -148,16 +149,30 @@ function transporter(): nodemailer.Transporter {
 
 const addr = (r: Recipient) => (r.name ? `${r.name} <${r.email}>` : r.email);
 
+// Where an answer to this message goes. A message that names its own (a reply
+// sent from a document, whose answer has to come back to the address the
+// original was delivered to) wins over the deployment-wide default.
+function replyToFor(msg: { replyTo?: Recipient[] }): Recipient[] {
+  const own = (msg.replyTo || []).filter((r) => r.email);
+  if (own.length) return own;
+  return env.MAIL_REPLY_TO ? [{ email: env.MAIL_REPLY_TO }] : [];
+}
+
+// A Message-ID as a header wants it: in angle brackets.
+const angled = (id: string) => (/^<.*>$/.test(id) ? id : `<${id}>`);
+
 async function sendViaSmtp(
-  msg: { subject: string; html: string; cc?: Recipient[]; attachments?: MailAttachment[] },
+  msg: { subject: string; html: string; cc?: Recipient[]; attachments?: MailAttachment[]; replyTo?: Recipient[]; inReplyTo?: string },
   to: Recipient[]
 ): Promise<MailResult> {
   try {
+    const replyTo = replyToFor(msg);
     await transporter().sendMail({
       from: env.MAIL_FROM_NAME ? `${env.MAIL_FROM_NAME} <${env.MAIL_FROM}>` : env.MAIL_FROM,
       to: to.map(addr),
       ...(msg.cc?.length ? { cc: msg.cc.map(addr) } : {}),
-      ...(env.MAIL_REPLY_TO ? { replyTo: env.MAIL_REPLY_TO } : {}),
+      ...(replyTo.length ? { replyTo: replyTo.map(addr) } : {}),
+      ...(msg.inReplyTo ? { inReplyTo: angled(msg.inReplyTo), references: angled(msg.inReplyTo) } : {}),
       subject: msg.subject,
       html: msg.html,
       ...(msg.attachments?.length
@@ -185,6 +200,11 @@ export async function sendMail(msg: {
   html: string;
   cc?: Recipient[];
   attachments?: MailAttachment[];
+  /** Where an answer goes, for this message alone. Absent = MAIL_REPLY_TO. */
+  replyTo?: Recipient[];
+  /** The Message-ID this answers, so the recipient's mail client threads it
+   *  under the message they sent rather than standing it alone. */
+  inReplyTo?: string;
 }): Promise<MailResult> {
   const to = Array.isArray(msg.to) ? msg.to : [msg.to];
   if (!to.length || !to.every((r) => r.email)) return { sent: false, error: 'no_recipient' };
@@ -202,6 +222,42 @@ export async function sendMail(msg: {
     const endpoint = env.GRAPH_SHARED_SENDER
       ? `${GRAPH}/users/${encodeURIComponent(env.GRAPH_SHARED_SENDER)}/sendMail`
       : `${GRAPH}/me/sendMail`;
+    const replyTo = replyToFor(msg);
+
+    // A reply is sent as MIME, because that is the only form in which Graph
+    // takes In-Reply-To / References: its JSON message accepts custom headers
+    // only where they start with "x-". Without them the answer arrives as a new
+    // conversation beside the one it answers. Tried first and never relied on:
+    // anything Graph refuses about it falls through to the ordinary send below,
+    // where the reply still goes out — unthreaded, with the original quoted.
+    const from = senderAddress();
+    if (msg.inReplyTo && from) {
+      const mime = await new MailComposer({
+        from,
+        to: to.map(addr),
+        ...(msg.cc?.length ? { cc: msg.cc.map(addr) } : {}),
+        ...(replyTo.length ? { replyTo: replyTo.map(addr) } : {}),
+        inReplyTo: angled(msg.inReplyTo),
+        references: angled(msg.inReplyTo),
+        subject: msg.subject,
+        html: msg.html,
+        ...(msg.attachments?.length
+          ? { attachments: msg.attachments.map((a) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64'), contentType: a.contentType })) }
+          : {}),
+      })
+        .compile()
+        .build();
+      const asMime = await fetch(endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
+        body: mime.toString('base64'),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (asMime.status === 202 || asMime.ok) return { sent: true };
+      const why: any = await asMime.json().catch(() => null);
+      console.error('[mailer] MIME send refused, sending unthreaded:', why?.error?.message ?? `HTTP ${asMime.status}`);
+    }
+
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -211,9 +267,7 @@ export async function sendMail(msg: {
           body: { contentType: 'HTML', content: msg.html },
           toRecipients: to.map(graphRecipient),
           ...(msg.cc?.length ? { ccRecipients: msg.cc.map(graphRecipient) } : {}),
-          ...(env.MAIL_REPLY_TO
-            ? { replyTo: [graphRecipient({ email: env.MAIL_REPLY_TO })] }
-            : {}),
+          ...(replyTo.length ? { replyTo: replyTo.map(graphRecipient) } : {}),
           ...(msg.attachments?.length
             ? {
                 attachments: msg.attachments.map((a) => ({
@@ -428,6 +482,29 @@ export function passwordResetEmail(o: { name: string; url: string; expiresInDays
       footnote: `This link expires in ${o.expiresInDays} days and can only be used once. If you didn&rsquo;t request a reset, ignore this email &mdash; your password is unchanged.`,
     }),
   };
+}
+
+// A reply written on a document's Email tab (email.ts). Deliberately NOT the
+// card `layout` draws: that is a notice from CYBills, and this is a person
+// answering somebody's email — it should read as one, with what they wrote
+// first and the message it answers quoted beneath, the way a mail client sends.
+export function replyEmail(o: {
+  body: string;
+  fromName: string;
+  entityName?: string;
+  original: { from: string; date: string; text: string };
+}) {
+  const para = (t: string) => esc(t).replace(/\r?\n/g, '<br>');
+  const who = [o.fromName, o.entityName ? `for ${o.entityName}` : ''].filter(Boolean).join(' ');
+  const quoted = o.original.text
+    ? `<p style="margin:24px 0 6px;font-size:12px;color:#6b7280">${esc(o.original.date ? `On ${o.original.date}, ` : '')}${esc(o.original.from)} wrote:</p>
+       <blockquote style="margin:0;padding:0 0 0 12px;border-left:2px solid #d1d5db;font-size:13px;line-height:1.55;color:#6b7280">${para(o.original.text)}</blockquote>`
+    : '';
+  return `<!doctype html><html><body style="margin:0;padding:0;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111">
+  <div style="font-size:14px;line-height:1.6">${para(o.body)}</div>
+  ${who ? `<p style="margin:20px 0 0;font-size:13px;color:#374151">${esc(who)}<br><span style="font-size:12px;color:#6b7280">Sent from CYBills. Reply to this email and your answer, with anything you attach, is filed with the document.</span></p>` : ''}
+  ${quoted}
+</body></html>`;
 }
 
 // Sent by Settings > Email → "Send test email". Proves consent, scopes and (for

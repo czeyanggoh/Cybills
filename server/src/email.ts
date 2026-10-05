@@ -28,13 +28,19 @@ import {
 } from './users.js';
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
 import { workspaceId } from './workspace.js';
-import { googleEnabled } from './env.js';
+import { env, googleEnabled, smtpConfigured } from './env.js';
 import { resolveProvider } from './llm.js';
 import { readSetting } from './settings.js';
 import { mailById, mailForOrg, trustAddressOf, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
 import { followMessageLinks } from './inbound.js';
 import { n8nEnabled } from './n8n.js';
+import { getBillById, type Bill } from './store.js';
+import { getOrganisation } from './organisations.js';
+import { isInternalAddress } from './users.js';
+import { isMailConnected } from './mailAccount.js';
+import { replyEmail, sendMail } from './mailer.js';
+import { recordReply, repliesFor } from './mailReplies.js';
 
 export const emailRouter = Router();
 
@@ -184,8 +190,12 @@ emailRouter.get('/threads/:userId', (req, res) => {
       ...m,
       summary: summaryOf(m),
       senderTrusted: isTrustedSender(ws, orgId, dataScopeForOrg(orgId), trustAddressOf(m)),
+      // What somebody here answered, and who an answer written now would go to.
+      replies: repliesFor(ws, orgId, dataScopeForOrg(orgId), { messageId: m.id, billIds: billIdsOf(m) }),
+      replyAddress: answerable(normaliseSender(trustAddressOf(m))),
     })),
     linkFetchEnabled: n8nEnabled(),
+    replyEnabled: replyEnabled(),
   });
 });
 
@@ -340,4 +350,202 @@ emailRouter.post('/documents/:billId/fetch', async (req, res) => {
 
   const { note, documents } = await followMessageLinks(req, message, ctx.user, ctx.provider, billId);
   res.json({ ok: documents.length > 0, note, documents });
+});
+
+// --- Answering a mail --------------------------------------------------------
+//
+// Everything above reads what arrived. This is the one thing that goes the
+// other way: a document that came in as a link with no invoice behind it, a
+// photo too dark to read, a bill with a page missing — each ends with somebody
+// having to ask the sender for something, and until now that meant leaving the
+// app to find the email again in a mailbox CYBills's addresses do not have.
+//
+// It goes out from the deployment's own mailbox (the one that sends invitations),
+// which nobody reads, so the ANSWER is pointed back where the original was
+// delivered: Reply-To is the CYBills address the sender wrote to. Their reply,
+// and whatever they attach to it, then arrives by the ordinary inbound road and
+// is filed under the same person, in the same thread. The person who wrote the
+// reply is on Reply-To as well, because a mirrored row tells nobody anything
+// has happened.
+
+const replyEnabled = () => smtpConfigured || isMailConnected();
+
+const ADDRESS = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
+
+// An address a reply can actually reach, or ''. Never an internal identity
+// (`…@cybills.local`), which is a name for a roster row and not a mailbox.
+const answerable = (address: string) => (ADDRESS.test(address) && !isInternalAddress(address) ? address : '');
+
+// Recipients as typed: a list, or one string with commas between them.
+function addressList(raw: unknown): { ok: string[]; bad: string[] } {
+  const parts = (Array.isArray(raw) ? raw : String(raw ?? '').split(/[,;\n]/))
+    .map((a) => normaliseSender(String(a ?? '')))
+    .filter(Boolean);
+  const unique = [...new Set(parts)];
+  return { ok: unique.filter((a) => answerable(a)), bad: unique.filter((a) => !answerable(a)) };
+}
+
+function billIdsOf(m: MailMessage): string[] {
+  return [...m.documents.map((d) => d.billId), m.pendingBillId || ''].filter(Boolean);
+}
+
+// The Message-ID an answer should name, where the mirror holds a real one. A
+// message named by what it IS (`mail_…`, a Worker that forwarded no MIME) has
+// none, and the suffix a second delivery of one mail is told apart by is ours.
+// An email that arrived ATTACHED to another answers the mail that carried it:
+// that is the message the person being answered actually sent.
+function messageIdToAnswer(m: MailMessage): string {
+  const id = String(m.forwardedIn || m.id || '').split('#')[0].trim();
+  return id.includes('@') && !id.startsWith('mail_') ? id : '';
+}
+
+const stamp = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleString('en-SG', { dateStyle: 'medium', timeStyle: 'short', timeZone: env.PRACTICE_TIMEZONE });
+};
+
+type Answering = {
+  message: MailMessage | null;
+  bill: Bill | null;
+  envelope: { from: string; to: string; subject: string; date: string; text: string };
+  billIds: string[];
+};
+
+// What is being answered: a mirrored message, named outright or found through
+// the document it produced, else the envelope the document itself carries (one
+// emailed in before the mirror existed). Null when the caller's entity holds
+// neither — which answers 404, like every other message they may not see.
+function answering(ws: string, orgId: string, about: { messageId?: string; billId?: string }): Answering | null {
+  const here = mailHere(ws, orgId);
+  const bill = about.billId ? getBillById(dataScopeForOrg(orgId), about.billId) : null;
+  const message =
+    (about.messageId ? here.find((m) => m.id === about.messageId) : null) ||
+    (bill ? here.find((m) => m.pendingBillId === bill.id) || here.find((m) => m.documents.some((d) => d.billId === bill.id)) : null) ||
+    null;
+  if (message) {
+    return {
+      message,
+      bill,
+      envelope: {
+        from: trustAddressOf(message),
+        to: message.to,
+        subject: message.subject,
+        date: message.sentAt || message.receivedAt,
+        text: message.text,
+      },
+      billIds: [...new Set([...billIdsOf(message), bill?.id || ''].filter(Boolean))],
+    };
+  }
+  if (bill?.email) return { message: null, bill, envelope: bill.email, billIds: [bill.id] };
+  return null;
+}
+
+// GET /api/email/documents/:billId/replies — what has been answered about the
+// mail this document arrived in, and whether (and to whom) it can be answered.
+emailRouter.get('/documents/:billId/replies', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
+  if (!about) return res.status(404).json({ error: 'unknown_document' });
+  res.json({
+    replies: repliesFor(ws, orgId, dataScopeForOrg(orgId), { messageId: about.message?.id, billIds: about.billIds }),
+    replyAddress: answerable(normaliseSender(about.envelope.from)),
+    replyEnabled: replyEnabled(),
+  });
+});
+
+/**
+ * POST /api/email/reply — answer a mail, from the page it is being read on.
+ *
+ * `{ messageId | billId, body, to?, cc? }`. The recipient defaults to whoever
+ * sent the original (for an email attached to another, whoever sent it IN — the
+ * From line inside the file is usually a supplier's no-reply address, and
+ * never the person who can be asked for anything).
+ *
+ * Business Admin, the bar everything else here holds: this sends mail to an
+ * outside address in the entity's name.
+ */
+emailRouter.post('/reply', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const about = answering(ws, orgId, {
+    messageId: String(req.body?.messageId ?? '').trim(),
+    billId: String(req.body?.billId ?? '').trim(),
+  });
+  if (!about) return res.status(404).json({ error: 'unknown_message' });
+
+  const body = String(req.body?.body ?? '').replace(/\r\n/g, '\n').trim();
+  if (!body) return res.status(422).json({ error: 'empty_reply', message: 'Write something to send.' });
+  if (body.length > 10_000) return res.status(422).json({ error: 'reply_too_long', message: 'That reply is too long to send from here.' });
+
+  const typedTo = addressList(req.body?.to);
+  const cc = addressList(req.body?.cc);
+  const fallback = answerable(normaliseSender(about.envelope.from));
+  const to = typedTo.ok.length || typedTo.bad.length ? typedTo.ok : fallback ? [fallback] : [];
+  const bad = [...typedTo.bad, ...cc.bad];
+  if (bad.length) return res.status(422).json({ error: 'bad_address', message: `${bad[0]} is not an email address.` });
+  if (!to.length) {
+    return res.status(422).json({ error: 'no_recipient', message: 'There is nobody to send this to — the original carries no usable sender address.' });
+  }
+  if (to.length + cc.ok.length > 10) {
+    return res.status(422).json({ error: 'too_many_recipients', message: 'A reply from here goes to at most ten addresses.' });
+  }
+
+  if (!replyEnabled()) {
+    return res.status(503).json({
+      error: 'mail_not_connected',
+      message: 'No mailbox is connected to send from. The practice connects one under Business settings -> Email.',
+    });
+  }
+
+  const me = memberForSession(req);
+  // The address the original was delivered to first: that is what files the
+  // sender's answer. Then the person writing, so they hear about it.
+  const replyTo = [
+    ...new Set([answerable(normaliseSender(about.envelope.to)), answerable(normaliseSender(me?.email || ''))].filter(Boolean)),
+  ];
+  const subject = /^\s*re\s*:/i.test(about.envelope.subject)
+    ? about.envelope.subject.trim()
+    : `Re: ${about.envelope.subject.trim() || 'your email'}`;
+  const inReplyTo = about.message ? messageIdToAnswer(about.message) : '';
+
+  const out = await sendMail({
+    to: to.map((email) => ({ email })),
+    ...(cc.ok.length ? { cc: cc.ok.map((email) => ({ email })) } : {}),
+    replyTo: replyTo.map((email) => ({ email })),
+    ...(inReplyTo ? { inReplyTo } : {}),
+    subject,
+    html: replyEmail({
+      body,
+      fromName: me?.name || me?.email || '',
+      entityName: getOrganisation(ws, orgId)?.name || '',
+      original: { from: about.envelope.from, date: stamp(about.envelope.date), text: about.envelope.text },
+    }),
+  });
+  // Recorded only once it has actually gone: a reply shown under a message is a
+  // claim that the sender was told something.
+  if (!out.sent) {
+    return res.status(502).json({ error: 'send_failed', message: `The reply was not sent — ${out.error || 'the mailbox refused it'}.` });
+  }
+
+  const reply = recordReply({
+    workspaceId: ws,
+    orgId,
+    scope: dataScopeForOrg(orgId),
+    messageId: about.message?.id || '',
+    billIds: about.billIds,
+    to,
+    cc: cc.ok,
+    replyTo,
+    subject,
+    text: body,
+    by: me?.email || '',
+    byName: me?.name || me?.email || '',
+  });
+  res.json({ ok: true, reply });
 });

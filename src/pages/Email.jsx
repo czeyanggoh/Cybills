@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Check, ChevronLeft, ExternalLink, FileText, Info, Link2, Loader2, Mail, Paperclip, Search, ShieldCheck, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { cn } from '@/lib/utils';
+import EmailReply from '@/components/EmailReply';
 import { useActiveOrganisation } from '@/lib/organisations';
 import {
   useMailThreads,
@@ -218,7 +219,7 @@ function TrustedSenders() {
 
 function Thread({ userId }) {
   const navigate = useNavigate();
-  const [{ person, messages, linkFetchEnabled, loading, error }, reload] = useMailThread(userId);
+  const [{ person, messages, linkFetchEnabled, replyEnabled, loading, error }, reload] = useMailThread(userId);
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
 
@@ -295,6 +296,8 @@ function Thread({ userId }) {
             key={m.id}
             m={m}
             linkFetchEnabled={linkFetchEnabled}
+            replyEnabled={replyEnabled}
+            onReplied={reload}
             busy={busy === m.id}
             onFetch={() => fetchLinks(m.id)}
             onTrust={() => trust(m.id, m.forwardedBy || m.from)}
@@ -305,7 +308,7 @@ function Thread({ userId }) {
   );
 }
 
-function Message({ m, linkFetchEnabled, busy, onFetch, onTrust }) {
+function Message({ m, linkFetchEnabled, replyEnabled, onReplied, busy, onFetch, onTrust }) {
   const filed = m.documents?.length > 0;
   // Whose trust this message's links wait on. For an email that arrived
   // attached to another, the person who delivered it: the From line inside an
@@ -390,6 +393,18 @@ function Message({ m, linkFetchEnabled, busy, onFetch, onTrust }) {
               <p className="text-xs text-muted-foreground">and {m.links.length - 5} more</p>
             )}
           </div>
+        )}
+
+        {/* Answering it. Not for a forwarding confirmation — that is Google
+            asking a question of the mailbox, and nobody is on the other end. */}
+        {m.outcome !== 'forwarding_confirmation' && (
+          <EmailReply
+            target={{ messageId: m.id }}
+            replies={m.replies}
+            replyAddress={m.replyAddress}
+            replyEnabled={replyEnabled}
+            onSent={onReplied}
+          />
         )}
       </div>
 

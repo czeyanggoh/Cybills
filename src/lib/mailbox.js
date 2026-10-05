@@ -3,9 +3,9 @@ import { getActiveOrganisationId } from '@/lib/organisations';
 
 // The Email tab, from the browser's side.
 //
-// Read-only bar one act: asking n8n again what is behind a message's links. The
-// mail itself is never fetched from here — it was delivered to the server and
-// mirrored there — so everything below is a listing and a retry.
+// A listing, a retry (asking n8n again what is behind a message's links) and
+// one thing that goes the other way: a reply. The mail itself is never fetched
+// from here — it was delivered to the server and mirrored there.
 
 const orgHeaders = () => {
   const id = getActiveOrganisationId();
@@ -64,6 +64,7 @@ export function useMailThread(userId) {
     person: null,
     messages: [],
     linkFetchEnabled: false,
+    replyEnabled: false,
     loading: Boolean(userId),
     error: '',
   });
@@ -80,6 +81,7 @@ export function useMailThread(userId) {
         person: data.person ?? null,
         messages: data.messages ?? [],
         linkFetchEnabled: Boolean(data.linkFetchEnabled),
+        replyEnabled: Boolean(data.replyEnabled),
         loading: false,
         error: '',
       });
@@ -163,5 +165,52 @@ export async function fetchDocumentLink(billId) {
   return json(`/api/email/documents/${encodeURIComponent(billId)}/fetch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+  });
+}
+
+/**
+ * What has been answered about the mail a document arrived in, and whether
+ * (and to whom) it can be answered now.
+ *
+ * `available` is false for anybody the server will not show mail to, and for a
+ * document that did not come by email: the page then draws nothing, rather
+ * than a Reply button that could only be refused.
+ */
+export function useDocumentReplies(billId) {
+  const [state, setState] = useState({ replies: [], replyAddress: '', replyEnabled: false, available: false });
+
+  const reload = useCallback(async () => {
+    if (!billId) {
+      setState({ replies: [], replyAddress: '', replyEnabled: false, available: false });
+      return;
+    }
+    try {
+      const data = await json(`/api/email/documents/${encodeURIComponent(billId)}/replies`, { headers: orgHeaders() });
+      setState({
+        replies: data.replies ?? [],
+        replyAddress: data.replyAddress ?? '',
+        replyEnabled: Boolean(data.replyEnabled),
+        available: true,
+      });
+    } catch {
+      setState({ replies: [], replyAddress: '', replyEnabled: false, available: false });
+    }
+  }, [billId]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+  return [state, reload];
+}
+
+/**
+ * Answer a mail. `{ billId | messageId, body, to?, cc? }` — the recipient
+ * defaults, server-side, to whoever sent the original.
+ */
+export async function sendReply(payload) {
+  return json('/api/email/reply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify(payload),
   });
 }
