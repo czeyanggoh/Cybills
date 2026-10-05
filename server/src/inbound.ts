@@ -9,7 +9,8 @@ import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './x
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
 import { keepMotorVehicleNoTax } from './motorVehicle.js';
-import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile } from './store.js';
+import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile, type Bill } from './store.js';
+import { emailAsPdf, emailPdfName } from './emailPdf.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
 import { keepPaymentProofInStep } from './paymentProof.js';
@@ -23,7 +24,7 @@ import { categoriesForOrg } from './categories.js';
 import { recordUsage } from './usage.js';
 import { readSetting } from './settings.js';
 import { workspaceId } from './workspace.js';
-import { visionEnabled, claudeEnabled, openaiEnabled, googleEnabled } from './env.js';
+import { env, visionEnabled, claudeEnabled, openaiEnabled, googleEnabled } from './env.js';
 import { fetchDocumentsForLinks, linksIn, n8nEnabled } from './n8n.js';
 import { recordMail, recordLinkFetch, mailById, trustAddressOf, type MailAttachment, type MailDocument, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender } from './trustedSenders.js';
@@ -715,6 +716,92 @@ export async function followMessageLinks(
     });
   }
   return { note: result.note, documents: made };
+}
+
+/**
+ * File the EMAIL as the document: write the message out as a PDF and attach it.
+ *
+ * For the mail whose paperwork is its own body — an order confirmation typed
+ * into a forward, "please PayNow to …" with the amount in the thread below and
+ * nothing attached. Its links are a logo and a mail client's footer, so there
+ * is nothing for n8n to fetch, and the document would otherwise be published
+ * to Xero with no paper behind it.
+ *
+ * `fill` is the document already standing in the inbox for this mail (the one
+ * that asked about its links), and the PDF lands on THAT row for the reason a
+ * fetched file does. It is read afterwards only where the row still says
+ * nothing: a document somebody has coded by hand gets its paper and keeps what
+ * they typed, and Re-read is theirs to press. With no row to fill a new
+ * document is filed, and read, exactly as an attachment would be.
+ */
+export async function saveEmailAsPdf(
+  req: Request,
+  o: {
+    scope: string;
+    orgId: string;
+    envelope: MailEnvelope;
+    /** The whole body where more of it survives than the envelope's capped copy. */
+    body: string;
+    message: MailMessage | null;
+    fill: Bill | null;
+    user: { email: string };
+    provider: Provider;
+  }
+): Promise<{ ok: boolean; note: string; document: MailDocument | null; reading: boolean }> {
+  const fileName = emailPdfName(o.envelope.subject);
+  const when = new Date(o.envelope.date);
+  const bytes = await emailAsPdf({
+    from: o.envelope.from,
+    to: o.envelope.to,
+    subject: o.envelope.subject,
+    date: Number.isNaN(when.getTime())
+      ? o.envelope.date
+      : when.toLocaleString('en-SG', { dateStyle: 'full', timeStyle: 'short', timeZone: env.PRACTICE_TIMEZONE }),
+    text: o.body || o.envelope.text,
+    caption: `Email received at ${o.envelope.to || 'CYBills'}, saved as a PDF by CYBills.`,
+  });
+  const doc = { bytes, fileName, mediaType: 'application/pdf' };
+
+  let id = '';
+  let displayId = '';
+  let reading = true;
+  if (o.fill) {
+    const file = await storeFetched(o.scope, doc);
+    // A document with no retrievable file is what this was pressed to fix.
+    if (!file.storageKey) return { ok: false, note: 'The PDF was made but could not be stored.', document: null, reading: false };
+    const f = o.fill;
+    reading = !f.supplier && !f.category && !f.date && !Number(f.total);
+    const filled = attachFetchedFile(o.scope, f.id, file, reading);
+    if (!filled) return { ok: false, note: 'That document is no longer here.', document: null, reading: false };
+    id = filled.id;
+    displayId = filled.displayId;
+  } else {
+    const bill = await fileFetchedDocument(o.scope, o.user, o.envelope, doc);
+    id = bill.id;
+    displayId = bill.displayId;
+  }
+
+  const note = 'The email itself was saved as a PDF';
+  // Only where the document was a question about links: it has been answered.
+  if (o.fill?.emailLink || (!o.fill && o.message?.links.length)) {
+    setBillEmailLink(o.scope, id, {
+      messageId: o.message?.id || o.fill?.emailLink?.messageId || '',
+      from: o.fill?.emailLink?.from || (o.message ? normaliseSender(trustAddressOf(o.message)) : ''),
+      links: o.fill?.emailLink?.links || o.message?.links || [],
+      status: 'converted',
+      note,
+    });
+  }
+  const document: MailDocument = { billId: id, displayId, fileName, via: 'email' };
+  if (o.message) recordLinkFetch(o.message.id, note, [document]);
+
+  if (reading) {
+    void autoRead(req, o.scope, o.orgId, o.provider, id, bytes.toString('base64'), 'application/pdf', {
+      ...o.envelope,
+      fileName,
+    });
+  }
+  return { ok: true, note, document, reading };
 }
 
 // The shared secret the Cloudflare Worker signs its POSTs with. Prefer an env

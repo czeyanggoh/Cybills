@@ -214,3 +214,16 @@ export async function sendReply(payload) {
     body: JSON.stringify(payload),
   });
 }
+
+/**
+ * File the EMAIL as the document: the message written out as a PDF and
+ * attached. `{ billId }` from a document that has no file, `{ messageId }` from
+ * a mail on the Email tab that became nothing. For the mail whose paperwork is
+ * its own body, where there is no file behind any link to fetch.
+ */
+export async function saveEmailAsPdf({ billId, messageId }) {
+  const path = billId
+    ? `/api/email/documents/${encodeURIComponent(billId)}/pdf`
+    : `/api/email/messages/${encodeURIComponent(messageId)}/pdf`;
+  return json(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...orgHeaders() } });
+}

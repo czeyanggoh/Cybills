@@ -12,6 +12,7 @@ import {
   fetchMessageLinks,
   trustSender,
   untrustSender,
+  saveEmailAsPdf,
 } from '@/lib/mailbox';
 
 // What arrived by email, threaded by the person it was addressed to.
@@ -239,6 +240,21 @@ function Thread({ userId }) {
     }
   }
 
+  // The mail whose paperwork is its own body: file the message itself, as a PDF.
+  async function savePdf(id) {
+    setBusy(id);
+    setNote('');
+    try {
+      const out = await saveEmailAsPdf({ messageId: id });
+      setNote(`${out.note}${out.reading ? ' — reading it now.' : '.'}`);
+      await reload();
+    } catch (err) {
+      setNote(err.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
   // Trusting the sender is the OTHER answer, and the bigger one: it fetches
   // everything of theirs already waiting and every later invoice on arrival.
   async function trust(id, address) {
@@ -301,6 +317,7 @@ function Thread({ userId }) {
             busy={busy === m.id}
             onFetch={() => fetchLinks(m.id)}
             onTrust={() => trust(m.id, m.forwardedBy || m.from)}
+            onSavePdf={() => savePdf(m.id)}
           />
         ))}
       </div>
@@ -308,8 +325,12 @@ function Thread({ userId }) {
   );
 }
 
-function Message({ m, linkFetchEnabled, replyEnabled, onReplied, busy, onFetch, onTrust }) {
+function Message({ m, linkFetchEnabled, replyEnabled, onReplied, busy, onFetch, onTrust, onSavePdf }) {
   const filed = m.documents?.length > 0;
+  // A mail that became no document with a file — nothing attached, nothing
+  // behind its links — can be filed as itself. Not a forwarding confirmation,
+  // and not a mail whose paperwork is the emails attached to it.
+  const canSavePdf = !filed && m.outcome !== 'forwarding_confirmation' && m.outcome !== 'forwarded';
   // Whose trust this message's links wait on. For an email that arrived
   // attached to another, the person who delivered it: the From line inside an
   // .eml is text anybody could have written.
@@ -342,7 +363,9 @@ function Message({ m, linkFetchEnabled, replyEnabled, onReplied, busy, onFetch, 
               >
                 <FileText className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="max-w-[16rem] truncate">{d.fileName || d.displayId}</span>
-                <span className="text-muted-foreground">{d.via === 'link' ? 'from a link' : d.displayId}</span>
+                <span className="text-muted-foreground">
+                  {d.via === 'link' ? 'from a link' : d.via === 'email' ? 'the email, as a PDF' : d.displayId}
+                </span>
               </Link>
             ))}
           </div>
@@ -421,8 +444,22 @@ function Message({ m, linkFetchEnabled, replyEnabled, onReplied, busy, onFetch, 
             <ShieldCheck className="h-3.5 w-3.5" /> sender trusted
           </span>
         )}
+        {canSavePdf && (
+          <button
+            type="button"
+            onClick={onSavePdf}
+            disabled={busy}
+            title="File the email itself as a cost document, with the message as its PDF."
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-60',
+              !(m.links?.length > 0 && linkFetchEnabled) && 'ml-auto'
+            )}
+          >
+            <FileText className="h-3.5 w-3.5" /> Save email as PDF
+          </button>
+        )}
         {m.links?.length > 0 && linkFetchEnabled && (
-          <span className="ml-auto flex flex-wrap items-center gap-2">
+          <span className={cn('flex flex-wrap items-center gap-2', !canSavePdf && 'ml-auto')}>
             {!m.senderTrusted && (
               <button
                 type="button"

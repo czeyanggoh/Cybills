@@ -16,7 +16,7 @@
 // Costs inbox it sits beside, and for the same reason: this shows everybody's
 // mail in the entity, not the caller's own.
 import { Router } from 'express';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import {
   ensure as ensureUsers,
   canAccessOrg,
@@ -33,7 +33,8 @@ import { resolveProvider } from './llm.js';
 import { readSetting } from './settings.js';
 import { mailById, mailForOrg, trustAddressOf, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
-import { followMessageLinks } from './inbound.js';
+import { followMessageLinks, saveEmailAsPdf } from './inbound.js';
+import { htmlToText } from './emailPdf.js';
 import { n8nEnabled } from './n8n.js';
 import { getBillById, type Bill } from './store.js';
 import { getOrganisation } from './organisations.js';
@@ -549,3 +550,70 @@ emailRouter.post('/reply', async (req, res) => {
   });
   res.json({ ok: true, reply });
 });
+
+// --- The email itself, as the document ---------------------------------------
+//
+// Some mail has nothing behind it to fetch: the paperwork is the BODY — an
+// order confirmation typed into a forward, "please PayNow to …" above a thread
+// that carries the amount — and its links are a logo and a mail client's
+// footer. The document it left in the inbox would be published to Xero with no
+// paper at all. So the message can be written out as a PDF and attached, from
+// the document that is asking or from the mail's own row on the Email tab.
+async function saveAsPdf(req: Request, res: Response, about: { messageId?: string; billId?: string }) {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const found = answering(ws, orgId, about);
+  if (!found) return res.status(404).json({ error: about.billId ? 'unknown_document' : 'unknown_message' });
+  const { message } = found;
+  const scope = dataScopeForOrg(orgId);
+  if (message?.outcome === 'forwarding_confirmation') {
+    return res.status(422).json({ error: 'not_a_document', message: 'That is a forwarding confirmation, not paperwork.' });
+  }
+
+  // The row the PDF lands on: the document it was pressed from, else the one
+  // standing in the inbox for this mail. A mail with neither gets a new one.
+  const fill = found.bill || (message?.pendingBillId ? getBillById(scope, message.pendingBillId) : null);
+  if (fill?.storageKey) {
+    return res.status(409).json({ error: 'has_file', message: 'This document already has a file attached.' });
+  }
+  if (!fill && message?.documents.length) {
+    return res.status(409).json({ error: 'already_filed', message: 'This mail has already been filed as a document.' });
+  }
+  const person = message ? personFor(ws, message.userId) : null;
+  if (!fill && !person) {
+    return res.status(422).json({ error: 'unknown_owner', message: 'The person this mail was addressed to is no longer on the roster.' });
+  }
+
+  // The message as it was SENT — for an email attached to another, its own
+  // From line, which is what the page should say whoever forwarded it.
+  const envelope = message
+    ? { from: message.from, to: message.to, subject: message.subject, date: message.sentAt || message.receivedAt, text: message.text }
+    : found.envelope;
+  // The stored text is the top of the message, capped; where the markup is
+  // still held and the text ran out (or was never there), the markup has the
+  // rest of the thread — which is where a forwarded order's figures are.
+  const cut = envelope.text.length >= 3900 || !envelope.text.trim();
+  const body = message?.html && cut ? htmlToText(message.html) : '';
+
+  const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', orgId);
+  const out = await saveEmailAsPdf(req, {
+    scope,
+    orgId: message?.orgId || orgId,
+    envelope,
+    body,
+    message,
+    fill,
+    user: person?.user || { email: fill?.owner || fill?.createdBy || '' },
+    provider: resolveProvider(settings?.readerProvider),
+  });
+  if (!out.ok) return res.status(502).json({ error: 'not_saved', message: out.note });
+  res.json({ ok: true, note: out.note, document: out.document, reading: out.reading });
+}
+
+// POST /api/email/documents/:billId/pdf — from the document that has no file.
+emailRouter.post('/documents/:billId/pdf', (req, res) => saveAsPdf(req, res, { billId: String(req.params.billId ?? '') }));
+
+// POST /api/email/messages/:id/pdf — from the mail's own row on the Email tab.
+emailRouter.post('/messages/:id/pdf', (req, res) => saveAsPdf(req, res, { messageId: String(req.params.id ?? '') }));

@@ -99,8 +99,10 @@ export type Bill = {
     from: string;
     links: string[];
     /** 'awaiting_trust' — asking; 'fetched' — the file below came from a link;
-     *  'failed' — it was tried and n8n could not produce a document. */
-    status: 'awaiting_trust' | 'fetched' | 'failed';
+     *  'failed' — it was tried and n8n could not produce a document;
+     *  'converted' — there was nothing behind the links, and the file below is
+     *  the email itself, written out as a PDF. */
+    status: 'awaiting_trust' | 'fetched' | 'failed' | 'converted';
     /** n8n's own words on the last attempt, or why it has not been attempted. */
     note: string;
     at: string;
@@ -1272,7 +1274,10 @@ export function setBillEmailLink(orgId: string, id: string, patch: Partial<NonNu
 export function attachFetchedFile(
   orgId: string,
   id: string,
-  file: { fileHash: string; fileName: string; storageKey: string; contentType: string }
+  file: { fileHash: string; fileName: string; storageKey: string; contentType: string },
+  // False where the file is attached and NOT read: the document somebody has
+  // already coded by hand gets its paper and keeps its status.
+  reading = true
 ): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
@@ -1283,7 +1288,7 @@ export function attachFetchedFile(
   bill.contentType = file.contentType;
   // Being read, and saying so — the same state the attachment road creates a
   // document in, cleared by autoRead's finally.
-  bill.status = 'processing';
+  if (reading) bill.status = 'processing';
   persist(bills);
   return bill;
 }

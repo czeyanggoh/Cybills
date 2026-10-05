@@ -25,7 +25,7 @@ import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { addItemToClaim, createClaim, docToClaimTxn, removeItemsFromClaim, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
-import { trustSender, fetchDocumentLink, useDocumentReplies } from '@/lib/mailbox';
+import { trustSender, fetchDocumentLink, useDocumentReplies, saveEmailAsPdf } from '@/lib/mailbox';
 import EmailReply from '@/components/EmailReply';
 import { getDoc } from '@/data/docs';
 import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
@@ -2013,6 +2013,17 @@ export default function CostDetail() {
                 >
                   {linkBusy === 'once' ? 'Fetching…' : askingToFetch ? 'Just fetch this one' : 'Try again'}
                 </button>
+                {/* The third answer: there is nothing behind these links, and
+                    the paperwork is the email itself. */}
+                <button
+                  type="button"
+                  disabled={Boolean(linkBusy)}
+                  onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id }))}
+                  title="Attach the email itself to this document as a PDF, so it goes to Xero with the bill."
+                  className="whitespace-nowrap text-xs text-sky-900/70 underline underline-offset-2 hover:text-sky-900 disabled:opacity-60"
+                >
+                  {linkBusy === 'pdf' ? 'Saving…' : 'Save email as PDF'}
+                </button>
               </span>
             )}
           </div>
@@ -2918,6 +2929,25 @@ export default function CostDetail() {
                       all (the server says). Under the message rather than in
                       the toolbar: it is an answer to THIS, and what was already
                       said back belongs beside it. */}
+                  {/* A document that came by email and has no file: the email
+                      can BE the file. Offered here as well as in the banner
+                      above, since a mail with no links at all never shows one. */}
+                  {mailReplies.available && !doc.hasFile && (
+                    <div className="mt-4 flex flex-wrap items-center gap-3 border-t pt-4">
+                      <button
+                        type="button"
+                        disabled={Boolean(linkBusy)}
+                        onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id }))}
+                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-60"
+                      >
+                        <FileText className="h-3.5 w-3.5" /> {linkBusy === 'pdf' ? 'Saving…' : 'Save this email as a PDF'}
+                      </button>
+                      <span className="text-xs text-muted-foreground">
+                        {linkNote ||
+                          'Attaches the message to this document as its file, so it goes to Xero with the bill.'}
+                      </span>
+                    </div>
+                  )}
                   {mailReplies.available && (
                     <div className="mt-4 border-t pt-4">
                       <EmailReply

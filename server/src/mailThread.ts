@@ -18,8 +18,9 @@ export type MailDocument = {
   billId: string;
   displayId: string;
   fileName: string;
-  /** How it got here: an attachment on the mail, or a link n8n followed. */
-  via: 'attachment' | 'link';
+  /** How it got here: an attachment on the mail, a link n8n followed, or the
+   *  email itself written out as a PDF. */
+  via: 'attachment' | 'link' | 'email';
 };
 
 export type MailAttachment = {

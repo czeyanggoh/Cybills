@@ -2244,6 +2244,35 @@ With no mailbox connected the button is there and disabled, saying so. Covered
 by `npm test` in `server/` (`test/email-reply.test.mts`, over real HTTP in and a
 real SMTP conversation out, so what is asserted is the mail that leaves).
 
+**And the email itself can be the document.** Some mail has nothing behind its
+links: the paperwork is the BODY — an order confirmation typed into a forward,
+"please PayNow to …" above a thread carrying the amount — and the links are a
+social-media logo and "Get Outlook for iOS". n8n rightly finds no PDF, the
+document stands in the inbox with no file, and a bill published from it reaches
+Xero with no paper at all. **Save email as PDF** writes the message out as the
+paper (`emailPdf.ts`, a leaf: subject, From / To / Date, then the text, wrapped
+and paginated with pdf-lib) and attaches it, so publishing uploads it like any
+other file. Offered in three places, one road (`saveEmailAsPdf` in `inbound.ts`):
+the link banner on the document, the document's Email tab (any emailed document
+with no file — a mail with no links never shows the banner), and the mail's row
+on the Email tab (`POST /api/email/documents/:billId/pdf`,
+`/messages/:id/pdf`). It lands on the row already standing in the inbox for the
+same reason a fetched file does, and that row's `emailLink.status` becomes
+`converted`, which is what stops it asking; a mail that left no row gets a new
+document, owned by whoever it was addressed to. **It is read afterwards only
+where the row still says nothing** (no supplier, category, date or total): a
+document somebody has coded by hand gets its paper and keeps what they typed
+(`attachFetchedFile`'s `reading` flag), and Re-read is theirs to press. TEXT,
+deliberately — rendering a mail's HTML as sent needs a browser the server does
+not carry. The stored text is the top of the message capped at 4,000 characters,
+so where that ran out and the markup is still held (it is, while a link fetch is
+pending) the body comes from the markup instead (`htmlToText`), which is where a
+forwarded order's figures are. The standard PDF fonts hold Western text only, so
+a character outside them prints as "?" rather than costing the page. Refused for
+a document that already has a file (409 `has_file`), a mail already filed
+(`already_filed`) and a forwarding confirmation. Business Admin, like the rest
+of the router. Covered by `npm test` in `server/` (`test/email-pdf.test.mts`).
+
 Env (server/.env): `N8N_FETCH_URL`, `N8N_API_KEY`, `N8N_TIMEOUT_MS` (default
 120s). Unset, the road is simply not there: the mail is still mirrored and the
 document still stands in the inbox with its links, saying so. Covered by `npm test` in `server/` (`test/email-link.test.mts`, driven over
