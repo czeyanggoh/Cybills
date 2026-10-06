@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Loader2, Maximize2, Plus, Search, Sparkles, Trash2, Undo2, X } from 'lucide-react';
 import ComboSelect from '@/components/ComboSelect';
 import { formatCategory } from '@/lib/categoryDisplay';
@@ -238,9 +238,39 @@ export function LineItemsActions({ onExtract, onAdd, onExpand, onRevert, canReve
 // with the document above it and a search for finding one row among many.
 // Every edit goes straight back to the same state the panel edits, so there is
 // nothing to save and Done just closes it.
+// How much of the editor the document takes, as a share of its height. Dragged
+// by the bar between the two, and remembered per browser: a long invoice wants
+// most of the window while its rows are checked, a short one very little.
+const SPLIT_KEY = 'cybills.lineItems.split';
+const SPLIT_DEFAULT = 0.38;
+const SPLIT_MIN = 0.15;
+const SPLIT_MAX = 0.85;
+const clampSplit = (v) => Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, v));
+function storedSplit() {
+  try {
+    const v = Number(localStorage.getItem(SPLIT_KEY));
+    return v > 0 ? clampSplit(v) : SPLIT_DEFAULT;
+  } catch {
+    return SPLIT_DEFAULT;
+  }
+}
+
 export function LineItemsEditor({ open, onClose, title, preview, actions, ...grid }) {
   const [showPreview, setShowPreview] = useState(true);
   const [q, setQ] = useState('');
+  const [split, setSplit] = useState(storedSplit);
+  const [dragging, setDragging] = useState(false);
+  const bodyRef = useRef(null);
+  const keepSplit = (v) => {
+    const next = clampSplit(v);
+    setSplit(next);
+    try { localStorage.setItem(SPLIT_KEY, String(next)); } catch { /* a private window: this session only */ }
+  };
+  const splitAt = (clientY) => {
+    // The pane's height is a share of the body INSIDE its padding (p-4).
+    const r = bodyRef.current?.getBoundingClientRect();
+    if (r && r.height > 32) keepSplit((clientY - r.top - 16) / (r.height - 32));
+  };
   if (!open) return null;
 
   const needle = q.trim().toLowerCase();
@@ -283,13 +313,56 @@ export function LineItemsEditor({ open, onClose, title, preview, actions, ...gri
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-        {preview && showPreview && <div className="h-[38%] min-h-0 shrink-0 overflow-auto">{preview}</div>}
+      <div ref={bodyRef} className={cn('flex min-h-0 flex-1 flex-col p-4', !(preview && showPreview) && 'gap-3')}>
+        {preview && showPreview && (
+          <>
+            {/* A PDF is an iframe, which swallows the pointer the moment the
+                drag crosses it — so it is switched off for as long as the bar
+                is held, on top of the capture the bar takes. */}
+            <div
+              className={cn('min-h-0 shrink-0 overflow-hidden', dragging && 'pointer-events-none')}
+              style={{ height: `${split * 100}%` }}
+            >
+              {preview}
+            </div>
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize document"
+              aria-valuenow={Math.round(split * 100)}
+              aria-valuemin={SPLIT_MIN * 100}
+              aria-valuemax={SPLIT_MAX * 100}
+              tabIndex={0}
+              title="Drag to resize · double-click to reset"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.currentTarget.setPointerCapture(e.pointerId);
+                setDragging(true);
+              }}
+              onPointerMove={(e) => { if (dragging) splitAt(e.clientY); }}
+              onPointerUp={() => setDragging(false)}
+              onPointerCancel={() => setDragging(false)}
+              onDoubleClick={() => keepSplit(SPLIT_DEFAULT)}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowUp') { e.preventDefault(); keepSplit(split - 0.05); }
+                if (e.key === 'ArrowDown') { e.preventDefault(); keepSplit(split + 0.05); }
+              }}
+              className="group flex h-3 shrink-0 cursor-row-resize touch-none items-center justify-center outline-none"
+            >
+              <span
+                className={cn(
+                  'h-1 w-12 rounded-full bg-border transition-colors group-hover:bg-foreground/40 group-focus-visible:bg-foreground/40',
+                  dragging && 'bg-foreground/50'
+                )}
+              />
+            </div>
+          </>
+        )}
         <div className="min-h-0 flex-1">
           <LineItemsGrid {...grid} visible={visible} expanded />
         </div>
         {/* Adding or re-reading a line shouldn't mean closing the editor first. */}
-        {actions && <div className="shrink-0">{actions}</div>}
+        {actions && <div className={cn('shrink-0', preview && showPreview && 'mt-3')}>{actions}</div>}
       </div>
     </div>
   );
