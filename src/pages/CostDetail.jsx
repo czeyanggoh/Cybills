@@ -130,13 +130,22 @@ function SectionHeading({ children }) {
 }
 
 // Left panel: the uploaded file once one exists, else a monochrome stand-in.
-// `fill` = take the height of whatever holds it (the line items editor, whose
-// document pane is dragged to size) rather than the page's own fixed height.
+// `fill` = take the height of whatever holds it rather than a fixed one: always
+// (the line items editor, whose document pane is dragged to size), or `'lg'`,
+// only once the page is two columns — stacked above the form on a narrow
+// screen there is nothing to fill, so it keeps its own height there.
 function ReceiptPreview({ doc, imageUrl, previewType, fill = false }) {
-  const frame = fill ? 'min-h-0 w-full flex-1' : 'h-[45vh] w-full md:h-[560px]';
+  const frame = fill === 'lg'
+    ? 'h-[45vh] w-full md:h-[560px] lg:h-auto lg:min-h-0 lg:flex-1'
+    : fill ? 'min-h-0 w-full flex-1' : 'h-[45vh] w-full md:h-[560px]';
   if (imageUrl) {
     return (
-      <div className={cn('overflow-hidden rounded-lg border bg-background', fill && 'flex h-full flex-col')}>
+      <div
+        className={cn(
+          'overflow-hidden rounded-lg border bg-background',
+          fill === 'lg' ? 'lg:flex lg:h-full lg:flex-col' : fill && 'flex h-full flex-col'
+        )}
+      >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 text-sm font-medium">
           <span>Uploaded receipt</span>
           {/* Which page of the original this is. "Split PDF by page" turns one
@@ -162,7 +171,7 @@ function ReceiptPreview({ doc, imageUrl, previewType, fill = false }) {
   // No stored file yet — neutral placeholder for every document (no seeded
   // "Grab receipt" mock). Use "Upload receipt" to attach the original.
   return (
-    <div className={cn('overflow-hidden rounded-lg border bg-background', fill && 'h-full overflow-auto')}>
+    <div className={cn('overflow-hidden rounded-lg border bg-background', fill === true && 'h-full overflow-auto')}>
       <div className="border-b px-4 py-3 text-sm">
         <span className="font-medium">{doc.supplier || 'Document'}</span>
         {doc.date && doc.date !== '—' && <span className="ml-2 text-muted-foreground">· {doc.date}</span>}
@@ -2344,8 +2353,13 @@ export default function CostDetail() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Left: preview */}
-        <ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} />
+        {/* Left: preview. As tall as the window and held in place while the
+            form beside it scrolls: at a fixed 560px it showed half a page above
+            a column of blank card, and scrolled away from the fields being
+            checked against it. */}
+        <div className={cn(imageUrl && 'lg:sticky lg:top-0 lg:h-[calc(100dvh-6.5rem)] lg:min-h-[560px] lg:self-start')}>
+          <ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} fill="lg" />
+        </div>
 
         {/* Right: extracted fields */}
         <div>
