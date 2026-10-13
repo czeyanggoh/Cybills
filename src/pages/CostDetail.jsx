@@ -1049,6 +1049,13 @@ export default function CostDetail() {
     if (projectReason) patch.projectReason = projectReason;
     setMany(patch);
     setRuleApplied(fields);
+    // "Extract line items" is the one part of a rule that is not a field: it is
+    // a READ, and saving the rule here used to code this document and leave it a
+    // single total, which read as the switch not working. Only where there are
+    // no rows yet — rows already on the document are somebody's, or a read's.
+    if (rule?.extractLineItems && !lineItems.length && imageUrl) {
+      extractLineItems(patch.category || data.category);
+    }
   };
 
 
@@ -1792,7 +1799,9 @@ export default function CostDetail() {
   // Its own pass (see server/src/extract.ts): the rows come back already checked
   // against the document's own grand total, so anything that doesn't add up is
   // said out loud here rather than left for the "Out by" row to be noticed.
-  const extractLineItems = async () => {
+  const extractLineItems = async (category) => {
+    // The grid's button passes its click event; only a rule passes a category.
+    const fallbackCategory = typeof category === 'string' ? category : data.category;
     setLinesNote('');
     const rec = await receiptToUpload();
     if (!rec) { setLinesNote('Attach a receipt first, then extract line items.'); return; }
@@ -1807,7 +1816,7 @@ export default function CostDetail() {
       // Saved here rather than through `set`, whose write is fire-and-forget:
       // the job must not resolve before the rows are actually stored, or the
       // page could re-sync itself from the server a moment too early.
-      const built = lineItemRows(rows, data.category);
+      const built = lineItemRows(rows, fallbackCategory);
       setData((d) => ({ ...d, lineItems: built }));
       setLineSnapshot(built); // a fresh read is the new set to fall back to
       if (doc?.persisted) {
