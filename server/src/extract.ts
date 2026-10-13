@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { visionEnabled } from './env.js';
 import { apportion, notFiller, derivedDescription, withPeriod } from './store.js';
@@ -1166,20 +1166,29 @@ function buildLinesSchema(categories: string[], projectNames: string[]) {
   };
 }
 
-extractRouter.post('/extract-lines', async (req, res) => {
-  if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+// The line-items pass, minus the request: what the route below runs for the
+// browser, and what the background read an emailed, WhatsApp'd or Drive
+// document gets runs for a supplier whose rule asks for rows (inbound.ts). One
+// copy, so a row read on the road nobody is watching is reconciled against the
+// document's total and allocated to its outlet exactly as an uploaded one is.
+export type LineExtractionInputs = {
+  provider: Provider;
+  imageBase64: string;
+  mediaType: string;
+  accounts: AccountRef[];
+  categories: string[];
+  projects: NamedRule[];
+  instructions: string;
+  feature?: string; // what the usage is recorded as
+};
 
-  const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
-  const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
-  if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType)) {
-    return res.status(400).json({ error: 'invalid_image' });
-  }
+export type LineExtractionResult =
+  | { ok: true; data: { lines: Array<Record<string, unknown> & { description: string; category: string; project: string; amount: number; net: number; tax: number }>; grandTotal: number; subTotal: number; taxTotal: number; currency: string; linesTotal: number; reconciled: boolean; note: string; attempts: number } }
+  | { ok: false; status: number; error: string };
 
-  const accounts = parseAccounts(req.body?.accounts);
-  const rawCats: unknown = req.body?.categories;
-  const bodyCats = Array.isArray(rawCats)
-    ? rawCats.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-    : [];
+export async function runLineExtraction(req: Request, inp: LineExtractionInputs): Promise<LineExtractionResult> {
+  const { imageBase64, mediaType, accounts } = inp;
+  const bodyCats = inp.categories;
   const accountLabels = accounts.map((a) => `${a.code} - ${a.name}`);
   const source = accountLabels.length ? accountLabels : bodyCats;
   const categories = source.length
@@ -1187,8 +1196,7 @@ extractRouter.post('/extract-lines', async (req, res) => {
     : DEFAULT_CATEGORIES;
   const categorySet = new Set(categories);
 
-  const rawInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
-  const instructions = rawInstructions.slice(0, 6000);
+  const instructions = inp.instructions.trim().slice(0, 6000);
   const contextBlock = instructions
     ? `Business context and coding rules for this organisation — apply these when classifying each line:\n${instructions}\n\n`
     : '';
@@ -1197,7 +1205,7 @@ extractRouter.post('/extract-lines', async (req, res) => {
   // properties), so each LINE can be allocated to the one it is for. An invoice
   // that bills three outlets on one page is the whole reason line items exist
   // here; leaving every row on the document's single project throws that away.
-  const projects = parseNamedRules(req.body?.projects);
+  const projects = inp.projects;
   const projectNames = projects.map((p) => p.name);
   const projectSet = new Set(projectNames);
   const projectsGuide = projects.length
@@ -1247,7 +1255,7 @@ extractRouter.post('/extract-lines', async (req, res) => {
     projectsGuide;
 
   const isPdf = mediaType === PDF_MEDIA;
-  const provider = resolveProvider(req.body?.provider);
+  const provider = inp.provider;
   // Cents, so the comparison isn't at the mercy of binary floating point.
   const cents = (n: number) => Math.round(Number(n) * 100);
   const sumOf = (lines: Array<{ amount: number }>) => lines.reduce((t, l) => t + cents(l.amount), 0);
@@ -1319,7 +1327,7 @@ extractRouter.post('/extract-lines', async (req, res) => {
         feedback,
     });
     recordUsage(req, {
-      feature: 'extract-lines',
+      feature: inp.feature || 'extract-lines',
       provider: outcome.provider,
       model: outcome.model,
       usage: outcome.usage,
@@ -1331,7 +1339,7 @@ extractRouter.post('/extract-lines', async (req, res) => {
 
   try {
     let data = await read('');
-    if (!data) return res.status(502).json({ error: 'no_data' });
+    if (!data) return { ok: false, status: 502, error: 'no_data' };
 
     // The check the model was asked to do, done again here — because a model
     // that miscounts is exactly the one that won't notice it miscounted. One
@@ -1368,7 +1376,7 @@ extractRouter.post('/extract-lines', async (req, res) => {
       // line falls back to the document's.
       project: projectSet.has(li.project) ? li.project : '',
     }));
-    return res.json({
+    return {
       ok: true,
       data: {
         lines,
@@ -1382,11 +1390,35 @@ extractRouter.post('/extract-lines', async (req, res) => {
         note: notFiller(data.note),
         attempts,
       },
-    });
+    };
   } catch (err) {
     console.error('[extract-lines] failed', err);
-    return res.status(500).json({ error: 'extraction_failed' });
+    return { ok: false, status: 500, error: 'extraction_failed' };
   }
+}
+
+extractRouter.post('/extract-lines', async (req, res) => {
+  if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+
+  const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
+  const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
+  if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType)) {
+    return res.status(400).json({ error: 'invalid_image' });
+  }
+  const rawCats: unknown = req.body?.categories;
+  const out = await runLineExtraction(req, {
+    provider: resolveProvider(req.body?.provider),
+    imageBase64,
+    mediaType,
+    accounts: parseAccounts(req.body?.accounts),
+    categories: Array.isArray(rawCats)
+      ? rawCats.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+      : [],
+    projects: parseNamedRules(req.body?.projects),
+    instructions: typeof req.body?.instructions === 'string' ? req.body.instructions : '',
+  });
+  if (!out.ok) return res.status(out.status).json({ error: out.error });
+  return res.json({ ok: true, data: out.data });
 });
 
 // --- Vault document summariser ----------------------------------------------

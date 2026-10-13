@@ -281,7 +281,14 @@ asked for, never reconciled against the total, which is the set the publish
 path refuses. It now keeps them only for a supplier whose rule opts in, mapped
 into the stored shape the way an upload's `lineItemRows` does (stored raw they
 were rows worth nothing). The off-base tax split still writes its two rows by
-itself, as designed. Covered by `npm test` in `server/`
+itself, as designed. **And the rows an opted-in supplier gets are the
+line-items pass's on every road**: `runLineExtraction` (`extract.ts`) is that
+pass minus the request, run by the route, by `readIntoBill`, and by a re-read
+(`ruleLineRows` in `reRead.js`) where the document has no rows yet. The general
+read's summary is only the fallback: it is not reconciled and names no outlet
+per row, which is how an invoice billing three outlets came back with every row
+on "Same as document". Saving a rule with the switch on from the document page
+runs the pass there and then. Covered by `npm test` in `server/`
 (`test/inbound-line-items.test.mts`).
 
 **One GST figure becomes per-line GST.** Nearly every SG invoice prints its rows

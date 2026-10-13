@@ -30,11 +30,17 @@ writeFileSync(
 );
 
 let answer: Record<string, unknown> = {};
+// What the dedicated line-items pass answers, when a case sets one. Told apart
+// from the general read by the schema the request names.
+let linesAnswer: Record<string, unknown> | null = null;
+let lineCalls = 0;
 const stub = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', () => {
-    const out = JSON.stringify(answer);
+    const forLines = body.includes('document_line_items');
+    if (forLines) lineCalls += 1;
+    const out = JSON.stringify(forLines && linesAnswer ? linesAnswer : answer);
     res.setHeader('content-type', 'application/json');
     res.end(
       JSON.stringify({
@@ -133,6 +139,32 @@ setSupplierRules({ 'Nuphar Design': { category: '93511/000 - REPAIR & MAINT', ex
 bill = await arrive();
 check('opted in, the rows are stored', (bill?.lineItems ?? []).map((li) => li.description), ['Extended project management', 'Transport reimbursement']);
 check('…worth what the reader read', (bill?.lineItems ?? []).map((li) => Number(li.total)), [8000, 244]);
+
+// --- 4) Opted in, and the line-items pass answers: ITS rows are the ones kept --
+// A laundry invoice billing two outlets on one page. The general read's summary
+// is one row; the dedicated pass returns the charge rows, and the GST stated
+// once at the foot is shared across them so they add up to the document.
+check('an opted-in supplier gets the line-items pass', lineCalls > 0, true);
+linesAnswer = {
+  grandTotal: 490.5, subTotal: 450, taxTotal: 40.5, currency: 'SGD', note: '',
+  lines: [
+    { description: 'Tangs Plaza towel wash', amount: 270, tax: 0, category: 'Uncategorised', project: '' },
+    { description: 'Vivo City towel wash', amount: 180, tax: 0, category: 'Uncategorised', project: '' },
+  ],
+};
+answer = { ...FIELDS, supplier: 'Xtreme Laundry Services', total: 490.5, tax: 40.5, lineItems: [{ description: 'Laundry', amount: 490.5 }] };
+setSupplierRules({ 'Xtreme Laundry Services': { extractLineItems: true } });
+bill = await arrive();
+check('the dedicated rows are stored, not the summary', (bill?.lineItems ?? []).map((li) => li.description), ['Tangs Plaza towel wash', 'Vivo City towel wash']);
+check('…with the stated GST shared across them', (bill?.lineItems ?? []).map((li) => Number(li.tax)), [24.3, 16.2]);
+check('…adding up to the document', (bill?.lineItems ?? []).reduce((t, li) => t + Number(li.total), 0), 490.5);
+
+// --- 5) A supplier that has not opted in costs no second read -----------------
+const before = lineCalls;
+setSupplierRules({});
+answer = { ...FIELDS };
+await arrive();
+check('no rule, no line-items pass', lineCalls, before);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, stub);

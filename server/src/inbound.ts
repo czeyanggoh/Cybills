@@ -18,7 +18,7 @@ import { keepPaymentProofInStep } from './paymentProof.js';
 import { keepAdvanceInStep } from './prepayment.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
-import { runExtraction } from './extract.js';
+import { runExtraction, runLineExtraction } from './extract.js';
 import { readGotNothing } from './blankRead.js';
 import type { CoveringNote } from './extract.js';
 import { categoriesForOrg } from './categories.js';
@@ -48,7 +48,7 @@ function supplierRuleFor(ws: string, orgId: string, supplier: string): Record<st
 // by email carries a net, a tax and a total the grid and the publish path can
 // read. Stored raw ({description, amount}) they were rows worth nothing.
 function lineItemRows(
-  rows: Array<{ description?: string; amount?: number; net?: number; tax?: number; category?: string }>,
+  rows: Array<{ description?: string; amount?: number; net?: number; tax?: number; category?: string; project?: string }>,
   fallbackCategory = ''
 ) {
   return rows.map((li) => {
@@ -58,7 +58,9 @@ function lineItemRows(
     return {
       description: li.description || '',
       category: li.category || fallbackCategory || 'Uncategorised',
-      project: '',
+      // Per line only from the line-items pass, which is asked which outlet or
+      // site each row is for; the general read's summary names none.
+      project: li.project || '',
       project2: '',
       net: net.toFixed(2),
       tax: tax.toFixed(2),
@@ -265,10 +267,28 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     // reconciled against the document's total, which is the set the publish
     // path refuses. Nothing is stored unless a person switched it on.
     const wantsLines = Boolean(vendorRule?.extractLineItems);
-    const readerLines =
-      wantsLines && Array.isArray(d.lineItems) && d.lineItems.length
-        ? lineItemRows(d.lineItems, vendorRule?.category || d.category)
-        : undefined;
+    // The rows come from the dedicated line-items pass — the one an upload runs
+    // for an opted-in supplier — so they are checked against the document's
+    // total and each carries the outlet it names. The general read's summary
+    // of the table is the fallback where that pass returns nothing: it has
+    // neither, which is how an emailed invoice billing three outlets arrived
+    // with every row on the document's single project. A second reader call,
+    // so not for a document that already has rows.
+    let readerLines: ReturnType<typeof lineItemRows> | undefined;
+    if (wantsLines && !getBillById(scope, billId)?.lineItems?.length) {
+      const pass = await runLineExtraction(req, {
+        provider,
+        imageBase64: fileBase64,
+        mediaType,
+        accounts: inputs.accounts,
+        categories: inputs.categories,
+        projects: inputs.projects,
+        instructions: inputs.instructions,
+        feature: 'inbound-extract-lines',
+      }).catch(() => null);
+      const rows = pass?.ok && pass.data.lines.length ? pass.data.lines : d.lineItems;
+      if (Array.isArray(rows) && rows.length) readerLines = lineItemRows(rows, vendorRule?.category || d.category);
+    }
     const patch: Record<string, unknown> = {
       supplier: d.supplier,
       date: d.date,
