@@ -1124,7 +1124,7 @@ async function deliverMail(
       linkFetchedAt: '',
       outcome: 'nothing',
       html: '',
-      ...(bodyKey ? { bodyKey } : {}),
+      ...(bodyKey ? { bodyKey, bodyBytes: Buffer.byteLength(String(mail.html ?? ''), 'utf8') } : {}),
       ...(attached ? { forwardedBy: attached.by, forwardedIn: attached.inId } : {}),
       ...over,
     });

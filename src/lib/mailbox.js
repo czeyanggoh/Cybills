@@ -24,6 +24,15 @@ async function json(url, init) {
   return body;
 }
 
+/** Bytes as a person reads them: "412 KB", "3.2 MB". */
+export function formatBytes(n) {
+  const b = Number(n) || 0;
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${Math.round(b / 1024)} KB`;
+  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 /** One row per person mail has arrived for, newest first. */
 export function useMailThreads() {
   const [state, setState] = useState({
@@ -43,6 +52,12 @@ export function useMailThreads() {
         threads: data.threads ?? [],
         messages: Number(data.messages ?? 0),
         unfiled: Number(data.unfiled ?? 0),
+        // What the mail occupies (bytes): the messages, the files of the
+        // documents filed from them, and the share that became nothing.
+        mailBytes: Number(data.mailBytes ?? 0),
+        fileBytes: Number(data.fileBytes ?? 0),
+        unfiledBytes: Number(data.unfiledBytes ?? 0),
+        sizing: Number(data.sizing ?? 0),
         linkFetchEnabled: Boolean(data.linkFetchEnabled),
         loading: false,
         error: '',

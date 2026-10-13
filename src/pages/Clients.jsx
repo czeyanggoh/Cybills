@@ -11,6 +11,7 @@ import {
 } from '@/lib/usageRange';
 import { useOrganisations, setActiveOrganisationId } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
+import { formatBytes } from '@/lib/mailbox';
 
 // Initials for the account-manager chips, same shape as the top-bar avatar.
 function initials(name) {
@@ -220,6 +221,7 @@ export default function Clients() {
               <th className="px-3 py-2.5 font-medium">Account managers</th>
               {showToday && <th className="px-3 py-2.5 text-right font-medium">API today</th>}
               <th className="px-3 py-2.5 text-right font-medium">API · {periodLabel}</th>
+              <th className="px-3 py-2.5 text-right font-medium">Email stored</th>
               <th className="px-3 py-2.5 font-medium"> </th>
             </tr>
           </thead>
@@ -264,6 +266,15 @@ export default function Clients() {
                   {formatUsd(c.usage.range.costUsd)}
                   <span className="block text-xs text-muted-foreground">{c.usage.range.calls} calls</span>
                 </td>
+                {/* What this client's mirrored email occupies, all time: the
+                    messages plus the attachments filed as documents. */}
+                <td
+                  className="px-3 py-3 text-right tabular-nums"
+                  title={`Messages ${formatBytes(c.email?.mailBytes)} · filed attachments ${formatBytes(c.email?.fileBytes)} · mail that filed nothing ${formatBytes(c.email?.unfiledBytes)} (${c.email?.unfiled || 0} messages)`}
+                >
+                  {formatBytes((c.email?.mailBytes || 0) + (c.email?.fileBytes || 0))}
+                  <span className="block text-xs text-muted-foreground">{c.email?.messages || 0} messages</span>
+                </td>
                 <td className="px-3 py-3 text-right">
                   <button
                     type="button"
@@ -282,7 +293,7 @@ export default function Clients() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={showToday ? 6 : 5} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={showToday ? 7 : 6} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {error
                     ? 'Only the practice team can see the client list.'
                     : isLoading
@@ -297,7 +308,12 @@ export default function Clients() {
         </table>
       </div>
 
-      {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {clients.length} clients</p>}
+      {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">
+          Showing {rows.length} of {clients.length} clients · email stored:{' '}
+          {formatBytes(clients.reduce((n, c) => n + (c.email?.mailBytes || 0) + (c.email?.fileBytes || 0), 0))} across all
+          clients, {formatBytes(clients.reduce((n, c) => n + (c.email?.unfiledBytes || 0), 0))} of it mail that filed nothing
+          {data?.emailSizing > 0 ? ` · ${data.emailSizing} older messages still being measured — reload to finish` : ''}
+        </p>}
     </AppShell>
   );
 }

@@ -11,6 +11,7 @@
 // marketing email runs to hundreds of kilobytes. A leaf, like mailThread.ts.
 import { createHash } from 'node:crypto';
 import { getBillFile, putBillFile } from './storage.js';
+import { setMailBodyBytes, type MailMessage } from './mailThread.js';
 
 // A mail larger than this is a newsletter with its images inlined; what is
 // kept of it is the plain text.
@@ -31,6 +32,25 @@ export async function storeMailBody(scope: string, html: string): Promise<string
   } catch {
     return '';
   }
+}
+
+/**
+ * Measure the stored HTML part of mail mirrored before sizes were kept, a
+ * batch at a time so no one request reads a whole mailbox out of storage.
+ * Writes what it found onto the rows given AND the store; answers with how
+ * many are still unmeasured.
+ */
+export async function measureMailBodies(rows: MailMessage[], limit = 40): Promise<number> {
+  const todo = rows.filter((m) => m.bodyKey && m.bodyBytes == null);
+  if (!todo.length) return 0;
+  const sizes: Record<string, number> = {};
+  for (const m of todo.slice(0, limit)) {
+    const html = await readMailBody({ bodyKey: m.bodyKey }).catch(() => '');
+    sizes[m.id] = Buffer.byteLength(html, 'utf8');
+    m.bodyBytes = sizes[m.id];
+  }
+  setMailBodyBytes(sizes);
+  return Math.max(0, todo.length - limit);
 }
 
 /**

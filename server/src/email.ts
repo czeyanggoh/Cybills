@@ -31,11 +31,11 @@ import { workspaceId } from './workspace.js';
 import { env, googleEnabled, smtpConfigured } from './env.js';
 import { resolveProvider } from './llm.js';
 import { readSetting } from './settings.js';
-import { mailById, mailForOrg, trustAddressOf, type MailMessage } from './mailThread.js';
+import { mailById, mailForOrg, mailFootprint, mailUnfiled, trustAddressOf, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
 import { followMessageLinks, saveEmailAsPdf } from './inbound.js';
 import { htmlToText } from './emailPdf.js';
-import { readMailBody } from './mailBody.js';
+import { readMailBody, measureMailBodies } from './mailBody.js';
 import { n8nEnabled } from './n8n.js';
 import { getBillById, type Bill } from './store.js';
 import { getOrganisation } from './organisations.js';
@@ -110,12 +110,18 @@ function summaryOf(m: MailMessage): string {
 // Only people who have actually received something are listed: an entity's
 // whole roster is the Users page's job, and a thread with no messages in it is
 // not a conversation.
-emailRouter.get('/threads', (req, res) => {
+emailRouter.get('/threads', async (req, res) => {
   const ws = workspaceId(req);
   const orgId = orgIdFor(req);
   if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
 
   const all = mailHere(ws, orgId);
+  // A mail mirrored before sizes were kept has a stored HTML part of unknown
+  // size: measured here, once; `sizing` says the figures are still short.
+  const sizing = await measureMailBodies(all);
+  const isUnfiled = mailUnfiled;
+  const sizeOf = mailFootprint;
+
   const byUser = new Map<string, MailMessage[]>();
   for (const m of all) {
     const rows = byUser.get(m.userId) || [];
@@ -143,9 +149,11 @@ emailRouter.get('/threads', (req, res) => {
         documents: rows.reduce((n, m) => n + m.documents.length, 0),
         // What arrived and became nothing. This is the number the tab exists
         // for, so it is counted rather than left to be eyeballed.
-        unfiled: rows.filter(
-          (m) => !m.documents.length && m.outcome !== 'forwarding_confirmation' && m.outcome !== 'forwarded'
-        ).length,
+        unfiled: rows.filter(isUnfiled).length,
+        // What the mailbox occupies: the messages themselves, the files of the
+        // documents filed from them, and how much of the first is mail that
+        // became nothing.
+        ...sizeOf(rows),
         lastMessageAt: last?.sentAt || last?.receivedAt || '',
         lastSubject: last?.subject || '',
         lastSummary: last ? summaryOf(last) : '',
@@ -157,6 +165,8 @@ emailRouter.get('/threads', (req, res) => {
     threads,
     messages: all.length,
     unfiled: threads.reduce((n, t) => n + t.unfiled, 0),
+    ...sizeOf(all),
+    sizing,
     // Whether "Fetch the document" is a button at all. Said by the server, since
     // whether the road exists is a deployment fact the browser cannot see.
     linkFetchEnabled: n8nEnabled(),

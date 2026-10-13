@@ -2315,6 +2315,17 @@ attaches in place of its own text page only where the bytes are a PDF (422
 `not_a_pdf`). No HTML kept, or anything going wrong while drawing, falls back to
 the text page. It is a picture of the message, so its text cannot be selected.
 
+**What the mail occupies is counted.** `mailSize` / `mailFootprint`
+(`mailThread.ts`) total a mailbox in bytes: the messages themselves (subject,
+text, markup still on the row, and the stored HTML part — `bodyBytes`, written
+with `bodyKey`), the attachments FILED (documents now, so the Costs book's
+bytes), and the share that is mail which filed nothing. A skipped attachment was
+never stored and counts for nothing. Shown as **Size** on the Email tab and
+**Email stored** per client on Practice -> Clients. Mail mirrored before sizes
+were kept is measured off those listings, a bounded batch per request
+(`measureMailBodies`), and the page says while figures are still short. Nothing
+deletes mail yet: there is no retention rule.
+
 Env (server/.env): `N8N_FETCH_URL`, `N8N_API_KEY`, `N8N_TIMEOUT_MS` (default
 120s). Unset, the road is simply not there: the mail is still mirrored and the
 document still stands in the inbox with its links, saying so. Covered by `npm test` in `server/` (`test/email-link.test.mts`, driven over

@@ -13,6 +13,7 @@ import {
   trustSender,
   untrustSender,
   saveEmailAsPdf,
+  formatBytes,
 } from '@/lib/mailbox';
 import MailBody from '@/components/MailBody';
 
@@ -44,7 +45,7 @@ export default function Email() {
 function ThreadList() {
   const navigate = useNavigate();
   const organisation = useActiveOrganisation();
-  const [{ threads, messages, unfiled, loading, error }] = useMailThreads();
+  const [{ threads, messages, unfiled, mailBytes = 0, fileBytes = 0, unfiledBytes = 0, sizing = 0, loading, error }] = useMailThreads();
   const [query, setQuery] = useState('');
 
   const q = query.trim().toLowerCase();
@@ -88,6 +89,7 @@ function ThreadList() {
               <th className="px-3 py-2.5 font-medium text-right">Messages</th>
               <th className="px-3 py-2.5 font-medium text-right">Documents</th>
               <th className="px-3 py-2.5 font-medium text-right">Filed nothing</th>
+              <th className="px-3 py-2.5 font-medium text-right">Size</th>
             </tr>
           </thead>
           <tbody>
@@ -128,11 +130,19 @@ function ThreadList() {
                     <span className="text-muted-foreground tabular-nums">0</span>
                   )}
                 </td>
+                {/* The messages plus the files filed from them. The tooltip
+                    splits it, since only the first is the mailbox's own. */}
+                <td
+                  className="px-3 py-3 text-right tabular-nums text-muted-foreground"
+                  title={`Messages ${formatBytes(t.mailBytes)} · filed attachments ${formatBytes(t.fileBytes)} · mail that filed nothing ${formatBytes(t.unfiledBytes)}`}
+                >
+                  {formatBytes((t.mailBytes || 0) + (t.fileBytes || 0))}
+                </td>
               </tr>
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {error
                     ? error
                     : loading
@@ -148,7 +158,10 @@ function ThreadList() {
       </div>
       {rows.length > 0 && (
         <p className="mt-3 text-xs text-muted-foreground">
-          Showing {rows.length} of {threads.length} mailboxes · {messages} messages
+          Showing {rows.length} of {threads.length} mailboxes · {messages} messages ·{' '}
+          {formatBytes(mailBytes + fileBytes)} stored ({formatBytes(mailBytes)} of messages, {formatBytes(fileBytes)} of
+          attachments filed as documents) · {formatBytes(unfiledBytes)} is mail that filed nothing
+          {sizing > 0 ? ` · ${sizing} older message${sizing === 1 ? '' : 's'} still being measured — reload to finish` : ''}
         </p>
       )}
 

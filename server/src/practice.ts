@@ -17,6 +17,9 @@ import {
   type User,
 } from './users.js';
 import { usageSummary, priceTable } from './usage.js';
+import { dataScopeForOrg } from './organisations.js';
+import { mailForOrg, mailFootprint, mailUnfiled } from './mailThread.js';
+import { measureMailBodies } from './mailBody.js';
 
 // The practice (CYBM) — the firm that runs CYBills for its clients.
 //
@@ -160,7 +163,7 @@ practiceRouter.post('/colleagues', async (req, res) => {
 // the period being asked about (?range=last-month, or ?range=custom&from=&to=;
 // this month if nothing is named). A Standard colleague sees the clients they
 // can open; whoever runs the practice sees all of them.
-practiceRouter.get('/clients', (req, res) => {
+practiceRouter.get('/clients', async (req, res) => {
   const { me, ok } = practiceMember(req, res);
   if (!ok) return;
   const ws = workspaceId(req);
@@ -169,10 +172,25 @@ practiceRouter.get('/clients', (req, res) => {
   const team = colleagues(ws).filter((u) => !u.deactivated);
   const everything = !me || canManagePractice(me);
 
-  const clients = listOrganisations(ws)
-    .filter((o) => everything || canAccessOrg(me, o.id))
+  // What each client's mirrored email occupies. Older mail has a stored HTML
+  // part nobody measured; a bounded batch is measured per request, and
+  // `sizing` says how many are still to go so a short figure is not taken as
+  // the whole.
+  const orgs = listOrganisations(ws).filter((o) => everything || canAccessOrg(me, o.id));
+  const mailByOrg = new Map(orgs.map((o) => [o.id, mailForOrg(ws, o.id, dataScopeForOrg(o.id))] as const));
+  let budget = 60;
+  let sizing = 0;
+  for (const rows of mailByOrg.values()) {
+    const before = rows.filter((m) => m.bodyKey && m.bodyBytes == null).length;
+    const left = await measureMailBodies(rows, budget);
+    budget = Math.max(0, budget - (before - left));
+    sizing += left;
+  }
+
+  const clients = orgs
     .map((o) => {
       const window = usage.byOrganisation[o.id];
+      const mail = mailByOrg.get(o.id) || [];
       return {
         id: o.id,
         name: o.name,
@@ -193,12 +211,16 @@ practiceRouter.get('/clients', (req, res) => {
           today: window?.today ?? { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
           range: window?.range ?? { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
         },
+        // Its mirrored email: how many messages, how many became nothing, and
+        // what they occupy (bytes).
+        email: { messages: mail.length, unfiled: mail.filter(mailUnfiled).length, ...mailFootprint(mail) },
       };
     });
 
   res.json({
     practice: { name: env.PRACTICE_NAME },
     clients,
+    emailSizing: sizing,
     // Practice-wide spend, including calls made before an entity was selected
     // (which belong to no client and would otherwise vanish from the total).
     usage: {

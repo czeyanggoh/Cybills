@@ -64,6 +64,9 @@ export type MailMessage = {
    *  SHOWN as it was sent. Kept for good, unlike `html` above: it is a file,
    *  not a field of this store. */
   bodyKey?: string;
+  /** How big that stored HTML part is, in bytes. Written with it; measured
+   *  once off the listing for a mail mirrored before sizes were kept. */
+  bodyBytes?: number;
   /** What n8n said when it was asked to follow them. Empty = never asked. */
   linkNote: string;
   linkFetchedAt: string;
@@ -162,6 +165,55 @@ export function recordMail(row: MailMessage): MailMessage {
   items[at] = merged;
   saveMail(items);
   return merged;
+}
+
+/**
+ * What a mirrored message occupies, in bytes: `mail` is the message itself (its
+ * text, any markup still held on the row, and the stored HTML part), `files`
+ * the attachments that were FILED — those are documents now, and their bytes
+ * belong to the Costs book rather than to the mailbox. A skipped attachment
+ * was never stored, so it counts for nothing.
+ */
+export function mailSize(m: MailMessage): { mail: number; files: number } {
+  const len = (v: unknown) => Buffer.byteLength(String(v ?? ''), 'utf8');
+  return {
+    mail: len(m.subject) + len(m.text) + len(m.html) + (Number(m.bodyBytes) || 0),
+    files: m.attachments.reduce((n, a) => n + (a.skipped ? 0 : Number(a.bytes) || 0), 0),
+  };
+}
+
+/** Did this delivery come to nothing? (Not a forwarding confirmation, nor a
+ *  carrier whose paperwork is the emails attached to it.) */
+export const mailUnfiled = (m: MailMessage): boolean =>
+  !m.documents.length && m.outcome !== 'forwarding_confirmation' && m.outcome !== 'forwarded';
+
+/** What a set of messages occupies, and how much of it is mail that became
+ *  nothing — the part that can be cleared without touching a document. */
+export function mailFootprint(rows: MailMessage[]) {
+  return rows.reduce(
+    (t, m) => {
+      const s = mailSize(m);
+      return {
+        mailBytes: t.mailBytes + s.mail,
+        fileBytes: t.fileBytes + s.files,
+        unfiledBytes: t.unfiledBytes + (mailUnfiled(m) ? s.mail : 0),
+      };
+    },
+    { mailBytes: 0, fileBytes: 0, unfiledBytes: 0 }
+  );
+}
+
+/** Record the size of a stored HTML part measured after the fact. */
+export function setMailBodyBytes(sizes: Record<string, number>): void {
+  const items = loadMail();
+  let changed = false;
+  for (const m of items) {
+    if (sizes[m.id] != null && m.bodyBytes !== sizes[m.id]) {
+      m.bodyBytes = sizes[m.id];
+      changed = true;
+    }
+  }
+  if (changed) saveMail(items);
 }
 
 /** Add what a link fetch produced to a message already mirrored. */
