@@ -7,7 +7,7 @@
 // AFTER the upload only reaches it through this path. Which value wins is a
 // precedence question with several near-misses, so it is decided ONCE here
 // rather than separately in each caller.
-import { billFileUrl, fetchExtract, fetchClassifyType, updateBill, lineItemRows } from '@/lib/bills';
+import { billFileUrl, fetchExtract, fetchExtractLines, fetchClassifyType, updateBill, lineItemRows } from '@/lib/bills';
 import { isPaymentProof, PAYMENT_PROOF_TYPE } from '@/lib/paymentProof';
 import { prepareUpload } from '@/lib/image';
 import {
@@ -38,7 +38,7 @@ import { starDescription } from '@/lib/description';
 export function readDecisions(
   current,
   ex,
-  { gstRegistered = true, taxRates = [], allTaxRates = null, defaultTaxRateCosts = '', accounts = [], mileageRate = '' } = {}
+  { gstRegistered = true, taxRates = [], allTaxRates = null, defaultTaxRateCosts = '', accounts = [], mileageRate = '', lineRows = null } = {}
 ) {
   const descr =
     ex.description ||
@@ -102,9 +102,15 @@ export function readDecisions(
     supplierRuleProjectReason(vendorRule, supplierName) || String(ex.projectReason || '').trim();
   const categoryReason =
     supplierRuleCategoryReason(vendorRule, supplierName) || String(ex.categoryReason || '').trim();
+  // The rows of the dedicated line-items pass where the caller ran it
+  // (ruleLineRows below): checked against the document's total, and carrying
+  // the outlet each row names. The general read's own summary of the table is
+  // the fallback — it has neither, which is how a laundry invoice billing three
+  // outlets came back with every row on "Same as document".
+  const readLines = Array.isArray(lineRows) && lineRows.length ? lineRows : ex.lineItems;
   const ruleLines =
-    vendorRule.extractLineItems && Array.isArray(ex.lineItems)
-      ? lineItemRows(ex.lineItems, rule.category || ex.category || current.category)
+    vendorRule.extractLineItems && Array.isArray(readLines)
+      ? lineItemRows(readLines, rule.category || ex.category || current.category)
       : [];
 
   const patch = {};
@@ -280,6 +286,18 @@ export function readDecisions(
   };
 }
 
+// The line-items pass a re-read owes a supplier whose rule says "Extract line
+// items" — the same pass an upload runs for them and the document page's button
+// runs, rather than the general read's summary. A second reader call, so only
+// where the rule asks and the document has no rows yet; null otherwise, and on
+// any failure, which leaves readDecisions on the summary it always used.
+export async function ruleLineRows(current, ex, rec, accounts) {
+  const vendorRule = matchSupplierRule(ex?.supplier || current?.supplier);
+  if (!vendorRule?.extractLineItems || current?.lineItems?.length || !rec?.base64) return null;
+  const read = await fetchExtractLines(rec.base64, rec.mediaType, accounts).catch(() => null);
+  return read?.lines?.length ? read.lines : null;
+}
+
 // The document's stored file, downscaled the same way an upload is (a raw phone
 // photo is several MB once base64-encoded — over the server's body limit).
 // Returns null when there's no file, or it can't be fetched.
@@ -320,7 +338,8 @@ export async function reReadDocument(doc, ctx) {
     // naming this business as its own supplier.
     const ex = await fetchExtract(rec.base64, rec.mediaType, ctx.accounts, coveringNote(doc), doc.kind === 'sales' ? 'sales' : 'cost');
     if (!ex) return 'failed';
-    const { patch } = readDecisions(doc, ex, ctx);
+    const lineRows = await ruleLineRows(doc, ex, rec, ctx.accounts);
+    const { patch } = readDecisions(doc, ex, { ...ctx, lineRows });
     await updateBill(doc.id, patch);
     return ex.supplier || Number(ex.total) > 0 ? 'ok' : 'blank';
   } catch {

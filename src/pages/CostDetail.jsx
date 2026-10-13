@@ -54,7 +54,7 @@ import { useCostsDocs, rowsFor, isInInbox } from '@/lib/costsData';
 import { readWalk, walkPosition } from '@/lib/listView';
 import { totalOk } from '@/lib/readiness';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
-import { readDecisions } from '@/lib/reRead';
+import { readDecisions, ruleLineRows } from '@/lib/reRead';
 import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
 import { useAutoSave } from '@/lib/useAutoSave';
@@ -1656,6 +1656,10 @@ export default function CostDetail() {
         defaultTaxRateCosts: extractionSettings.defaultTaxRateCosts,
         accounts,
         mileageRate: extractionSettings.mileageRate,
+        // The dedicated line-items pass, where the supplier's rule asks for
+        // rows and the document has none: reconciled, and with each row's
+        // outlet, which the general read's summary of the table carries neither of.
+        lineRows: await ruleLineRows(data, ex, { base64: imageBase64, mediaType }, accounts),
       });
       setData((d) => ({
         ...d,
