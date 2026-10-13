@@ -159,5 +159,15 @@ check('count is what is chosen', filterCount({ tax: 'yes', paid: '', flag: 'no' 
   check('no unassigned documents, no Unassigned option', ownersOf([mine, uploaded]), ['Astrid Yang', 'Cze Yang Goh']);
 }
 
+// Bank match: the chip the Match column draws. A line pairing with the document
+// is a match; one already autofilled reads "Payment filled" and is not.
+{
+  const rows = [doc({ id: 'a' }), doc({ id: 'b' }), doc({ id: 'c', bankMatch: { amount: -100 } })];
+  const ctx = { bankMatches: new Map([['a', [{ amount: -100 }]], ['c', [{ amount: -100 }]]]) };
+  check('Match found', keep(rows, { bankMatch: 'yes' }, ctx), ['a']);
+  check('No match', keep(rows, { bankMatch: 'no' }, ctx), ['b', 'c']);
+  check('no bank lines loaded: nothing matches', keep(rows, { bankMatch: 'yes' }, {}), []);
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

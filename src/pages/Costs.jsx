@@ -1037,7 +1037,7 @@ export default function Costs() {
   // Filter popover (flag, tax, category, publishing, …) + Advanced search
   // (amount / date / supplier). The popover's rules live in one list so a chip
   // can't be offered without being applied.
-  rows = applyCostFilters(rows, filters, { flags: flagAssignments, baseCurrency });
+  rows = applyCostFilters(rows, filters, { flags: flagAssignments, baseCurrency, bankMatches: bankMatchesByDoc });
   if (adv.min) rows = rows.filter((d) => toNum(d.total) >= toNum(adv.min));
   if (adv.max) rows = rows.filter((d) => toNum(d.total) <= toNum(adv.max));
   if (adv.from) rows = rows.filter((d) => toTime(d.date) >= toTime(adv.from));

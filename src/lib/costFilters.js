@@ -28,6 +28,10 @@ const hasProject = (d) =>
 // and the merge scan use, so one document can't be blank in one place and not
 // in another.
 const readBlank = (d) => statesNothing(docFacts(d));
+// The row wears "Match found" — the Match column's own test (BankMatchCell): a
+// bank line pairs with it and nobody has pressed Autofill yet. Once they have,
+// the chip reads "Payment filled" and the question is answered.
+const matchFound = (d, ctx) => !d.bankMatch && (ctx?.bankMatches?.get(d.id)?.length || 0) > 0;
 
 // A pair of chips: [id, label, predicate]. The second is always the first's
 // negation, so "either" is the absence of a choice rather than a third chip.
@@ -65,6 +69,7 @@ export const COST_FILTERS = {
   merged: pair('Merged', 'Merged', 'Not merged', isMerged),
   duplicates: pair('Duplicates', 'With duplicates', 'Without duplicates', hasDuplicate),
   paid: pair('Paid', 'Paid', 'Unpaid', (d) => Boolean(d.paid)),
+  bankMatch: pair('Bank match', 'Match found', 'No match', matchFound),
   claim: pair('Expense claim', 'On a claim', 'Not on a claim', (d) => d.status === 'expenseclaim'),
   lineItems: pair('Line items', 'With line items', 'Without line items', (d) => lineCount(d) > 0),
   project: pair('Project', 'With project', 'Without project', hasProject),
