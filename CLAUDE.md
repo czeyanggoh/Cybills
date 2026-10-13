@@ -3513,6 +3513,19 @@ left out of the CYWorkspace payables list — they are money owed to us, and a
 payment run would read one as a bill. Covered by `publish-bill.test.mts`,
 `payables.test.mts` and `test/readiness.test.mjs`.
 
+**And the reader can SAY it is one.** The general read's type list had no
+credit note in it (only the sweep's `classify-type` did), so a credit could only
+come back as an Invoice with a negative total, which is refused as incomplete.
+"Credit note/refund" is now offered, and the title does not decide it: QBE
+prints a premium refund under TAX INVOICE with "78.89-" (a TRAILING minus) and
+one line saying it is a credit note. One negative row on a document whose total
+is still a charge stays an Invoice. `runExtraction` holds a credit note's
+total, tax, restatement and line amounts POSITIVE whatever the reader did with
+the sign: every tax rule asks whether the tax is above 0, so read as printed
+the credit would be coded No Tax with its GST folded into the cost. Documents
+read before this need a re-read (or the Type changed by hand). Covered by
+`npm test` in `server/` (`test/credit-note-read.test.mts`).
+
 ## Two-step sign-in (TOTP), for the password login
 
 A Google account already carries its own second factor, so this exists for the

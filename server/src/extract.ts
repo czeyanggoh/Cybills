@@ -97,8 +97,9 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       },
       documentType: {
         type: 'string',
-        enum: ['Receipt', 'Invoice', 'Payment proof', 'Quotation', 'Pro-forma invoice', 'Mileage', 'Other'],
+        enum: ['Receipt', 'Invoice', 'Payment proof', 'Quotation', 'Pro-forma invoice', 'Credit note/refund', 'Mileage', 'Other'],
         description:
+          '"Credit note/refund" is a document that REDUCES what is owed rather than charging for something: one titled Credit Note / Credit Memo / Refund, one that SAYS it is a credit ("this is a Credit Note and no payment is required", "amount credited", "refund due to you"), or one whose grand total is printed NEGATIVE — a leading minus, a TRAILING minus ("78.89-"), brackets "(78.89)" or a CR suffix. The title alone does not decide it: an insurer or utility prints a credit under the heading TAX INVOICE with every amount negative, and that is a credit note. One negative row (a discount, a deposit taken off) on a document whose grand total is still a charge is an ordinary Invoice or Receipt. For a credit note give `total`, `tax` and every line amount as POSITIVE figures — the type carries the direction. ' +
           '"Payment proof" is evidence that money was SENT rather than a bill for it: a bank transfer confirmation, a PayNow / PayLah / GIRO screenshot, an internet-banking "transfer successful" page, a card-payment notification. The PAYEE is the supplier, the amount transferred is the total, tax is 0 (a transfer states none), and the transaction reference is the document number. A merchant\'s receipt or an invoice stamped PAID is NOT a payment proof — those are a Receipt or an Invoice. ' +
           '"Quotation" is a supplier\'s QUOTE — titled Quotation, Quote or Estimate, usually with a validity date — and "Pro-forma invoice" is one titled Pro-forma / Proforma invoice: both ask for money BEFORE the tax invoice is issued and neither is a tax invoice. The quote\'s own number (QUO-2609239) is the document number. A document titled Tax Invoice or Invoice is an Invoice even when it mentions an earlier quotation. ' +
           '"Mileage" is a RECORD OF A JOURNEY rather than a purchase: a map route screenshot (Google Maps "16 min (13 km)", a Waze route, an Apple Maps trip), an odometer photo, a line off a mileage log. Nobody was paid and no amount is printed — the claimant is reimbursed per kilometre afterwards. A taxi, ride-hailing or fuel receipt is NOT mileage: those are purchases with a supplier and a total, so they are a Receipt.',
@@ -291,7 +292,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
 const ReceiptSchema = z.object({
   supplier: z.string(),
   date: z.string(),
-  documentType: z.enum(['Receipt', 'Invoice', 'Payment proof', 'Quotation', 'Pro-forma invoice', 'Mileage', 'Other']),
+  documentType: z.enum(['Receipt', 'Invoice', 'Payment proof', 'Quotation', 'Pro-forma invoice', 'Credit note/refund', 'Mileage', 'Other']),
   distanceKm: z.number().optional().default(0),
   invoiceNumber: z.string(),
   currency: z.string(),
@@ -801,6 +802,8 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'take the PAYEE (the recipient) as `supplier`, the amount transferred as `total`, 0 as `tax` (a transfer states none — any GST is on the invoice it pays), the transaction reference as `invoiceNumber`, and describe it as a payment ("Payment to A1 Consultancy, ref 20260826ABC"). ' +
     'A merchant\'s receipt or an invoice stamped PAID is a Receipt or an Invoice, not a payment proof. ' +
     'A QUOTATION (titled Quotation / Quote / Estimate) or a PRO-FORMA INVOICE is a request to pay in advance, not a tax invoice: set `documentType` to "Quotation" or "Pro-forma invoice", take the quote\'s number as `invoiceNumber` and its grand total as `total`. ' +
+    'A CREDIT NOTE or REFUND — titled as one, saying it is one ("this is a Credit Note and no payment is required"), or with its grand total printed negative (a leading or TRAILING minus "78.89-", brackets, CR) even under the heading TAX INVOICE — takes money OFF what is owed: set `documentType` to "Credit note/refund", ' +
+    'give `total`, `tax` and the line amounts as POSITIVE figures (the type says which way the money goes), code it to the category the original charge belongs to, and say in `description` that it is a credit. ' +
     'A MILEAGE record — a map route screenshot, an odometer photo, a mileage log — is a journey, not a purchase: set `documentType` to "Mileage", read `distanceKm` off it, ' +
     'leave `supplier` empty unless a name is actually printed, leave `total` and `tax` at 0 unless an amount is printed, and describe the journey in `description` (origin → destination, e.g. "Drive: Work (ST Engineering Jurong East) → MacRitchie Reservoir Park, 13 km"). ' +
     'The amount is worked out afterwards from the distance at the company\'s rate per km — never invent one. ' +
@@ -875,6 +878,25 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
         ? parsed.data.dueDate
         : '';
     const category = categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised';
+    // A credit note's direction is its TYPE, and every rule downstream — the
+    // GST evidence gate, the percentage, the SGD restatement — reads a document
+    // by asking whether its tax and its net are above 0. Read as printed
+    // ("78.89-", "6.51-") the credit would be coded No Tax with its GST folded
+    // into the cost, so the figures are held positive here whatever the reader
+    // did with the sign; publishing sends them to Xero as an ACCPAYCREDIT.
+    if (parsed.data.documentType === 'Credit note/refund') {
+      const pos = (n: number | undefined) => (typeof n === 'number' && Number.isFinite(n) ? Math.abs(n) : n);
+      parsed.data.total = Math.abs(parsed.data.total);
+      parsed.data.tax = Math.abs(parsed.data.tax);
+      parsed.data.baseTotal = Math.abs(parsed.data.baseTotal);
+      parsed.data.baseTax = Math.abs(parsed.data.baseTax);
+      parsed.data.lineItems = parsed.data.lineItems.map((li) => ({
+        ...li,
+        amount: Math.abs(li.amount),
+        net: pos(li.net),
+        tax: pos(li.tax),
+      }));
+    }
     const restated = restatement(parsed.data);
     // A supplier whose billing-currency face shows no tax line has still charged
     // the GST its tax block states. Left at 0 the document would be coded No Tax
