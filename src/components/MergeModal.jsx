@@ -20,7 +20,7 @@ function Row({ label, children }) {
 const inputCls =
   'w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-export default function MergeModal({ open, docs, categoryOptions = [], onClose, onConfirm }) {
+export default function MergeModal({ open, docs, categoryOptions = [], onClose, onConfirm, onKeepSeparate }) {
   const [building, setBuilding] = useState(false);
   const [preview, setPreview] = useState(null);
   const [fields, setFields] = useState(null);
@@ -72,6 +72,12 @@ export default function MergeModal({ open, docs, categoryOptions = [], onClose, 
     if (!preview || !fields || submitting) return;
     setSubmitting(true);
     await onConfirm(preview.sources, preview.base64, fields);
+    setSubmitting(false);
+  };
+  const keepSeparate = async () => {
+    if (!preview || submitting) return;
+    setSubmitting(true);
+    await onKeepSeparate(preview.sources);
     setSubmitting(false);
   };
 
@@ -148,6 +154,19 @@ export default function MergeModal({ open, docs, categoryOptions = [], onClose, 
 
             {/* Footer */}
             <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
+              {/* The other answer to the question this screen asks. Cancel only
+                  closes it, so the same suggestion was back on the next look. */}
+              {onKeepSeparate && (
+                <button
+                  type="button"
+                  onClick={keepSeparate}
+                  disabled={submitting}
+                  title="These are different documents — don’t suggest merging them again"
+                  className="mr-auto inline-flex h-9 items-center rounded-md border px-4 text-sm hover:bg-muted disabled:opacity-50"
+                >
+                  Keep separate
+                </button>
+              )}
               <button type="button" onClick={onClose} className="inline-flex h-9 items-center rounded-md border px-4 text-sm hover:bg-muted">
                 Cancel
               </button>

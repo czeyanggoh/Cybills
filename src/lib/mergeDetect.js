@@ -102,6 +102,15 @@ export function statesNothing(f) {
   );
 }
 
+// The reviewer's "these are not one document" (`notMergeWith`, written from the
+// merge review's Keep separate). Either side naming the other is enough — it is
+// one verdict about a pair, and it outranks every kind of evidence below, the
+// pages this app cut from one PDF included.
+export function keptApart(a, b) {
+  const names = (d, other) => Array.isArray(d?.notMergeWith) && d.notMergeWith.includes(other?.id);
+  return names(a, b) || names(b, a);
+}
+
 function arrivedTogether(a, b) {
   if (!a.by || a.by !== b.by) return false;
   if (!a.at || !b.at) return false;
@@ -202,6 +211,7 @@ export function findMergeCandidates(docs) {
   const payments = [];
   for (let i = 0; i < pool.length; i += 1) {
     for (let j = i + 1; j < pool.length; j += 1) {
+      if (keptApart(pool[i], pool[j])) continue;
       // Pages the app itself cut from one PDF. Not evidence to weigh — a record
       // of what happened. They are tied before anything is compared, because
       // the page that carries the trip map or the terms often shares nothing

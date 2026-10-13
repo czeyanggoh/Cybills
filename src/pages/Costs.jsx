@@ -44,7 +44,7 @@ import { formatKm } from '@/lib/mileage';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
 import { canPublishToXero, canCreateClaims } from '@/lib/userStore';
-import { updateBill, deleteBill, notifyBillsChanged, itemNumber, costPath } from '@/lib/bills';
+import { updateBill, deleteBill, notifyBillsChanged, itemNumber, costPath, markNotMerge } from '@/lib/bills';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { buildMergePreview, commitMerge } from '@/lib/mergeDocs';
@@ -1275,6 +1275,24 @@ export default function Costs() {
     }
   };
 
+  // The modal's other answer: these are different documents. Recorded on the
+  // documents themselves, so the suggestion and its badge are gone for everybody
+  // and stay gone — Cancel alone left it to come back on the next look.
+  const keepSeparate = async (sources) => {
+    try {
+      await markNotMerge(sources);
+      setMergeModalDocs(null);
+      setSelected(new Set());
+      notifyBillsChanged();
+      await reload();
+      setMergeNote(
+        `Kept as ${sources.length} separate documents — they won’t be suggested for merging again. To combine them after all, select them and press Merge.`
+      );
+    } catch {
+      setMergeNote('Could not save that. Please try again.');
+    }
+  };
+
   // Which of the ticked rows each of the two moves can act on. Unarchive is
   // deliberately narrower than the Archive tab's old button: a document on a
   // live expense claim, or one MERGED away into another, is not "archived" —
@@ -1858,6 +1876,7 @@ export default function Costs() {
         categoryOptions={categoryOptions}
         onClose={() => setMergeModalDocs(null)}
         onConfirm={confirmMerge}
+        onKeepSeparate={keepSeparate}
       />
     </AppShell>
   );

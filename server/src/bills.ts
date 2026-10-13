@@ -764,6 +764,13 @@ billsRouter.patch('/bills/:id', async (req, res) => {
     patch.duplicateOfId = '';
     patch.duplicateType = '';
   }
+  // "Keep separate" — the reviewer's verdict in the merge review. ADDED to what
+  // the document already names, so a second verdict cannot undo the first.
+  if (Array.isArray(b.notMergeWith)) {
+    const ids = (b.notMergeWith as unknown[]).filter((v): v is string => typeof v === 'string' && Boolean(v) && v !== req.params.id);
+    const already = getBillById(orgIdFor(req), req.params.id)?.notMergeWith ?? [];
+    patch.notMergeWith = [...new Set([...already, ...ids])].slice(-200);
+  }
   // "This entity is right" — the reviewer's verdict on a document whose paper
   // names somebody else. Legitimate often enough (an intercompany recharge, a
   // trading name, a group company paying for a subsidiary) that it has to be

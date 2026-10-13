@@ -721,6 +721,15 @@ into one. Nothing is announced, which is what Automatic means; nothing is lost
 either, because the combined document points at its sources and Unmerge puts
 them back. A group that fails is attempted once and then left in the toolbar.
 
+**And a suggestion can be answered No.** The merge review asked a question and
+took only one answer: Cancel closed it, and the same pair was back on the next
+look, badge and all. **Keep separate** (the modal's footer) is the other one —
+`notMergeWith` on each document names the others (`markNotMerge`, ADDED to by
+the PATCH route rather than replaced), and `keptApart` in `mergeDetect.js` drops
+that pair before any evidence is weighed, pages this app cut from one PDF
+included. Pairwise rather than a flag: a document that is not a page of THAT one
+may still be a page of another. Selecting them and pressing Merge still works.
+
 **Neither scan is a button any more.** Merge detection already ran on every
 change; the whole-book duplicate check now does too — `autoScanDuplicates` in
 `bills.ts`, off the listing endpoint, guarded by `bookRevision()` so an

@@ -228,6 +228,11 @@ export type Bill = {
   duplicateOfId?: string;
   duplicateType?: string; // exact_file | same_invoice | likely_duplicate
   duplicateDismissed?: boolean;
+  // The reviewer saying "these are not one document" from the merge review: the
+  // ids of the documents this one must never be suggested for merging with.
+  // Pairwise rather than a flag, because a document that is not a page of THAT
+  // one may still be a page of another.
+  notMergeWith?: string[];
   // Who the document is billed TO, as the reader found it on the paper. Read
   // for ONE purpose: checking the document against the entity it was filed
   // under. Which book a document lands in is decided by provenance — who
@@ -1135,6 +1140,7 @@ const EDITABLE: (keyof Bill)[] = [
   'duplicateDismissed',
   'duplicateOfId',
   'duplicateType',
+  'notMergeWith',
   // Evidence off the paper, written by the read and re-written by a re-read —
   // not typed by anybody, but they travel the same PATCH the rest of a read's
   // answer does.

@@ -230,5 +230,23 @@ check('already-merged originals are left alone', findMergeCandidates([doc({ ...p
   check('…never crossed', two.every((g) => g.docs.length === 2), true);
 }
 
+// --- "Keep separate" ----------------------------------------------------------
+// A lease invoice and a card slip at the same 2,300.00: offered as one payment,
+// until somebody who has looked says they are not. One side naming the other is
+// the whole verdict, and it is about that PAIR only.
+{
+  const lease = doc({ id: 'lease', supplier: 'Nordad Commercial Leasing Pte Ltd', total: '2300.00', date: '2026-10-01' });
+  const slip = doc({ id: 'slip', supplier: 'DBS Card', total: '2300.00', date: '2026-09-14' });
+  check('offered before anybody says otherwise', findMergeCandidates([lease, slip]).length, 1);
+  check('kept separate: not offered again', findMergeCandidates([lease, { ...slip, notMergeWith: ['lease'] }]).length, 0);
+  check('…whichever side recorded it', findMergeCandidates([{ ...lease, notMergeWith: ['slip'] }, slip]).length, 0);
+  const other = doc({ id: 'other', supplier: 'UOB Card', total: '2300.00', date: '2026-10-01' });
+  check(
+    '…and the verdict is about that pair alone',
+    ids(findMergeCandidates([{ ...lease, notMergeWith: ['slip'] }, other])[0]?.docs || []).sort(),
+    ['lease', 'other'],
+  );
+}
+
 console.log(failures ? `\n${failures} failing` : '\nall passing');
 process.exit(failures ? 1 : 0);

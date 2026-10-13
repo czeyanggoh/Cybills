@@ -125,6 +125,16 @@ export function markNotDuplicate(id) {
   return updateBill(id, { duplicateDismissed: true });
 }
 
+// The reviewer's "these are not one document", from the merge review. Each
+// document names the others, so the pair is never suggested again whichever of
+// them the scan meets first.
+export function markNotMerge(docs) {
+  const ids = (docs || []).filter((d) => d?.persisted).map((d) => d.id);
+  return Promise.all(
+    ids.map((id) => updateBill(id, { notMergeWith: ids.filter((other) => other !== id) }))
+  );
+}
+
 // Forget that a document was published to Xero: clears the stored invoice id,
 // tenant and date, and brings it back out of Archive so it can be published
 // again. Local only — it does NOT delete or void the bill in Xero. Use it when
@@ -466,6 +476,7 @@ export function billToDoc(b) {
     duplicateOfId: b.duplicateOfId || '',
     duplicateType: b.duplicateType || '',
     duplicateDismissed: Boolean(b.duplicateDismissed),
+    notMergeWith: Array.isArray(b.notMergeWith) ? b.notMergeWith : [],
     xeroInvoiceId: b.xeroInvoiceId || '',
     // What it went up as: a bill (ACCPAY) or a credit note (ACCPAYCREDIT). The
     // two live under different pages in Xero, so the link needs to know.
