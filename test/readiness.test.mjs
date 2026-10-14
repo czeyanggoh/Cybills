@@ -7,6 +7,7 @@
 import {
   isComplete,
   missingFields,
+  missingOnClaim,
   isReady,
   needsReview,
   isInInbox,
@@ -63,6 +64,16 @@ check('zero is not a total', missingFields(doc({ total: '0' })), ['Total']);
 check('a blank read names all four',
   missingFields(doc({ supplier: 'Unknown supplier', date: '', category: '', total: '0' })),
   READY_FIELDS);
+
+// On an EXPENSE CLAIM the supplier is never asked for — the claim's bill is
+// made out to the claimant — and the server has already filled an undated
+// item's date with the day it was submitted, so only a line with neither is
+// missing one.
+check('a claim item with no supplier is fine', missingOnClaim(doc({ supplier: 'Unknown supplier' })), []);
+check('…nor a blank one', missingOnClaim(doc({ supplier: '' })), []);
+check('a claim item still needs a category and a total',
+  missingOnClaim(doc({ supplier: '', category: 'Uncategorised', total: '0' })), ['Category', 'Total']);
+check('…and a date when it has none at all', missingOnClaim(doc({ date: '—' })), ['Date']);
 
 // Settled documents are nobody's problem either, however incomplete.
 for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processing']) {

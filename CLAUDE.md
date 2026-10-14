@@ -1464,6 +1464,18 @@ approved again without being re-submitted. Same people as Approve. The
 claimant is emailed, because they were told it was approved and would otherwise
 be waiting on money that has stopped moving. Covered by the same test.
 
+**A claim item needs no supplier, and an undated one takes its submission
+date.** Submit and direct approval (`refuseUndecidable`) asked the inbox's four
+fields of every item, so a receipt the reader could not name held up the whole
+claim. On a claim the supplier is only words on a line, because the bill is made
+out to the CLAIMANT. So an unnamed item goes on as **Unknown supplier**. An item
+with no printed date takes the day it was SUBMITTED, in the practice's day
+(`claimItemDate` in `claims.ts`). That is the claim's reading of the item: the
+document itself stays undated. `missingOnItem` and the claim page's badge
+(`missingOnClaim`, `readiness.js`) now ask only for Category and Total. Without
+those the line has no account and no money. Covered by
+`test/claim-unknown-supplier.test.mts`.
+
 **And Unapprove is the only way back out of an approval.** Ticking an approved
 claim in the list and pressing **Submit for approval** put it straight back to
 `awaiting_approval`, cleared `decidedBy` / `decidedAt` / `decidedFor` and emailed

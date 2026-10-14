@@ -72,7 +72,7 @@ import { CLAIM_COLUMNS, DENSITY_CLASS, useTablePrefs } from '@/lib/tablePrefs';
 import DocCardList from '@/components/DocCardList';
 import SearchSelect from '@/components/SearchSelect';
 import { useClaimantNames } from '@/lib/userStore';
-import { missingFields } from '@/lib/readiness';
+import { missingOnClaim } from '@/lib/readiness';
 import { cn } from '@/lib/utils';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { lineWorking } from '@/lib/claimFx';
@@ -1080,12 +1080,12 @@ export default function ExpenseClaimDetail() {
                             said — so an item with no date sat under a green
                             light while the approver decided. Same rule the
                             inbox uses, so the two can't disagree. */}
-                        {missingFields(t).length ? (
+                        {missingOnClaim(t).length ? (
                           <span
-                            title={`Needs: ${missingFields(t).join(', ')}`}
+                            title={`Needs: ${missingOnClaim(t).join(', ')}`}
                             className="rounded border border-amber-600/40 bg-amber-50 px-2 py-0.5 text-xs text-amber-800"
                           >
-                            Needs: {missingFields(t).join(', ')}
+                            Needs: {missingOnClaim(t).join(', ')}
                           </span>
                         ) : (
                           <span className="rounded bg-foreground px-2 py-0.5 text-xs text-background">Ready</span>

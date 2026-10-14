@@ -18,6 +18,7 @@ import {
 } from './store.js';
 import { listOrganisations, primaryOrgId } from './organisations.js';
 import { endOfThisMonth, isoClaimDate } from './claimDates.js';
+import { practiceDayKey } from './usage.js';
 import { referenceFor, numberFor } from './claimRef.js';
 import { claimPdfBytes } from './claimPdfDoc.js';
 import { shareToken, verifyShareToken } from './shareLinks.js';
@@ -621,6 +622,19 @@ function cents(v: unknown): string {
   return s && Number.isFinite(n) ? n.toFixed(2) : s;
 }
 
+// The date a claim item goes by: the one printed on it, else the day it was
+// SUBMITTED. A receipt with no readable date is still a real expense somebody
+// paid, and on a claim the date only has to say roughly when — the bill the claim
+// becomes is dated by the claim, not by its items — so the day it reached CYBills
+// (the practice's day, not UTC's) stands in rather than holding the claim up.
+// The document itself is left undated: this is the claim's reading of it.
+function claimItemDate(bill: { date?: string; createdAt?: string }): string {
+  const printed = String(bill.date ?? '').trim();
+  if (printed) return printed;
+  const at = new Date(String(bill.createdAt ?? ''));
+  return Number.isNaN(at.getTime()) ? '' : practiceDayKey(at);
+}
+
 function liveTxns(c: Claim): Txn[] {
   return c.transactions.map((t) => {
     const bill = getBillById(c.orgId, String(t.itemId));
@@ -628,8 +642,11 @@ function liveTxns(c: Claim): Txn[] {
     const money = claimMoney(bill, c.currency || 'SGD');
     return {
       ...t,
-      supplier: bill.supplier ?? t.supplier,
-      date: bill.date ?? t.date,
+      // A receipt nobody could put a name to goes on the claim as "Unknown
+      // supplier" — the claim's bill is made out to the CLAIMANT, so the
+      // supplier is only ever words on its line.
+      supplier: String(bill.supplier ?? '').trim() || String(t.supplier ?? '').trim() || 'Unknown supplier',
+      date: claimItemDate(bill) || t.date,
       category: bill.category ?? t.category,
       description: bill.description || t.description,
       project: bill.project ?? t.project,
@@ -1062,9 +1079,13 @@ claimsRouter.post('/:id/update', async (req, res) => {
 // POST /api/claims/:id/submit — submit for approval. The approver is derived
 // automatically from the claimant's direct manager (set in Users), so there's no
 // approver to pick. Fails with 'no_manager' when the claimant has none assigned.
-// What an item on a claim is still missing, in the words the inbox uses — the
-// same four fields as costComplete / readiness.js, so a document that reads
-// "Needs: Date" in one place reads the same here.
+// What an item on a claim is still missing, in the words the inbox uses
+// (readiness.js `missingOnClaim` is the browser's copy). Two of the inbox's four
+// fields are not asked for here. The SUPPLIER: a claim's bill is made out to the
+// claimant, so a receipt nobody could name goes on as "Unknown supplier" and
+// posts like any other line. The DATE: an undated receipt takes the day it was
+// submitted (`claimItemDate`). Category and Total still hold — without them the
+// line has no account to post to and no money to pay back.
 //
 // Read off the LIVE document, not the claim's snapshot. A claim stores the
 // item's fields as they were when it was added and refreshes only the
@@ -1074,8 +1095,7 @@ claimsRouter.post('/:id/update', async (req, res) => {
 // with no bill behind it (a sample/demo row).
 function missingOnItem(orgId: string, t: Txn): string[] {
   const bill = getBillById(orgId, String(t.itemId));
-  const supplier = bill ? bill.supplier : t.supplier;
-  const date = bill ? bill.date : t.date;
+  const date = bill ? claimItemDate(bill) : t.date;
   const category = bill ? bill.category : t.category;
   const total = bill ? bill.total : t.total;
   const named = (v: unknown, placeholder: string) => {
@@ -1083,8 +1103,7 @@ function missingOnItem(orgId: string, t: Txn): string[] {
     return Boolean(x) && x !== placeholder;
   };
   const out: string[] = [];
-  if (!named(supplier, 'unknown supplier')) out.push('Supplier');
-  if (!String(date ?? '').trim()) out.push('Date');
+  if (!named(date, '—')) out.push('Date');
   if (!named(category, 'uncategorised')) out.push('Category');
   if (!(parseAmount(total) > 0)) out.push('Total');
   return out;

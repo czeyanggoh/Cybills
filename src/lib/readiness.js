@@ -83,6 +83,20 @@ export function missingFields(d) {
   return out;
 }
 
+// What an item on an EXPENSE CLAIM still needs — fewer than a bill, and the
+// server's `missingOnItem` (claims.ts) is the same rule. No supplier: the claim's
+// bill is made out to the claimant, so a receipt nobody could name goes on as
+// "Unknown supplier". The date is the item's own or, where the paper had none,
+// the day it was submitted, which the server fills in — so Date is missing only
+// on a line that has neither.
+export function missingOnClaim(d) {
+  const out = [];
+  if (!has(d?.date)) out.push('Date');
+  if (!named(d?.category, 'uncategorised')) out.push('Category');
+  if (!totalOk(d)) out.push('Total');
+  return out;
+}
+
 // The inbox statuses: documents still being worked on. Anything else — archived,
 // on an expense claim, merged away — is settled, and the automatic duplicate and
 // merge scans leave it alone (you can still merge archived documents by hand).
