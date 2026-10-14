@@ -166,7 +166,15 @@ async function pages(path: string, tenantId: string, query: Record<string, strin
   return out;
 }
 
-export async function xeroTransactionsFor(organisation: Org, ws: string, docs: Bill[], refresh = false): Promise<{ txns: Txn[]; error: string }> {
+export async function xeroTransactionsFor(
+  organisation: Org,
+  ws: string,
+  docs: Bill[],
+  refresh = false,
+  // A one-document question (the automatic publish) neither reads nor writes
+  // the list's cache: its narrower answer would evict the whole list's.
+  cacheable = true
+): Promise<{ txns: Txn[]; error: string }> {
   const dated = docs.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d.date ?? '')));
   if (!dated.length) return { txns: [], error: '' };
   const times = dated.map((d) => Date.parse(`${d.date}T00:00:00Z`));
@@ -176,7 +184,7 @@ export async function xeroTransactionsFor(organisation: Org, ws: string, docs: B
   if (!cents.length) return { txns: [], error: '' };
   const key = `${from}|${to}|${cents.join(',')}`;
   const hit = cache.get(organisation.tenantId);
-  if (!refresh && hit && hit.key === key && Date.now() - hit.at < TTL_MS) return { txns: hit.txns, error: '' };
+  if (cacheable && !refresh && hit && hit.key === key && Date.now() - hit.at < TTL_MS) return { txns: hit.txns, error: '' };
 
   const look = await lookupsFor(ws, organisation.id);
   const range = `Date>=${xeroDate(from)} AND Date<=${xeroDate(to)}`;
@@ -195,7 +203,7 @@ export async function xeroTransactionsFor(organisation: Org, ws: string, docs: B
     for (const r of spend || []) txns.push(summariseXeroTxn(r, 'spend', look));
     for (const r of bills || []) txns.push(summariseXeroTxn(r, 'bill', look));
   }
-  if (!failed) cache.set(organisation.tenantId, { at: Date.now(), key, txns });
+  if (!failed && cacheable) cache.set(organisation.tenantId, { at: Date.now(), key, txns });
   return { txns, error: failed ? 'Xero could not be asked for its transactions just now.' : '' };
 }
 
@@ -247,6 +255,40 @@ export async function paperworkMatchesFor(
   const matches: Record<string, Candidate[]> = {};
   for (const [id, cands] of map) matches[id] = cands;
   return { status: 200, body: { ok: true, matches, trackingCategories: cats.map((c) => c.name), error, checkedAt: new Date().toISOString() } };
+}
+
+// --- before an UNATTENDED publish ------------------------------------------------------
+//
+// The automatic publish-after-reading (an upload whose supplier rule or entity
+// switch says publish, an emailed / WhatsApp'd / Drive document whose rule
+// does) posts with nobody looking, so it cannot rely on somebody noticing the
+// "Already in Xero" badge first. It asks Xero this one question before it
+// posts: is there a transaction this document is FIRMLY the paper for? If so
+// it declines, and the document waits in the list wearing the badge, to be
+// sent there instead. A failure to ask is a decline as well — an unattended
+// publish that could not check is exactly the duplicate this exists to stop,
+// and a document left in the list costs a click.
+//
+// Firm only, the same bar the list's badge and bulk publish use: a 'possible'
+// (the money and the window, nothing naming it) is not a reason to hold up a
+// supplier somebody has told CYBills to publish.
+export async function xeroAlreadyHas(
+  organisation: Org,
+  ws: string,
+  bill: Bill,
+  ownNames: string[]
+): Promise<{ ok: true; match: Candidate | null } | { ok: false; error: string }> {
+  const loaded = await loadRules();
+  if (!loaded) return { ok: false, error: 'Paperwork match is unavailable on this server.' };
+  // Whether Xero has this money does not depend on where the document sits in
+  // the list — it may still be settling out of Processing when its read
+  // finishes — so it is asked of the document as a working one.
+  const asWorking = { ...bill, status: 'ready' } as Bill;
+  if (!loaded.rules.paperworkEligible(asWorking)) return { ok: true, match: null };
+  const { txns, error } = await xeroTransactionsFor(organisation, ws, [asWorking], false, false);
+  if (error) return { ok: false, error };
+  const cands = loaded.rules.paperworkCandidatesFor(asWorking, notOurs(txns), { ownNames });
+  return { ok: true, match: cands.find((c) => c.confidence === 'firm') ?? null };
 }
 
 // --- sending a document to one ---------------------------------------------------------

@@ -38,8 +38,13 @@ import { starDescription } from '@/lib/description';
 export function readDecisions(
   current,
   ex,
-  { gstRegistered = true, taxRates = [], allTaxRates = null, defaultTaxRateCosts = '', accounts = [], mileageRate = '', lineRows = null } = {}
+  { gstRegistered = true, taxRates = [], allTaxRates = null, defaultTaxRateCosts = '', defaultTaxRateSales = '', accounts = [], mileageRate = '', lineRows = null } = {}
 ) {
+  // A sales invoice names its CUSTOMER where a cost names its supplier, so a
+  // supplier rule matched on that name is a rule about somebody we BUY from
+  // being applied to an invoice we sent them. Sales documents take no supplier
+  // rule, and their tax code is decided as a supply rather than a purchase.
+  const sale = current?.kind === 'sales';
   const descr =
     ex.description ||
     (Array.isArray(ex.lineItems) ? ex.lineItems.map((li) => li.description).filter(Boolean).join(', ') : '');
@@ -53,7 +58,7 @@ export function readDecisions(
   // document will end up carrying, and whether that is a motor vehicle account
   // is part of deciding the tax code.
   const supplierName = ex.supplier || current.supplier;
-  const vendorRule = matchSupplierRule(supplierName);
+  const vendorRule = sale ? {} : matchSupplierRule(supplierName);
   const rule = supplierRulePatch(vendorRule, { invoiceDate: ex.date || current.date, gstRegistered });
   // A covering note that decided the category beats the rule's (see below), so
   // the category the note chose is the one to judge.
@@ -69,7 +74,7 @@ export function readDecisions(
     allRates: allTaxRates,
     suggested: ex.taxRate,
     gstRegistered,
-    defaultName: defaultTaxRateCosts,
+    defaultName: sale ? defaultTaxRateSales : defaultTaxRateCosts,
     currency: ex.currency || current.currency,
     // The SGD figures a foreign-currency document prints for tax purposes: the
     // supplier's exact ones, where the billing-currency pair beside them is
@@ -77,7 +82,7 @@ export function readDecisions(
     baseTotal: ex.baseTotal != null ? ex.baseTotal : current.baseTotal,
     baseTax: ex.baseTax != null ? ex.baseTax : current.baseTax,
     statedCurrency: ex.baseCurrency || current.baseCurrency || '',
-    kind: 'cost',
+    kind: sale ? 'sales' : 'cost',
     accountTaxType: account?.taxType || '',
     accountLabel: account?.code || '',
     // Only Singapore GST from a registered supplier is input tax to claim.
@@ -292,6 +297,7 @@ export function readDecisions(
 // where the rule asks and the document has no rows yet; null otherwise, and on
 // any failure, which leaves readDecisions on the summary it always used.
 export async function ruleLineRows(current, ex, rec, accounts) {
+  if (current?.kind === 'sales') return null; // no supplier rule reaches a sale (readDecisions)
   const vendorRule = matchSupplierRule(ex?.supplier || current?.supplier);
   if (!vendorRule?.extractLineItems || current?.lineItems?.length || !rec?.base64) return null;
   const read = await fetchExtractLines(rec.base64, rec.mediaType, accounts).catch(() => null);

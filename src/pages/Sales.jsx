@@ -305,6 +305,7 @@ export default function Sales() {
       taxRates,
       gstRegistered,
       settings,
+      defaultTaxRateSales: settings.defaultTaxRateSales,
     };
     let ok = 0;
     let blank = 0;

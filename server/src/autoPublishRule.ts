@@ -74,6 +74,9 @@ export async function publishByRule(
       accountCode: posting.accountCode,
       taxType: posting.taxType,
       status,
+      // Nobody is watching this road: Xero is asked first whether it already
+      // holds this money (Paperwork match), and a yes is a decline.
+      unattended: true,
     });
     if (out.status !== 200) return { published: false, reason: String(out.body?.error ?? out.status) };
     return { published: true, status, invoiceId: String(out.body?.invoice?.invoiceId ?? '') };

@@ -1717,6 +1717,10 @@ export async function postBillToXero(
     // The bank line it is being paid against (the settle road); a pending
     // autofill on the document is read without being named.
     payingLine?: PayingLine | null;
+    // An UNATTENDED publish (publish-after-reading, either road): ask Xero
+    // first whether it already holds this money (Paperwork match), and decline
+    // rather than post it twice.
+    unattended?: boolean;
   }
 ): Promise<{ status: number; body: any }> {
   // Three refusals below are about COSTS, and only costs: a payment proof, a
@@ -1788,6 +1792,21 @@ export async function postBillToXero(
       missing,
       message: `This document still needs ${missing.join(', ')}. A bill is posted into a live ledger, so it has to be complete first.`,
     } };
+  }
+  if (opts.unattended && !receivable && !bill.xeroInvoiceId) {
+    const { xeroAlreadyHas } = await import('./paperworkMatch.js');
+    const has = await xeroAlreadyHas(organisation, workspace, bill, [organisation.name, organisation.tenantName].filter(Boolean) as string[]);
+    if (!has.ok) {
+      return { status: 503, body: { error: 'paperwork_check_failed', message: `Not published automatically: Xero could not be asked whether it already has this payment (${has.error}). Publish it by hand.` } };
+    }
+    if (has.match) {
+      const t = has.match.txn;
+      return { status: 409, body: {
+        error: 'already_in_xero',
+        message: `Not published automatically: Xero already has this payment — a ${t.kind === 'bill' ? 'bill' : 'Spend Money'} to ${t.contact || 'this supplier'} for ${t.currency} ${Number(t.total).toFixed(2)} on ${t.date}. Send the document to that transaction from its page instead.`,
+        transaction: { kind: t.kind, id: t.id },
+      } };
+    }
   }
   const prepared = await buildBillInvoice(req, organisation, bill, {
     accountCode: opts.accountCode,
@@ -2122,6 +2141,8 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     dueDate: b.dueDate,
     description: b.description,
     force: b.force === true,
+    // The browser's publish-after-reading says so: nobody is looking.
+    unattended: b.unattended === true,
   });
   return res.status(out.status).json(out.body);
 });

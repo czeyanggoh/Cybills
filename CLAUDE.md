@@ -3416,10 +3416,22 @@ leave it alone, and bulk publish SKIPS any document Xero already has a firm matc
 for, saying how many. **Unlink** forgets the link and nothing else: Xero's API
 cannot remove an attachment, and putting old coding back is not this button's to
 decide. Shown on the document page (Details tab, top) and as "Already in Xero" /
-"Sent to Xero" in the Costs Match column. Not covered: the automatic
-publish-after-reading, which still publishes without asking Xero first. Covered
-by `npm test` in `server/` (`test/paperwork-match.test.mts`, over real HTTP
-against a stub relay).
+"Sent to Xero" in the Costs Match column. 
+
+**The automatic publish-after-reading asks Xero first**, on both roads — the
+browser's upload (`autoPublishAfterRead` sends `unattended: true`) and the
+background read of an emailed, WhatsApp'd or Drive document (`publishByRule`).
+Nobody is looking at either, so nobody can notice the badge: `postBillToXero`
+with `unattended` asks Xero for this one document (`xeroAlreadyHas`, outside the
+list's cache) and a FIRM match is a decline, 409 `already_in_xero` naming the
+transaction; the document waits in the list wearing "Already in Xero". Firm
+only, the badge's bar — a 'possible' does not hold up a supplier somebody told
+CYBills to publish. And a failure to ASK is a decline too (503
+`paperwork_check_failed`): an unattended publish that could not check is
+exactly the duplicate this exists to stop. A person's publish is never asked —
+they get the confirm instead. Covered by `npm test` in `server/`
+(`test/paperwork-match.test.mts`, over real HTTP against a stub relay; and
+`supplier-rule-publish` now asserts the question is asked).
 
 ## Xero via the cyworkspace relay
 

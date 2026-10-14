@@ -45,6 +45,7 @@ process.env.OPENAI_BASE_URL = 'http://127.0.0.1:4691';
 
 // --- stub relay ----------------------------------------------------------------
 const posted: any[] = [];
+const asked: string[] = [];
 const relay = http.createServer((req, res) => {
   const path = decodeURIComponent(String(req.url)).split('?')[0];
   res.setHeader('content-type', 'application/json');
@@ -60,6 +61,13 @@ const relay = http.createServer((req, res) => {
     if (path.endsWith('/Organisation')) {
       return res.end(JSON.stringify({ Organisations: [{ Name: 'Excellence AS', BaseCurrency: 'SGD' }] }));
     }
+    // Asked before every unattended publish: does Xero already hold this money
+    // (Paperwork match)? Nothing here does.
+    if ((path.endsWith('/BankTransactions') || path.endsWith('/Invoices')) && req.method === 'GET') {
+      asked.push(path.split('/').pop());
+      return res.end(JSON.stringify(path.endsWith('/Invoices') ? { Invoices: [] } : { BankTransactions: [] }));
+    }
+    if (path.endsWith('/TrackingCategories')) return res.end(JSON.stringify({ TrackingCategories: [] }));
     if (path.endsWith('/Invoices') && req.method === 'PUT') {
       const inv = JSON.parse(body || '{}').Invoices?.[0] ?? {};
       posted.push(inv);
@@ -131,6 +139,7 @@ check('…the document is filed, coded by the rule', [got.bill?.category, got.bi
 setRule({ ...RULE, autoPublish: 'AUTHORISED' });
 got = await arrive({ invoiceNumber: 'NCL-1' });
 check('the rule publishes it straight after reading', got.sent.length, 1);
+check('…having asked Xero first whether it already had the payment', asked.includes('BankTransactions') && asked.includes('Invoices'), true);
 check('…as Approved (awaiting payment)', got.sent[0]?.Status, 'AUTHORISED');
 check('…coded by the rule', got.sent[0]?.LineItems?.[0]?.AccountCode, '449');
 check('…and the document records the bill', Boolean(got.bill?.xeroInvoiceId), true);

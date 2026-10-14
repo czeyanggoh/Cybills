@@ -72,6 +72,8 @@ export function xeroBillUrl(invoiceId, shortCode = '', docType = '') {
 //     Xero is worse than one still sitting in the inbox.
 //   - only when its category maps to an account that exists in this org's chart
 //   - only with a tax code: the document's own, else the account's default
+//   - never when Xero already holds the money (a Spend Money off the card feed,
+//     a bill keyed in by hand) — asked by the server, see Paperwork match
 // Anything missing means no publish and no error — the document stays put and
 // the Publish to Xero button still works by hand.
 //
@@ -122,6 +124,10 @@ export async function autoPublishAfterRead(bill) {
       // The supplier rule's status, else Awaiting approval: the entity-wide
       // switch covers every supplier, coded or not, so it goes to a queue.
       status: ruleStatus || 'SUBMITTED',
+      // Unattended: the server asks Xero first whether it already holds this
+      // money (Paperwork match) and declines rather than post it twice — the
+      // document then waits in the list wearing "Already in Xero".
+      unattended: true,
       // No dueDate: the server sets it to the date it actually posts, so the two
       // stay together when a locked period shifts the date.
     });

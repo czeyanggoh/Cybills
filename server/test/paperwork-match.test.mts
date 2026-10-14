@@ -31,6 +31,7 @@ const spendRecord = () => ({
   LineItems: [{ LineItemID: 'li-1', Description: 'CKO*LALAMOVE 624784 SINGAPORE (1005)', Quantity: 1, UnitAmount: 73.8, AccountCode: '425', TaxType: 'NONE', TaxAmount: 0, LineAmount: 73.8, Tracking: [{ Name: 'Outlets', Option: 'HQ' }] }],
 });
 let recodeReply: any = null;
+let lookupDown = false;
 const seen: Array<{ method: string; path: string; query: string; body: any }> = [];
 const stub = http.createServer((req, res) => {
   const [rawPath, query = ''] = String(req.url).split('?');
@@ -53,7 +54,15 @@ const stub = http.createServer((req, res) => {
     ] }));
     if (path === 'Organisation') return res.end(JSON.stringify({ Organisations: [{ BaseCurrency: 'SGD' }] }));
     if (path === 'Currencies') return res.end(JSON.stringify({ Currencies: [{ Code: 'SGD' }] }));
-    if (path === 'BankTransactions' && req.method === 'GET') return res.end(JSON.stringify({ BankTransactions: [spendRecord()] }));
+    if (path === 'BankTransactions' && req.method === 'GET') {
+      if (lookupDown) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'xero_down', message: 'Xero is having a bad afternoon' })); }
+      // Two more Lalamove runs on the Amex, for the automatic publish below.
+      const more = (id: string, total: number, day: string) => ({ ...spendRecord(), BankTransactionID: id, Total: total, DateString: `${day}T00:00:00`, Date: '', LineItems: [{ ...spendRecord().LineItems[0], UnitAmount: total, LineAmount: total }] });
+      return res.end(JSON.stringify({ BankTransactions: [spendRecord(), more('bt-2', 41.2, '2026-10-02'), more('bt-3', 55, '2026-10-05')] }));
+    }
+    if (path === 'Invoices' && req.method === 'PUT') {
+      return res.end(JSON.stringify({ Invoices: [{ InvoiceID: 'inv-new', InvoiceNumber: 'X', Status: body.Invoices[0].Status, HasErrors: false, LineItems: [] }] }));
+    }
     if (path === 'Invoices' && req.method === 'GET') return res.end(JSON.stringify({ Invoices: [] }));
     if (path === 'BankTransactions/bt-1' && req.method === 'GET') return res.end(JSON.stringify({ BankTransactions: [spendRecord()] }));
     if (path === 'BankTransactions/bt-1' && req.method === 'POST') {
@@ -162,6 +171,46 @@ check('…and the lines kept as Xero has them, so the difference still shows', b
 recodeReply = null;
 r = await api('paperwork-recode', { billId: doc.id });
 check('recoding again later', [r.status, r.body.recode?.ok, getBillById('cybm', doc.id)!.paperworkMatch?.lines?.[0]?.tracking], [200, true, [{ category: 'Outlets', option: 'Tangs' }]]);
+
+// 8) The automatic publish-after-reading, on both roads: Xero is asked first,
+//    and a firm match is a decline, not a second copy.
+const { publishByRule } = await import('../src/autoPublishRule.ts');
+const { loadCollection, saveCollection } = await import('../src/jsonStore.ts');
+const { WORKSPACE_ID } = await import('../src/workspace.ts');
+type Setting = { workspaceId: string; key: string; value: unknown };
+const rules = loadCollection<Setting>('settings').filter((x) => x.key !== 'cybills.supplier.rules.v1::org-1');
+rules.push({ workspaceId: WORKSPACE_ID, key: 'cybills.supplier.rules.v1::org-1', value: { Lalamove: { autoPublish: 'AUTHORISED' } } });
+saveCollection('settings', rules);
+const putInvoices = () => seen.filter((x) => x.path === 'Invoices' && x.method === 'PUT').length;
+
+// The browser's road (an upload): publish-bill, marked unattended.
+const uploaded = receipt({ date: '2026-10-01', total: '41.20', invoiceNumber: 'UP-1', fileHash: 'uploaded' });
+seen.length = 0;
+r = await api('publish-bill', { billId: uploaded.id, accountCode: '425', taxType: 'NONE', status: 'SUBMITTED', unattended: true });
+check('upload road: Xero already has it, so it is not published', [r.status, r.body.error, r.body.transaction?.id], [409, 'already_in_xero', 'bt-2']);
+check('…nothing reached Xero', putInvoices(), 0);
+check('…and the document waits in the list', getBillById('cybm', uploaded.id)!.status, 'ready');
+
+// The server's road (emailed / WhatsApp'd / Drive): the supplier's rule.
+const emailed = receipt({ date: '2026-10-04', total: '55.00', invoiceNumber: 'EM-1', fileHash: 'emailed' });
+let outcome = await publishByRule({ headers: {} }, WORKSPACE_ID, 'cybm', 'org-1', emailed.id);
+check('rule road: declined, and says why', outcome, { published: false, reason: 'already_in_xero' });
+check('…nothing reached Xero', putInvoices(), 0);
+
+// No such transaction in Xero: publishes as before.
+const fresh = receipt({ date: '2026-06-02', total: '12.30', invoiceNumber: 'NEW-1', fileHash: 'fresh' });
+r = await api('publish-bill', { billId: fresh.id, accountCode: '425', taxType: 'NONE', status: 'SUBMITTED', unattended: true });
+check('nothing in Xero: it publishes', [r.status, putInvoices()], [200, 1]);
+
+// Xero could not be asked: an unattended publish declines rather than risk it…
+lookupDown = true;
+const blind = receipt({ date: '2026-06-03', total: '14.50', invoiceNumber: 'NEW-2', fileHash: 'blind' });
+r = await api('publish-bill', { billId: blind.id, accountCode: '425', taxType: 'NONE', status: 'SUBMITTED', unattended: true });
+check('Xero unreachable: the automatic publish declines', [r.status, r.body.error, putInvoices()], [503, 'paperwork_check_failed', 1]);
+// …while a person's publish is not held up by the check at all.
+r = await api('publish-bill', { billId: blind.id, accountCode: '425', taxType: 'NONE', status: 'SUBMITTED' });
+check('a person publishing is not asked about it', [r.status, putInvoices()], [200, 2]);
+lookupDown = false;
 
 server.close();
 stub.close();
