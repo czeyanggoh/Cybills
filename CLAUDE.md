@@ -3369,6 +3369,58 @@ dropped only on CYWS's own JSON refusal or after thirty days undelivered.
 Contract: `deploy/BANK-MATCH.md` § What CYBills tells CYWS. This REPLACED a simulated feed (`bankRecon.js`,
 `BankReconcile.jsx`) that seeded bank lines from the documents themselves.
 
+## Paperwork match: the receipt for a transaction Xero already has
+
+Bank match is a statement line waiting for its bill; this is the reverse, and
+it is Dext's Paperwork match. The money is ALREADY in the ledger — a Spend Money
+coded straight off the Amex feed and reconciled, a bill somebody keyed in — and
+the receipt turns up here afterwards. Publishing it would post the same spending
+twice. So the document is **sent** to that transaction: its file is attached
+there, and (ticked by default where the coding differs) the transaction's lines
+are **recoded** to the document's account, tax rate and both tracking
+categories. Cze asked for the recode as well as the attach (14 Oct 2026).
+
+`src/lib/paperworkMatch.js` (pure, `npm test` at the root, loaded by path in
+`server/src/paperworkMatch.ts`) is the judgement, built on Bank match's own
+tests — `amountsAgree` to the cent, the same date window, the supplier's name or
+the document's number in the transaction's contact, narrative or reference;
+firm when named, or when it is the only one at that figure within a week; each
+transaction firm for the NEAREST document only. `codingDifferences` lays the two
+side by side, compared as sets across lines (account by CODE, tax by name,
+tracking per category), and a blank is a value: recoding a transaction tagged HQ
+to a document with no outlet takes HQ off it, so the table says so first.
+
+Xero cannot be asked which of forty receipts it already has, so
+`GET /api/xero/organisations/:id/paperwork-matches` asks for SPEND bank
+transactions and ACCPAY bills at the documents' AMOUNTS (in the `where`
+clause, 25 at a time) over the dates they could have been paid on, held five
+minutes per tenant. Never offered: a record CYBills put there itself (a
+published bill, a claim's bill, a prepayment) — a receipt matching one of those
+is a duplicate — or one another document was already sent to.
+
+`POST …/paperwork-match` `{ billId, kind, transactionId, recode }` re-reads the
+transaction, holds the money to the same rule, recodes FIRST (so the paper lands
+on the lines that stay) and then attaches. The recode's lines are built by the
+publish path's own builder (`documentLineItemsFor` → `postingCodesFor` +
+`buildBillInvoice`), so it is exactly what publishing would have posted; it is
+refused unless they add up to the transaction's total to the cent, and a single
+line keeps Xero's DESCRIPTION — the card narrative the statement line was
+reconciled by. Xero may refuse to recode a reconciled transaction or a paid bill:
+its words are kept on the document (`paperworkMatch.recode`), the file is still
+attached, the difference still shows, and **Recode in Xero**
+(`…/paperwork-recode`) tries again later. The document records the link
+(`paperworkMatch`, its own writer, never EDITABLE), is archived, and — for a
+Spend Money — Paid from that bank account. `isPublished` counts it, so it leaves
+Unpublished; publish refuses it (409 `paperwork_matched`), Bank match and claims
+leave it alone, and bulk publish SKIPS any document Xero already has a firm match
+for, saying how many. **Unlink** forgets the link and nothing else: Xero's API
+cannot remove an attachment, and putting old coding back is not this button's to
+decide. Shown on the document page (Details tab, top) and as "Already in Xero" /
+"Sent to Xero" in the Costs Match column. Not covered: the automatic
+publish-after-reading, which still publishes without asking Xero first. Covered
+by `npm test` in `server/` (`test/paperwork-match.test.mts`, over real HTTP
+against a stub relay).
+
 ## Xero via the cyworkspace relay
 
 CYBills never holds Xero credentials. All Xero traffic goes through

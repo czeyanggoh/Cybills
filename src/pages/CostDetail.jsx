@@ -68,6 +68,9 @@ import { formatDate } from '@/lib/date';
 import BankMatchPanel from '@/components/BankMatchPanel';
 import PaymentProofPanel from '@/components/PaymentProofPanel';
 import PrepaymentPanel from '@/components/PrepaymentPanel';
+import PaperworkMatchPanel from '@/components/PaperworkMatchPanel';
+import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
+import { paperworkSuggestion } from '@/lib/paperworkMatch';
 import { isAdvanceDocument, advancePatch, firmPrepayment, ADVANCE_TYPES } from '@/lib/prepayment';
 import SaveStatus from '@/components/SaveStatus';
 import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
@@ -445,6 +448,8 @@ export default function CostDetail() {
   // adding it a second time.
   const claimBlocked = doc?.xeroInvoiceId
     ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.`
+    : doc?.paperworkMatch
+      ? 'Sent to a transaction already in Xero — it can’t also go on an expense claim.'
     : claimForItem
       ? `Already on expense claim ${claimRef(claimForItem)}. Take it off that claim first to move it.`
       : '';
@@ -727,6 +732,10 @@ export default function CostDetail() {
   // …and run the same read the button runs. The ref is how a hook that must sit
   // above the early return reaches a handler defined below it; effects run after
   // the render that assigns it, so it is always there by the time this fires.
+  // Paperwork match (Xero already holding this money) — above the early return,
+  // since it is a hook; read by openPublish below.
+  const paperwork = usePaperworkMatches({ enabled: Boolean(doc?.persisted) && !doc?.xeroInvoiceId });
+
   useEffect(() => {
     if (!readOnArrival || !reReadRef.current) return;
     setReadOnArrival(false);
@@ -1407,7 +1416,7 @@ export default function CostDetail() {
   // Set aside by hand = archived with no Xero bill of its own. A published
   // document is archived as well, but its chip is "Open in Xero" and pulling it
   // back into the inbox would make it look like unpublished work.
-  const setAside = doc?.persisted && doc.status === 'archived' && !doc.xeroInvoiceId;
+  const setAside = doc?.persisted && doc.status === 'archived' && !doc.xeroInvoiceId && !doc.paperworkMatch;
   const archiveDoc = async () => {
     await persistStatus('archived');
     goToNextInbox();
@@ -1425,7 +1434,21 @@ export default function CostDetail() {
 
   // Publish to Xero (persisted bills only — the server posts the SAVED bill,
   // so flush any on-screen edits first, keeping the current workflow status).
+  // Paperwork match: Xero may already hold this money (a Spend Money off the
+  // card feed). Publishing beside it posts the spending twice, so say so first.
+  const paperworkFirm = doc?.persisted && !doc.paperworkMatch ? paperworkSuggestion(paperwork.matches[doc.id]) : null;
   const openPublish = async () => {
+    if (
+      paperworkFirm &&
+      !window.confirm(
+        `Xero already has this payment — a ${paperworkFirm.txn.kind === 'bill' ? 'bill' : 'Spend Money'} to ${paperworkFirm.txn.contact || 'this supplier'} for ${paperworkFirm.txn.currency} ${Number(paperworkFirm.txn.total).toFixed(2)} on ${paperworkFirm.txn.date}.
+
+Publishing posts it a second time. Use "Send to Xero transaction" on the Details tab instead.
+
+Publish anyway?`
+      )
+    )
+      return;
     await persistStatus(persisted?.status ?? 'new');
     setPublishMode('publish');
     setPublishOpen(true);
@@ -2230,6 +2253,20 @@ export default function CostDetail() {
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
           ) : (
+            // Sent to a transaction Xero already had (Paperwork match): that
+            // transaction is where it lives, and publishing would post it twice.
+            doc.paperworkMatch ? (
+              <a
+                href={xeroTxnUrl(doc.paperworkMatch, xeroShortCode)}
+                target="_blank"
+                rel="noreferrer"
+                title={`Open the ${doc.paperworkMatch.kind === 'bill' ? 'bill' : 'Spend Money'} this document was sent to`}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700 transition-colors hover:bg-green-600/20"
+              >
+                Open in Xero
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            ) :
             // On a claim, this cost reaches Xero as a line of the claim's own
             // bill — publishing it separately would post it twice.
             //
@@ -2441,6 +2478,39 @@ export default function CostDetail() {
                     ? 'Replaces the file on this same document — it won’t create a new one.'
                     : 'Attaches the receipt to this document — it won’t create a new one.'}
                 </p>
+              )}
+              {/* Paperwork match: Xero already holds this money, so the
+                  document is sent there (attached, and recoded when asked)
+                  rather than published a second time. */}
+              {persisted && !persisted.xeroInvoiceId && (
+                <div className="mb-4">
+                  <PaperworkMatchPanel
+                    doc={{
+                      ...persisted,
+                      supplier: data.supplier,
+                      total: data.total,
+                      date: isoDate(data.date) || persisted.date,
+                      invoiceNumber: data.ref,
+                      currency: data.currency || persisted.currency,
+                      type: data.type || persisted.type,
+                      category: data.category,
+                      taxRate: data.taxRate,
+                      project: data.project,
+                      project2: data.project2,
+                      lineItems: data.lineItems ?? persisted.lineItems,
+                    }}
+                    mayPublish={mayPublish && !bridge}
+                    xeroShortCode={xeroShortCode}
+                    onBeforeSend={() => persistStatus(persisted?.status ?? 'new')}
+                    onChanged={async () => {
+                      const bill = await fetchBillById(persisted.id);
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+                    }}
+                  />
+                </div>
               )}
               {aiError && (
                 <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">

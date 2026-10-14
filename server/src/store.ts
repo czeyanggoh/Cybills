@@ -359,6 +359,48 @@ export type Bill = {
     before?: { status: string; paid: boolean; paymentMethod: string };
   };
   prepaymentsApplied?: Array<PrepaymentAllocation & { fromId: string; fromDisplayId: string; reference: string; overpaymentId: string }>;
+  // PAPERWORK MATCH (src/lib/paperworkMatch.js, server/src/paperworkMatch.ts):
+  // Xero already had this money — a Spend Money coded off the bank feed, a bill
+  // keyed in by hand — so the document was SENT to that transaction instead of
+  // being published beside it: its file attached there, the transaction
+  // recoded to the document's coding when asked. A record of what Xero was told
+  // and what it answered, so its own writer (setBillPaperworkMatch), never
+  // EDITABLE. Counts as published everywhere a list asks (readiness.js).
+  paperworkMatch?: PaperworkMatch;
+};
+
+export type PaperworkLine = {
+  description: string;
+  accountCode: string;
+  accountName: string;
+  taxType: string;
+  taxName: string;
+  amount: number;
+  tax: number;
+  tracking: Array<{ category: string; option: string }>;
+};
+
+export type PaperworkMatch = {
+  kind: 'spend' | 'bill';
+  id: string; // BankTransactionID or InvoiceID
+  date: string;
+  total: number;
+  currency: string;
+  contact: string;
+  reference: string;
+  number: string;
+  status: string;
+  bankAccount: { name: string; code: string };
+  reconciled: boolean;
+  // The transaction's lines as Xero last reported them — after a recode, the
+  // recoded ones — so the page can still say what differs without asking Xero.
+  lines: PaperworkLine[];
+  linkedAt: string;
+  linkedBy: string;
+  attachment: { ok: boolean; error?: string } | null;
+  recode: { ok: boolean; at: string; message?: string; before?: PaperworkLine[] } | null;
+  // What the document said before it was set aside, so Unlink puts it back.
+  before: { status: string; paid: boolean; paymentMethod: string };
 };
 
 export type PrepaymentAllocation = {
@@ -1635,6 +1677,17 @@ export function unapplyPaymentProof(orgId: string, proofId: string, by: string):
   proof.proofAutoDeclined = true;
   persist(bills);
   return { proof, invoices };
+}
+
+// Record (or, with null, forget) the Xero transaction a document was sent to.
+export function setBillPaperworkMatch(orgId: string, id: string, match: PaperworkMatch | null): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  if (match) bill.paperworkMatch = match;
+  else delete bill.paperworkMatch;
+  persist(bills);
+  return bill;
 }
 
 // Record (or, with null, forget) the Xero overpayment a quotation was paid as.

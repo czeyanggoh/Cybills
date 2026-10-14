@@ -14,7 +14,7 @@ import { referenceFor, dateFor } from './claimRef.js';
 import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, isCreditNote, listBills, markBillPosted, markBillXeroPayment, parseAmount, totalComplete, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, markClaimXeroPayment, publishedClaims, saveClaimXero } from './claims.js';
-import { appOrigin, canPublishToXero, memberForSession } from './users.js';
+import { addressIn, appOrigin, canPublishToXero, memberForSession, visibleOwnersFor } from './users.js';
 import { syncWhatsappReaction } from './waReactions.js';
 import { isPaymentProofDoc } from './paymentProof.js';
 import { isAdvanceDoc } from './prepayment.js';
@@ -244,7 +244,7 @@ export function paymentFromInvoice(invoice: Record<string, any>): {
 // "/Date(1756166400000+0000)/" elsewhere in the same API. Reading only the first
 // shape is how a backfilled bill would show a paid status with no paid date
 // beside it. Anything else reads as no date rather than as a wrong one.
-function xeroDay(value: unknown): string {
+export function xeroDay(value: unknown): string {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
   const iso = /^(\d{4}-\d{2}-\d{2})/.exec(raw);
@@ -1108,7 +1108,7 @@ type TrackingCat = { name: string; options: Set<string> };
 // The org's ACTIVE tracking categories in Xero's own order — [0] is the "PIC"
 // list the app calls Projects, [1] is Projects 2. Xero allows at most two, and
 // a line may be tagged with one option from each.
-async function trackingCategories(tenantId: string): Promise<TrackingCat[]> {
+export async function trackingCategories(tenantId: string): Promise<TrackingCat[]> {
   const result = await relay('TrackingCategories', { tenantId });
   if (!result.ok) return [];
   return (result.data?.TrackingCategories ?? [])
@@ -1659,6 +1659,37 @@ export function postingCodesFrom(
   return { ok: true, accountCode, taxType };
 }
 
+// The lines a document posts as, built exactly as publishing builds them —
+// for recoding a transaction Xero ALREADY holds (paperworkMatch.ts) to what the
+// paper says, rather than a second copy of the coding rules that could drift
+// from the publish. The same posting codes (postingCodesFor), the same lines
+// (buildBillInvoice: the document's own rows where they reconcile, else one
+// summary line), the same currency handling. Null-free: a document that could
+// not be published says why in the words the publish would use.
+export async function documentLineItemsFor(
+  req: any,
+  organisation: { id: string; tenantId: string },
+  ws: string,
+  bill: Bill
+): Promise<
+  | { ok: true; lineItems: Array<Record<string, any>>; lineAmountTypes: string; currency: string; perLine: boolean }
+  | { ok: false; message: string }
+> {
+  const missing = missingForPublish(bill);
+  if (missing.length) return { ok: false, message: `This document still needs ${missing.join(', ')} before its coding can be sent to Xero.` };
+  const codes = await postingCodesFor(ws, organisation.id, bill);
+  if (!codes.ok) return { ok: false, message: codes.message };
+  const built = await buildBillInvoice(req, organisation, bill, { accountCode: codes.accountCode, taxType: codes.taxType });
+  if (!built.ok) return { ok: false, message: String(built.body?.message ?? 'The document’s lines could not be built.') };
+  return {
+    ok: true,
+    lineItems: (built.payload.LineItems as Array<Record<string, any>>) ?? [],
+    lineAmountTypes: String(built.payload.LineAmountTypes ?? 'Exclusive'),
+    currency: String(built.payload.CurrencyCode ?? ''),
+    perLine: built.perLine,
+  };
+}
+
 // The whole of publishing, minus the request. Both the button in this app and
 // the payables hand-off from CYWorkspace post a document as an ACCPAY bill, and
 // they post it into the SAME live ledger — so they cannot hold different
@@ -1714,6 +1745,15 @@ export async function postBillToXero(
     return { status: 422, body: {
       error: 'advance_document',
       message: 'This is a quotation / pro-forma invoice, not a tax invoice, so it is not published as a bill. Once it is paid, record it as a prepayment to the supplier; the tax invoice that follows is published and the prepayment applied to it.',
+    } };
+  }
+  // Sent to a transaction Xero already had (Paperwork match): the money is in
+  // the ledger, and a bill beside it would post the same spending twice.
+  if (!bill.xeroInvoiceId && bill.paperworkMatch) {
+    const m = bill.paperworkMatch;
+    return { status: 409, body: {
+      error: 'paperwork_matched',
+      message: `This document was sent to ${m.kind === 'bill' ? 'a bill' : 'a Spend Money transaction'} already in Xero (${m.contact || 'no contact'}, ${m.currency} ${Number(m.total).toFixed(2)} on ${m.date}), so it is not published again. Unlink it on the document page first if that was wrong.`,
     } };
   }
   if (bill.xeroInvoiceId && opts.force !== true) {
@@ -1926,6 +1966,76 @@ export async function postBillToXero(
     bill: updated,
   } };
 }
+
+// Paperwork match (paperworkMatch.ts): the receipt for a transaction Xero
+// ALREADY holds. GET lists, for every document the caller can see, the Spend
+// Money and bills in Xero it could be the paper for; POST sends one to its
+// transaction (attach, and recode when asked); unlink forgets it again.
+function paperworkVisible(req: any, organisation: { id: string }) {
+  const owners = visibleOwnersFor(req, organisation.id);
+  return (b: Bill) => !owners || addressIn(owners, b.createdBy) || addressIn(owners, (b as any).owner);
+}
+const ownNamesOf = (o: { name?: string; tenantName?: string }) => [o.name, o.tenantName].filter(Boolean) as string[];
+
+xeroRouter.get('/organisations/:id/paperwork-matches', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const { paperworkMatchesFor } = await import('./paperworkMatch.js');
+  const out = await paperworkMatchesFor(organisation, bookFor(req), {
+    visible: paperworkVisible(req, organisation),
+    ownNames: ownNamesOf(organisation),
+    refresh: req.query.refresh === '1',
+  });
+  res.status(out.status).json(out.body);
+});
+
+// { billId, kind: 'spend' | 'bill', transactionId, recode }
+xeroRouter.post('/organisations/:id/paperwork-match', async (req, res) => {
+  if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const workspace = bookFor(req);
+  const b = req.body ?? {};
+  const bill = getBillById(workspace, String(b.billId ?? ''));
+  if (!bill || !paperworkVisible(req, organisation)(bill)) return res.status(404).json({ error: 'bill_not_found' });
+  const { sendToXeroTransaction } = await import('./paperworkMatch.js');
+  const out = await sendToXeroTransaction(req, organisation, workspace, bill, {
+    kind: b.kind,
+    transactionId: b.transactionId,
+    recode: b.recode === true,
+    by: String(memberForSession(req)?.email ?? ''),
+    ownNames: ownNamesOf(organisation),
+  });
+  res.status(out.status).json(out.body);
+});
+
+xeroRouter.post('/organisations/:id/paperwork-recode', async (req, res) => {
+  if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const workspace = bookFor(req);
+  const bill = getBillById(workspace, String(req.body?.billId ?? ''));
+  if (!bill || !paperworkVisible(req, organisation)(bill)) return res.status(404).json({ error: 'bill_not_found' });
+  const { recodeLinked } = await import('./paperworkMatch.js');
+  const out = await recodeLinked(req, organisation, workspace, bill);
+  res.status(out.status).json(out.body);
+});
+
+xeroRouter.post('/organisations/:id/paperwork-unlink', async (req, res) => {
+  if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const workspace = bookFor(req);
+  const bill = getBillById(workspace, String(req.body?.billId ?? ''));
+  if (!bill || !paperworkVisible(req, organisation)(bill)) return res.status(404).json({ error: 'bill_not_found' });
+  const { unlinkXeroTransaction } = await import('./paperworkMatch.js');
+  const out = unlinkXeroTransaction(organisation, workspace, bill);
+  res.status(out.status).json(out.body);
+});
 
 // POST /api/xero/organisations/:id/record-prepayment — a quotation / pro-forma
 // paid in advance goes to Xero as an overpayment to its supplier.

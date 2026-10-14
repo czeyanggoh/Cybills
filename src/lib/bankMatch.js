@@ -189,6 +189,9 @@ export function matchable(doc) {
   if ((doc.kind || 'cost') !== 'cost') return false;
   const status = String(doc.status || '');
   if (['expenseclaim', 'merged', 'deleted', 'processing'].includes(status)) return false;
+  // Sent to a transaction Xero already had (paperworkMatch.js): that
+  // transaction is the payment, and it is the one Xero reconciles.
+  if (doc.paperworkMatch) return false;
   if (!payableKind(doc.type || doc.documentType)) return false;
   if (String(doc.xeroStatus || '').toUpperCase() === 'PAID') return false;
   if (String(doc.xeroStatus || '').toUpperCase() === 'VOIDED') return false;

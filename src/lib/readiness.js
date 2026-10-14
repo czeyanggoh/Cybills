@@ -140,7 +140,11 @@ export const isMergedAway = (d) => d?.status === 'merged';
 // Xero has this document's money. It is what takes a document out of the
 // working list, and — because publishing is what archives one — it is also what
 // tells a published archived document apart from one somebody archived by hand.
-export const isPublished = (d) => Boolean(d?.xeroInvoiceId);
+//
+// A document SENT to a transaction Xero already had (Paperwork match,
+// paperworkMatch.js) is published in every sense a list cares about: its money
+// is in the ledger, and its paper is attached there.
+export const isPublished = (d) => Boolean(d?.xeroInvoiceId || d?.paperworkMatch);
 
 // A document somebody deliberately kept just in case: the duplicate invoice
 // that turned up twice, the screenshot of a bank screen, the thing that is not
@@ -178,7 +182,7 @@ export const inCostsAll = (d) =>
 // it was folded into carries its money. Both are still there under "All costs".
 export function isUnpublished(d) {
   if (!inCostsList(d)) return false;
-  if (d?.xeroInvoiceId) return false;
+  if (isPublished(d)) return false;
   return d?.status !== 'expenseclaim' && d?.status !== 'merged';
 }
 

@@ -436,6 +436,8 @@ export function billToDoc(b) {
     // supplier, and the invoices it has been applied to; on an invoice, the
     // prepayments it used (src/lib/prepayment.js).
     prepayment: b.prepayment || null,
+    // The Xero transaction this document was sent to (src/lib/paperworkMatch.js).
+    paperworkMatch: b.paperworkMatch || null,
     prepaymentsApplied: Array.isArray(b.prepaymentsApplied) ? b.prepaymentsApplied : [],
     customer: b.customer || '',
     project: b.project || '',

@@ -63,6 +63,8 @@ import ExtractionProgress from '@/components/ExtractionProgress';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import BankMatchCell from '@/components/BankMatchCell';
+import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
+import { paperworkSuggestion } from '@/lib/paperworkMatch';
 import { useBankLines, invalidateBankLines } from '@/lib/bankStore';
 import { matchesByDoc, lineKey as bankLineKey } from '@/lib/bankMatch';
 import { useListView, rememberWalk } from '@/lib/listView';
@@ -584,7 +586,7 @@ export default function Costs() {
     status: {
       cell: (d) => (
         <div className="flex flex-col items-start gap-1">
-          <StatusBadge status={d.status} published={Boolean(d.xeroInvoiceId)} />
+          <StatusBadge status={d.status} published={Boolean(d.xeroInvoiceId || d.paperworkMatch)} />
           {/* Billed to somebody who isn't this entity. On the ROW because a
               document nobody opens is exactly the one that gets published into
               the wrong client's ledger — and the badge is the only thing that
@@ -763,11 +765,27 @@ export default function Costs() {
       sortable: false,
       interactive: true,
       cell: (d) => (
-        <BankMatchCell
-          doc={d}
-          matches={bankMatchesByDoc.get(d.id) || []}
-          onChanged={() => invalidateBankLines()}
-        />
+        <div className="flex flex-col items-start gap-1">
+          <BankMatchCell
+            doc={d}
+            matches={bankMatchesByDoc.get(d.id) || []}
+            onChanged={() => invalidateBankLines()}
+          />
+          {/* Paperwork match: Xero already holds this money, so the document
+              is sent there from its own page rather than published again. */}
+          {d.paperworkMatch ? (
+            <span className="whitespace-nowrap rounded bg-green-600/10 px-1.5 py-0.5 text-xs text-green-700" title="Sent to a transaction already in Xero">
+              Sent to Xero
+            </span>
+          ) : paperworkSuggestion(paperwork.matches[d.id]) ? (
+            <span
+              className="whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800"
+              title="Xero already has this payment. Open the document to send the receipt there instead of publishing it again."
+            >
+              Already in Xero
+            </span>
+          ) : null}
+        </div>
       ),
     },
     ref: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (d) => d.invoiceNumber || '—' },
@@ -818,6 +836,10 @@ export default function Costs() {
       cell: (d) =>
         d.xeroInvoiceId ? (
           <a href={xeroBillUrl(d.xeroInvoiceId, xeroShortCode, d.xeroDocType)} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
+            View
+          </a>
+        ) : d.paperworkMatch ? (
+          <a href={xeroTxnUrl(d.paperworkMatch, xeroShortCode)} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
             View
           </a>
         ) : (
@@ -878,6 +900,9 @@ export default function Costs() {
   // they pay (src/lib/bankMatch.js — the same pairing the Bank tab draws). A
   // line already settled or set aside is not offered again.
   const bank = useBankLines();
+  // Paperwork match: the Xero transactions (Spend Money off a card feed, bills
+  // keyed in by hand) these documents are the receipts for.
+  const paperwork = usePaperworkMatches();
   // The entity's own name is not evidence of the supplier (bankMatch.js): an
   // outgoing transfer's narrative often names the payer, which is us.
   const bankOwnName = useActiveOrganisation()?.name || '';
@@ -1189,8 +1214,8 @@ export default function Costs() {
     const actor = user?.name || user?.email || 'You';
     const byId = new Map(allRows.map((r) => [r.id, r]));
     const picked = [...selected].map((id) => byId.get(id)).filter(Boolean);
-    const published = picked.filter((d) => d.xeroInvoiceId);
-    const claimable = picked.filter((d) => !d.xeroInvoiceId);
+    const published = picked.filter((d) => d.xeroInvoiceId || d.paperworkMatch);
+    const claimable = picked.filter((d) => !d.xeroInvoiceId && !d.paperworkMatch);
     if (!claimable.length) {
       setMergeNote(
         published.length === 1
@@ -1417,7 +1442,13 @@ export default function Costs() {
   // that isn't in this org's chart. Publishing finishes a document (it archives,
   // and can no longer go on a claim), so it asks first.
   const publishSelected = async () => {
-    const picked = selectedDocs();
+    let picked = selectedDocs();
+    // Xero already holds a document's money when it was sent to a transaction
+    // there, or when one is waiting for it (Paperwork match): publishing would
+    // post the same spending twice. Skipped and counted, never published.
+    const alreadyInXero = (d) => !d.xeroInvoiceId && (d.paperworkMatch || paperworkSuggestion(paperwork.matches[d.id]));
+    const inXeroCount = picked.filter(alreadyInXero).length;
+    picked = picked.filter((d) => !alreadyInXero(d));
     const skipped = {
       published: picked.filter((d) => d.xeroInvoiceId).length,
       claimed: picked.filter((d) => !d.xeroInvoiceId && d.status === 'expenseclaim').length,
@@ -1429,8 +1460,10 @@ export default function Costs() {
     const incomplete = picked.length - targets.length - skipped.published - skipped.claimed - skipped.proofs;
     if (!targets.length) {
       setMergeNote(
-        'Nothing to publish — a document must have a supplier, a date, a real category and a total above 0, ' +
-          'and not already be published, on an expense claim, a payment proof or a quotation.'
+        inXeroCount && inXeroCount === selectedDocs().length
+          ? 'Nothing to publish — Xero already has the payment for ' + (inXeroCount === 1 ? 'that document' : 'those documents') + '. Open each one to send the receipt to its Xero transaction instead.'
+          : 'Nothing to publish — a document must have a supplier, a date, a real category and a total above 0, ' +
+              'and not already be published, on an expense claim, a payment proof or a quotation.'
       );
       return;
     }
@@ -1501,6 +1534,7 @@ export default function Costs() {
       `Published ${done} document${done === 1 ? '' : 's'} to Xero as ${publishStatusLabel(publishStatus).toLowerCase()} bills.` +
         (failed.length ? ` ${failed.length} could not be published (${failed.slice(0, 3).join(', ')}).` : '') +
         (skipped.published ? ` ${skipped.published} already published.` : '') +
+        (inXeroCount ? ` ${inXeroCount} skipped — Xero already has the payment (send the receipt there from the document page).` : '') +
         (skipped.claimed ? ` ${skipped.claimed} on an expense claim.` : '') +
         (incomplete > 0 ? ` ${incomplete} still missing a supplier, date, category or total.` : '')
     );
