@@ -48,6 +48,11 @@ export async function relay(
   if (opts.tenantId) url.searchParams.set('tenant_id', opts.tenantId);
   for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
 
+  // Anything that WRITES to a tenant may change what its reference lists say
+  // (publishing a bill can create a contact; an account's description is edited
+  // from Lists), so the cached copies of that tenant's are dropped before it goes.
+  if (opts.tenantId && (opts.method ?? 'GET').toUpperCase() !== 'GET') forgetReferenceReads(opts.tenantId);
+
   const hasRaw = opts.rawBody !== undefined;
   let res: Response;
   try {
@@ -93,6 +98,64 @@ export async function relay(
     message: String(data?.message ?? `relay returned ${res.status}`),
     data,
   };
+}
+
+// A tenant's REFERENCE lists — its chart, tax rates, tracking categories,
+// customer and supplier contacts, its own profile — read through a short cache.
+//
+// Each read is a round trip through cyworkspace to Xero, 0.7 to 2.5 seconds, and
+// the document page asks for five or six of them every time it opens, though
+// they change perhaps once a month. So an answer is kept per tenant: FRESH for
+// two minutes, and for half an hour after that it is still served at once while
+// a fresh copy is fetched behind it (`allowStale`), so the page never waits on a
+// list it has seen recently and is never more than one look behind Xero. A road
+// that is about to POST into the ledger — a publish checking its account and tax
+// codes — passes `allowStale: false` and takes only the fresh half. Concurrent
+// asks for one list share one request, only a real answer is kept, and any write
+// to the tenant through `relay` drops its copies (`forgetReferenceReads`).
+const REFERENCE_FRESH_MS = 2 * 60_000;
+const REFERENCE_STALE_MS = 30 * 60_000;
+const referenceCache = new Map<string, { at: number; result: RelayResult }>();
+const referenceInFlight = new Map<string, Promise<RelayResult>>();
+const referenceGeneration = new Map<string, number>();
+
+function forgetReferenceReads(tenantId: string): void {
+  referenceGeneration.set(tenantId, (referenceGeneration.get(tenantId) ?? 0) + 1);
+  for (const key of referenceCache.keys()) if (key.startsWith(`${tenantId}|`)) referenceCache.delete(key);
+}
+
+export async function referenceRead(
+  xeroPath: string,
+  tenantId: string,
+  query?: Record<string, string>,
+  { allowStale = true }: { allowStale?: boolean } = {}
+): Promise<RelayResult> {
+  const key = `${tenantId}|${xeroPath}|${JSON.stringify(query ?? {})}`;
+  const fetchFresh = (): Promise<RelayResult> => {
+    const running = referenceInFlight.get(key);
+    if (running) return running;
+    // A write that lands while this read is out may already be missing from
+    // its answer, so an answer that started before the write is not kept.
+    const generation = referenceGeneration.get(tenantId) ?? 0;
+    const p = relay(xeroPath, { tenantId, query })
+      .then((result) => {
+        if (result.ok && (referenceGeneration.get(tenantId) ?? 0) === generation) {
+          referenceCache.set(key, { at: Date.now(), result });
+        }
+        return result;
+      })
+      .finally(() => referenceInFlight.delete(key));
+    referenceInFlight.set(key, p);
+    return p;
+  };
+  const hit = referenceCache.get(key);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (hit && age < REFERENCE_FRESH_MS) return hit.result;
+  if (hit && allowStale && age < REFERENCE_STALE_MS) {
+    void fetchFresh().catch(() => {});
+    return hit.result;
+  }
+  return fetchFresh();
 }
 
 // The relay has no dedicated "list tenants" route; its documented discovery
@@ -404,7 +467,7 @@ export async function accountsForOrg(ws: string, orgId: string): Promise<XeroAcc
   // failure swallowed — degrading by accident rather than on purpose.
   if (!organisation?.tenantId) return [];
   try {
-    const result = await relay('Accounts', { tenantId: organisation.tenantId, query: { where: 'Status=="ACTIVE"' } });
+    const result = await referenceRead('Accounts', organisation.tenantId, { where: 'Status=="ACTIVE"' }, { allowStale: false });
     if (!result.ok) return [];
     return (result.data?.Accounts ?? [])
       .filter((a: any) => a.Code)
@@ -431,7 +494,7 @@ export async function taxRatesForOrg(ws: string, orgId: string): Promise<Array<{
   // failure swallowed — degrading by accident rather than on purpose.
   if (!organisation?.tenantId) return [];
   try {
-    const result = await relay('TaxRates', { tenantId: organisation.tenantId });
+    const result = await referenceRead('TaxRates', organisation.tenantId, undefined, { allowStale: false });
     if (!result.ok) return [];
     return (result.data?.TaxRates ?? [])
       .filter((t: any) => t.Status === 'ACTIVE' && t.CanApplyToExpenses !== false)
@@ -472,10 +535,7 @@ export async function customerOptionsForOrg(ws: string, orgId: string): Promise<
   const organisation = getOrganisation(ws, orgId);
   if (!organisation?.tenantId) return [];
   try {
-    const result = await relay('Contacts', {
-      tenantId: organisation.tenantId,
-      query: { where: 'IsCustomer==true AND ContactStatus=="ACTIVE"' },
-    });
+    const result = await referenceRead('Contacts', organisation.tenantId, { where: 'IsCustomer==true AND ContactStatus=="ACTIVE"' }, { allowStale: false });
     if (!result.ok) return [];
     const names = (result.data?.Contacts ?? [])
       .map((c: { Name?: unknown }) => String(c?.Name ?? '').trim())
@@ -524,10 +584,7 @@ xeroRouter.get('/organisations/:id/accounts', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
-  const result = await relay('Accounts', {
-    tenantId: organisation.tenantId,
-    query: { where: 'Status=="ACTIVE"' },
-  });
+  const result = await referenceRead('Accounts', organisation.tenantId, { where: 'Status=="ACTIVE"' });
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const accounts = (result.data?.Accounts ?? [])
     .filter((a: any) => a.Code)
@@ -548,10 +605,7 @@ xeroRouter.get('/organisations/:id/payment-methods', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
-  const result = await relay('Accounts', {
-    tenantId: organisation.tenantId,
-    query: { where: 'Status=="ACTIVE"' },
-  });
+  const result = await referenceRead('Accounts', organisation.tenantId, { where: 'Status=="ACTIVE"' });
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const methods = (result.data?.Accounts ?? [])
     .filter((a: any) => String(a.Type).toUpperCase() === 'BANK' || a.EnablePaymentsToAccount === true)
@@ -578,7 +632,7 @@ xeroRouter.get('/organisations/:id/taxrates', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
-  const result = await relay('TaxRates', { tenantId: organisation.tenantId });
+  const result = await referenceRead('TaxRates', organisation.tenantId);
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const taxRates = (result.data?.TaxRates ?? [])
     .filter((t: any) => t.Status === 'ACTIVE' && t.CanApplyToExpenses !== false)
@@ -592,10 +646,7 @@ xeroRouter.get('/organisations/:id/customers', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
-  const result = await relay('Contacts', {
-    tenantId: organisation.tenantId,
-    query: { where: 'IsCustomer==true AND ContactStatus=="ACTIVE"' },
-  });
+  const result = await referenceRead('Contacts', organisation.tenantId, { where: 'IsCustomer==true AND ContactStatus=="ACTIVE"' });
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const customers = (result.data?.Contacts ?? [])
     .map((c: any) => ({ id: String(c.ContactID ?? ''), name: String(c.Name ?? '').trim() }))
@@ -610,10 +661,7 @@ xeroRouter.get('/organisations/:id/suppliers', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
-  const result = await relay('Contacts', {
-    tenantId: organisation.tenantId,
-    query: { where: 'IsSupplier==true AND ContactStatus=="ACTIVE"' },
-  });
+  const result = await referenceRead('Contacts', organisation.tenantId, { where: 'IsSupplier==true AND ContactStatus=="ACTIVE"' });
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const suppliers = (result.data?.Contacts ?? [])
     .map((c: any) => ({ id: String(c.ContactID ?? ''), name: String(c.Name ?? '').trim() }))
@@ -629,7 +677,7 @@ xeroRouter.get('/organisations/:id/profile', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
-  const result = await relay('Organisation', { tenantId: organisation.tenantId });
+  const result = await referenceRead('Organisation', organisation.tenantId);
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const org = result.data?.Organisations?.[0];
   if (!org) return res.status(404).json({ error: 'organisation_not_found_in_xero' });
@@ -666,7 +714,7 @@ xeroRouter.get('/organisations/:id/tracking', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
-  const result = await relay('TrackingCategories', { tenantId: organisation.tenantId });
+  const result = await referenceRead('TrackingCategories', organisation.tenantId);
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const categories = (result.data?.TrackingCategories ?? [])
     .filter((c: any) => c.Status === 'ACTIVE')
@@ -689,7 +737,7 @@ xeroRouter.get('/organisations/:id/categories', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
-  const result = await relay('Accounts', { tenantId: organisation.tenantId, query: { where: 'Status=="ACTIVE"' } });
+  const result = await referenceRead('Accounts', organisation.tenantId, { where: 'Status=="ACTIVE"' });
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const categories = (result.data?.Accounts ?? [])
     .filter((a: any) => a.AccountID && EXPENSE_TYPES.has(String(a.Type).toUpperCase()))
@@ -1109,7 +1157,7 @@ type TrackingCat = { name: string; options: Set<string> };
 // list the app calls Projects, [1] is Projects 2. Xero allows at most two, and
 // a line may be tagged with one option from each.
 export async function trackingCategories(tenantId: string): Promise<TrackingCat[]> {
-  const result = await relay('TrackingCategories', { tenantId });
+  const result = await referenceRead('TrackingCategories', tenantId, undefined, { allowStale: false });
   if (!result.ok) return [];
   return (result.data?.TrackingCategories ?? [])
     .filter((c: any) => c.Status === 'ACTIVE' && c.Name)
@@ -1158,7 +1206,7 @@ function trackingAcross(cats: TrackingCat[], values: string[]): Array<{ Name: st
 async function taxTypesByName(tenantId: string): Promise<Map<string, { code: string; rate: number }>> {
   const out = new Map<string, { code: string; rate: number }>();
   try {
-    const result = await relay('TaxRates', { tenantId });
+    const result = await referenceRead('TaxRates', tenantId, undefined, { allowStale: false });
     if (!result.ok) return out;
     for (const t of result.data?.TaxRates ?? []) {
       if (t?.Status !== 'ACTIVE') continue;
@@ -1172,7 +1220,7 @@ async function taxTypesByName(tenantId: string): Promise<Map<string, { code: str
 }
 
 async function activeAccountCodes(tenantId: string): Promise<Set<string>> {
-  const result = await relay('Accounts', { tenantId, query: { where: 'Status=="ACTIVE"' } });
+  const result = await referenceRead('Accounts', tenantId, { where: 'Status=="ACTIVE"' }, { allowStale: false });
   if (!result.ok) return new Set();
   return new Set<string>((result.data?.Accounts ?? []).map((a: any) => String(a.Code ?? '')).filter(Boolean));
 }
