@@ -7,6 +7,8 @@ import {
   paperworkSuggestion,
   paperworkReason,
   codingDifferences,
+  recodeLocked,
+  recodeInstructions,
 } from '../src/lib/paperworkMatch.js';
 import { isPublished, isUnpublished } from '../src/lib/readiness.js';
 import { matchable } from '../src/lib/bankMatch.js';
@@ -73,6 +75,13 @@ check('a tax rate said blank as Not set',
 check('taking a tag OFF is a difference too',
   codingDifferences({ ...doc, project: '' }, spend, ['Outlets']),
   [{ key: 'project', label: 'Outlets', document: 'Not set', xero: 'HQ' }]);
+
+// --- what Xero will let an app change ---------------------------------------------------
+check('a reconciled Spend Money cannot be recoded by an app', recodeLocked(spend), true);
+check('an unreconciled one can', recodeLocked({ ...spend, reconciled: false }), false);
+check('a paid bill cannot', recodeLocked({ kind: 'bill', status: 'PAID' }), true);
+check('an approved, unpaid bill can', recodeLocked({ kind: 'bill', status: 'AUTHORISED' }), false);
+check('what to change by hand, field by field', recodeInstructions(codingDifferences(doc, spend, ['Outlets'])), ['Outlets: HQ → Tangs']);
 
 // --- what being sent means elsewhere ----------------------------------------------------
 const sent = { ...doc, status: 'archived', paperworkMatch: { id: 'bt-1' } };

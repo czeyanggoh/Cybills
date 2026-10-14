@@ -2044,6 +2044,19 @@ xeroRouter.post('/organisations/:id/paperwork-recode', async (req, res) => {
   res.status(out.status).json(out.body);
 });
 
+// Re-read the linked transaction without changing it (after a hand edit in Xero).
+xeroRouter.post('/organisations/:id/paperwork-refresh', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const workspace = bookFor(req);
+  const bill = getBillById(workspace, String(req.body?.billId ?? ''));
+  if (!bill || !paperworkVisible(req, organisation)(bill)) return res.status(404).json({ error: 'bill_not_found' });
+  const { refreshLinked } = await import('./paperworkMatch.js');
+  const out = await refreshLinked(organisation, workspace, bill);
+  res.status(out.status).json(out.body);
+});
+
 xeroRouter.post('/organisations/:id/paperwork-unlink', async (req, res) => {
   if (notConfigured(res)) return;
   if (!mayPublish(req, res)) return;

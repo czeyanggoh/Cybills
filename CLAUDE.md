@@ -3453,6 +3453,18 @@ needs no chart, went through. Found on Excellence's Lalamove receipt (14 Oct
 2026); the test now runs against a non-primary entity, since one with a single
 entity had the two ids agree by accident.
 
+**But Xero will not let an app recode a RECONCILED Spend Money** — "This Bank
+Transaction cannot be edited as it has been reconciled with a Bank Statement",
+which is what the Lalamove one answered once the chart was found — nor a PAID
+bill. Its own screens still can (Options -> Edit). So `recodeLocked`
+(`paperworkMatch.js`) says which transactions those are, the server never asks
+Xero for a recode it will refuse (the plain reason is recorded instead), and the
+page names the change for a person to make there, field by field ("Outlets: HQ →
+Tangs", `recodeInstructions`), with the link. **I've changed it — check Xero
+again** (`…/paperwork-refresh`) re-reads the transaction without writing
+anything, so the difference stops being shown once it is fixed. The
+recode only ever runs on an unreconciled Spend Money or an unpaid bill.
+
 **The automatic publish-after-reading asks Xero first**, on both roads — the
 browser's upload (`autoPublishAfterRead` sends `unattended: true`) and the
 background read of an emailed, WhatsApp'd or Drive document (`publishByRule`).

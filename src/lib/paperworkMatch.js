@@ -136,6 +136,30 @@ export function paperworkReason(match, doc) {
 // What a Xero transaction is called, in Xero's own words.
 export const txnNoun = (txn) => (txn?.kind === 'bill' ? 'bill' : 'Spend Money');
 
+// Whether Xero will let an APP change this transaction's lines at all. It will
+// not for a Spend Money once it is reconciled with a bank statement line ("This
+// Bank Transaction cannot be edited as it has been reconciled with a Bank
+// Statement", Excellence's Lalamove, 14 Oct 2026), nor for a bill that is fully
+// paid. Xero's own screens still can (Options -> Edit), so the page names the
+// change for a person to make there rather than offering a button that can
+// only fail.
+export function recodeLocked(txn) {
+  if (txn?.kind === 'spend') return Boolean(txn?.reconciled);
+  if (txn?.kind === 'bill') return String(txn?.status || '').toUpperCase() === 'PAID';
+  return false;
+}
+
+export function recodeLockedReason(txn) {
+  return txn?.kind === 'bill'
+    ? 'Xero does not let an app change the lines of a bill that has been paid.'
+    : 'Xero does not let an app change a Spend Money once it is reconciled with a bank statement line.';
+}
+
+// The change a person makes in Xero, one line per field: "Outlets: HQ → Tangs".
+export function recodeInstructions(diffs) {
+  return (diffs || []).map((d) => `${d.label}: ${d.xero} → ${d.document}`);
+}
+
 // --- the coding, side by side ------------------------------------------------------
 //
 // What the document says the money is (account, tax code, both tracking

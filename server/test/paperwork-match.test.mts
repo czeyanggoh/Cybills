@@ -30,13 +30,16 @@ writeFileSync(join(DATA_DIR, 'files', 'lalamove.pdf'), Buffer.from('%PDF-1.4 a d
 
 // The Spend Money as Xero holds it: Freight & Courier, No Tax, outlet HQ.
 const spendRecord = () => ({
-  BankTransactionID: 'bt-1', Type: 'SPEND', Status: 'AUTHORISED', IsReconciled: true, HasAttachments: false,
+  BankTransactionID: 'bt-1', Type: 'SPEND', Status: 'AUTHORISED', IsReconciled: reconciled, HasAttachments: false,
   Contact: { ContactID: 'c-lala', Name: 'Lalamove' }, Date: '/Date(1758758400000+0000)/', DateString: '2026-09-25T00:00:00',
   Reference: 'AT262680002000010006526', CurrencyCode: 'SGD', LineAmountTypes: 'Inclusive', Total: 73.8,
   BankAccount: { AccountID: 'acc-amex', Code: '', Name: 'Amex' },
   LineItems: [{ LineItemID: 'li-1', Description: 'CKO*LALAMOVE 624784 SINGAPORE (1005)', Quantity: 1, UnitAmount: 73.8, AccountCode: '425', TaxType: 'NONE', TaxAmount: 0, LineAmount: 73.8, Tracking: [{ Name: 'Outlets', Option: 'HQ' }] }],
 });
 let recodeReply: any = null;
+// Unreconciled until section 9: Xero refuses an app's edit to a reconciled one.
+let reconciled = false;
+let handEdit = false;
 let lookupDown = false;
 const seen: Array<{ method: string; path: string; query: string; body: any }> = [];
 const stub = http.createServer((req, res) => {
@@ -70,7 +73,11 @@ const stub = http.createServer((req, res) => {
       return res.end(JSON.stringify({ Invoices: [{ InvoiceID: 'inv-new', InvoiceNumber: 'X', Status: body.Invoices[0].Status, HasErrors: false, LineItems: [] }] }));
     }
     if (path === 'Invoices' && req.method === 'GET') return res.end(JSON.stringify({ Invoices: [] }));
-    if (path === 'BankTransactions/bt-1' && req.method === 'GET') return res.end(JSON.stringify({ BankTransactions: [spendRecord()] }));
+    if (path === 'BankTransactions/bt-1' && req.method === 'GET') {
+      const rec = spendRecord();
+      if (handEdit) rec.LineItems = [{ ...rec.LineItems[0], Tracking: [{ Name: 'Outlets', Option: 'Tangs' }] }];
+      return res.end(JSON.stringify({ BankTransactions: [rec] }));
+    }
     if (path === 'BankTransactions/bt-1' && req.method === 'POST') {
       if (recodeReply) return res.end(JSON.stringify(recodeReply));
       const sent = body.BankTransactions[0];
@@ -217,6 +224,28 @@ check('Xero unreachable: the automatic publish declines', [r.status, r.body.erro
 r = await api('publish-bill', { billId: blind.id, accountCode: '425', taxType: 'NONE', status: 'SUBMITTED' });
 check('a person publishing is not asked about it', [r.status, putInvoices()], [200, 2]);
 lookupDown = false;
+
+// 9) A RECONCILED Spend Money (the real Lalamove one): Xero refuses an app's
+//    edit ("cannot be edited as it has been reconciled"), so none is asked for.
+//    The file still goes; the refusal is recorded in plain words; and once the
+//    change is made by hand in Xero, a re-read clears the difference.
+reconciled = true;
+const amex = receipt({ date: '2026-09-24', invoiceNumber: 'AMEX-1', fileHash: 'amex' });
+await api('paperwork-unlink', { billId: doc.id }); // free bt-1 for this one
+seen.length = 0;
+r = await api('paperwork-match', { billId: amex.id, kind: 'spend', transactionId: 'bt-1', recode: true });
+check('reconciled: sent', [r.status, r.body.attachment?.ok], [200, true]);
+check('…no edit is attempted', seen.some((x) => x.path === 'BankTransactions/bt-1' && x.method === 'POST'), false);
+check('…and why is said plainly', [r.body.recode?.ok, r.body.recode?.message], [false, 'Xero does not let an app change a Spend Money once it is reconciled with a bank statement line.']);
+r = await api('paperwork-recode', { billId: amex.id });
+check('pressing Recode on it later asks Xero nothing either', [r.status, seen.some((x) => x.path === 'BankTransactions/bt-1' && x.method === 'POST')], [422, false]);
+recodeReply = null;
+// Somebody changes the outlet in Xero by hand; the page reads it again.
+seen.length = 0;
+handEdit = true;
+r = await api('paperwork-refresh', { billId: amex.id });
+check('re-read after a hand edit: the lines now say Tangs', getBillById('org-1', amex.id)!.paperworkMatch?.lines?.[0]?.tracking, [{ category: 'Outlets', option: 'Tangs' }]);
+check('…and nothing was written to Xero', seen.filter((x) => x.method !== 'GET').length, 0);
 
 server.close();
 stub.close();

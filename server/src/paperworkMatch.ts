@@ -50,6 +50,8 @@ type Rules = {
   paperworkMatches: (docs: unknown[], txns: Txn[], opts?: Record<string, unknown>) => Map<string, Candidate[]>;
   codingDifferences: (doc: unknown, txn: Txn, trackingNames?: string[]) => Array<{ key: string; label: string; document: string; xero: string }>;
   txnAsLine: (txn: Txn) => Record<string, unknown>;
+  recodeLocked: (txn: Txn) => boolean;
+  recodeLockedReason: (txn: Txn) => string;
 };
 type BankRules = { amountsAgree: (doc: unknown, line: unknown) => boolean };
 
@@ -393,7 +395,15 @@ export async function sendToXeroTransaction(
   // Recode first: a transaction Xero refuses to recode still gets its paper,
   // but the paper should go onto the lines that will stay.
   let recoded: Awaited<ReturnType<typeof recode>> | null = null;
-  if (opts.recode) recoded = await recode(req, organisation, ws, bill, kind, record, look);
+  // A reconciled Spend Money (or a paid bill) is one Xero will not let an app
+  // change: asked anyway it answers "cannot be edited as it has been
+  // reconciled". Not asked — the refusal is recorded in plain words and the
+  // page names the change for a person to make in Xero.
+  if (opts.recode) {
+    recoded = loaded.rules.recodeLocked(txn)
+      ? { ok: false, at: new Date().toISOString(), message: loaded.rules.recodeLockedReason(txn), before: txn.lines }
+      : await recode(req, organisation, ws, bill, kind, record, look);
+  }
   const finalTxn = recoded?.ok && (recoded as any).record ? summariseXeroTxn((recoded as any).record, kind, look) : txn;
 
   const attachment = await attachBillFileTo(organisation.tenantId, kind === 'spend' ? 'BankTransactions' : 'Invoices', id, bill);
@@ -443,16 +453,37 @@ export async function recodeLinked(req: any, organisation: Org, ws: string, bill
   const record = await fetchTxn(organisation, m.kind, m.id);
   if (!record) return { status: 404, body: { error: 'transaction_not_found', message: 'Xero no longer has that transaction.' } };
   const look = await lookupsFor(organisation.id);
-  const done = await recode(req, organisation, ws, bill, m.kind, record, look);
+  const loaded = await loadRules();
+  const current = summariseXeroTxn(record, m.kind, look);
+  const done = loaded?.rules.recodeLocked(current)
+    ? { ok: false, at: new Date().toISOString(), message: loaded.rules.recodeLockedReason(current), before: current.lines }
+    : await recode(req, organisation, ws, bill, m.kind, record, look);
   const now = done.ok && (done as any).record ? summariseXeroTxn((done as any).record, m.kind, look) : summariseXeroTxn(record, m.kind, look);
   const next: PaperworkMatch = {
     ...m,
     lines: now.lines,
     status: now.status,
+    reconciled: now.reconciled,
     recode: { ok: done.ok, at: done.at, ...(done.message ? { message: done.message } : {}), before: done.before },
   };
   setBillPaperworkMatch(ws, bill.id, next);
   return { status: done.ok ? 200 : 422, body: { ok: done.ok, match: next, recode: next.recode, message: done.message, bill: getBillById(ws, bill.id) } };
+}
+
+/**
+ * Read the transaction again WITHOUT changing it — after somebody has made the
+ * change by hand in Xero (the road for a reconciled Spend Money), so the page
+ * stops showing a difference that is no longer there.
+ */
+export async function refreshLinked(organisation: Org, ws: string, bill: Bill): Promise<Out> {
+  const m = bill.paperworkMatch;
+  if (!m) return { status: 409, body: { error: 'not_linked', message: 'This document is not linked to a Xero transaction.' } };
+  const record = await fetchTxn(organisation, m.kind, m.id);
+  if (!record) return { status: 404, body: { error: 'transaction_not_found', message: 'Xero no longer has that transaction.' } };
+  const now = summariseXeroTxn(record, m.kind, await lookupsFor(organisation.id));
+  const next: PaperworkMatch = { ...m, lines: now.lines, status: now.status, reconciled: now.reconciled, total: now.total };
+  setBillPaperworkMatch(ws, bill.id, next);
+  return { status: 200, body: { ok: true, match: next, bill: getBillById(ws, bill.id) } };
 }
 
 /**

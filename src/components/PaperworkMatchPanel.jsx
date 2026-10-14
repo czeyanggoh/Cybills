@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, ExternalLink, FileCheck2, Info } from 'lucide-react';
 import { formatDate } from '@/lib/date';
 import { notifyBillsChanged } from '@/lib/bills';
-import { codingDifferences, paperworkReason, txnNoun } from '@/lib/paperworkMatch';
+import { codingDifferences, paperworkReason, recodeInstructions, recodeLocked, recodeLockedReason, txnNoun } from '@/lib/paperworkMatch';
 import {
   invalidatePaperworkMatches,
   recodeXeroTransaction,
+  refreshXeroTransaction,
   refreshPaperworkMatches,
   sendToXeroTransaction,
   unlinkXeroTransaction,
@@ -89,6 +90,28 @@ function Differences({ diffs }) {
   );
 }
 
+// What to change by hand in Xero, for a transaction Xero will not let an app
+// recode — named field by field, with the way in.
+function ChangeInXero({ txn, diffs, shortCode }) {
+  if (!diffs.length) return null;
+  const url = xeroTxnUrl(txn, shortCode);
+  return (
+    <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+      <p>{recodeLockedReason(txn)} Change it in Xero instead{txn.kind === 'spend' ? ' (Options → Edit)' : ''}:</p>
+      <ul className="mt-1 list-disc pl-5">
+        {recodeInstructions(diffs).map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      {url ? (
+        <a href={url} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 font-medium underline-offset-2 hover:underline">
+          Open it in Xero <ExternalLink className="h-3 w-3" />
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 export default function PaperworkMatchPanel({ doc, mayPublish, xeroShortCode, onBeforeSend, onChanged }) {
   const linked = doc?.paperworkMatch || null;
   const pw = usePaperworkMatches({ enabled: Boolean(doc?.persisted) });
@@ -134,6 +157,7 @@ export default function PaperworkMatchPanel({ doc, mayPublish, xeroShortCode, on
   if (linked) {
     const diffs = codingDifferences(doc, linked, pw.trackingCategories.length ? pw.trackingCategories : trackingNamesOf(linked));
     const r = linked.recode;
+    const locked = recodeLocked(linked);
     return (
       <div className="rounded-lg border bg-background p-4">
         <div className="mb-3 flex items-center gap-2 text-base font-semibold text-emerald-700">
@@ -154,15 +178,25 @@ export default function PaperworkMatchPanel({ doc, mayPublish, xeroShortCode, on
               ? 'Coding left as Xero had it.'
               : r.ok
                 ? `Recoded to this document on ${formatDate(String(r.at).slice(0, 10))}.`
-                : `Not recoded — ${r.message || 'Xero refused.'}`}
+                : locked
+                  ? 'Not recoded — Xero does not let an app change it.'
+                  : `Not recoded — ${r.message || 'Xero refused.'}`}
           </li>
         </ul>
         <Differences diffs={diffs} />
+        {locked ? <ChangeInXero txn={linked} diffs={diffs} shortCode={xeroShortCode} /> : null}
         {note ? <p className="mt-2 text-xs text-amber-700">{note}</p> : null}
         {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
         {mayPublish ? (
           <div className="mt-3 flex flex-wrap items-center gap-4">
-            {diffs.length ? (
+            {/* After a hand edit in Xero, read the transaction again so the
+                difference above stops being shown. Nothing is written. */}
+            {diffs.length && locked ? (
+              <button type="button" className={actionCls} disabled={Boolean(busy)} onClick={() => run('refresh', () => refreshXeroTransaction(doc.id))}>
+                {busy === 'refresh' ? 'Checking…' : 'I’ve changed it — check Xero again'}
+              </button>
+            ) : null}
+            {diffs.length && !locked ? (
               <button
                 type="button"
                 className={actionCls}
@@ -209,7 +243,8 @@ export default function PaperworkMatchPanel({ doc, mayPublish, xeroShortCode, on
       </div>
       {candidates.slice(0, 3).map((c) => {
         const diffs = codingDifferences(doc, c.txn, pw.trackingCategories);
-        const wantRecode = recode[c.txn.id] ?? (diffs.length > 0 && hasCategory);
+        const locked = recodeLocked(c.txn);
+        const wantRecode = !locked && (recode[c.txn.id] ?? (diffs.length > 0 && hasCategory));
         return (
           <div key={c.txn.id} className="rounded-lg border bg-background p-4">
             <div className={cn('mb-2 text-xs font-medium', c.confidence === 'firm' ? 'text-emerald-700' : 'text-muted-foreground')}>
@@ -218,9 +253,10 @@ export default function PaperworkMatchPanel({ doc, mayPublish, xeroShortCode, on
             </div>
             <Summary txn={c.txn} shortCode={xeroShortCode} />
             <Differences diffs={diffs} />
+            {locked ? <ChangeInXero txn={c.txn} diffs={diffs} shortCode={xeroShortCode} /> : null}
             {mayPublish ? (
               <div className="mt-3 space-y-3">
-                {diffs.length ? (
+                {diffs.length && !locked ? (
                   <label className={cn('flex items-start gap-2 text-sm', !hasCategory && 'opacity-60')}>
                     <input
                       type="checkbox"
@@ -244,7 +280,7 @@ export default function PaperworkMatchPanel({ doc, mayPublish, xeroShortCode, on
                   className={actionCls}
                   disabled={Boolean(busy)}
                   onClick={() => {
-                    const doRecode = Boolean(wantRecode) && hasCategory && diffs.length > 0;
+                    const doRecode = !locked && Boolean(wantRecode) && hasCategory && diffs.length > 0;
                     const what = doRecode ? 'attach this document and recode the transaction to it' : 'attach this document to it';
                     if (!window.confirm(`Send to the ${txnNoun(c.txn)} in Xero (${c.txn.contact || 'no contact'}, ${money(c.txn.currency, c.txn.total)} on ${formatDate(c.txn.date)})?\n\nThis will ${what}, and the document is set aside as done — it is not published.`)) return;
                     run(c.txn.id, async () => {

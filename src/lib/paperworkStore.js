@@ -118,3 +118,12 @@ export function recodeXeroTransaction(billId) {
     body: JSON.stringify({ billId }),
   });
 }
+
+// Read the linked transaction again without changing it — after the coding was
+// changed by hand in Xero (a reconciled Spend Money cannot be recoded by an app).
+export function refreshXeroTransaction(billId) {
+  return call(`/api/xero/organisations/${encodeURIComponent(orgNow())}/paperwork-refresh`, {
+    method: 'POST',
+    body: JSON.stringify({ billId }),
+  });
+}
