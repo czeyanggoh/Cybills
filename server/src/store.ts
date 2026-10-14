@@ -399,8 +399,23 @@ export type DuplicateMatch = {
 };
 
 // --- Normalization: make fuzzy human/OCR values comparable -------------------
+// A supplier compared as the words that NAME it: case, punctuation, "&" vs
+// "and" and the legal form all ignored. The same invoice is read as "Zoro Design
+// & Build" off one copy and "Zoro Design & Build Pte Ltd" off another, and
+// compared as written the pair never matched — a document published to Xero was
+// uploaded again and sat in Ready unflagged. Safe to loosen: every tier that
+// keys on the supplier also needs the same total and the same document number
+// or date. Mirrors `normaliseSupplier` in src/lib/supplierDuplicates.js, written
+// out here because the duplicate check is synchronous.
+const SUPPLIER_SUFFIXES = /\b(pte|ptd|ltd|limited|llp|llc|inc|incorporated|co|company|corp|corporation|sdn|bhd|gmbh)\b/g;
 export function normSupplier(s: string): string {
-  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return String(s || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(SUPPLIER_SUFFIXES, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 export function normInvoice(s: string): string {
   return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');

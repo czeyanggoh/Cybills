@@ -81,6 +81,15 @@ check('not a duplicate yet', await flagOn(willMatch.id), '');
 updateBill('cybm', willMatch.id, { supplier: 'Grab', invoiceNumber: 'G-9', total: '30', date: '2026-08-01' } as any);
 check('flagged once the edit made them agree', await flagOn(willMatch.id), edited.id);
 
+// 2b) The same invoice read with and without the legal form, the original
+// already published (archived) — the Zoro case. Settled documents stay in the
+// corpus, so the re-upload is flagged against it.
+const zoro = bill({ supplier: 'Zoro Design & Build', invoiceNumber: 'ZDB26-0033VO', total: '3000', date: '2026-09-01', status: 'archived', xeroInvoiceId: 'inv-zoro' });
+const zoroAgain = bill({ supplier: 'ZORO DESIGN AND BUILD PTE. LTD.', invoiceNumber: 'ZDB26-0033VO', total: '3000', date: '2026-09-01', status: 'ready' });
+check('a legal form or "&" does not hide a duplicate', await flagOn(zoroAgain.id), zoro.id);
+const zoroOther = bill({ supplier: 'Zoro Design & Build Pte Ltd', invoiceNumber: 'ZDB26-0034', total: '1500', date: '2026-09-15' });
+check('…while a different invoice of the same supplier is not one', await flagOn(zoroOther.id), '');
+
 // 3) The reviewer's "not a duplicate" is final — the automatic scan must never
 // raise it again.
 updateBill('cybm', copy.id, { duplicateDismissed: true } as any);

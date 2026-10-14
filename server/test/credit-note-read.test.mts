@@ -99,7 +99,5 @@ answer = { ...BASE, documentType: 'Invoice' };
 body = await read();
 check('an invoice keeps the sign it was read with', body.data?.total, -78.89);
 
-console.log(failures ? `
-${failures} FAILURE(S)` : '
-ALL PASS');
+console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, server, stub);
