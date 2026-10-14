@@ -214,8 +214,13 @@ POST https://cybills.cy-bm.sg/api/whatsapp/message   (X-API-Key, same key)
   the WhatsApp tab it is marked `manual`, and a later CYWS re-send leaves it
   alone — otherwise correcting it would be pointless.
 - **The classification is what files it.** A message whose `doc_category` is
-  `supplier_bill` or `receipt` is filed as a cost document by this endpoint, on
-  the send that carries the verdict. Everything else — a bank statement, a sales
+  one of the message's `file_categories` is filed as a cost document by this
+  endpoint, on the send that carries the verdict. `file_categories` is the
+  list the chat ticked in the CYWS inbox (WhatsApp -> auto-tag options -> "File
+  as cost documents in CYBills", Oct 2026 — e.g. `["supplier_bill", "receipt",
+  "payment_proof"]`); absent, it is `supplier_bill` + `receipt`, and `[]`
+  files nothing. A payment proof filed this way is read, archived and applied
+  to the invoices it pays like any other. Everything else — a bank statement, a sales
   invoice, a photo — stays in the thread and is filed by nobody unless a person
   says otherwise. **One post per message**: CYWS must NOT also call `/invoice`
   for those two, or the bill is posted twice, filed by one call and shown as

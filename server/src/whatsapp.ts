@@ -1785,7 +1785,15 @@ whatsappRouter.post('/test', async (req, res) => {
 // already paid — so both are filed on arrival. Everything else it can say (a
 // bank statement, a sales invoice, a photo of a cat) is kept in the thread and
 // filed by nobody unless a person says otherwise.
+//
+// That pair is now only the DEFAULT. CYWS lets the chat choose which verdicts
+// are filed (its inbox, per chat — e.g. payment proofs too) and sends the list
+// on every message as `file_categories`; an older CYWS sends none.
 const FILEABLE = new Set(['supplier_bill', 'receipt']);
+export function fileableFor(raw: unknown): Set<string> {
+  if (!Array.isArray(raw)) return FILEABLE;
+  return new Set(raw.map((c) => String(c ?? '').trim()).filter(Boolean));
+}
 /**
  * Files one WhatsApp document as a cost document, and starts the read.
  *
@@ -2084,7 +2092,7 @@ whatsappRouter.post('/message', async (req, res) => {
   // path runs again for a message already handled: not already filed here, not
   // already delivered under this id, and there has to be a file at all.
   const alreadyDelivered = Boolean(seenMessage(stored.id) || (cywsMessageId && seenMessage(cywsMessageId)));
-  if (!stored.billId && FILEABLE.has(stored.docCategory) && (stored.r2Key || stored.fileUrl) && !alreadyDelivered) {
+  if (!stored.billId && fileableFor(b.file_categories).has(stored.docCategory) && (stored.r2Key || stored.fileUrl) && !alreadyDelivered) {
     const filed = await fileWhatsappDocument(req, channel, {
       chat_id: stored.chatId,
       chat_subject: channel.subject,

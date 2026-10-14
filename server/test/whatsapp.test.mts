@@ -786,6 +786,25 @@ check('and names that as the reason', r.body.error, 'no_bucket');
 
   const after = await get('threads', { 'X-Org-Id': 'org_one0001' });
   check('nothing is left unfiled', after.body.threads.find((x: any) => x.submissionId === submissionId)?.unfiled, 0);
+
+  // Which verdicts are filed is the CHAT's choice in CYWS, sent on each message
+  // as file_categories. Without it the original pair stands.
+  const proof = (id: string, extra: Record<string, unknown> = {}) => post('message', {
+    ...base, wa_message_id: id, msg_type: 'image', doc_category: 'payment_proof',
+    r2_key: `whatsapp/${id}.jpg`, file_url: `https://cyworkspace.cy-bm.sg/api/invoice-file?k=${id}&ct=jpg&s=sig`, ...extra,
+  }, KEY);
+  r = await proof('MSG-proof-a');
+  check('a payment proof is not filed when CYWS names no list', r.body.filed, false);
+  r = await proof('MSG-proof-b', { file_categories: ['supplier_bill', 'receipt', 'payment_proof'] });
+  check('and is filed when the chat ticked payment proof', r.body.filed, true);
+  r = await post('message', {
+    ...base, wa_message_id: 'MSG-receipt-off', msg_type: 'image', doc_category: 'receipt',
+    r2_key: 'whatsapp/roff.jpg', file_url: 'https://cyworkspace.cy-bm.sg/api/invoice-file?k=roff&ct=jpg&s=sig',
+    file_categories: ['supplier_bill'],
+  }, KEY);
+  check('a receipt the chat unticked is kept, not filed', [r.status, r.body.filed], [200, false]);
+  r = await proof('MSG-proof-c', { file_categories: [] });
+  check('an empty list files nothing', r.body.filed, false);
 }
 
 server.close();
