@@ -21,6 +21,7 @@ import {
   primaryOrgId,
   listOrganisations,
   dataScopeForOrg,
+  organisationsRevision,
   type Organisation,
 } from './organisations.js';
 import { setSession, readSession } from './auth.js';
@@ -235,7 +236,13 @@ export function publicUser(u: User) {
 
 const COLLECTION = 'users';
 const load = () => loadCollection<User>(COLLECTION);
-export const save = (items: User[]) => saveCollection(COLLECTION, items);
+// Bumped on every write — what lets ensure() skip its repair passes when
+// nothing has changed since they last ran.
+let rosterRevision = 0;
+export const save = (items: User[]) => {
+  rosterRevision += 1;
+  saveCollection(COLLECTION, items);
+};
 
 // The real company employees (matching the CYHR/Talenox records). Seeded once
 // per workspace so the list is never empty.
@@ -1334,8 +1341,19 @@ function assignPractice(items: User[], ws: string): boolean {
 
 // Return the workspace's users, seeding the real employees on first use and
 // keeping the roster de-duplicated (one email per teammate).
+// The repair passes below are about a millisecond over a real roster, and
+// ensure() is asked from inside per-ROW loops — the Costs listing resolves every
+// WhatsApp document's sender through it on every load, a claim list renames
+// each claim's claimant through it — so a book of a few hundred documents spent
+// half a second per listing re-deriving a roster that had not changed. What the
+// passes read is the roster and the organisation list, so they run again only
+// when either has been written (or a row added) since they last ran.
+const ensuredAt = new Map<string, string>();
+const ensureKey = (items: User[]) => `${rosterRevision}|${items.length}|${organisationsRevision()}`;
+
 export function ensure(ws: string): User[] {
   const items = load();
+  if (ensuredAt.get(ws) === ensureKey(items)) return items;
   let changed = false;
   if (!items.some((u) => u.workspaceId === ws)) {
     // The seed IS the practice's own staff, so they're seeded as colleagues
@@ -1372,6 +1390,8 @@ export function ensure(ws: string): User[] {
   if (assignPractice(items, ws)) changed = true;
   if (ensureEmailHandles(items, ws)) changed = true;
   if (changed) save(items);
+  // Read AFTER the save: the passes' own write is not a reason to run them again.
+  ensuredAt.set(ws, ensureKey(load()));
   return items;
 }
 

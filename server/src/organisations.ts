@@ -126,7 +126,13 @@ function load(): Organisation[] {
   return cache;
 }
 
+// Bumped on every write, so a reader that derives something from the list (the
+// roster's ensure() in users.ts) can tell whether it has to derive it again.
+let revision = 0;
+export const organisationsRevision = (): number => revision;
+
 function persist(organisations: Organisation[]): void {
+  revision += 1;
   mkdirSync(DATA_DIR, { recursive: true });
   const tmp = `${DATA_FILE}.tmp`;
   writeFileSync(tmp, JSON.stringify({ organisations }, null, 2));
