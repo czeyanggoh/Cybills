@@ -24,6 +24,7 @@ import { whatsappRouter } from './whatsapp.js';
 import { paymentsRouter } from './payments.js';
 import { bankRouter } from './bankMatch.js';
 import { driveRouter, startDriveClock } from './drive.js';
+import { startStorageClock } from './storageCare.js';
 import { scrubFillerText } from './store.js';
 import { verifyShareToken } from './shareLinks.js';
 
@@ -241,4 +242,7 @@ app.listen(env.PORT, () => {
   // a Drive folder, so every connected folder is looked in every couple of
   // minutes. A no-op until the robot's key is configured.
   startDriveClock();
+  // And the files: anything still on this server's own disk is moved into the
+  // bucket, and the records are backed up there once a day (storageCare.ts).
+  startStorageClock();
 });

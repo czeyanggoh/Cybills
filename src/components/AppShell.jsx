@@ -43,6 +43,7 @@ import AddOrganisationModal from './AddOrganisationModal';
 import RemoveOrganisationModal from './RemoveOrganisationModal';
 import ApprovalReminderBanner from './ApprovalReminderBanner';
 import JoinRequestBanner from './JoinRequestBanner';
+import StorageBanner from './StorageBanner';
 
 // Primary workspaces (matches Dext's left rail: Costs / Sales / Bank / Vault).
 const NAV = [
@@ -678,6 +679,7 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
 
           <div className="flex min-h-0 flex-1">
             <main className="min-w-0 flex-1 overflow-auto p-4 md:p-6">
+              <StorageBanner />
               <JoinRequestBanner />
               <ApprovalReminderBanner />
               {children}

@@ -1827,3 +1827,21 @@ export function storageKeyInUse(storageKey: string): boolean {
   if (!storageKey) return false;
   return load().some((b) => b.storageKey === storageKey);
 }
+
+// Point every document still naming an OLD storage key at its new one — the
+// local-disk files moved into the bucket (storageCare.ts). Only a row still
+// naming exactly the old key moves, so a document whose file was replaced while
+// the copy was being made keeps its new file. One write for the whole batch.
+export function replaceStorageKeys(moved: Map<string, string>): number {
+  if (!moved.size) return 0;
+  const bills = load();
+  let n = 0;
+  for (const b of bills) {
+    const to = b.storageKey ? moved.get(b.storageKey) : undefined;
+    if (!to) continue;
+    b.storageKey = to;
+    n += 1;
+  }
+  if (n) persist(bills);
+  return n;
+}

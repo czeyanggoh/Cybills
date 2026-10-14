@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Building2, ExternalLink, Info, CalendarRange } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import StorageStatusCard from '@/components/StorageStatusCard';
 import { useClients, formatUsd, formatTokens } from '@/lib/practiceStore';
 import {
   USAGE_RANGES,
@@ -154,6 +155,8 @@ export default function Clients() {
           sub={usage ? `${usage.range.calls} call${usage.range.calls === 1 ? '' : 's'} · ${formatTokens(usage.range.inputTokens + usage.range.outputTokens)} tokens` : ' '}
         />
       </div>
+
+      <StorageStatusCard />
 
       {usage && (
         <div className="mb-4 rounded-lg border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">

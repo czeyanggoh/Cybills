@@ -3509,6 +3509,39 @@ they get the confirm instead. Covered by `npm test` in `server/`
 (`test/paperwork-match.test.mts`, over real HTTP against a stub relay; and
 `supplier-rule-publish` now asserts the question is asked).
 
+## Where the files and records are kept
+
+Every stored file — a document, a claim's supporting document, a mail's HTML
+body — goes to the R2 bucket CYBills SHARES with CYWorkspace (`R2_BUCKET=
+cyworkspace`; the one R2 key both apps hold opens that bucket and no other).
+`putBillFile` falls back to the VPS's own disk (`local:` keys) when the bucket
+refuses, which is right — a receipt must never be lost — and is also how, until
+14 Oct 2026, every file landed on local disk for weeks: the env named a bucket
+`cybills` the key could not open, and the only trace was a log line.
+
+So the failure is now SHOWN. `storage.ts` records the bucket's last success and
+refusal (`storageHealth`), and `storageCare.ts` turns that, the files still on
+local disk and the backup's age into plain-language `problems` on
+`GET /api/practice/storage`, which a banner shows every practice colleague on
+every page (`StorageBanner.jsx`) and the Clients page details
+(`StorageStatusCard.jsx`). Two jobs run on a half-hourly clock
+(`startStorageClock`), each also runnable now by an Owner / Practice Admin
+(`POST /api/practice/storage/move` / `/backup`):
+
+- **Move**: every `local:` key any record names is copied to
+  `bills/local/<name>`, checked there by SIZE, and only then are the records
+  pointed at it (`replaceStorageKeys` for documents, the claims and mail
+  collections directly). The local file is never deleted. A file that falls
+  back during a later outage goes up once the bucket answers again.
+- **Backup**: once a practice day, every top-level `.data/*.json` is gzipped to
+  `backups/cybills/<day>/`, kept 30 days. The files need no copy of their own
+  once in the bucket; the records saying which file is whose live only on the
+  VPS, so they do.
+
+`R2_ENDPOINT` (unset in production) points the client at another S3-compatible
+endpoint, path-style — what lets `test/storage-care.test.mts` drive all of it
+against a stub.
+
 ## Xero via the cyworkspace relay
 
 CYBills never holds Xero credentials. All Xero traffic goes through

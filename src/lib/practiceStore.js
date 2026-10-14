@@ -79,6 +79,29 @@ export function usePractice() {
   });
 }
 
+// Where the files and records are kept, and whether that is working (server
+// storageCare.ts). Read by the banner every practice colleague sees and by the
+// card on Clients. `enabled` is false for anybody not on the team, who would
+// only be refused.
+export function useStorageStatus(enabled = true) {
+  return useQuery({
+    queryKey: ['practice-storage'],
+    queryFn: () => getJson('/api/practice/storage'),
+    enabled,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchInterval: 30 * 60_000,
+  });
+}
+
+// Run the move into the bucket, or a backup, now. Owner / Practice Admin.
+export async function runStorageTask(task) {
+  const res = await fetch(`/api/practice/storage/${task}`, { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.message || body.error || `Request failed (${res.status})`);
+  return body;
+}
+
 // The practice team. Refetches when any roster mutation fires, since colleagues
 // are edited through the shared user endpoints (invite, password, deactivate).
 export function useColleagues() {

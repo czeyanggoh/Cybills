@@ -1,4 +1,11 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+} from '@aws-sdk/client-s3';
 import type { S3ClientConfig } from '@aws-sdk/client-s3';
 import { mkdirSync, writeFileSync, createReadStream, existsSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +25,8 @@ let client: S3Client | null = null;
 export function r2Config(): S3ClientConfig {
   return {
     region: 'auto',
-    endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    endpoint: env.R2_ENDPOINT || `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    ...(env.R2_ENDPOINT ? { forcePathStyle: true } : {}),
     credentials: {
       accessKeyId: env.R2_ACCESS_KEY_ID,
       secretAccessKey: env.R2_SECRET_ACCESS_KEY,
@@ -65,10 +73,72 @@ export function extFor(mediaType: string): string {
   return map[mediaType] ?? '';
 }
 
+// How the bucket has been answering, kept so it can be SHOWN rather than only
+// logged. The fallback to local disk below is right — a receipt must never be
+// lost to a storage outage — and it is also exactly what let a misconfigured
+// bucket go unnoticed for weeks: every upload "worked", every file landed on
+// the VPS's own disk, and the only trace was a line in the server log. So each
+// outcome is recorded here and read by the practice's storage status
+// (storageCare.ts → GET /api/practice/storage), which says so on screen.
+export type StorageHealth = {
+  lastSuccessAt: string;
+  lastFailureAt: string;
+  lastFailureOp: string;
+  lastFailureMessage: string;
+  // Uploads that fell back to local disk since the process started.
+  fallbacks: number;
+};
+const health: StorageHealth = { lastSuccessAt: '', lastFailureAt: '', lastFailureOp: '', lastFailureMessage: '', fallbacks: 0 };
+export const storageHealth = (): StorageHealth => ({ ...health });
+function noteSuccess(): void {
+  health.lastSuccessAt = new Date().toISOString();
+}
+function noteFailure(op: string, err: unknown): void {
+  health.lastFailureAt = new Date().toISOString();
+  health.lastFailureOp = op;
+  const e = err as { name?: string; message?: string };
+  health.lastFailureMessage = [e?.name, e?.message].filter(Boolean).join(': ') || String(err);
+}
+
 export async function putBill(key: string, body: Buffer, contentType: string): Promise<void> {
-  await r2().send(
-    new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: key, Body: body, ContentType: contentType })
-  );
+  try {
+    await r2().send(
+      new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: key, Body: body, ContentType: contentType })
+    );
+    noteSuccess();
+  } catch (err) {
+    noteFailure('put', err);
+    throw err;
+  }
+}
+
+// The stored size of an object, or null when it isn't there (or can't be
+// asked). What a copy is checked against before anything is pointed at it.
+export async function objectSize(key: string): Promise<number | null> {
+  try {
+    const out = await r2().send(new HeadObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
+    return typeof out.ContentLength === 'number' ? out.ContentLength : null;
+  } catch {
+    return null;
+  }
+}
+
+// Every key under a prefix, for the backup's retention sweep.
+export async function listKeys(prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  let token: string | undefined;
+  do {
+    const out = await r2().send(
+      new ListObjectsV2Command({ Bucket: env.R2_BUCKET, Prefix: prefix, ContinuationToken: token })
+    );
+    for (const o of out.Contents ?? []) if (o.Key) keys.push(o.Key);
+    token = out.IsTruncated ? out.NextContinuationToken : undefined;
+  } while (token);
+  return keys;
+}
+
+export async function deleteKey(key: string): Promise<void> {
+  await r2().send(new DeleteObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
 }
 
 export async function getBill(
@@ -77,8 +147,11 @@ export async function getBill(
   try {
     const out = await r2().send(new GetObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
     if (!out.Body) return null;
+    noteSuccess();
     return { body: out.Body as Readable, contentType: out.ContentType ?? 'application/octet-stream' };
   } catch (err) {
+    // A missing object is the caller's answer (null), not the bucket failing.
+    if ((err as { name?: string })?.name !== 'NoSuchKey') noteFailure('get', err);
     console.error('[storage] R2 get failed', err);
     return null;
   }
@@ -90,6 +163,9 @@ export async function getBill(
 // are still viewable. `storageKey` is prefixed (`r2:` / `local:`) so the file
 // endpoint knows which backend to read.
 const FILES_DIR = `${env.BILLS_DATA_DIR || fileURLToPath(new URL('../.data', import.meta.url))}/files`;
+
+// Where a `local:` key's bytes are on disk, for moving them into the bucket.
+export const localFilePath = (storageKey: string): string => `${FILES_DIR}/${storageKey.slice('local:'.length)}`;
 
 function putBillLocal(
   orgId: string,
@@ -121,6 +197,7 @@ export async function putBillFile(
       await putBill(key, bytes, contentType);
       return { storageKey: `r2:${key}`, contentType };
     } catch (err) {
+      health.fallbacks += 1;
       console.error('[storage] R2 put failed; falling back to local disk', err);
     }
   }

@@ -20,6 +20,7 @@ import { usageSummary, priceTable } from './usage.js';
 import { dataScopeForOrg } from './organisations.js';
 import { mailForOrg, mailFootprint, mailUnfiled } from './mailThread.js';
 import { measureMailBodies } from './mailBody.js';
+import { storageStatus, moveLocalFilesToBucket, backupRecords } from './storageCare.js';
 
 // The practice (CYBM) — the firm that runs CYBills for its clients.
 //
@@ -156,6 +157,33 @@ practiceRouter.post('/colleagues', async (req, res) => {
   const invites = notify ? await sendInvites(req, created, { orgName: env.PRACTICE_NAME, message }) : [];
   save(items);
   res.json({ colleagues: created.map(publicUser), duplicates, invites });
+});
+
+// GET /api/practice/storage — where the files and records are kept, and
+// whether that is working: the bucket's own health, how many files are still
+// only on this server's disk, and the last move and backup (storageCare.ts).
+// Any colleague may look — the banner that reads it is how they find out.
+practiceRouter.get('/storage', (req, res) => {
+  const { ok } = practiceMember(req, res);
+  if (!ok) return;
+  res.json(storageStatus());
+});
+
+// POST /api/practice/storage/move and /backup — run either now rather than on
+// the next half-hourly tick. Owner / Practice Admin, like the rest of running
+// the practice.
+practiceRouter.post('/storage/move', async (req, res) => {
+  const { ok } = practiceAdmin(req, res);
+  if (!ok) return;
+  const result = await moveLocalFilesToBucket();
+  res.json({ ...result, status: storageStatus() });
+});
+
+practiceRouter.post('/storage/backup', async (req, res) => {
+  const { ok } = practiceAdmin(req, res);
+  if (!ok) return;
+  const result = await backupRecords();
+  res.json({ ...result, status: storageStatus() });
 });
 
 // GET /api/practice/clients — every client entity the practice has connected,

@@ -196,6 +196,9 @@ export const env = {
   R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID ?? '',
   R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY ?? '',
   R2_BUCKET: process.env.R2_BUCKET ?? '',
+  // Optional: another S3-compatible endpoint in place of the account's R2 one
+  // (path-style). Unset in production; what lets a test stand a stub in.
+  R2_ENDPOINT: process.env.R2_ENDPOINT ?? '',
 
 
   // --- Outbound email (Microsoft Graph, DELEGATED) --------------------------
