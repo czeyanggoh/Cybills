@@ -10,7 +10,8 @@ import { cn } from '@/lib/utils';
 export default function Customers() {
   const [selected, setSelected] = useState(() => new Set());
   const [query, setQuery] = useState('');
-  const categoryOptions = useCategoryOptions();
+  // A customer's category is where their invoices are coded: a revenue account.
+  const categoryOptions = useCategoryOptions('sales');
   const PROJECTS = useXeroProjectOptions();
   // Customers come from the active org's (CYBM) live Xero customer contacts.
   const customerNames = useXeroCustomers();

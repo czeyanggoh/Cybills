@@ -676,7 +676,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
 
     // Resolve the categorisation chart once for the whole batch (live Xero
     // accounts when connected, else the bundled standard chart).
-    const accountsPromise = getExtractionAccounts();
+    const accountsPromise = getExtractionAccounts(kind);
 
     created.forEach((it) => {
       void (async () => {

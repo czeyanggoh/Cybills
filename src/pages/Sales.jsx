@@ -125,7 +125,7 @@ export default function Sales() {
   const navigate = useNavigate();
   const { allDocs, reload } = useSalesDocs();
   const settings = useExtractionSettings();
-  const categoryOptions = useCategoryOptions();
+  const categoryOptions = useCategoryOptions('sales');
   const taxRates = useVisibleTaxRates();
   const gstRegistered = useGstRegistered();
   const readerName = useReaderName();
@@ -301,7 +301,7 @@ export default function Sales() {
       return;
     setRunning('rerun');
     const ctx = {
-      accounts: await getExtractionAccounts().catch(() => []),
+      accounts: await getExtractionAccounts('sales').catch(() => []),
       taxRates,
       gstRegistered,
       settings,

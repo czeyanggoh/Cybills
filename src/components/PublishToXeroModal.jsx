@@ -125,13 +125,15 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
     };
   }, [open, organisationId]);
 
-  // Expense-y accounts first (that's what supplier bills code to), but keep
-  // the full chart available below for the odd asset/other posting.
+  // The side's own accounts first — expense for a bill, revenue for a sales
+  // invoice — but keep the full chart available below for the odd posting.
+  const saleSide = String(bill?.kind ?? 'cost') === 'sales';
   const accountCodes = useMemo(() => {
     const list = accounts ?? [];
-    const isExpense = (a) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(a.type);
-    return [...list.filter(isExpense), ...list.filter((a) => !isExpense(a))].map((a) => a.code);
-  }, [accounts]);
+    const types = saleSide ? ['REVENUE', 'SALES', 'OTHERINCOME'] : ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'];
+    const first = (a) => types.includes(String(a.type || '').toUpperCase());
+    return [...list.filter(first), ...list.filter((a) => !first(a))].map((a) => a.code);
+  }, [accounts, saleSide]);
 
   // Non-GST orgs only ever post No Tax, so that's the whole list for them.
   const taxTypes = useMemo(

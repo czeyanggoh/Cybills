@@ -307,7 +307,8 @@ export default function CostDetail() {
   const ownerOptions = Array.from(
     new Set([...ownerNames, ...teamUsers.filter((u) => !u.deactivated).map((u) => u.name || u.email)].filter(Boolean))
   );
-  const categoryOptions = useCategoryOptions();
+  // Revenue accounts for a sales invoice, expense accounts for a cost.
+  const categoryOptions = useCategoryOptions(salesRoute ? 'sales' : 'cost');
   const catMode = useCategoryDisplayMode();
   // Projects come from the active org's live Xero tracking category (managed in
   // Lists → Projects); fall back to the bundled seed only when Xero isn't linked.
@@ -1711,7 +1712,7 @@ Publish anyway?`
     startExtraction(doc.id, 'read', async () => {
     setAiError('');
     try {
-      const accounts = await getExtractionAccounts();
+      const accounts = await getExtractionAccounts(isSales ? 'sales' : 'cost');
       // A document that arrived with a covering message — emailed in, or
       // attached in a WhatsApp bill collection group — is re-read with it, so a
       // re-read can't quietly undo what that message asked for.
@@ -1889,7 +1890,7 @@ Publish anyway?`
     // so it has to survive the reviewer moving on to the next document.
     startExtraction(doc.id, 'lines', async () => {
     try {
-      const accounts = await getExtractionAccounts();
+      const accounts = await getExtractionAccounts(isSales ? 'sales' : 'cost');
       const ex = await fetchExtractLines(rec.base64, rec.mediaType, accounts);
       const rows = Array.isArray(ex?.lines) ? ex.lines : [];
       if (!rows.length) { setLinesNote('No itemised charges found on this document.'); return null; }

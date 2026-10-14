@@ -1308,7 +1308,14 @@ the supplier's GST-number evidence and Supplier statements under Move to.
 `readDecisions` / `ruleLineRows` (`reRead.js`) apply **no supplier rule** to a
 sale and decide its tax code as a supply (`defaultTaxRateSales`): a rule about a
 company we buy from must not code an invoice we sent them, which the Sales list's
-Rerun processing was doing.
+Rerun processing was doing. **And a sale is coded from the REVENUE half of the
+chart**: `getExtractionAccounts(kind)` / `useCategoryOptions(kind)`
+(`organisations.js`) gave every caller the expense accounts alone, so the reader
+answered a sales invoice with "no revenue account is available" and the Category
+picker could not offer one either. `'sales'` takes REVENUE / SALES / OTHERINCOME
+— the page, the Sales list and its re-read, the drawer's Sales tab and the
+Customers page ask for it, and the publish dialog lists the side's own accounts
+first.
 
 **What Sales does not get**: merge detection, duplicate review, expense claims,
 bank matching, payment proofs and prepayments. Each is a question about money

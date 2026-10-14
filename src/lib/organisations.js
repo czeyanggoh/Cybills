@@ -16,8 +16,14 @@ const ACTIVE_KEY = 'cybills:active-organisation';
 // and the user roster) refetches on it.
 export const ORGANISATION_EVENT = 'cybills:organisation-changed';
 
-// Supplier bills post to expense-type accounts, so those drive categorisation.
+// Supplier bills post to expense-type accounts and sales invoices to revenue
+// ones, so the side of the ledger decides which part of the chart a document
+// is coded from. Offering only the expense half to a sales invoice left the
+// reader with no account it could honestly pick.
 const isExpenseType = (t) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(String(t || '').toUpperCase());
+const isRevenueType = (t) => ['REVENUE', 'SALES', 'OTHERINCOME'].includes(String(t || '').toUpperCase());
+const accountsForKind = (accounts, kind) =>
+  accounts.filter((a) => (kind === 'sales' ? isRevenueType(a.type) : isExpenseType(a.type)));
 
 // Which entity a Xero-backed lookup should use.
 //
@@ -532,7 +538,7 @@ export async function resolveCategorisationOrgId() {
 // expense accounts (code/name/description, pulled through the relay), falling
 // back to the bundled standard chart when Xero isn't connected. Used at upload
 // time, so it must never throw — any failure yields the fallback.
-export async function getExtractionAccounts() {
+export async function getExtractionAccounts(kind = 'cost') {
   // A bridge entity has no chart at all — not even the bundled fallback, which
   // would have the reader coding an ST Eng taxi fare to "429 - General
   // Expenses", a code that means nothing to the people reviewing it. Its
@@ -546,8 +552,8 @@ export async function getExtractionAccounts() {
     // classify a document into an account the user has retired.
     const hidden = getHiddenSet('categories');
     const shown = accounts.filter((a) => !hidden.has(a.code || a.name));
-    const expense = shown.filter((a) => isExpenseType(a.type));
-    const list = (expense.length ? expense : shown).map((a) => ({
+    const side = accountsForKind(shown, kind);
+    const list = (side.length ? side : shown).map((a) => ({
       code: a.code,
       name: a.name,
       description: a.description || '',
@@ -646,7 +652,7 @@ export async function getExtractionProjects() {
 //
 // A bridge entity is the exception: it has no chart, so its dropdown is the
 // plain list its people maintain in Business settings → Lists → Categories.
-export function useCategoryOptions() {
+export function useCategoryOptions(kind = 'cost') {
   const { data: organisations = [] } = useOrganisations();
   const active = getActiveOrganisationId();
   const standalone = isStandaloneOrg(organisations.find((o) => o.id === active));
@@ -663,12 +669,14 @@ export function useCategoryOptions() {
   // by account code, and drop out of the picker entirely.
   const hidden = useHiddenSet('categories');
   const shown = (data ?? []).filter((a) => !hidden.has(a.code || a.name));
-  const expense = shown.filter((a) => isExpenseType(a.type));
+  const side = accountsForKind(shown, kind);
   const labels = standalone
     ? listNames
-    : expense.length
-      ? expense.map(accountLabel)
-      : XERO_ACCOUNTS.map(accountLabel);
+    : side.length
+      ? side.map(accountLabel)
+      : kind === 'sales' && shown.length
+        ? shown.map(accountLabel)
+        : XERO_ACCOUNTS.map(accountLabel);
   // The category dropdown always follows the Xero chart of accounts. Only
   // categories the user explicitly adds via "Add category" are appended; the
   // Business-settings Lists categories no longer feed this dropdown.
