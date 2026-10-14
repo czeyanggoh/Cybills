@@ -1669,7 +1669,6 @@ export function postingCodesFrom(
 export async function documentLineItemsFor(
   req: any,
   organisation: { id: string; tenantId: string },
-  ws: string,
   bill: Bill
 ): Promise<
   | { ok: true; lineItems: Array<Record<string, any>>; lineAmountTypes: string; currency: string; perLine: boolean }
@@ -1677,7 +1676,9 @@ export async function documentLineItemsFor(
 > {
   const missing = missingForPublish(bill);
   if (missing.length) return { ok: false, message: `This document still needs ${missing.join(', ')} before its coding can be sent to Xero.` };
-  const codes = await postingCodesFor(ws, organisation.id, bill);
+  // The chart is looked up under the WORKSPACE, where organisation records
+  // live — never the entity's book, which finds no organisation and so no chart.
+  const codes = await postingCodesFor(workspaceId(req), organisation.id, bill);
   if (!codes.ok) return { ok: false, message: codes.message };
   const built = await buildBillInvoice(req, organisation, bill, { accountCode: codes.accountCode, taxType: codes.taxType });
   if (!built.ok) return { ok: false, message: String(built.body?.message ?? 'The document’s lines could not be built.') };

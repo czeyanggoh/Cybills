@@ -1,6 +1,7 @@
 import type { Bill, PaperworkLine, PaperworkMatch } from './store.js';
 import { getBillById, listBills, listBillsAcrossScopes, setBillPaperworkMatch, updateBill } from './store.js';
 import { claimsByXeroInvoiceId } from './claims.js';
+import { WORKSPACE_ID } from './workspace.js';
 import {
   accountsForOrg,
   attachBillFileTo,
@@ -76,8 +77,14 @@ type Out = { status: number; body: any };
 
 type Lookups = { accounts: Map<string, string>; taxes: Map<string, string> };
 
-async function lookupsFor(ws: string, orgId: string): Promise<Lookups> {
-  const [accounts, rates] = await Promise.all([accountsForOrg(ws, orgId), taxRatesForOrg(ws, orgId)]);
+// The organisation RECORD lives in the workspace, not in the entity's book —
+// `ws` everywhere else in this file is the BOOK (dataScopeForOrg), which for
+// any entity but the practice's primary one is the entity's own id. Asked with
+// the book, accountsForOrg finds no organisation and answers an empty chart, so
+// the recode refused itself ("Account 425 isn't an active account") for every
+// client but CYBM before anything reached Xero.
+async function lookupsFor(orgId: string): Promise<Lookups> {
+  const [accounts, rates] = await Promise.all([accountsForOrg(WORKSPACE_ID, orgId), taxRatesForOrg(WORKSPACE_ID, orgId)]);
   return {
     accounts: new Map(accounts.map((a) => [a.code, a.name])),
     taxes: new Map(rates.map((r) => [r.code, r.name])),
@@ -186,7 +193,7 @@ export async function xeroTransactionsFor(
   const hit = cache.get(organisation.tenantId);
   if (cacheable && !refresh && hit && hit.key === key && Date.now() - hit.at < TTL_MS) return { txns: hit.txns, error: '' };
 
-  const look = await lookupsFor(ws, organisation.id);
+  const look = await lookupsFor(organisation.id);
   const range = `Date>=${xeroDate(from)} AND Date<=${xeroDate(to)}`;
   const txns: Txn[] = [];
   let failed = false;
@@ -319,7 +326,7 @@ const lineTotalCents = (lines: Array<Record<string, any>>, types: string) =>
 async function recode(req: any, organisation: Org, ws: string, bill: Bill, kind: 'spend' | 'bill', record: any, look: Lookups) {
   const at = new Date().toISOString();
   const before = linesOf(record, look);
-  const built = await documentLineItemsFor(req, organisation, ws, bill);
+  const built = await documentLineItemsFor(req, organisation, bill);
   if (!built.ok) return { ok: false, at, message: built.message, before };
   const currency = String(record?.CurrencyCode ?? '');
   if (built.currency && currency && built.currency !== currency) {
@@ -375,7 +382,7 @@ export async function sendToXeroTransaction(
   if (['DELETED', 'VOIDED'].includes(String(record.Status ?? '').toUpperCase())) {
     return { status: 409, body: { error: 'transaction_void', message: `That transaction is ${String(record.Status).toLowerCase()} in Xero.` } };
   }
-  const look = await lookupsFor(ws, organisation.id);
+  const look = await lookupsFor(organisation.id);
   const txn = summariseXeroTxn(record, kind, look);
   // Held to the same money the page offered it on, so nobody can send a
   // receipt to a transaction for a different amount by asking the API.
@@ -435,7 +442,7 @@ export async function recodeLinked(req: any, organisation: Org, ws: string, bill
   if (!m) return { status: 409, body: { error: 'not_linked', message: 'This document is not linked to a Xero transaction.' } };
   const record = await fetchTxn(organisation, m.kind, m.id);
   if (!record) return { status: 404, body: { error: 'transaction_not_found', message: 'Xero no longer has that transaction.' } };
-  const look = await lookupsFor(ws, organisation.id);
+  const look = await lookupsFor(organisation.id);
   const done = await recode(req, organisation, ws, bill, m.kind, record, look);
   const now = done.ok && (done as any).record ? summariseXeroTxn((done as any).record, m.kind, look) : summariseXeroTxn(record, m.kind, look);
   const next: PaperworkMatch = {

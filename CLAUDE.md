@@ -3443,6 +3443,16 @@ cannot remove an attachment, and putting old coding back is not this button's to
 decide. Shown on the document page (Details tab, top) and as "Already in Xero" /
 "Sent to Xero" in the Costs Match column. 
 
+**The chart is looked up under the WORKSPACE, not the book.** The first
+version passed the entity's BOOK (`bookFor`, which is the entity's own id for
+every client but the practice's primary one) to `accountsForOrg` /
+`taxRatesForOrg`, which find the organisation record by WORKSPACE — so for every
+client the chart came back empty and the recode refused itself ("Account 425
+isn't an active account") before anything reached Xero, while the attach, which
+needs no chart, went through. Found on Excellence's Lalamove receipt (14 Oct
+2026); the test now runs against a non-primary entity, since one with a single
+entity had the two ids agree by accident.
+
 **The automatic publish-after-reading asks Xero first**, on both roads — the
 browser's upload (`autoPublishAfterRead` sends `unattended: true`) and the
 background read of an emailed, WhatsApp'd or Drive document (`publishByRule`).

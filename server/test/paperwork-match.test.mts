@@ -14,7 +14,13 @@ process.env.CYWORKSPACE_API_KEY = 'test-key';
 writeFileSync(
   join(DATA_DIR, 'organisations.json'),
   JSON.stringify({
+    // Excellence is a CLIENT entity, not the practice's primary one — so its
+    // documents live in a book of their own ('org-1') while its organisation
+    // record lives in the workspace ('cybm'). Production's shape: a test with
+    // one entity had the two agree by accident and hid a recode that refused
+    // itself for every client but CYBM.
     organisations: [
+      { id: 'org-cybm', orgId: 'cybm', name: 'CY Business Management Pte. Ltd.', tenantId: 'tenant-cybm', tenantName: 'CY Business Management Pte. Ltd.', createdAt: new Date(0).toISOString(), createdBy: '' },
       { id: 'org-1', orgId: 'cybm', name: 'Excellence A.S Pte Ltd', tenantId: 'tenant-1', tenantName: 'Excellence A.S Pte Ltd', createdAt: new Date(0).toISOString(), createdBy: '' },
     ],
   })
@@ -26,7 +32,7 @@ writeFileSync(join(DATA_DIR, 'files', 'lalamove.pdf'), Buffer.from('%PDF-1.4 a d
 const spendRecord = () => ({
   BankTransactionID: 'bt-1', Type: 'SPEND', Status: 'AUTHORISED', IsReconciled: true, HasAttachments: false,
   Contact: { ContactID: 'c-lala', Name: 'Lalamove' }, Date: '/Date(1758758400000+0000)/', DateString: '2026-09-25T00:00:00',
-  Reference: 'AT262680002000010006526', CurrencyCode: 'SGD', LineAmountTypes: 'Exclusive', Total: 73.8,
+  Reference: 'AT262680002000010006526', CurrencyCode: 'SGD', LineAmountTypes: 'Inclusive', Total: 73.8,
   BankAccount: { AccountID: 'acc-amex', Code: '', Name: 'Amex' },
   LineItems: [{ LineItemID: 'li-1', Description: 'CKO*LALAMOVE 624784 SINGAPORE (1005)', Quantity: 1, UnitAmount: 73.8, AccountCode: '425', TaxType: 'NONE', TaxAmount: 0, LineAmount: 73.8, Tracking: [{ Name: 'Outlets', Option: 'HQ' }] }],
 });
@@ -101,7 +107,7 @@ const api = async (route: string, body?: unknown) => {
 };
 const receipt = (fields: Record<string, unknown> = {}) =>
   insertBill({
-    orgId: 'cybm', kind: 'cost', status: 'ready', supplier: 'Lalamove', documentType: 'Receipt', currency: 'SGD',
+    orgId: 'org-1', kind: 'cost', status: 'ready', supplier: 'Lalamove', documentType: 'Receipt', currency: 'SGD',
     date: '2026-09-24', invoiceNumber: '3591407579064128444', category: '425 - Freight & Courier', taxRate: 'No Tax',
     project: 'Tangs', description: '* Van delivery from Jalan Kilang Timor to Tang Plaza', total: '73.80', tax: '0',
     fileName: 'lalamove.pdf', storageKey: 'local:lalamove.pdf', contentType: 'application/pdf', ...fields,
@@ -130,7 +136,7 @@ check('…for the same money', recoded?.LineItems?.map((l: any) => [l.UnitAmount
 check('…keeping the bank narrative it was reconciled by', recoded?.LineItems?.[0]?.Description, 'CKO*LALAMOVE 624784 SINGAPORE (1005)');
 check('the file is attached to the Spend Money', seen.some((s) => s.path === 'BankTransactions/bt-1/Attachments/lalamove.pdf' || /^BankTransactions\/bt-1\/Attachments\//.test(s.path)), true);
 check('the reply says both', [r.body.attachment?.ok, r.body.recode?.ok], [true, true]);
-let b = getBillById('cybm', doc.id)!;
+let b = getBillById('org-1', doc.id)!;
 check('the document records the link', [b.paperworkMatch?.id, b.paperworkMatch?.kind, b.paperworkMatch?.lines?.[0]?.tracking], ['bt-1', 'spend', [{ category: 'Outlets', option: 'Tangs' }]]);
 check('…and is done: archived, paid from the Amex', [b.status, b.paid, b.paymentMethod], ['archived', true, 'Amex']);
 check('nothing was published', seen.some((s) => s.path === 'Invoices' && s.method === 'PUT'), false);
@@ -152,7 +158,7 @@ check('…and no longer offered', (r.body.matches[twin.id] || []).length, 0);
 seen.length = 0;
 r = await api('paperwork-unlink', { billId: doc.id });
 check('unlinked', r.status, 200);
-b = getBillById('cybm', doc.id)!;
+b = getBillById('org-1', doc.id)!;
 check('the document is back as it was', [Boolean(b.paperworkMatch), b.status, b.paid, b.paymentMethod], [false, 'ready', false, '']);
 check('nothing was written to Xero', seen.filter((s) => s.method !== 'GET').length, 0);
 
@@ -166,11 +172,11 @@ recodeReply = { BankTransactions: [{ BankTransactionID: 'bt-1', HasErrors: true,
 r = await api('paperwork-match', { billId: doc.id, kind: 'spend', transactionId: 'bt-1', recode: true });
 check('sent even so', [r.status, r.body.attachment?.ok], [200, true]);
 check('…with Xero’s own words for the recode', [r.body.recode?.ok, r.body.recode?.message], [false, 'This Bank Transaction cannot be edited as it has been reconciled with a Bank Statement.']);
-b = getBillById('cybm', doc.id)!;
+b = getBillById('org-1', doc.id)!;
 check('…and the lines kept as Xero has them, so the difference still shows', b.paperworkMatch?.lines?.[0]?.tracking, [{ category: 'Outlets', option: 'HQ' }]);
 recodeReply = null;
 r = await api('paperwork-recode', { billId: doc.id });
-check('recoding again later', [r.status, r.body.recode?.ok, getBillById('cybm', doc.id)!.paperworkMatch?.lines?.[0]?.tracking], [200, true, [{ category: 'Outlets', option: 'Tangs' }]]);
+check('recoding again later', [r.status, r.body.recode?.ok, getBillById('org-1', doc.id)!.paperworkMatch?.lines?.[0]?.tracking], [200, true, [{ category: 'Outlets', option: 'Tangs' }]]);
 
 // 8) The automatic publish-after-reading, on both roads: Xero is asked first,
 //    and a firm match is a decline, not a second copy.
@@ -189,11 +195,11 @@ seen.length = 0;
 r = await api('publish-bill', { billId: uploaded.id, accountCode: '425', taxType: 'NONE', status: 'SUBMITTED', unattended: true });
 check('upload road: Xero already has it, so it is not published', [r.status, r.body.error, r.body.transaction?.id], [409, 'already_in_xero', 'bt-2']);
 check('…nothing reached Xero', putInvoices(), 0);
-check('…and the document waits in the list', getBillById('cybm', uploaded.id)!.status, 'ready');
+check('…and the document waits in the list', getBillById('org-1', uploaded.id)!.status, 'ready');
 
 // The server's road (emailed / WhatsApp'd / Drive): the supplier's rule.
 const emailed = receipt({ date: '2026-10-04', total: '55.00', invoiceNumber: 'EM-1', fileHash: 'emailed' });
-let outcome = await publishByRule({ headers: {} }, WORKSPACE_ID, 'cybm', 'org-1', emailed.id);
+let outcome = await publishByRule({ headers: {} }, WORKSPACE_ID, 'org-1', 'org-1', emailed.id);
 check('rule road: declined, and says why', outcome, { published: false, reason: 'already_in_xero' });
 check('…nothing reached Xero', putInvoices(), 0);
 
