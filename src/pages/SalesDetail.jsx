@@ -13,7 +13,7 @@ import { useAuth } from '@/lib/auth';
 import { useReaderName } from '@/lib/readerProvider';
 
 import { useCategoryOptions, getExtractionAccounts, useXeroPaymentMethods, useXeroCustomers, useXeroProjectOptions } from '@/lib/organisations';
-import { fetchBills, billToDoc, billFileUrl, itemNumber, updateBill, notifyBillsChanged, salesPath, moveBillToWorkspace } from '@/lib/bills';
+import { fetchBills, billToDoc, billFileUrl, itemNumber, updateBill, notifyBillsChanged, salesPath, moveBillToWorkspace, findByItemKey } from '@/lib/bills';
 import { readWalk } from '@/lib/listView';
 import { isPublished } from '@/lib/readiness';
 import { xeroBillUrl } from '@/lib/autoPublish';
@@ -276,7 +276,9 @@ export default function SalesDetail() {
   useEffect(() => {
     let live = true;
     (async () => {
-      const doc = (await fetchBills()).map(billToDoc).find((b) => b.id === id);
+      // The URL carries the Item ID the list shows (salesPath), not the storage
+      // key; findByItemKey answers to either, the way the Costs page resolves.
+      const doc = findByItemKey((await fetchBills()).map(billToDoc), id);
       if (!live) return;
       if (doc) {
         const mapped = billDocToSale(doc);
