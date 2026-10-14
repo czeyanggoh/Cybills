@@ -1,7 +1,7 @@
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
-import { formatDate } from '@/lib/date';
+import DocDate from '@/components/DocDate';
 import { cn } from '@/lib/utils';
 
 // The document list, as CARDS, for phones.
@@ -72,7 +72,7 @@ export default function DocCardList({
                   </span>
                 </div>
                 <div className="mt-0.5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                  <span className="tabular-nums">{formatDate(d.date)}</span>
+                  <span className="tabular-nums"><DocDate doc={d} /></span>
                   {Number(String(d.tax ?? '').replace(/[^0-9.-]/g, '')) > 0 && (
                     <span className="tabular-nums">Tax {d.tax}</span>
                   )}

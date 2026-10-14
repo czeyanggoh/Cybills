@@ -14,9 +14,10 @@ const has = (v) => v != null && String(v).trim() !== '' && String(v).trim() !== 
 const named = (v, placeholder) => has(v) && String(v).trim().toLowerCase() !== placeholder;
 const amount = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
 
-// The fields a cost document needs before it's "ready" (moves out of the inbox).
+// The fields a document needs before it's "ready" (moves out of the inbox).
 // Surfaced in the UI so users know exactly why something is still in the inbox.
-// No Supplier: a cost nobody could name publishes to "Unknown supplier".
+// No Supplier or Customer: a document nobody could name publishes to "Unknown
+// supplier" / "Unknown customer".
 export const READY_FIELDS = ['Date', 'Category', 'Total'];
 
 // A document the business ISSUED rather than received: the Sales workspace.
@@ -34,14 +35,17 @@ export const isSale = (d) => String(d?.kind ?? 'cost') === 'sales';
 // customer on a sales invoice. Only the WORD differs, and it differs everywhere
 // a person reads it, so it is answered here rather than in each caller.
 export const counterpartyLabel = (d) => (isSale(d) ? 'Customer' : 'Supplier');
-// Neither placeholder counts as a name, whichever workspace the document is
-// in: "Unknown supplier" is what the reader's blank has always been written as,
-// and a sales document that has been through a cost-shaped road carries it too.
-const namedCounterparty = (v) =>
-  has(v) && !['unknown supplier', 'unknown customer'].includes(String(v).trim().toLowerCase());
+// Whether nobody could name the counterparty. Neither placeholder counts as a
+// name, whichever workspace the document is in: "Unknown supplier" is what the
+// reader's blank has always been written as, and a sales document that has been
+// through a cost-shaped road carries it too. Such a document still publishes, to
+// the placeholder contact of its own side (`unknownCounterparty`).
+export const counterpartyUnnamed = (d) =>
+  !has(d?.supplier) || ['unknown supplier', 'unknown customer'].includes(String(d.supplier).trim().toLowerCase());
+export const unknownCounterparty = (d) => (isSale(d) ? 'Unknown customer' : 'Unknown supplier');
 
-// The fields THIS document needs: a sales invoice names its customer as well.
-export const readyFieldsFor = (d) => (isSale(d) ? ['Customer', 'Date', 'Category', 'Total'] : READY_FIELDS);
+// The fields THIS document needs — the same in either workspace.
+export const readyFieldsFor = () => READY_FIELDS;
 
 // A credit note or refund: the supplier owes US, so the money runs the other
 // way and it reaches Xero as a credit note rather than a bill. Decided by the
@@ -70,31 +74,27 @@ export function submissionDate(d) {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
 }
 
-// The date a document goes by: the one printed on it, else — on a COST — the day
-// it was submitted. A receipt with no readable date is still money spent, so it
-// is Ready and publishes dated that day rather than waiting on a date nobody can
-// read. The document itself stays undated, so a date typed or re-read takes over
-// at once. A sales invoice gets no stand-in. Mirrors the server's costDate (which
-// counts the day in the practice's timezone, and is what is actually posted).
+// The date a document goes by: the one printed on it, else the day it was
+// submitted. A receipt (or sales invoice) with no readable date is still money,
+// so it is Ready and publishes dated that day rather than waiting on a date
+// nobody can read. The document itself stays undated, so a date typed or re-read
+// takes over at once. Mirrors the server's costDate (which counts the day in the
+// practice's timezone, and is what is actually posted).
 export function effectiveDate(d) {
   if (has(d?.date)) return String(d.date).trim();
-  return isSale(d) ? '' : submissionDate(d);
+  return submissionDate(d);
 }
 
 // Whether the date a document goes by is the submission date standing in.
 export const dateFromSubmission = (d) => !has(d?.date) && Boolean(effectiveDate(d));
 
-// A cost does not have to name its supplier: one nobody could name publishes to
-// the Xero contact "Unknown supplier". A sales invoice still needs its customer.
-const counterpartyOk = (d) => !isSale(d) || namedCounterparty(d?.supplier);
-
 // A document is "complete" (→ Ready) when it carries what it needs to publish:
-// a date (see effectiveDate), a real category (not "Uncategorised"), a total
-// (see totalOk) and, on a sales invoice, its customer. Mirrors the server's
+// a date (see effectiveDate), a real category (not "Uncategorised") and a total
+// (see totalOk). Not a supplier or customer: one nobody could name publishes to
+// the placeholder contact (`unknownCounterparty`). Mirrors the server's
 // costComplete so both follow one rule.
 export function isComplete(d) {
   return (
-    counterpartyOk(d) &&
     has(effectiveDate(d)) &&
     named(d?.category, 'uncategorised') &&
     totalOk(d)
@@ -104,7 +104,6 @@ export function isComplete(d) {
 // The specific fields still missing on a document (for a per-row explanation).
 export function missingFields(d) {
   const out = [];
-  if (!counterpartyOk(d)) out.push(counterpartyLabel(d));
   if (!has(effectiveDate(d))) out.push('Date');
   if (!named(d?.category, 'uncategorised')) out.push('Category');
   if (!totalOk(d)) out.push('Total');

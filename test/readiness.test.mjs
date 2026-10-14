@@ -11,6 +11,8 @@ import {
   effectiveDate,
   dateFromSubmission,
   submissionDate,
+  counterpartyUnnamed,
+  unknownCounterparty,
   isReady,
   needsReview,
   isInInbox,
@@ -77,8 +79,11 @@ check('an undated cost is complete when it was submitted', [isComplete(undated),
 check('…and goes by the day it was submitted',
   [effectiveDate(undated), dateFromSubmission(undated)], [submissionDate(undated), true]);
 check('a printed date wins', [effectiveDate(doc({ createdAt: submitted })), dateFromSubmission(doc({ createdAt: submitted }))], ['2026-08-22', false]);
-check('a sales invoice gets no stand-in date',
-  missingFields(doc({ kind: 'sales', date: '', createdAt: submitted })), ['Date']);
+check('a sales invoice goes by its submission day too',
+  [missingFields(doc({ kind: 'sales', date: '', createdAt: submitted })), dateFromSubmission(doc({ kind: 'sales', date: '', createdAt: submitted }))],
+  [[], true]);
+check('only a document with neither a date nor a submission day lacks one',
+  missingFields(doc({ date: '', createdAt: '' })), ['Date']);
 
 // On an EXPENSE CLAIM the supplier is never asked for — the claim's bill is
 // made out to the claimant — and the server has already filled an undated
@@ -256,8 +261,8 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
 // A sales document is the same four fields with the counterparty read from the
 // other end of the paper: a cost names the SUPPLIER it came from, a sales
 // invoice the CUSTOMER it went to. One stored field, one rule, and only the
-// word a person reads differs — so a sales invoice that names its customer is
-// Ready exactly as a coded receipt is, and one that does not says "Customer".
+// word a person reads differs — so a sales invoice is Ready exactly as a coded
+// receipt is, and one nobody could name posts to "Unknown customer".
 {
   const sale = (over = {}) => doc({ kind: 'sales', ...over });
   check('a sales document is a sale', [isSale(sale()), isSale(doc({}))], [true, false]);
@@ -266,15 +271,14 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
   check('a complete sales invoice is Ready', [isComplete(sale()), isReady(sale())], [true, true]);
   check('an uncoded one is To review, naming Category',
     missingFields(sale({ category: '' })), ['Category']);
-  check('and a nameless one asks for a Customer, not a Supplier',
-    missingFields(sale({ supplier: '' })), ['Customer']);
-  check('"Unknown supplier" is no customer — though a cost may post to it',
-    [missingFields(sale({ supplier: 'Unknown supplier' })), missingFields(doc({ supplier: 'Unknown supplier' }))],
-    [['Customer'], []]);
-  check('…nor is "Unknown customer"', missingFields(sale({ supplier: 'Unknown customer' })), ['Customer']);
-  check('the fields are named for the workspace',
-    [readyFieldsFor(sale()), readyFieldsFor(doc({}))],
-    [['Customer', 'Date', 'Category', 'Total'], READY_FIELDS]);
+  check('a nameless one is Ready too', [isComplete(sale({ supplier: '' })), missingFields(sale({ supplier: '' }))], [true, []]);
+  check('either placeholder reads as no name, in either workspace',
+    ['', 'Unknown supplier', 'Unknown customer', 'Grab'].map((s) => [counterpartyUnnamed(sale({ supplier: s })), counterpartyUnnamed(doc({ supplier: s }))]),
+    [[true, true], [true, true], [true, true], [false, false]]);
+  check('…and posts to its own side\'s placeholder contact',
+    [unknownCounterparty(sale()), unknownCounterparty(doc({}))], ['Unknown customer', 'Unknown supplier']);
+  check('the fields are the same in both workspaces',
+    [readyFieldsFor(sale()), readyFieldsFor(doc({}))], [READY_FIELDS, READY_FIELDS]);
   check('and a sales document walks the same tabs',
     [inCostsTab(sale()), isUnpublished(sale())], [true, true]);
 }

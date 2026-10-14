@@ -1236,10 +1236,11 @@ was issued to, and both live in `supplier`. That is the whole reason it is one
 field: the Contact Xero needs is the other party to the transaction either way,
 so readiness, the duplicate check, the export column and the publish all read it
 once. Only the WORD differs, so `counterpartyLabel` (`readiness.js`) answers it
-and everything a person reads says "Customer" in Sales — the "Needs: …" badge,
-the publish dialog, the server's own refusal (`missingForPublish`). Neither of
-the reader's placeholders ("Unknown supplier", "Unknown customer") counts as a
-name in either workspace.
+and everything a person reads says "Customer" in Sales — the field, the publish
+dialog. Neither of the reader's placeholders ("Unknown supplier", "Unknown
+customer") counts as a name in either workspace, but neither is required either:
+an unnamed sales invoice publishes to **Unknown customer** (see "A document needs
+no counterparty" below).
 
 **And the READ is told which side it is on.** It was not, so it read a sales
 invoice for its supplier — which on paper the business issued is the business
@@ -1607,8 +1608,8 @@ be overruled by it a moment later.
 
 **Ready and To review are both derived, and between them they are the whole
 inbox.** `src/lib/readiness.js` (pure, tested by `npm test`) decides from the
-document, never from its stored status: a cost carrying a Date, a Category and
-a Total above 0 is Ready (a sales invoice needs its Customer as well); every
+document, never from its stored status: a document carrying a Date, a Category
+and a Total above 0 is Ready, in Costs and in Sales alike; every
 other inbox document is waiting on a person — most often for the account code
 the reader could not choose. To review used to be a STATUS only the toolbar could
 write, so a document needing attention landed there only if somebody had already
@@ -1616,21 +1617,24 @@ noticed it and pressed the button. Rows in To review wear a **"Needs: …"** bad
 naming the missing fields (`missingFields`), except where "Nothing read" already
 says it better.
 
-**A cost needs no supplier, and an undated one goes by its submission date.**
-Cze's rule (14 Oct 2026), first for claims and then for the Costs inbox. A
-receipt nobody could name or date is still money spent, so it should not wait on
-facts the paper does not carry. An unnamed cost publishes to the Xero contact
-**Unknown supplier**, the reader's own placeholder. Xero matches a contact by
-name, so all such costs land on that one contact. A cost with no printed date
-takes the day it was SUBMITTED, in the practice's day: `costDate` / `submissionDay`
-(`store.ts`), mirrored by `effectiveDate` / `dateFromSubmission` (`readiness.js`).
-That date drives readiness, the posted Date and DueDate, and the day-rate lookup.
-The document itself stays undated, so a date typed or re-read takes over at once.
-The Costs Date column shows the stand-in in italics with a `*`. The document page
-and the publish dialog say so in words. A SALES invoice still needs its customer
-and its date: it is the business's own paper. Payment runs still leave out an
-unnamed cost (`payments.ts`), because a payment needs a payee. Covered by
-`npm test` at the root (`readiness`) and in `server/` (`publish-bill`).
+**A document needs no counterparty, and an undated one goes by its submission
+date.** Cze's rule (14 Oct 2026), applied to claims, then the Costs inbox, then
+Sales. A document nobody could name or date is still money, so it should not
+wait on facts the paper does not carry. An unnamed cost publishes to the Xero
+contact **Unknown supplier**, and an unnamed sales invoice to **Unknown
+customer** — each side's own placeholder, whichever of the two the field
+happens to hold (`buildBillInvoice`; `counterpartyUnnamed` /
+`unknownCounterparty` in `readiness.js`). Xero matches a contact by name, so all
+such documents on one side land on that one contact. A document with no printed
+date takes the day it was SUBMITTED, in the practice's day: `costDate` /
+`submissionDay` (`store.ts`), mirrored by `effectiveDate` / `dateFromSubmission`
+(`readiness.js`). That date drives readiness, the posted Date and DueDate, and
+the day-rate lookup. The document itself stays undated, so a date typed or
+re-read takes over at once. The Costs and Sales Date columns and the phone cards
+show the stand-in in italics with a `*` (`DocDate.jsx`). The document page and
+the publish dialog say so in words. Payment runs still leave out an unnamed cost
+(`payments.ts`), because a payment needs a payee. Covered by `npm test` at the
+root (`readiness`) and in `server/` (`publish-bill`, `sales-publish`).
 
 **A document the reader got NOTHING off lands in the inbox, wearing the badge
 that says so.** No supplier, no total, no date, no reference and no rows —

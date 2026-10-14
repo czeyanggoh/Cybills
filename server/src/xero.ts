@@ -1537,7 +1537,13 @@ async function buildBillInvoice(
   // issued to — and it is the Contact either way, which is precisely why it is
   // one field: the contact Xero needs is the other party to the transaction.
   const sale = isReceivable(docType);
-  const counterparty = String(bill.supplier ?? '').trim() || (sale ? 'Unknown customer' : 'Unknown supplier');
+  // A document nobody could name posts to the placeholder contact of ITS side —
+  // either reader placeholder is read as no name, since a sales document that
+  // came through a cost-shaped road carries "Unknown supplier".
+  const named = String(bill.supplier ?? '').trim();
+  const counterparty = named && !/^unknown (supplier|customer)$/i.test(named)
+    ? named
+    : sale ? 'Unknown customer' : 'Unknown supplier';
   const payload: Record<string, unknown> = {
     Type: docType,
     Contact: contactId ? { ContactID: contactId } : { Name: counterparty },
@@ -1631,14 +1637,10 @@ function missingForPublish(bill: Bill): string[] {
   if (costComplete(bill)) return [];
   const out: string[] = [];
   const filled = (v: unknown) => String(v ?? '').trim().length > 0;
-  const s = String(bill.supplier ?? '').trim().toLowerCase();
   const c = String(bill.category ?? '').trim().toLowerCase();
-  // Only a sales invoice has to name its counterparty, its CUSTOMER: a cost
-  // nobody could name posts to the contact "Unknown supplier" (costComplete).
-  if (isReceivable(docTypeForBill(bill)) && (!filled(bill.supplier) || s === 'unknown supplier' || s === 'unknown customer')) {
-    out.push('a customer');
-  }
-  // A cost with no printed date goes by the day it was submitted (costDate).
+  // No counterparty is asked for: one nobody could name posts to the contact
+  // "Unknown supplier" / "Unknown customer" (costComplete, buildBillInvoice).
+  // A document with no printed date goes by the day it was submitted (costDate).
   if (!/^\d{4}-\d{2}-\d{2}$/.test(costDate(bill))) out.push('a date');
   if (!filled(bill.category) || c === 'uncategorised') out.push('a category');
   // A credit note's total may be typed either way round, so it only has to be

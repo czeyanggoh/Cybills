@@ -54,7 +54,8 @@ import BulkEditModal from '@/components/BulkEditModal';
 import DocCardList from '@/components/DocCardList';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
 import { useCostsDocs, rowsFor, isInInbox, isComplete, isArchived, needsReview, missingFields } from '@/lib/costsData';
-import { awaitingLink, linkFetchFailed, effectiveDate, dateFromSubmission } from '@/lib/readiness';
+import { awaitingLink, linkFetchFailed } from '@/lib/readiness';
+import DocDate from '@/components/DocDate';
 import { COST_FILTERS, FILTER_IDS, applyCostFilters, emptyFilters, filterCount, ANYONE, UNASSIGNED, isOwnedBy, ownersOf } from '@/lib/costFilters';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { formatDate } from '@/lib/date';
@@ -720,17 +721,7 @@ export default function Costs() {
       ),
     },
     user: { cellClass: 'whitespace-nowrap', cell: (d) => <span className={cn(d.unread && 'font-semibold')}>{uploaderLabel(d)}</span> },
-    // A cost with no printed date goes by the day it was submitted, and posts
-    // with it — so that is what the column shows, marked as a stand-in.
-    date: {
-      cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground',
-      cell: (d) =>
-        dateFromSubmission(d) ? (
-          <span className="italic" title="No date printed — the day it was submitted is used">{formatDate(effectiveDate(d))}*</span>
-        ) : (
-          formatDate(d.date)
-        ),
-    },
+    date: { cellClass: 'whitespace-nowrap tabular-nums text-muted-foreground', cell: (d) => <DocDate doc={d} /> },
     supplier: { cell: (d) => <span className={cn(d.unread && 'font-semibold')}>{d.supplier}</span> },
     category: {
       interactive: true,

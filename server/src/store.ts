@@ -986,34 +986,28 @@ export function submissionDay(b: Pick<Bill, 'createdAt'>): string {
   return Number.isNaN(at.getTime()) ? '' : practiceDayKey(at);
 }
 
-// The date a COST goes by: the one printed on it, else the day it was
-// submitted. A receipt with no readable date is still money spent, and the day
-// it reached CYBills is the nearest true thing to say about when — so it is
-// Ready, and publishes dated that day, rather than waiting on a date nobody can
-// read off the paper. The document itself stays undated: this is a reading of
-// it, and a date somebody types (or a re-read finds) takes over at once. A SALES
-// invoice is the business's own paper, which always carries its date, so it
-// gets no stand-in. Mirrors effectiveDate in src/lib/readiness.js.
-export function costDate(b: Pick<Bill, 'date' | 'createdAt' | 'kind'>): string {
+// The date a document goes by: the one printed on it, else the day it was
+// submitted. A receipt with no readable date is still money spent (and a sales
+// invoice with none is still money owed), and the day it reached CYBills is the
+// nearest true thing to say about when — so it is Ready, and publishes dated
+// that day, rather than waiting on a date nobody can read off the paper. The
+// document itself stays undated: this is a reading of it, and a date somebody
+// types (or a re-read finds) takes over at once. Mirrors effectiveDate in
+// src/lib/readiness.js. Named for costs, where it started; sales use it too.
+export function costDate(b: Pick<Bill, 'date' | 'createdAt'>): string {
   const printed = String(b.date ?? '').trim();
   if (printed && printed !== '—') return printed;
-  return b.kind === 'sales' ? '' : submissionDay(b);
+  return submissionDay(b);
 }
 
-// Whether a document names its counterparty. A cost does not have to: one
-// nobody could name posts to a Xero contact called "Unknown supplier" (the
-// placeholder the reader writes) rather than waiting on a name nobody can read.
-// A sales invoice still needs its customer — that is who is being billed.
-function counterpartyComplete(b: Bill): boolean {
-  if (b.kind !== 'sales') return true;
-  return filled(b.supplier) &&
-    !['unknown supplier', 'unknown customer'].includes(String(b.supplier).trim().toLowerCase());
-}
-
+// Whether a document is complete (→ Ready, and publishable). The counterparty
+// is NOT asked for, in either workspace: a document nobody could name posts to
+// the Xero contact "Unknown supplier" or "Unknown customer" (buildBillInvoice)
+// rather than waiting on a name nobody can read. Mirrors isComplete in
+// src/lib/readiness.js.
 export function costComplete(b: Bill): boolean {
-  // Mirrors isComplete in src/lib/readiness.js.
   const category = filled(b.category) && String(b.category).trim().toLowerCase() !== 'uncategorised';
-  return counterpartyComplete(b) && filled(costDate(b)) && category && totalComplete(b);
+  return filled(costDate(b)) && category && totalComplete(b);
 }
 
 // Auto-move a document between the inbox ('new') and 'ready' based on

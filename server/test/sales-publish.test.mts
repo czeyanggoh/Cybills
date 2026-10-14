@@ -181,15 +181,20 @@ const publish = async (billId: string, over: Record<string, unknown> = {}) => {
   check('…linking back to Costs', String(r.posted?.Url ?? '').includes('/costs/'), true);
 }
 
-// 4) Incomplete is refused in the words the Sales page uses. "This document
-//    still needs a supplier" sends somebody looking for a field that workspace
-//    does not have.
+// 4) A sales invoice nobody could name, or date, still publishes: to the Xero
+//    contact "Unknown customer" — never "Unknown supplier", which is the other
+//    side's placeholder — dated the day it was submitted.
 {
-  const r = await publish(sale({ supplier: '' }).id);
-  check('a nameless sales invoice is refused', r.status, 400);
-  check('…asking for a customer, not a supplier', r.body?.missing, ['a customer']);
-  const r2 = await publish(sale({ supplier: 'Unknown customer' }).id);
-  check('and the reader’s own placeholder is no name either', r2.body?.missing, ['a customer']);
+  const { practiceDayKey } = await import('../src/usage.ts');
+  const blank = sale({ supplier: '', date: '' });
+  const r = await publish(blank.id);
+  check('a nameless, undated sales invoice publishes', r.status, 200);
+  check('…to the contact "Unknown customer"', r.posted?.Contact, { Name: 'Unknown customer' });
+  check('…dated the day it was submitted', r.posted?.Date, practiceDayKey(new Date(blank.createdAt)));
+  const r2 = await publish(sale({ supplier: 'Unknown supplier' }).id);
+  check('a cost-side placeholder on a sale still posts as "Unknown customer"', [r2.status, r2.posted?.Contact], [200, { Name: 'Unknown customer' }]);
+  const r3 = await publish(sale({ category: '' }).id);
+  check('an uncoded one is still refused, in Sales words', [r3.status, r3.body?.missing], [400, ['a category']]);
 }
 
 // 5) Publishing twice is refused the same way a bill's is — one invoice, one

@@ -11,7 +11,7 @@ import {
   useXeroShortCode,
 } from '@/lib/organisations';
 import { lineItemsPostable } from '@/lib/bills';
-import { isCreditNote, totalOk, effectiveDate, dateFromSubmission } from '@/lib/readiness';
+import { isCreditNote, totalOk, effectiveDate, dateFromSubmission, counterpartyUnnamed, unknownCounterparty } from '@/lib/readiness';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useExtractionSettings, PUBLISH_STATUSES } from '@/lib/extractionSettings';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
@@ -205,14 +205,10 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   const missing = (() => {
     const out = [];
     const txt = (v) => String(v ?? '').trim();
-    // Only a sales invoice has to name its counterparty: a cost nobody could
-    // name posts to the contact "Unknown supplier". Mirrors missingForPublish on
-    // the server, which refuses in the same words.
-    const party = txt(bill?.supplier).toLowerCase();
-    if (sale && (!party || party === 'unknown supplier' || party === 'unknown customer')) {
-      out.push('a customer');
-    }
-    // A cost with no printed date posts with the day it was submitted.
+    // No counterparty is asked for: one nobody could name posts to the contact
+    // "Unknown supplier" / "Unknown customer". A document with no printed date
+    // posts with the day it was submitted. Mirrors missingForPublish on the
+    // server, which refuses in the same words.
     if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate(bill))) out.push('a date');
     if (!txt(bill?.category) || txt(bill?.category).toLowerCase() === 'uncategorised') out.push('a category');
     if (!totalOk(bill)) out.push(credit ? 'a total other than 0' : 'a total above 0');
@@ -396,11 +392,11 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               </p>
               {/* What stands in for what the paper did not say, said before the
                   click rather than found in the ledger afterwards. */}
-              {!sale && (!String(bill?.supplier ?? '').trim() || /^unknown supplier$/i.test(String(bill?.supplier ?? '').trim()) || dateFromSubmission(bill)) && (
+              {(counterpartyUnnamed(bill) || dateFromSubmission(bill)) && (
                 <p className="rounded-md border border-amber-600/40 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                   {[
-                    (!String(bill?.supplier ?? '').trim() || /^unknown supplier$/i.test(String(bill?.supplier ?? '').trim())) &&
-                      'No supplier was read, so it posts to the Xero contact "Unknown supplier".',
+                    counterpartyUnnamed(bill) &&
+                      `No ${sale ? 'customer' : 'supplier'} was read, so it posts to the Xero contact "${unknownCounterparty(bill)}".`,
                     dateFromSubmission(bill) &&
                       `No date is printed, so it posts dated ${effectiveDate(bill)}, the day it was submitted.`,
                   ].filter(Boolean).join(' ')}

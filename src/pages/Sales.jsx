@@ -54,7 +54,7 @@ import { useSalesDocs, rowsFor, isArchived, needsReview, missingFields } from '@
 import { isComplete, isPublished, isSetAside } from '@/lib/readiness';
 import { docFacts, statesNothing } from '@/lib/mergeDetect';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
-import { formatDate } from '@/lib/date';
+import DocDate from '@/components/DocDate';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { useListView, rememberWalk } from '@/lib/listView';
@@ -643,7 +643,7 @@ export default function Sales() {
                     </td>
                     <td className="px-3 py-3">{badgeFor(d)}</td>
                     <td className="whitespace-nowrap px-3 py-3">{d.user}</td>
-                    <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{formatDate(d.date)}</td>
+                    <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground"><DocDate doc={d} /></td>
                     <td className="px-3 py-3">{d.supplier || <span className="text-muted-foreground">—</span>}</td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       {isPublished(d) ? (
