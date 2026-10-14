@@ -15,7 +15,6 @@ import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
 import Whatsapp from './pages/Whatsapp';
 import Email from './pages/Email';
-import SalesDetail from './pages/SalesDetail';
 import Customers from './pages/Customers';
 import Exports from './pages/Exports';
 import Bank from './pages/Bank';
@@ -67,7 +66,7 @@ function App() {
             <Route path="/costs/:id" element={<Protected><CostDetail /></Protected>} />
             <Route path="/sales" element={<SalesRoute><Sales /></SalesRoute>} />
             <Route path="/sales/exports" element={<SalesRoute><Exports workspace="sales" /></SalesRoute>} />
-            <Route path="/sales/:id" element={<SalesRoute><SalesDetail /></SalesRoute>} />
+            <Route path="/sales/:id" element={<SalesRoute><CostDetail /></SalesRoute>} />
             {/* Everybody's documents AND everybody's messages in the entity,
                 so the same bar as the Costs inbox it sits beside: a Business
                 Admin, which a colleague is inside every client they are given. */}

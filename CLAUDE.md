@@ -1292,6 +1292,24 @@ read. The publish dialog is the SAME dialog — one act, one form — and only w
 it is CALLED changes. No "Move to ready" on either page: readiness is derived,
 so the button could only agree with the server or be overruled a moment later.
 
+**And the document page is the Costs one.** `/sales/:id` renders `CostDetail`
+— re-read, line items, tax code and its Reason, Update in Xero / Clear Xero
+link, the owner picker, the Email / WhatsApp / Drive tabs, a Delete that
+deletes. It had its own page (`SalesDetail.jsx`, gone), a fraction of the size,
+that never got any of it: its Delete only navigated, its Split and Note saved
+nothing, and its upload never stored the file. The workspace is the route's
+until the document loads, then the document's `kind` (`isSales`), and a document
+opened under the wrong workspace's address moves to `docPath`. On a sale the
+counterparty is labelled Customer and offers the org's Xero customers, its
+rules link is **customer rules**, the read is sent `kind: 'sales'`, and the
+cost-only parts are not drawn: expense claims, paperwork match, bank match,
+payment proofs, prepayments, the recharge Customer / Rebillable pair, mileage,
+the supplier's GST-number evidence and Supplier statements under Move to.
+`readDecisions` / `ruleLineRows` (`reRead.js`) apply **no supplier rule** to a
+sale and decide its tax code as a supply (`defaultTaxRateSales`): a rule about a
+company we buy from must not code an invoice we sent them, which the Sales list's
+Rerun processing was doing.
+
 **What Sales does not get**: merge detection, duplicate review, expense claims,
 bank matching, payment proofs and prepayments. Each is a question about money
 going OUT, and none can be asked of an invoice you sent.
