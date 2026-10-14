@@ -8,6 +8,9 @@ import {
   isComplete,
   missingFields,
   missingOnClaim,
+  effectiveDate,
+  dateFromSubmission,
+  submissionDate,
   isReady,
   needsReview,
   isInInbox,
@@ -58,12 +61,24 @@ check('…and the row says which field', missingFields(uncoded), ['Category']);
 check('an empty category counts the same', missingFields(doc({ category: '' })), ['Category']);
 
 // The other placeholders the reader leaves behind.
-check('unknown supplier', missingFields(doc({ supplier: 'Unknown supplier' })), ['Supplier']);
 check('an em dash is not a date', missingFields(doc({ date: '—' })), ['Date']);
 check('zero is not a total', missingFields(doc({ total: '0' })), ['Total']);
-check('a blank read names all four',
+check('a blank read names all three',
   missingFields(doc({ supplier: 'Unknown supplier', date: '', category: '', total: '0' })),
   READY_FIELDS);
+
+// A cost nobody could name is Ready: it publishes to "Unknown supplier". And
+// one with no printed date goes by the day it was submitted.
+const submitted = '2026-10-05T03:00:00.000Z';
+check('an unknown supplier is no reason to wait', missingFields(doc({ supplier: 'Unknown supplier' })), []);
+check('…nor is a blank one', [isComplete(doc({ supplier: '' })), isReady(doc({ supplier: '', status: 'ready' }))], [true, true]);
+const undated = doc({ date: '—', createdAt: submitted });
+check('an undated cost is complete when it was submitted', [isComplete(undated), missingFields(undated)], [true, []]);
+check('…and goes by the day it was submitted',
+  [effectiveDate(undated), dateFromSubmission(undated)], [submissionDate(undated), true]);
+check('a printed date wins', [effectiveDate(doc({ createdAt: submitted })), dateFromSubmission(doc({ createdAt: submitted }))], ['2026-08-22', false]);
+check('a sales invoice gets no stand-in date',
+  missingFields(doc({ kind: 'sales', date: '', createdAt: submitted })), ['Date']);
 
 // On an EXPENSE CLAIM the supplier is never asked for — the claim's bill is
 // made out to the claimant — and the server has already filled an undated
@@ -253,11 +268,11 @@ for (const status of ['archived', 'expenseclaim', 'merged', 'deleted', 'processi
     missingFields(sale({ category: '' })), ['Category']);
   check('and a nameless one asks for a Customer, not a Supplier',
     missingFields(sale({ supplier: '' })), ['Customer']);
-  check('"Unknown supplier" is no name in either workspace',
+  check('"Unknown supplier" is no customer — though a cost may post to it',
     [missingFields(sale({ supplier: 'Unknown supplier' })), missingFields(doc({ supplier: 'Unknown supplier' }))],
-    [['Customer'], ['Supplier']]);
+    [['Customer'], []]);
   check('…nor is "Unknown customer"', missingFields(sale({ supplier: 'Unknown customer' })), ['Customer']);
-  check('the four fields are named for the workspace',
+  check('the fields are named for the workspace',
     [readyFieldsFor(sale()), readyFieldsFor(doc({}))],
     [['Customer', 'Date', 'Category', 'Total'], READY_FIELDS]);
   check('and a sales document walks the same tabs',

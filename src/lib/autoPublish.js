@@ -67,7 +67,7 @@ export function xeroBillUrl(invoiceId, shortCode = '', docType = '') {
 //   - off unless Business settings → Extraction turns it on (off by default)
 //   - never twice (a bill carrying a Xero id is skipped)
 //   - never a document that's on an expense claim — the claim posts that cost
-//   - only a COMPLETE document: supplier, date, a real category, a total > 0.
+//   - only a COMPLETE document (readiness.js isComplete): a date, a real category, a total > 0.
 //     An incomplete one has no account code to post to, and a half-read bill in
 //     Xero is worse than one still sitting in the inbox.
 //   - only when its category maps to an account that exists in this org's chart

@@ -15,10 +15,10 @@ import {
   unmarkBillsClaimed,
   returnBillsToInbox,
   parseAmount,
+  costDate,
 } from './store.js';
 import { listOrganisations, primaryOrgId } from './organisations.js';
 import { endOfThisMonth, isoClaimDate } from './claimDates.js';
-import { practiceDayKey } from './usage.js';
 import { referenceFor, numberFor } from './claimRef.js';
 import { claimPdfBytes } from './claimPdfDoc.js';
 import { shareToken, verifyShareToken } from './shareLinks.js';
@@ -622,19 +622,6 @@ function cents(v: unknown): string {
   return s && Number.isFinite(n) ? n.toFixed(2) : s;
 }
 
-// The date a claim item goes by: the one printed on it, else the day it was
-// SUBMITTED. A receipt with no readable date is still a real expense somebody
-// paid, and on a claim the date only has to say roughly when — the bill the claim
-// becomes is dated by the claim, not by its items — so the day it reached CYBills
-// (the practice's day, not UTC's) stands in rather than holding the claim up.
-// The document itself is left undated: this is the claim's reading of it.
-function claimItemDate(bill: { date?: string; createdAt?: string }): string {
-  const printed = String(bill.date ?? '').trim();
-  if (printed) return printed;
-  const at = new Date(String(bill.createdAt ?? ''));
-  return Number.isNaN(at.getTime()) ? '' : practiceDayKey(at);
-}
-
 function liveTxns(c: Claim): Txn[] {
   return c.transactions.map((t) => {
     const bill = getBillById(c.orgId, String(t.itemId));
@@ -646,7 +633,7 @@ function liveTxns(c: Claim): Txn[] {
       // supplier" — the claim's bill is made out to the CLAIMANT, so the
       // supplier is only ever words on its line.
       supplier: String(bill.supplier ?? '').trim() || String(t.supplier ?? '').trim() || 'Unknown supplier',
-      date: claimItemDate(bill) || t.date,
+      date: costDate(bill) || t.date,
       category: bill.category ?? t.category,
       description: bill.description || t.description,
       project: bill.project ?? t.project,
@@ -1084,7 +1071,7 @@ claimsRouter.post('/:id/update', async (req, res) => {
 // fields are not asked for here. The SUPPLIER: a claim's bill is made out to the
 // claimant, so a receipt nobody could name goes on as "Unknown supplier" and
 // posts like any other line. The DATE: an undated receipt takes the day it was
-// submitted (`claimItemDate`). Category and Total still hold — without them the
+// submitted (`costDate`, store.ts). Category and Total still hold — without them the
 // line has no account to post to and no money to pay back.
 //
 // Read off the LIVE document, not the claim's snapshot. A claim stores the
@@ -1095,7 +1082,7 @@ claimsRouter.post('/:id/update', async (req, res) => {
 // with no bill behind it (a sample/demo row).
 function missingOnItem(orgId: string, t: Txn): string[] {
   const bill = getBillById(orgId, String(t.itemId));
-  const date = bill ? claimItemDate(bill) : t.date;
+  const date = bill ? costDate(bill) : t.date;
   const category = bill ? bill.category : t.category;
   const total = bill ? bill.total : t.total;
   const named = (v: unknown, placeholder: string) => {

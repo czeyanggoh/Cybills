@@ -11,7 +11,7 @@ import {
 import { workspaceId } from './workspace.js';
 import { readSetting } from './settings.js';
 import { referenceFor, dateFor } from './claimRef.js';
-import { apportion, costComplete, displayIdOf, getBillById, getBillByIdAny, isCreditNote, listBills, markBillPosted, markBillXeroPayment, parseAmount, totalComplete, type Bill } from './store.js';
+import { apportion, costComplete, costDate, displayIdOf, getBillById, getBillByIdAny, isCreditNote, listBills, markBillPosted, markBillXeroPayment, parseAmount, totalComplete, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, markClaimXeroPayment, publishedClaims, saveClaimXero } from './claims.js';
 import { addressIn, appOrigin, canPublishToXero, memberForSession, visibleOwnersFor } from './users.js';
@@ -1100,11 +1100,11 @@ async function inPostableCurrency(
     rate = newTotal / 100 / total;
     source = 'document';
   } else {
-    rate = await dayRate(from, base, String(bill.date ?? ''));
+    rate = await dayRate(from, base, costDate(bill));
     if (!(rate > 0)) {
       return { ok: false, status: 422, body: {
         error: 'no_exchange_rate',
-        message: `This Xero organisation has no multi-currency, so this ${from} document has to be posted in ${base} — and no ${from}→${base} rate could be found for ${bill.date || 'its date'}. Try again shortly, or enter the ${base} total on the document.`,
+        message: `This Xero organisation has no multi-currency, so this ${from} document has to be posted in ${base} — and no ${from}→${base} rate could be found for ${costDate(bill) || 'its date'}. Try again shortly, or enter the ${base} total on the document.`,
       } };
     }
     newTotal = cents(total * rate);
@@ -1451,7 +1451,8 @@ async function buildBillInvoice(
   const converted = postable.converted;
   const total = parseAmount(bill.total);
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-  const date = String(bill.date ?? '');
+  // The printed date, else — on a cost — the day it was submitted (costDate).
+  const date = costDate(bill);
   // Due date follows the date actually POSTED, not the one on the paper. When a
   // period is locked, `date` above has already moved to something postable — and
   // a due date left on the original date would then sit BEFORE the bill itself.
@@ -1632,13 +1633,13 @@ function missingForPublish(bill: Bill): string[] {
   const filled = (v: unknown) => String(v ?? '').trim().length > 0;
   const s = String(bill.supplier ?? '').trim().toLowerCase();
   const c = String(bill.category ?? '').trim().toLowerCase();
-  // Called what it is: the counterparty is a SUPPLIER on a cost and a CUSTOMER
-  // on a sales invoice, and "this document still needs a supplier" sends
-  // somebody looking for a field the Sales page does not have.
-  if (!filled(bill.supplier) || s === 'unknown supplier' || s === 'unknown customer') {
-    out.push(isReceivable(docTypeForBill(bill)) ? 'a customer' : 'a supplier');
+  // Only a sales invoice has to name its counterparty, its CUSTOMER: a cost
+  // nobody could name posts to the contact "Unknown supplier" (costComplete).
+  if (isReceivable(docTypeForBill(bill)) && (!filled(bill.supplier) || s === 'unknown supplier' || s === 'unknown customer')) {
+    out.push('a customer');
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(bill.date ?? ''))) out.push('a date');
+  // A cost with no printed date goes by the day it was submitted (costDate).
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(costDate(bill))) out.push('a date');
   if (!filled(bill.category) || c === 'uncategorised') out.push('a category');
   // A credit note's total may be typed either way round, so it only has to be
   // there; a bill's has to be above 0.

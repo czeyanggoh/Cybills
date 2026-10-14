@@ -1470,8 +1470,8 @@ fields of every item, so a receipt the reader could not name held up the whole
 claim. On a claim the supplier is only words on a line, because the bill is made
 out to the CLAIMANT. So an unnamed item goes on as **Unknown supplier**. An item
 with no printed date takes the day it was SUBMITTED, in the practice's day
-(`claimItemDate` in `claims.ts`). That is the claim's reading of the item: the
-document itself stays undated. `missingOnItem` and the claim page's badge
+(`costDate` in `store.ts`, the rule the Costs inbox uses too). That is the
+claim's reading of the item: the document itself stays undated. `missingOnItem` and the claim page's badge
 (`missingOnClaim`, `readiness.js`) now ask only for Category and Total. Without
 those the line has no account and no money. Covered by
 `test/claim-unknown-supplier.test.mts`.
@@ -1607,13 +1607,30 @@ be overruled by it a moment later.
 
 **Ready and To review are both derived, and between them they are the whole
 inbox.** `src/lib/readiness.js` (pure, tested by `npm test`) decides from the
-document, never from its stored status: a cost carrying a Supplier, Date,
-Category and a Total above 0 is Ready; every other inbox document is waiting on
-a person — most often for the account code the reader could not choose. To
-review used to be a STATUS only the toolbar could write, so a document needing
-attention landed there only if somebody had already noticed it and pressed the
-button. Rows in To review wear a **"Needs: …"** badge naming the missing fields
-(`missingFields`), except where "Nothing read" already says it better.
+document, never from its stored status: a cost carrying a Date, a Category and
+a Total above 0 is Ready (a sales invoice needs its Customer as well); every
+other inbox document is waiting on a person — most often for the account code
+the reader could not choose. To review used to be a STATUS only the toolbar could
+write, so a document needing attention landed there only if somebody had already
+noticed it and pressed the button. Rows in To review wear a **"Needs: …"** badge
+naming the missing fields (`missingFields`), except where "Nothing read" already
+says it better.
+
+**A cost needs no supplier, and an undated one goes by its submission date.**
+Cze's rule (14 Oct 2026), first for claims and then for the Costs inbox. A
+receipt nobody could name or date is still money spent, so it should not wait on
+facts the paper does not carry. An unnamed cost publishes to the Xero contact
+**Unknown supplier**, the reader's own placeholder. Xero matches a contact by
+name, so all such costs land on that one contact. A cost with no printed date
+takes the day it was SUBMITTED, in the practice's day: `costDate` / `submissionDay`
+(`store.ts`), mirrored by `effectiveDate` / `dateFromSubmission` (`readiness.js`).
+That date drives readiness, the posted Date and DueDate, and the day-rate lookup.
+The document itself stays undated, so a date typed or re-read takes over at once.
+The Costs Date column shows the stand-in in italics with a `*`. The document page
+and the publish dialog say so in words. A SALES invoice still needs its customer
+and its date: it is the business's own paper. Payment runs still leave out an
+unnamed cost (`payments.ts`), because a payment needs a payee. Covered by
+`npm test` at the root (`readiness`) and in `server/` (`publish-bill`).
 
 **A document the reader got NOTHING off lands in the inbox, wearing the badge
 that says so.** No supplier, no total, no date, no reference and no rows —

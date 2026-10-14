@@ -11,7 +11,7 @@ import {
   useXeroShortCode,
 } from '@/lib/organisations';
 import { lineItemsPostable } from '@/lib/bills';
-import { isCreditNote, totalOk } from '@/lib/readiness';
+import { isCreditNote, totalOk, effectiveDate, dateFromSubmission } from '@/lib/readiness';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useExtractionSettings, PUBLISH_STATUSES } from '@/lib/extractionSettings';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
@@ -79,7 +79,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
     // follows the date actually sent to Xero, so a date shifted for a locked
     // period can't leave the due date sitting before the bill. Change it here to
     // post something else.
-    setDueDate(/^\d{4}-\d{2}-\d{2}$/.test(bill?.date ?? '') ? bill.date : '');
+    setDueDate(/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate(bill)) ? effectiveDate(bill) : '');
     setError('');
     setDone(null);
   }, [open]);
@@ -205,14 +205,15 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   const missing = (() => {
     const out = [];
     const txt = (v) => String(v ?? '').trim();
-    // The counterparty, called what it is in this workspace: a supplier on a
-    // cost, a customer on a sales invoice. Mirrors missingForPublish on the
-    // server, which refuses in the same words.
+    // Only a sales invoice has to name its counterparty: a cost nobody could
+    // name posts to the contact "Unknown supplier". Mirrors missingForPublish on
+    // the server, which refuses in the same words.
     const party = txt(bill?.supplier).toLowerCase();
-    if (!party || party === 'unknown supplier' || party === 'unknown customer') {
-      out.push(sale ? 'a customer' : 'a supplier');
+    if (sale && (!party || party === 'unknown supplier' || party === 'unknown customer')) {
+      out.push('a customer');
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(txt(bill?.date))) out.push('a date');
+    // A cost with no printed date posts with the day it was submitted.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate(bill))) out.push('a date');
     if (!txt(bill?.category) || txt(bill?.category).toLowerCase() === 'uncategorised') out.push('a category');
     if (!totalOk(bill)) out.push(credit ? 'a total other than 0' : 'a total above 0');
     return out;
@@ -393,6 +394,18 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                     ? ' as a supplier credit note — the amount is credited, not owed.'
                     : ' as a supplier bill.'}
               </p>
+              {/* What stands in for what the paper did not say, said before the
+                  click rather than found in the ledger afterwards. */}
+              {!sale && (!String(bill?.supplier ?? '').trim() || /^unknown supplier$/i.test(String(bill?.supplier ?? '').trim()) || dateFromSubmission(bill)) && (
+                <p className="rounded-md border border-amber-600/40 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  {[
+                    (!String(bill?.supplier ?? '').trim() || /^unknown supplier$/i.test(String(bill?.supplier ?? '').trim())) &&
+                      'No supplier was read, so it posts to the Xero contact "Unknown supplier".',
+                    dateFromSubmission(bill) &&
+                      `No date is printed, so it posts dated ${effectiveDate(bill)}, the day it was submitted.`,
+                  ].filter(Boolean).join(' ')}
+                </p>
+              )}
               {/* The inbox's Autofill payment: the bank line this document is
                   paid against. Said HERE because the publish is what writes the
                   payment, and it is the irreversible half. */}

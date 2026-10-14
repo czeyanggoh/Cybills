@@ -16,7 +16,8 @@ const amount = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
 
 // The fields a cost document needs before it's "ready" (moves out of the inbox).
 // Surfaced in the UI so users know exactly why something is still in the inbox.
-export const READY_FIELDS = ['Supplier', 'Date', 'Category', 'Total'];
+// No Supplier: a cost nobody could name publishes to "Unknown supplier".
+export const READY_FIELDS = ['Date', 'Category', 'Total'];
 
 // A document the business ISSUED rather than received: the Sales workspace.
 // Mirrors the server's `kind`, where anything that isn't explicitly 'sales' (or
@@ -39,9 +40,8 @@ export const counterpartyLabel = (d) => (isSale(d) ? 'Customer' : 'Supplier');
 const namedCounterparty = (v) =>
   has(v) && !['unknown supplier', 'unknown customer'].includes(String(v).trim().toLowerCase());
 
-// The four fields THIS document needs — the same four either way, with the
-// counterparty called what it is.
-export const readyFieldsFor = (d) => [counterpartyLabel(d), 'Date', 'Category', 'Total'];
+// The fields THIS document needs: a sales invoice names its customer as well.
+export const readyFieldsFor = (d) => (isSale(d) ? ['Customer', 'Date', 'Category', 'Total'] : READY_FIELDS);
 
 // A credit note or refund: the supplier owes US, so the money runs the other
 // way and it reaches Xero as a credit note rather than a bill. Decided by the
@@ -61,13 +61,41 @@ export function totalOk(d) {
   return isCreditNote(d) ? n !== 0 : n > 0;
 }
 
-// A cost is "complete" (→ Ready) when it carries those fields: a real supplier
-// (not "Unknown supplier"), a date, a real category (not "Uncategorised"), and a
-// total (see totalOk). Mirrors the server's costComplete so both follow one rule.
+// The day a document was SUBMITTED (reached CYBills), YYYY-MM-DD in this
+// browser's day; '' for a row with no timestamp.
+export function submissionDate(d) {
+  const at = new Date(String(d?.createdAt ?? ''));
+  if (Number.isNaN(at.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+}
+
+// The date a document goes by: the one printed on it, else — on a COST — the day
+// it was submitted. A receipt with no readable date is still money spent, so it
+// is Ready and publishes dated that day rather than waiting on a date nobody can
+// read. The document itself stays undated, so a date typed or re-read takes over
+// at once. A sales invoice gets no stand-in. Mirrors the server's costDate (which
+// counts the day in the practice's timezone, and is what is actually posted).
+export function effectiveDate(d) {
+  if (has(d?.date)) return String(d.date).trim();
+  return isSale(d) ? '' : submissionDate(d);
+}
+
+// Whether the date a document goes by is the submission date standing in.
+export const dateFromSubmission = (d) => !has(d?.date) && Boolean(effectiveDate(d));
+
+// A cost does not have to name its supplier: one nobody could name publishes to
+// the Xero contact "Unknown supplier". A sales invoice still needs its customer.
+const counterpartyOk = (d) => !isSale(d) || namedCounterparty(d?.supplier);
+
+// A document is "complete" (→ Ready) when it carries what it needs to publish:
+// a date (see effectiveDate), a real category (not "Uncategorised"), a total
+// (see totalOk) and, on a sales invoice, its customer. Mirrors the server's
+// costComplete so both follow one rule.
 export function isComplete(d) {
   return (
-    namedCounterparty(d?.supplier) &&
-    has(d?.date) &&
+    counterpartyOk(d) &&
+    has(effectiveDate(d)) &&
     named(d?.category, 'uncategorised') &&
     totalOk(d)
   );
@@ -76,8 +104,8 @@ export function isComplete(d) {
 // The specific fields still missing on a document (for a per-row explanation).
 export function missingFields(d) {
   const out = [];
-  if (!namedCounterparty(d?.supplier)) out.push(counterpartyLabel(d));
-  if (!has(d?.date)) out.push('Date');
+  if (!counterpartyOk(d)) out.push(counterpartyLabel(d));
+  if (!has(effectiveDate(d))) out.push('Date');
   if (!named(d?.category, 'uncategorised')) out.push('Category');
   if (!totalOk(d)) out.push('Total');
   return out;

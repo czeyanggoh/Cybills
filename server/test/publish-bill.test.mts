@@ -259,6 +259,20 @@ check('the document records what Xero made of it', r.body.bill.xeroStatus, 'DRAF
 check('the bill links back to its document', /\/costs\/\d+\?org=org-1$/.test(String(r.posted.Url)), true);
 check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 'Projects', Option: 'ASTP 01' }]);
 
+// 4b) A cost nobody could name, or date, still publishes: to the Xero contact
+// "Unknown supplier", dated the day it was submitted.
+{
+  const { practiceDayKey } = await import('../src/usage.ts');
+  const blank = bill({ supplier: '', date: '', total: '20', tax: '0' });
+  const out = await publish(blank.id);
+  check('unknown supplier, no date: published', out.status, 200);
+  check('…to the contact "Unknown supplier"', out.posted?.Contact, { Name: 'Unknown supplier' });
+  const day = practiceDayKey(new Date(blank.createdAt));
+  check('…dated the day it was submitted, due the same day', [out.posted?.Date, out.posted?.DueDate], [day, day]);
+  const placeholder = await publish(bill({ supplier: 'Unknown supplier', total: '21', tax: '0' }).id);
+  check('the reader\'s placeholder publishes the same way', [placeholder.status, placeholder.posted?.Contact], [200, { Name: 'Unknown supplier' }]);
+}
+
 // 5) A foreign-currency bill posts at the rate the DOCUMENT printed.
 //
 // Xero converts a USD bill to the base currency at its own XE.com day rate

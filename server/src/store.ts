@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { env } from './env.js';
 import { WORKSPACE_ID } from './workspace.js';
+import { practiceDayKey } from './usage.js';
 
 // Tiny persistent JSON store for uploaded bills. Deliberately dependency-free:
 // the VPS deploys with `npm ci` and recompiles native modules on every pull, so
@@ -978,15 +979,41 @@ export function totalComplete(b: Bill): boolean {
   return isCreditNote(b) ? n !== 0 : n > 0;
 }
 
-export function costComplete(b: Bill): boolean {
-  // The counterparty, whichever end of the paper it was read from: a cost's
-  // supplier, a sales invoice's customer. One stored field, and neither of the
-  // reader's two placeholders is a name. Mirrors src/lib/readiness.js.
-  const supplier =
-    filled(b.supplier) &&
+// The day a document was SUBMITTED — reached CYBills — in the practice's own
+// day rather than UTC's ('' for a row with no usable timestamp).
+export function submissionDay(b: Pick<Bill, 'createdAt'>): string {
+  const at = new Date(String(b.createdAt ?? ''));
+  return Number.isNaN(at.getTime()) ? '' : practiceDayKey(at);
+}
+
+// The date a COST goes by: the one printed on it, else the day it was
+// submitted. A receipt with no readable date is still money spent, and the day
+// it reached CYBills is the nearest true thing to say about when — so it is
+// Ready, and publishes dated that day, rather than waiting on a date nobody can
+// read off the paper. The document itself stays undated: this is a reading of
+// it, and a date somebody types (or a re-read finds) takes over at once. A SALES
+// invoice is the business's own paper, which always carries its date, so it
+// gets no stand-in. Mirrors effectiveDate in src/lib/readiness.js.
+export function costDate(b: Pick<Bill, 'date' | 'createdAt' | 'kind'>): string {
+  const printed = String(b.date ?? '').trim();
+  if (printed && printed !== '—') return printed;
+  return b.kind === 'sales' ? '' : submissionDay(b);
+}
+
+// Whether a document names its counterparty. A cost does not have to: one
+// nobody could name posts to a Xero contact called "Unknown supplier" (the
+// placeholder the reader writes) rather than waiting on a name nobody can read.
+// A sales invoice still needs its customer — that is who is being billed.
+function counterpartyComplete(b: Bill): boolean {
+  if (b.kind !== 'sales') return true;
+  return filled(b.supplier) &&
     !['unknown supplier', 'unknown customer'].includes(String(b.supplier).trim().toLowerCase());
+}
+
+export function costComplete(b: Bill): boolean {
+  // Mirrors isComplete in src/lib/readiness.js.
   const category = filled(b.category) && String(b.category).trim().toLowerCase() !== 'uncategorised';
-  return supplier && filled(b.date) && category && totalComplete(b);
+  return counterpartyComplete(b) && filled(costDate(b)) && category && totalComplete(b);
 }
 
 // Auto-move a document between the inbox ('new') and 'ready' based on

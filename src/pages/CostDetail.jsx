@@ -54,7 +54,7 @@ import {
 import TeachRule from '@/components/TeachRule';
 import { useDocsOfKind, rowsFor, isInInbox } from '@/lib/costsData';
 import { readWalk, walkPosition } from '@/lib/listView';
-import { totalOk, counterpartyLabel } from '@/lib/readiness';
+import { totalOk, counterpartyLabel, effectiveDate, dateFromSubmission } from '@/lib/readiness';
 import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
 import { readDecisions, ruleLineRows } from '@/lib/reRead';
 import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
@@ -2599,6 +2599,13 @@ Publish anyway?`
                   onChange={(e) => set('date', e.target.value)}
                   className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
+                {/* No date read: the day it was submitted stands in, and is what
+                    publishing posts — said here, where the field is blank. */}
+                {dateFromSubmission({ ...doc, date: data.date }) && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    None printed — goes by the day it was submitted, {formatDate(effectiveDate({ ...doc, date: data.date }))}.
+                  </p>
+                )}
               </Field>
               <Field label={counterpartyLabel(doc)}>
                 {/* The org's Xero supplier contacts, but not ONLY them: a name
@@ -3366,7 +3373,7 @@ Publish anyway?`
       <PublishToXeroModal
         open={publishOpen}
         onClose={() => setPublishOpen(false)}
-        bill={{ id: doc.id, kind: doc.kind, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType, bankMatch: doc.bankMatch, prepaymentMatch }}
+        bill={{ id: doc.id, kind: doc.kind, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, createdAt: doc.createdAt, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType, bankMatch: doc.bankMatch, prepaymentMatch }}
         onPublished={onPublished}
         // A first publish finishes the document, so moving on is offered; a
         // correction sent to an existing bill is not, which is just Done.
