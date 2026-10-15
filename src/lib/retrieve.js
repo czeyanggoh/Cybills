@@ -42,7 +42,7 @@ export const isActiveRun = (run) => run?.status === 'running' || run?.status ===
 
 /** This entity's portal logins, the portals offered, and whether n8n is set up. */
 export function usePortalLogins() {
-  const [state, setState] = useState({ logins: [], portals: [], enabled: false, loading: true, error: '' });
+  const [state, setState] = useState({ logins: [], portals: [], enabled: false, timezone: '', loading: true, error: '' });
   const running = useRef(new Set());
 
   const reload = useCallback(async () => {
@@ -55,7 +55,14 @@ export function usePortalLogins() {
       const settled = [...running.current].some((id) => !now.has(id));
       running.current = now;
       if (settled) notifyBillsChanged();
-      setState({ logins, portals: data.portals ?? [], enabled: Boolean(data.enabled), loading: false, error: '' });
+      setState({
+        logins,
+        portals: data.portals ?? [],
+        enabled: Boolean(data.enabled),
+        timezone: data.timezone || '',
+        loading: false,
+        error: '',
+      });
     } catch (err) {
       setState((s) => ({ ...s, loading: false, error: err.message }));
     }

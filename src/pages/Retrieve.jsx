@@ -13,6 +13,16 @@ import {
   runPortalLogin,
   runAllPortalLogins,
 } from '@/lib/retrieve';
+import {
+  DEFAULT_SCHEDULE,
+  SCHEDULE_DAYS,
+  SCHEDULE_HOURS,
+  dayKeyLabel,
+  hourLabel,
+  normaliseSchedule,
+  ordinal,
+  scheduleLabel,
+} from '@/lib/retrieveSchedule';
 import { cn } from '@/lib/utils';
 
 // Costs -> Retrieve: the supplier portals CYBills signs into for the invoices
@@ -58,7 +68,8 @@ function RunStatus({ login }) {
   return (
     <div className="space-y-1 text-xs">
       <div className={cn(run.status === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
-        {run.status === 'failed' ? 'Failed' : 'Last retrieved'} {when(run.endedAt || run.startedAt)} — {run.note}
+        {run.status === 'failed' ? 'Failed' : 'Last retrieved'} {when(run.endedAt || run.startedAt)}
+        {run.scheduled ? ' (on schedule)' : ''} — {run.note}
       </div>
       {run.filed?.length > 0 && (
         <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -73,7 +84,36 @@ function RunStatus({ login }) {
   );
 }
 
-function LoginModal({ open, login, portals, owners, onClose, onSaved }) {
+// Where a login's schedule is read on its card: when it retrieves by itself and
+// the day it next will.
+function ScheduleLine({ login, timezone }) {
+  const s = normaliseSchedule(login.schedule);
+  if (s.frequency === 'off') {
+    return <span>Retrieves only when somebody presses Retrieve now</span>;
+  }
+  return (
+    <span>
+      Retrieves {scheduleLabel(s).replace(/^\w/, (c) => c.toLowerCase())}
+      {timezone ? ` (${timezone})` : ''}
+      {login.nextScheduledDay ? ` · next ${dayKeyLabel(login.nextScheduledDay)}` : ''}
+      {!login.hasPassword ? ' · paused until a password is saved' : ''}
+    </span>
+  );
+}
+
+const selectCls = cn(inputCls, 'appearance-none pr-9');
+function Select({ value, onChange, children, label }) {
+  return (
+    <div className="relative">
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={selectCls} aria-label={label}>
+        {children}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+    </div>
+  );
+}
+
+function LoginModal({ open, login, portals, owners, timezone, onClose, onSaved }) {
   const editing = Boolean(login);
   const [portal, setPortal] = useState('');
   const [label, setLabel] = useState('');
@@ -82,6 +122,7 @@ function LoginModal({ open, login, portals, owners, onClose, onSaved }) {
   const [password, setPassword] = useState('');
   const [accountRef, setAccountRef] = useState('');
   const [owner, setOwner] = useState('');
+  const [schedule, setSchedule] = useState(DEFAULT_SCHEDULE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -94,6 +135,7 @@ function LoginModal({ open, login, portals, owners, onClose, onSaved }) {
     setPassword('');
     setAccountRef(login?.accountRef || '');
     setOwner(login?.owner || '');
+    setSchedule(normaliseSchedule(login?.schedule));
     setError('');
     setBusy(false);
   }, [open, login, portals]);
@@ -107,7 +149,7 @@ function LoginModal({ open, login, portals, owners, onClose, onSaved }) {
     setBusy(true);
     setError('');
     try {
-      const fields = { label, loginUrl, username, accountRef, owner };
+      const fields = { label, loginUrl, username, accountRef, owner, schedule };
       // Blank on an edit keeps the saved one — it is never shown, so the form
       // has nothing to send back.
       if (password) fields.password = password;
@@ -226,6 +268,46 @@ function LoginModal({ open, login, portals, owners, onClose, onSaved }) {
             </div>
           </label>
 
+          <div className="space-y-1.5 text-sm">
+            <div className="text-muted-foreground">Retrieve automatically</div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Select
+                label="How often"
+                value={schedule.frequency}
+                onChange={(frequency) => setSchedule((s) => ({ ...s, frequency }))}
+              >
+                <option value="off">Off</option>
+                <option value="daily">Every day</option>
+                <option value="monthly">Once a month</option>
+              </Select>
+              {schedule.frequency === 'monthly' && (
+                <Select label="Day of the month" value={schedule.day} onChange={(day) => setSchedule((s) => ({ ...s, day: Number(day) }))}>
+                  {SCHEDULE_DAYS.map((d) => (
+                    <option key={d} value={d}>
+                      on the {ordinal(d)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+              {schedule.frequency !== 'off' && (
+                <Select label="Hour" value={schedule.hour} onChange={(hour) => setSchedule((s) => ({ ...s, hour: Number(hour) }))}>
+                  {SCHEDULE_HOURS.map((h) => (
+                    <option key={h} value={h}>
+                      at {hourLabel(h)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </div>
+            {schedule.frequency !== 'off' && (
+              <p className="text-xs text-muted-foreground">
+                {schedule.frequency === 'monthly' && schedule.day > 28 ? 'A month without that day runs on its last day. ' : ''}
+                Times are {timezone || 'the practice’s'} time. A run that fails is not retried until the next one — the
+                reason shows on the login.
+              </p>
+            )}
+          </div>
+
           <p className="flex gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
             <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             The password is encrypted on the server and is never shown again, here or anywhere else. It is only sent to
@@ -260,7 +342,7 @@ export default function Retrieve() {
   const owners = useOwnerChoices();
   const [modal, setModal] = useState({ open: false, login: null });
   const [error, setError] = useState('');
-  const { logins, portals, enabled, loading } = state;
+  const { logins, portals, enabled, timezone, loading } = state;
   const busyAll = logins.some((l) => isActiveRun(l.run));
 
   const run = async (id) => {
@@ -319,7 +401,7 @@ export default function Retrieve() {
       <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
         Some suppliers never send the bill — it waits on their portal. Save the login here and CYBills signs in, downloads
         the invoices and files them into the Costs inbox, where they are read like any upload. An invoice already
-        retrieved is never filed twice.
+        retrieved is never filed twice. Give a login a schedule and it does this by itself — every day, or once a month.
       </p>
 
       {!loading && !enabled && (
@@ -364,6 +446,9 @@ export default function Retrieve() {
                     <div className="mt-0.5 text-xs text-muted-foreground">
                       {l.hasPassword ? `Password saved ${when(l.passwordSetAt)}` : 'No password saved'}
                       {l.filedCount ? ` · ${l.filedCount} document${l.filedCount === 1 ? '' : 's'} retrieved so far` : ''}
+                    </div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      <ScheduleLine login={l} timezone={timezone} />
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
@@ -410,6 +495,7 @@ export default function Retrieve() {
         login={modal.login}
         portals={portals}
         owners={owners}
+        timezone={timezone}
         onClose={() => setModal({ open: false, login: null })}
         onSaved={() => reload()}
       />

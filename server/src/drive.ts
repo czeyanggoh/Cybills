@@ -18,6 +18,7 @@ import { readerMediaType } from './mediaType.js';
 import { readSetting } from './settings.js';
 import { resolveProvider } from './llm.js';
 import { autoRead } from './inbound.js';
+import { robotRequest } from './robotRequest.js';
 import { workspaceId, WORKSPACE_ID } from './workspace.js';
 import { practiceDayKey } from './usage.js';
 import {
@@ -179,26 +180,6 @@ function publicFolder(f: DriveFolder, withFiles = true) {
 }
 
 // --- Looking in a folder --------------------------------------------------------
-
-// The poller has no request: nobody asked. What the read downstream wants of
-// one is the entity to attribute the model call to (recordUsage reads X-Org-Id)
-// and an origin for a link back (appOrigin, which prefers APP_ORIGIN and so
-// never needs the host). This is that much of a request and no more.
-function robotRequest(orgId: string): Request {
-  const headers: Record<string, string> = { 'x-org-id': orgId };
-  const header = (name: string) => headers[String(name).toLowerCase()];
-  return {
-    headers,
-    header,
-    get: header,
-    cookies: {},
-    query: {},
-    params: {},
-    body: {},
-    path: '/api/drive/poll',
-    protocol: 'https',
-  } as unknown as Request;
-}
 
 // Why Drive would not let the folder be listed, as the person who has to fix it
 // would say it.
@@ -555,7 +536,8 @@ function startReads(
   if (!reads.length) return;
   const settings = readSetting<{ readerProvider?: string }>(WORKSPACE_ID, 'cybills.extraction-settings.v1', realOrgId);
   const provider = resolveProvider(settings?.readerProvider);
-  const req = robotRequest(realOrgId);
+  // The poller has no request: nobody asked (robotRequest.ts).
+  const req = robotRequest(realOrgId, '/api/drive/poll');
   const waiting = new Set(reads.map((x) => x.billId));
   for (const id of waiting) noteReading(scope, id);
   const beat = setInterval(() => {

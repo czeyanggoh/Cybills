@@ -2441,7 +2441,31 @@ already holds. `known_references` tells n8n what to skip. The portal list
 a portal is offered only where the workflow can have a recipe for it. Contract:
 `deploy/RETRIEVE.md`. Covered by `npm test` in `server/`
 (`test/portal-retrieve.test.mts`, over real HTTP against a stub n8n). Not yet:
-running on a schedule; a portal that asks for an OTP.
+a portal that asks for an OTP.
+
+**And a login retrieves by itself.** A bill that waits on somebody pressing
+Retrieve now is the shoebox again, so each login carries a `schedule` — Off,
+daily, or on a day of the month — at an hour of the PRACTICE's day, edited in
+the login dialog and shown on the card with the day it next runs.
+`src/lib/retrieveSchedule.js` is the rule (pure, loaded by path in
+`retrieve.ts` the way `digest.ts` loads `digest.js`), and `startRetrieveClock`
+(`index.ts`) asks it every five minutes. Due is decided by DAY, as the digest
+is: the latest slot that has passed, if nothing has run since, so a server down
+over the 5th makes up the 5th's run when it returns, and a month without a 31st
+runs on its last day. `lastScheduledDay` is the day it RAN, written BEFORE the
+run, so a run caught up at 00:30 is that day's run and not a second one at
+07:00, a restart cannot run it twice, and a FAILED run (recorded on `run` as a
+button press's is, marked `scheduled`) waits for the next slot rather than
+being retried into a portal all day — three wrong passwords in an hour is how
+an account gets locked. `scheduleFrom` is the day the schedule was set: a slot
+before it is not owed, so a schedule saved on the 10th for the 5th first runs
+next month. One at a time across EVERY entity, since n8n drives one browser,
+and a person's own Retrieve now holds that browser until it settles (the tick
+stops and the next picks up what is still due). With `N8N_RETRIEVE_URL` unset
+nothing runs and no day is used up. A clock has no request, so the read is
+handed `robotRequest` (`robotRequest.ts`, shared with the Drive poller). Covered
+by `npm test` in `server/` (`test/retrieve-schedule.test.mts`: the rule at fixed
+dates, and `runDueRetrievals(now)` over real HTTP to a stub n8n).
 
 ## Bill collection through a Google Drive folder
 

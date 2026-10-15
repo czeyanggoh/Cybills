@@ -7,7 +7,7 @@ signs in, downloads the invoices and answers with them. CYBills files each one
 into the Costs inbox and reads it like an upload.
 
 ```
-Costs → Retrieve → "Retrieve now"
+Costs → Retrieve → "Retrieve now", or the login's schedule
         │   POST $N8N_RETRIEVE_URL      (X-API-Key: $N8N_API_KEY)
         ▼
 n8n:  sign into the portal as `username` / `password`
@@ -78,5 +78,31 @@ twice. A streamed PDF body also works.
 - Retrieved documents are owned by the login's "File documents under" person,
   else the entity's general account, and carry `retrieved` (portal, login,
   username, invoice number) so where each came from is on record.
+- A request from a scheduled run is identical to a button press — the workflow
+  cannot tell them apart and does not need to.
 
-Covered by `npm test` in `server/` (`test/portal-retrieve.test.mts`).
+## Scheduled runs
+
+Each login has **Retrieve automatically** in its dialog: **Off** (the default),
+**Every day**, or **Once a month** on a chosen day, at an hour in
+`PRACTICE_TIMEZONE` (Asia/Singapore unless set). The card shows the schedule and
+the day it next runs. The server checks every five minutes (no extra env):
+
+- **At most once per practice day.** The day is recorded *before* the run
+  starts, so a restart or a slow portal cannot start it twice.
+- **Downtime is made up.** If the server was down over the scheduled hour, the
+  missed run happens when it comes back — and that counts as the day's run.
+  "The 31st" runs on the last day of a shorter month.
+- **A failed run is not retried that day** (a wrong password retried every five
+  minutes locks portal accounts). The reason shows on the login; it tries again
+  at the next scheduled slot, or when somebody presses Retrieve now.
+- **One at a time across every client.** Each run is a browser session on n8n's
+  machine, so scheduled runs never overlap each other or a run somebody started
+  by hand; whatever is still due waits for the next check.
+- A slot from before the schedule was saved is not made up: one saved on the
+  10th for "the 5th" first runs on the 5th of next month. (Saved on the day of
+  its slot after the hour, it runs within five minutes.)
+- With `N8N_RETRIEVE_URL` unset nothing runs, and nothing is marked as run.
+
+Covered by `npm test` in `server/` (`test/portal-retrieve.test.mts`,
+`test/retrieve-schedule.test.mts`).

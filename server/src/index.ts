@@ -9,7 +9,7 @@ import { extractRouter, vaultRouter } from './extract.js';
 import { billsRouter } from './bills.js';
 import { inboundRouter } from './inbound.js';
 import { emailRouter } from './email.js';
-import { retrieveRouter } from './retrieve.js';
+import { retrieveRouter, startRetrieveClock } from './retrieve.js';
 import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { claimsRouter } from './claims.js';
@@ -247,6 +247,9 @@ app.listen(env.PORT, () => {
   // a Drive folder, so every connected folder is looked in every couple of
   // minutes. A no-op until the robot's key is configured.
   startDriveClock();
+  // And the supplier portals: a login with a schedule signs in for its invoices
+  // by itself, one login at a time. A no-op until N8N_RETRIEVE_URL is set.
+  startRetrieveClock();
   // And the files: anything still on this server's own disk is moved into the
   // bucket, and the records are backed up there once a day (storageCare.ts).
   startStorageClock();

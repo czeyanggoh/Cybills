@@ -29,6 +29,14 @@
 // Every retrieval is a background job, because a portal sign-in and a handful of
 // downloads take minutes and a proxy will not hold a request open that long. The
 // page polls the login's `run` until it settles.
+//
+// And a login can retrieve BY ITSELF, which is the point of keeping it: a bill
+// that waits on somebody remembering to press a button is the shoebox again.
+// Each login carries a schedule (off / daily / a day of the month, at an hour
+// of the practice's day — src/lib/retrieveSchedule.js is the rule, loaded by
+// path so the dialog and the clock read one), and `startRetrieveClock` runs
+// the due ones, one at a time across every entity, because n8n drives one
+// browser.
 import { Router } from 'express';
 import type { Request } from 'express';
 import { createHash, randomUUID } from 'node:crypto';
@@ -52,6 +60,9 @@ import { readDocumentsReply, type FetchedDocument } from './n8n.js';
 import { insertBill, listBills, noteReading } from './store.js';
 import { putBillFile } from './storage.js';
 import { autoRead } from './inbound.js';
+import { practiceDayKey } from './usage.js';
+import { practiceHour } from './digest.js';
+import { robotRequest } from './robotRequest.js';
 
 export const retrieveRouter = Router();
 
@@ -81,6 +92,24 @@ export const PORTALS = [
 ] as const;
 const portalById = (id: string) => PORTALS.find((p) => p.id === id);
 
+export type Schedule = { frequency: 'off' | 'daily' | 'monthly'; day: number; hour: number };
+type ScheduleState = { lastDay?: string; from?: string };
+type ScheduleRules = {
+  normaliseSchedule: (value: unknown) => Schedule;
+  validSchedule: (value: unknown) => boolean;
+  scheduleDue: (schedule: unknown, state: ScheduleState, today: string, hourNow: number) => boolean;
+  nextScheduledDay: (schedule: unknown, state: ScheduleState, today: string, hourNow: number) => string;
+};
+
+let rules: ScheduleRules | null = null;
+async function loadRules(): Promise<ScheduleRules> {
+  if (rules) return rules;
+  // From server/dist (or server/src under tsx) up to the repo root.
+  const url = new URL('../../src/lib/retrieveSchedule.js', import.meta.url).href;
+  rules = (await import(url)) as ScheduleRules;
+  return rules;
+}
+
 type FiledRecord = { hash: string; reference: string; billId: string; at: string };
 
 type RunRecord = {
@@ -91,6 +120,8 @@ type RunRecord = {
   endedAt?: string;
   /** Who pressed Retrieve, as an address. */
   by: string;
+  /** Started by the schedule rather than by a person. */
+  scheduled?: boolean;
   /** n8n's own words, or why it was not asked. Always set once it settles. */
   note: string;
   filed: Array<{ billId: string; displayId: string; fileName: string }>;
@@ -126,6 +157,12 @@ export type PortalLogin = {
   filed: FiledRecord[];
   /** When a retrieval last came back without failing. */
   lastRetrievedAt?: string;
+  /** When it retrieves by itself; absent = off. */
+  schedule?: Schedule;
+  /** The practice day the schedule was set — a slot before it is not owed. */
+  scheduleFrom?: string;
+  /** The practice day the schedule last STARTED a run, written before it runs. */
+  lastScheduledDay?: string;
 };
 
 const COLLECTION = 'portal-logins';
@@ -161,7 +198,9 @@ function runOf(l: PortalLogin): RunRecord | undefined {
 }
 
 // What the page sees. No password — only that one is set, and when.
-function view(ws: string, l: PortalLogin) {
+function view(ws: string, l: PortalLogin, r: ScheduleRules, now = new Date()) {
+  const schedule = r.normaliseSchedule(l.schedule);
+  const state = { lastDay: l.lastScheduledDay, from: l.scheduleFrom };
   const portal = portalById(l.portal);
   const people = peopleForOrg(ws, l.orgId);
   const ownerEmail = l.owner || generalUserFor(ws, l.orgId)?.email || '';
@@ -184,6 +223,10 @@ function view(ws: string, l: PortalLogin) {
     run: runOf(l) || null,
     filedCount: l.filed.length,
     lastRetrievedAt: l.lastRetrievedAt || '',
+    schedule,
+    // The practice day the schedule next runs on; the hour is the schedule's.
+    nextScheduledDay: r.nextScheduledDay(schedule, state, practiceDayKey(now), practiceHour(now)),
+    lastScheduledDay: l.lastScheduledDay || '',
   };
 }
 
@@ -213,18 +256,30 @@ function resolveOwner(ws: string, orgId: string, requested: string): { ok: true;
 }
 
 // GET /api/retrieve/logins — this entity's portal logins, and the portals offered.
-retrieveRouter.get('/logins', (req, res) => {
+retrieveRouter.get('/logins', async (req, res) => {
   const ws = workspaceId(req);
   const orgId = orgIdFor(req);
   if (!mayManage(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const r = await loadRules();
   const logins = loginsHere(ws, orgId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    .map((l) => view(ws, l));
-  res.json({ logins, portals: PORTALS, enabled: retrieveEnabled() });
+    .map((l) => view(ws, l, r));
+  res.json({ logins, portals: PORTALS, enabled: retrieveEnabled(), timezone: env.PRACTICE_TIMEZONE });
 });
 
+const BAD_SCHEDULE = { error: 'bad_schedule', message: 'Choose when it retrieves: off, daily, or a day of the month, at an hour.' };
+
+// A schedule from the dialog onto the row. A CHANGED schedule starts counting
+// from today, so a slot that passed before it was set is not made up for.
+function applySchedule(row: PortalLogin, raw: unknown, r: ScheduleRules): void {
+  const next = r.normaliseSchedule(raw);
+  const changed = !row.schedule || JSON.stringify(next) !== JSON.stringify(r.normaliseSchedule(row.schedule));
+  row.schedule = next;
+  if (changed) row.scheduleFrom = practiceDayKey(new Date());
+}
+
 // POST /api/retrieve/logins — save a portal login.
-retrieveRouter.post('/logins', (req, res) => {
+retrieveRouter.post('/logins', async (req, res) => {
   const ws = workspaceId(req);
   const orgId = orgIdFor(req);
   if (!mayManage(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
@@ -242,6 +297,8 @@ retrieveRouter.post('/logins', (req, res) => {
   }
   const owner = resolveOwner(ws, orgId, b.owner);
   if (!owner.ok) return res.status(422).json({ error: 'bad_owner', message: 'That person is not on this entity’s list.' });
+  const r = await loadRules();
+  if (b.schedule !== undefined && !r.validSchedule(b.schedule)) return res.status(422).json(BAD_SCHEDULE);
 
   const me = memberForSession(req);
   const now = new Date().toISOString();
@@ -263,15 +320,16 @@ retrieveRouter.post('/logins', (req, res) => {
     updatedAt: now,
     filed: [],
   };
+  if (b.schedule !== undefined) applySchedule(row, b.schedule, r);
   const rows = load();
   rows.push(row);
   persist(rows);
-  res.status(201).json({ login: view(ws, row) });
+  res.status(201).json({ login: view(ws, row, r) });
 });
 
 // PATCH /api/retrieve/logins/:id — change a login. A blank password keeps the
 // one already sealed: it is never shown, so the form cannot send it back.
-retrieveRouter.patch('/logins/:id', (req, res) => {
+retrieveRouter.patch('/logins/:id', async (req, res) => {
   const ws = workspaceId(req);
   const orgId = orgIdFor(req);
   if (!mayManage(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
@@ -279,6 +337,8 @@ retrieveRouter.patch('/logins/:id', (req, res) => {
   const row = rows.find((l) => l.id === req.params.id && l.workspaceId === ws && l.orgId === orgId);
   if (!row) return res.status(404).json({ error: 'not_found' });
   const b = req.body ?? {};
+  const r = await loadRules();
+  if (b.schedule !== undefined && !r.validSchedule(b.schedule)) return res.status(422).json(BAD_SCHEDULE);
   if (b.username !== undefined) {
     const username = clean(b.username);
     if (!username) return res.status(422).json({ error: 'no_username', message: 'The username cannot be blank.' });
@@ -302,9 +362,10 @@ retrieveRouter.patch('/logins/:id', (req, res) => {
     if (!owner.ok) return res.status(422).json({ error: 'bad_owner', message: 'That person is not on this entity’s list.' });
     row.owner = owner.owner;
   }
+  if (b.schedule !== undefined) applySchedule(row, b.schedule, r);
   row.updatedAt = new Date().toISOString();
   persist(rows);
-  res.json({ login: view(ws, row) });
+  res.json({ login: view(ws, row, r) });
 });
 
 // DELETE /api/retrieve/logins/:id — the password goes with it. The documents it
@@ -394,7 +455,12 @@ const writeRun = (id: string, patch: Partial<PortalLogin>) => {
  * One retrieval, start to finish. Exported for the test; the route runs it in
  * the background and answers at once.
  */
-export async function runRetrieval(req: Request, loginId: string, by: string): Promise<RunRecord | null> {
+export async function runRetrieval(
+  req: Request,
+  loginId: string,
+  by: string,
+  opts: { scheduled?: boolean } = {}
+): Promise<RunRecord | null> {
   const ws = workspaceId(req);
   const start = load().find((l) => l.id === loginId);
   if (!start) return null;
@@ -406,6 +472,7 @@ export async function runRetrieval(req: Request, loginId: string, by: string): P
     note: '',
     filed: [],
     skipped: 0,
+    ...(opts.scheduled ? { scheduled: true } : {}),
   };
   writeRun(loginId, { run });
 
@@ -519,37 +586,42 @@ export async function runRetrieval(req: Request, loginId: string, by: string): P
 
 const isRunning = (l: PortalLogin) => runOf(l)?.status === 'running' || runOf(l)?.status === 'queued';
 
+// A run that threw rather than settling, recorded as the reason it failed.
+function failRun(id: string, by: string, err: unknown, scheduled = false) {
+  console.error('[retrieve] run failed', err);
+  const at = new Date().toISOString();
+  writeRun(id, {
+    run: {
+      id: `run_${Date.now().toString(36)}`,
+      status: 'failed',
+      startedAt: at,
+      endedAt: at,
+      by,
+      ...(scheduled ? { scheduled: true } : {}),
+      note: `The retrieval stopped unexpectedly (${err instanceof Error ? err.message : String(err)}).`,
+      filed: [],
+      skipped: 0,
+    },
+  });
+}
+
 // POST /api/retrieve/logins/:id/run — retrieve now. Answers at once; the page
 // polls the login until its run settles.
-retrieveRouter.post('/logins/:id/run', (req, res) => {
+retrieveRouter.post('/logins/:id/run', async (req, res) => {
   const ws = workspaceId(req);
   const orgId = orgIdFor(req);
   if (!mayManage(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
   const login = loginsHere(ws, orgId).find((l) => l.id === req.params.id);
   if (!login) return res.status(404).json({ error: 'not_found' });
-  if (isRunning(login)) return res.status(409).json({ error: 'already_running', login: view(ws, login) });
+  if (isRunning(login)) return res.status(409).json({ error: 'already_running', login: view(ws, login, await loadRules()) });
   if (!retrieveEnabled()) {
     return res.status(503).json({ error: 'not_configured', message: 'No n8n retrieval webhook is configured (N8N_RETRIEVE_URL).' });
   }
   const by = memberForSession(req)?.email || '';
-  const pending = runRetrieval(req, login.id, by).catch((err) => {
-    console.error('[retrieve] run failed', err);
-    writeRun(login.id, {
-      run: {
-        id: `run_${Date.now().toString(36)}`,
-        status: 'failed',
-        startedAt: new Date().toISOString(),
-        endedAt: new Date().toISOString(),
-        by,
-        note: `The retrieval stopped unexpectedly (${err instanceof Error ? err.message : String(err)}).`,
-        filed: [],
-        skipped: 0,
-      },
-    });
-  });
-  void pending;
+  const r = await loadRules();
+  void runRetrieval(req, login.id, by).catch((err) => failRun(login.id, by, err));
   const now = load().find((l) => l.id === login.id)!;
-  res.status(202).json({ login: view(ws, now) });
+  res.status(202).json({ login: view(ws, now, r) });
 });
 
 // POST /api/retrieve/run-all — every login of this entity, one after another
@@ -580,3 +652,55 @@ retrieveRouter.post('/run-all', (req, res) => {
   })();
   res.status(202).json({ started: ids.length });
 });
+
+// --- The clock ------------------------------------------------------------------
+
+// Every few minutes, every login whose schedule is due retrieves — ONE at a
+// time across every entity, since each run is a browser session on n8n's one
+// machine, and a person's own Retrieve now is left to finish first. Due is
+// decided by the practice's DAY (retrieveSchedule.js): the day is written
+// BEFORE the run, so a slow portal and the next tick cannot both start it, a
+// restart cannot run it twice, and a failure is recorded on the login's `run`
+// and waits for the next slot rather than being retried into a portal all day
+// (three wrong passwords in an hour is how an account gets locked).
+let clockBusy = false;
+export async function runDueRetrievals(now = new Date()): Promise<number> {
+  if (clockBusy || !retrieveEnabled()) return 0;
+  clockBusy = true;
+  let ran = 0;
+  try {
+    const r = await loadRules();
+    const today = practiceDayKey(now);
+    const hour = practiceHour(now);
+    const dueIds = load()
+      .filter((l) => l.password && r.scheduleDue(l.schedule, { lastDay: l.lastScheduledDay, from: l.scheduleFrom }, today, hour))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((l) => l.id);
+    for (const id of dueIds) {
+      // Somebody pressed Retrieve somewhere meanwhile: n8n's browser is theirs
+      // until it settles. What is still due is picked up by the next tick.
+      if (load().some(isRunning)) break;
+      const login = load().find((l) => l.id === id);
+      if (!login || !login.password) continue;
+      // Asked again: the schedule may have been switched off while the one
+      // before it ran.
+      if (!r.scheduleDue(login.schedule, { lastDay: login.lastScheduledDay, from: login.scheduleFrom }, today, hour)) continue;
+      writeRun(id, { lastScheduledDay: today });
+      ran += 1;
+      try {
+        await runRetrieval(robotRequest(login.orgId, '/api/retrieve/schedule'), id, '', { scheduled: true });
+      } catch (err) {
+        failRun(id, '', err, true);
+      }
+    }
+  } finally {
+    clockBusy = false;
+  }
+  return ran;
+}
+
+export function startRetrieveClock(): void {
+  const tick = () => void runDueRetrievals().catch((err) => console.error('[retrieve] schedule failed', err));
+  setTimeout(tick, 60_000).unref();
+  setInterval(tick, 5 * 60_000).unref();
+}
