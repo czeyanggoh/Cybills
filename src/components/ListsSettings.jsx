@@ -156,11 +156,14 @@ function CategoryDescriptionCell({ category, orgId, onSaved }) {
   );
   return (
     <div>
-      <input
+      {/* One line tall, like the input it replaced, with the corner handle to
+          drag it taller for a description that runs long. */}
+      <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         placeholder="Add a description…"
-        className="h-8 w-full rounded-md border bg-background px-2.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        rows={1}
+        className="block min-h-[32px] w-full resize-y rounded-md border bg-background px-2.5 py-1.5 text-[13px] leading-[18px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       {error ? (
         <p className="mt-1 text-xs text-destructive">{error}</p>
