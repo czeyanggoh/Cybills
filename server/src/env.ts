@@ -155,6 +155,17 @@ export const env = {
   // delivery was answered before the call went out.
   N8N_TIMEOUT_MS: Number(process.env.N8N_TIMEOUT_MS) || 120000,
 
+  // --- Retrieve: signing into a supplier's portal for its invoices ----------
+  // Costs -> Retrieve keeps an entity's login for a portal (SP Group's, say)
+  // and hands it to THIS webhook, which signs in and answers with the
+  // invoices in the same shapes N8N_FETCH_URL does. A different workflow from
+  // the link fetch, so a different URL; N8N_API_KEY is shared. Unset, the
+  // logins can still be saved and nothing is retrieved. See deploy/RETRIEVE.md.
+  N8N_RETRIEVE_URL: process.env.N8N_RETRIEVE_URL ?? '',
+  // A sign-in, an OTP-less portal crawl and a few downloads take minutes, and
+  // the page polls rather than waiting on the request.
+  N8N_RETRIEVE_TIMEOUT_MS: Number(process.env.N8N_RETRIEVE_TIMEOUT_MS) || 300000,
+
   // --- Google Drive folders (a third road in) --------------------------------
   // A person shares a folder in their own Drive with CYBills' ROBOT — a Google
   // service account — and whatever is saved into it is filed under them. A

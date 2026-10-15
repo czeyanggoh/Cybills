@@ -15,6 +15,7 @@ import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
 import Whatsapp from './pages/Whatsapp';
 import Email from './pages/Email';
+import Retrieve from './pages/Retrieve';
 import Customers from './pages/Customers';
 import Exports from './pages/Exports';
 import Bank from './pages/Bank';
@@ -63,6 +64,9 @@ function App() {
             <Route path="/join" element={<RequireSignedIn><Join /></RequireSignedIn>} />
             <Route path="/costs" element={<Protected><Costs /></Protected>} />
             <Route path="/costs/exports" element={<Protected><Exports workspace="costs" /></Protected>} />
+            {/* Supplier-portal logins CYBills signs into for their invoices. The
+                entity's credentials, so Business Admin, as on the server. */}
+            <Route path="/costs/retrieve" element={<RequireBusinessAdmin><Retrieve /></RequireBusinessAdmin>} />
             <Route path="/costs/:id" element={<Protected><CostDetail /></Protected>} />
             <Route path="/sales" element={<SalesRoute><Sales /></SalesRoute>} />
             <Route path="/sales/exports" element={<SalesRoute><Exports workspace="sales" /></SalesRoute>} />

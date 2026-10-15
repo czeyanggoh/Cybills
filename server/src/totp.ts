@@ -167,13 +167,16 @@ export function spendRecovery(hashes: string[], typed: string): string[] | null 
 //
 // The trade is the same one mailAccount.ts makes and says out loud: changing
 // SESSION_SECRET makes the sealed secrets unreadable, and everybody re-enrols.
-function sealKey(): Buffer | null {
+//
+// `purpose` salts the key, so a secret sealed for one use cannot be opened as
+// another's: a supplier-portal password (retrieve.ts) is sealed under its own.
+function sealKey(purpose: string): Buffer | null {
   if (!env.SESSION_SECRET) return null; // dev/mock: nothing to derive from
-  return scryptSync(env.SESSION_SECRET, 'cybills-totp-secret', 32);
+  return scryptSync(env.SESSION_SECRET, purpose, 32);
 }
 
-export function sealSecret(plain: string): string {
-  const k = sealKey();
+export function sealSecret(plain: string, purpose = 'cybills-totp-secret'): string {
+  const k = sealKey(purpose);
   if (!k) return `plain:${plain}`; // local dev only — prod always has a secret
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', k, iv);
@@ -181,12 +184,12 @@ export function sealSecret(plain: string): string {
   return `v1:${iv.toString('base64url')}:${cipher.getAuthTag().toString('base64url')}:${enc.toString('base64url')}`;
 }
 
-export function openSecret(sealed: string): string {
+export function openSecret(sealed: string, purpose = 'cybills-totp-secret'): string {
   const text = String(sealed ?? '');
   if (!text) return '';
   if (text.startsWith('plain:')) return text.slice(6);
   const [version, iv, tag, payload] = text.split(':');
-  const k = sealKey();
+  const k = sealKey(purpose);
   if (version !== 'v1' || !iv || !tag || !payload || !k) return '';
   try {
     const d = createDecipheriv('aes-256-gcm', k, Buffer.from(iv, 'base64url'));

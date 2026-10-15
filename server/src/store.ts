@@ -127,6 +127,21 @@ export type Bill = {
     /** When the file appeared in Drive, as Drive states it. */
     addedAt: string;
   };
+  // The supplier portal a document was RETRIEVED from — Costs -> Retrieve
+  // signed in with the entity's saved login and n8n downloaded it. The fourth
+  // envelope: what it records is which login fetched it, so "where did this
+  // come from?" has an answer. Not EDITABLE, like `drive`.
+  retrieved?: {
+    /** The saved login (retrieve.ts) it was fetched with. */
+    loginId: string;
+    portal: string;
+    portalName: string;
+    /** Who the portal was signed into as — the username, never the password. */
+    username: string;
+    /** The document's own number, as the workflow reported it. */
+    reference: string;
+    at: string;
+  };
   taxRate?: string; // GST/tax-rate name, e.g. "Standard-Rated Purchases" (9%)
   taxRateReason?: string; // why that tax code — the "when to use" rule it matched
   // A PERSON chose to leave the tax rate blank. An empty `taxRate` on its own

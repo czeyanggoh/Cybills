@@ -24,7 +24,15 @@ import { sniffMediaType, type ReaderMedia } from './mediaType.js';
 /** Whether a link can be followed at all. Unset, the road is simply not there. */
 export const n8nEnabled = (): boolean => Boolean(String(env.N8N_FETCH_URL || '').trim());
 
-export type FetchedDocument = { bytes: Buffer; fileName: string; mediaType: ReaderMedia };
+export type FetchedDocument = {
+  bytes: Buffer;
+  fileName: string;
+  mediaType: ReaderMedia;
+  /** The document's own number, where the workflow said it (a portal lists
+   *  invoices by number). What a retrieval dedupes on, since a portal often
+   *  regenerates the same invoice's PDF with a new timestamp in it. */
+  reference?: string;
+};
 
 export type LinkFetchResult = {
   documents: FetchedDocument[];
@@ -194,7 +202,13 @@ function documentFrom(o: Record<string, unknown>, link: string): FetchedDocument
   if (!bytes || bytes.length > MAX_BYTES) return null;
   const mediaType = sniffMediaType(bytes);
   if (!mediaType) return null;
-  return { bytes, fileName: nameFor(pick(o, NAME_KEYS), link, mediaType), mediaType };
+  const reference = pick(o, ['invoice_number', 'invoiceNumber', 'document_number', 'documentNumber', 'reference']);
+  return {
+    bytes,
+    fileName: nameFor(pick(o, NAME_KEYS), link, mediaType),
+    mediaType,
+    ...(reference ? { reference: reference.slice(0, 120) } : {}),
+  };
 }
 
 /**
@@ -275,6 +289,18 @@ export async function fetchDocumentsForLinks(
     return { documents: [], note: `n8n could not be reached (${why})`, attempted: true };
   }
 
+  return readDocumentsReply(res, links[0]);
+}
+
+/**
+ * What a workflow handed back, as documents — or the reason there are none.
+ *
+ * Shared by the two roads that ask n8n for paper: a link in an email
+ * (`fetchDocumentsForLinks`) and a supplier portal signed into on an entity's
+ * behalf (retrieve.ts). Both workflows answer in the same shapes, and the same
+ * rule holds on both: the BYTES decide what a file is.
+ */
+export async function readDocumentsReply(res: Response, link: string): Promise<LinkFetchResult> {
   if (!res.ok) {
     // A workflow that refuses says why in a field — CYBM's Invoice Fetch
     // answers 500 with `{ ok: false, error: … }` — so the sentence a reviewer
@@ -298,7 +324,7 @@ export async function fetchDocumentsForLinks(
   if (contentType.includes('json')) {
     const data = await res.json().catch(() => null);
     for (const item of itemsIn(data)) {
-      const doc = documentFrom(item, links[0]);
+      const doc = documentFrom(item, link);
       if (doc && !documents.some((d) => d.bytes.equals(doc.bytes))) documents.push(doc);
     }
     if (!documents.length) {
@@ -319,12 +345,12 @@ export async function fetchDocumentsForLinks(
     const bytes = Buffer.from(await res.arrayBuffer().catch(() => new ArrayBuffer(0)));
     const disposition = String(res.headers.get('content-disposition') || '');
     const named = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)?.[1] || '';
-    const doc = documentFrom({ base64: bytes.toString('base64'), fileName: named }, links[0]);
+    const doc = documentFrom({ base64: bytes.toString('base64'), fileName: named }, link);
     if (!doc) {
       const label = contentType.split(';')[0] || 'an unrecognised type';
       return {
         documents,
-        note: `n8n returned ${label} rather than a document — the link probably needs a login n8n could not complete`,
+        note: `n8n returned ${label} rather than a document — probably a login page n8n could not get past`,
         attempted: true,
       };
     }

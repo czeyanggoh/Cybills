@@ -9,6 +9,7 @@ import { extractRouter, vaultRouter } from './extract.js';
 import { billsRouter } from './bills.js';
 import { inboundRouter } from './inbound.js';
 import { emailRouter } from './email.js';
+import { retrieveRouter } from './retrieve.js';
 import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { claimsRouter } from './claims.js';
@@ -182,6 +183,10 @@ app.use('/api/inbound', inboundRouter);
 // mail PRODUCED; this shows what arrived — including the mail that produced
 // nothing, which is the half nobody could see before.
 app.use('/api/email', emailRouter);
+// Costs -> Retrieve: the entity's supplier-portal logins (sealed) and the
+// background run that hands one to n8n to sign in and download the invoices.
+// Business Admin; see retrieve.ts.
+app.use('/api/retrieve', retrieveRouter);
 
 // Bill collection over WhatsApp, in partnership with CYWorkspace: asking it for
 // a group per submission, and receiving the supplier bills its classifier

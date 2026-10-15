@@ -2,6 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useCostsCounts } from '@/lib/costsData';
 import { useClaims, pendingApprovalsFor } from '@/lib/claimStore';
 import { useAuth } from '@/lib/auth';
+import { canManageBusiness } from '@/lib/userStore';
 import { isItemKey } from '@/lib/bills';
 import { cn } from '@/lib/utils';
 
@@ -10,7 +11,7 @@ export default function CostsSubnav() {
   const { pathname } = useLocation();
   const counts = useCostsCounts();
   const claims = useClaims();
-  const { user } = useAuth();
+  const { user, membership, googleEnabled } = useAuth();
   // Claims awaiting the signed-in user's approval — shown as a red badge so a
   // pending approval stays visible even after the reminder banner is dismissed.
   const pendingApprovals = pendingApprovalsFor(claims, user).length;
@@ -27,6 +28,7 @@ export default function CostsSubnav() {
         pathname === '/costs' ||
         (pathname.startsWith('/costs/') &&
           pathname !== '/costs/exports' &&
+          pathname !== '/costs/retrieve' &&
           !itemInClaim)
       );
     }
@@ -43,6 +45,9 @@ export default function CostsSubnav() {
     { label: 'Costs inbox', count: counts.costs, to: '/costs' },
     { label: 'Expense claims', count: counts.expenseClaims, pending: pendingApprovals, to: '/expense-claims' },
     { label: 'Supplier statements', to: '/supplier-statements' },
+    // Supplier-portal logins — the entity's own credentials, so offered to the
+    // Business Admin the route is guarded for.
+    ...(canManageBusiness(membership, googleEnabled) ? [{ label: 'Retrieve', to: '/costs/retrieve' }] : []),
     { label: 'Exports', to: '/costs/exports' },
   ];
 

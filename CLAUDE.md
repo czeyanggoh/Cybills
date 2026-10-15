@@ -2408,6 +2408,41 @@ real HTTP at both ends — the inbound endpoint as the Worker calls it, and a st
 standing in for n8n — so what is asserted is the request that actually goes out
 and the bytes that actually come back).
 
+## Retrieve: signing into a supplier's portal (Costs -> Retrieve)
+
+**Some suppliers never send the bill**, and SP Group is the case that prompted
+this: the invoice waits on the customer portal until somebody signs in. The link
+road above holds no credentials, and still doesn't. Retrieve is the deliberate
+exception, scoped to one entity's own logins. An entity keeps one login per
+portal account (`portal-logins`, `server/src/retrieve.ts`), and **Retrieve now**
+hands it to a SECOND n8n workflow (`N8N_RETRIEVE_URL`, `N8N_API_KEY` shared).
+That workflow signs in and answers in the shapes the link fetch already reads.
+`readDocumentsReply` (`n8n.ts`) is that parser, shared by both roads, so the
+bytes decide here too and a sign-in page is never filed. What comes back is
+filed as a cost (`retrieved` on the bill: portal, login, username, invoice
+number, never the password) and read by `autoRead` like an upload.
+
+**The password is the care.** It is sealed at rest under its own purpose
+(`sealSecret(…, 'cybills-portal-login')`, the TOTP arrangement with a separate
+salt). It is never in a listing, a reply or a log. Only the one request to n8n
+carries it. A blank password on an edit keeps the sealed one, since it is never
+shown and so cannot be sent back. Deleting a login deletes it outright: a sealed
+credential is not something to soft-delete. Business Admin on the route and the
+page (the Costs sub-nav offers it only to them). Changing `SESSION_SECRET`
+makes saved passwords unreadable, and the run says to enter them again.
+
+**A run is a background job** (`202`, the page polls), because a portal sign-in
+outlasts a proxy's timeout. A run that never reports back is shown failed after
+the timeout plus two minutes. **Retrieve all** queues the entity's logins one at
+a time. **Filed once**: a login's ledger (`filed`) skips the same bytes OR the
+same invoice number (portals regenerate PDFs), and so does a file the entity
+already holds. `known_references` tells n8n what to skip. The portal list
+(`PORTALS`) is SP Group plus "Another portal" with its own https sign-in page:
+a portal is offered only where the workflow can have a recipe for it. Contract:
+`deploy/RETRIEVE.md`. Covered by `npm test` in `server/`
+(`test/portal-retrieve.test.mts`, over real HTTP against a stub n8n). Not yet:
+running on a schedule; a portal that asks for an OTP.
+
 ## Bill collection through a Google Drive folder
 
 The third road a document travels without anybody signing in, and the same
