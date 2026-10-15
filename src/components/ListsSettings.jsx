@@ -160,7 +160,7 @@ function CategoryDescriptionCell({ category, orgId, onSaved }) {
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         placeholder="Add a description…"
-        className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-8 w-full rounded-md border bg-background px-2.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       {error ? (
         <p className="mt-1 text-xs text-destructive">{error}</p>
@@ -224,18 +224,27 @@ function CategoriesFromXero({ side = 'cost' }) {
         </div>
       </div>
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[620px] text-sm">
+        {/* Fixed widths: the NAME is what somebody scans this list by, so it
+            gets a real share of the row (two-fifths) rather than whatever the
+            description input leaves over, which wrapped "Service income -
+            Synsam" onto three lines. */}
+        <table className="w-full min-w-[680px] table-fixed text-[13px]">
+          <colgroup>
+            <col className="w-24" />
+            <col className="w-[40%]" />
+            <col />
+            <col className="w-28" />
+          </colgroup>
           <thead className="border-b bg-muted/40 text-left text-muted-foreground">
-            {/* Description is the greedy column (w-full) so it fills the row; the
-                others shrink to their content. */}
-            <tr><th className="whitespace-nowrap px-3 py-2.5 font-medium">Code</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Name</th><th className="w-full px-3 py-2.5 font-medium">Description</th><th className="whitespace-nowrap px-3 py-2.5 font-medium">Visible</th></tr>
+            <tr><th className="whitespace-nowrap px-3 py-2 font-medium">Code</th><th className="whitespace-nowrap px-3 py-2 font-medium">Name</th><th className="px-3 py-2 font-medium">Description</th><th className="whitespace-nowrap px-3 py-2 font-medium">Visible</th></tr>
           </thead>
           <tbody>
             {rows.map((c) => (
               <tr key={c.id} className="border-b align-top last:border-0 hover:bg-muted/40">
-                <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{c.code || '—'}</td>
-                <td className="px-3 py-3 font-medium">{c.name}</td>
-                <td className="px-3 py-2">
+                {/* Paddings centre each cell's first line on the 32px input. */}
+                <td className="px-3 py-3.5 font-mono text-xs leading-4 text-muted-foreground">{c.code || '—'}</td>
+                <td className="break-words px-3 py-3 font-medium leading-5">{c.name}</td>
+                <td className="px-3 py-1.5">
                   <CategoryDescriptionCell category={c} orgId={orgId} onSaved={adopt} />
                 </td>
                 <td className="px-3 py-3">
