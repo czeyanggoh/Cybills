@@ -362,9 +362,13 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
   const { pathname } = useLocation();
   const users = useUsers();
   const settings = useExtractionSettings();
-  const visibleTaxRates = useVisibleTaxRates();
+  // Each workspace's own codes: purchase codes for a cost, supply (output)
+  // codes for a sales document — picked per upload below, by its tab.
+  const costTaxRates = useVisibleTaxRates('cost');
+  const salesTaxRates = useVisibleTaxRates('sales');
   // Unfiltered too — a switched-off code is still the standard one for its rate.
-  const allTaxRates = useManagedTaxRates();
+  const allCostTaxRates = useManagedTaxRates('cost');
+  const allSalesTaxRates = useManagedTaxRates('sales');
   const gstRegistered = useGstRegistered();
   const [tab, setTab] = useState('Costs');
   // An entity that has hidden the Sales workspace has nowhere to put a sales
@@ -456,6 +460,8 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
     // categorisation/extraction and no Processing step; they land straight in
     // their own list.
     const isStatement = kind === 'supplier_statement';
+    const visibleTaxRates = kind === 'sales' ? salesTaxRates : costTaxRates;
+    const allTaxRates = kind === 'sales' ? allSalesTaxRates : allCostTaxRates;
 
     // Apply the Business settings → Extraction defaults to a freshly-created
     // cost/sales doc: default tax rate (only when extraction didn't read one),

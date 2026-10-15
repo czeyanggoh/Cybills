@@ -483,10 +483,17 @@ export async function accountsForOrg(ws: string, orgId: string): Promise<XeroAcc
   }
 }
 
-// The linked org's ACTIVE purchase tax rates, shaped the way the client's
-// managed list shapes them ({name, code, rate}) so the shared tax-code decision
-// (src/lib/taxRateRules.js) reads them identically wherever it is called from.
-export async function taxRatesForOrg(ws: string, orgId: string): Promise<Array<{ name: string; code: string; rate: number }>> {
+// The linked org's ACTIVE tax rates for one side of the ledger, shaped the way
+// the client's managed list shapes them ({name, code, rate}) so the shared
+// tax-code decision (src/lib/taxRateRules.js) reads them identically wherever
+// it is called from. 'cost' (the default) is the purchase codes, 'sales' the
+// supply codes — Xero's own CanApplyToExpenses / CanApplyToRevenue — and 'all'
+// both, for a lookup BY NAME that must find a sales invoice's output code too.
+export async function taxRatesForOrg(
+  ws: string,
+  orgId: string,
+  side: 'cost' | 'sales' | 'all' = 'cost'
+): Promise<Array<{ name: string; code: string; rate: number }>> {
   if (!xeroEnabled || !orgId) return [];
   const organisation = getOrganisation(ws, orgId);
   // No organisation, or a standalone one with no Xero of its own. Explicit,
@@ -497,7 +504,7 @@ export async function taxRatesForOrg(ws: string, orgId: string): Promise<Array<{
     const result = await referenceRead('TaxRates', organisation.tenantId, undefined, { allowStale: false });
     if (!result.ok) return [];
     return (result.data?.TaxRates ?? [])
-      .filter((t: any) => t.Status === 'ACTIVE' && t.CanApplyToExpenses !== false)
+      .filter((t: any) => t.Status === 'ACTIVE' && taxRateOnSide(t, side))
       .map((t: any) => ({ name: String(t.Name ?? ''), code: String(t.TaxType ?? ''), rate: Number(t.EffectiveRate) || 0 }))
       .filter((t: any) => t.name);
   } catch {
@@ -626,8 +633,18 @@ xeroRouter.get('/organisations/:id/payment-methods', async (req, res) => {
   res.json({ paymentMethods: methods });
 });
 
-// GET /api/xero/organisations/:id/taxrates — active tax rates usable on
-// purchases in the linked Xero org.
+// Whether a Xero tax rate applies to that side of the ledger. Only an explicit
+// `false` excludes, as before: a rate Xero says nothing about is offered.
+function taxRateOnSide(t: any, side: 'cost' | 'sales' | 'all'): boolean {
+  if (side === 'all') return true;
+  return side === 'sales' ? t.CanApplyToRevenue !== false : t.CanApplyToExpenses !== false;
+}
+
+// GET /api/xero/organisations/:id/taxrates — the linked Xero org's active tax
+// rates, BOTH sides, each saying which it applies to (`expenses` / `revenue`).
+// The pickers split them: purchases offer the input codes, Sales the output
+// ones. Both in one answer because the publish dialog and the bulk publish
+// resolve a document's code BY NAME, and a sales invoice's is an output code.
 xeroRouter.get('/organisations/:id/taxrates', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
@@ -635,8 +652,14 @@ xeroRouter.get('/organisations/:id/taxrates', async (req, res) => {
   const result = await referenceRead('TaxRates', organisation.tenantId);
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
   const taxRates = (result.data?.TaxRates ?? [])
-    .filter((t: any) => t.Status === 'ACTIVE' && t.CanApplyToExpenses !== false)
-    .map((t: any) => ({ name: t.Name, taxType: t.TaxType, rate: t.EffectiveRate ?? 0 }));
+    .filter((t: any) => t.Status === 'ACTIVE')
+    .map((t: any) => ({
+      name: t.Name,
+      taxType: t.TaxType,
+      rate: t.EffectiveRate ?? 0,
+      expenses: t.CanApplyToExpenses !== false,
+      revenue: t.CanApplyToRevenue !== false,
+    }));
   res.json({ taxRates });
 });
 
@@ -729,18 +752,22 @@ xeroRouter.get('/organisations/:id/tracking', async (req, res) => {
 });
 
 const EXPENSE_TYPES = new Set(['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS']);
+const REVENUE_TYPES = new Set(['REVENUE', 'SALES', 'OTHERINCOME']);
 
 // GET /api/xero/organisations/:id/categories — the org's Xero expense accounts
 // with their AccountID + editable Description, for Business settings → Lists →
 // Categories (where the Description can be edited and pushed back to Xero).
+// `?kind=sales` is the other half of the chart — the revenue accounts a sales
+// invoice is coded from — for the same list's Sales side.
 xeroRouter.get('/organisations/:id/categories', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
   const result = await referenceRead('Accounts', organisation.tenantId, { where: 'Status=="ACTIVE"' });
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
+  const types = req.query.kind === 'sales' ? REVENUE_TYPES : EXPENSE_TYPES;
   const categories = (result.data?.Accounts ?? [])
-    .filter((a: any) => a.AccountID && EXPENSE_TYPES.has(String(a.Type).toUpperCase()))
+    .filter((a: any) => a.AccountID && types.has(String(a.Type).toUpperCase()))
     .map((a: any) => ({ id: a.AccountID, code: a.Code ?? '', name: a.Name ?? '', description: a.Description ?? '' }));
   res.json({ categories });
 });
@@ -1674,7 +1701,9 @@ export async function postingCodesFor(
   orgId: string,
   bill: Bill
 ): Promise<PostingCodes> {
-  const [accounts, rates] = await Promise.all([accountsForOrg(ws, orgId), taxRatesForOrg(ws, orgId)]);
+  // Both sides: the name a sales invoice carries is an OUTPUT code, which a
+  // purchase-only list would miss and quietly post under the account default.
+  const [accounts, rates] = await Promise.all([accountsForOrg(ws, orgId), taxRatesForOrg(ws, orgId, 'all')]);
   return postingCodesFrom(bill, accounts, rates);
 }
 

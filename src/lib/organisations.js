@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
+import { taxRatesForSide } from '@/lib/taxRateRules';
 import { getHiddenSet, getAddedRows, getMeta, useHiddenSet, useCategoryListOptions, getVisibleCategoryNames, LISTS_EVENT, SEED_TAX_RATES } from '@/lib/listsStore';
 import { useCustomCategories } from '@/lib/customCategories';
 import { useCategorySortMode, sortCategories } from '@/lib/categoryDisplay';
@@ -376,9 +377,9 @@ export function useXeroCustomers() {
   return (data ?? []).map((c) => c.name).filter(Boolean);
 }
 
-// Purchase tax-rate options straight from the active org's Xero, with each rate's
-// %. Returns { options: string[], rateFor: (name) => number }. Falls back to the
-// caller's list when Xero isn't connected.
+// Every ACTIVE tax rate straight from the active org's Xero, each saying which
+// side of the ledger it applies to (`expenses` / `revenue`, Xero's own
+// CanApplyToExpenses / CanApplyToRevenue). Empty when Xero isn't connected.
 export function useXeroPurchaseTaxRates() {
   const orgId = useActiveOrgId();
   const { data } = useQuery({
@@ -393,12 +394,18 @@ export function useXeroPurchaseTaxRates() {
 
 // The ONE managed tax-rate list, shared by Business settings → Lists → Tax rates
 // AND every cost/sales tax-rate picker. Source = the linked org's LIVE Xero
-// purchase tax rates (fallback: the bundled Singapore seed when Xero isn't
-// connected), plus any manually-added rates. Each row is annotated `visible`
-// from the managed hidden-set, keyed by NAME — so switching a rate off in the
-// list removes it from every picker. (Previously the list showed the seed while
-// the pickers showed the fuller Xero set, so visibility toggles never matched.)
-export function useManagedTaxRates() {
+// tax rates (fallback: the bundled Singapore seed when Xero isn't connected),
+// plus any manually-added rates. Each row is annotated `visible` from the
+// managed hidden-set, keyed by NAME — so switching a rate off in the list
+// removes it from every picker. (Previously the list showed the seed while the
+// pickers showed the fuller Xero set, so visibility toggles never matched.)
+//
+// `kind` is the side of the ledger the picker is for: 'cost' (the default)
+// offers the PURCHASE codes, 'sales' the SUPPLY (output) codes, 'all' both —
+// Lists itself, where one name has one visibility whichever side uses it. A
+// sales invoice coded "Standard-Rated Purchases" would claim input tax on a
+// supply, so each side is offered only the codes Xero says apply to it.
+export function useManagedTaxRates(kind = 'cost') {
   const xero = useXeroPurchaseTaxRates();
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -408,31 +415,40 @@ export function useManagedTaxRates() {
   }, []);
   return useMemo(() => {
     void tick; // re-run when the managed list changes
-    return mergeManagedTaxRates(xero);
-  }, [xero, tick]);
+    return taxRatesForSide(mergeManagedTaxRates(xero), kind);
+  }, [xero, tick, kind]);
 }
 
 // The merge itself, free of React so the upload path (getExtractionTaxRates) and
 // the hook can't drift apart. `xero` is the live relay list ([{name, taxType,
-// rate}]); empty falls back to the bundled seed.
+// rate, expenses, revenue}]); empty falls back to the bundled seed.
 function mergeManagedTaxRates(xero) {
   const hidden = getHiddenSet('taxRates');
   const meta = getMeta('taxRates'); // per-rate "when to use" rules, keyed by name
+  const sides = (t) => ({
+    expenses: typeof t.expenses === 'boolean' ? t.expenses : undefined,
+    revenue: typeof t.revenue === 'boolean' ? t.revenue : undefined,
+  });
   const base = xero.length
-    ? xero.map((t) => ({ name: t.name, code: t.taxType || '', rate: Number(t.rate) || 0 }))
+    ? xero.map((t) => ({ name: t.name, code: t.taxType || '', rate: Number(t.rate) || 0, ...sides(t) }))
     : SEED_TAX_RATES.map((t) => ({ name: t.name, code: t.code, rate: Number(t.rate) || 0 }));
-  const added = getAddedRows('taxRates').map((a) => ({ name: a.name, code: a.code || '', rate: Number(a.rate) || 0 }));
+  // A rate added by hand says which side it was added on, where it was added
+  // from one; older rows are read by their code (taxRateSide).
+  const addedSide = (a) =>
+    a.side === 'sales' ? { expenses: false, revenue: true } : a.side === 'cost' ? { expenses: true, revenue: false } : {};
+  const added = getAddedRows('taxRates').map((a) => ({ name: a.name, code: a.code || '', rate: Number(a.rate) || 0, ...addedSide(a) }));
   const seen = new Set();
   return [...base, ...added]
     .filter((t) => t.name && !seen.has(t.name) && seen.add(t.name))
     .map((t) => ({ ...t, id: t.name, visible: !hidden.has(t.name), rules: meta[t.name]?.rules || '' }));
 }
 
-// Just the visible rates (what the pickers offer). Each carries its `rules`
-// string — the org's own note on when that code applies, which rides along to
-// the extractor so it can pick codes arithmetic can't reach.
-export function useVisibleTaxRates() {
-  return useManagedTaxRates().filter((t) => t.visible);
+// Just the visible rates (what the pickers offer), for one side of the ledger
+// (see useManagedTaxRates). Each carries its `rules` string — the org's own
+// note on when that code applies, which rides along to the extractor so it can
+// pick codes arithmetic can't reach.
+export function useVisibleTaxRates(kind = 'cost') {
+  return useManagedTaxRates(kind).filter((t) => t.visible);
 }
 
 // Payment-method dropdown options: the linked org's Xero accounts a payment can
@@ -491,14 +507,16 @@ export function useXeroProjectOptions(index = 0) {
 
 // The org's Xero expense accounts (with AccountID + Description) — the editable
 // Categories list. Category = a Xero account; its Description syncs to Xero.
-export function fetchXeroCategories(organisationId) {
-  return getJson(`/api/xero/organisations/${organisationId}/categories`).then((b) => b.categories ?? []);
+// `kind` 'sales' is the revenue accounts instead — what Sales is coded from.
+export function fetchXeroCategories(organisationId, kind = 'cost') {
+  const q = kind === 'sales' ? '?kind=sales' : '';
+  return getJson(`/api/xero/organisations/${organisationId}/categories${q}`).then((b) => b.categories ?? []);
 }
 
-export function useXeroCategories(organisationId) {
+export function useXeroCategories(organisationId, kind = 'cost') {
   return useQuery({
-    queryKey: ['xero-categories', organisationId],
-    queryFn: () => fetchXeroCategories(organisationId),
+    queryKey: ['xero-categories', organisationId, kind],
+    queryFn: () => fetchXeroCategories(organisationId, kind),
     enabled: Boolean(organisationId),
     staleTime: 5 * 60 * 1000,
     retry: false,
@@ -552,8 +570,10 @@ export async function getExtractionAccounts(kind = 'cost') {
     // classify a document into an account the user has retired.
     const hidden = getHiddenSet('categories');
     const shown = accounts.filter((a) => !hidden.has(a.code || a.name));
-    const side = accountsForKind(shown, kind);
-    const list = (side.length ? side : shown).map((a) => ({
+    // The whole chart only when it has NO account on this side at all — not
+    // because every one of them was switched off in Lists, which is a choice.
+    const side = accountsForKind(accounts, kind).length ? accountsForKind(shown, kind) : shown;
+    const list = side.map((a) => ({
       code: a.code,
       name: a.name,
       description: a.description || '',
@@ -585,7 +605,7 @@ export async function getExtractionCategories() {
 // The visible tax rates for the upload path (fetchExtract), where hooks aren't
 // available. Same list the pickers show, each carrying its "when to use" rules.
 // Must never throw — any failure yields the seed-backed list.
-export async function getExtractionTaxRates() {
+export async function getExtractionTaxRates(kind = 'cost') {
   const orgId = await resolveCategorisationOrgId();
   let live = [];
   if (orgId) {
@@ -595,7 +615,7 @@ export async function getExtractionTaxRates() {
       live = [];
     }
   }
-  return mergeManagedTaxRates(live).filter((t) => t.visible);
+  return taxRatesForSide(mergeManagedTaxRates(live), kind).filter((t) => t.visible);
 }
 
 // The customers a cost can be recharged to, for the upload path (fetchExtract),
@@ -670,9 +690,12 @@ export function useCategoryOptions(kind = 'cost') {
   const hidden = useHiddenSet('categories');
   const shown = (data ?? []).filter((a) => !hidden.has(a.code || a.name));
   const side = accountsForKind(shown, kind);
+  // A chart with this side's accounts all switched off in Lists offers none of
+  // them — that is what switching them off says — rather than the other half.
+  const sideHidden = !side.length && accountsForKind(data ?? [], kind).length > 0;
   const labels = standalone
     ? listNames
-    : side.length
+    : side.length || sideHidden
       ? side.map(accountLabel)
       : kind === 'sales' && shown.length
         ? shown.map(accountLabel)

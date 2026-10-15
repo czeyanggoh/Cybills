@@ -172,6 +172,46 @@ export function noTaxRateName(rates) {
   return row ? row.name : '';
 }
 
+// --- Which side of the ledger a code is for ---------------------------------
+// A purchase is coded with an INPUT code and a supply with an OUTPUT one, and
+// the two are not interchangeable: a sales invoice under "Standard-Rated
+// Purchases" claims input tax on a supply. Xero says which side each rate
+// applies to (CanApplyToExpenses / CanApplyToRevenue, carried as `expenses` /
+// `revenue`), and where it has said, that is the answer. Where it hasn't — the
+// bundled seed, a rate added by hand, an older server — the code says it:
+// Xero's Singapore supply codes all carry OUTPUT (OUTPUTY24, DSOUTPUTY24,
+// OSOUTPUT2, ZERORATEDOUTPUT) or are the bad-debt RECOVERY, No Tax is both, and
+// everything else is a purchase code. A row with no code at all is read by its
+// name, and offered on both sides when even that says nothing.
+const SUPPLY_CODE = /OUTPUT|BADDEBTRECOVERY/i;
+const SUPPLY_NAME = /\bsuppl(y|ies)\b|\brecovery\b|\boutput\b/i;
+const PURCHASE_NAME = /\bpurchases?\b|\bexpenses?\b|\binput\b|\brelief\b/i;
+
+export function taxRateSide(row) {
+  const expenses = typeof row?.expenses === 'boolean' ? row.expenses : null;
+  const revenue = typeof row?.revenue === 'boolean' ? row.revenue : null;
+  if (expenses !== null || revenue !== null) {
+    return { cost: expenses !== false, sales: revenue !== false };
+  }
+  if (autoMatches(AUTO_NO_TAX, row)) return { cost: true, sales: true };
+  const code = String(row?.code || '').trim();
+  if (code) return SUPPLY_CODE.test(code) ? { cost: false, sales: true } : { cost: true, sales: false };
+  const name = String(row?.name || '');
+  if (SUPPLY_NAME.test(name)) return { cost: false, sales: true };
+  if (PURCHASE_NAME.test(name)) return { cost: true, sales: false };
+  return { cost: true, sales: true };
+}
+
+// The rates a picker for one side should offer: 'cost' (purchases), 'sales'
+// (supplies), or 'all' for both. Anything else is read as 'cost', the side
+// every picker offered before the two were told apart.
+export function taxRatesForSide(rates, kind = 'cost') {
+  const list = Array.isArray(rates) ? rates : [];
+  if (kind === 'all') return list;
+  const side = kind === 'sales' ? 'sales' : 'cost';
+  return list.filter((r) => taxRateSide(r)[side]);
+}
+
 // Which tax code this document gets, and the sentence that says why — including
 // when the answer is "none", which used to be a silent blank field with nothing
 // to act on.

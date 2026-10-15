@@ -340,24 +340,24 @@ export default function CostDetail() {
   // Customers come from the active org's (CYBM) live Xero customer contacts.
   const customerOptions = useXeroCustomers();
   const paymentMethods = useXeroPaymentMethods();
-  // GST/tax rates for purchases (Costs) — one managed list shared with Business
-  // settings → Lists → Tax rates: the live Xero rates (seed fallback), showing
-  // only the rates left Visible there. `rateFor` gives the % for the tax math.
-  const taxRateSource = useVisibleTaxRates();
-  // The unfiltered list too: a code switched off in Lists is still the standard
-  // one for its rate, and this is how the org's own name for it is found.
-  const allTaxRates = useManagedTaxRates();
+  // GST/tax rates — one managed list shared with Business settings → Lists →
+  // Tax rates: the live Xero rates (seed fallback), showing only the rates left
+  // Visible there, for each side of the ledger. A cost is offered the purchase
+  // codes and a sale the supply (output) codes; which applies is only known
+  // once the document is (see `isSales` below). `rateFor` gives the % for the
+  // tax math.
+  const costTaxRates = useVisibleTaxRates('cost');
+  const salesTaxRates = useVisibleTaxRates('sales');
+  // The unfiltered lists too: a code switched off in Lists is still the
+  // standard one for its rate, and this is how the org's own name for it is found.
+  const allCostTaxRates = useManagedTaxRates('cost');
+  const allSalesTaxRates = useManagedTaxRates('sales');
   // Not GST-registered → every document codes to No Tax and no GST is split out,
   // and the picker offers nothing else.
   const gstRegistered = useGstRegistered();
   const salesEnabled = useSalesEnabled();
   // The entity's own currency, and whether this document was billed in another.
   const baseCurrency = useBaseCurrency();
-  const noTaxName = noTaxRateName(taxRateSource);
-  const taxRateOptions = gstRegistered
-    ? taxRateSource.map((t) => t.name)
-    : [noTaxName].filter(Boolean);
-  const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
   const extractionSettings = useExtractionSettings();
   useSupplierRules(); // the Supplier field's rules link tracks whether a rule exists
   const [pmModalOpen, setPmModalOpen] = useState(false);
@@ -432,6 +432,13 @@ export default function CostDetail() {
   // about money going out (claims, bank match, payment proofs, prepayments,
   // paperwork match, supplier rules) is offered.
   const isSales = doc ? doc.kind === 'sales' : salesRoute;
+  const taxRateSource = isSales ? salesTaxRates : costTaxRates;
+  const allTaxRates = isSales ? allSalesTaxRates : allCostTaxRates;
+  const noTaxName = noTaxRateName(taxRateSource);
+  const taxRateOptions = gstRegistered
+    ? taxRateSource.map((t) => t.name)
+    : [noTaxName].filter(Boolean);
+  const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
   // The key everything server-side is addressed by. Falls back to the URL's key
   // while the document is still loading.
   const id = doc?.id ?? routeId;

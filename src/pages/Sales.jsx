@@ -126,7 +126,8 @@ export default function Sales() {
   const { allDocs, reload } = useSalesDocs();
   const settings = useExtractionSettings();
   const categoryOptions = useCategoryOptions('sales');
-  const taxRates = useVisibleTaxRates();
+  // The SUPPLY side's codes — a sales invoice is coded with an output code.
+  const taxRates = useVisibleTaxRates('sales');
   const gstRegistered = useGstRegistered();
   const readerName = useReaderName();
   const shortCode = useXeroShortCode();

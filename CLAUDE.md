@@ -1318,6 +1318,23 @@ picker could not offer one either. `'sales'` takes REVENUE / SALES / OTHERINCOME
 Customers page ask for it, and the publish dialog lists the side's own accounts
 first.
 
+**And a sale is offered the OUTPUT tax codes.** `/taxrates` returned only the
+rates Xero lets you use on expenses, so the Sales tax picker offered "Partially
+Exempt Traders Standard-Rated Purchases" and never "Standard-Rated Supplies".
+The route now returns every active rate with `expenses` / `revenue` (Xero's
+CanApplyToExpenses / CanApplyToRevenue), and `taxRatesForSide`
+(`taxRateRules.js`, pure, `npm test`) splits them: `useVisibleTaxRates(kind)` /
+`useManagedTaxRates(kind)` give 'cost' the purchase codes and 'sales' the supply
+codes (No Tax is both). Where Xero has said nothing — the seed, a hand-added
+rate — the code decides (`OUTPUT…`, `BADDEBTRECOVERY…` are supplies). The
+document page, the Sales list, the drawer's Sales tab, the publish dialog and
+the "Default tax rate for sales" setting all ask for the sales side, and
+`postingCodesFor` resolves a name across BOTH sides. **Lists has a Costs / Sales
+toggle** (shown where Sales is on) over Categories — the Sales half is the
+revenue accounts (`/categories?kind=sales`), each with its own Visible switch
+feeding the Sales pickers — and over Tax rates. Visibility stays keyed by code /
+name, so one switch per account or rate.
+
 **What Sales does not get**: merge detection, duplicate review, expense claims,
 bank matching, payment proofs and prepayments. Each is a question about money
 going OUT, and none can be asked of an invoice you sent.

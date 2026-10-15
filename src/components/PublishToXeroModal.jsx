@@ -15,6 +15,7 @@ import { isCreditNote, totalOk, effectiveDate, dateFromSubmission, counterpartyU
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useExtractionSettings, PUBLISH_STATUSES } from '@/lib/extractionSettings';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
+import { taxRatesForSide } from '@/lib/taxRateRules';
 import ComboSelect from '@/components/ComboSelect';
 
 // "Publish to Xero" dialog — posts a stored cost document to the linked Xero
@@ -135,13 +136,15 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
     return [...list.filter(first), ...list.filter((a) => !first(a))].map((a) => a.code);
   }, [accounts, saleSide]);
 
-  // Non-GST orgs only ever post No Tax, so that's the whole list for them.
+  // Non-GST orgs only ever post No Tax, so that's the whole list for them. The
+  // rest is the side's own codes — purchase codes for a bill, supply (output)
+  // codes for a sales invoice — the same split the document's own picker makes.
   const taxTypes = useMemo(
     () =>
-      (taxRates ?? [])
+      taxRatesForSide((taxRates ?? []).map((t) => ({ ...t, code: t.taxType })), saleSide ? 'sales' : 'cost')
         .filter((t) => gstRegistered || t.taxType === 'NONE' || /^no tax$/i.test(t.name))
         .map((t) => t.taxType),
-    [taxRates, gstRegistered]
+    [taxRates, gstRegistered, saleSide]
   );
 
   const taxRateLabel = useCallback(

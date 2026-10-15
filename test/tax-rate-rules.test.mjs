@@ -12,6 +12,8 @@ import {
   zeroTaxRate,
   splitByPrintedRate,
   linesAgreeWithTotal,
+  taxRateSide,
+  taxRatesForSide,
 } from '../src/lib/taxRateRules.js';
 
 let failures = 0;
@@ -417,6 +419,33 @@ check('noTaxRateName', [noTaxRateName(SG), noTaxRateName([]), noTaxRateName(hidd
     ask({ total: 74.67, tax: 6.17, gstRegNo: 'M8-8001588-5', gstRegNoRemembered: 'ruleOther' }).reason, "another client's supplier rule");
   const none = ask({ total: 4.5, tax: 0, gstRegNo: 'M8-8001588-5', gstRegNoRemembered: true });
   check('no tax charged, no remembered-number note', /wasn't read off/.test(none.reason), false);
+}
+
+// --- Which side of the ledger a code is for ---------------------------------
+// Sales offers the supply (output) codes and Costs the purchase ones; a sales
+// invoice under "Standard-Rated Purchases" would claim input tax on a supply.
+{
+  const names = (rows) => rows.map((r) => r.name);
+  check('Sales is offered the supply codes and No Tax',
+    names(taxRatesForSide(SG, 'sales')), ['Standard-Rated Supplies', 'No Tax']);
+  check('Costs is offered everything but the supply codes',
+    names(taxRatesForSide(SG, 'cost')).includes('Standard-Rated Supplies'), false);
+  check('…and keeps No Tax', names(taxRatesForSide(SG, 'cost')).includes('No Tax'), true);
+  check("'all' is both", taxRatesForSide(SG, 'all').length, SG.length);
+  // Xero's own flags win over the code.
+  check('Xero saying revenue-only decides it',
+    taxRateSide({ name: 'Odd', code: 'INPUTY24', expenses: false, revenue: true }), { cost: false, sales: true });
+  check('…and expenses-only too',
+    taxRateSide({ name: 'Odd', code: 'OUTPUTY24', expenses: true, revenue: false }), { cost: true, sales: false });
+  // The seed's other supply codes.
+  for (const code of ['DSOUTPUTY24', 'OSOUTPUT2', 'ZERORATEDOUTPUT', 'BADDEBTRECOVERYY24']) {
+    check(`${code} is a supply code`, taxRateSide({ name: code, code }), { cost: false, sales: true });
+  }
+  check('Bad Debt Relief is a purchase code', taxRateSide({ name: 'Bad Debt Relief', code: 'BADDEBTRELIEFY24' }), { cost: true, sales: false });
+  // A hand-added row with no code is read by its name.
+  check('no code, "Supplies" in the name', taxRateSide({ name: 'Exempt Supplies' }), { cost: false, sales: true });
+  check('no code, "Purchases" in the name', taxRateSide({ name: 'Exempt Purchases' }), { cost: true, sales: false });
+  check('no code, nothing said: both', taxRateSide({ name: 'Special' }), { cost: true, sales: true });
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

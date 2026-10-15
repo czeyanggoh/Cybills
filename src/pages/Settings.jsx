@@ -912,8 +912,10 @@ function Extraction() {
   const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setDirty(true); };
 
   // The default-tax-rate pickers offer the SAME rates the cost/sales pickers do
-  // — the visible rates from the managed Tax-rates list — plus a "None" option.
-  const taxRateOptions = ['— None —', ...useVisibleTaxRates().map((t) => t.name)];
+  // — the visible rates from the managed Tax-rates list, each for its own side
+  // (purchase codes for costs, supply codes for sales) — plus a "None" option.
+  const taxRateOptions = ['— None —', ...useVisibleTaxRates('cost').map((t) => t.name)];
+  const salesTaxRateOptions = ['— None —', ...useVisibleTaxRates('sales').map((t) => t.name)];
 
   // Card fees a bank adds on top of a card spend (UOB's 1%): which account, what
   // percent, and the account the fee posts to.
@@ -1056,7 +1058,7 @@ function Extraction() {
                 with nothing to apply to. */}
             {salesEnabled && (
               <Row label="Default tax rate for sales">
-                <SelectBox value={form.defaultTaxRateSales || '— None —'} onChange={(v) => set('defaultTaxRateSales', v === '— None —' ? '' : v)} options={taxRateOptions} />
+                <SelectBox value={form.defaultTaxRateSales || '— None —'} onChange={(v) => set('defaultTaxRateSales', v === '— None —' ? '' : v)} options={salesTaxRateOptions} />
               </Row>
             )}
           </>

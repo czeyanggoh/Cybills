@@ -8,6 +8,7 @@ import { useCategoryAccounts, setCategoryAccount } from '@/lib/categoryAccounts'
 import { useProjectLabels, useProjectLabelDefaults, setProjectLabels, singular } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import { useAutoSave } from '@/lib/useAutoSave';
+import { useSalesEnabled } from '@/lib/workspaceSettings';
 import SaveStatus from '@/components/SaveStatus';
 
 // Inner sub-nav for Business settings → Lists (mirrors Dext).
@@ -20,6 +21,41 @@ const SUBNAV = [
   { key: 'payment', label: 'Payment methods' },
   { key: 'flags', label: 'Flags' },
 ];
+
+// Which workspace's half of a list is on screen. Costs are coded from the
+// expense accounts and the purchase tax codes, Sales from the revenue accounts
+// and the supply (output) codes, so each half has its own rows and its own
+// Visible switches — and what is switched on here is what that workspace's
+// pickers offer. Drawn only where the entity has Sales switched on: a half of a
+// list for a workspace that isn't there is a control with nothing to apply to.
+const SIDES = [
+  { key: 'cost', label: 'Costs' },
+  { key: 'sales', label: 'Sales' },
+];
+
+function SideToggle({ side, setSide }) {
+  return (
+    <div className="mb-3 inline-flex rounded-md border p-0.5" role="group" aria-label="Which workspace's list to show">
+      {SIDES.map((s) => {
+        const active = side === s.key;
+        return (
+          <button
+            key={s.key}
+            type="button"
+            aria-pressed={active}
+            onClick={() => setSide(s.key)}
+            className={cn(
+              'inline-flex h-7 items-center whitespace-nowrap rounded px-3 text-sm transition-colors',
+              active ? 'bg-foreground font-medium text-background' : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {s.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function VisibleToggle({ on, onToggle }) {
   return (
@@ -138,11 +174,12 @@ function CategoryDescriptionCell({ category, orgId, onSaved }) {
 // Categories = the active org's Xero expense accounts. Each Description is
 // editable here and written straight back to Xero. Pulled live per org (so CYBM
 // shows CYBM's chart). Name/Code come from Xero and are read-only.
-function CategoriesFromXero() {
+function CategoriesFromXero({ side = 'cost' }) {
   const qc = useQueryClient();
   const { data: organisations = [] } = useOrganisations();
   const orgId = (organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0])?.id || '';
-  const { data: categories, isLoading, isError, error } = useXeroCategories(orgId);
+  const sales = side === 'sales';
+  const { data: categories, isLoading, isError, error } = useXeroCategories(orgId, side);
   const [query, setQuery] = useState('');
   // Visibility is CYBills-side (Xero has no such flag), keyed by account CODE —
   // the one field the categories endpoint and the accounts endpoint share, so a
@@ -152,7 +189,7 @@ function CategoriesFromXero() {
   // Adopt a saved description into the react-query cache so the row doesn't
   // snap back to the old text on the next render.
   const adopt = (id, description) =>
-    qc.setQueryData(['xero-categories', orgId], (prev) =>
+    qc.setQueryData(['xero-categories', orgId, side], (prev) =>
       (/** @type {any[]} */ (prev) || []).map((x) => (x.id === id ? { ...x, description } : x)));
 
   const notice = (msg) => (
@@ -174,8 +211,11 @@ function CategoriesFromXero() {
   return (
     <div>
       <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
-        Categories are your connected Xero organisation’s expense accounts. Edit a <span className="font-medium text-foreground">Description</span> and it writes straight back to Xero on its own. Switch{' '}
-        <span className="font-medium text-foreground">Visible</span> off to drop a category from the document pickers and stop CYBills coding anything to it — the account stays untouched in Xero.
+        {sales
+          ? 'Sales categories are your connected Xero organisation’s revenue accounts — the accounts a sales invoice is coded to.'
+          : 'Categories are your connected Xero organisation’s expense accounts.'}{' '}
+        Edit a <span className="font-medium text-foreground">Description</span> and it writes straight back to Xero on its own. Switch{' '}
+        <span className="font-medium text-foreground">Visible</span> off to drop a category from the {sales ? 'Sales' : 'Costs'} document pickers and stop CYBills coding anything to it — the account stays untouched in Xero.
       </p>
       <div className="mb-3 flex items-center">
         <div className="relative ml-auto">
@@ -204,7 +244,7 @@ function CategoriesFromXero() {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">No categories{q ? ' match your search' : ''}.</td></tr>
+              <tr><td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">No {sales ? 'revenue accounts' : 'categories'}{q ? ' match your search' : ''}.</td></tr>
             )}
           </tbody>
         </table>
@@ -401,11 +441,11 @@ function CategoriesFromList({ organisation }) {
 
 // Which Categories tab this entity gets: a bridge entity keeps its own list,
 // everything else reads its Xero chart.
-function Categories() {
+function Categories({ side }) {
   const { data: organisations = [] } = useOrganisations();
   const organisation = organisations.find((o) => o.id === getActiveOrganisationId()) || null;
   if (isStandaloneOrg(organisation)) return <CategoriesFromList organisation={organisation} />;
-  return <CategoriesFromXero />;
+  return <CategoriesFromXero side={side} />;
 }
 
 // The "when to use" rule for one row. Free text the org writes itself — it rides
@@ -432,10 +472,12 @@ function RulesCell({ row, kind = 'taxRates', placeholder = 'When should this cod
   );
 }
 
-function TaxRatesList() {
-  // The live Xero purchase rates (seed fallback) — the SAME source the cost/sales
-  // pickers use — so switching a rate's Visible off here removes it there.
-  const rows = useManagedTaxRates();
+function TaxRatesList({ side = 'cost' }) {
+  // The live Xero rates (seed fallback) for one side — purchase codes for Costs,
+  // supply (output) codes for Sales — the SAME source that side's pickers use,
+  // so switching a rate's Visible off here removes it there. Visibility is kept
+  // by NAME, so a code both sides use (No Tax) is one switch for both.
+  const rows = useManagedTaxRates(side);
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const { selected, toggle, clear } = useSelection();
@@ -488,7 +530,7 @@ function TaxRatesList() {
         onClose={() => setAddOpen(false)}
         onAdd={(f) => {
           const name = f.name.trim();
-          addToList('taxRates', { name, id: (f.code || '').trim().toUpperCase(), code: (f.code || '').trim().toUpperCase(), rate: Number(f.rate) || 0 });
+          addToList('taxRates', { name, id: (f.code || '').trim().toUpperCase(), code: (f.code || '').trim().toUpperCase(), rate: Number(f.rate) || 0, side });
           if ((f.rules || '').trim()) setMetaField('taxRates', name, 'rules', f.rules.trim());
         }}
       />
@@ -844,6 +886,10 @@ function Placeholder({ label }) {
 
 export default function ListsSettings() {
   const [tab, setTab] = useState('categories');
+  // Costs or Sales — one choice for both lists that have two halves.
+  const salesEnabled = useSalesEnabled();
+  const [sideChoice, setSide] = useState('cost');
+  const side = salesEnabled ? sideChoice : 'cost';
   const bridge = isStandaloneOrg(
     (useOrganisations().data ?? []).find((o) => o.id === getActiveOrganisationId()),
   );
@@ -875,7 +921,10 @@ export default function ListsSettings() {
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="mb-4 text-lg font-semibold tracking-tight">{TITLES[tab]}</h2>
-        {tab === 'categories' ? <Categories /> : tab === 'taxRates' ? <TaxRatesList /> : tab === 'projects' ? <ProjectsTab index={0} bridge={bridge} label={labels.project} /> : tab === 'projects2' ? <ProjectsTab index={1} bridge={bridge} label={labels.project2} /> : tab === 'flags' ? <FlagsList /> : tab === 'payment' ? <PaymentMethodsFromXero /> : <Placeholder label={TITLES[tab]} />}
+        {salesEnabled && !bridge && (tab === 'categories' || tab === 'taxRates') && (
+          <SideToggle side={side} setSide={setSide} />
+        )}
+        {tab === 'categories' ? <Categories side={side} /> : tab === 'taxRates' ? <TaxRatesList side={side} /> : tab === 'projects' ? <ProjectsTab index={0} bridge={bridge} label={labels.project} /> : tab === 'projects2' ? <ProjectsTab index={1} bridge={bridge} label={labels.project2} /> : tab === 'flags' ? <FlagsList /> : tab === 'payment' ? <PaymentMethodsFromXero /> : <Placeholder label={TITLES[tab]} />}
       </div>
     </div>
   );
