@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Search, ChevronDown, Settings2, CheckCircle2 } from 'lucide-react';
+import { Search, ChevronDown, Settings2, CheckCircle2, Download, Upload } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
 import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
 import EditUserModal from '@/components/EditUserModal';
-import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser, updateUser } from '@/lib/userStore';
-import { useOrganisations, getActiveOrganisationId, useXeroProjectOptions } from '@/lib/organisations';
+import ImportUsersModal from '@/components/ImportUsersModal';
+import { useUsers, addUser, addUsers, setUserActive, removeUser, setUserPassword, approveUser, inviteUser, updateUser, rolesFor, REPORTING_OFFICER } from '@/lib/userStore';
+import { useOrganisations, getActiveOrganisationId, useXeroProjectOptions, useBridgeEntity } from '@/lib/organisations';
+import { writeXlsx, readXlsx } from '@/lib/xlsx';
+import { rosterWorkbook, planRosterImport, pickRosterSheet, rosterFileName } from '@/lib/rosterSheet';
 import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import { cn } from '@/lib/utils';
@@ -160,7 +163,10 @@ export default function Users() {
   const [multiOpen, setMultiOpen] = useState(false);
   const [edit, setEdit] = useState(null); // { user, mode }
   const [toast, setToast] = useState('');
+  const [importing, setImporting] = useState(null); // { plan, fileName }
+  const importRef = useRef(null);
   const users = useUsers();
+  const bridge = useBridgeEntity();
 
   const showToast = (msg) => setToast(msg);
 
@@ -258,6 +264,41 @@ export default function Users() {
     return !u.deactivated && !u.pending; // active
   });
 
+  // The whole roster as a workbook — every tab, not just the one on screen —
+  // with the editable columns as dropdowns over this entity's own choices.
+  const exportExcel = () => {
+    const roles = rolesFor(bridge || users.some((u) => u.role === REPORTING_OFFICER));
+    const bytes = writeXlsx(rosterWorkbook({ users, roles, projects: projectOptions, company: workspaceCompany }));
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = rosterFileName(activeOrg?.name);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  // Read the file, work out what it changes, and show that — nothing is saved
+  // until the preview is confirmed.
+  const importExcel = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const sheet = pickRosterSheet(await readXlsx(await file.arrayBuffer()));
+      const plan = planRosterImport({
+        rows: sheet?.rows || [],
+        users,
+        rolesFor: (current) => rolesFor(bridge, current),
+        projects: projectOptions,
+      });
+      setImporting({ plan, fileName: file.name });
+    } catch {
+      showToast(`${file.name} couldn’t be read as an Excel workbook (.xlsx). Export the roster, edit that file, and import it again.`);
+    }
+  };
+
   // While redirecting a colleague off the practice's own entity, render nothing.
   if (redirectToColleagues) return <AppShell><div /></AppShell>;
 
@@ -305,6 +346,31 @@ export default function Users() {
           <button type="button" onClick={() => setMultiOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted">
             Add multiple users
           </button>
+          <button
+            type="button"
+            onClick={exportExcel}
+            disabled={!users.length}
+            title="Download the roster as an Excel workbook — roles, direct managers, projects and privileges as dropdowns"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" /> Export to Excel
+          </button>
+          <button
+            type="button"
+            onClick={() => importRef.current?.click()}
+            disabled={!users.length}
+            title="Upload an edited export — you'll see every change before anything is saved"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            <Upload className="h-3.5 w-3.5" /> Import from Excel
+          </button>
+          <input
+            ref={importRef}
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="hidden"
+            onChange={importExcel}
+          />
           <div className="relative hidden sm:block">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="h-8 w-48 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
@@ -453,6 +519,18 @@ export default function Users() {
 
       <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} onAdd={handleAddUser} />
       <AddMultipleUsersModal open={multiOpen} onClose={() => setMultiOpen(false)} onAdd={handleAddUsers} />
+      <ImportUsersModal
+        plan={importing?.plan}
+        fileName={importing?.fileName}
+        onClose={() => setImporting(null)}
+        onApplied={(ok, bad) =>
+          showToast(
+            bad
+              ? `Updated ${ok} ${ok === 1 ? 'person' : 'people'}; ${bad} couldn’t be saved — see the import dialog.`
+              : `Updated ${ok} ${ok === 1 ? 'person' : 'people'} from Excel.`
+          )
+        }
+      />
       <EditUserModal
         key={edit ? `${edit.user.id}-${edit.mode}` : 'closed'}
         open={Boolean(edit)}

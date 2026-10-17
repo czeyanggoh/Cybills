@@ -309,6 +309,25 @@ export async function updateUser(id, patch) {
   await req(`/${id}`, 'PATCH', patch);
   await refreshPeople();
 }
+// Several people at once (the spreadsheet import): one PATCH each, through the
+// same route a single edit takes, so every rule it enforces still holds per
+// person — the last admin can't be demoted, a role on a visitor stays here.
+// One at a time, and the directory is refreshed once at the end rather than
+// after each. Resolves with each outcome; never throws for one refusal.
+export async function updateUsers(items, onProgress) {
+  const results = [];
+  for (const { id, patch } of items) {
+    try {
+      await req(`/${id}`, 'PATCH', patch);
+      results.push({ id, ok: true });
+    } catch (err) {
+      results.push({ id, ok: false, error: err?.info?.message || err?.code || 'failed' });
+    }
+    onProgress?.(results.length, items.length);
+  }
+  await refreshPeople();
+  return results;
+}
 export async function setUserActive(id, active) {
   await req(`/${id}/active`, 'POST', { active });
   await refreshPeople();
