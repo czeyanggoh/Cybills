@@ -22,6 +22,7 @@ import { coveringNote } from '@/lib/coveringNote';
 import { mileagePatch } from '@/lib/mileage';
 import { withAttendees } from '@/lib/attendees';
 import { starDescription } from '@/lib/description';
+import { rebillableFor } from '@/lib/recharge';
 
 // What a re-read decided, given the document as it stands (`current`) and what
 // the reader returned (`ex`). `patch` is what to save; the rest is the working
@@ -250,6 +251,19 @@ export function readDecisions(
   if (ruled.taxRate) patch.taxRateReason = `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`;
   if (ruled.project) patch.projectReason = projectReason;
   if (noteDecided) patch.categoryReason = `From the email that sent this: ${String(ex.noteFollowed).trim()}`;
+  // Coded — by the read or the rule — to a recharge account, with a customer to
+  // bill: Rebillable, whatever the reader's own flag said (src/lib/recharge.js).
+  // Only ever turned on here; a person's "No" on another account is theirs.
+  if (
+    !sale &&
+    rebillableFor({
+      customer: patch.customer || current.customer,
+      category: patch.category || current.category,
+      accounts,
+    })
+  ) {
+    patch.rebillable = true;
+  }
   // …except the due date, where the document's own beats the rule's terms.
   if (ex.dueDate) patch.dueDate = ex.dueDate;
   // The invoice date the rule gives it (the end of the previous month, for a

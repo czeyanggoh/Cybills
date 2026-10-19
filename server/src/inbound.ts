@@ -19,7 +19,7 @@ import { keepPaymentProofInStep } from './paymentProof.js';
 import { keepAdvanceInStep } from './prepayment.js';
 import { putBillFile } from './storage.js';
 import { resolveProvider, type Provider } from './llm.js';
-import { runExtraction, runLineExtraction } from './extract.js';
+import { runExtraction, runLineExtraction, loadRechargeRules } from './extract.js';
 import { readGotNothing } from './blankRead.js';
 import type { CoveringNote } from './extract.js';
 import { categoriesForOrg } from './categories.js';
@@ -408,6 +408,19 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       noteFollowed: d.noteFollowed,
       via: envelope?.via,
     });
+    // A rule's category or customer can be the half that makes it a recharge:
+    // coded to a recharge account with a customer to bill, it is Rebillable
+    // (src/lib/recharge.js), the same as the read and the re-read decide.
+    const recharge = await loadRechargeRules();
+    if (
+      recharge?.rebillableFor({
+        customer: String(patch.customer ?? ''),
+        category: String(patch.category ?? ''),
+        accounts: inputs.accounts,
+      })
+    ) {
+      patch.rebillable = true;
+    }
     // A supplier that invoices after the period it bills for: the rule moves the
     // date to the end of the previous month (src/lib/ruleDate.js), the same as an
     // upload or a re-read gets. The printed due date is left alone.

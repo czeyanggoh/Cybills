@@ -534,6 +534,28 @@ async function loadAttendeeRules(): Promise<AttendeeRules | null> {
   return attendeeRules;
 }
 
+// Whether a cost is Rebillable, from the reader's flag OR a recharge account
+// it was coded to (src/lib/recharge.js) — the same module the re-read uses.
+type RechargeRules = {
+  rebillableFor: (args: { customer?: string; rebillable?: boolean; category?: string; accounts?: unknown[] }) => boolean;
+};
+let rechargeRules: RechargeRules | null = null;
+let rechargeRulesTried = false;
+
+export async function loadRechargeRules(): Promise<RechargeRules | null> {
+  if (rechargeRulesTried) return rechargeRules;
+  rechargeRulesTried = true;
+  try {
+    const url = new URL('../../src/lib/recharge.js', import.meta.url).href;
+    const mod = (await import(url)) as Partial<RechargeRules>;
+    rechargeRules = typeof mod?.rebillableFor === 'function' ? (mod as RechargeRules) : null;
+  } catch (e) {
+    console.error('[extract] recharge rules unavailable', e);
+    rechargeRules = null;
+  }
+  return rechargeRules;
+}
+
 // What the sender said about this document, as guidance for the read.
 //
 // Two things, and they are not equal. The MESSAGE — "recharge this to CY-Biz" —
@@ -873,10 +895,6 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     // Same for the customer: the party who gets invoiced for this cost is not a
     // field to accept a name the org has never heard of.
     const customer = customerSet.has(parsed.data.customer) ? parsed.data.customer : '';
-    // Never rebillable without somebody to bill. The flag says "charge this to
-    // that client", so with no client it is an instruction with no object — and
-    // it would publish as a billable expense against nobody.
-    const rebillable = Boolean(customer) && parsed.data.rebillable === true;
     // A due date that isn't a real ISO date is no due date. Same for one that
     // merely echoes the invoice date, which is what the model produces when it
     // feels obliged to fill the field — and which posts to Xero as "due the day
@@ -886,6 +904,15 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
         ? parsed.data.dueDate
         : '';
     const category = categorySet.has(parsed.data.category) ? parsed.data.category : 'Uncategorised';
+    // Never rebillable without somebody to bill. The flag says "charge this to
+    // that client", so with no client it is an instruction with no object — and
+    // it would publish as a billable expense against nobody. With one, a cost
+    // coded to a recharge account ("RECOVERABLE EXPENSES") is being billed back
+    // whatever the reader's own flag said (src/lib/recharge.js).
+    const rechargeRuleSet = await loadRechargeRules();
+    const rebillable = rechargeRuleSet
+      ? rechargeRuleSet.rebillableFor({ customer, rebillable: parsed.data.rebillable === true, category, accounts })
+      : Boolean(customer) && parsed.data.rebillable === true;
     // A credit note's direction is its TYPE, and every rule downstream — the
     // GST evidence gate, the percentage, the SGD restatement — reads a document
     // by asking whether its tax and its net are above 0. Read as printed

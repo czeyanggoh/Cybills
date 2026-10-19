@@ -473,6 +473,17 @@ customer: the flag says "bill this to that client", so with no client it is an
 instruction with no object, and it would publish as a billable expense against
 nobody. Enforced in `runExtraction`, and again at publish.
 
+**And a cost coded to a recharge account is Rebillable.** The reader named the
+customer and coded a receipt to "1354 - RECOVERABLE EXPENSES - PREPAYMENT", then
+left Rebillable off — a cost the chart itself says is billed back, published
+without being marked billable (19 Oct 2026). So the ACCOUNT is a second signal:
+`src/lib/recharge.js` (pure, `npm test`) reads its name (recoverable, recharge,
+reimbursable, rebill, disbursement, "on behalf") and its description ("recharge
+back to", "bill back", "on behalf of client"; never "recharge" alone, which is a
+mobile top-up, nor "Reimbursements", which is staff paid back). Applied in
+`runExtraction`, after the supplier rule in the re-read and the
+emailed / WhatsApp'd read. It only turns the switch ON, and only with a customer.
+
 **A meal is a record of people, not only of money.** A restaurant bill states an
 amount and says nothing about the one question anybody asks of it afterwards:
 who was at the table. "Din Tai Fung — Entertainment" is a figure with no business
