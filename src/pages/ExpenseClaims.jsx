@@ -10,7 +10,8 @@ import AutoClaimsModal from '@/components/AutoClaimsModal';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
-import { useClaims, notifyClaimsChanged, archiveClaims, isClaimUnpublished,deleteClaims, createClaim, submitForApproval, approveClaim, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
+import { useClaims, notifyClaimsChanged, archiveClaims, isClaimUnpublished,deleteClaims, createClaim, submitForApproval, approveClaim, visibleClaimsFor, formatClaimDate, endOfMonthFor, todayIso, toIsoClaimDate } from '@/lib/claimStore';
+import SortTh from '@/components/SortTh';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, isAdminAccess, canCreateClaims, canPublishToXero, useUsers } from '@/lib/userStore';
 import { publishClaimToXero } from '@/lib/organisations';
@@ -248,6 +249,9 @@ export default function ExpenseClaims() {
   // never were, and Cze quite reasonably reported them as broken.
   const [filters, setFilters] = useListView('claims', 'filters', { status: '', paidStatus: '', type: '' });
   const [adv, setAdv] = useListView('claims', 'adv', { min: '', max: '', from: '', to: '', claimFor: '', month: '', approver: '' });
+  // Which column the list is ordered by. No key is the list's own order,
+  // newest first, until somebody clicks a heading.
+  const [sort, setSort] = useListView('claims', 'sort', { key: '', dir: 'asc' });
   const [approveOpen, setApproveOpen] = useState(false);
   const [approving, setApproving] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -321,7 +325,7 @@ export default function ExpenseClaims() {
   const base = scope === 'all' ? everything : unpublished;
   const q = query.trim().toLowerCase();
   const amount = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
-  const rows = base.filter((c) => {
+  const filtered = base.filter((c) => {
     // The approver is searchable too. "Search by approver name" was asked for
     // and the box did not answer it: it read the claimant, the name and the
     // type, so typing the one person a claim is WAITING on found nothing.
@@ -346,6 +350,34 @@ export default function ExpenseClaims() {
     if (adv.to && String(c.endDate || '') > adv.to) return false;
     return true;
   });
+  // Ordered by the heading clicked. Each column sorts on what it SHOWS — the
+  // approver who decided over the one it waited on, an approval date only for
+  // an approved claim — so the order agrees with what is read down it. Money as
+  // numbers, dates as dates (an end date was typed in any of several shapes),
+  // and a blank always last whichever way round, since a dash at the top of a
+  // list sorted by paid date answers nothing.
+  const sortValue = {
+    status: (c) => statusOf(c),
+    approver: (c) => c.decidedBy || c.approver || '',
+    approved: (c) => (c.approvalStatus === 'approved' && c.decidedAt ? String(c.decidedAt) : ''),
+    paidStatus: (c) => xeroPaidStatus(c)?.label || '',
+    paidDate: (c) => String(c.xeroPaidDate || ''),
+    claimFor: (c) => String(c.claimFor || ''),
+    type: (c) => String(c.type || ''),
+    name: (c) => String(c.name || ''),
+    endDate: (c) => toIsoClaimDate(c.endDate) || '',
+    total: (c) => (String(c.total ?? '').trim() === '' ? '' : amount(c.total)),
+    tax: (c) => (String(c.tax ?? '').trim() === '' ? '' : amount(c.tax)),
+  }[sort?.key];
+  const rows = !sortValue
+    ? filtered
+    : [...filtered].sort((a, b) => {
+        const x = sortValue(a);
+        const y = sortValue(b);
+        if (x === '' || y === '') return x === y ? 0 : x === '' ? 1 : -1;
+        const order = typeof x === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: 'base' });
+        return sort.dir === 'desc' ? -order : order;
+      });
   // What the two popovers can offer, taken from the claims actually here — a
   // filter listing a status nothing has is a dead end with a count of zero.
   const statusOptions = [...new Set(base.map(statusOf))].sort();
@@ -759,13 +791,13 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
                   className="h-4 w-4 accent-black"
                 />
               </th>
-              <th className="px-3 py-2.5 font-medium">Approval status</th>
+              <SortTh label="Approval status" sortKey="status" sort={sort} setSort={setSort} />
               {/* Whose call it is, and when they made it. Before a decision this
                   is the person it is waiting on; after, the person who actually
                   made it — which is the same name in the ordinary case and a
                   different one when somebody else stepped in. */}
-              <th className="px-3 py-2.5 font-medium">Approver</th>
-              <th className="px-3 py-2.5 font-medium">Approved</th>
+              <SortTh label="Approver" sortKey="approver" sort={sort} setSort={setSort} />
+              <SortTh label="Approved" sortKey="approved" sort={sort} setSort={setSort} />
               {/* Approval is the company saying it owes the money; these two are
                   the bank saying it left. A claimant's question is the second
                   one, and until now nothing here answered it.
@@ -776,14 +808,14 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
                   where the other list has "Paid status" and "Paid date" makes
                   them look like different facts, and it cannot be sorted by
                   when the money actually left. */}
-              <th className="px-3 py-2.5 font-medium">Paid status</th>
-              <th className="px-3 py-2.5 font-medium">Paid date</th>
-              <th className="px-3 py-2.5 font-medium">Claim for</th>
-              <th className="px-3 py-2.5 font-medium">Type</th>
-              <th className="px-3 py-2.5 font-medium">Name</th>
-              <th className="px-3 py-2.5 font-medium">End date</th>
-              <th className="px-3 py-2.5 text-right font-medium">Total</th>
-              <th className="px-3 py-2.5 text-right font-medium">Tax</th>
+              <SortTh label="Paid status" sortKey="paidStatus" sort={sort} setSort={setSort} />
+              <SortTh label="Paid date" sortKey="paidDate" sort={sort} setSort={setSort} />
+              <SortTh label="Claim for" sortKey="claimFor" sort={sort} setSort={setSort} />
+              <SortTh label="Type" sortKey="type" sort={sort} setSort={setSort} />
+              <SortTh label="Name" sortKey="name" sort={sort} setSort={setSort} />
+              <SortTh label="End date" sortKey="endDate" sort={sort} setSort={setSort} />
+              <SortTh label="Total" sortKey="total" sort={sort} setSort={setSort} align="right" />
+              <SortTh label="Tax" sortKey="tax" sort={sort} setSort={setSort} align="right" />
             </tr>
           </thead>
           <tbody>
