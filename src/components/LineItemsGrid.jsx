@@ -81,11 +81,18 @@ export function LineItemsGrid({
             return (
               <tr key={i} className="border-b last:border-0 align-top">
                 <td className="px-2 py-1.5">
-                  <input
+                  {/* A text box with a drag handle rather than an input: a line
+                      description is often a whole sentence ("Disbursements
+                      without GST: Lodgement of Annual Return…"), and one line
+                      of a narrow column showed only its first few words.
+                      Dragging the corner widens the column or lets it wrap. */}
+                  <textarea
+                    rows={1}
+                    aria-label="Line item description"
                     value={li.description || ''}
                     onChange={(e) => onUpdate(i, { description: e.target.value })}
                     className={cn(
-                      'h-8 w-full rounded border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      'block min-h-8 w-full resize rounded border bg-background px-2 py-1.5 text-sm leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       expanded ? 'min-w-[18rem]' : 'min-w-[9rem]'
                     )}
                   />
