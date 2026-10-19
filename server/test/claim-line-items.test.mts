@@ -13,6 +13,7 @@ import http from 'node:http';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { finish } from './support.mts';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'cybills-claim-lines-'));
 process.env.BILLS_DATA_DIR = DATA_DIR;
@@ -201,7 +202,5 @@ check('an item changed since approval stops the publish', [changed.status, chang
 check('…nothing reaches Xero', posted, null);
 check('…and it says to unapprove and approve again', /Unapprove/.test(changedWhy.message), true);
 
-server.close();
-stub.close();
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
-process.exit(failures ? 1 : 0);
+await finish(failures, server, stub);

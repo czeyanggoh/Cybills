@@ -36,7 +36,8 @@ import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, us
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
 import { useProjectLabels, singular } from '@/lib/projectLabels';
-import { useUsers, useOwnerNames, canPublishToXero, canCreateClaims } from '@/lib/userStore';
+import { useUsers, useOwnerNames, canPublishToXero, canCreateClaims, canManageBusiness } from '@/lib/userStore';
+import { isPracticeTeam } from '@/lib/practiceStore';
 import { setWhatsappSender } from '@/lib/whatsapp';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
 import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, deleteBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, salesPath, docPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, moveBillToWorkspace, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
@@ -504,6 +505,14 @@ export default function CostDetail() {
   // ledger as a line of that bill until the claim is updated there.
   const claimLocked = claimForItem?.approvalStatus === 'approved';
   const claimInXero = Boolean(claimForItem?.xeroInvoiceId);
+  // On an APPROVED claim the item is the figure the approver signed off, so it
+  // is read-only for the people who raised it. The entity's Business Admin and
+  // the practice's colleagues may still correct it for posting, and the server
+  // carries their correction onto the claim (lockedOnApprovedClaim /
+  // carryCorrectionIntoClaim in server/src). The server holds the rule; this
+  // only draws it.
+  const mayCorrectApproved = isPracticeTeam(membership, googleEnabled) || canManageBusiness(membership, googleEnabled);
+  const itemLocked = claimLocked && !mayCorrectApproved;
   const removeFromClaim = async () => {
     if (!claimForItem || claimLocked || claimLeaving) return;
     const ref = claimRef(claimForItem);
@@ -2028,6 +2037,16 @@ Publish anyway?`
               </>
             ) : null}
             {claimForItem.endDate ? ` (${claimForItem.endDate})` : ''}.
+            {itemLocked ? (
+              <>
+                {' '}The claim is approved, so this item is locked. A Business Admin can correct it for posting.
+              </>
+            ) : claimLocked ? (
+              <>
+                {' '}The claim is approved: a correction saved here is carried onto the claim
+                {claimInXero ? ', then press Update in Xero on the claim to send it.' : '.'}
+              </>
+            ) : null}
           </span>
           {doc?.persisted && (
             <button
@@ -2512,7 +2531,9 @@ Publish anyway?`
           </div>
 
           {tab === 'details' && (
-            <div>
+            // A disabled fieldset disables every control inside it, so a locked
+            // item cannot be edited, re-read, archived or split from here.
+            <fieldset disabled={itemLocked} className="m-0 min-w-0 border-0 p-0">
               {/* Upload a receipt image (always) + AI auto-fill (when a reader is on) */}
               <input
                 ref={fileInputRef}
@@ -3083,7 +3104,7 @@ Publish anyway?`
                 {archiveControl}
                 <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
               </div>
-            </div>
+            </fieldset>
           )}
 
           {tab === 'email' && (

@@ -1,4 +1,4 @@
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { readSession } from './auth.js';
 import {
   findDuplicate,
@@ -32,7 +32,7 @@ import {
 } from './store.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { dataScopeForOrg, listOrganisations, primaryOrgId } from './organisations.js';
-import { workspaceId, WORKSPACE_ID } from './workspace.js';
+import { actor, workspaceId, WORKSPACE_ID } from './workspace.js';
 import { addressIn, canAccessOrg, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg, visibleOwnersFor } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
@@ -476,6 +476,28 @@ function mayWriteBill(req: Request): boolean {
   return canAccessOrg(me, entity) && visibleToCaller(visibleOwnersFor(req, entity), bill);
 }
 
+// A document on an APPROVED expense claim is locked for the people who raised
+// it: a receipt its claimant could still edit would change a figure the
+// approver has already signed off. The entity's Business Admin and the
+// practice's colleagues may still correct it for posting (Cze, 19 Oct 2026),
+// and their correction is carried into the claim (carryCorrectionIntoClaim).
+// Answers the refusal itself and returns true when the caller is turned away.
+// claims.ts imports this module, so it is loaded on demand rather than at the
+// top.
+async function lockedOnApprovedClaim(req: Request, res: Response): Promise<boolean> {
+  const { approvedClaimForBill, mayCorrectApprovedItem } = await import('./claims.js');
+  const claim = approvedClaimForBill(orgIdFor(req), String(req.params.id));
+  if (!claim || mayCorrectApprovedItem(req)) return false;
+  res.status(409).json({
+    error: 'claim_locked',
+    claimId: claim.id,
+    message:
+      `This item is on the approved expense claim “${claim.name}”, so it can’t be changed. ` +
+      'A Business Admin can correct it for posting, or the claim can be unapproved.',
+  });
+  return true;
+}
+
 // Which ENTITY a document belongs to. Its `orgId` is a data SCOPE, and the
 // primary entity's scope is the legacy WORKSPACE_ID — so a scope has to be
 // folded back to an entity id before it is compared to one a person may open,
@@ -662,6 +684,7 @@ billsRouter.get('/bills/:id/where', (req, res) => {
 // { fileBase64, mediaType }.
 billsRouter.post('/bills/:id/file', async (req, res) => {
   if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  if (await lockedOnApprovedClaim(req, res)) return;
   const orgId = orgIdFor(req);
   const bill = getBillById(orgId, req.params.id);
   if (!bill) return res.status(404).json({ error: 'not_found' });
@@ -724,6 +747,7 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   // than a rule. 404, like every other refusal here: whether a document exists
   // is itself something the caller isn't entitled to learn.
   if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  if (await lockedOnApprovedClaim(req, res)) return;
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
   for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel']) {
@@ -845,10 +869,16 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   // (The other is the read itself, on arrival.) Cheap and silent when there is
   // nothing to say, which is every document that did not come in that way.
   void syncWhatsappReaction(orgId, req.params.id);
+  // Corrected by somebody allowed to (the lock above let them through): the
+  // approved claim it sits on takes the correction, so what posts is what was
+  // corrected — said back, with whether the claim's bill needs Update in Xero.
+  const { carryCorrectionIntoClaim } = await import('./claims.js');
+  const claimCorrection = carryCorrectionIntoClaim(orgId, req.params.id, actor(req).name || actor(req).email);
   const check = await entityCheckFor(req);
   res.json({
     ok: true,
     bill: { ...updated, hasFile: Boolean(updated.storageKey), entityCheck: check(updated, entityIdForBill(updated)) },
+    claimCorrection,
   });
 });
 
@@ -985,6 +1015,7 @@ billsRouter.post('/bills/:id/unapply-proof', (req, res) => {
 // never blocks removing the record.
 billsRouter.delete('/bills/:id', async (req, res) => {
   if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  if (await lockedOnApprovedClaim(req, res)) return;
   const orgId = orgIdFor(req);
   const removed = deleteBillHard(orgId, req.params.id);
   if (!removed) return res.status(404).json({ error: 'not_found' });

@@ -445,6 +445,70 @@ export function claimForBill(org: string, billId: string): { id: string; name: s
   return claim ? { id: claim.id, name: claim.name } : null;
 }
 
+// The APPROVED claim a document sits on, or null. Approval locks a claim's
+// items for the people who raised them: a receipt the claimant could still edit
+// would change a figure the approver has already signed off.
+export function approvedClaimForBill(org: string, billId: string): { id: string; name: string; xeroInvoiceId?: string } | null {
+  const key = String(billId);
+  const claim = load().find(
+    (c) => c.orgId === org && !c.deleted && c.approvalStatus === 'approved' && c.transactions.some((t) => String(t.itemId) === key)
+  );
+  return claim ? { id: claim.id, name: claim.name, xeroInvoiceId: claim.xeroInvoiceId } : null;
+}
+
+// May this caller correct a document on an APPROVED claim? The entity's own
+// Business Admin and the practice's colleagues run the book the claim posts
+// into, so a correction for posting is theirs to make; the claimant and any
+// other Standard user see the item as it was approved. The same people who may
+// decide a claim on its approver's behalf (mayOverride), without the claimant
+// exclusion: correcting a receipt is not approving one's own claim.
+export function mayCorrectApprovedItem(req: Request): boolean {
+  const member = memberForSession(req);
+  if (!member) return true; // sessionless mock/dev, as everywhere else
+  if (member.deactivated) return false;
+  if (member.practice) return true;
+  return effectiveRoleFor(member, orgScope(req)) === 'Business Admin';
+}
+
+// A correction made to a document on an APPROVED claim, carried into the
+// claim's frozen line so what posts is what was corrected. Without it the claim
+// would keep the approved figures while its tax code is read live off the
+// document — the mismatch buildClaimInvoice refuses. Written to the claim's
+// history (worded as editing, not approval: approvalHistory.js), and said back
+// to the caller with whether the claim is already in Xero, where the correction
+// needs Update in Xero to arrive. Null when nothing on the line moved.
+export function carryCorrectionIntoClaim(
+  org: string,
+  billId: string,
+  by: string
+): { claimId: string; name: string; published: boolean; before: { total: string; tax: string }; after: { total: string; tax: string } } | null {
+  const key = String(billId);
+  const items = load();
+  const claim = items.find(
+    (c) => c.orgId === org && !c.deleted && c.approvalStatus === 'approved' && c.transactions.some((t) => String(t.itemId) === key)
+  );
+  if (!claim) return null;
+  const i = claim.transactions.findIndex((t) => String(t.itemId) === key);
+  const old = claim.transactions[i];
+  const fresh = liveTxns({ ...claim, transactions: [old] })[0];
+  const fields = ['supplier', 'date', 'category', 'description', 'project', 'net', 'tax', 'total'] as const;
+  if (fields.every((f) => String(old[f] ?? '') === String(fresh[f] ?? ''))) return null;
+  claim.transactions[i] = fresh;
+  const shown = fresh.displayId || key;
+  const money = String(old.total) !== String(fresh.total) || String(old.tax) !== String(fresh.tax)
+    ? ` — total ${old.total} → ${fresh.total}, tax ${old.tax} → ${fresh.tax}`
+    : '';
+  claim.history.unshift({ text: `Item ${shown} (${fresh.supplier}) was corrected after approval${money}`, by, at: nowIso() });
+  saveCollection(COLLECTION, items);
+  return {
+    claimId: claim.id,
+    name: claim.name,
+    published: Boolean(claim.xeroInvoiceId),
+    before: { total: String(old.total), tax: String(old.tax) },
+    after: { total: String(fresh.total), tax: String(fresh.tax) },
+  };
+}
+
 // Every bill id that already sits on a claim in this workspace. The auto-claim
 // runner asks once per sweep rather than per document, and it catches an item
 // whose bill status drifted out of 'expenseclaim' but which is still on a claim.

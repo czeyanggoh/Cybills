@@ -539,6 +539,22 @@ longer matches its document is refused, 409 `claim_items_changed`, naming the
 item: Unapprove and approve again takes the correction. Converted foreign
 receipts are not compared. Covered by `publish-bill` and `claim-line-items`.
 
+**An approved claim's items are locked for the people who raised them, and
+correctable by the people who post them.** Cze's rule (19 Oct 2026). A receipt
+on an APPROVED claim is the figure the approver signed off, so a Standard user —
+the claimant included — can no longer edit, delete or replace the file of a
+document on one (`lockedOnApprovedClaim` in `bills.ts` on the PATCH, DELETE and
+file routes, 409 `claim_locked`; the document page wraps its Details form in a
+disabled fieldset and says why). The entity's Business Admin and the practice's
+colleagues (`mayCorrectApprovedItem` in `claims.ts`) may still correct it, and
+their correction is CARRIED onto the claim (`carryCorrectionIntoClaim`): the
+frozen line takes the document's live figures, the claim stays approved, and
+its history says "Item … was corrected after approval — total a → b, tax c → d"
+(editing, not an approval event). The PATCH reply carries `claimCorrection`, and
+a claim already in Xero still needs **Update in Xero** to send it. A claim not
+yet approved is untouched — its lines follow the documents anyway. Covered by
+`test/claim-item-lock.test.mts`.
+
 **A meal is a record of people, not only of money.** A restaurant bill states an
 amount and says nothing about the one question anybody asks of it afterwards:
 who was at the table. "Din Tai Fung — Entertainment" is a figure with no business
