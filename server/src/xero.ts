@@ -2680,36 +2680,95 @@ async function buildClaimInvoice(
   // becomes the whole figure rather than the net. The bill in Xero is worth
   // exactly what the claim is worth, which is the only rule that can't bend.
   const noTax = isStandalone(organisation);
-  const lineItems = (claim.transactions ?? [])
-    .map((t) => {
-      const total = parseAmount(t.total);
-      const tax = noTax ? 0 : parseAmount(t.tax);
-      const bill = getBillByIdAny(String(t.itemId));
-      const line = {
-        Description: describe(t),
-        Quantity: 1,
-        // Tax-exclusive: net unit amount + explicit tax, so Xero renders a Tax
-        // Amount column (matching Dext).
-        UnitAmount: Math.max(0, total - tax),
-        AccountCode: codeOf(t.category),
-        TaxAmount: tax,
-        // Named explicitly rather than left to the account's default rate in
-        // Xero, which would put GST on a figure that has none and make the bill
-        // disagree with the claim.
-        ...(noTax ? { TaxType: 'NONE' } : {}),
-        __total: total,
-        __category: String(t.category ?? '').trim(),
-        // The customer this receipt is billed back to, read off the LIVE
-        // document the way the project is: Rebillable on a claimed receipt is
-        // marked billable on its line of the claim's bill, after it posts.
-        __rebill: bill?.rebillable && String(bill?.customer ?? '').trim() ? String(bill.customer).trim() : '',
-      } as Record<string, unknown>;
-      // Tag the PIC (tracking category) from the underlying cost doc's project.
-      const tracking = trackingFor(tc, String(bill?.project || t.project || ''));
-      if (tracking) line.Tracking = tracking;
-      return line;
-    })
-    .map((line) => line as Record<string, unknown>);
+  // The org's tax codes by name, so each receipt posts under the code it was
+  // coded to here. Left to the account's default, an entertainment account that
+  // defaults to No Tax posted a receipt coded Standard-Rated as "No Tax" with
+  // its GST in the Tax column — which Xero books as an ADJUSTMENT to tax rather
+  // than as input tax, so the claim's whole GST went unclaimed (19 Oct 2026).
+  const rateTypes = noTax ? new Map<string, { code: string; rate: number }>() : await taxTypesByName(target.tenantId);
+  const taxTypeOf = (name: unknown): string => {
+    const n = String(name ?? '').trim();
+    if (!n) return '';
+    return rateTypes.get(n)?.code || (/^no tax$/i.test(n) ? 'NONE' : '');
+  };
+  const cents = (v: unknown) => Math.round(parseAmount(v) * 100);
+  // One group per claimed receipt: its line(s), and what the refusals below
+  // read about it. A receipt is one line — or, where the document carries its
+  // own line items, those lines (see below) — but it is still ONE item to the
+  // claim, so the checks count items, never lines.
+  type Group = { lines: Array<Record<string, unknown>>; total: number; category: string; rebill: string; accountCode: string; description: string };
+  const groups: Group[] = [];
+  for (const t of claim.transactions ?? []) {
+    const total = parseAmount(t.total);
+    const tax = noTax ? 0 : parseAmount(t.tax);
+    const bill = getBillByIdAny(String(t.itemId));
+    const accountCode = codeOf(t.category);
+    const taxType = noTax ? 'NONE' : taxTypeOf(bill?.taxRate);
+    const description = describe(t);
+    const line = {
+      Description: description,
+      Quantity: 1,
+      // Tax-exclusive: net unit amount + explicit tax, so Xero renders a Tax
+      // Amount column (matching Dext).
+      UnitAmount: Math.max(0, Math.round((total - tax) * 100) / 100),
+      AccountCode: accountCode,
+      TaxAmount: tax,
+      // Named explicitly rather than left to the account's default rate in
+      // Xero, which would put GST on a figure that has none (a bridge entity)
+      // or call a GST receipt No Tax (an entertainment account) and make the
+      // bill disagree with the claim.
+      ...(taxType ? { TaxType: taxType } : {}),
+    } as Record<string, unknown>;
+    // Tag the PIC (tracking category) from the underlying cost doc's project.
+    const tracking = trackingFor(tc, String(bill?.project || t.project || ''));
+    if (tracking) line.Tracking = tracking;
+    let lines: Array<Record<string, unknown>> = [line];
+    // A receipt with its own line items posts as THOSE lines, the way it would
+    // published on its own: LINKUS's bill split 231.56 at 9% and 23.09 outside
+    // GST, and the claim posted one 254.65 line under the account's default
+    // code (19 Oct 2026). Built by the publish path's own perLineItems, so a
+    // row's own account, tax code and tracking are read exactly as there — and
+    // only where the claim line IS the document's money: the same total and tax
+    // to the cent, in the document's own currency. A converted foreign receipt
+    // or a breakdown that does not reconcile stays one line, as it was.
+    if (
+      !noTax && bill && accountCode && Array.isArray(bill.lineItems) && bill.lineItems.length &&
+      !t.origCurrency && total > 0 &&
+      cents(t.total) === cents(bill.total) && cents(t.tax) === cents(bill.tax) &&
+      (!bill.currency || !claim.currency || String(bill.currency).toUpperCase() === String(claim.currency).toUpperCase())
+    ) {
+      const built = await perLineItems(bill, {
+        accountCode,
+        taxType,
+        tenantId: target.tenantId,
+        fallbackDescription: description,
+      });
+      if (built.kind === 'lines') {
+        lines = built.lines.map((l) => {
+          const own = String(l.Description ?? '').trim();
+          const out: Record<string, unknown> = {
+            ...l,
+            // Every line says which receipt it came from — one Xero bill carries
+            // many people's receipts — then what the row itself is.
+            Description: own && own !== description ? `${description} — ${own}` : description,
+          };
+          if (!out.TaxType) delete out.TaxType;
+          return out;
+        });
+      }
+    }
+    groups.push({
+      lines,
+      total,
+      category: String(t.category ?? '').trim(),
+      // The customer this receipt is billed back to, read off the LIVE
+      // document the way the project is: Rebillable on a claimed receipt is
+      // marked billable on its line(s) of the claim's bill, after it posts.
+      rebill: bill?.rebillable && String(bill?.customer ?? '').trim() ? String(bill.customer).trim() : '',
+      accountCode,
+      description,
+    });
+  }
 
   // An item with no coded category, or nothing to pay, cannot become a Xero
   // line. It used to be dropped SILENTLY — so a five-item claim could post as a
@@ -2718,10 +2777,12 @@ async function buildClaimInvoice(
   // claim and the ledger is the one outcome worth refusing over, and it is the
   // same rule a bill's own line items already follow: a breakdown that disagrees
   // with its paper is a mistake to fix, not to post around.
-  const unpostable = lineItems.filter((l) => !l.AccountCode || !(Number(l.__total) > 0));
-  const postableRaw = lineItems.filter((l) => l.AccountCode && Number(l.__total) > 0);
-  const rebillTo = postableRaw.map((l) => String(l.__rebill ?? ''));
-  const postable = postableRaw.map(({ __total, __category, __rebill, ...line }) => line);
+  const unpostable = groups.filter((g) => !g.accountCode || !(g.total > 0));
+  const postableGroups = groups.filter((g) => g.accountCode && g.total > 0);
+  // Paired with the posted lines by position (linkClaimBillables), so a receipt
+  // posted as two lines names its customer on both.
+  const rebillTo = postableGroups.flatMap((g) => g.lines.map(() => g.rebill));
+  const postable = postableGroups.flatMap((g) => g.lines);
 
   // What a reviewer has to DO about a refusal differs by entity, so the message
   // does too. A linked entity's item needs a coded category; a bridge entity's
@@ -2731,8 +2792,8 @@ async function buildClaimInvoice(
   const unmappedCategories = [
     ...new Set(
       unpostable
-        .filter((l) => !l.AccountCode && Number(l.__total) > 0)
-        .map((l) => String(l.__category ?? ''))
+        .filter((g) => !g.accountCode && g.total > 0)
+        .map((g) => g.category)
         .filter(Boolean)
     ),
   ];
@@ -2752,10 +2813,10 @@ async function buildClaimInvoice(
     return { ok: false as const, status: 422, body: {
       error: 'unpostable_lines',
       count: unpostable.length,
-      lines: unpostable.map((l) => String(l.Description ?? '')).slice(0, 10),
+      lines: unpostable.map((g) => g.description).slice(0, 10),
       categories: unmappedCategories.slice(0, 20),
       message:
-        `${unpostable.length} of the ${lineItems.length} items on this claim can't become a Xero line — ` +
+        `${unpostable.length} of the ${groups.length} items on this claim can't become a Xero line — ` +
         `${fixIt}, and each item needs an amount above 0. Publishing now would post a bill for less than the ` +
         'claim is worth, so fix those items first.',
     } };
@@ -2859,8 +2920,8 @@ async function attachClaimPdf(
 
 // POST /api/xero/organisations/:id/publish-claim — post an APPROVED expense
 // claim as an ACCPAY bill payable to the employee. Each claim line becomes an
-// invoice line (account code from its category); Xero applies each account's
-// default tax rate. Defaults to DRAFT so it's reviewable in Xero, not finalised.
+// invoice line (account code from its category, tax code from the document;
+// a document with its own line items posts as those lines). Defaults to DRAFT so it's reviewable in Xero, not finalised.
 // Re-publishing is refused (409) unless force.
 //
 // The claim's entity and the entity whose ledger receives it are deliberately

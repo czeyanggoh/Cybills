@@ -500,6 +500,22 @@ sent). An update re-links, since Xero gives the lines new ids, which is also how
 a claim published before this gets its lines marked. Best-effort and REPORTED
 on the claim page. Covered by `test/claim-rebillable.test.mts`.
 
+**And a claimed receipt posts under its OWN tax code, as its own lines.** A
+claim's bill sent each receipt as one line with no `TaxType`, so Xero applied
+the ACCOUNT's default — and a chart whose ENTERTAINMENT defaults to No Tax
+posted every Standard-Rated restaurant receipt as "No Tax" with its GST in the
+Tax column, which Xero books as an "adjustment to tax" rather than input tax
+(Jenny Lye's September auto claim, 19 Oct 2026: 136.92 of GST unclaimed). Each
+line now names the document's own code (`taxTypeOf`, by name, from the receiving
+org's rates). And a receipt with line items — LINKUS split 231.56 at 9% and
+23.09 outside GST — posts as THOSE lines, built by the publish path's own
+`perLineItems`, each described "<receipt> — <row>". Only where the claim line is
+the document's money to the cent (same total, same tax, same currency, not a
+converted foreign receipt) and the rows reconcile; otherwise it stays one line,
+never refused. The refusals still count ITEMS, and a rebillable receipt's
+customer is named on every one of its lines. A bridge entity is untouched (No
+Tax, one line). Covered by `test/claim-line-items.test.mts`.
+
 **A meal is a record of people, not only of money.** A restaurant bill states an
 amount and says nothing about the one question anybody asks of it afterwards:
 who was at the table. "Din Tai Fung — Entertainment" is a figure with no business
