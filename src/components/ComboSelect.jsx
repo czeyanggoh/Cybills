@@ -288,6 +288,9 @@ export default function ComboSelect({
               data-active={i === active}
               onMouseEnter={() => setActive(i)}
               onClick={() => commit(o)}
+              // A row too long for the box is cut short, so hovering it reads
+              // it whole.
+              title={typeof format(o) === 'string' ? format(o) : undefined}
               className={cn(
                 'flex cursor-pointer items-center gap-2 px-3 py-1.5',
                 i === active && 'bg-accent text-accent-foreground'
