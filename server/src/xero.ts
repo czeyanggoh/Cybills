@@ -886,6 +886,54 @@ async function linkBillableExpenses(
   return { ok: linked === lineIds.length, linked, ...(error ? { error } : {}) };
 }
 
+// The same, line by line, for an EXPENSE CLAIM's bill — whose lines are many
+// people's receipts, so each is billed back (or not) on its own document's say:
+// `rebillTo[i]` is the customer named on the document behind line i, '' for a
+// line that is the organisation's own cost. Xero hands the lines back in the
+// order they were sent, which is what lets the two be paired by position. Each
+// customer is looked up once. Best-effort and reported, like the bill's.
+async function linkClaimBillables(
+  tenantId: string,
+  invoice: { InvoiceID?: unknown; LineItems?: Array<{ LineItemID?: unknown }> },
+  rebillTo: string[]
+): Promise<{ ok: boolean; linked: number; asked: number; error?: string } | null> {
+  const sourceId = String(invoice?.InvoiceID ?? '');
+  const lines = invoice?.LineItems ?? [];
+  if (!sourceId || !rebillTo.some(Boolean)) return null;
+  const contactIds = new Map<string, string>();
+  let linked = 0;
+  let asked = 0;
+  let error = '';
+  for (let i = 0; i < rebillTo.length; i += 1) {
+    const name = String(rebillTo[i] || '').trim();
+    if (!name) continue;
+    asked += 1;
+    if (!contactIds.has(name)) {
+      // eslint-disable-next-line no-await-in-loop -- one lookup per customer, cached
+      contactIds.set(name, await customerContactId(tenantId, name));
+    }
+    const contactId = contactIds.get(name) || '';
+    const lineId = String(lines[i]?.LineItemID ?? '');
+    if (!contactId) {
+      if (!error) error = `"${name}" isn't a contact in this Xero organisation.`;
+      continue;
+    }
+    if (!lineId) {
+      if (!error) error = 'Xero did not return the line to link.';
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop -- one call per line; Xero has no batch form
+    const result = await relay('LinkedTransactions', {
+      method: 'PUT',
+      tenantId,
+      body: { SourceTransactionID: sourceId, SourceLineItemID: lineId, ContactID: contactId },
+    });
+    if (result.ok) linked += 1;
+    else if (!error) error = result.message || result.error || 'link_failed';
+  }
+  return { ok: linked === asked, linked, asked, ...(error ? { error } : {}) };
+}
+
 // The Xero ContactID for a customer NAME, or '' when that name isn't one of the
 // org's customers. A billable expense names who gets invoiced, so a name Xero
 // doesn't hold is no answer at all.
@@ -2569,7 +2617,7 @@ async function buildClaimInvoice(
   target: any,
   claim: NonNullable<ReturnType<typeof getClaimForXero>>
 ): Promise<
-  | { ok: true; payload: Record<string, unknown>; lines: number }
+  | { ok: true; payload: Record<string, unknown>; lines: number; rebillTo: string[] }
   | { ok: false; status: number; body: any }
 > {
   // Account code for a claim line.
@@ -2651,6 +2699,10 @@ async function buildClaimInvoice(
         ...(noTax ? { TaxType: 'NONE' } : {}),
         __total: total,
         __category: String(t.category ?? '').trim(),
+        // The customer this receipt is billed back to, read off the LIVE
+        // document the way the project is: Rebillable on a claimed receipt is
+        // marked billable on its line of the claim's bill, after it posts.
+        __rebill: bill?.rebillable && String(bill?.customer ?? '').trim() ? String(bill.customer).trim() : '',
       } as Record<string, unknown>;
       // Tag the PIC (tracking category) from the underlying cost doc's project.
       const tracking = trackingFor(tc, String(bill?.project || t.project || ''));
@@ -2667,9 +2719,9 @@ async function buildClaimInvoice(
   // same rule a bill's own line items already follow: a breakdown that disagrees
   // with its paper is a mistake to fix, not to post around.
   const unpostable = lineItems.filter((l) => !l.AccountCode || !(Number(l.__total) > 0));
-  const postable = lineItems
-    .filter((l) => l.AccountCode && Number(l.__total) > 0)
-    .map(({ __total, __category, ...line }) => line);
+  const postableRaw = lineItems.filter((l) => l.AccountCode && Number(l.__total) > 0);
+  const rebillTo = postableRaw.map((l) => String(l.__rebill ?? ''));
+  const postable = postableRaw.map(({ __total, __category, __rebill, ...line }) => line);
 
   // What a reviewer has to DO about a refusal differs by entity, so the message
   // does too. A linked entity's item needs a coded category; a bridge entity's
@@ -2770,7 +2822,7 @@ async function buildClaimInvoice(
       payload.CurrencyCode = base;
     }
   }
-  return { ok: true, payload, lines: postable.length };
+  return { ok: true, payload, lines: postable.length, rebillTo };
 }
 
 // Best-effort: attach the expense-claim PDF (rendered client-side and passed as
@@ -2888,6 +2940,9 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
 
   const invoiceId = String(invoice.InvoiceID ?? '');
   const attachment = await attachClaimPdf(invoiceId, target.tenantId, b, String(invoice.InvoiceNumber ?? ''));
+  // The receipts on it that are billed back to a client: each one's line marked
+  // billable to that customer, as publishing the receipt on its own would.
+  const rebilled = await linkClaimBillables(target.tenantId, invoice, prepared.rebillTo);
 
   res.json({
     ok: true,
@@ -2897,6 +2952,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       status: String(invoice.Status ?? status),
     },
     attachment,
+    rebilled,
     claim: updated,
   });
 });
@@ -2981,6 +3037,10 @@ xeroRouter.post('/organisations/:id/update-claim', async (req, res) => {
 
   const invoiceId = String(invoice.InvoiceID ?? claim.xeroInvoiceId);
   const attachment = await attachClaimPdf(invoiceId, target.tenantId, b, String(invoice.InvoiceNumber ?? ''));
+  // An update sends the lines afresh, so Xero gives them new ids: the billable
+  // ones are linked again, which is also how a claim published before this
+  // existed gets its rebillable lines marked.
+  const rebilled = await linkClaimBillables(target.tenantId, { ...invoice, InvoiceID: invoiceId }, prepared.rebillTo);
 
   res.json({
     ok: true,
@@ -2991,6 +3051,7 @@ xeroRouter.post('/organisations/:id/update-claim', async (req, res) => {
     },
     lines: prepared.lines,
     attachment,
+    rebilled,
     claim: getClaimForXero(org, claim.id),
   });
 });

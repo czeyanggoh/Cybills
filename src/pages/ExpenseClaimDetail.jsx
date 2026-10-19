@@ -366,12 +366,21 @@ export default function ExpenseClaimDetail() {
       });
       notifyClaimsChanged(); // refresh so the button flips to "Published to Xero"
       const attachNote = r.attachment && r.attachment.ok === false ? ' (PDF attachment couldn’t be sent — see Xero)' : '';
-      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as a ${publishStatusLabel(publishStatus).toLowerCase()} bill${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''}.${attachNote}`);
+      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as a ${publishStatusLabel(publishStatus).toLowerCase()} bill${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''}.${attachNote}${rebillNote(r.rebilled)}`);
     } catch (err) {
       setPayNote(err?.message || 'Could not publish the claim to Xero.');
     } finally {
       setPublishing(false);
     }
+  };
+
+  // What became of the receipts marked Rebillable: each one's line is marked a
+  // billable expense to its customer after the bill posts. Said either way —
+  // a cost meant to be recharged and silently not marked is money nobody bills.
+  const rebillNote = (rb) => {
+    if (!rb || !rb.asked) return '';
+    if (rb.ok) return ` ${rb.linked} line${rb.linked === 1 ? '' : 's'} marked billable to the customer.`;
+    return ` Only ${rb.linked} of ${rb.asked} rebillable line${rb.asked === 1 ? '' : 's'} could be marked billable: ${rb.error || 'Xero refused.'} Use “Assign expenses to a customer” on the bill in Xero for the rest.`;
   };
 
   // The claim's twin of the cost page's Update in Xero: after Unapprove, fix,
@@ -388,7 +397,7 @@ export default function ExpenseClaimDetail() {
       const r = await updateClaimInXero(orgId, { claimId: claim.id, pdfBase64, pdfName: claimExportName(claim, 'pdf') });
       notifyClaimsChanged();
       const attachNote = r.attachment && r.attachment.ok === false ? ' (PDF attachment couldn’t be sent — see Xero)' : '';
-      setPayNote(`Updated the bill in ${claim.xeroTenantName || 'Xero'}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} with this claim’s current items.${attachNote}`);
+      setPayNote(`Updated the bill in ${claim.xeroTenantName || 'Xero'}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} with this claim’s current items.${attachNote}${rebillNote(r.rebilled)}`);
     } catch (err) {
       setPayNote(err?.message || 'Could not update the bill in Xero.');
     } finally {

@@ -489,6 +489,17 @@ turn the switch ON, and only with a customer. The document page's re-read now
 mirrors `customer` and `rebillable` from what it saved — it left both behind,
 so a re-read that turned Rebillable on still showed No until a reload.
 
+**And a rebillable receipt on an expense CLAIM is billed back too.** Only
+publish-bill ever made the link, so a receipt marked Rebillable that reached
+Xero as a line of a claim's bill was assigned to nobody (19 Oct 2026).
+`buildClaimInvoice` now reads each line's live document (`rebillable` +
+`customer`, the way it reads the project) into `rebillTo`, and publish-claim and
+update-claim link each such line to its customer after the bill posts
+(`linkClaimBillables`, paired by position — Xero returns the lines in the order
+sent). An update re-links, since Xero gives the lines new ids, which is also how
+a claim published before this gets its lines marked. Best-effort and REPORTED
+on the claim page. Covered by `test/claim-rebillable.test.mts`.
+
 **A meal is a record of people, not only of money.** A restaurant bill states an
 amount and says nothing about the one question anybody asks of it afterwards:
 who was at the table. "Din Tai Fung — Entertainment" is a figure with no business
