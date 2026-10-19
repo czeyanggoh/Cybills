@@ -1,5 +1,6 @@
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { isComplete } from '@/lib/costsData';
+import { isGstRegistered } from '@/lib/businessProfile';
 import { getExtractionSettings } from '@/lib/extractionSettings';
 import { isPaymentProof } from '@/lib/paymentProof';
 import { isAdvanceDocument } from '@/lib/prepayment';
@@ -114,7 +115,12 @@ export async function autoPublishAfterRead(bill) {
     const account = accounts.find((a) => a.code === accountCode);
     if (!account) return null;
 
-    const taxType = rates.find((t) => t.name === bill.taxRate)?.taxType || account.taxType || '';
+    // The document's own tax code, never the account's default in its place —
+    // a blank one is declined (and refused by the server: taxRateMissing). Only
+    // an entity that is not GST-registered, whose documents carry none, posts
+    // under the account's default.
+    const gst = isGstRegistered();
+    const taxType = rates.find((t) => t.name === bill.taxRate)?.taxType || (gst ? '' : account.taxType) || '';
     if (!taxType) return null;
 
     return await publishBillToXero(orgId, {

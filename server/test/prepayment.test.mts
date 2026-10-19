@@ -117,7 +117,7 @@ check('recorded again', r.status, 200);
 // 4) The invoice that follows: published Approved, the prepayment applied.
 const invoice = doc({
   documentType: 'Invoice', invoiceNumber: 'INV-1', status: 'ready', total: '1200', tax: '99.08',
-  date: '2026-10-05', category: '429 - General Expenses', description: 'Window works, as per QUO-2609239',
+  date: '2026-10-05', category: '429 - General Expenses', taxRate: 'No Tax', description: 'Window works, as per QUO-2609239',
 });
 seen.length = 0;
 r = await post('publish-bill', { billId: invoice.id, accountCode: '429', taxType: 'INPUTY24', status: 'DRAFT' });
@@ -137,7 +137,7 @@ r = await post('undo-prepayment', { billId: quote.id });
 check('a used prepayment cannot be undone', [r.status, r.body.error], [409, 'allocated']);
 
 // 5) Nothing left: the next invoice from the supplier publishes as it was asked.
-const next = doc({ documentType: 'Invoice', invoiceNumber: 'INV-2', status: 'ready', total: '50', date: '2026-11-01', category: '429 - General Expenses' });
+const next = doc({ documentType: 'Invoice', invoiceNumber: 'INV-2', status: 'ready', total: '50', date: '2026-11-01', category: '429 - General Expenses', taxRate: 'No Tax' });
 seen.length = 0;
 r = await post('publish-bill', { billId: next.id, accountCode: '429', taxType: 'INPUTY24', status: 'DRAFT' });
 check('a used-up prepayment is not applied again',
@@ -170,7 +170,7 @@ check('an unpublished invoice is refused', [r.status, r.body.error], [409, 'not_
 const q3 = doc({ supplier: 'Zeta Works', invoiceNumber: 'Q-9', total: '100' });
 await post('record-prepayment', { billId: q3.id, bankAccountCode: '090', date: '2026-09-01' });
 allocationReply = { status: 200, body: { Allocations: [{ ValidationErrors: [{ Message: 'Allocation date is in a locked period.' }] }] } };
-const zInv = doc({ supplier: 'Zeta Works', documentType: 'Invoice', invoiceNumber: 'Z-1', status: 'ready', total: '100', date: '2026-10-01', category: '429 - General Expenses' });
+const zInv = doc({ supplier: 'Zeta Works', documentType: 'Invoice', invoiceNumber: 'Z-1', status: 'ready', total: '100', date: '2026-10-01', category: '429 - General Expenses', taxRate: 'No Tax' });
 r = await post('publish-bill', { billId: zInv.id, accountCode: '429', taxType: 'INPUTY24', status: 'AUTHORISED' });
 check('the bill still posts', r.status, 200);
 check('…and the refusal is reported in Xero’s words', [r.body.prepayment?.ok, r.body.prepayment?.message], [false, 'Allocation date is in a locked period.']);

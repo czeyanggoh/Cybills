@@ -82,7 +82,7 @@ const check = (name: string, got: unknown, want: unknown) => {
 const mk = (supplier: string, published: boolean) => {
   const b = insertBill({
     orgId: 'cybm', kind: 'cost', status: 'ready', supplier, invoiceNumber: 'INV-1', documentType: 'Invoice',
-    currency: 'AUD', date: '2026-07-31', category: '429 - General Expenses', description: supplier,
+    currency: 'AUD', date: '2026-07-31', category: '429 - General Expenses', taxRate: 'No Tax', description: supplier,
     total: '717.75', tax: '0',
   } as any);
   if (published) markBillPosted('cybm', b.id, { xeroInvoiceId: 'inv-existing', xeroTenantId: 't-cybm', xeroTenantName: 'CYBM' });

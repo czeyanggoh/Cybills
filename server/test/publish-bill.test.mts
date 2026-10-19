@@ -158,7 +158,7 @@ const bill = (fields: Record<string, unknown>) =>
   insertBill({
     orgId: 'cybm', kind: 'cost', status: 'ready', supplier: 'A1 Laundry', invoiceNumber: 'INV-9',
     documentType: 'Invoice', currency: 'SGD', date: '2026-07-31', category: '429 - General Expenses',
-    description: 'Laundry services', total: '0', tax: '0',
+    description: 'Laundry services', total: '0', tax: '0', taxRate: 'Standard-Rated Purchases',
     ...fields,
   } as any);
 
@@ -481,6 +481,25 @@ check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 
   check('other refusal: still says how much CYBills sent',
     /CYBills sent 25 bytes of application\/pdf/.test(out.body.attachment.error), true);
   attachmentReply = null;
+}
+
+// A document with no tax code is never published: it used to go up under the
+// ACCOUNT's default, chosen by nobody — Royal China's 17.82 of GST went up as
+// No Tax under ENTERTAINMENT's default (19 Oct 2026).
+{
+  const out = await publish(bill({ total: '155.39', tax: '17.82', taxRate: '' }).id);
+  check('no tax code: refused', [out.status, out.body.error], [422, 'no_tax_rate']);
+  check('no tax code: nothing reaches Xero', out.posted, null);
+  check('no tax code: it says where to fix it', /Tax rate on the document/.test(out.body.message), true);
+
+  // An entity that is NOT GST-registered carries no codes, and still publishes.
+  const { loadCollection, saveCollection } = await import('../src/jsonStore.ts');
+  saveCollection('settings', [
+    ...loadCollection<any>('settings'),
+    { workspaceId: 'cybm', key: 'cybills.business-profile.v1::org-1', value: { gstRegistered: 'No' } },
+  ]);
+  const ok = await publish(bill({ total: '50', tax: '0', taxRate: '' }).id);
+  check('not GST-registered: a blank code still publishes', ok.status, 200);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');

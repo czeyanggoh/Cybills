@@ -516,6 +516,29 @@ never refused. The refusals still count ITEMS, and a rebillable receipt's
 customer is named on every one of its lines. A bridge entity is untouched (No
 Tax, one line). Covered by `test/claim-line-items.test.mts`.
 
+**A document with no tax code is never published.** Cze's rule (19 Oct 2026),
+after a Royal China receipt with Tax rate left blank posted its 17.82 of GST as
+No Tax under ENTERTAINMENT's default. The account's default never stands in for
+the document's code, on any road: `taxRateMissing` (`xero.ts`) refuses it in
+`postBillToXero` (the button, bulk, automatic, payables, bank settle) and in
+update-bill, 422 `no_tax_rate`; `postingCodesFrom` refuses a blank OR unknown
+name for the machine callers (it no longer falls back to `account.taxType`); a
+claim is refused naming every receipt with no code or one the org has no rate
+for. In the browser the publish dialog lists "a tax code" as missing and no
+longer preselects the account's default, bulk publish skips and counts them, and
+publish-after-reading declines. An entity that is NOT GST-registered
+(`gstRegisteredFor`) is not asked — its documents carry no code — and nor is a
+bridge entity. A claim item with no document behind it posts No Tax if it
+carries no tax, and is refused if it does.
+
+**And an approved claim must still match its documents.** Approval freezes the
+claim's lines (`withLiveItems`), but the tax code is read live, so a receipt
+corrected afterwards (Tiong Bahru to No Tax, tax 0) would post the approved
+16.56 of tax under the new No Tax code. A claim whose item's total or tax no
+longer matches its document is refused, 409 `claim_items_changed`, naming the
+item: Unapprove and approve again takes the correction. Converted foreign
+receipts are not compared. Covered by `publish-bill` and `claim-line-items`.
+
 **A meal is a record of people, not only of money.** A restaurant bill states an
 amount and says nothing about the one question anybody asks of it afterwards:
 who was at the table. "Din Tai Fung — Entertainment" is a figure with no business

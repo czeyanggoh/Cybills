@@ -104,8 +104,9 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
         const code = accountCodeFromCategory(bill?.category);
         const match = code ? acc.find((a) => a.code === code) : null;
         if (match) setAccountCode(match.code);
-        // Tax rate: prefer the doc's own tax rate (matched by name), else fall
-        // back to the selected account's default.
+        // Tax rate: the doc's own, matched by name — never the account's
+        // default in its place. A document with no tax code is not published
+        // (taxRateMissing in server/src/xero.ts); the notice below says so.
         const noTax = rates.find((t) => t.taxType === 'NONE' || /^no tax$/i.test(t.name));
         if (!gstRegistered) {
           setTaxType(noTax?.taxType ?? '');
@@ -113,7 +114,6 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
         }
         const byName = bill?.taxRate ? rates.find((t) => t.name === bill.taxRate) : null;
         if (byName) setTaxType(byName.taxType);
-        else if (match?.taxType && rates.some((t) => t.taxType === match.taxType)) setTaxType(match.taxType);
       })
       .catch((err) => {
         if (!alive) return;
@@ -168,6 +168,8 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   const pickAccount = (code) => {
     setAccountCode(code);
     if (!gstRegistered) return; // stays No Tax
+    // The document's own code stands whatever account is picked.
+    if (String(bill?.taxRate ?? '').trim()) return;
     const acc = (accounts ?? []).find((a) => a.code === code);
     if (acc?.taxType && (taxRates ?? []).some((t) => t.taxType === acc.taxType)) {
       setTaxType(acc.taxType);
@@ -215,6 +217,10 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
     if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate(bill))) out.push('a date');
     if (!txt(bill?.category) || txt(bill?.category).toLowerCase() === 'uncategorised') out.push('a category');
     if (!totalOk(bill)) out.push(credit ? 'a total other than 0' : 'a total above 0');
+    // A GST-registered entity's document names its own tax code (No Tax
+    // included); the server refuses one that doesn't rather than post the
+    // account's default.
+    if (gstRegistered && !txt(bill?.taxRate)) out.push('a tax code');
     return out;
   })();
   const hasDate = missing.length === 0;
@@ -589,8 +595,9 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               {missing.length > 0 && (
                 <p className="rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                   <span className="font-medium">Can&rsquo;t publish yet.</span> This document still needs{' '}
-                  {missing.join(', ')}. Fill it in on the document first — a {noun} goes into a live ledger, and a
-                  missing date would land it in whatever period today falls in.
+                  {missing.join(', ')}. Fill it in on the document first — a {noun} goes into a live ledger
+                  {missing.includes('a date') ? ', and a missing date would land it in whatever period today falls in' : ''}
+                  {missing.includes('a tax code') ? ', and a blank tax code would post under the account’s default rather than what the paper says' : ''}.
                 </p>
               )}
 

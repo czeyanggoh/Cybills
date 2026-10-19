@@ -21,6 +21,7 @@ import { getBillFile } from './storage.js';
 import { appOrigin, peopleForOrg, REPORTING_OFFICER } from './users.js';
 import {
   accountsForOrg,
+  gstRegisteredFor,
   postBillToXero,
   postingCodesFrom,
   taxRatesForOrg,
@@ -240,7 +241,7 @@ paymentsRouter.get('/bills', async (req, res) => {
       const advance = isAdvance(bill);
       const posting = advance
         ? ({ ok: true, accountCode: '', taxType: '' } as ReturnType<typeof postingCodesFrom>)
-        : postingCodesFrom(bill, accounts, rates);
+        : postingCodesFrom(bill, accounts, rates, { gstRegistered: gstRegisteredFor(organisation.id) });
       bills.push(payableRow(req, organisation, bill, posting, advance));
     }
   }
@@ -484,7 +485,8 @@ paymentsRouter.post('/bills/:id/publish', async (req, res) => {
   const posting = postingCodesFrom(
     bill,
     await accountsForOrg(WORKSPACE_ID, organisation.id),
-    await taxRatesForOrg(WORKSPACE_ID, organisation.id)
+    await taxRatesForOrg(WORKSPACE_ID, organisation.id),
+    { gstRegistered: gstRegisteredFor(organisation.id) }
   );
   if (!posting.ok) return res.status(422).json({ error: posting.error, message: posting.message });
 
@@ -623,7 +625,7 @@ paymentsRouter.get('/bank-candidates', async (req, res) => {
     for (const bill of mine) {
       const published = Boolean(bill.xeroInvoiceId);
       // A bill already in Xero needs no posting codes: it is paid, not posted.
-      const posting = published ? null : postingCodesFrom(bill, accounts, rates);
+      const posting = published ? null : postingCodesFrom(bill, accounts, rates, { gstRegistered: gstRegisteredFor(organisation.id) });
       const row = payableRow(req, organisation, bill, posting ?? { ok: true, accountCode: '', taxType: '' });
       candidates.push({
         ...row,

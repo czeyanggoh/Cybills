@@ -115,7 +115,7 @@ const sale = (fields: Record<string, unknown> = {}) =>
   insertBill({
     orgId: 'cybm', kind: 'sales', status: 'ready', supplier: 'ARC3 Nobel Pte Ltd',
     invoiceNumber: 'SI-1001', documentType: 'Invoice', currency: 'SGD', date: '2026-09-18',
-    category: '200 - Sales', description: 'Consulting, September', total: '1090', tax: '90',
+    category: '200 - Sales', taxRate: 'Standard-Rated Supplies', description: 'Consulting, September', total: '1090', tax: '90',
     ...fields,
   } as any);
 
@@ -174,7 +174,7 @@ const publish = async (billId: string, over: Record<string, unknown> = {}) => {
   const cost = insertBill({
     orgId: 'cybm', kind: 'cost', status: 'ready', supplier: 'A1 Laundry', invoiceNumber: 'INV-9',
     documentType: 'Invoice', currency: 'SGD', date: '2026-09-18', category: '200 - Sales',
-    description: 'Laundry', total: '109', tax: '9',
+    description: 'Laundry', total: '109', tax: '9', taxRate: 'Standard-Rated Purchases',
   } as any);
   const r = await publish(cost.id);
   check('a cost still publishes as a bill', [r.status, r.posted?.Type], [200, 'ACCPAY']);

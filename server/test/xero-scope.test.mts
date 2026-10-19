@@ -63,7 +63,7 @@ const check = (name: string, got: unknown, want: unknown) => {
 const bill = (orgId: string, supplier: string) =>
   insertBill({
     orgId, kind: 'cost', status: 'ready', supplier, invoiceNumber: 'INV-1', documentType: 'Invoice',
-    currency: 'SGD', date: '2026-07-31', category: '429 - General Expenses', description: supplier,
+    currency: 'SGD', date: '2026-07-31', category: '429 - General Expenses', taxRate: 'No Tax', description: supplier,
     total: '100', tax: '0',
   } as any);
 

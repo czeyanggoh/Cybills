@@ -69,7 +69,7 @@ const { saveCollection } = await import('../src/jsonStore.ts');
 const bill = (f: Record<string, unknown>) =>
   insertBill({
     orgId: 'cybm', kind: 'cost', status: 'expenseclaim', invoiceNumber: '', documentType: 'Receipt',
-    category: '61000 - Software expense', description: '', tax: '0', ...f,
+    category: '61000 - Software expense', taxRate: 'No Tax', description: '', tax: '0', ...f,
   } as any);
 const usd = bill({ supplier: 'HighLevel LLC', currency: 'USD', total: '25', date: '2026-09-14' });
 const restated = bill({ supplier: 'Microsoft', currency: 'USD', total: '17.17', tax: '1.42', baseCurrency: 'SGD', baseTotal: 22.2, baseTax: 1.84, date: '2026-09-10' });

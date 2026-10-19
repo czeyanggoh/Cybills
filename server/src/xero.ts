@@ -1736,6 +1736,29 @@ function missingForPublish(bill: Bill): string[] {
   return out;
 }
 
+// Is this entity registered for GST? Anything but an explicit 'No' counts, as
+// in taxContextFor and isGstRegistered() in the browser: a profile saved before
+// the field existed keeps its behaviour.
+export function gstRegisteredFor(orgId: string): boolean {
+  const profile = readSetting<{ gstRegistered?: string }>(workspaceId({} as any), 'cybills.business-profile.v1', orgId);
+  return String(profile?.gstRegistered || 'Yes').toLowerCase() !== 'no';
+}
+
+// A document with no tax code is never published. It used to post under the
+// ACCOUNT's default, chosen by nobody: a Royal China receipt with its Tax rate
+// left blank and 17.82 of GST went up under ENTERTAINMENT's default — No Tax —
+// with the GST booked as an adjustment to tax rather than input tax (19 Oct
+// 2026). Whether a document carries tax, and under which code, is a decision
+// about the paper, so it is made on the document — the reader, a supplier rule
+// or a person — and an empty field is refused on every road rather than filled
+// in by the chart. An entity that is not GST-registered is not asked: it posts
+// No Tax throughout and its documents carry no code.
+export const NO_TAX_RATE_MESSAGE =
+  'This document has no tax code. Choose one in Tax rate on the document (No Tax if it carries none) before publishing — it is never left to the account’s default.';
+export function taxRateMissing(orgId: string, bill: Pick<Bill, 'taxRate'>): boolean {
+  return !String(bill?.taxRate ?? '').trim() && gstRegisteredFor(orgId);
+}
+
 // The account code and tax code a document posts under, worked out from the
 // document itself.
 //
@@ -1764,7 +1787,7 @@ export async function postingCodesFor(
   // Both sides: the name a sales invoice carries is an OUTPUT code, which a
   // purchase-only list would miss and quietly post under the account default.
   const [accounts, rates] = await Promise.all([accountsForOrg(ws, orgId), taxRatesForOrg(ws, orgId, 'all')]);
-  return postingCodesFrom(bill, accounts, rates);
+  return postingCodesFrom(bill, accounts, rates, { gstRegistered: gstRegisteredFor(orgId) });
 }
 
 export type PostingCodes =
@@ -1777,7 +1800,8 @@ export type PostingCodes =
 export function postingCodesFrom(
   bill: Bill,
   accounts: XeroAccountRef[],
-  rates: Array<{ name: string; code: string; rate: number }>
+  rates: Array<{ name: string; code: string; rate: number }>,
+  opts: { gstRegistered?: boolean } = {}
 ): PostingCodes {
   const accountCode = codeFromCategory(bill.category);
   if (!accountCode) {
@@ -1790,7 +1814,15 @@ export function postingCodesFrom(
       `Account ${accountCode} isn\u2019t an active account in this Xero organisation\u2019s chart.` };
   }
   const named = String(bill.taxRate ?? '').trim();
-  const taxType = (named && rates.find((r) => r.name === named)?.code) || account.taxType || '';
+  const own = (named && rates.find((r) => r.name === named)?.code) || '';
+  // A GST-registered entity posts the code the DOCUMENT names, never the
+  // account's default in its place (see taxRateMissing).
+  if (opts.gstRegistered !== false && !own) {
+    return { ok: false, error: 'no_tax_rate', message: named
+      ? `This document’s tax rate “${named}” isn’t one of this organisation’s Xero tax rates. Choose another in Tax rate on the document before publishing.`
+      : NO_TAX_RATE_MESSAGE };
+  }
+  const taxType = own || account.taxType || '';
   if (!taxType) {
     return { ok: false, error: 'no_tax_code', message: named
       ? `This document\u2019s tax rate \u201C${named}\u201D isn\u2019t one of this organisation\u2019s, and account ${accountCode} has no default.`
@@ -1933,6 +1965,9 @@ export async function postBillToXero(
       missing,
       message: `This document still needs ${missing.join(', ')}. A bill is posted into a live ledger, so it has to be complete first.`,
     } };
+  }
+  if (taxRateMissing(organisation.id, bill)) {
+    return { status: 422, body: { error: 'no_tax_rate', message: NO_TAX_RATE_MESSAGE } };
   }
   if (opts.unattended && !receivable && !bill.xeroInvoiceId) {
     const { xeroAlreadyHas } = await import('./paperworkMatch.js');
@@ -2479,6 +2514,9 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
       message: `This document still needs ${missing.join(', ')}. It is already in the ledger, so an update has to be complete too.`,
     });
   }
+  if (taxRateMissing(organisation.id, bill)) {
+    return res.status(422).json({ error: 'no_tax_rate', message: NO_TAX_RATE_MESSAGE });
+  }
 
   const prepared = await buildBillInvoice(req, organisation, bill, {
     accountCode,
@@ -2692,6 +2730,60 @@ async function buildClaimInvoice(
     return rateTypes.get(n)?.code || (/^no tax$/i.test(n) ? 'NONE' : '');
   };
   const cents = (v: unknown) => Math.round(parseAmount(v) * 100);
+  // An APPROVED claim's lines are frozen at the figures approved (withLiveItems
+  // in claims.ts), while the tax code above is read off the live document. So a
+  // receipt corrected after approval — Tiong Bahru changed to No Tax, its tax
+  // to 0 — would post the approved 16.56 of tax under the NEW No Tax code,
+  // which Xero books as an adjustment to tax (19 Oct 2026). The two must be one
+  // answer: a document whose money no longer matches its approved line stops
+  // the publish, and Unapprove + approve again takes the correction. Compared
+  // only where the line is the document's own figure (not a converted foreign
+  // receipt, which is restated in the claim's currency).
+  const stale = (claim.transactions ?? []).flatMap((t) => {
+    const bill = getBillByIdAny(String(t.itemId));
+    if (!bill || t.origCurrency) return [];
+    if (bill.currency && claim.currency && String(bill.currency).toUpperCase() !== String(claim.currency).toUpperCase()) return [];
+    const moved = cents(t.total) !== cents(bill.total) || (!noTax && cents(t.tax) !== cents(bill.tax));
+    if (!moved) return [];
+    const label = xeroLineDescription(String(t.supplier || bill.supplier || 'Item'), String(t.itemId), '') || 'Item';
+    return [`${label}: approved at ${cents(t.total) / 100} (tax ${cents(t.tax) / 100}), the document now says ${cents(bill.total) / 100} (tax ${cents(bill.tax) / 100})`];
+  });
+  if (stale.length) {
+    return { ok: false as const, status: 409, body: {
+      error: 'claim_items_changed',
+      lines: stale.slice(0, 10),
+      message:
+        `${stale.length} item(s) on this claim have changed since it was approved — ${stale.slice(0, 3).join('; ')}${stale.length > 3 ? '; …' : ''}. ` +
+        'An approved claim keeps the figures it was approved at, so Unapprove it and approve it again to take the change, then publish or Update in Xero.',
+    } };
+  }
+  // Every receipt names its own code, or the claim is not published: left
+  // blank, the line went up under the account's default (see taxRateMissing),
+  // which is how Royal China's 17.82 of GST landed in Xero as No Tax. A code the
+  // receiving org cannot place is the same gap. Not asked of a bridge entity
+  // (No Tax throughout) or one that is not GST-registered.
+  if (!noTax && gstRegisteredFor(organisation.id)) {
+    const gaps = (claim.transactions ?? []).flatMap((t) => {
+      const bill = getBillByIdAny(String(t.itemId));
+      const name = String(bill?.taxRate ?? '').trim();
+      const label = xeroLineDescription(String(t.supplier || bill?.supplier || 'Item'), String(t.itemId), '') || String(t.supplier || 'Item');
+      // A line with no document behind it has only the claim's own figures:
+      // with no tax it posts No Tax, with tax there is nothing to say which code.
+      if (!bill) return cents(t.tax) === 0 ? [] : [`${label}: carries tax but has no document to say which code`];
+      if (!name) return [`${label}: no tax code`];
+      if (!taxTypeOf(name)) return [`${label}: “${name}” isn’t one of ${target.name || 'this organisation'}’s Xero tax rates`];
+      return [];
+    });
+    if (gaps.length) {
+      return { ok: false as const, status: 422, body: {
+        error: 'no_tax_rate',
+        lines: gaps.slice(0, 10),
+        message:
+          `${gaps.length} item(s) on this claim have no usable tax code — ${gaps.slice(0, 5).join('; ')}${gaps.length > 5 ? '; …' : ''}. ` +
+          'Choose one in Tax rate on each document (No Tax if it carries none) before publishing; a receipt is never left to the account’s default.',
+      } };
+    }
+  }
   // One group per claimed receipt: its line(s), and what the refusals below
   // read about it. A receipt is one line — or, where the document carries its
   // own line items, those lines (see below) — but it is still ONE item to the
@@ -2703,7 +2795,7 @@ async function buildClaimInvoice(
     const tax = noTax ? 0 : parseAmount(t.tax);
     const bill = getBillByIdAny(String(t.itemId));
     const accountCode = codeOf(t.category);
-    const taxType = noTax ? 'NONE' : taxTypeOf(bill?.taxRate);
+    const taxType = noTax || (!bill && cents(t.tax) === 0) ? 'NONE' : taxTypeOf(bill?.taxRate);
     const description = describe(t);
     const line = {
       Description: description,

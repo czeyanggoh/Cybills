@@ -1457,13 +1457,19 @@ export default function Costs() {
       // Nor is a quotation / pro-forma: it is recorded as a prepayment.
       proofs: picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && (isPaymentProof(d.type) || isAdvanceDocument(d.type))).length,
     };
-    const targets = picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && !isPaymentProof(d.type) && !isAdvanceDocument(d.type) && isComplete(d));
-    const incomplete = picked.length - targets.length - skipped.published - skipped.claimed - skipped.proofs;
+    const publishable = picked.filter((d) => !d.xeroInvoiceId && d.status !== 'expenseclaim' && !isPaymentProof(d.type) && !isAdvanceDocument(d.type) && isComplete(d));
+    // No tax code, no publish: the server refuses it rather than post the
+    // account's default (taxRateMissing in server/src/xero.ts), so it is
+    // skipped and counted here instead of failing one by one.
+    const hasTaxCode = (d) => !gstRegistered || String(d.taxRate ?? '').trim();
+    skipped.noTaxCode = publishable.filter((d) => !hasTaxCode(d)).length;
+    const targets = publishable.filter(hasTaxCode);
+    const incomplete = picked.length - publishable.length - skipped.published - skipped.claimed - skipped.proofs;
     if (!targets.length) {
       setMergeNote(
         inXeroCount && inXeroCount === selectedDocs().length
           ? 'Nothing to publish — Xero already has the payment for ' + (inXeroCount === 1 ? 'that document' : 'those documents') + '. Open each one to send the receipt to its Xero transaction instead.'
-          : 'Nothing to publish — a document must have a supplier, a date, a real category and a total above 0, ' +
+          : 'Nothing to publish — a document must have a supplier, a date, a real category, a tax code and a total above 0, ' +
               'and not already be published, on an expense claim, a payment proof or a quotation.'
       );
       return;
@@ -1515,7 +1521,9 @@ export default function Costs() {
     for (const d of targets) {
       const accountCode = accountCodeFromCategory(d.category);
       const account = accounts.find((a) => a.code === accountCode);
-      const taxType = rates.find((t) => t.name === d.taxRate)?.taxType || account?.taxType || '';
+      // The document's own code; the account's default only where the entity
+      // is not GST-registered and so carries none.
+      const taxType = rates.find((t) => t.name === d.taxRate)?.taxType || (gstRegistered ? '' : account?.taxType) || '';
       if (!account || !taxType) {
         failed.push(d.supplier || 'Unknown supplier');
         continue;
@@ -1537,6 +1545,7 @@ export default function Costs() {
         (skipped.published ? ` ${skipped.published} already published.` : '') +
         (inXeroCount ? ` ${inXeroCount} skipped — Xero already has the payment (send the receipt there from the document page).` : '') +
         (skipped.claimed ? ` ${skipped.claimed} on an expense claim.` : '') +
+        (skipped.noTaxCode ? ` ${skipped.noTaxCode} skipped — no tax code (set Tax rate on the document).` : '') +
         (incomplete > 0 ? ` ${incomplete} still missing a supplier, date, category or total.` : '')
     );
   };

@@ -26,7 +26,7 @@ writeFileSync(
 const MGH = 'MERIDIAN GROUP HOLDINGS PTE LTD';
 const doc = (id: string, extra: Record<string, unknown>) => ({
   id, orgId: 'cybm', displayId: id, fileHash: `h-${id}`, fileName: `${id}.jpg`, supplier: 'Supplier', invoiceNumber: id,
-  documentType: 'Receipt', currency: 'SGD', total: 100, tax: 0, date: '2026-09-23', category: '1354 - RECOVERABLE EXPENSES - PREPAYMENT',
+  documentType: 'Receipt', currency: 'SGD', total: 100, tax: 0, date: '2026-09-23', category: '1354 - RECOVERABLE EXPENSES - PREPAYMENT', taxRate: 'No Tax',
   createdBy: 'jenny@sun.sg', owner: 'jenny@sun.sg', status: 'expenseclaim', kind: 'cost', createdAt: new Date(0).toISOString(), ...extra,
 });
 writeFileSync(

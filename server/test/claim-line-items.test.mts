@@ -50,17 +50,37 @@ writeFileSync(
         supplier: 'CHUI HUAY LIM', total: 209.71, tax: 17.32,
         lineItems: [{ description: 'Food', category: ENT, net: '100', tax: '9', total: '109', taxRate: '' }],
       }),
+      // Its Tax rate left BLANK — the Royal China receipt that went up as No Tax.
+      doc('260908115607', { supplier: 'ROYAL CHINA', total: 155.39, tax: 17.82, taxRate: '' }),
+      // A code the receiving org has no rate for.
+      doc('260908115608', { supplier: 'ODD CAFE', total: 10.9, tax: 0.9, taxRate: 'Imaginary Rate' }),
+      // Changed to No Tax AFTER its claim was approved at 16.56 of tax.
+      doc('260929211213', { supplier: 'TIONG BAHRU', total: 200.59, tax: 0, taxRate: 'No Tax' }),
     ],
   })
 );
 
+const claimOf = (id: string, transactions: unknown[]) => ({
+  id, workspaceId: 'cybm', orgId: 'cybm', claimFor: 'Jenny Lye', type: 'Regular',
+  name: 'Auto claim', claimDate: '2026-09-30', endDate: '2026-09-30', currency: 'SGD', transactions,
+  history: [], approvalStatus: 'approved', approver: '', approverEmail: '', decidedBy: '', decidedAt: '',
+  archived: false, deleted: false, createdBy: '', createdAt: new Date(0).toISOString(),
+  hrSentAt: '', hrSentAmount: '', hrSentBy: '', hrRevision: 0,
+});
 const txn = (itemId: string, supplier: string, category: string, total: string, tax: string) => ({
   itemId, date: '2026-09-18', supplier, category, description: 'meal', net: String(Number(total) - Number(tax)), tax, total,
 });
 writeFileSync(
   join(DATA_DIR, 'claims.json'),
   JSON.stringify({
-    items: [{
+    items: [
+      claimOf('claim-3', [txn('260929211213', 'TIONG BAHRU', ENT, '200.59', '16.56')]),
+      claimOf('claim-2', [
+        txn('260923110349', 'ROYAL CHINA', ENT, '155.39', '17.82'),
+        txn('260908115607', 'ROYAL CHINA', ENT, '155.39', '17.82'),
+        txn('260908115608', 'ODD CAFE', ENT, '10.90', '0.90'),
+      ]),
+      {
       id: 'claim-1', workspaceId: 'cybm', orgId: 'cybm', claimFor: 'Jenny Lye', type: 'Regular',
       name: 'Auto claim', claimDate: '2026-09-30', endDate: '2026-09-30', currency: 'SGD',
       transactions: [
@@ -155,6 +175,31 @@ const sum = (k: string) => Math.round(lines.reduce((a, l) => a + Number(l[k]) * 
 check('the bill is worth exactly what the claim is', (sum('UnitAmount') + sum('TaxAmount')) / 100, 275.49 + 155.39 + 1032.6 + 209.71);
 check('a rebillable receipt posted as two lines is billed back on both', linked.map((l) => l.SourceLineItemID), ['li-1', 'li-2']);
 check('…and reported', [body.rebilled?.ok, body.rebilled?.linked], [true, 2]);
+
+// A receipt with no tax code — or one the org has no rate for — stops the claim.
+posted = null;
+const refused = await fetch('http://127.0.0.1:4744/api/xero/organisations/org-sun/publish-claim', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ claimId: 'claim-2', status: 'DRAFT' }),
+});
+const why = await refused.json();
+check('a claim with a receipt lacking a tax code is refused', [refused.status, why.error], [422, 'no_tax_rate']);
+check('…and nothing reaches Xero', posted, null);
+check('…naming the receipts, not the good one', why.lines?.map((l: string) => l.split(':')[0]), ['ROYAL CHINA #260908115607', 'ODD CAFE #260908115608']);
+
+// A receipt corrected after its claim was approved: the frozen line and the
+// live code disagree, so the claim says so rather than post 16.56 as No Tax.
+posted = null;
+const changed = await fetch('http://127.0.0.1:4744/api/xero/organisations/org-sun/publish-claim', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ claimId: 'claim-3', status: 'DRAFT' }),
+});
+const changedWhy = await changed.json();
+check('an item changed since approval stops the publish', [changed.status, changedWhy.error], [409, 'claim_items_changed']);
+check('…nothing reaches Xero', posted, null);
+check('…and it says to unapprove and approve again', /Unapprove/.test(changedWhy.message), true);
 
 server.close();
 stub.close();
