@@ -248,5 +248,32 @@ check('already-merged originals are left alone', findMergeCandidates([doc({ ...p
   );
 }
 
+// --- one receipt, two photos, the supplier read two ways ----------------------
+// Two photos of one LINKUS receipt (Sunstream, 19 Sep 2026) read the supplier as
+// "LINKUS" and "LINKUS 临家". As strings those are two suppliers at one total,
+// which is the receipt-and-card-slip shape, so it was offered as a merge. It is
+// a duplicate: one supplier spelt two ways, and the same receipt number.
+const linkusA = doc({
+  id: 'linkusA',
+  supplier: 'LINKUS',
+  invoiceNumber: '202609180073',
+  date: '2026-09-18',
+  total: '275.49',
+  tax: '20.84',
+  lineItems: [{ description: 'Food' }, { description: 'Service charge' }],
+});
+const linkusB = doc({ ...linkusA, id: 'linkusB', supplier: 'LINKUS 临家' });
+check('one supplier spelt two ways is not a receipt and its slip', kindOf(linkusA, linkusB), null);
+check('…and is offered no merge', findMergeCandidates([linkusA, linkusB]).length, 0);
+check('…and reads as duplicates', looksLikeDuplicates([linkusA, linkusB]), true);
+
+// Even where the names share nothing, a shared receipt number is one document:
+// a card slip prints its own trace number, never the merchant's.
+check(
+  'the same reference at the same total is never a payment pair',
+  kindOf(linkusA, doc({ ...linkusA, id: 'other', supplier: 'Lin Kus Restaurant Group' })),
+  null,
+);
+
 console.log(failures ? `\n${failures} failing` : '\nall passing');
 process.exit(failures ? 1 : 0);

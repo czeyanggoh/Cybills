@@ -26,6 +26,8 @@
 // The last condition is what stops two unrelated half-read documents pairing up
 // just because they are both incomplete.
 
+import { sameCompany } from './billedTo.js';
+
 // Two uploads this far apart are not one trip to the scanner. Used as the
 // "arrived together" signal — the closest thing to "came from the same email"
 // that a document actually carries.
@@ -111,6 +113,22 @@ export function keptApart(a, b) {
   return names(a, b) || names(b, a);
 }
 
+// One supplier, however the reader spelt it this time. Two photos of one LINKUS
+// receipt came back as "LINKUS" and "LINKUS 临家" (the shop's sign prints both),
+// and compared as strings that is two DIFFERENT suppliers at one total — which is
+// exactly what a receipt and its card slip look like, so the pair was offered as
+// a merge when it is a duplicate. `sameCompany` is the entity check's rule: the
+// shorter name wholly inside the longer, anchored on the first word, legal forms
+// and non-Latin script aside.
+//
+// Used only where it can STOP a merge — the payment pair and the duplicate
+// verdict. The page rule keeps exact names: widened there, a "Craftsmen Coffee"
+// receipt chains onto the pages of a "Craftsmen Coffee - Mohd Sultan" order, and
+// a merge that should not happen is the costlier mistake.
+function sameSupplier(a, b) {
+  return Boolean(a.supplier && b.supplier && (a.supplier === b.supplier || sameCompany(a.supplier, b.supplier)));
+}
+
 function arrivedTogether(a, b) {
   if (!a.by || a.by !== b.by) return false;
   if (!a.at || !b.at) return false;
@@ -131,9 +149,13 @@ function tie(a, b) {
 // by construction — 'payment' needs two different suppliers, 'pages' needs
 // compatible ones.
 export function pairMatch(a, b) {
+  // A card slip prints its own trace number, never the merchant's receipt
+  // number, so two documents stating the SAME reference are one piece of paper
+  // whatever the supplier came back as — a duplicate, not a receipt and its slip.
+  const sameRef = Boolean(a.ref && a.ref === b.ref);
   if (
     a.total != null && b.total != null && money(a.total) === money(b.total) &&
-    a.supplier && b.supplier && a.supplier !== b.supplier &&
+    a.supplier && b.supplier && !sameSupplier(a, b) && !sameRef &&
     !(a.card && b.card && a.card !== b.card)
   ) {
     return { kind: 'payment', why: 'the same total from two different documents' };
@@ -298,10 +320,12 @@ export function looksLikeDuplicates(docs) {
   const facts = (docs || []).map(docFacts);
   if (facts.length < 2) return false;
   if (new Set(facts.map((f) => money(f.total))).size !== 1) return false;
-  if (new Set(facts.map((f) => f.supplier)).size !== 1) return false;
   for (let i = 0; i < facts.length; i += 1) {
     for (let j = i + 1; j < facts.length; j += 1) {
-      if (complementary(facts[i], facts[j])) return false;
+      const a = facts[i];
+      const b = facts[j];
+      if (a.supplier !== b.supplier && !sameSupplier(a, b)) return false;
+      if (complementary(a, b)) return false;
     }
   }
   return true;
