@@ -259,6 +259,10 @@ function initialData(doc) {
     distanceKm: doc.distanceKm ? String(doc.distanceKm) : '',
     mileageRate: doc.mileageRate ? String(doc.mileageRate) : '',
     customer: doc.customer ?? '',
+    // Left out, the form read every document as not rebillable: the switch
+    // showed No on load whatever was saved, and flicked Yes -> No when a
+    // re-read that turned it on finished and the page took the document back.
+    rebillable: doc.rebillable === true,
     project: doc.project ?? '',
     project2: doc.project2 ?? '',
     projectReason: doc.projectReason ?? '',
