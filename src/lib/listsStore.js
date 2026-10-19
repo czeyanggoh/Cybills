@@ -6,11 +6,12 @@
 import { useEffect, useState } from 'react';
 import { blobStore } from '@/lib/blobStore';
 import { SEED_CATEGORIES } from '@/lib/categoryList';
+import { shownAssetKeys } from '@/lib/accountSides';
 
 const KEY = 'cybills.lists.v1';
 export const LISTS_EVENT = 'cybills:lists-changed';
 const emit = () => window.dispatchEvent(new Event(LISTS_EVENT));
-const store = blobStore(KEY, { added: {}, hidden: {}, meta: {} }, emit, { perOrg: true });
+const store = blobStore(KEY, { added: {}, hidden: {}, meta: {}, shown: {} }, emit, { perOrg: true });
 
 // --- Seeds (from the client's ST Eng workspace) -----------------------------
 // The categories themselves live in a pure module, because the SERVER reads
@@ -64,6 +65,7 @@ function read() {
     added: asObject(saved.added),
     hidden: asObject(saved.hidden),
     meta: asObject(saved.meta),
+    shown: asObject(saved.shown),
   };
 }
 
@@ -194,6 +196,30 @@ export function setListVisible(kind, id, visible) {
   else set.add(id);
   hidden[kind] = [...set];
   write({ ...state, hidden });
+}
+
+// The asset accounts switched ON for the Costs side. The opposite of `hidden`,
+// deliberately: an expense account is offered until somebody switches it off,
+// an asset account only once somebody switches it on (src/lib/accountSides.js
+// says why).
+export function getShownAssetSet() {
+  return shownAssetKeys(read());
+}
+export function useShownAssetSet() {
+  const [set, setSet] = useState(() => getShownAssetSet());
+  useEffect(() => {
+    const sync = () => setSet(getShownAssetSet());
+    window.addEventListener(LISTS_EVENT, sync);
+    return () => window.removeEventListener(LISTS_EVENT, sync);
+  }, []);
+  return set;
+}
+export function setAssetShown(id, on) {
+  const state = read();
+  const set = new Set(Array.isArray(state.shown.categories) ? state.shown.categories : []);
+  if (on) set.add(id);
+  else set.delete(id);
+  write({ ...state, shown: { ...state.shown, categories: [...set] } });
 }
 
 export function useList(kind) {

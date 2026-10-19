@@ -6,6 +6,7 @@ import type { Request } from 'express';
 import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberForSession, defaultProjectFor } from './users.js';
 import { dataScopeForOrg, getOrganisation, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
+import { loadAccountSides } from './accountSides.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
 import { keepMotorVehicleNoTax } from './motorVehicle.js';
@@ -81,17 +82,20 @@ type ListsBlob = {
   meta?: Record<string, Record<string, { rules?: string }>>;
 };
 const asStrArray = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x)) : []);
-const EXPENSE_TYPES = new Set(['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS']);
 
 async function extractionInputsFor(ws: string, realOrgId: string) {
   const lists = (readSetting<ListsBlob>(ws, 'cybills.lists.v1', realOrgId) || {}) as ListsBlob;
 
-  // Chart of accounts: expense accounts first, honouring any category hidden in
-  // Lists — exactly what getExtractionAccounts does for an upload.
+  // Chart of accounts: expense accounts (plus any asset account switched on),
+  // honouring any category hidden in Lists — exactly what getExtractionAccounts
+  // does for an upload.
+  const sides = await loadAccountSides();
   const hiddenCats = new Set(asStrArray(lists?.hidden?.categories));
   const accountsRaw = await accountsForOrg(ws, realOrgId);
   const shown = accountsRaw.filter((a) => !hiddenCats.has(a.code || a.name));
-  const expense = shown.filter((a) => EXPENSE_TYPES.has(String(a.type).toUpperCase()));
+  const expense = sides.accountsForSide(accountsRaw, 'cost').length
+    ? sides.accountsForSide(shown, 'cost', sides.shownAssetKeys(lists))
+    : [];
   const usable = expense.length ? expense : shown;
   const accounts = usable.map((a) => ({ code: a.code, name: a.name, description: a.description || '' }));
 

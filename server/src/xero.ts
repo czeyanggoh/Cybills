@@ -10,6 +10,7 @@ import {
 } from './organisations.js';
 import { workspaceId } from './workspace.js';
 import { readSetting } from './settings.js';
+import { loadAccountSides } from './accountSides.js';
 import { referenceFor, dateFor } from './claimRef.js';
 import { apportion, costComplete, costDate, displayIdOf, getBillById, getBillByIdAny, isCreditNote, listBills, markBillPosted, markBillXeroPayment, parseAmount, totalComplete, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
@@ -454,7 +455,7 @@ function bookFor(req: any): string {
 // or an unreachable relay yields an empty list, so an emailed document still
 // reads (just without account/project classification), never 500s.
 
-export type XeroAccountRef = { code: string; name: string; description: string; type: string; taxType: string };
+export type XeroAccountRef = { code: string; name: string; description: string; type: string; taxType: string; systemAccount?: string };
 
 // The linked org's ACTIVE Xero accounts, for classifying an emailed document
 // into the account it should post to. Empty when Xero isn't configured, the org
@@ -477,6 +478,7 @@ export async function accountsForOrg(ws: string, orgId: string): Promise<XeroAcc
         description: String(a.Description ?? ''),
         type: String(a.Type ?? ''),
         taxType: String(a.TaxType ?? ''),
+        systemAccount: String(a.SystemAccount ?? ''),
       }));
   } catch {
     return [];
@@ -601,6 +603,7 @@ xeroRouter.get('/organisations/:id/accounts', async (req, res) => {
       type: a.Type,
       taxType: a.TaxType ?? '',
       description: a.Description ?? '',
+      systemAccount: a.SystemAccount ?? '',
     }));
   res.json({ accounts });
 });
@@ -751,24 +754,33 @@ xeroRouter.get('/organisations/:id/tracking', async (req, res) => {
   res.json({ categories });
 });
 
-const EXPENSE_TYPES = new Set(['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS']);
-const REVENUE_TYPES = new Set(['REVENUE', 'SALES', 'OTHERINCOME']);
-
 // GET /api/xero/organisations/:id/categories — the org's Xero expense accounts
 // with their AccountID + editable Description, for Business settings → Lists →
 // Categories (where the Description can be edited and pushed back to Xero).
-// `?kind=sales` is the other half of the chart — the revenue accounts a sales
-// invoice is coded from — for the same list's Sales side.
+// The cost side also lists the ASSET accounts a bill may be capitalised to,
+// each marked `asset` — offered in the pickers only once switched on there
+// (src/lib/accountSides.js). `?kind=sales` is the other half of the chart —
+// the revenue accounts a sales invoice is coded from — for the same list's
+// Sales side.
 xeroRouter.get('/organisations/:id/categories', async (req, res) => {
   if (notConfigured(res)) return;
   const organisation = requireOrganisation(req, res);
   if (!organisation) return;
   const result = await referenceRead('Accounts', organisation.tenantId, { where: 'Status=="ACTIVE"' });
   if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
-  const types = req.query.kind === 'sales' ? REVENUE_TYPES : EXPENSE_TYPES;
+  const sides = await loadAccountSides();
+  const sales = req.query.kind === 'sales';
   const categories = (result.data?.Accounts ?? [])
-    .filter((a: any) => a.AccountID && types.has(String(a.Type).toUpperCase()))
-    .map((a: any) => ({ id: a.AccountID, code: a.Code ?? '', name: a.Name ?? '', description: a.Description ?? '' }));
+    .map((a: any) => ({
+      id: a.AccountID,
+      code: a.Code ?? '',
+      name: a.Name ?? '',
+      description: a.Description ?? '',
+      type: String(a.Type ?? ''),
+      systemAccount: String(a.SystemAccount ?? ''),
+    }))
+    .filter((a: any) => a.id && (sales ? sides.isRevenueAccount(a) : sides.isExpenseAccount(a) || sides.isAssetAccount(a)))
+    .map(({ systemAccount: _system, ...a }: any) => ({ ...a, asset: !sales && !sides.isExpenseAccount(a) }));
   res.json({ categories });
 });
 

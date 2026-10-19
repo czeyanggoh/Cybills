@@ -1208,6 +1208,23 @@ names the rate, what IS visible at it, and points at Business settings → Lists
 Tax rates. A blank field with no explanation is
 indistinguishable from a bug, which is exactly how one was reported.
 
+**A cost can be capitalised: asset accounts are categories too, off until
+switched on.** A laptop, a fit-out, a deposit or a prepaid year of insurance is
+paid by bill like anything else and belongs on the balance sheet, so Lists ->
+Categories lists the chart's ASSET accounts (FIXED, CURRENT, NONCURRENT,
+PREPAYMENT, INVENTORY) under their own heading below the expense accounts. The
+switch is the other way round from an expense account's: OFF until somebody
+turns it on (`shown.categories` in the Lists blob, beside `hidden`), because a
+chart's assets include Accumulated Depreciation, director loans and
+intercompany balances, and the reader would otherwise choose among them on
+every receipt. A system account (Accounts Receivable) is never listed — Xero
+refuses one on a bill line — and nor is BANK. `src/lib/accountSides.js` (pure,
+`npm test`) is the rule, read by the Category picker, the upload's read
+(`getExtractionAccounts`) and, loaded by path (`server/src/accountSides.ts`),
+the emailed / WhatsApp'd read (`extractionInputsFor`), so all three offer the
+same accounts. Publishing needed nothing: `postingCodesFrom` already takes any
+active account in the chart.
+
 ## A workspace an entity doesn't use is not a tab
 
 Most CYBM clients raise their own invoices in Xero and never file a sales

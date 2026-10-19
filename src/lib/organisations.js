@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
 import { taxRatesForSide } from '@/lib/taxRateRules';
-import { getHiddenSet, getAddedRows, getMeta, useHiddenSet, useCategoryListOptions, getVisibleCategoryNames, LISTS_EVENT, SEED_TAX_RATES } from '@/lib/listsStore';
+import { getHiddenSet, getAddedRows, getMeta, useHiddenSet, useCategoryListOptions, getVisibleCategoryNames, getShownAssetSet, useShownAssetSet, LISTS_EVENT, SEED_TAX_RATES } from '@/lib/listsStore';
+import { accountsForSide } from '@/lib/accountSides';
 import { useCustomCategories } from '@/lib/customCategories';
 import { useCategorySortMode, sortCategories } from '@/lib/categoryDisplay';
 import { useBankAccounts } from '@/lib/bankAccounts';
@@ -21,10 +22,9 @@ export const ORGANISATION_EVENT = 'cybills:organisation-changed';
 // ones, so the side of the ledger decides which part of the chart a document
 // is coded from. Offering only the expense half to a sales invoice left the
 // reader with no account it could honestly pick.
-const isExpenseType = (t) => ['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS'].includes(String(t || '').toUpperCase());
-const isRevenueType = (t) => ['REVENUE', 'SALES', 'OTHERINCOME'].includes(String(t || '').toUpperCase());
-const accountsForKind = (accounts, kind) =>
-  accounts.filter((a) => (kind === 'sales' ? isRevenueType(a.type) : isExpenseType(a.type)));
+// A cost may also post to an asset account somebody switched on in Lists
+// (accountSides.js); with no set passed, a side is its expense / revenue half.
+const accountsForKind = (accounts, kind, shownAssets) => accountsForSide(accounts, kind, shownAssets);
 
 // Which entity a Xero-backed lookup should use.
 //
@@ -572,7 +572,7 @@ export async function getExtractionAccounts(kind = 'cost') {
     const shown = accounts.filter((a) => !hidden.has(a.code || a.name));
     // The whole chart only when it has NO account on this side at all — not
     // because every one of them was switched off in Lists, which is a choice.
-    const side = accountsForKind(accounts, kind).length ? accountsForKind(shown, kind) : shown;
+    const side = accountsForKind(accounts, kind).length ? accountsForKind(shown, kind, getShownAssetSet()) : shown;
     const list = side.map((a) => ({
       code: a.code,
       name: a.name,
@@ -667,7 +667,8 @@ export async function getExtractionProjects() {
   return out;
 }
 
-// Category-dropdown options for the active org's live chart (expense accounts),
+// Category-dropdown options for the active org's live chart (expense accounts,
+// and any asset account switched on in Lists),
 // with the bundled standard chart as fallback. 'Uncategorised' is always first.
 //
 // A bridge entity is the exception: it has no chart, so its dropdown is the
@@ -688,8 +689,9 @@ export function useCategoryOptions(kind = 'cost') {
   // Categories switched off in Business settings → Lists → Categories are keyed
   // by account code, and drop out of the picker entirely.
   const hidden = useHiddenSet('categories');
+  const assets = useShownAssetSet();
   const shown = (data ?? []).filter((a) => !hidden.has(a.code || a.name));
-  const side = accountsForKind(shown, kind);
+  const side = accountsForKind(shown, kind, assets);
   // A chart with this side's accounts all switched off in Lists offers none of
   // them — that is what switching them off says — rather than the other half.
   const sideHidden = !side.length && accountsForKind(data ?? [], kind).length > 0;

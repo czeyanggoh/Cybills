@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
-import { addToList, removeFromList, renameInList, setListVisible, setMetaField, useHiddenSet, useList, useMeta } from '@/lib/listsStore';
+import { addToList, removeFromList, renameInList, setListVisible, setMetaField, setAssetShown, useHiddenSet, useShownAssetSet, useList, useMeta } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, useTargetAccounts, updateXeroCategoryDescription, getActiveOrganisationId, isStandaloneOrg, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useCategoryAccounts, setCategoryAccount } from '@/lib/categoryAccounts';
@@ -189,6 +189,9 @@ function CategoriesFromXero({ side = 'cost' }) {
   // category switched off here also leaves the document pickers and the
   // extractor's allowed list.
   const hidden = useHiddenSet('categories');
+  // An asset account is the other way round: off until switched on here, since
+  // a chart's assets include accounts nobody should be coding receipts to.
+  const assetsOn = useShownAssetSet();
   // Adopt a saved description into the react-query cache so the row doesn't
   // snap back to the old text on the next render.
   const adopt = (id, description) =>
@@ -209,6 +212,23 @@ function CategoriesFromXero({ side = 'cost' }) {
   const q = query.trim().toLowerCase();
   const rows = (categories || []).filter((c) => !q || c.name.toLowerCase().includes(q) || (c.code || '').toLowerCase().includes(q));
   const visKey = (c) => c.code || c.name;
+  const expenseRows = rows.filter((c) => !c.asset);
+  const assetRows = rows.filter((c) => c.asset);
+  const isOn = (c) => (c.asset ? assetsOn.has(visKey(c)) : !hidden.has(visKey(c)));
+  const toggle = (c) => (c.asset ? setAssetShown(visKey(c), !isOn(c)) : setListVisible('categories', visKey(c), !isOn(c)));
+  const row = (c) => (
+    <tr key={c.id} className="border-b align-top last:border-0 hover:bg-muted/40">
+      {/* Paddings centre each cell's first line on the 32px input. */}
+      <td className="px-3 py-3.5 font-mono text-xs leading-4 text-muted-foreground">{c.code || '—'}</td>
+      <td className="break-words px-3 py-3 font-medium leading-5">{c.name}</td>
+      <td className="px-3 py-1.5">
+        <CategoryDescriptionCell category={c} orgId={orgId} onSaved={adopt} />
+      </td>
+      <td className="px-3 py-3">
+        <VisibleToggle on={isOn(c)} onToggle={() => toggle(c)} />
+      </td>
+    </tr>
+  );
 
 
   return (
@@ -216,7 +236,7 @@ function CategoriesFromXero({ side = 'cost' }) {
       <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
         {sales
           ? 'Sales categories are your connected Xero organisation’s revenue accounts — the accounts a sales invoice is coded to.'
-          : 'Categories are your connected Xero organisation’s expense accounts.'}{' '}
+          : 'Categories are your connected Xero organisation’s expense accounts, and the asset accounts a cost can be capitalised to (switched off until you turn them on).'}{' '}
         Edit a <span className="font-medium text-foreground">Description</span> and it writes straight back to Xero on its own. Switch{' '}
         <span className="font-medium text-foreground">Visible</span> off to drop a category from the {sales ? 'Sales' : 'Costs'} document pickers and stop CYBills coding anything to it — the account stays untouched in Xero.
       </p>
@@ -242,19 +262,15 @@ function CategoriesFromXero({ side = 'cost' }) {
             <tr><th className="whitespace-nowrap px-3 py-2 font-medium">Code</th><th className="whitespace-nowrap px-3 py-2 font-medium">Name</th><th className="px-3 py-2 font-medium">Description</th><th className="whitespace-nowrap px-3 py-2 font-medium">Visible</th></tr>
           </thead>
           <tbody>
-            {rows.map((c) => (
-              <tr key={c.id} className="border-b align-top last:border-0 hover:bg-muted/40">
-                {/* Paddings centre each cell's first line on the 32px input. */}
-                <td className="px-3 py-3.5 font-mono text-xs leading-4 text-muted-foreground">{c.code || '—'}</td>
-                <td className="break-words px-3 py-3 font-medium leading-5">{c.name}</td>
-                <td className="px-3 py-1.5">
-                  <CategoryDescriptionCell category={c} orgId={orgId} onSaved={adopt} />
-                </td>
-                <td className="px-3 py-3">
-                  <VisibleToggle on={!hidden.has(visKey(c))} onToggle={() => setListVisible('categories', visKey(c), hidden.has(visKey(c)))} />
+            {expenseRows.map(row)}
+            {assetRows.length > 0 && (
+              <tr className="border-b bg-muted/40">
+                <td colSpan={4} className="px-3 py-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Assets</span> — for a cost that is capitalised rather than expensed (equipment, a deposit, a prepayment). Off until switched on.
                 </td>
               </tr>
-            ))}
+            )}
+            {assetRows.map(row)}
             {rows.length === 0 && (
               <tr><td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">No {sales ? 'revenue accounts' : 'categories'}{q ? ' match your search' : ''}.</td></tr>
             )}
