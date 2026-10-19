@@ -1757,7 +1757,11 @@ Publish anyway?`
         currency: rule.currency || ex.currency || d.currency,
         category: rule.category || ex.category || d.category,
         categoryReason: categoryReason || d.categoryReason,
-        customer: rule.customer || d.customer,
+        // Who it is recharged to and whether it is billed back, exactly as
+        // SAVED: the form left both behind, so a re-read that turned Rebillable
+        // on still showed No until the page was reloaded.
+        customer: 'customer' in patch ? patch.customer : d.customer,
+        rebillable: 'rebillable' in patch ? patch.rebillable : d.rebillable,
         // A mileage record's total is not read but WORKED OUT — distance × the
         // rate per km — and readDecisions has already done the sum into the
         // patch. Every other document takes the total the reader found.

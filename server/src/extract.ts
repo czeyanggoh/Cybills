@@ -537,7 +537,7 @@ async function loadAttendeeRules(): Promise<AttendeeRules | null> {
 // Whether a cost is Rebillable, from the reader's flag OR a recharge account
 // it was coded to (src/lib/recharge.js) — the same module the re-read uses.
 type RechargeRules = {
-  rebillableFor: (args: { customer?: string; rebillable?: boolean; category?: string; accounts?: unknown[] }) => boolean;
+  rebillableFor: (args: { customer?: string; rebillable?: boolean; category?: string; accounts?: unknown[]; reasons?: string[] }) => boolean;
 };
 let rechargeRules: RechargeRules | null = null;
 let rechargeRulesTried = false;
@@ -911,7 +911,14 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     // whatever the reader's own flag said (src/lib/recharge.js).
     const rechargeRuleSet = await loadRechargeRules();
     const rebillable = rechargeRuleSet
-      ? rechargeRuleSet.rebillableFor({ customer, rebillable: parsed.data.rebillable === true, category, accounts })
+      ? rechargeRuleSet.rebillableFor({
+          customer,
+          rebillable: parsed.data.rebillable === true,
+          category,
+          accounts,
+          // What it took from the covering message, and why it coded it so.
+          reasons: [parsed.data.noteFollowed, parsed.data.categoryReason],
+        })
       : Boolean(customer) && parsed.data.rebillable === true;
     // A credit note's direction is its TYPE, and every rule downstream — the
     // GST evidence gate, the percentage, the SGD restatement — reads a document

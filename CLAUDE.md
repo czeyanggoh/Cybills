@@ -482,7 +482,12 @@ reimbursable, rebill, disbursement, "on behalf") and its description ("recharge
 back to", "bill back", "on behalf of client"; never "recharge" alone, which is a
 mobile top-up, nor "Reimbursements", which is staff paid back). Applied in
 `runExtraction`, after the supplier rule in the re-read and the
-emailed / WhatsApp'd read. It only turns the switch ON, and only with a customer.
+emailed / WhatsApp'd read. A THIRD signal is what the reader said: the note it
+followed or the reason it gave ("coded for recharge to MERIDIAN GROUP
+HOLDINGS", "bill back") is enough by itself (`saysRecharge`). All three only
+turn the switch ON, and only with a customer. The document page's re-read now
+mirrors `customer` and `rebillable` from what it saved — it left both behind,
+so a re-read that turned Rebillable on still showed No until a reload.
 
 **A meal is a record of people, not only of money.** A restaurant bill states an
 amount and says nothing about the one question anybody asks of it afterwards:

@@ -49,5 +49,15 @@ check('…and the reader saying so is still enough', rebillableFor({ customer: M
 check('never without a customer, whatever the account',
   rebillableFor({ customer: '', rebillable: true, category: '1354 - RECOVERABLE EXPENSES - PREPAYMENT', accounts }), false);
 
+// The reason the reader gave is enough on its own — the case that showed it:
+// "The sender marked this as MGH, so it was coded for recharge to MERIDIAN".
+const NOTE = 'The sender marked this as MGH, so it was coded for recharge to MERIDIAN GROUP HOLDINGS PTE LTD.';
+check('a note saying to recharge is enough on an ordinary account',
+  rebillableFor({ customer: MGH, category: '420 - Entertainment', accounts, reasons: [NOTE, ''] }), true);
+check('…and "bill back" says the same', rebillableFor({ customer: MGH, category: '420 - Entertainment', accounts, reasons: ['Please bill back to MGH'] }), true);
+check('…but never without a customer', rebillableFor({ customer: '', category: '420 - Entertainment', accounts, reasons: [NOTE] }), false);
+check('a reason that says nothing of it changes nothing',
+  rebillableFor({ customer: MGH, category: '420 - Entertainment', accounts, reasons: ['Client lunch at a restaurant'] }), false);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 process.exit(failures ? 1 : 0);

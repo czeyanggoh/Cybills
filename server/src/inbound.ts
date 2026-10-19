@@ -417,6 +417,7 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
         customer: String(patch.customer ?? ''),
         category: String(patch.category ?? ''),
         accounts: inputs.accounts,
+        reasons: [String(d.noteFollowed ?? ''), String(d.categoryReason ?? '')],
       })
     ) {
       patch.rebillable = true;

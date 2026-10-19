@@ -260,6 +260,7 @@ export function readDecisions(
       customer: patch.customer || current.customer,
       category: patch.category || current.category,
       accounts,
+      reasons: [ex.noteFollowed, ex.categoryReason],
     })
   ) {
     patch.rebillable = true;

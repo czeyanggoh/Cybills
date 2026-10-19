@@ -9,8 +9,9 @@
 // reader sometimes did) meant the cost published without being marked
 // billable, so nobody billed it (19 Oct 2026).
 //
-// So the account is a second signal beside the reader's own `rebillable`, and
-// it only ever turns the switch ON, only alongside a customer — the flag means
+// So the account is a second signal beside the reader's own `rebillable` — and
+// the note the reader followed is a third ("coded for recharge to MERIDIAN"):
+// both only ever turn the switch ON, only alongside a customer — the flag means
 // "bill this to that client", and with no client it has no object.
 //
 // Pure: the server's read (extract.ts) loads it by path, and the re-read
@@ -49,14 +50,28 @@ export function isRechargeAccount(label, description = '') {
   return DESCRIPTION_PHRASES.some((re) => re.test(d));
 }
 
+// Words that say a cost is being BILLED BACK, in what the reader took from the
+// covering message ("The sender marked this as MGH, so it was coded for
+// recharge to MERIDIAN GROUP HOLDINGS") or in the reason it gave. Same caution
+// as the description: a bare "recharge" could be a mobile top-up, but not
+// beside a customer the reader has just named.
+const INSTRUCTION = /\b(recharg(e|ed|es|ing)|re-?bill(ed|able|ing)?|bill(ed)?\s+back|on\s+behalf\s+of)\b/i;
+
+/** Does what the reader said about this document say it is billed back? */
+export function saysRecharge(...texts) {
+  return texts.some((t) => INSTRUCTION.test(String(t ?? '')));
+}
+
 /**
- * Whether a document should be Rebillable: the reader said so, or it is coded
- * to a recharge account — either way only with a customer to bill.
- * `accounts` is the chart (code / name / description), for the description.
+ * Whether a document should be Rebillable — only ever with a customer to bill —
+ * by any of three signals: the reader said so; it is coded to a recharge
+ * account (`accounts` is the chart, for the description); or the note the
+ * reader followed, or the reason it gave, says to recharge it.
  */
-export function rebillableFor({ customer = '', rebillable = false, category = '', accounts = [] } = {}) {
+export function rebillableFor({ customer = '', rebillable = false, category = '', accounts = [], reasons = [] } = {}) {
   if (!String(customer ?? '').trim()) return false;
   if (rebillable === true) return true;
+  if (saysRecharge(...(Array.isArray(reasons) ? reasons : [reasons]))) return true;
   const label = String(category ?? '');
   const account = (Array.isArray(accounts) ? accounts : []).find(
     (a) => `${a?.code} - ${a?.name}` === label || String(a?.code ?? '') === label
