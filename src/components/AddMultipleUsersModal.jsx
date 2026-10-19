@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { X, ChevronDown } from 'lucide-react';
+import { X, ChevronDown, Download, Upload, AlertTriangle } from 'lucide-react';
 import { rolesFor, roleTier } from '@/lib/userStore';
 import { useOrganisations, getActiveOrganisationId, isStandaloneOrg } from '@/lib/organisations';
 import { cn } from '@/lib/utils';
@@ -7,43 +7,19 @@ import { mobileError } from '@/lib/mobile';
 
 const blankPriv = () => ({ accessAll: false, createClaims: false, canPublish: false });
 const blankRow = () => ({ firstName: '', lastName: '', email: '', mobile: '', role: 'Standard', privileges: blankPriv() });
+const isFilled = (r) => r.firstName.trim() || r.lastName.trim() || r.email.trim();
 
-// Parse a simple CSV (First name, Last name, Email, Mobile, Role). A header row
-// containing "first" is skipped. Privileges aren't in the CSV — they default off
-// and are set per row in the grid, same as the single "Add a user" dialog.
-// A role this entity doesn't offer (Reporting Officer outside a bridge entity)
-// reads as Standard, the same as a misspelt one.
-function parseCsv(text, roles) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  const rows = [];
-  for (const line of lines) {
-    const cols = line.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
-    if (rows.length === 0 && /first/i.test(cols[0] || '')) continue; // header
-    const [firstName = '', lastName = '', email = '', mobile = '', role = 'Standard'] = cols;
-    if (firstName || lastName || email) {
-      rows.push({ firstName, lastName, email, mobile, role: roles.includes(role) ? role : 'Standard', privileges: blankPriv() });
-    }
-  }
-  return rows;
-}
-
-function downloadTemplate() {
-  const csv = 'First name,Last name,Email,Mobile number,Role\nJane,Doe,jane.doe@example.com,,Standard\n';
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'cybills-users-template.csv';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-// "Add multiple users" dialog — CSV upload and/or an editable grid of rows.
-export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
+// "Add multiple users" dialog — the roster workbook and/or an editable grid of
+// rows. The workbook is the one Export to Excel writes, so there is one file
+// format for the roster, not two: new people typed into it land in the grid
+// below (where the invitation is still chosen here), and changes to people
+// already on the roster go to the import preview (`onReview`) like any import.
+// `onExport()` downloads it; `onImport(file)` resolves with planRosterImport's
+// answer for it, asked with `adding`, or throws when it is not a workbook.
+export default function AddMultipleUsersModal({ open, onClose, onAdd, onExport, onImport, onReview }) {
   const fileRef = useRef(null);
   const [rows, setRows] = useState([blankRow()]);
+  const [imported, setImported] = useState(null); // { fileName, plan } | { fileName, failed: true }
   const [notify, setNotify] = useState(true);
   const [showEmail, setShowEmail] = useState(false);
   // The invite message is editable (different orgs word it differently) and
@@ -51,7 +27,6 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
   const { data: organisations = [] } = useOrganisations();
   const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
   const orgName = activeOrg?.name || 'CYBills';
-  const roles = rolesFor(isStandaloneOrg(activeOrg));
   const defaultMessage = `You've been invited to CYBills for ${orgName}. Click the link in this email to set your password and get started.`;
   const [message, setMessage] = useState(null);
   const effectiveMessage = message ?? defaultMessage;
@@ -64,18 +39,28 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
   const addRow = () => setRows((r) => [...r, blankRow()]);
   const close = () => {
     setRows([blankRow()]);
+    setImported(null);
     onClose();
   };
   const onFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    const text = await file.text();
-    const parsed = parseCsv(text, roles);
-    if (parsed.length) setRows(parsed);
+    let plan;
+    try {
+      plan = await onImport(file);
+    } catch {
+      setImported({ fileName: file.name, failed: true });
+      return;
+    }
+    setImported({ fileName: file.name, plan });
+    // New people join whatever has already been typed; the grid's blank
+    // padding rows make way for them.
+    const added = plan.additions.map(({ row: _row, ...p }) => ({ ...blankRow(), ...p }));
+    if (added.length) setRows((r) => [...r.filter(isFilled), ...added]);
   };
   // A row somebody actually filled in. Blank rows are the grid's own padding.
-  const filled = rows.filter((r) => r.firstName.trim() || r.lastName.trim() || r.email.trim());
+  const filled = rows.filter(isFilled);
   // A blank mobile is fine — the number can be filled in later. A number that
   // has been TYPED has to be usable, or the bills that person sends in over
   // WhatsApp won't find them. Named per row rather than refused as a batch:
@@ -109,21 +94,37 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
         <div className="flex-1 space-y-6 overflow-auto p-6">
           <div className="text-center text-sm">
             <p className="text-muted-foreground">
-              You can add multiple users by uploading a CSV file. Please follow our{' '}
-              <button type="button" onClick={downloadTemplate} className="font-medium text-foreground underline underline-offset-2">
-                CSV file template
-              </button>
-              .
+              Export the roster to Excel, add new people as rows at the bottom (leave User ID blank), then import the file.
+              <br />
+              Changes to people already on it are shown for you to review before anything is saved.
             </p>
-            <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              className="mt-3 inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted"
-            >
-              Select file
-            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              onChange={onFile}
+            />
+            <div className="mt-3 flex justify-center gap-2">
+              <button
+                type="button"
+                onClick={onExport}
+                title="Download the roster as an Excel workbook — roles, direct managers, projects and privileges as dropdowns"
+                className="inline-flex h-9 items-center gap-1.5 rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted"
+              >
+                <Download className="h-4 w-4" /> Export to Excel
+              </button>
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="inline-flex h-9 items-center gap-1.5 rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted"
+              >
+                <Upload className="h-4 w-4" /> Import from Excel
+              </button>
+            </div>
           </div>
+
+          {imported && <ImportSummary imported={imported} onReview={onReview} />}
 
           <div className="flex items-center gap-3 text-sm">
             <span className="text-muted-foreground">Notify by email</span>
@@ -234,6 +235,67 @@ export default function AddMultipleUsersModal({ open, onClose, onAdd }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// What the imported file did: who it added to the grid, who it would change
+// (reviewed in the import preview, not here), and every row it skipped, by row
+// number, so the fix is a matter of finding that row in Excel.
+function ImportSummary({ imported, onReview }) {
+  const { fileName, plan, failed } = imported;
+  if (failed) {
+    return (
+      <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        {fileName} couldn’t be read as an Excel workbook (.xlsx). Export the roster, edit that file, and import it again.
+      </p>
+    );
+  }
+  const { additions, changes, errors, unchanged, deferred } = plan;
+  const people = (n) => `${n} ${n === 1 ? 'person' : 'people'}`;
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="text-muted-foreground">
+        <span className="font-medium text-foreground">{fileName}</span>
+        {': '}
+        {additions.length ? `${people(additions.length)} new, added to the list below.` : 'nobody new in this file.'}
+        {unchanged ? ` ${people(unchanged)} already here unchanged.` : ''}
+      </p>
+      {additions.length > 0 && deferred.length > 0 && (
+        <p className="text-muted-foreground">
+          {deferred.join(', ')} for new people {deferred.length === 1 ? 'isn’t' : 'aren’t'} set when adding them. Import the same file
+          again once they’re added and {deferred.length === 1 ? 'it is' : 'those are'} applied.
+        </p>
+      )}
+      {changes.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/40 px-3 py-2">
+          <span>The file also changes {people(changes.length)} already on the roster.</span>
+          <button
+            type="button"
+            onClick={() => onReview({ ...plan, errors: [] }, fileName)}
+            className="inline-flex h-8 items-center rounded-md border bg-background px-3 text-sm font-medium transition-colors hover:bg-muted"
+          >
+            Review changes
+          </button>
+        </div>
+      )}
+      {errors.length > 0 && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-50 p-3 text-amber-900">
+          <p className="mb-1.5 flex items-center gap-1.5 font-medium">
+            <AlertTriangle className="h-4 w-4" /> Skipped — fix these rows in the file and import it again
+          </p>
+          <ul className="space-y-1">
+            {errors.map((e, i) => (
+              <li key={i}>
+                {e.row ? <span className="tabular-nums">Row {e.row}</span> : null}
+                {e.name ? <span className="font-medium"> {e.name}</span> : null}
+                {e.row || e.name ? ': ' : ''}
+                {e.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

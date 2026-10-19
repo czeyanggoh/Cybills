@@ -58,7 +58,7 @@ assert.equal(plan0.changes.length, 1);
 assert.deepEqual(plan0.changes[0].patch, { project: '0012' });
 // Untouched, nothing changes.
 const none = planRosterImport({ rows: sheet, users: USERS, rolesFor, projects: PROJECTS });
-assert.deepEqual(none, { changes: [], errors: [], unchanged: USERS.length });
+assert.deepEqual(none, { changes: [], errors: [], unchanged: USERS.length, additions: [], deferred: [] });
 
 // --- Planning edits -------------------------------------------------------------
 {
@@ -174,6 +174,40 @@ assert.match(planRosterImport({ rows: [['Name', 'Role'], ['X', 'Standard']], use
   assert.deepEqual(s.rows, [['User ID', '', 'Role'], [], [], ['u3', '', 'Business Admin']]);
   const plan = planRosterImport({ rows: s.rows, users: USERS, rolesFor });
   assert.deepEqual(plan.changes.map((c) => [c.user.id, c.patch]), [['u3', { role: 'Business Admin' }]]);
+}
+
+// Adding (the Add multiple users dialog): a row with no User ID and an address
+// nobody here has is somebody new, read into the Add grid's shape; a known
+// address is still an update, and a User ID nobody has is still refused.
+{
+  const header = ROSTER_COLUMNS.map((c) => c.header);
+  const at = (values) => ROSTER_COLUMNS.map((c) => values[c.key] ?? '');
+  const rows = [
+    header,
+    at({ name: 'Mei  Ling Tan', email: 'meiling@redalphacyber.com', role: 'user admin', createClaims: 'Yes', manager: 'Zhen Lin Wong', project: 'Tangs' }),
+    at({ name: 'Solo', email: '' }),
+    at({ name: 'Yvette Kiah', email: 'yvette.kiah@redalphacyber.com', role: 'Business Admin' }),
+    at({ name: 'Ghost', email: 'ghost@x.com', id: 'nope' }),
+    at({ name: 'Again', email: 'MEILING@redalphacyber.com' }),
+    at({ name: 'Bad', email: 'not-an-address' }),
+    at({ name: 'Owner', email: 'o@x.com', role: 'Owner' }),
+  ];
+  const plan = planRosterImport({ rows, users: USERS, rolesFor, projects: PROJECTS, adding: true });
+  assert.deepEqual(plan.additions, [
+    { row: 2, firstName: 'Mei', lastName: 'Ling Tan', email: 'meiling@redalphacyber.com', role: 'User Admin', privileges: { accessAll: false, createClaims: true, canPublish: false } },
+    { row: 3, firstName: 'Solo', lastName: '', email: '', role: 'Standard', privileges: { accessAll: false, createClaims: false, canPublish: false } },
+  ]);
+  assert.deepEqual(plan.deferred, ['Direct manager', 'Project (PIC)']);
+  assert.deepEqual(plan.changes.map((c) => [c.user.id, c.patch.role]), [['u3', 'Business Admin']]);
+  assert.deepEqual(plan.errors.map((e) => e.row), [5, 6, 7, 8]);
+  assert.match(plan.errors[0].message, /Clear the User ID/);
+  assert.match(plan.errors[1].message, /already on row 2/);
+  assert.match(plan.errors[2].message, /isn’t an email address/);
+  assert.match(plan.errors[3].message, /isn’t offered/);
+  // Without `adding`, the same new row is an error, as on any import.
+  const update = planRosterImport({ rows: rows.slice(0, 2), users: USERS, rolesFor, projects: PROJECTS });
+  assert.equal(update.additions.length, 0);
+  assert.match(update.errors[0].message, /Not on this entity/);
 }
 
 await assert.rejects(readXlsx(new TextEncoder().encode('Name,Role\nX,Standard')), /not_xlsx/);

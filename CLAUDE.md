@@ -236,18 +236,24 @@ gets had no fallback at all, though the reader is told there is one:
 entity's list still has, and never over a project already on the document.
 Covered by `npm test` in `server/` (`test/colleague-default-project.test.mts`).
 
-**The roster round-trips through Excel.** Users -> **Export to Excel** /
-**Import from Excel**, for setting roles, direct managers, projects and the
-three privileges across a roster of hundreds by filling down a column rather
-than opening a dialog per person. The export is a real .xlsx with the editable
-columns as dropdowns over a Lists sheet (this entity's roles, the active people
-who can manage, its project list, Yes / No), and name, email, company, status
-and User ID greyed out — read for matching, never for changes. An import only
-UPDATES people already on the roster: nobody is added, removed or (de)activated,
-because each of those sends mail or ends somebody's access. It matches by User
-ID then email, shows every change as person / field / from -> to before saving
-anything, and names each row it will skip with its row number and why — a row
-with any problem is skipped WHOLE, so nobody is half-updated. Saving is one PATCH
+**The roster round-trips through Excel.** Users -> Add multiple users ->
+**Export to Excel** / **Import from Excel** (it replaced that dialog's CSV
+template: one file format for the roster, not two), for setting roles, direct
+managers, projects and the three privileges across a roster of hundreds by
+filling down a column rather than opening a dialog per person. The export is a
+real .xlsx with the editable columns as dropdowns over a Lists sheet (this
+entity's roles, the active people who can manage, its project list, Yes / No),
+and name, email, company, status and User ID greyed out — read for matching,
+never for changes. A row with no User ID and an address nobody here has is
+somebody NEW: it lands in the dialog's Add grid (`additions`, asked for with
+`adding`), where the invitation is still chosen on the page, carrying name,
+email, role and privileges; login, manager and project are named as not carried
+(`deferred`), and importing the same file again once they are added sets them.
+Nobody is removed or (de)activated, because each of those ends somebody's
+access. Existing people are matched by User ID then email, and every change is
+shown as person / field / from -> to before saving anything; each row skipped is
+named with its row number and why — a row with any problem is skipped WHOLE, so
+nobody is half-updated. Saving is one PATCH
 per person through the ordinary route (`updateUsers` in `userStore.js`), so every
 server rule still holds per row and a refusal is reported in the server's words.
 No spreadsheet library: `src/lib/xlsx.js` writes stored ZIP entries and reads

@@ -8,10 +8,17 @@
 // points at it), and the columns that identify a person — name, email, company,
 // status — ride along greyed out, for reading and for matching only.
 //
-// Nothing is ADDED or REMOVED by an import, and nobody's status changes: those
-// each send mail or end somebody's access, and are a person's act on the page.
-// An import says what would change, row by row, and saves nothing until the
-// preview is confirmed.
+// Nobody is REMOVED by an import, and nobody's status changes: those end
+// somebody's access, and are a person's act on the page. An import says what
+// would change, row by row, and saves nothing until the preview is confirmed.
+//
+// The same workbook is how people are ADDED in bulk (Add multiple users): a row
+// with no User ID and an address nobody here has is somebody new. Asked for
+// with `adding`, those come back as `additions` for the Add grid — where the
+// invitation is a person's choice, made on the page — rather than as errors.
+// Only what that grid carries comes across (name, email, role, privileges);
+// login, manager and project are named in `deferred`, and importing the same
+// file again once they are added sets them, since by then the address matches.
 //
 // Pure: no React, no fetch. `npm test` at the root (`roster-sheet`).
 
@@ -157,14 +164,23 @@ export function pickRosterSheet(sheets) {
 //   changes:   [{ user, patch, diffs: [{ field, from, to }] }] — one per person
 //   errors:    [{ row, name, message }] — rows that will NOT be applied
 //   unchanged: how many recognised rows change nothing
+//   additions: [{ row, firstName, lastName, email, role, privileges }] — new
+//              people (only with `adding`; otherwise such a row is an error)
+//   deferred:  field labels new rows filled in that adding does not carry
 // A row with any error is left out whole, so nobody is ever half-updated.
-export function planRosterImport({ rows, users, rolesFor, projects = [] }) {
+export function planRosterImport({ rows, users, rolesFor, projects = [], adding = false }) {
   const errors = [];
   const changes = [];
+  const additions = [];
+  const deferred = new Set();
   let unchanged = 0;
   const all = rows || [];
   const headerAt = all.findIndex((r) => (r || []).some((c) => String(c ?? '').trim()));
-  if (headerAt < 0) return { changes, errors: [{ row: 0, name: '', message: 'The sheet is empty.' }], unchanged };
+  const done = () => ({ changes, errors, unchanged, additions, deferred: [...deferred] });
+  if (headerAt < 0) {
+    errors.push({ row: 0, name: '', message: 'The sheet is empty.' });
+    return done();
+  }
 
   const keyOf = Object.fromEntries(ROSTER_COLUMNS.map((c) => [headerKey(c.header), c.key]));
   // Older or hand-made sheets: a few obvious alternatives.
@@ -175,11 +191,8 @@ export function planRosterImport({ rows, users, rolesFor, projects = [] }) {
     if (k && !(k in at)) at[k] = i;
   });
   if (!('id' in at) && !('email' in at)) {
-    return {
-      changes,
-      errors: [{ row: headerAt + 1, name: '', message: 'No "User ID" or "Email" column — the sheet has to say who each row is. Export a fresh copy and edit that.' }],
-      unchanged,
-    };
+    errors.push({ row: headerAt + 1, name: '', message: 'No "User ID" or "Email" column — the sheet has to say who each row is. Export a fresh copy and edit that.' });
+    return done();
   }
 
   const list = users || [];
@@ -189,6 +202,7 @@ export function planRosterImport({ rows, users, rolesFor, projects = [] }) {
   const labels = managerLabels(list);
   const projectByName = new Map((projects || []).map((p) => [norm(p), p]));
   const seen = new Map();
+  const seenNew = new Map();
 
   for (let r = headerAt + 1; r < all.length; r++) {
     const row = all[r] || [];
@@ -200,11 +214,19 @@ export function planRosterImport({ rows, users, rolesFor, projects = [] }) {
     const user = (id && byId.get(id)) || (email && byEmail.get(norm(email))) || null;
     const name = user?.name || get('name') || email || '';
     const fail = (message) => errors.push({ row: rowNo, name, message });
+    if (!user && adding && !id) {
+      const add = readAddition({ get, rolesFor, rowNo, seenNew, deferred });
+      if (add.error) fail(add.error);
+      else additions.push(add.person);
+      continue;
+    }
     if (!user) {
       fail(
-        id || email
-          ? 'Not on this entity’s roster. An import only updates people who are already here — add them with Add a user first.'
-          : 'No User ID or email, so there is nobody to update.'
+        adding
+          ? `User ID "${id}" isn’t on this entity’s roster. Clear the User ID to add them as somebody new.`
+          : id || email
+            ? 'Not on this entity’s roster. An import only updates people who are already here — add them with Add a user first.'
+            : 'No User ID or email, so there is nobody to update.'
       );
       continue;
     }
@@ -312,7 +334,51 @@ export function planRosterImport({ rows, users, rolesFor, projects = [] }) {
     if (diffs.length) changes.push({ user, patch, diffs });
     else unchanged += 1;
   }
-  return { changes, errors, unchanged };
+  return done();
+}
+
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// A row for somebody not on the roster, read into the Add grid's shape. The
+// sheet has one Name column and the grid two: split at the first space, which
+// the server joins back with one, so the name arrives exactly as typed.
+function readAddition({ get, rolesFor, rowNo, seenNew, deferred }) {
+  const name = (get('name') || '').replace(/\s+/g, ' ');
+  const email = get('email') || '';
+  if (!name && !email) return { error: 'No name or email, so there is nobody to add.' };
+  if (email && !EMAIL_SHAPE.test(email)) return { error: `"${email}" isn’t an email address.` };
+  const key = norm(email) || `name:${norm(name)}`;
+  if (seenNew.has(key)) return { error: `${email || name} is already on row ${seenNew.get(key)}; this row was skipped.` };
+  seenNew.set(key, rowNo);
+
+  const problems = [];
+  const offered = rolesFor(undefined);
+  const roleText = get('role');
+  const role = roleText ? offered.find((x) => norm(x) === norm(roleText)) : 'Standard';
+  if (!role) problems.push(`Role "${roleText}" isn’t offered here (${offered.join(', ')}).`);
+  const privileges = { accessAll: false, createClaims: false, canPublish: false };
+  for (const k of PRIVILEGES) {
+    const v = get(k);
+    const want = readYesNo(v);
+    if (want === null) problems.push(`${fieldLabel(k)} "${v}" — use Yes or No.`);
+    else if (want) privileges[k] = true;
+  }
+  if (problems.length) return { error: problems.join(' ') };
+
+  if (readYesNo(get('login')) === false) deferred.add(fieldLabel('login'));
+  if (get('manager')) deferred.add(fieldLabel('manager'));
+  if (get('project')) deferred.add(fieldLabel('project'));
+  const space = name.indexOf(' ');
+  return {
+    person: {
+      row: rowNo,
+      firstName: space < 0 ? name : name.slice(0, space),
+      lastName: space < 0 ? '' : name.slice(space + 1),
+      email,
+      role,
+      privileges,
+    },
+  };
 }
 
 // "red-alpha-st-engineering-users-2026-10-17.xlsx".

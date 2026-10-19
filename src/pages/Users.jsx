@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Search, ChevronDown, Settings2, CheckCircle2, Download, Upload } from 'lucide-react';
+import { Search, ChevronDown, Settings2, CheckCircle2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import AddUserModal from '@/components/AddUserModal';
 import AddMultipleUsersModal from '@/components/AddMultipleUsersModal';
@@ -164,7 +164,6 @@ export default function Users() {
   const [edit, setEdit] = useState(null); // { user, mode }
   const [toast, setToast] = useState('');
   const [importing, setImporting] = useState(null); // { plan, fileName }
-  const importRef = useRef(null);
   const users = useUsers();
   const bridge = useBridgeEntity();
 
@@ -279,24 +278,18 @@ export default function Users() {
     URL.revokeObjectURL(url);
   };
 
-  // Read the file, work out what it changes, and show that — nothing is saved
-  // until the preview is confirmed.
-  const importExcel = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      const sheet = pickRosterSheet(await readXlsx(await file.arrayBuffer()));
-      const plan = planRosterImport({
-        rows: sheet?.rows || [],
-        users,
-        rolesFor: (current) => rolesFor(bridge, current),
-        projects: projectOptions,
-      });
-      setImporting({ plan, fileName: file.name });
-    } catch {
-      showToast(`${file.name} couldn’t be read as an Excel workbook (.xlsx). Export the roster, edit that file, and import it again.`);
-    }
+  // Read the file and work out what it would do: new people for the Add grid,
+  // changes to people already here for the preview. Nothing is saved until one
+  // of those is confirmed. Throws when the file is not a workbook.
+  const planImport = async (file) => {
+    const sheet = pickRosterSheet(await readXlsx(await file.arrayBuffer()));
+    return planRosterImport({
+      rows: sheet?.rows || [],
+      users,
+      rolesFor: (current) => rolesFor(bridge, current),
+      projects: projectOptions,
+      adding: true,
+    });
   };
 
   // While redirecting a colleague off the practice's own entity, render nothing.
@@ -346,31 +339,6 @@ export default function Users() {
           <button type="button" onClick={() => setMultiOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted">
             Add multiple users
           </button>
-          <button
-            type="button"
-            onClick={exportExcel}
-            disabled={!users.length}
-            title="Download the roster as an Excel workbook — roles, direct managers, projects and privileges as dropdowns"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm transition-colors hover:bg-muted disabled:opacity-50"
-          >
-            <Download className="h-3.5 w-3.5" /> Export to Excel
-          </button>
-          <button
-            type="button"
-            onClick={() => importRef.current?.click()}
-            disabled={!users.length}
-            title="Upload an edited export — you'll see every change before anything is saved"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm transition-colors hover:bg-muted disabled:opacity-50"
-          >
-            <Upload className="h-3.5 w-3.5" /> Import from Excel
-          </button>
-          <input
-            ref={importRef}
-            type="file"
-            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            className="hidden"
-            onChange={importExcel}
-          />
           <div className="relative hidden sm:block">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="h-8 w-48 rounded-md border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
@@ -518,7 +486,14 @@ export default function Users() {
       {rows.length > 0 && <p className="mt-3 text-xs text-muted-foreground">Showing {rows.length} of {rows.length} items</p>}
 
       <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} onAdd={handleAddUser} />
-      <AddMultipleUsersModal open={multiOpen} onClose={() => setMultiOpen(false)} onAdd={handleAddUsers} />
+      <AddMultipleUsersModal
+        open={multiOpen}
+        onClose={() => setMultiOpen(false)}
+        onAdd={handleAddUsers}
+        onExport={exportExcel}
+        onImport={planImport}
+        onReview={(plan, fileName) => setImporting({ plan, fileName })}
+      />
       <ImportUsersModal
         plan={importing?.plan}
         fileName={importing?.fileName}
