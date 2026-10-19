@@ -26,6 +26,9 @@ export type TaxOutcome = {
   // Decided by the motor vehicle rule (src/lib/motorVehicle.js), which a
   // supplier rule's tax code does not overrule.
   motorVehicle?: boolean;
+  // Decided by the hospital / clinic rule (src/lib/medicalProvider.js), on the
+  // same footing.
+  medicalProvider?: boolean;
 };
 export type SplitRows = { rows: Array<Record<string, string>>; note: string } | null;
 type TaxRules = {
@@ -138,6 +141,8 @@ export async function decideTaxRate(
     supplierGstRegNoRemembered?: unknown;
     supplierGstRegNoFrom?: unknown;
     motorVehicle?: unknown;
+    supplier?: unknown;
+    medicalProvider?: unknown;
   }
 ): Promise<TaxOutcome | null> {
   const rules = await loadTaxRules();
@@ -172,6 +177,9 @@ export async function decideTaxRate(
       // A motor vehicle expense is No Tax, by its account or by the paper.
       category,
       motorVehicle: doc.motorVehicle === true,
+      // A hospital's or clinic's bill is No Tax, by its name or by the paper.
+      supplier: String(doc.supplier ?? ''),
+      medicalProvider: doc.medicalProvider === true,
     });
   } catch (e) {
     console.error('[taxRules] decision failed', e);

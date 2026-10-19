@@ -234,6 +234,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'true when this document is a cost of OWNING OR RUNNING A MOTOR VEHICLE: fuel for a vehicle (petrol, diesel, EV charging), parking (a car park, season parking, parking coupons), ERP, road tax, COE, motor insurance, vehicle servicing, repairs, tyres, a car wash, renting or leasing a vehicle, or buying one. false when somebody ELSE carries you or your goods — a taxi, Grab or any ride-hailing trip, a bus, MRT or train fare, a flight, a courier, delivery or freight charge — and false for every other kind of cost. A mileage record is false.',
       },
+      medicalProvider: {
+        type: 'boolean',
+        description:
+          'true when the SUPPLIER who issued this document is a HOSPITAL or CLINIC that treats patients: a hospital, a polyclinic, a GP or family clinic, a specialist clinic or medical centre (e.g. "Novena Heart Centre", "Mount Elizabeth Hospital", "Raffles Medical"), a dental clinic, an eye, skin or TCM clinic, a physiotherapy clinic. false for a pharmacy or retailer selling health products, a diagnostic laboratory billing on its own, a health insurer, a veterinary clinic, and every other kind of supplier.',
+      },
       lineItems: {
         type: 'array',
         description:
@@ -278,6 +283,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'taxLabel',
       'taxRatePrinted',
       'motorVehicle',
+      'medicalProvider',
       'billedTo',
       'billedToRegNo',
       'cardLast4',
@@ -316,6 +322,7 @@ const ReceiptSchema = z.object({
   taxLabel: z.string().optional().default(''),
   taxRatePrinted: z.number().optional().default(0),
   motorVehicle: z.boolean().optional().default(false),
+  medicalProvider: z.boolean().optional().default(false),
   billedTo: z.string().optional().default(''),
   billedToRegNo: z.string().optional().default(''),
   taxRate: z.string().optional().default(''),
@@ -808,6 +815,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'leave `supplier` empty unless a name is actually printed, leave `total` and `tax` at 0 unless an amount is printed, and describe the journey in `description` (origin → destination, e.g. "Drive: Work (ST Engineering Jurong East) → MacRitchie Reservoir Park, 13 km"). ' +
     'The amount is worked out afterwards from the distance at the company\'s rate per km — never invent one. ' +
     'Set `motorVehicle` to true for the cost of owning or running a vehicle — fuel, parking, ERP, servicing, repairs, vehicle rental — and false when the business paid somebody else to carry people or goods (a taxi, a Grab ride, a courier): it decides that the GST is not claimed, so do not guess it from the supplier\'s industry alone. ' +
+    'Set `medicalProvider` to true when the document was issued by a hospital or clinic that treats patients (a specialist centre, a GP, a dental clinic) — not a pharmacy, a lab billing on its own or an insurer: it decides that the GST is not claimed. ' +
     'If a field is not present, use an empty string or 0. ' +
     'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
     accountsGuide +
@@ -972,6 +980,9 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       // (src/lib/motorVehicle.js). A mileage record is a journey in somebody's
       // own car, already worth no tax, and not the business's vehicle.
       motorVehicle: parsed.data.motorVehicle === true && parsed.data.documentType !== 'Mileage',
+      // Issued by a hospital or clinic, so its GST is not claimed
+      // (src/lib/medicalProvider.js). Not a sales invoice's customer.
+      medicalProvider: parsed.data.medicalProvider === true && inp.kind !== 'sales',
       lineItems: parsed.data.lineItems.map((li) => ({ ...li, description: notFiller(li.description) })),
     };
     return { ok: true, data, outcome };

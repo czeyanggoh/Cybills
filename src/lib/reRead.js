@@ -96,6 +96,10 @@ export function readDecisions(
     // the reader's judgement of the paper (src/lib/motorVehicle.js).
     category: codedTo,
     motorVehicle: ex.motorVehicle === true,
+    // A hospital's or clinic's bill is No Tax — by the supplier's name, or by
+    // the reader's judgement of who issued it (src/lib/medicalProvider.js).
+    supplier: supplierName,
+    medicalProvider: ex.medicalProvider === true,
   });
   const inferredRate = rate.name;
   // Tax is RECORDED only when it is Singapore GST this business can claim:
@@ -208,6 +212,7 @@ export function readDecisions(
   // the rule still holds when somebody later moves the document to an account
   // that does not say so.
   patch.motorVehicle = ex.motorVehicle === true;
+  patch.medicalProvider = ex.medicalProvider === true;
   if (descr) patch.description = descr;
   if (ex.cardLast4) patch.cardLast4 = ex.cardLast4;
   if (ex.project) {
@@ -236,10 +241,10 @@ export function readDecisions(
     if (ex.project) delete ruled.project;
     if (ex.customer) delete ruled.customer;
   }
-  // …and except a motor vehicle expense's tax code, which is No Tax whatever a
-  // supplier's rule says: the rule is about one supplier, this is about every
+  // …and except a motor vehicle or medical expense's tax code, which is No Tax
+  // whatever a supplier's rule says: the rule is about one supplier, this is about every
   // client's book (src/lib/motorVehicle.js).
-  if (rate.motorVehicle) delete ruled.taxRate;
+  if (rate.motorVehicle || rate.medicalProvider) delete ruled.taxRate;
   Object.assign(patch, ruled);
   if (ruled.category) patch.categoryReason = categoryReason;
   if (ruled.taxRate) patch.taxRateReason = `Standing rule: documents from ${supplierName} are coded ${rule.taxRate}.`;

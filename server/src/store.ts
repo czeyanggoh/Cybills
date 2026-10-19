@@ -273,8 +273,11 @@ export type Bill = {
   supplierGstRegNoFrom?: string;
   // The reader's judgement that the paper is the cost of owning or running a
   // motor vehicle — fuel, parking, servicing. With a motor vehicle account it is
-  // what makes the document No Tax in every client's book (motorVehicle.ts).
+  // what makes the document No Tax in every client's book (practiceNoTax.ts).
   motorVehicle?: boolean;
+  // The reader's judgement that the SUPPLIER is a hospital or clinic — with the
+  // supplier's own name, what makes the document No Tax (medicalProvider.js).
+  medicalProvider?: boolean;
   taxLabel?: string;
   // The reviewer saying the entity is right after all — an intercompany
   // recharge, a trading name, a group company paying for a subsidiary. Same
@@ -1243,6 +1246,7 @@ const EDITABLE: (keyof Bill)[] = [
   'supplierGstRegNoRemembered',
   'supplierGstRegNoFrom',
   'motorVehicle',
+  'medicalProvider',
   'taxLabel',
   'entityCheckDismissed',
   // Written by keepPaymentProofInStep beside the status it archives, never taken

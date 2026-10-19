@@ -83,6 +83,7 @@ import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
 import ZoomableImage from '@/components/ZoomableImage';
 import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from '@/lib/motorVehicle';
+import { isMedicalProviderExpense, medicalProviderReason } from '@/lib/medicalProvider';
 
 function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
   return (
@@ -909,21 +910,23 @@ export default function CostDetail() {
     }
     setData((d) => ({ ...d, [key]: value }));
     // Moved onto a motor vehicle account: No Tax, the same as the server holds it
-    // (server/src/motorVehicle.ts) — shown here at once, so the form does not
+    // (server/src/practiceNoTax.ts) — shown here at once, so the form does not
     // keep claiming GST the stored document has already given up. Not where a
     // person picked the code themselves.
-    if (
-      key === 'category' &&
-      !isSales &&
-      !data.taxRateEdited &&
-      !data.taxRateCleared &&
-      isMotorVehicleExpense({ category: value, motorVehicle: doc?.motorVehicle === true })
-    ) {
+    // Renamed to a hospital or clinic: No Tax the same way (medicalProvider.js).
+    const noTaxBecause = isSales || data.taxRateEdited || data.taxRateCleared
+      ? ''
+      : key === 'category' && isMotorVehicleExpense({ category: value, motorVehicle: doc?.motorVehicle === true })
+        ? motorVehicleReason({ category: value })
+        : key === 'supplier' && isMedicalProviderExpense({ supplier: value, medicalProvider: doc?.medicalProvider === true })
+          ? medicalProviderReason({ supplier: value })
+          : '';
+    if (noTaxBecause) {
       const noTaxName = noTaxRateName(taxRateSource) || MOTOR_VEHICLE_TAX_RATE;
       setData((d) => ({
         ...d,
         taxRate: noTaxName,
-        taxRateReason: motorVehicleReason({ category: value }),
+        taxRateReason: noTaxBecause,
         tax: '0.00',
         lineItems: Array.isArray(d.lineItems) && d.lineItems.length ? foldTaxIntoCost(d.lineItems) : d.lineItems,
       }));

@@ -5,6 +5,7 @@
 // than only through the pages that call it. `extractionSettings.js` re-exports
 // it for those callers. Its one import is another pure rule of the same kind.
 import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from './motorVehicle.js';
+import { isMedicalProviderExpense, medicalProviderReason, MEDICAL_TAX_RATE } from './medicalProvider.js';
 
 // --- Auto-pickable tax codes ------------------------------------------------
 // The ONLY codes CYBills is allowed to choose from arithmetic alone:
@@ -283,6 +284,10 @@ export function taxRateOutcome({
   // vehicle. Either makes it a motor vehicle expense (src/lib/motorVehicle.js).
   category = '',
   motorVehicle = false,
+  // Who issued it, and the reader's judgement that they are a hospital or
+  // clinic. Either makes it a medical expense (src/lib/medicalProvider.js).
+  supplier = '',
+  medicalProvider = false,
 } = {}) {
   // A motor vehicle expense is No Tax, ahead of everything: the account's own
   // default, the org's "when to use" rules and the printed GST. It is the
@@ -297,6 +302,17 @@ export function taxRateOutcome({
       reason: motorVehicleReason({ category: label, motorVehicle: motorVehicle === true }),
       claimsTax: false,
       motorVehicle: true,
+    };
+  }
+  // A hospital's or clinic's bill is No Tax on the same footing: the practice's
+  // rule about the expense, which no printed GST makes claimable.
+  if (gstRegistered && isMedicalProviderExpense({ supplier, medicalProvider: medicalProvider === true, kind })) {
+    const noTax = (Array.isArray(rates) ? rates : []).find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));
+    return {
+      name: noTax ? noTax.name : MEDICAL_TAX_RATE,
+      reason: medicalProviderReason({ supplier }),
+      claimsTax: false,
+      medicalProvider: true,
     };
   }
   const out = taxRateDecision(arguments[0] ?? {});

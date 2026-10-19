@@ -946,7 +946,7 @@ rental; never a taxi, a Grab ride or a courier), stored on the document.
 and the reason names which signal decided. It beats a supplier rule's tax code
 (the re-read deletes it, the background read and PATCH overwrite it and take
 `taxRate` out of the rule's `ruleFields`, or the rule sweep would write it back).
-`server/src/motorVehicle.ts` loads the same module and holds it on every write —
+`server/src/practiceNoTax.ts` loads the same module and holds it on every write —
 the page's category picker, the inline cell, Bulk edit, the emailed/WhatsApp read
 (`keepMotorVehicleNoTax`) — and over each stored book on the listing
 (`enforceMotorVehicleNoTax`), zeroing the tax in both currencies and on the lines
@@ -955,6 +955,23 @@ chose (a goods van's GST is claimable; a re-read clears the markers and applies
 the rule again), a PUBLISHED bill (Update in Xero is the road), and a document on
 an expense claim or merged away. Covered by `npm test` in `server/`
 (`test/motor-vehicle.test.mts`).
+
+**And a bill from a hospital or clinic is No Tax, on the same footing.** GST
+on medical expenses is disallowed input tax, and the practice never claims it
+(19 Oct 2026) — but a Novena Heart Centre invoice prints a GST number and "GST
+9%" and passed the evidence gate like anybody's. Decided by the SUPPLIER rather
+than the account, since a clinic's bill is coded to Staff Medical, Welfare or a
+recharge and is disallowed on all of them: the name, as whole words
+("Hospital", "Clinic", "Polyclinic", "Medical / Dental / Specialist / Heart
+Centre", never a vet's), or the reader's `medicalProvider` flag for a name that
+says neither ("TCI Cardiology"). A pharmacy, a lab billing on its own and an
+insurer are not. `src/lib/medicalProvider.js` (pure, `npm test`) is the rule;
+`taxRateOutcome` applies it right after the motor vehicle rule, and
+`server/src/practiceNoTax.ts` (was `motorVehicle.ts`) now holds BOTH rules on
+every write, the background read and the listing sweep, with the same
+exceptions — a published bill, a claimed or merged one, and a code a person
+picked (a work-injury claim's GST is claimable). Covered by
+`test/medical-provider.test.mjs` and `server/test/motor-vehicle.test.mts`.
 
 **So the evidence is kept on the document.** `supplierGstRegNo` and `taxLabel`
 were read on every document and dropped the moment the code was chosen —

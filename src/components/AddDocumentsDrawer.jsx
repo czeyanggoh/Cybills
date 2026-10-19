@@ -510,6 +510,9 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           // A motor vehicle expense is No Tax, by its account or by the paper.
           category: codedTo,
           motorVehicle: extracted?.motorVehicle === true,
+          // A hospital's or clinic's bill is No Tax, by its name or by the paper.
+          supplier: cur?.supplier || extracted?.supplier || '',
+          medicalProvider: extracted?.medicalProvider === true,
         });
         claimsTax = outcome.claimsTax !== false;
         rateOutcome = outcome;

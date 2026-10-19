@@ -21,7 +21,7 @@
 // Either one is enough.
 //
 // Pure, and shared: taxRateOutcome (taxRateRules.js) applies it on the upload
-// and the re-read, and the server loads it by path (server/src/motorVehicle.ts)
+// and the re-read, and the server loads it by path (server/src/practiceNoTax.ts)
 // for every write, the background read and the sweep over what is already
 // stored — so the page, the list and the stored document cannot disagree.
 //

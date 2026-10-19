@@ -6,7 +6,7 @@ import type { Bill } from './store.js';
 //
 // The rule is NOT written here: it is the same pure module the document page
 // and the upload drawer apply (src/lib/paymentProof.js), loaded by path the way
-// mileage.ts and motorVehicle.ts load theirs — a second copy would drift, and
+// mileage.ts and practiceNoTax.ts load theirs — a second copy would drift, and
 // the drift would be a page showing Paid over a stored document that is not.
 //
 // Applied on a write that SETS the type — the reader's finalize, an emailed or

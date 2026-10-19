@@ -44,7 +44,7 @@ process.env.OPENAI_BASE_URL = 'http://127.0.0.1:4641';
 
 const { autoRead } = await import('../src/inbound.ts');
 const { insertBill, getBillById, updateBill } = await import('../src/store.ts');
-const { keepMotorVehicleNoTax, enforceMotorVehicleNoTax } = await import('../src/motorVehicle.ts');
+const { keepPracticeNoTax: keepMotorVehicleNoTax, enforcePracticeNoTax: enforceMotorVehicleNoTax } = await import('../src/practiceNoTax.ts');
 const { saveCollection } = await import('../src/jsonStore.ts');
 const { WORKSPACE_ID } = await import('../src/workspace.ts');
 
@@ -53,6 +53,12 @@ const check = (name: string, got: unknown, want: unknown) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
   if (!ok) failures++;
   console.log(`${ok ? 'PASS' : `FAIL got=${JSON.stringify(got)} want=${JSON.stringify(want)}`}  ${name}`);
+};
+
+const has = (name: string, text: unknown, needle: string) => {
+  const ok = String(text || '').includes(needle);
+  if (!ok) failures++;
+  console.log(`${ok ? 'PASS' : `FAIL ${JSON.stringify(text)} does not contain ${JSON.stringify(needle)}`}  ${name}`);
 };
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -124,5 +130,29 @@ await enforceMotorVehicleNoTax('cybm');
 check('the sweep puts a stored petrol receipt right', [getBillById('cybm', stale.id)!.taxRate, getBillById('cybm', stale.id)!.tax], ['No Tax', 0]);
 check('…and leaves the published one for Update in Xero', getBillById('cybm', published.id)!.taxRate, 'Standard-Rated Purchases');
 check("…and the person's pick", getBillById('cybm', handPicked.id)!.taxRate, 'Standard-Rated Purchases');
+
+// --- 5) A hospital's or clinic's bill: the same hold, decided by the supplier
+answer = {
+  ...FIELDS, supplier: 'TCI Cardiology Pte Ltd', motorVehicle: false, medicalProvider: true, total: 250.05, tax: 20.65,
+  supplierGstRegNo: '201807754R', taxLabel: 'GST 9%', taxRatePrinted: 9, description: 'Medical consultation',
+};
+const clinicBill = base({ status: 'processing', supplier: '', total: 0, tax: 0 });
+await autoRead(req, 'cybm', 'org_one0001', 'openai', clinicBill.id, PNG, 'image/png');
+const clinic = getBillById('cybm', clinicBill.id)!;
+check('a read the reader flags as a hospital or clinic is No Tax', [clinic.taxRate, clinic.tax, clinic.total], ['No Tax', 0, 250.05]);
+check('…the flag is stored', clinic.medicalProvider, true);
+has('…and the reason says why', clinic.taxRateReason, 'hospital or clinic');
+
+const renamed = base({ supplier: 'Unknown supplier', category: '8007 - STAFF MEDICAL', taxRate: 'Standard-Rated Purchases', total: 250.05, tax: 20.65 });
+const rename: Record<string, unknown> = { supplier: 'Mount Elizabeth Hospital' };
+check('a write naming a hospital as the supplier is changed', await keepMotorVehicleNoTax(renamed, rename), true);
+check('…to No Tax with no tax', [rename.taxRate, rename.tax], ['No Tax', 0]);
+check('a code a person picked on a clinic bill stays (a work-injury claim)',
+  await keepMotorVehicleNoTax(base({ supplier: 'Raffles Medical Clinic', taxRate: 'Standard-Rated Purchases', taxRateEdited: true }), {}), false);
+
+const staleClinic = base({ supplier: 'Bedok Polyclinic', taxRate: 'Standard-Rated Purchases' });
+updateBill('cybm', moved.id, {}); // bump the book so the sweep runs
+await enforceMotorVehicleNoTax('cybm');
+check('the sweep puts a stored clinic bill right', [getBillById('cybm', staleClinic.id)!.taxRate, getBillById('cybm', staleClinic.id)!.tax], ['No Tax', 0]);
 
 await finish(failures, stub);
