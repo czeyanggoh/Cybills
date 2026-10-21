@@ -114,7 +114,7 @@ check('…and says which portals are offered', r.body.portals.map((p: any) => p.
 check('…and that retrieval is configured', r.body.enabled, true);
 
 // --- Retrieving --------------------------------------------------------------
-answer([{ fileName: 'SP-Sep-2026.pdf', invoice_number: '8812345', pdf_base64: pdf('Sep').toString('base64') }]);
+answer([{ fileName: 'SP-Sep-2026.pdf', invoice_number: '8812345', invoice_date: '04 Sep 2026', pdf_base64: pdf('Sep').toString('base64') }]);
 r = await api(`/logins/${id}/run`, 'POST', {});
 check('Retrieve answers at once and runs in the background', [r.status, r.body.login.run?.status], [202, 'running']);
 let l = await settled(id);
@@ -130,6 +130,8 @@ check('n8n is told the portal and the account', [out.body.portal, out.body.usern
 check('…the password, opened for this one request', out.body.password, SECRET);
 check('…which client it is for', [out.body.tenant_id, out.body.xero_name], ['t-1', 'CYBM']);
 check('…with the n8n key', out.key, 'test-n8n-key');
+check('the first run names no last invoice date', [out.body.last_invoice_date, out.body.lastInvoiceDate], ['', '']);
+check('…and the listing then carries the portal’s date for it', l?.lastInvoiceDate, '2026-09-04');
 
 let docs = retrieved();
 const general = generalUserFor('cybm', 'org_one0001')?.email;
@@ -151,6 +153,7 @@ l = await settled(id);
 check('the same bytes again are not filed twice', [retrieved().length, l?.run.skipped, l?.run.filed.length], [1, 1, 0]);
 check('…and the run says so', /already retrieved/.test(l?.run.note || ''), true);
 check('n8n is told what is already held', sent[sent.length - 1].body.known_references, ['8812345']);
+check('…and to fetch only invoices dated after the newest one filed', sent[sent.length - 1].body.last_invoice_date, '2026-09-04');
 
 // A portal that regenerates the PDF: new bytes, same invoice number.
 answer([{ fileName: 'SP-Sep-2026 (1).pdf', invoice_number: '8812345', data: pdf('Sep regenerated').toString('base64') }]);
@@ -182,6 +185,19 @@ await api(`/logins/${id}/run`, 'POST', {});
 l = await settled(id);
 check('a replaced password is the one sent next', sent[sent.length - 1].body.password, 'new-secret');
 check('…and a new invoice is filed', [retrieved().length, l?.run.filed.length], [2, 1]);
+// No date from n8n for that one: the date the reader took off the paper counts.
+const { updateBill } = await import('../src/store.ts');
+const oct = retrieved().find((b) => b.fileName === 'SP-Oct-2026.pdf')!;
+updateBill(oct.orgId, oct.id, { date: '2026-10-05' });
+answer([]);
+await api(`/logins/${id}/run`, 'POST', {});
+l = await settled(id);
+check('a date read off the paper moves it on when n8n gave none', sent[sent.length - 1].body.last_invoice_date, '2026-10-05');
+// A misread year in the future would stop every later invoice being fetched.
+updateBill(oct.orgId, oct.id, { date: '2099-10-05' });
+await api(`/logins/${id}/run`, 'POST', {});
+l = await settled(id);
+check('…but a date past today is not believed', sent[sent.length - 1].body.last_invoice_date, '2026-09-04');
 
 // --- Unconfigured ------------------------------------------------------------
 env.N8N_RETRIEVE_URL = '';

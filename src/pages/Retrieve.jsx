@@ -446,6 +446,7 @@ export default function Retrieve() {
                     <div className="mt-0.5 text-xs text-muted-foreground">
                       {l.hasPassword ? `Password saved ${when(l.passwordSetAt)}` : 'No password saved'}
                       {l.filedCount ? ` · ${l.filedCount} document${l.filedCount === 1 ? '' : 's'} retrieved so far` : ''}
+                      {l.lastInvoiceDate ? ` · next fetches invoices after ${dayKeyLabel(l.lastInvoiceDate)}` : ''}
                     </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
                       <ScheduleLine login={l} timezone={timezone} />

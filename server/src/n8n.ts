@@ -32,6 +32,9 @@ export type FetchedDocument = {
    *  invoices by number). What a retrieval dedupes on, since a portal often
    *  regenerates the same invoice's PDF with a new timestamp in it. */
   reference?: string;
+  /** The invoice's date as the workflow said it (a portal lists invoices by
+   *  date), in whatever shape it came; the caller normalises it. */
+  date?: string;
 };
 
 export type LinkFetchResult = {
@@ -203,11 +206,13 @@ function documentFrom(o: Record<string, unknown>, link: string): FetchedDocument
   const mediaType = sniffMediaType(bytes);
   if (!mediaType) return null;
   const reference = pick(o, ['invoice_number', 'invoiceNumber', 'document_number', 'documentNumber', 'reference']);
+  const date = pick(o, ['invoice_date', 'invoiceDate', 'bill_date', 'billDate', 'document_date', 'documentDate', 'date']);
   return {
     bytes,
     fileName: nameFor(pick(o, NAME_KEYS), link, mediaType),
     mediaType,
     ...(reference ? { reference: reference.slice(0, 120) } : {}),
+    ...(date ? { date: date.slice(0, 40) } : {}),
   };
 }
 

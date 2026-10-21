@@ -2577,7 +2577,9 @@ this: the invoice waits on the customer portal until somebody signs in. The link
 road above holds no credentials, and still doesn't. Retrieve is the deliberate
 exception, scoped to one entity's own logins. An entity keeps one login per
 portal account (`portal-logins`, `server/src/retrieve.ts`), and **Retrieve now**
-hands it to a SECOND n8n workflow (`N8N_RETRIEVE_URL`, `N8N_API_KEY` shared).
+hands it to a SECOND n8n workflow (`N8N_RETRIEVE_URL`, default
+`https://n8n.cy-bm.sg/webhook/portal-retrieve`, set empty to switch off;
+`N8N_API_KEY` shared).
 That workflow signs in and answers in the shapes the link fetch already reads.
 `readDocumentsReply` (`n8n.ts`) is that parser, shared by both roads, so the
 bytes decide here too and a sign-in page is never filed. What comes back is
@@ -2598,7 +2600,10 @@ outlasts a proxy's timeout. A run that never reports back is shown failed after
 the timeout plus two minutes. **Retrieve all** queues the entity's logins one at
 a time. **Filed once**: a login's ledger (`filed`) skips the same bytes OR the
 same invoice number (portals regenerate PDFs), and so does a file the entity
-already holds. `known_references` tells n8n what to skip. The portal list
+already holds. `known_references` tells n8n what to skip, and `last_invoice_date` (the newest
+invoice date the login has filed: n8n's own `invoice_date` for the item, else
+the date read off the paper, never one past today) tells it to fetch only what
+is dated after that. The portal list
 (`PORTALS`) is SP Group plus "Another portal" with its own https sign-in page:
 a portal is offered only where the workflow can have a recipe for it. Contract:
 `deploy/RETRIEVE.md`. Covered by `npm test` in `server/`
@@ -2623,7 +2628,7 @@ an account gets locked. `scheduleFrom` is the day the schedule was set: a slot
 before it is not owed, so a schedule saved on the 10th for the 5th first runs
 next month. One at a time across EVERY entity, since n8n drives one browser,
 and a person's own Retrieve now holds that browser until it settles (the tick
-stops and the next picks up what is still due). With `N8N_RETRIEVE_URL` unset
+stops and the next picks up what is still due). With `N8N_RETRIEVE_URL` set empty
 nothing runs and no day is used up. A clock has no request, so the read is
 handed `robotRequest` (`robotRequest.ts`, shared with the Drive poller). Covered
 by `npm test` in `server/` (`test/retrieve-schedule.test.mts`: the rule at fixed

@@ -159,9 +159,10 @@ export const env = {
   // Costs -> Retrieve keeps an entity's login for a portal (SP Group's, say)
   // and hands it to THIS webhook, which signs in and answers with the
   // invoices in the same shapes N8N_FETCH_URL does. A different workflow from
-  // the link fetch, so a different URL; N8N_API_KEY is shared. Unset, the
-  // logins can still be saved and nothing is retrieved. See deploy/RETRIEVE.md.
-  N8N_RETRIEVE_URL: process.env.N8N_RETRIEVE_URL ?? '',
+  // the link fetch, so a different URL; N8N_API_KEY is shared. Defaults to
+  // CYBM's own workflow; set it EMPTY to switch retrieval off (the logins can
+  // still be saved and nothing is retrieved). See deploy/RETRIEVE.md.
+  N8N_RETRIEVE_URL: process.env.N8N_RETRIEVE_URL ?? 'https://n8n.cy-bm.sg/webhook/portal-retrieve',
   // A sign-in, an OTP-less portal crawl and a few downloads take minutes, and
   // the page polls rather than waiting on the request.
   N8N_RETRIEVE_TIMEOUT_MS: Number(process.env.N8N_RETRIEVE_TIMEOUT_MS) || 300000,

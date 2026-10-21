@@ -63,6 +63,7 @@ import { autoRead } from './inbound.js';
 import { practiceDayKey } from './usage.js';
 import { practiceHour } from './digest.js';
 import { robotRequest } from './robotRequest.js';
+import { isoClaimDate } from './claimDates.js';
 
 export const retrieveRouter = Router();
 
@@ -101,16 +102,32 @@ type ScheduleRules = {
   nextScheduledDay: (schedule: unknown, state: ScheduleState, today: string, hourNow: number) => string;
 };
 
+// An invoice date in any of the shapes a portal or a reader writes one ("05 Oct
+// 2026", 05/10/2026, ISO) as ISO, '' when it is none of them. claimDate.js's
+// rule, loaded with the schedule rules; until then only ISO is recognised.
+let isoDate: (v: unknown) => string = (v) => {
+  const s = String(v ?? '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+};
+
 let rules: ScheduleRules | null = null;
 async function loadRules(): Promise<ScheduleRules> {
   if (rules) return rules;
   // From server/dist (or server/src under tsx) up to the repo root.
   const url = new URL('../../src/lib/retrieveSchedule.js', import.meta.url).href;
   rules = (await import(url)) as ScheduleRules;
+  isoDate = (await isoClaimDate()) || isoDate;
   return rules;
 }
 
-type FiledRecord = { hash: string; reference: string; billId: string; at: string };
+type FiledRecord = {
+  hash: string;
+  reference: string;
+  billId: string;
+  at: string;
+  /** The invoice's own date, ISO, where n8n said it. */
+  date?: string;
+};
 
 type RunRecord = {
   id: string;
@@ -182,6 +199,23 @@ function mayManage(req: Request, orgId: string): boolean {
 const loginsHere = (ws: string, orgId: string) =>
   load().filter((l) => l.workspaceId === ws && l.orgId === orgId);
 
+// The newest invoice date among what this login has filed, ISO, '' when none is
+// known — what n8n is told so it fetches only the invoices dated AFTER it. The
+// portal's own date (what n8n said when it handed the file over) first, since
+// that is the list n8n compares against; else the date the reader took off the
+// paper, which also covers everything filed before n8n said dates. A date past
+// today is a misread, and would stop every later invoice being fetched, so it
+// is not believed.
+function latestInvoiceDate(login: PortalLogin, today = practiceDayKey(new Date())): string {
+  const read = new Map(listBills(login.scope).map((b) => [b.id, b.date]));
+  let latest = '';
+  for (const f of login.filed) {
+    const d = isoDate(f.date) || isoDate(read.get(f.billId));
+    if (d && d <= today && d > latest) latest = d;
+  }
+  return latest;
+}
+
 // A run that has said "running" for longer than the workflow is allowed to take
 // died with the process that started it — a restart, a deploy. Reported as
 // what it is rather than spinning on the page for ever.
@@ -223,6 +257,7 @@ function view(ws: string, l: PortalLogin, r: ScheduleRules, now = new Date()) {
     run: runOf(l) || null,
     filedCount: l.filed.length,
     lastRetrievedAt: l.lastRetrievedAt || '',
+    lastInvoiceDate: latestInvoiceDate(l, practiceDayKey(now)),
     schedule,
     // The practice day the schedule next runs on; the hour is the schedule's.
     nextScheduledDay: r.nextScheduledDay(schedule, state, practiceDayKey(now), practiceHour(now)),
@@ -398,6 +433,7 @@ async function askN8n(
       failed: true,
     };
   }
+  await loadRules();
   const portal = portalById(login.portal);
   const org = getOrganisation(ws, login.orgId);
   const headers: Record<string, string> = {
@@ -416,6 +452,8 @@ async function askN8n(
     login_id: login.id,
     run_id: runId,
     last_retrieved_at: login.lastRetrievedAt || '',
+    // Fetch only invoices dated after this one; '' on the first run.
+    last_invoice_date: latestInvoiceDate(login),
     xero_name: org?.tenantName || org?.name || '',
     tenant_id: org?.tenantId || '',
   };
@@ -536,7 +574,8 @@ export async function runRetrieval(
       },
     });
     hashesHere.add(hash);
-    ledger.push({ hash, reference: ref, billId: bill.id, at: bill.createdAt });
+    const date = isoDate(doc.date);
+    ledger.push({ hash, reference: ref, billId: bill.id, at: bill.createdAt, ...(date ? { date } : {}) });
     run.filed.push({ billId: bill.id, displayId: bill.displayId, fileName: doc.fileName });
     reads.push({ id: bill.id, bytes: doc.bytes, mediaType: doc.mediaType, fileName: doc.fileName });
   }

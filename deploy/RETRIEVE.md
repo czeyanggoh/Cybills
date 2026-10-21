@@ -11,8 +11,9 @@ Costs → Retrieve → "Retrieve now", or the login's schedule
         │   POST $N8N_RETRIEVE_URL      (X-API-Key: $N8N_API_KEY)
         ▼
 n8n:  sign into the portal as `username` / `password`
-      download the invoices not in `known_references`
-        │   200 [{ fileName, invoice_number, pdf_base64 }, …]
+      download the invoices dated after `last_invoice_date`
+      and not in `known_references`
+        │   200 [{ fileName, invoice_number, invoice_date, pdf_base64 }, …]
         ▼
 CYBills:  file each new document into the entity's Costs inbox, then read it
 ```
@@ -25,8 +26,10 @@ N8N_API_KEY=<shared with N8N_FETCH_URL; sent as X-API-Key>
 N8N_RETRIEVE_TIMEOUT_MS=300000        # optional; default 5 minutes
 ```
 
-Unset, logins can still be saved and the page says retrieval is not switched
-on. `SESSION_SECRET` must be set (it always is in production): the passwords
+`N8N_RETRIEVE_URL` defaults to `https://n8n.cy-bm.sg/webhook/portal-retrieve`,
+so it needs setting only to point elsewhere. Set it EMPTY (`N8N_RETRIEVE_URL=`)
+to switch retrieval off: logins can still be saved and the page says retrieval
+is not switched on. `SESSION_SECRET` must be set (it always is in production): the passwords
 are sealed with a key derived from it, and **changing it makes every saved
 portal password unreadable** — the page then asks for each to be entered again.
 
@@ -44,6 +47,7 @@ portal password unreadable** — the page then asks for each to be entered again
 | `account_ref` | optional account number, where one login holds several accounts |
 | `login_id`, `run_id` | to correlate a run (screenshots, logs) |
 | `last_retrieved_at` | ISO time of the last run that succeeded, `''` on the first |
+| `last_invoice_date` | ISO date (`2026-10-05`) of the newest invoice this login has filed, `''` on the first run — **retrieve only invoices dated after it** |
 | `known_references` | invoice numbers this login already filed — skip these |
 | `xero_name`, `tenant_id` | which client's book it is for |
 
@@ -57,6 +61,15 @@ items, each carrying the file as base64 under `pdf_base64` (or `data`,
 `contentBase64`, …) with a `fileName`, and ideally an `invoice_number` — that is
 what stops a portal that regenerates its PDFs from filing the same invoice
 twice. A streamed PDF body also works.
+
+**Send each invoice's date too** (`invoice_date`, or `invoiceDate` / `bill_date`
+/ `date`), as the portal lists it — `2026-10-05`, `05/10/2026` and `05 Oct 2026`
+are all read. It is what the next run's `last_invoice_date` is worked out from:
+the newest date the login has filed, taking the portal's own date where n8n gave
+one and otherwise the date the reader took off the PDF. A date later than today
+is ignored as a misread. Two invoices on the same day are safe whether the
+recipe compares "after" or "on or after": `known_references` and CYBills' own
+check still stop one being filed twice.
 
 - **Nothing new** → `200 []`, or `200 { "message": "No new invoices" }`. Shown
   as "Nothing new".
@@ -102,7 +115,7 @@ the day it next runs. The server checks every five minutes (no extra env):
 - A slot from before the schedule was saved is not made up: one saved on the
   10th for "the 5th" first runs on the 5th of next month. (Saved on the day of
   its slot after the hour, it runs within five minutes.)
-- With `N8N_RETRIEVE_URL` unset nothing runs, and nothing is marked as run.
+- With `N8N_RETRIEVE_URL` set empty nothing runs, and nothing is marked as run.
 
 Covered by `npm test` in `server/` (`test/portal-retrieve.test.mts`,
 `test/retrieve-schedule.test.mts`).
