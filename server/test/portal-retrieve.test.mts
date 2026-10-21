@@ -79,6 +79,8 @@ const api = async (path: string, method = 'GET', body?: unknown) => {
   return { status: res.status, text, body: JSON.parse(text || '{}') as Record<string, any> };
 };
 
+const loginOf = async (lid: string) => (await api('/logins')).body.logins.find((x: any) => x.id === lid);
+
 // Wait for the background run to settle, as the page does by polling.
 const settled = async (id: string) => {
   for (let i = 0; i < 100; i++) {
@@ -223,6 +225,68 @@ check('…which the run says', /2 were dated before 15 Aug 2026/.test(l?.run.not
 r = await api(`/logins/${id}`, 'PATCH', { retrieveFrom: '' });
 check('clearing it lifts the limit', [r.status, r.body.login.retrieveFrom], [200, '']);
 
+// --- n8n answering 202 and calling back --------------------------------------
+// The workflow takes the run on at once and posts the invoices back when it is
+// done, so nothing holds a request open for the whole sign-in.
+reply = { status: 202, type: 'application/json', body: JSON.stringify({ accepted: true }) };
+const callBack = (body: Record<string, unknown>, opts: { url?: string; token?: string } = {}) => {
+  const out = sent[sent.length - 1].body as Record<string, string>;
+  return fetch(opts.url || out.callback_url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Callback-Token': opts.token ?? out.callback_token },
+    body: JSON.stringify(body),
+  });
+};
+r = await api(`/logins/${id}/run`, 'POST', {});
+for (let i = 0; i < 40 && !(await api('/logins')).body.logins[0].run?.awaiting; i++) await new Promise((res) => setTimeout(res, 25));
+let lr = (await api('/logins')).body.logins[0];
+const asked = sent[sent.length - 1].body as Record<string, string>;
+check('n8n is given a callback for this run, and a token', [
+  asked.callback_url.endsWith(`/api/retrieve/callback/${lr.run.id}`),
+  asked.callbackUrl === asked.callback_url,
+  /^[0-9a-f]{64}$/.test(asked.callback_token),
+], [true, true, true]);
+check('a 202 leaves the run going, waiting on n8n', [lr.run.status, lr.run.awaiting], ['running', true]);
+check('…and the page never sees the token or its hash', [JSON.stringify(lr).includes(asked.callback_token), 'callbackHash' in lr.run], [false, false]);
+let cb = await callBack({ ok: true }, { token: 'f'.repeat(64) });
+check('a callback with the wrong token is turned away, as if no run existed', cb.status, 404);
+const beforeCb = retrieved().length;
+cb = await callBack([{ fileName: 'SP-Nov-2026.pdf', invoice_number: '8900001', invoice_date: '2026-10-21', pdf_base64: pdf('Nov').toString('base64') }]);
+check('the callback is accepted', cb.status, 202);
+l = await settled(id);
+check('…and files what it brought', [l?.run.status, l?.run.filed.length, retrieved().length - beforeCb, l?.run.awaiting], ['done', 1, 1, undefined]);
+cb = await callBack([{ fileName: 'SP-Nov-2026.pdf', pdf_base64: pdf('Nov again').toString('base64') }]);
+check('a second callback for a settled run files nothing', [cb.status, retrieved().length - beforeCb], [409, 1]);
+
+await api(`/logins/${id}/run`, 'POST', {});
+for (let i = 0; i < 40 && !(await api('/logins')).body.logins[0].run?.awaiting; i++) await new Promise((res) => setTimeout(res, 25));
+cb = await callBack({ ok: false, error: 'Login failed: account locked' });
+l = await settled(id);
+check('a callback that refuses fails the run, in n8n’s words', [cb.status, l?.run.status, /account locked/.test(l?.run.note || '')], [202, 'failed', true]);
+
+// --- One at a time -----------------------------------------------------------
+// n8n drives one browser: a second login pressed while the first is with n8n
+// waits its turn rather than being refused by the workflow.
+r = await api('/logins', 'POST', { portal: 'spgroup', username: 'second@cybm.sg', password: 'pw-2' });
+const second = r.body.login.id as string;
+const sentBefore = sent.length;
+await api(`/logins/${id}/run`, 'POST', {});
+r = await api(`/logins/${second}/run`, 'POST', {});
+check('a second retrieval while one is with n8n is queued', [r.status, r.body.login.run?.status], [202, 'queued']);
+for (let i = 0; i < 40 && !(await api('/logins')).body.logins[0].run?.awaiting; i++) await new Promise((res) => setTimeout(res, 25));
+await new Promise((res) => setTimeout(res, 100));
+check('…and not sent while the first is with n8n', [sent.length - sentBefore, (await loginOf(second)).run.status], [1, 'queued']);
+reply = { status: 200, type: 'application/json', body: '[]' };
+await callBack({ message: 'No new invoices' });
+await settled(id);
+const s2 = await settled(second);
+check('…and goes to n8n once the first has called back', [sent.length - sentBefore, sent[sent.length - 1].body.username, s2?.run.status], [
+  2,
+  'second@cybm.sg',
+  'done',
+]);
+await api(`/logins/${second}`, 'DELETE');
+
 // --- Unconfigured ------------------------------------------------------------
 env.N8N_RETRIEVE_URL = '';
 r = await api(`/logins/${id}/run`, 'POST', {});
@@ -235,6 +299,6 @@ env.N8N_RETRIEVE_URL = 'http://127.0.0.1:4652/webhook/portal-retrieve';
 r = await api(`/logins/${id}`, 'DELETE');
 const gone = readFileSync(join(DATA_DIR, 'portal-logins.json'), 'utf8');
 check('deleting a login removes it, sealed password and all', [r.status, JSON.parse(gone).items.length], [200, 0]);
-check('…and leaves the documents it retrieved', retrieved().length, 3);
+check('…and leaves the documents it retrieved', retrieved().length, 4);
 
 await finish(failures, server, n8n);

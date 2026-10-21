@@ -39,7 +39,7 @@
 // browser.
 import { Router } from 'express';
 import type { Request } from 'express';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { env, googleEnabled } from './env.js';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { sealSecret, openSecret } from './totp.js';
@@ -51,6 +51,7 @@ import {
   ownerForOrg,
   generalUserFor,
   peopleForOrg,
+  appOrigin,
 } from './users.js';
 import { dataScopeForOrg, getOrganisation } from './organisations.js';
 import { workspaceId } from './workspace.js';
@@ -146,6 +147,10 @@ type RunRecord = {
   skipped: number;
   /** Documents n8n returned dated before the login's "Retrieve invoices from". */
   tooOld?: number;
+  /** n8n accepted the run and will post the invoices back to the callback. */
+  awaiting?: boolean;
+  /** sha256 of the one-time token the callback must carry. Never shown. */
+  callbackHash?: string;
 };
 
 export type PortalLogin = {
@@ -224,15 +229,28 @@ function latestInvoiceDate(login: PortalLogin, today = practiceDayKey(new Date()
 // died with the process that started it — a restart, a deploy. Reported as
 // what it is rather than spinning on the page for ever.
 const STALE_MS = () => (Number(env.N8N_RETRIEVE_TIMEOUT_MS) || 300000) + 120000;
+// A run n8n ACCEPTED is waiting on n8n, not on us, and gets as long as the
+// workflow is allowed to call back in.
+const CALLBACK_MS = () => (Number(env.N8N_RETRIEVE_CALLBACK_MS) || 30 * 60_000) + 120000;
 function runOf(l: PortalLogin): RunRecord | undefined {
   const r = l.run;
-  // A queued login waits on every one ahead of it, so it gets the same grace
+  // A queued login waits on every one ahead of it, so it gets that grace
   // several times over before it is called dead.
-  const grace = r?.status === 'queued' ? STALE_MS() * 6 : STALE_MS();
+  const grace = r?.status === 'queued' ? CALLBACK_MS() * 3 : r?.awaiting ? CALLBACK_MS() : STALE_MS();
   if ((r?.status === 'running' || r?.status === 'queued') && Date.now() - Date.parse(r.startedAt) > grace) {
-    return { ...r, status: 'failed', note: 'The retrieval never reported back — the server restarted while it ran. Try again.' };
+    const note = r.awaiting
+      ? 'n8n accepted the retrieval and never posted the invoices back. Check the run in n8n, then try again.'
+      : 'The retrieval never reported back — the server restarted while it ran. Try again.';
+    return { ...r, status: 'failed', note };
   }
   return r;
+}
+
+// A run as the page sees it: the callback token's hash stays on the server.
+function publicRun(r: RunRecord | undefined) {
+  if (!r) return null;
+  const { callbackHash: _hidden, ...shown } = r;
+  return shown;
 }
 
 // What the page sees. No password — only that one is set, and when.
@@ -259,7 +277,7 @@ function view(ws: string, l: PortalLogin, r: ScheduleRules, now = new Date()) {
     createdAt: l.createdAt,
     createdBy: l.createdBy,
     updatedAt: l.updatedAt,
-    run: runOf(l) || null,
+    run: publicRun(runOf(l)),
     filedCount: l.filed.length,
     lastRetrievedAt: l.lastRetrievedAt || '',
     lastInvoiceDate: latestInvoiceDate(l, practiceDayKey(now)),
@@ -448,11 +466,23 @@ retrieveRouter.delete('/logins/:id', (req, res) => {
 });
 
 // Ask n8n for this login's invoices. Never throws: a failure is a note.
+type Asked = { documents: FetchedDocument[]; note: string; failed: boolean; accepted?: boolean };
+
+// Whether n8n took the run on rather than answering it: a 202, or a 2xx saying
+// `accepted` / `status: "accepted"`. The invoices then arrive at the callback.
+async function acceptedReply(res: Response): Promise<boolean> {
+  if (res.status === 202) return true;
+  if (!res.ok || !String(res.headers.get('content-type') || '').includes('json')) return false;
+  const body = (await res.clone().json().catch(() => null)) as Record<string, unknown> | null;
+  return Boolean(body && !Array.isArray(body) && (body.accepted === true || String(body.status || '').toLowerCase() === 'accepted'));
+}
+
 async function askN8n(
   ws: string,
   login: PortalLogin,
-  runId: string
-): Promise<{ documents: FetchedDocument[]; note: string; failed: boolean }> {
+  runId: string,
+  callback: { url: string; token: string }
+): Promise<Asked> {
   const url = String(env.N8N_RETRIEVE_URL || '').trim();
   if (!url) return { documents: [], note: 'No n8n retrieval webhook is configured (N8N_RETRIEVE_URL).', failed: true };
   const password = openSecret(login.password, SEAL_PURPOSE);
@@ -486,6 +516,10 @@ async function askN8n(
     last_invoice_date: latestInvoiceDate(login),
     // And none dated before this one; '' = no limit.
     retrieve_from: login.retrieveFrom || '',
+    // Where n8n may post the invoices instead of holding this request open
+    // for the whole sign-in, and the token that proves the post is its own.
+    callback_url: callback.url,
+    callback_token: callback.token,
     xero_name: org?.tenantName || org?.name || '',
     tenant_id: org?.tenantId || '',
   };
@@ -506,10 +540,22 @@ async function askN8n(
   } catch (err) {
     return { documents: [], note: `n8n could not be reached (${err instanceof Error ? err.message : String(err)})`, failed: true };
   }
+  if (await acceptedReply(res)) return { documents: [], note: '', failed: false, accepted: true };
   const out = await readDocumentsReply(res, login.loginUrl || 'https://portal.invalid/');
   // "n8n returned no document" is a run that WORKED and found nothing new —
   // the ordinary answer on most days. Only a refusal is a failure.
   return { documents: out.documents, note: out.note, failed: !res.ok };
+}
+
+const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
+
+// Where n8n reaches us. A person's press knows the host it arrived on; a
+// scheduled run has no request at all, and with APP_ORIGIN unset appOrigin
+// would answer localhost — an address n8n, on another box, cannot call back.
+const PUBLIC_ORIGIN = 'https://cybills.cy-bm.sg';
+function callbackOrigin(req: Request): string {
+  const origin = appOrigin(req);
+  return /localhost/.test(origin) && !req.headers?.host ? PUBLIC_ORIGIN : origin;
 }
 
 const writeRun = (id: string, patch: Partial<PortalLogin>) => {
@@ -534,8 +580,9 @@ export async function runRetrieval(
   const ws = workspaceId(req);
   const start = load().find((l) => l.id === loginId);
   if (!start) return null;
+  const token = randomBytes(32).toString('hex');
   const run: RunRecord = {
-    id: `run_${Date.now().toString(36)}`,
+    id: `run_${Date.now().toString(36)}_${randomUUID().slice(0, 6)}`,
     status: 'running',
     startedAt: new Date().toISOString(),
     by,
@@ -543,12 +590,50 @@ export async function runRetrieval(
     filed: [],
     skipped: 0,
     ...(opts.scheduled ? { scheduled: true } : {}),
+    // Written BEFORE the request goes out: a quick workflow can call back
+    // before its 202 has even reached us.
+    callbackHash: hashToken(token),
   };
   writeRun(loginId, { run });
 
-  const asked = await askN8n(ws, start, run.id);
+  const callback = { url: `${callbackOrigin(req)}/api/retrieve/callback/${run.id}`, token };
+  const asked = await askN8n(ws, start, run.id, callback);
+  if (asked.accepted) {
+    // n8n has it. The run stays "running" until the callback lands (or the
+    // workflow's time runs out), and nobody waits on this request.
+    const now = load().find((l) => l.id === loginId);
+    if (now?.run?.id === run.id && now.run.status === 'running') {
+      writeRun(loginId, { run: { ...now.run, awaiting: true } });
+    }
+    return run;
+  }
+  return settleRun(req, loginId, run.id, asked);
+}
+
+// Runs being filed right now, so a reply and a callback for the same run (a
+// workflow that sends both) cannot each file the invoices.
+const settling = new Set<string>();
+
+/**
+ * What n8n handed back for a run, filed — from the reply to the request or from
+ * the callback, whichever brings it. Null when that run is no longer the
+ * login's running one (already settled, or replaced).
+ */
+async function settleRun(req: Request, loginId: string, runId: string, asked: Asked): Promise<RunRecord | null> {
   const login = load().find((l) => l.id === loginId);
-  if (!login) return null;
+  if (!login?.run || login.run.id !== runId || login.run.status !== 'running' || settling.has(runId)) return null;
+  settling.add(runId);
+  try {
+    return await fileDocuments(req, login, { ...login.run, awaiting: undefined }, asked);
+  } finally {
+    settling.delete(runId);
+  }
+}
+
+async function fileDocuments(req: Request, login: PortalLogin, run: RunRecord, asked: Asked): Promise<RunRecord> {
+  const ws = workspaceId(req);
+  const loginId = login.id;
+  const by = run.by;
 
   const scope = login.scope;
   const owner = login.owner || generalUserFor(ws, login.orgId)?.email || by;
@@ -688,6 +773,111 @@ function failRun(id: string, by: string, err: unknown, scheduled = false) {
   });
 }
 
+// --- One at a time --------------------------------------------------------------
+
+// n8n drives ONE browser, and refuses a second run while one is going ("a run
+// is already in progress"). So every retrieval — a button, Retrieve all, the
+// schedule — joins one queue, across every entity, and the next starts only
+// once the one before it has SETTLED: filed, failed, or (for a run n8n took on
+// with a 202) called back. Nobody waits on it: the routes answer at once, the
+// login says "Waiting its turn…" until it starts, and its documents land in
+// Costs whether or not anybody is still on the page.
+type Job = { req: Request; loginId: string; by: string; scheduled?: boolean; done: () => void };
+const queue: Job[] = [];
+let draining = false;
+
+async function untilSettled(loginId: string): Promise<void> {
+  for (;;) {
+    const l = load().find((x) => x.id === loginId);
+    if (!l || runOf(l)?.status !== 'running') return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+async function drain(): Promise<void> {
+  if (draining) return;
+  draining = true;
+  try {
+    for (let job = queue.shift(); job; job = queue.shift()) {
+      try {
+        // Still wanted? Deleted, or no longer the queued run it was, it is skipped.
+        if (load().some((l) => l.id === job!.loginId)) {
+          await runRetrieval(job.req, job.loginId, job.by, { scheduled: job.scheduled });
+          await untilSettled(job.loginId);
+        }
+      } catch (err) {
+        failRun(job.loginId, job.by, err, job.scheduled);
+      }
+      job.done();
+    }
+  } finally {
+    draining = false;
+  }
+}
+
+/** Queue a retrieval; resolves once it has settled. Marked queued meanwhile. */
+function enqueue(req: Request, loginId: string, by: string, scheduled = false): Promise<void> {
+  writeRun(loginId, {
+    run: {
+      id: `run_${Date.now().toString(36)}`,
+      status: 'queued',
+      startedAt: new Date().toISOString(),
+      by,
+      note: '',
+      filed: [],
+      skipped: 0,
+      ...(scheduled ? { scheduled: true } : {}),
+    },
+  });
+  return new Promise<void>((done) => {
+    queue.push({ req, loginId, by, scheduled, done });
+    void drain();
+  });
+}
+
+/** Whether anything is retrieving, or waiting to, anywhere. */
+const anyRetrieving = () => draining || queue.length > 0 || load().some(isRunning);
+
+// POST /api/retrieve/callback/:runId — n8n posting a run's invoices back, for a
+// run it answered 202. No session: it proves itself with the one-time token
+// sent with that run (X-Callback-Token, or `callback_token` in the body). The
+// body is what the synchronous reply would have been; `{ ok: false, error }`
+// (or `status: "failed"`) is a refusal, in n8n's own words.
+retrieveRouter.post('/callback/:runId', (req, res) => {
+  const runId = String(req.params.runId || '');
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const token = String(req.header('X-Callback-Token') || (body && !Array.isArray(body) ? body.callback_token || body.callbackToken || '' : ''));
+  const login = load().find((l) => l.run?.id === runId);
+  const expected = login?.run?.callbackHash || '';
+  const given = token ? hashToken(token) : '';
+  if (!login || !expected || !given || !timingSafeEqual(Buffer.from(given), Buffer.from(expected))) {
+    // One answer for an unknown run and a wrong token: which runs exist is not
+    // something a caller without the token gets to learn.
+    return res.status(404).json({ error: 'not_found' });
+  }
+  if (login.run?.status !== 'running' || settling.has(runId)) {
+    return res.status(409).json({ error: 'already_settled', message: 'This run has already settled.' });
+  }
+  const refused =
+    !Array.isArray(body) &&
+    (body.ok === false || /^(failed|error)$/i.test(String(body.status || '')) || (typeof body.error === 'string' && body.error.trim() !== ''));
+  const reply = new Response(JSON.stringify(body), {
+    status: refused ? 500 : 200,
+    headers: { 'content-type': 'application/json' },
+  });
+  // Answered once the bytes are in hand; the filing and the reads go on
+  // without n8n waiting for them.
+  res.status(202).json({ ok: true });
+  void (async () => {
+    const out = await readDocumentsReply(reply, login.loginUrl || 'https://portal.invalid/');
+    await settleRun(robotRequest(login.orgId, '/api/retrieve/callback'), login.id, runId, {
+      documents: out.documents,
+      note: out.note,
+      failed: refused,
+    });
+  })().catch((err) => failRun(login.id, login.run?.by || '', err, Boolean(login.run?.scheduled)));
+});
+
 // POST /api/retrieve/logins/:id/run — retrieve now. Answers at once; the page
 // polls the login until its run settles.
 retrieveRouter.post('/logins/:id/run', async (req, res) => {
@@ -702,7 +892,7 @@ retrieveRouter.post('/logins/:id/run', async (req, res) => {
   }
   const by = memberForSession(req)?.email || '';
   const r = await loadRules();
-  void runRetrieval(req, login.id, by).catch((err) => failRun(login.id, by, err));
+  void enqueue(req, login.id, by);
   const now = load().find((l) => l.id === login.id)!;
   res.status(202).json({ login: view(ws, now, r) });
 });
@@ -718,21 +908,7 @@ retrieveRouter.post('/run-all', (req, res) => {
   }
   const by = memberForSession(req)?.email || '';
   const ids = loginsHere(ws, orgId).filter((l) => !isRunning(l) && l.password).map((l) => l.id);
-  const at = new Date().toISOString();
-  for (const id of ids) {
-    writeRun(id, {
-      run: { id: `run_${Date.now().toString(36)}`, status: 'queued', startedAt: at, by, note: '', filed: [], skipped: 0 },
-    });
-  }
-  void (async () => {
-    for (const id of ids) {
-      try {
-        await runRetrieval(req, id, by);
-      } catch (err) {
-        console.error('[retrieve] run failed', err);
-      }
-    }
-  })();
+  for (const id of ids) void enqueue(req, id, by);
   res.status(202).json({ started: ids.length });
 });
 
@@ -762,7 +938,7 @@ export async function runDueRetrievals(now = new Date()): Promise<number> {
     for (const id of dueIds) {
       // Somebody pressed Retrieve somewhere meanwhile: n8n's browser is theirs
       // until it settles. What is still due is picked up by the next tick.
-      if (load().some(isRunning)) break;
+      if (anyRetrieving()) break;
       const login = load().find((l) => l.id === id);
       if (!login || !login.password) continue;
       // Asked again: the schedule may have been switched off while the one
@@ -770,11 +946,9 @@ export async function runDueRetrievals(now = new Date()): Promise<number> {
       if (!r.scheduleDue(login.schedule, { lastDay: login.lastScheduledDay, from: login.scheduleFrom }, today, hour)) continue;
       writeRun(id, { lastScheduledDay: today });
       ran += 1;
-      try {
-        await runRetrieval(robotRequest(login.orgId, '/api/retrieve/schedule'), id, '', { scheduled: true });
-      } catch (err) {
-        failRun(id, '', err, true);
-      }
+      // Through the one queue, and waited for until it SETTLES — a run n8n
+      // took on with a 202 is still n8n's browser until it calls back.
+      await enqueue(robotRequest(login.orgId, '/api/retrieve/schedule'), id, '', true);
     }
   } finally {
     clockBusy = false;

@@ -101,6 +101,9 @@ app.use((req, res, next) => {
   // every client's book, and a payment run naming the wrong one would post into
   // somebody else's ledger.
   if (p.startsWith('/api/payments/')) return next();
+  // n8n posting a portal retrieval's invoices back, for a run it answered 202.
+  // It carries the one-time token minted for that run instead (retrieve.ts).
+  if (/^\/api\/retrieve\/callback\/[^/]+$/.test(p)) return next();
   // An image link in an exported CSV, or an Item ID in an emailed claim PDF, is
   // opened by somebody with no session here — an accountant, an approver. It
   // carries a signed, expiring token naming the one document it opens instead

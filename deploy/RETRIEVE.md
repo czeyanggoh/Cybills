@@ -23,7 +23,8 @@ CYBills:  file each new document into the entity's Costs inbox, then read it
 ```
 N8N_RETRIEVE_URL=https://n8n.cy-bm.sg/webhook/portal-retrieve
 N8N_API_KEY=<shared with N8N_FETCH_URL; sent as X-API-Key>
-N8N_RETRIEVE_TIMEOUT_MS=300000        # optional; default 5 minutes
+N8N_RETRIEVE_TIMEOUT_MS=300000        # optional; default 5 minutes (a held-open answer)
+N8N_RETRIEVE_CALLBACK_MS=1800000      # optional; default 30 minutes (a 202 then callback)
 ```
 
 `N8N_RETRIEVE_URL` defaults to `https://n8n.cy-bm.sg/webhook/portal-retrieve`,
@@ -51,9 +52,38 @@ portal password unreadable** — the page then asks for each to be entered again
 | `retrieve_from` | ISO date the login's **Retrieve invoices from** names, `''` = no limit — **never retrieve an invoice dated before it** |
 | `known_references` | invoice numbers this login already filed — skip these |
 | `xero_name`, `tenant_id` | which client's book it is for |
+| `callback_url` | where to POST the invoices instead of answering with them (see below) |
+| `callback_token` | the one-time token that callback must carry, as `X-Callback-Token` |
 
 **Never log the request body** — it carries the password. The workflow should
 not keep it either: it is sent fresh on every run.
+
+## Answering now, or calling back (recommended)
+
+A portal sign-in takes minutes, so the workflow need not hold CYBills' request
+open for it. Either:
+
+- **Answer with the invoices** (the shapes below), as before. Fine for a quick
+  portal, but the request stays open for the whole sign-in.
+- **Answer `202` straight away** (or `200 { "accepted": true }`) — in n8n, a
+  Webhook node set to *Respond: Immediately* — then, when it is done, **POST the
+  same answer to `callback_url`** with the header
+  `X-Callback-Token: <callback_token>` (or `callback_token` in the JSON body).
+  A refusal is `{ "ok": false, "error": "Login failed: incorrect password" }`.
+  CYBills answers the callback `202`; a wrong token or an unknown run is `404`,
+  and a second callback for a run already settled is `409`.
+
+The run shows as running until the callback lands, for up to
+`N8N_RETRIEVE_CALLBACK_MS` (default 30 minutes), after which it is shown as
+failed ("never posted the invoices back"). Nobody needs to stay on the page.
+`callback_url` is the host the button was pressed on, or `APP_ORIGIN`, else
+`https://cybills.cy-bm.sg` for a scheduled run, so n8n must be able to reach
+that host.
+
+**CYBills sends one run at a time**, across every client: a second Retrieve
+now, Retrieve all and the schedule all wait in one queue until the run before
+them has settled — answered, failed, or called back — so n8n is never asked for
+a second run while its browser is busy ("a run is already in progress").
 
 ## What the workflow answers
 
@@ -94,8 +124,9 @@ item without one is filed.
 - Business Admin only, on the page and on every `/api/retrieve` route.
 - The password is sealed at rest (AES-GCM), never returned to the browser,
   never logged, and deleted with the login.
-- A run is a background job; the page polls. "Retrieve all" works through the
-  entity's logins one at a time.
+- A run is a background job; the page polls, and nobody has to stay on it.
+  Every run — a button, "Retrieve all", the schedule — goes through one queue,
+  one at a time across every client.
 - A document is skipped if this login filed the same bytes or the same invoice
   number before, or the entity already holds the same file.
 - Retrieved documents are owned by the login's "File documents under" person,

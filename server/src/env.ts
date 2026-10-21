@@ -166,6 +166,9 @@ export const env = {
   // A sign-in, an OTP-less portal crawl and a few downloads take minutes, and
   // the page polls rather than waiting on the request.
   N8N_RETRIEVE_TIMEOUT_MS: Number(process.env.N8N_RETRIEVE_TIMEOUT_MS) || 300000,
+  // A workflow that answers 202 and posts the invoices back to callback_url
+  // has this long to do it before the run is shown as failed.
+  N8N_RETRIEVE_CALLBACK_MS: Number(process.env.N8N_RETRIEVE_CALLBACK_MS) || 30 * 60_000,
 
   // --- Google Drive folders (a third road in) --------------------------------
   // A person shares a folder in their own Drive with CYBills' ROBOT — a Google

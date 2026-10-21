@@ -58,11 +58,18 @@ function useOwnerChoices() {
 function RunStatus({ login }) {
   const run = login.run;
   if (!run) return <span className="text-xs text-muted-foreground">Not retrieved yet</span>;
-  if (run.status === 'queued') return <span className="text-xs text-muted-foreground">Waiting its turn…</span>;
+  if (run.status === 'queued') {
+    return (
+      <span className="text-xs text-muted-foreground">
+        Waiting its turn — n8n signs into one portal at a time. You can leave this page.
+      </span>
+    );
+  }
   if (run.status === 'running') {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Signing in and retrieving… (started {when(run.startedAt)})
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Signing in and retrieving… (started {when(run.startedAt)}). You can
+        leave this page — the invoices land in Costs when it finishes.
       </span>
     );
   }
@@ -420,6 +427,7 @@ export default function Retrieve() {
         Some suppliers never send the bill — it waits on their portal. Save the login here and CYBills signs in, downloads
         the invoices and files them into the Costs inbox, where they are read like any upload. An invoice already
         retrieved is never filed twice. Give a login a schedule and it does this by itself — every day, or once a month.
+        A retrieval runs in the background, so there is no need to stay on this page while it does.
       </p>
 
       {!loading && !enabled && (

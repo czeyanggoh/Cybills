@@ -2596,9 +2596,17 @@ page (the Costs sub-nav offers it only to them). Changing `SESSION_SECRET`
 makes saved passwords unreadable, and the run says to enter them again.
 
 **A run is a background job** (`202`, the page polls), because a portal sign-in
-outlasts a proxy's timeout. A run that never reports back is shown failed after
-the timeout plus two minutes. **Retrieve all** queues the entity's logins one at
-a time. **Filed once**: a login's ledger (`filed`) skips the same bytes OR the
+outlasts a proxy's timeout. **And n8n need not hold the request open either**:
+each request carries `callback_url` + a one-time `callback_token` (stored only
+as a hash on the run), so the workflow may answer `202` at once and POST the
+invoices to `/api/retrieve/callback/:runId` when it is done
+(`X-Callback-Token`; allowlisted past the session guard, 404 for a wrong token
+or unknown run, 409 once settled). A run waiting on that callback is shown
+failed after `N8N_RETRIEVE_CALLBACK_MS` (30 min); one held open, after the
+timeout plus two minutes. **Every run goes through one queue** (`enqueue` /
+`drain`), across every entity, and the next starts only once the one before has
+SETTLED — n8n drives one browser and refuses a second run ("a run is already in
+progress"), which is what a second press used to get. **Filed once**: a login's ledger (`filed`) skips the same bytes OR the
 same invoice number (portals regenerate PDFs), and so does a file the entity
 already holds. `known_references` tells n8n what to skip, and `last_invoice_date` (the newest
 invoice date the login has filed: n8n's own `invoice_date` for the item, else
