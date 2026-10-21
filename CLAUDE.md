@@ -2011,6 +2011,27 @@ claim's send it — so pressing Publish in two places cannot put two different
 statuses in one ledger. The automatic publish-after-reading is deliberately NOT
 covered by `publishStatus`.
 
+**A document marked Paid, from a named account, is paid in Xero on publish.**
+Cze's rule (21 Oct 2026). Paid on with a Payment method ("Other Debtors - Red
+Alpha", "DBS Current (2338)") meant nothing to the ledger: the bill went up
+awaiting payment and somebody paid it again by hand in Xero. Now
+`postBillToXero` resolves the method to the account it names among those Xero
+takes payments to (`paymentAccountFor` — bank accounts and any account with
+EnablePaymentsToAccount, matched by the dropdown's label, the name, the code or
+"code - name", the same `paymentMethodsFrom` the dropdown is built from),
+publishes AUTHORISED whatever was asked (`statusForced`; Xero refuses a payment
+on a draft) and records one payment from it on the document's posted date for
+what the bill leaves owing (`recordPaidOnPublish`), at the bill's own
+CurrencyRate where the account is in another currency. Every road that
+publishes does it — the dialog, bulk, the automatic publish. Not where something
+else pays it: a bank line (the autofill, or the settle road naming one), a firm
+prepayment, nor a credit note (its payment is a refund). A method that is no
+such account — one added by hand, one now closed to payments, or two accounts
+answering to it — publishes as asked and says so (`paidOnPublish`), never a
+guess; a refusal from Xero never undoes the publish. The dialog says beforehand
+("Approved, then paid from …") and after. Covered by `npm test` in `server/`
+(`test/paid-on-publish.test.mts`).
+
 **A published document is never back in Ready.** Publishing archives it, but
 the document page saved the status it last knew before Update in Xero, so a
 bill already in the ledger could be reopened as Ready. The PATCH route now

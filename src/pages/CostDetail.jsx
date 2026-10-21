@@ -3412,7 +3412,7 @@ Publish anyway?`
       <PublishToXeroModal
         open={publishOpen}
         onClose={() => setPublishOpen(false)}
-        bill={{ id: doc.id, kind: doc.kind, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, createdAt: doc.createdAt, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType, bankMatch: doc.bankMatch, prepaymentMatch }}
+        bill={{ id: doc.id, kind: doc.kind, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, createdAt: doc.createdAt, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType, paid: data.paid, paymentMethod: data.paymentMethod, bankMatch: doc.bankMatch, prepaymentMatch }}
         onPublished={onPublished}
         // A first publish finishes the document, so moving on is offered; a
         // correction sent to an existing bill is not, which is just Done.

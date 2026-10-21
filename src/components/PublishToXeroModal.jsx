@@ -57,6 +57,8 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   const [bankPayment, setBankPayment] = useState(null);
   // The quotation paid in advance and applied to the bill, or why it was not.
   const [prepayment, setPrepayment] = useState(null);
+  // The payment from the document's own Payment method (Paid on), or why not.
+  const [paidOnPublish, setPaidOnPublish] = useState(null);
   // Xero's short code for the ledger, so "Open in Xero" is a deep link that
   // opens the right organisation rather than whichever one the browser last had.
   const xeroShortCode = useXeroShortCode();
@@ -207,6 +209,13 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   // that is not on the screen.
   const sale = String(bill?.kind ?? 'cost') === 'sales';
   const noun = credit ? 'credit note' : sale ? 'sales invoice' : 'bill';
+  // Marked Paid with the account it was paid from: the publish posts it
+  // Approved and records the payment from that account (paidOnPublish on the
+  // server). Not where a bank line or a prepayment already pays it.
+  const paidFromMethod =
+    !updating && !credit && bill?.paid === true && !bill?.bankMatch && !bill?.prepaymentMatch
+      ? String(bill?.paymentMethod ?? '').trim()
+      : '';
   const missing = (() => {
     const out = [];
     const txt = (v) => String(v ?? '').trim();
@@ -248,6 +257,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
       setAttachment(result.attachment ?? null);
       setBankPayment(result.bankPayment ?? null);
       setPrepayment(result.prepayment ?? null);
+      setPaidOnPublish(result.paidOnPublish ?? null);
       setRebilled(result.rebilled ?? null);
       onPublished?.(result);
     } catch (err) {
@@ -322,6 +332,19 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               <p className="max-w-sm text-xs text-amber-700">
                 The bill posted, but the bank payment could not be recorded: {bankPayment.message || bankPayment.error} Match it from the
                 Bank tab, or record the payment by hand in Xero.
+              </p>
+            )}
+            {paidOnPublish?.ok && !paidOnPublish.skipped && (
+              <p className="max-w-sm text-xs text-muted-foreground">
+                Marked paid in Xero: a payment of {paidOnPublish.payment?.currency}{' '}
+                {Number(paidOnPublish.payment?.amount || 0).toFixed(2)} from {paidOnPublish.account} on {paidOnPublish.payment?.date} is
+                recorded against it.
+              </p>
+            )}
+            {paidOnPublish && !paidOnPublish.ok && (
+              <p className="max-w-sm text-xs text-amber-700">
+                The {noun} posted, but it could not be marked paid from {paidOnPublish.account}: {paidOnPublish.message} Record the
+                payment by hand in Xero.
               </p>
             )}
             {/* A cost meant to be recharged and silently not marked is money
@@ -438,6 +461,13 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                       ? ` The bank added a card fee of ${feeAmount.toFixed(2)}, so the bill goes up with a No Tax fee line for it and one payment of ${Math.abs(Number(bill.bankMatch.amount) || 0).toFixed(2)} matches the statement line.`
                       : '';
                   })()}
+                </p>
+              )}
+              {paidFromMethod && (
+                <p className="rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900">
+                  <span className="font-medium">Will be marked paid.</span> This document is marked Paid from{' '}
+                  {paidFromMethod}, so the {noun} is posted Approved and a payment from that account on the document&rsquo;s
+                  date is recorded straight after, leaving it Paid in Xero.
                 </p>
               )}
               {/* The paper names somebody else. Said again HERE because this is
@@ -574,6 +604,10 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                     ) : !updating && bill?.prepaymentMatch ? (
                       <span className="flex h-9 flex-1 items-center rounded-md border bg-muted/40 px-3 text-sm">
                         Approved, then the prepayment applied
+                      </span>
+                    ) : paidFromMethod ? (
+                      <span className="flex h-9 flex-1 items-center rounded-md border bg-muted/40 px-3 text-sm">
+                        Approved, then paid from {paidFromMethod}
                       </span>
                     ) : (
                       <div className="relative flex-1">

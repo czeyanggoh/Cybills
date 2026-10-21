@@ -608,33 +608,126 @@ xeroRouter.get('/organisations/:id/accounts', async (req, res) => {
   res.json({ accounts });
 });
 
-// GET /api/xero/organisations/:id/payment-methods — accounts a payment can be
-// applied to in the linked Xero org: bank accounts (Type BANK) plus any account
-// flagged EnablePaymentsToAccount. Feeds the document "Payment method" dropdown.
-xeroRouter.get('/organisations/:id/payment-methods', async (req, res) => {
-  if (notConfigured(res)) return;
-  const organisation = requireOrganisation(req, res);
-  if (!organisation) return;
-  const result = await referenceRead('Accounts', organisation.tenantId, { where: 'Status=="ACTIVE"' });
-  if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
-  const methods = (result.data?.Accounts ?? [])
+// The accounts a payment can be applied to in a Xero org: bank accounts (Type
+// BANK) plus any account flagged EnablePaymentsToAccount. One shape for the
+// document's "Payment method" dropdown and for the publish that pays from it,
+// so the label somebody picked is the label the publish finds again.
+function paymentMethodsFrom(accounts: any[]) {
+  return accounts
     .filter((a: any) => String(a.Type).toUpperCase() === 'BANK' || a.EnablePaymentsToAccount === true)
     .map((a: any) => {
       const name = String(a.Name ?? '').trim();
       const last4 = String(a.BankAccountNumber ?? '').replace(/\D/g, '').slice(-4);
       const isBank = String(a.Type).toUpperCase() === 'BANK';
       return {
+        accountId: String(a.AccountID ?? ''),
         code: String(a.Code ?? ''),
         name,
         type: String(a.Type ?? ''),
+        currency: String(a.CurrencyCode ?? '').toUpperCase(),
         bankAccountNumber: String(a.BankAccountNumber ?? ''),
         // "DBS Business Account (1234)" for banks with a number, else the name.
         label: isBank && last4 ? `${name} (${last4})` : name,
       };
     })
-    .filter((m: any) => m.label);
+    .filter((m) => m.label);
+}
+type PaymentAccount = ReturnType<typeof paymentMethodsFrom>[number];
+
+// The account a document's Payment method names, among those Xero takes a
+// payment to. The field is a LABEL, so it is matched the ways one is written —
+// the dropdown's label, the bare name, the code, "code - name" — and a label
+// that is no such account (a method added by hand, an account since archived
+// or closed to payments, two accounts answering to it) is null rather than a
+// guess: a payment against the wrong account is money moved in a live ledger.
+async function paymentAccountFor(tenantId: string, method: string): Promise<PaymentAccount | null> {
+  const want = method.trim().toLowerCase();
+  if (!want) return null;
+  const result = await referenceRead('Accounts', tenantId, { where: 'Status=="ACTIVE"' });
+  if (!result.ok) return null;
+  const spellings = (m: PaymentAccount) =>
+    [m.label, m.name, m.code, m.code ? `${m.code} - ${m.name}` : ''].filter(Boolean).map((x) => x.toLowerCase());
+  const hits = paymentMethodsFrom(result.data?.Accounts ?? []).filter((m) => spellings(m).includes(want));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// GET /api/xero/organisations/:id/payment-methods — feeds the document
+// "Payment method" dropdown (paymentMethodsFrom above).
+xeroRouter.get('/organisations/:id/payment-methods', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const result = await referenceRead('Accounts', organisation.tenantId, { where: 'Status=="ACTIVE"' });
+  if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
+  const methods = paymentMethodsFrom(result.data?.Accounts ?? []).map(({ code, name, type, bankAccountNumber, label }) => ({
+    code,
+    name,
+    type,
+    bankAccountNumber,
+    label,
+  }));
   res.json({ paymentMethods: methods });
 });
+
+// A document marked Paid, with the account it was paid from, is PAID in Xero
+// the moment it is published: a payment from that account, on the document's
+// date, for what the bill leaves owing. Never allowed to fail the publish — the
+// bill is in the ledger either way, and a refusal is reported beside it.
+async function recordPaidOnPublish(
+  organisation: { tenantId: string },
+  workspace: string,
+  bill: Bill,
+  invoice: Record<string, any>,
+  invoiceId: string,
+  account: PaymentAccount,
+  date: string
+): Promise<{ ok: boolean; [k: string]: unknown }> {
+  const amount = Number(invoice.AmountDue ?? invoice.Total ?? 0);
+  if (!(amount > 0)) return { ok: true, skipped: true, account: account.label };
+  const invoiceCurrency = String(invoice.CurrencyCode ?? '').toUpperCase();
+  const payment: Record<string, unknown> = {
+    Invoice: { InvoiceID: invoiceId },
+    Account: account.accountId ? { AccountID: account.accountId } : { Code: account.code },
+    Date: date,
+    Amount: amount,
+    Reference: String(bill.invoiceNumber ?? '').slice(0, 255),
+  };
+  // A foreign-currency bill paid from an account in another currency (the
+  // base) is paid at the rate the bill went up at, so no exchange difference
+  // appears that the paper never had. An account in the bill's own currency
+  // needs none.
+  const rate = Number(invoice.CurrencyRate);
+  if (account.currency !== invoiceCurrency && rate > 0 && rate !== 1) payment.CurrencyRate = rate;
+  const paid = await relay('Payments', {
+    method: 'PUT',
+    tenantId: organisation.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { Payments: [payment] },
+  });
+  const record = paid.ok ? paid.data?.Payments?.[0] : null;
+  const errors: string[] = (record?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+  if (!paid.ok || !record || record.HasValidationErrors || errors.length) {
+    return {
+      ok: false,
+      account: account.label,
+      message: errors.length ? errors.join(' ') : paid.ok ? 'Xero rejected the payment.' : paid.message,
+    };
+  }
+  // What Xero now says about the bill, read back rather than assumed — through
+  // the same writer the webhook and the payments sweep use.
+  const after = await fetchXeroInvoice(organisation.tenantId, invoiceId);
+  markBillXeroPayment(
+    workspace,
+    bill.id,
+    after ? paymentFromInvoice(after) : { xeroStatus: 'PAID', xeroPaidDate: date, xeroPaymentRef: String(payment.Reference ?? '') }
+  );
+  void syncWhatsappReaction(workspace, bill.id);
+  return {
+    ok: true,
+    account: account.label,
+    payment: { paymentId: String(record.PaymentID ?? ''), date, amount, currency: invoiceCurrency },
+  };
+}
 
 // Whether a Xero tax rate applies to that side of the ledger. Only an explicit
 // `false` excludes, as before: a rate Xero says nothing about is offered.
@@ -2007,7 +2100,21 @@ export async function postBillToXero(
   // (src/lib/prepayment.js); anything weaker is offered on the document page.
   const prepay = docType === 'ACCPAY' ? await import('./prepayment.js') : null;
   const firmPrepayment = prepay ? await prepay.firmPrepaymentFor(workspace, bill) : null;
-  const status = pendingPayment || firmPrepayment ? 'AUTHORISED' : opts.status;
+  // Marked Paid, with the account it was paid from: paid in Xero on publish
+  // (recordPaidOnPublish). Not where something else already pays it — a bank
+  // line (the autofill, or the settle road naming one), a prepayment — and not
+  // a credit note, whose "payment" is a refund. Approved, for the reason a
+  // bank-matched bill is: Xero refuses a payment against a draft.
+  const paidMethod = String(bill.paymentMethod ?? '').trim();
+  const payOnPublish =
+    (docType === 'ACCPAY' || docType === 'ACCREC') &&
+    bill.paid === true &&
+    Boolean(paidMethod) &&
+    !pendingPayment &&
+    !opts.payingLine &&
+    !firmPrepayment;
+  const paidFrom = payOnPublish ? await paymentAccountFor(organisation.tenantId, paidMethod) : null;
+  const status = pendingPayment || firmPrepayment || paidFrom ? 'AUTHORISED' : opts.status;
   const payload = { ...prepared.payload, Status: status };
   const endpoint = xeroEndpointFor(docType);
   // What to call it when something goes wrong, in the words the ledger uses:
@@ -2115,6 +2222,27 @@ export async function postBillToXero(
     }
   }
 
+  // Paid from the account the document names. A method that is no account Xero
+  // takes payments to leaves the bill as asked, and says so.
+  let paidOnPublish: any = null;
+  if (payOnPublish) {
+    if (paidFrom) {
+      try {
+        paidOnPublish = await recordPaidOnPublish(organisation, workspace, bill, invoice, xeroId, paidFrom, String((payload as Record<string, unknown>).Date ?? ''));
+      } catch (err) {
+        console.error('[xero] payment on publish failed', err);
+        paidOnPublish = { ok: false, account: paidFrom.label, message: err instanceof Error ? err.message : String(err) };
+      }
+      updated = getBillById(workspace, bill.id) ?? updated;
+    } else {
+      paidOnPublish = {
+        ok: false,
+        account: paidMethod,
+        message: `“${paidMethod}” isn’t an account in ${organisation.tenantName || 'Xero'} that takes payments, so the ${noun} was published unpaid.`,
+      };
+    }
+  }
+
   // A cost incurred on a client's behalf: mark its lines billable to them, so
   // Xero offers them up when that client's next invoice is raised. Needs the
   // customer to be a Xero contact — without an id there is nobody to bill.
@@ -2157,7 +2285,10 @@ export async function postBillToXero(
     // The quotation paid in advance and applied to this bill, or why it was not.
     // Null when there was none to apply.
     prepayment,
-    statusForced: (pendingPayment || Boolean(firmPrepayment)) && opts.status !== 'AUTHORISED',
+    // The payment from the document's own Payment method, or why there was
+    // none. Null when the document was not marked Paid with a method.
+    paidOnPublish,
+    statusForced: (pendingPayment || Boolean(firmPrepayment) || Boolean(paidFrom)) && opts.status !== 'AUTHORISED',
     bill: updated,
   } };
 }
