@@ -11,8 +11,8 @@ Costs → Retrieve → "Retrieve now", or the login's schedule
         │   POST $N8N_RETRIEVE_URL      (X-API-Key: $N8N_API_KEY)
         ▼
 n8n:  sign into the portal as `username` / `password`
-      download the invoices dated after `last_invoice_date`
-      and not in `known_references`
+      download the invoices dated after `last_invoice_date`,
+      not before `retrieve_from`, and not in `known_references`
         │   200 [{ fileName, invoice_number, invoice_date, pdf_base64 }, …]
         ▼
 CYBills:  file each new document into the entity's Costs inbox, then read it
@@ -48,6 +48,7 @@ portal password unreadable** — the page then asks for each to be entered again
 | `login_id`, `run_id` | to correlate a run (screenshots, logs) |
 | `last_retrieved_at` | ISO time of the last run that succeeded, `''` on the first |
 | `last_invoice_date` | ISO date (`2026-10-05`) of the newest invoice this login has filed, `''` on the first run — **retrieve only invoices dated after it** |
+| `retrieve_from` | ISO date the login's **Retrieve invoices from** names, `''` = no limit — **never retrieve an invoice dated before it** |
 | `known_references` | invoice numbers this login already filed — skip these |
 | `xero_name`, `tenant_id` | which client's book it is for |
 
@@ -70,6 +71,15 @@ one and otherwise the date the reader took off the PDF. A date later than today
 is ignored as a misread. Two invoices on the same day are safe whether the
 recipe compares "after" or "on or after": `known_references` and CYBills' own
 check still stop one being filed twice.
+
+**Retrieve invoices from** is set per login in its dialog, so the first run does
+not pull a portal's whole history. Both dates apply on every run: an invoice must
+be dated after `last_invoice_date` (when there is one) and on or after
+`retrieve_from` (when there is one). CYBills holds the second itself as well — an
+item whose `invoice_date` is before it is not filed, and the run says how many
+were left on the portal — so a recipe that ignores it costs a slower run, not a
+book full of last year's bills. That check needs the item's `invoice_date`; an
+item without one is filed.
 
 - **Nothing new** → `200 []`, or `200 { "message": "No new invoices" }`. Shown
   as "Nothing new".

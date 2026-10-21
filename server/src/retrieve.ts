@@ -144,6 +144,8 @@ type RunRecord = {
   filed: Array<{ billId: string; displayId: string; fileName: string }>;
   /** Documents n8n returned that were filed before (same bytes or same number). */
   skipped: number;
+  /** Documents n8n returned dated before the login's "Retrieve invoices from". */
+  tooOld?: number;
 };
 
 export type PortalLogin = {
@@ -166,6 +168,8 @@ export type PortalLogin = {
   accountRef: string;
   /** Whose documents they are, as an email; '' = the entity's general account. */
   owner: string;
+  /** ISO date; invoices dated before it are not retrieved. '' = no limit. */
+  retrieveFrom?: string;
   createdAt: string;
   createdBy: string;
   updatedAt: string;
@@ -250,6 +254,7 @@ function view(ws: string, l: PortalLogin, r: ScheduleRules, now = new Date()) {
     passwordSetAt: l.passwordSetAt,
     accountRef: l.accountRef,
     owner: l.owner,
+    retrieveFrom: l.retrieveFrom || '',
     ownerName: ownerRow?.name || ownerEmail,
     createdAt: l.createdAt,
     createdBy: l.createdBy,
@@ -302,6 +307,23 @@ retrieveRouter.get('/logins', async (req, res) => {
   res.json({ logins, portals: PORTALS, enabled: retrieveEnabled(), timezone: env.PRACTICE_TIMEZONE });
 });
 
+// "1 Jan 2026", for a run's note. An ISO date is a calendar day, read as UTC so
+// it is the same day wherever the server runs.
+const dayLabel = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-SG', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
+
+const BAD_FROM = { error: 'bad_retrieve_from', message: 'Choose a date to retrieve invoices from, no later than today.' };
+
+// "Retrieve invoices from", as typed: '' (no limit) or a date no later than
+// today, stored ISO. Null when it is neither — refused rather than guessed,
+// since a wrong date here silently leaves invoices behind on the portal.
+function parseFrom(raw: unknown): string | null {
+  const s = clean(raw, 40);
+  if (!s) return '';
+  const d = isoDate(s);
+  return d && d <= practiceDayKey(new Date()) ? d : null;
+}
+
 const BAD_SCHEDULE = { error: 'bad_schedule', message: 'Choose when it retrieves: off, daily, or a day of the month, at an hour.' };
 
 // A schedule from the dialog onto the row. A CHANGED schedule starts counting
@@ -334,6 +356,8 @@ retrieveRouter.post('/logins', async (req, res) => {
   if (!owner.ok) return res.status(422).json({ error: 'bad_owner', message: 'That person is not on this entity’s list.' });
   const r = await loadRules();
   if (b.schedule !== undefined && !r.validSchedule(b.schedule)) return res.status(422).json(BAD_SCHEDULE);
+  const retrieveFrom = parseFrom(b.retrieveFrom);
+  if (retrieveFrom === null) return res.status(422).json(BAD_FROM);
 
   const me = memberForSession(req);
   const now = new Date().toISOString();
@@ -350,6 +374,7 @@ retrieveRouter.post('/logins', async (req, res) => {
     passwordSetAt: now,
     accountRef: clean(b.accountRef),
     owner: owner.owner,
+    ...(retrieveFrom ? { retrieveFrom } : {}),
     createdAt: now,
     createdBy: me?.email || '',
     updatedAt: now,
@@ -396,6 +421,11 @@ retrieveRouter.patch('/logins/:id', async (req, res) => {
     const owner = resolveOwner(ws, orgId, b.owner);
     if (!owner.ok) return res.status(422).json({ error: 'bad_owner', message: 'That person is not on this entity’s list.' });
     row.owner = owner.owner;
+  }
+  if (b.retrieveFrom !== undefined) {
+    const retrieveFrom = parseFrom(b.retrieveFrom);
+    if (retrieveFrom === null) return res.status(422).json(BAD_FROM);
+    row.retrieveFrom = retrieveFrom;
   }
   if (b.schedule !== undefined) applySchedule(row, b.schedule, r);
   row.updatedAt = new Date().toISOString();
@@ -454,6 +484,8 @@ async function askN8n(
     last_retrieved_at: login.lastRetrievedAt || '',
     // Fetch only invoices dated after this one; '' on the first run.
     last_invoice_date: latestInvoiceDate(login),
+    // And none dated before this one; '' = no limit.
+    retrieve_from: login.retrieveFrom || '',
     xero_name: org?.tenantName || org?.name || '',
     tenant_id: org?.tenantId || '',
   };
@@ -526,6 +558,14 @@ export async function runRetrieval(
   const reads: Array<{ id: string; bytes: Buffer; mediaType: string; fileName: string }> = [];
 
   for (const doc of asked.documents) {
+    // Held here as well as asked of n8n: a recipe that ignores the date would
+    // otherwise file the portal's whole history. Only by the date n8n STATED —
+    // the paper's own date is not known until after it is read.
+    const stated = isoDate(doc.date);
+    if (login.retrieveFrom && stated && stated < login.retrieveFrom) {
+      run.tooOld = (run.tooOld || 0) + 1;
+      continue;
+    }
     const hash = createHash('sha256').update(doc.bytes).digest('hex');
     const ref = (doc.reference || '').trim();
     const seen =
@@ -574,20 +614,24 @@ export async function runRetrieval(
       },
     });
     hashesHere.add(hash);
-    const date = isoDate(doc.date);
-    ledger.push({ hash, reference: ref, billId: bill.id, at: bill.createdAt, ...(date ? { date } : {}) });
+    ledger.push({ hash, reference: ref, billId: bill.id, at: bill.createdAt, ...(stated ? { date: stated } : {}) });
     run.filed.push({ billId: bill.id, displayId: bill.displayId, fileName: doc.fileName });
     reads.push({ id: bill.id, bytes: doc.bytes, mediaType: doc.mediaType, fileName: doc.fileName });
   }
 
   run.status = asked.failed ? 'failed' : 'done';
   run.endedAt = new Date().toISOString();
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const also = [
+    run.skipped ? `${plural(run.skipped, 'was', 'were')} already retrieved` : '',
+    run.tooOld ? `${plural(run.tooOld, 'was', 'were')} dated before ${dayLabel(login.retrieveFrom || '')} and left on the portal` : '',
+  ].filter(Boolean);
   run.note = asked.failed
     ? asked.note
     : run.filed.length
-      ? `Filed ${run.filed.length} new document${run.filed.length === 1 ? '' : 's'}${run.skipped ? ` · ${run.skipped} already retrieved` : ''}.`
-      : run.skipped
-        ? `Nothing new — ${run.skipped} document${run.skipped === 1 ? ' was' : 's were'} already retrieved.`
+      ? `Filed ${plural(run.filed.length, 'new document', 'new documents')}${also.length ? ` · ${also.join(' · ')}` : ''}.`
+      : also.length
+        ? `Nothing new — ${also.join(' · ')}.`
         : `Nothing new (${asked.note}).`;
   writeRun(loginId, {
     run,

@@ -2603,7 +2603,11 @@ same invoice number (portals regenerate PDFs), and so does a file the entity
 already holds. `known_references` tells n8n what to skip, and `last_invoice_date` (the newest
 invoice date the login has filed: n8n's own `invoice_date` for the item, else
 the date read off the paper, never one past today) tells it to fetch only what
-is dated after that. The portal list
+is dated after that. **Retrieve invoices from** on the login (`retrieveFrom`,
+sent as `retrieve_from`) is the floor for the first run and every run after; it
+is held server-side too, by the date n8n states for each item (an item with
+none is filed), so a recipe that ignores it cannot file a portal's whole
+history. The portal list
 (`PORTALS`) is SP Group plus "Another portal" with its own https sign-in page:
 a portal is offered only where the workflow can have a recipe for it. Contract:
 `deploy/RETRIEVE.md`. Covered by `npm test` in `server/`

@@ -199,6 +199,30 @@ await api(`/logins/${id}/run`, 'POST', {});
 l = await settled(id);
 check('…but a date past today is not believed', sent[sent.length - 1].body.last_invoice_date, '2026-09-04');
 
+// --- Retrieve invoices from -------------------------------------------------
+r = await api(`/logins/${id}`, 'PATCH', { retrieveFrom: '2099-01-01' });
+check('a "retrieve from" date in the future is refused', [r.status, r.body.error], [422, 'bad_retrieve_from']);
+r = await api(`/logins/${id}`, 'PATCH', { retrieveFrom: 'soon' });
+check('…and so is one that is not a date', [r.status, r.body.error], [422, 'bad_retrieve_from']);
+r = await api(`/logins/${id}`, 'PATCH', { retrieveFrom: '15/08/2026' });
+check('a typed date is kept, as ISO', [r.status, r.body.login.retrieveFrom], [200, '2026-08-15']);
+answer([
+  { fileName: 'SP-Jul-2026.pdf', invoice_number: '8700001', invoice_date: '2026-07-03', pdf_base64: pdf('Jul').toString('base64') },
+  { fileName: 'SP-Aug-2026.pdf', invoice_number: '8700002', invoice_date: '2026-08-05', pdf_base64: pdf('Aug').toString('base64') },
+  { fileName: 'SP-Aug2-2026.pdf', invoice_number: '8700003', invoice_date: '2026-08-20', pdf_base64: pdf('Aug2').toString('base64') },
+]);
+const held = retrieved().length;
+await api(`/logins/${id}/run`, 'POST', {});
+l = await settled(id);
+check('n8n is told the date to retrieve from', [sent[sent.length - 1].body.retrieve_from, sent[sent.length - 1].body.retrieveFrom], [
+  '2026-08-15',
+  '2026-08-15',
+]);
+check('…and what it sends dated before it is left on the portal', [retrieved().length - held, l?.run.tooOld], [1, 2]);
+check('…which the run says', /2 were dated before 15 Aug 2026/.test(l?.run.note || ''), true);
+r = await api(`/logins/${id}`, 'PATCH', { retrieveFrom: '' });
+check('clearing it lifts the limit', [r.status, r.body.login.retrieveFrom], [200, '']);
+
 // --- Unconfigured ------------------------------------------------------------
 env.N8N_RETRIEVE_URL = '';
 r = await api(`/logins/${id}/run`, 'POST', {});
@@ -211,6 +235,6 @@ env.N8N_RETRIEVE_URL = 'http://127.0.0.1:4652/webhook/portal-retrieve';
 r = await api(`/logins/${id}`, 'DELETE');
 const gone = readFileSync(join(DATA_DIR, 'portal-logins.json'), 'utf8');
 check('deleting a login removes it, sealed password and all', [r.status, JSON.parse(gone).items.length], [200, 0]);
-check('…and leaves the documents it retrieved', retrieved().length, 2);
+check('…and leaves the documents it retrieved', retrieved().length, 3);
 
 await finish(failures, server, n8n);

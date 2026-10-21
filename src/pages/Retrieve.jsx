@@ -24,6 +24,7 @@ import {
   scheduleLabel,
 } from '@/lib/retrieveSchedule';
 import { cn } from '@/lib/utils';
+import { todayIso } from '@/lib/claimDate';
 
 // Costs -> Retrieve: the supplier portals CYBills signs into for the invoices
 // nobody sends — SP Group's utility bills are the first. Each login is kept on
@@ -122,6 +123,7 @@ function LoginModal({ open, login, portals, owners, timezone, onClose, onSaved }
   const [password, setPassword] = useState('');
   const [accountRef, setAccountRef] = useState('');
   const [owner, setOwner] = useState('');
+  const [retrieveFrom, setRetrieveFrom] = useState('');
   const [schedule, setSchedule] = useState(DEFAULT_SCHEDULE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -135,6 +137,7 @@ function LoginModal({ open, login, portals, owners, timezone, onClose, onSaved }
     setPassword('');
     setAccountRef(login?.accountRef || '');
     setOwner(login?.owner || '');
+    setRetrieveFrom(login?.retrieveFrom || '');
     setSchedule(normaliseSchedule(login?.schedule));
     setError('');
     setBusy(false);
@@ -149,7 +152,7 @@ function LoginModal({ open, login, portals, owners, timezone, onClose, onSaved }
     setBusy(true);
     setError('');
     try {
-      const fields = { label, loginUrl, username, accountRef, owner, schedule };
+      const fields = { label, loginUrl, username, accountRef, owner, retrieveFrom, schedule };
       // Blank on an edit keeps the saved one — it is never shown, so the form
       // has nothing to send back.
       if (password) fields.password = password;
@@ -249,6 +252,21 @@ function LoginModal({ open, login, portals, owners, timezone, onClose, onSaved }
               placeholder="Optional — only this account, where the login holds several"
               className={inputCls}
             />
+          </label>
+
+          <label className="block space-y-1.5 text-sm">
+            <span className="text-muted-foreground">Retrieve invoices from</span>
+            <input
+              type="date"
+              value={retrieveFrom}
+              max={todayIso()}
+              onChange={(e) => setRetrieveFrom(e.target.value)}
+              className={cn(inputCls, 'sm:w-56')}
+            />
+            <span className="block text-xs text-muted-foreground">
+              Optional. Invoices dated before this stay on the portal; blank fetches whatever the portal still lists.
+              After the first run, each run fetches only invoices newer than the latest one retrieved.
+            </span>
           </label>
 
           <label className="block space-y-1.5 text-sm">
@@ -446,7 +464,11 @@ export default function Retrieve() {
                     <div className="mt-0.5 text-xs text-muted-foreground">
                       {l.hasPassword ? `Password saved ${when(l.passwordSetAt)}` : 'No password saved'}
                       {l.filedCount ? ` · ${l.filedCount} document${l.filedCount === 1 ? '' : 's'} retrieved so far` : ''}
-                      {l.lastInvoiceDate ? ` · next fetches invoices after ${dayKeyLabel(l.lastInvoiceDate)}` : ''}
+                      {l.lastInvoiceDate && !(l.retrieveFrom && l.lastInvoiceDate < l.retrieveFrom)
+                        ? ` · next fetches invoices after ${dayKeyLabel(l.lastInvoiceDate)}`
+                        : l.retrieveFrom
+                          ? ` · fetches invoices from ${dayKeyLabel(l.retrieveFrom)}`
+                          : ''}
                     </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
                       <ScheduleLine login={l} timezone={timezone} />
