@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 
-// The inbound-email ("Extract by email") config for the Cloudflare Email Worker:
-// the webhook URL to POST to, the shared secret to sign with, and the mail
-// domain user addresses live on. Admin-only on the server.
+// The inbound-email ("Extract by email") config: the mail domain user addresses
+// live on. Practice team only on the server, and it carries no Worker URL or
+// secret — those are kept in server/.env on the VPS and shown to nobody.
 export function useInboundConfig() {
   const [config, setConfig] = useState(null);
   useEffect(() => {

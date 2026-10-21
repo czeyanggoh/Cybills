@@ -1,5 +1,6 @@
-// The two credentials on the Extraction page belong to the DEPLOYMENT, not to
-// whichever entity happens to be open.
+// The two credentials behind the Extraction page belong to the DEPLOYMENT, not
+// to whichever entity happens to be open, and the app no longer hands them to
+// anybody — they live in server/.env on the VPS.
 //
 // INBOUND_SECRET authorises submitting a document for any handle in any client
 // entity. CYBILLS_API_KEY authorises filing a bill into any client's book. The
@@ -123,13 +124,18 @@ r = await get('/api/whatsapp/config');
 check('for both', r.status, 403);
 
 // --- The practice's own ------------------------------------------------------
+// Not even the practice is handed the credentials any more: they are set once
+// in the Worker and in CYWorkspace, and kept in server/.env on the VPS. A
+// colleague still gets the mail domain and the delivery log.
 r = await get('/api/inbound/config', as('astridy2004@gmail.com'));
-check('a colleague reads the inbound secret', r.status, 200);
-check('and it is the real one', r.body.secret, 'the-worker-secret');
+check('a colleague reads the inbound config', r.status, 200);
+check('which names the mail domain', r.body.domain, 'cybills.sg');
+check('and not the inbound secret', JSON.stringify(r.body).includes('the-worker-secret'), false);
 
 r = await get('/api/whatsapp/config', as('astridy2004@gmail.com'));
-check('and the WhatsApp key', r.status, 200);
-check('also the real one', r.body.apiKey, 'the-cyws-key');
+check('and the WhatsApp config', r.status, 200);
+check('with its delivery log', Array.isArray(r.body.deliveries), true);
+check('and not the WhatsApp key', JSON.stringify(r.body).includes('the-cyws-key'), false);
 
 r = await get('/api/mail/status', as('astridy2004@gmail.com'));
 check('and the sending mailbox is theirs to see', r.status, 200);

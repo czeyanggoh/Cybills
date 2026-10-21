@@ -1603,12 +1603,13 @@ whatsappRouter.post('/channels/:submissionId/disappearing', async (req, res) => 
   });
 });
 
-// GET /api/whatsapp/config — what the CYWS operator needs: where to POST, and
-// the key to send with it.
+// GET /api/whatsapp/config — whether the pipe is on, and what has arrived.
 //
-// PRACTICE TEAM ONLY, and for the same reason the inbound-email secret is: this
-// key authorises filing documents into ANY client entity's book, so it belongs
-// to the deployment rather than to whichever entity happens to be open.
+// PRACTICE TEAM ONLY (the delivery log spans every client). It no longer
+// carries the invoice URL or the key: the key authorises filing documents into
+// ANY client entity's book, nobody signed in to the app needs it, and its
+// source of truth is WHATSAPP_INBOUND_KEY in server/.env (else the generated
+// one in .data) on the VPS, which is where CYWS's operator gets it.
 whatsappRouter.get('/config', (req, res) => {
   const member = memberForSession(req);
   if (member && (!member.practice || member.deactivated)) {
@@ -1616,8 +1617,6 @@ whatsappRouter.get('/config', (req, res) => {
   }
   if (!member && googleEnabled) return res.status(403).json({ error: 'forbidden' });
   res.json({
-    url: `${appOrigin(req)}/api/whatsapp/invoice`,
-    apiKey: inboundKey(),
     enabled: whatsappEnabled,
     // So "nothing turned up" can be answered rather than guessed at.
     deliveries: recentDeliveries(),

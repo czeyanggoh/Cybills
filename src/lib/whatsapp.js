@@ -63,9 +63,9 @@ export async function createWhatsappChannel({ participants, subject }) {
   throw err;
 }
 
-// What the CYWorkspace operator needs from us: where to POST a bill, and the
-// key to send with it. Practice team only on the server — the key authorises
-// filing documents into any client entity's book.
+// Whether WhatsApp collection is on, and what CYWorkspace has delivered.
+// Practice team only on the server. The invoice URL and key are not served —
+// they are kept in server/.env on the VPS.
 export function useWhatsappConfig() {
   const [config, setConfig] = useState(null);
   const reload = useCallback(async () => {

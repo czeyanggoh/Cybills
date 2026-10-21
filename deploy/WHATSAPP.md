@@ -39,17 +39,17 @@ Share (opens the admin's own WhatsApp) and Email invite.
 
 ## Hand these to the CYWS operator
 
-Both are in the app: **Business settings → Extraction → Extract by WhatsApp**
-(practice team only — the key authorises filing a bill into *any* client
-entity's book, so it belongs to the deployment, not to one client).
+Neither is shown in the app any more, to anybody: the key authorises filing a
+bill into *any* client entity's book, so it belongs to the deployment and is
+read on the VPS.
 
 | | |
 |---|---|
 | `CYBILLS_INVOICE_URL` | `https://cybills.cy-bm.sg/api/whatsapp/invoice` |
-| `CYBILLS_API_KEY` | shown in the app; set `WHATSAPP_INBOUND_KEY` to pin it |
+| `CYBILLS_API_KEY` | `WHATSAPP_INBOUND_KEY` in `server/.env` |
 
-Left unset, CYBills generates the key on first use and keeps it, so it can be
-read out of the app and handed over without anyone having VPS access.
+Left unset, CYBills generates the key on first use and keeps it in `.data` on
+the VPS; set `WHATSAPP_INBOUND_KEY` to pin it.
 
 ## Setting a group up
 

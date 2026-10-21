@@ -9,7 +9,6 @@ import {
   Download,
   ClipboardList,
   ImagePlus,
-  Copy,
   Info,
   Mail,
   ShieldCheck,
@@ -132,9 +131,9 @@ function SettingsNav({ nav, active, onSelect }) {
 }
 
 // --- Reusable form primitives (b&w) ----------------------------------------
-function Card({ title, children }) {
+function Card({ title, children, id }) {
   return (
-    <section className="overflow-hidden rounded-lg border bg-background">
+    <section id={id} className="scroll-mt-6 overflow-hidden rounded-lg border bg-background">
       {title && (
         <div className="border-b px-5 py-4 text-base font-semibold tracking-tight">{title}</div>
       )}
@@ -209,46 +208,6 @@ function Toggle({ defaultOn = false, on: onProp = undefined, onChange = undefine
       </span>
       <span className="text-muted-foreground">{on ? 'Yes' : 'No'}</span>
     </button>
-  );
-}
-
-// A value to copy into somebody else's configuration. `secret` keeps it off the
-// screen until asked for: a credential nobody is currently reading should not be
-// sitting in a window behind them, and it can still be copied without ever being
-// shown. (The icon used to be decoration — it copies now.)
-function CopyRow({ label, value, secret = false }) {
-  const [shown, setShown] = useState(!secret);
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(String(value ?? ''));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard refused (no permission / insecure context) — reveal it so the
-      // value can be selected by hand rather than leaving nothing to do.
-      setShown(true);
-    }
-  };
-  return (
-    <div className="flex items-center justify-between gap-3 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="flex items-center gap-2 font-mono text-foreground">
-        <span className="truncate">{shown ? value : '•'.repeat(24)}</span>
-        {secret && (
-          <button
-            type="button"
-            onClick={() => setShown((v) => !v)}
-            className="shrink-0 font-sans text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          >
-            {shown ? 'Hide' : 'Reveal'}
-          </button>
-        )}
-        <button type="button" onClick={copy} aria-label={`Copy ${label}`} title={copied ? 'Copied' : 'Copy'}>
-          <Copy className={cn('h-3.5 w-3.5 shrink-0 cursor-pointer', copied ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')} />
-        </button>
-      </span>
-    </div>
   );
 }
 
@@ -599,20 +558,16 @@ function EmailSuffixRow({ organisation, domain }) {
   );
 }
 
-// Real "Extract by Email" config: the values to wire into the Cloudflare Email
-// Worker so `<handle>@<domain>` addresses ingest into CYBills. Per-user addresses
-// live on each user's page (Users → Manage → Edit user details).
+// "Extract by Email": the addresses an entity's people forward bills to, and the
+// short form that shapes them. Per-user addresses live on each user's page
+// (Users → Manage → Edit user details). The Cloudflare Worker's URL and secret
+// are not shown to anybody — they are the deployment's, set once in the Worker,
+// and kept in server/.env on the VPS.
 function ExtractByEmailCard() {
   const config = useInboundConfig();
-  const { membership, googleEnabled } = useAuth();
   const organisation = useActiveOrganisation();
-  // The Worker credentials are the DEPLOYMENT's, not this entity's: that secret
-  // authorises submitting documents for any handle in any client entity, so a
-  // client's own admin has no business reading it. They still get the half that
-  // is theirs — the addresses their people forward bills to.
-  const canSeeWorker = isPracticeTeam(membership, googleEnabled);
   return (
-    <Card title="Extract by Email">
+    <Card title="Extract by Email" id="extract-by-email">
       <p className="text-sm text-muted-foreground">
         Users email or forward bills to their own{' '}
         <code>&lt;handle&gt;{addressTail(organisation?.emailSuffix, config?.domain || 'cybills.sg')}</code> address and
@@ -633,42 +588,13 @@ function ExtractByEmailCard() {
           <strong>General</strong> account on the Users page.
         </p>
       ) : null}
-      {canSeeWorker ? (
-        <>
-          <div className="rounded-md border p-4">
-            <p className="mb-1 text-sm font-medium">Cloudflare Email Worker</p>
-            <p className="mb-3 text-xs text-muted-foreground">
-              Paste these into the <code>cybills-inbound</code> Worker (Settings → Variables), then set the catch-all route to
-              that Worker. No server access needed.
-            </p>
-            {config ? (
-              <div className="space-y-2">
-                <CopyRow label="CYBILLS_INBOUND_URL" value={config.url || '—'} />
-                <CopyRow label="INBOUND_SECRET" value={config.secret || '—'} secret />
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">Loading…</p>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            <code>INBOUND_SECRET</code> is the whole deployment&rsquo;s — it authorises submitting documents for any handle in
-            any client entity, so it goes into the Worker and nowhere else. Full setup: <code>deploy/EMAIL-INBOUND.md</code>.
-          </p>
-        </>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          The mail routing itself is set up once for the whole account by the practice — there is nothing to configure
-          here.
-        </p>
-      )}
     </Card>
   );
 }
 
 // Business settings → Extraction → "Extract by WhatsApp". The other half of the
-// email card above: what the CYWorkspace operator needs to hand bills back to
-// CYBills. The group itself is per-entity and lives under Connections; these
-// two values are the deployment's.
+// email card above. The group itself is per-entity and lives under Connections;
+// what is here is whether CYWorkspace has been handing bills back at all.
 // How each inbound attempt reads. Refusals are worth as much as successes here:
 // they say the call is being MADE, which is the half of the question CYBills
 // can answer on its own.
@@ -722,10 +648,11 @@ function ExtractByWhatsappCard() {
       reloadConfig();
     }
   };
-  // Same rule as the inbound-email secret, for the same reason: this key
-  // authorises filing documents into ANY client entity's book, so it is the
-  // practice's and not a client admin's.
-  const canSeeKey = isPracticeTeam(membership, googleEnabled);
+  // The invoice URL and key CYWorkspace posts with are not shown to anybody:
+  // the key authorises filing documents into ANY client entity's book, and it
+  // lives in server/.env on the VPS. The delivery log spans every client, so it
+  // is the practice's.
+  const canSeeLog = isPracticeTeam(membership, googleEnabled);
   return (
     <Card title="Extract by WhatsApp">
       <p className="text-sm text-muted-foreground">
@@ -734,26 +661,8 @@ function ExtractByWhatsappCard() {
         and reads them with whatever they typed alongside — &ldquo;recharge this to CY-Biz&rdquo; is an
         instruction about that bill, and it is treated as one.
       </p>
-      {canSeeKey ? (
+      {canSeeLog ? (
         <>
-          <div className="rounded-md border p-4">
-            <p className="mb-1 text-sm font-medium">Give these to the CYWorkspace operator</p>
-            <p className="mb-3 text-xs text-muted-foreground">
-              CYWorkspace POSTs one bill at a time to this URL with the key in <code>X-API-Key</code>.
-            </p>
-            {config ? (
-              <div className="space-y-2">
-                <CopyRow label="CYBILLS_INVOICE_URL" value={config.url || '—'} />
-                <CopyRow label="CYBILLS_API_KEY" value={config.apiKey || '—'} secret />
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">Loading…</p>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            The key is the whole deployment&rsquo;s — it authorises filing a bill into any client entity, so it
-            goes to CYWorkspace and nowhere else. Full contract: <code>deploy/WHATSAPP.md</code>.
-          </p>
           {/* "I sent a bill and nothing turned up" has two very different
               answers — CYWorkspace never called, or it called and was turned
               away — and they need different people to fix them. Every attempt
@@ -790,8 +699,9 @@ function ExtractByWhatsappCard() {
               </ul>
             ) : (
               <p className="text-xs text-muted-foreground">
-                CYWorkspace has never called this endpoint. Until it is given the URL and key above, a bill sent
-                into a group is read by CYWorkspace and goes no further — nothing reaches CYBills to file.
+                CYWorkspace has never called this endpoint. Until it is given the URL and key (server/.env on
+                the VPS), a bill sent into a group is read by CYWorkspace and goes no further — nothing reaches
+                CYBills to file.
               </p>
             )}
           </div>
@@ -923,6 +833,13 @@ function Extraction() {
   const feeAccountOptions = useCategoryOptions();
   const feeRules = Array.isArray(form.cardFeeRules) ? form.cardFeeRules : [];
   const setFeeRule = (i, patch) => set('cardFeeRules', feeRules.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  // A deep link naming a card (/settings?section=extraction#extract-by-email,
+  // from the Add-documents drawer) lands on it rather than at the top.
+  useEffect(() => {
+    const id = window.location.hash.slice(1);
+    if (id) document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  }, []);
 
   return (
     <div className="space-y-6">

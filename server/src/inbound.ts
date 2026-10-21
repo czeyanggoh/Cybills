@@ -914,27 +914,21 @@ function parseForwardConfirmation(from: string, subject: string, body: string, l
   return { url, code: codeMatch ? codeMatch[1] : '' };
 }
 
-// GET /api/inbound/config — the webhook URL + shared secret + mail domain, for
-// whoever sets up the Cloudflare Worker.
+// GET /api/inbound/config — the mail domain user addresses live on.
 //
-// PRACTICE TEAM ONLY. This secret is not a per-entity setting: it authorises
-// posting documents to the inbound endpoint for ANY user handle in ANY client
-// entity, so a client's own Business Admin reading it could file documents into
-// another client's books. It belongs to the deployment, and the deployment is
-// the practice's. (Goes through the normal session auth — only /email is
-// allowlisted, for the Worker itself.)
+// PRACTICE TEAM ONLY, and it no longer carries the Worker's URL or secret at
+// all. The secret authorises posting documents for ANY user handle in ANY
+// client entity, and nobody signed in to the app needs it: it is set once in
+// the Worker, and its source of truth is INBOUND_SECRET in server/.env (else
+// .data/inbound-config.json) on the VPS. (Goes through the normal session auth
+// — only /email is allowlisted, for the Worker itself.)
 inboundRouter.get('/config', (req, res) => {
   const member = memberForSession(req);
   if (member && (!member.practice || member.deactivated)) {
     return res.status(403).json({ error: 'not_practice_team' });
   }
   if (!member && googleEnabled) return res.status(403).json({ error: 'forbidden' });
-  const origin = (process.env.APP_ORIGIN || '').replace(/\/$/, '');
-  res.json({
-    url: `${origin}/api/inbound/email`,
-    secret: getInboundSecret(),
-    domain: process.env.INBOUND_MAIL_DOMAIN || 'cybills.sg',
-  });
+  res.json({ domain: process.env.INBOUND_MAIL_DOMAIN || 'cybills.sg' });
 });
 
 // An email that arrived ATTACHED to another — Gmail's "Forward as attachment",

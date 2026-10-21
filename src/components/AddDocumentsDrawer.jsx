@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { X, FileText, Loader2, CheckCircle2, AlertTriangle, ExternalLink, Copy, Check } from 'lucide-react';
 import DextImportModal from '@/components/DextImportModal';
 import { cn } from '@/lib/utils';
@@ -42,7 +42,7 @@ import { foldTaxIntoCost } from '@/lib/lineItems';
 import { splitByPrintedRate, linesAgreeWithTotal } from '@/lib/taxRateRules';
 import { paymentProofPatch } from '@/lib/paymentProof';
 import { advancePatch } from '@/lib/prepayment';
-import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere, canPublishToXero, getDirectory } from '@/lib/userStore';
+import { useUsers, useOwnerNames, useGeneralOwnerName, useOwnerAddress, ownsHere, canPublishToXero, canManageBusiness, getDirectory } from '@/lib/userStore';
 import { PDFDocument } from 'pdf-lib';
 import { coveringNote } from '@/lib/coveringNote';
 
@@ -358,6 +358,14 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
   // the setting; both admin tiers publish by role. Refused server-side too, on
   // all four Xero routes — this is what stops the button being offered at all.
   const mayPublish = canPublishToXero(membership, googleEnabled);
+  // Business settings is a Business Admin's page, so only they are sent there;
+  // anybody else is told who can do it.
+  const mayOpenSettings = canManageBusiness(membership, googleEnabled);
+  const navigate = useNavigate();
+  const openEmailSettings = () => {
+    onClose();
+    navigate('/settings?section=extraction#extract-by-email');
+  };
   const readerName = useReaderName();
   const { pathname } = useLocation();
   const users = useUsers();
@@ -1053,8 +1061,19 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
                 </>
               ) : owner && owner === generalName ? (
                 <p className="text-sm text-muted-foreground">
-                  This entity has no address of its own yet — Business settings → Extraction → Extract by Email gives
-                  it one, and bills sent there file under {generalName}.
+                  This entity has no address of its own yet —{' '}
+                  {mayOpenSettings ? (
+                    <button
+                      type="button"
+                      onClick={openEmailSettings}
+                      className="font-medium text-foreground underline underline-offset-2 hover:no-underline"
+                    >
+                      set its short form in Business settings
+                    </button>
+                  ) : (
+                    'your Business Admin can give it one in Business settings → Extraction → Extract by Email'
+                  )}
+                  {mayOpenSettings ? ' to give it one' : ''}, and bills sent there file under {generalName}.
                 </p>
               ) : (
                 <p className="text-sm text-muted-foreground">

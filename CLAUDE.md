@@ -3163,9 +3163,18 @@ in `EDITABLE`. Covered by `npm test` in `server/` (`test/whatsapp.test.mts`).
 Env (server/.env): `CYWORKSPACE_API_KEY` (the same key the Xero relay uses —
 creating groups switches on with it), `CYWORKSPACE_PUBLIC_URL` (the only host a
 file link may point at), `WHATSAPP_INBOUND_KEY` (the key CYWS sends BACK,
-generated and kept if unset so a practice admin can read it out of the app).
-Practice team only, like the inbound-email secret: it files documents into any
-client's book. Covered by `npm test` in `server/`.
+generated and kept in `.data` if unset). Covered by `npm test` in `server/`.
+
+**Neither deployment credential is shown in the app, to anybody.** The Worker's
+`INBOUND_SECRET` and the WhatsApp `CYBILLS_API_KEY` each authorise filing into
+ANY client's book, and Business settings -> Extraction used to print both (with
+their URLs) to every practice colleague. Nobody signed in needs them: each is
+set once at the other end, and the VPS is where they are read. So
+`GET /api/inbound/config` now returns only the mail `domain`, and
+`GET /api/whatsapp/config` only `enabled` + the delivery log — both still
+practice team only (the log spans every client). Covered by
+`test/secrets-access.test.mts`, which asserts a colleague's reply carries
+neither.
 
 ## AI API spend
 
