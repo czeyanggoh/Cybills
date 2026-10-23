@@ -2631,6 +2631,173 @@ export function withExistingLineIds(sent: any[], existing: any[]): any[] {
   return [...paired, ...keptFees];
 }
 
+// --- Update in Xero on a PAID bill: take the payments off, put them back ---------
+// Xero keeps a paid bill's lines largely as they are, so a tax code corrected
+// after payment was taken and quietly kept (Magicboo, 23 Oct 2026, fixed by
+// hand in Xero: payment deleted, bill edited, payment made again — and the
+// bank's reference lost on the way). Asked to (`repay` on update-bill), CYBills
+// does the same three steps and keeps each payment exactly as it was: the
+// account it came from, its date, its amount, its rate and its reference.
+//
+// Everything that could stop it is checked BEFORE anything is touched, because
+// a bill left unpaid half way is worse than one never changed:
+//   • a payment reconciled against a bank statement line — Xero will not delete
+//     one through its API, and doing it in Xero (Remove & Redo) unreconciles
+//     the statement line too, which is a person's call;
+//   • a payment that is part of a batch payment — it is deleted as the batch;
+//   • a credit note, prepayment or overpayment applied to the bill — those are
+//     allocations, not payments, and not put back by this;
+//   • an update that would leave the bill worth less than what was paid on it.
+// A failure after the payments came off puts them back before answering.
+export type HeldPayment = {
+  paymentId: string;
+  accountId: string;
+  account: string;
+  date: string;
+  amount: number;
+  reference: string;
+  currencyRate: number;
+};
+
+const money2 = (n: number) => Math.round(n * 100) / 100;
+
+export async function holdPayments(
+  tenantId: string,
+  current: Record<string, any> | null,
+  lines: any[] | undefined
+): Promise<{ ok: true; payments: HeldPayment[] } | { ok: false; status: number; body: any }> {
+  if (!current) {
+    return { ok: false, status: 502, body: { error: 'bill_unreadable', message: 'The bill could not be read back from Xero, so its payment was left alone. Try again in a moment.' } };
+  }
+  const listed = (Array.isArray(current.Payments) ? current.Payments : []).filter((p: any) => p?.PaymentID);
+  if (!listed.length) return { ok: true, payments: [] };
+  const allocated = ['CreditNotes', 'Prepayments', 'Overpayments'].filter((k) => Array.isArray(current[k]) && current[k].length);
+  if (allocated.length) {
+    return { ok: false, status: 409, body: {
+      error: 'has_allocations',
+      message: 'This bill has a credit note, prepayment or overpayment applied to it as well as a payment. Remove that allocation in Xero first, or make the change in Xero.',
+    } };
+  }
+  const total = money2((lines ?? []).reduce((a, l) => a + (Number(l?.UnitAmount) || 0) * (Number(l?.Quantity) || 1) + (Number(l?.TaxAmount) || 0), 0));
+  const paid = money2(listed.reduce((a: number, p: any) => a + (Number(p.Amount) || 0), 0));
+  if (total + 0.005 < paid) {
+    return { ok: false, status: 409, body: {
+      error: 'total_below_paid',
+      message: `The update would make the bill ${total.toFixed(2)}, less than the ${paid.toFixed(2)} already paid on it, so the payment could not go back on. Correct the total, or change the payment in Xero.`,
+    } };
+  }
+  const payments: HeldPayment[] = [];
+  for (const p of listed) {
+    const read = await relay(`Payments/${encodeURIComponent(String(p.PaymentID))}`, { tenantId });
+    const full = read.ok ? read.data?.Payments?.[0] : null;
+    if (!full) {
+      return { ok: false, status: 502, body: { error: 'payment_unreadable', message: 'A payment on this bill could not be read from Xero, so nothing was changed. Try again in a moment.' } };
+    }
+    if (String(full.Status ?? '').toUpperCase() === 'DELETED') continue;
+    const account = String(full.Account?.Name ?? full.Account?.Code ?? 'the bank account');
+    const day = xeroDay(full.Date);
+    const amount = money2(Number(full.Amount) || 0);
+    if (full.IsReconciled) {
+      return { ok: false, status: 409, body: {
+        error: 'payment_reconciled',
+        message: `The payment of ${amount.toFixed(2)} on ${day} from ${account} is reconciled against a bank statement line, and Xero will not let it be deleted from here. In Xero, use Remove & Redo on that statement line, then update the bill again.`,
+      } };
+    }
+    if (full.BatchPaymentID) {
+      return { ok: false, status: 409, body: {
+        error: 'batch_payment',
+        message: `The payment of ${amount.toFixed(2)} on ${day} is part of a batch payment, which Xero only removes as a whole. Change the bill in Xero instead.`,
+      } };
+    }
+    const accountId = String(full.Account?.AccountID ?? '');
+    if (!accountId || !day || !(amount > 0)) {
+      return { ok: false, status: 409, body: { error: 'payment_unreadable', message: 'A payment on this bill names no account, date or amount Xero could give back, so it was left alone. Change the bill in Xero instead.' } };
+    }
+    payments.push({
+      paymentId: String(full.PaymentID),
+      accountId,
+      account,
+      date: day,
+      amount,
+      reference: String(full.Reference ?? ''),
+      currencyRate: Number(full.CurrencyRate) || 1,
+    });
+  }
+  return { ok: true, payments };
+}
+
+export async function removePayments(
+  tenantId: string,
+  held: HeldPayment[]
+): Promise<{ ok: true } | { ok: false; deleted: HeldPayment[]; message: string }> {
+  const deleted: HeldPayment[] = [];
+  for (const p of held) {
+    const gone = await relay(`Payments/${encodeURIComponent(p.paymentId)}`, {
+      method: 'POST',
+      tenantId,
+      body: { Status: 'DELETED' },
+    });
+    const rec = gone.ok ? gone.data?.Payments?.[0] : null;
+    const errors: string[] = (rec?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+    if (!gone.ok || errors.length) {
+      return { ok: false, deleted, message: errors.length ? errors.join(' ') : gone.ok ? 'Xero refused.' : gone.message };
+    }
+    deleted.push(p);
+  }
+  return { ok: true };
+}
+
+// Each held payment recorded again on the bill. One at a time, so what did not
+// go back is named rather than lost in a batch answer — and said with every
+// detail somebody needs to enter it by hand, because an unpaid bill that was
+// paid is the one outcome this must never leave unexplained.
+export async function recordPayments(
+  tenantId: string,
+  invoiceId: string,
+  held: HeldPayment[]
+): Promise<{ ok: boolean; payments: Array<HeldPayment & { newPaymentId?: string; error?: string }>; message?: string }> {
+  const out: Array<HeldPayment & { newPaymentId?: string; error?: string }> = [];
+  for (const p of held) {
+    const payment: Record<string, unknown> = {
+      Invoice: { InvoiceID: invoiceId },
+      Account: { AccountID: p.accountId },
+      Date: p.date,
+      Amount: p.amount,
+      Reference: p.reference,
+    };
+    if (p.currencyRate && p.currencyRate !== 1) payment.CurrencyRate = p.currencyRate;
+    const made = await relay('Payments', {
+      method: 'PUT',
+      tenantId,
+      query: { summarizeErrors: 'false' },
+      body: { Payments: [payment] },
+    });
+    const rec = made.ok ? made.data?.Payments?.[0] : null;
+    const errors: string[] = (rec?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+    const newId = String(rec?.PaymentID ?? '');
+    if (!made.ok || !newId || errors.length) {
+      out.push({ ...p, error: errors.length ? errors.join(' ') : made.ok ? 'Xero refused the payment.' : made.message });
+      continue;
+    }
+    out.push({ ...p, newPaymentId: newId });
+    // A bank match that remembered the old payment follows it to the new one.
+    // Loaded on demand: bankMatch.ts imports this module.
+    try {
+      const { replaceBankPaymentId } = await import('./bankMatch.js');
+      replaceBankPaymentId(p.paymentId, newId);
+    } catch (err) {
+      console.error('[xero] could not move a bank match to the new payment', err);
+    }
+  }
+  const failed = out.filter((p) => p.error);
+  if (!failed.length) return { ok: true, payments: out };
+  const list = failed
+    .map((p) => `${p.amount.toFixed(2)} on ${p.date} from ${p.account}${p.reference ? `, reference "${p.reference}"` : ''} (${p.error})`)
+    .join('; ');
+  console.error('[xero] payments not put back on', invoiceId, list);
+  return { ok: false, payments: out, message: `The payment was taken off the bill and could not be put back: ${list}. Record it again in Xero by hand.` };
+}
+
 // The account and tax code each sent line asked for that Xero's reply does not
 // carry, paired by LineItemID where both have one, else by position. Only what
 // was SENT is compared; a reply with no lines says nothing either way.
@@ -2762,6 +2929,34 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
     payload.LineItems = withExistingLineIds(payload.LineItems as any[], current.LineItems);
   }
 
+  // Asked to (`repay`): the bill's payments come off first and go back on after,
+  // exactly as they were — see repayAround. Everything that could stop it is
+  // checked before anything is touched.
+  let held: HeldPayment[] = [];
+  if (b.repay === true) {
+    if (isCreditDoc(postedAs)) {
+      return res.status(409).json({
+        error: 'repay_unsupported',
+        message: 'Undoing and re-recording payments is only offered on a bill, not on a credit note. Change it in Xero instead.',
+      });
+    }
+    const plan = await holdPayments(tenantId, current, payload.LineItems as any[]);
+    if (!plan.ok) return res.status(plan.status).json(plan.body);
+    held = plan.payments;
+    const removed = await removePayments(tenantId, held);
+    if (!removed.ok) {
+      const restored = await recordPayments(tenantId, bill.xeroInvoiceId, removed.deleted);
+      return res.status(409).json({
+        error: 'payment_not_deleted',
+        message: `Xero would not delete the payment, so nothing was changed: ${removed.message}`,
+        ...(removed.deleted.length ? { repay: restored } : {}),
+      });
+    }
+  }
+  // A failure after the payments came off puts them back before answering.
+  const postedId = bill.xeroInvoiceId;
+  const putBack = async () => (held.length ? { repay: await recordPayments(tenantId, postedId, held) } : {});
+
   // POST (not PUT) is Xero's update; summarizeErrors=false again, so a rejection
   // comes back per-record with its reasons instead of as a bare 400.
   const result = await relay(endpoint, {
@@ -2773,17 +2968,20 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
 
   if (!result.ok) {
     console.error('[xero] update failed', result.status, result.message);
-    return res.status(result.status >= 500 ? 502 : result.status).json({ error: result.error, message: result.message });
+    const back = await putBack();
+    return res.status(result.status >= 500 ? 502 : result.status).json({ error: result.error, message: result.message, ...back });
   }
 
   const { record: invoice, id: xeroId, number: xeroNumber } = xeroRecordFrom(postedAs, result.data);
   const validationErrors: string[] = (invoice?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
   if (!invoice || invoice.HasErrors || validationErrors.length > 0) {
+    const back = await putBack();
     return res.status(422).json({
       error: 'xero_validation_failed',
       // Xero's own words. A paid bill refuses an amount change, and the reason
       // it gives is more use to a reviewer than anything invented here.
       messages: validationErrors.length ? validationErrors : ['Xero rejected the update.'],
+      ...back,
     });
   }
 
@@ -2793,9 +2991,16 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
   // updated.
   const notApplied = linesNotApplied(payload.LineItems as any[], invoice.LineItems);
 
+  // The payments go back on the updated bill, under the same account, date,
+  // amount and reference they had.
+  const repaid = held.length ? await recordPayments(tenantId, bill.xeroInvoiceId, held) : null;
+
   // The answer names the bill's state as it now stands, so the document's own
-  // Xero fields are refreshed from it rather than left to the next webhook.
-  const payment = paymentFromInvoice(invoice);
+  // Xero fields are refreshed from it rather than left to the next webhook —
+  // read again once the payments are back, since the update's own reply saw
+  // the bill without them.
+  const now = repaid ? (await fetchXeroInvoice(tenantId, bill.xeroInvoiceId)) ?? invoice : invoice;
+  const payment = paymentFromInvoice(now);
   if (payment.xeroStatus && markBillXeroPayment(bill.orgId, bill.id, payment)) {
     void syncWhatsappReaction(bill.orgId, bill.id);
   }
@@ -2806,11 +3011,12 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
       invoiceId: xeroId || bill.xeroInvoiceId,
       invoiceNumber: xeroNumber,
       docType: postedAs,
-      status: String(invoice.Status ?? ''),
+      status: String(now.Status ?? invoice.Status ?? ''),
     },
     lines: prepared.lines,
     perLine: prepared.perLine,
     ...(notApplied.length ? { notApplied } : {}),
+    ...(repaid ? { repay: repaid } : {}),
     bill: getBillById(workspace, bill.id),
   });
 });

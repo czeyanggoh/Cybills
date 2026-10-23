@@ -2196,6 +2196,24 @@ And the reply is READ: `linesNotApplied` compares each line's account and tax
 code with what was sent, and the dialog says which Xero kept rather than
 "Updated". Covered by `npm test` in `server/`.
 
+**And a PAID bill can be taken off its payment, updated and paid again.** Xero
+keeps a paid bill's lines largely as they are, so Magicboo's tax code was fixed
+by hand in Xero — payment deleted, bill edited, payment made again — and the
+bank's reference was lost on the way. Where the document's Xero status is PAID
+the dialog asks (a checkbox, never done unasked), and update-bill with
+`repay: true` does the three steps (`holdPayments` / `removePayments` /
+`recordPayments` in `xero.ts`), putting each payment back exactly as it was:
+account, date, amount, rate and reference. Everything that could stop it is
+checked BEFORE anything is touched — a payment reconciled to a bank statement
+line (Xero will not delete one from here, and Remove & Redo unreconciles the
+line, which is a person's call), one in a batch payment, a credit note /
+prepayment / overpayment applied to the bill, an update that would leave the
+bill worth less than was paid — and a failure after the payment came off puts it
+back before answering; one that cannot be put back is named with every detail
+needed to enter it by hand. A bank match remembering the old payment follows it
+to the new id (`replaceBankPaymentId`). Bills only, not credit notes. Covered by
+`npm test` in `server/` (`test/update-paid-bill.test.mts`).
+
 **And the paperwork links forward.** A claim's "Published to Xero" chip was a
 dead label: it stated that a bill EXISTS and left somebody to go and find it,
 while the cost page beside it had carried "Open in Xero" all along. It is the

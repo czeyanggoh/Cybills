@@ -202,6 +202,24 @@ export function recordsFor(orgId: string): BankLineRecord[] {
   return loadRecords().filter((r) => r.orgId === orgId);
 }
 
+// A payment Update in Xero took off a paid bill and recorded again is the same
+// payment under a new id (xero.ts, repayAround). A match that remembered the old
+// id would have Undo delete a payment that no longer exists, and leave the new
+// one standing.
+export function replaceBankPaymentId(oldId: string, newId: string): number {
+  if (!oldId || !newId || oldId === newId) return 0;
+  const items = loadRecords();
+  let changed = 0;
+  for (const r of items) {
+    if (r.paymentId === oldId) {
+      r.paymentId = newId;
+      changed++;
+    }
+  }
+  if (changed) saveRecords(items);
+  return changed;
+}
+
 // --- telling CYWS which lines are spent -----------------------------------------
 // A line CYBills has used to record a payment is SPENT: its money is on a bill
 // in Xero. CYWS's auto bank reconciliation would otherwise keep proposing it —

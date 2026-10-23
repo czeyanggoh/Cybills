@@ -792,6 +792,9 @@ export async function updateBillInXero(organisationId, payload) {
       Array.isArray(body.messages) ? body.messages.join(' ') : body.message || 'Update failed.'
     ));
     err.code = body.error;
+    // What became of a paid bill's payment when the update failed after it was
+    // taken off: put back, or not (and then how to enter it by hand).
+    err.repay = body.repay ?? null;
     throw err;
   }
   return body;

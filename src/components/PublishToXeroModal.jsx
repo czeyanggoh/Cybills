@@ -62,6 +62,11 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   // What Xero accepted an update for and still kept as it was (an account or a
   // tax code per line), so "Updated" is never said over a change that didn't stick.
   const [notApplied, setNotApplied] = useState([]);
+  // A bill already PAID in Xero keeps its lines largely as they are, so the
+  // reviewer is asked whether to take the payment off, update, and record the
+  // same payment again (server: repayAround in xero.ts). Never done unasked.
+  const [repay, setRepay] = useState(false);
+  const [repayResult, setRepayResult] = useState(null);
   // Xero's short code for the ledger, so "Open in Xero" is a deep link that
   // opens the right organisation rather than whichever one the browser last had.
   const xeroShortCode = useXeroShortCode();
@@ -89,6 +94,8 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
     setError('');
     setDone(null);
     setNotApplied([]);
+    setRepay(false);
+    setRepayResult(null);
   }, [open]);
 
   // Load the chosen organisation's chart of accounts + tax rates.
@@ -205,6 +212,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   // — once it is in Xero — by what it was posted as, since an update has to go
   // to the record that exists.
   const credit = updating ? String(bill?.xeroDocType ?? '').endsWith('CREDIT') : isCreditNote(bill);
+  const paidInXero = updating && !credit && String(bill?.xeroStatus ?? '').toUpperCase() === 'PAID';
   // One dialog for both workspaces, because it is one act: pick the account,
   // pick the tax code, post it. What differs is which side of the ledger the
   // document lands on — and that is the server's answer, read from the
@@ -255,6 +263,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
         // correcting an approved bill's coding can't knock it back to draft.
         status: updating && !status ? undefined : status,
         dueDate: dueDate || undefined,
+        repay: paidInXero && repay ? true : undefined,
       });
       setDone(result.invoice);
       setPostedLines(Number(result.lines) || 0);
@@ -263,10 +272,12 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
       setPrepayment(result.prepayment ?? null);
       setPaidOnPublish(result.paidOnPublish ?? null);
       setNotApplied(Array.isArray(result.notApplied) ? result.notApplied : []);
+      setRepayResult(result.repay ?? null);
       setRebilled(result.rebilled ?? null);
       onPublished?.(result);
     } catch (err) {
       setError(err.message);
+      setRepayResult(err.repay ?? null);
     } finally {
       setPublishing(false);
     }
@@ -339,6 +350,19 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                 Bank tab, or record the payment by hand in Xero.
               </p>
             )}
+            {repayResult?.ok && (
+              <p className="max-w-sm text-xs text-muted-foreground">
+                {repayResult.payments.length === 1 ? 'The payment was' : `${repayResult.payments.length} payments were`} taken off,
+                the {noun} updated, and recorded again:{' '}
+                {repayResult.payments
+                  .map((p) => `${Number(p.amount).toFixed(2)} on ${p.date} from ${p.account}`)
+                  .join('; ')}
+                , reference kept.
+              </p>
+            )}
+            {repayResult && !repayResult.ok && (
+              <p className="max-w-sm text-sm font-medium text-destructive">{repayResult.message}</p>
+            )}
             {notApplied.length > 0 && (
               <p className="max-w-sm text-xs text-amber-700">
                 Xero took the update but kept{' '}
@@ -350,7 +374,10 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                     return `line ${n.line}'s ${what} as ${show(n.kept)} (not ${show(n.sent)})`;
                   })
                   .join(', ')}
-                . Change it in Xero (Edit on the {noun}).
+                .{' '}
+                {paidInXero && !repay
+                  ? `Send the update again with “Undo the payment, update, then record it again” ticked, or change it in Xero.`
+                  : `Change it in Xero (Edit on the ${noun}).`}
               </p>
             )}
             {paidOnPublish?.ok && !paidOnPublish.skipped && (
@@ -500,11 +527,32 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                   entity. Check it is filed under the right client before it goes into this ledger.
                 </p>
               )}
-              {updating && (
+              {updating && !paidInXero && (
                 <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   Xero decides what may still change: a bill that has been paid or voided refuses an
                   update, and says so.
                 </p>
+              )}
+              {paidInXero && (
+                <div className="rounded-md border border-amber-600/30 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <p>
+                    This {noun} is <span className="font-medium">paid</span> in Xero, and Xero keeps a paid {noun}&rsquo;s
+                    lines largely as they are — a tax code change may not stick.
+                  </p>
+                  <label className="mt-2 flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={repay}
+                      onChange={(e) => setRepay(e.target.checked)}
+                    />
+                    <span>
+                      <span className="font-medium">Undo the payment, update, then record it again</span> — the same
+                      account, date, amount and reference. Not done for a payment reconciled to a bank line or part of
+                      a batch; you&rsquo;ll be told if so, before anything changes.
+                    </span>
+                  </label>
+                </div>
               )}
 
               {lines.rows > 0 &&
@@ -655,6 +703,12 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               )}
 
               {error && <p className="text-sm text-destructive">{error}</p>}
+              {error && repayResult?.ok && (
+                <p className="text-xs text-muted-foreground">The payment was put back on the {noun} as it was.</p>
+              )}
+              {error && repayResult && !repayResult.ok && (
+                <p className="text-sm font-medium text-destructive">{repayResult.message}</p>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t px-6 py-4">
