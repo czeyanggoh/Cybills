@@ -2187,7 +2187,14 @@ Magicboo's proforma, 23 Oct 2026). So the route reads the bill back first and
 `withExistingLineIds` pairs the document's lines with Xero's by position, and
 keeps a bank match's card fee line (`CARD_FEE_LINE_MARK`) as Xero holds it,
 since dropping it would leave the bill short of the payment recorded against
-it. Covered by `npm test` in `server/`.
+it. **A row's own tax code that carries no tax, on a row that carries tax, is
+not a choice**: it is the code an earlier coding left behind, and it used to
+outrank the one picked in the dialog — Magicboo's one row said No Tax beside
+88.14 of GST, so Standard-Rated went up as No Tax again with the GST as an
+"adjustment to tax". `perLineItems` now lets such a row follow the bill's code.
+And the reply is READ: `linesNotApplied` compares each line's account and tax
+code with what was sent, and the dialog says which Xero kept rather than
+"Updated". Covered by `npm test` in `server/`.
 
 **And the paperwork links forward.** A claim's "Published to Xero" chip was a
 dead label: it stated that a bill EXISTS and left somebody to go and find it,

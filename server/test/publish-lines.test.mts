@@ -147,8 +147,16 @@ check('each with exactly its own tax', [lines[0].TaxAmount, lines[1].TaxAmount],
 check('the discount posts as a negative net', [lines[0].UnitAmount, lines[1].UnitAmount], [198, -60.43]);
 check('and the money is the document\u2019s', sum(lines, 'UnitAmount') + sum(lines, 'TaxAmount'), 155.39);
 
-lines = await linesOf(bill({ total: '218', tax: '18', lineItems: [row({ total: '109', net: '100', tax: '9' }), row({ total: '109', net: '100', tax: '9', taxRate: 'Zero-Rated Purchases' })] }));
+lines = await linesOf(bill({ total: '209', tax: '9', lineItems: [row({ total: '109', net: '100', tax: '9' }), row({ total: '100', net: '100', tax: '0', taxRate: 'Zero-Rated Purchases' })] }));
 check('blank follows the bill; a named code is its own', [lines[0].TaxType, lines[1].TaxType], ['INPUT', 'ZERORATEDINPUT']);
+
+// A row coded to a code that carries no tax while carrying tax itself is the
+// code an earlier coding left behind, not a choice: it follows the bill's
+// (Magicboo, 23 Oct 2026 — No Tax beside 88.14 of GST).
+lines = await linesOf(bill({ total: '218', tax: '18', lineItems: [row({ total: '109', net: '100', tax: '9' }), row({ total: '109', net: '100', tax: '9', taxRate: 'Zero-Rated Purchases' })] }));
+check('a zero-rate code carrying tax follows the bill', [lines[0].TaxType, lines[1].TaxType], ['INPUT', 'INPUT']);
+lines = await linesOf(bill({ total: '1067.50', tax: '88.14', lineItems: [row({ total: '1067.50', net: '979.36', tax: '88.14', taxRate: 'No Tax' })] }));
+check('...No Tax included', lines[0].TaxType, 'INPUT');
 lines = await linesOf(bill({ total: '100', lineItems: [row({ total: '100', taxRate: 'Not A Rate Here' })] }));
 check('a name the org does not have follows the bill', lines[0].TaxType, 'INPUT');
 

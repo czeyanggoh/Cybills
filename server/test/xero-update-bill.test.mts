@@ -29,6 +29,8 @@ writeFileSync(
 // way a paid bill really does.
 let seen: { method: string; body: any } | null = null;
 let refuse = '';
+// Xero accepting an update and keeping a line's tax code as it was.
+let keepTaxAs = '';
 const stub = http.createServer((req, res) => {
   const url = new URL(String(req.url), 'http://x');
   const path = decodeURIComponent(url.pathname);
@@ -47,6 +49,13 @@ const stub = http.createServer((req, res) => {
           { LineItemID: 'li-fee', Description: '1% card fee charged by UOB', Quantity: 1, UnitAmount: 7.18, AccountCode: '404', TaxType: 'NONE', TaxAmount: 0 },
         ],
       }],
+    }));
+  }
+  if (path.endsWith('/Invoices/inv-magicboo') && req.method === 'GET') {
+    return void res.end(JSON.stringify({
+      Invoices: [{ InvoiceID: 'inv-magicboo', Status: 'PAID', LineItems: [
+        { LineItemID: 'li-mb', Description: 'Spa materials', Quantity: 1, UnitAmount: 979.36, AccountCode: '429', TaxType: 'NONE', TaxAmount: 88.14 },
+      ] }],
     }));
   }
   if (path.endsWith('/Invoices')) {
@@ -69,6 +78,7 @@ const stub = http.createServer((req, res) => {
           InvoiceNumber: 'BILL-1',
           Status: sent.Status || 'AUTHORISED',
           HasErrors: false,
+          ...(keepTaxAs ? { LineItems: (sent.LineItems ?? []).map((l: any) => ({ ...l, TaxType: keepTaxAs })) } : {}),
         }],
       }));
     });
@@ -168,6 +178,28 @@ refuse = '';
 r = await update(posted.id, { status: 'AUTHORISED' });
 check('the answer updates the stored Xero status', getBillById('cybm', posted.id)?.xeroStatus, 'AUTHORISED');
 check('the document is still linked to the SAME bill', getBillById('cybm', posted.id)?.xeroInvoiceId, 'inv-existing');
+
+// A one-row document whose row still carries No Tax beside 88.14 of GST — the
+// code an earlier coding left behind. The row contradicts itself, so the code
+// chosen in the dialog is what goes up, not the row's (Magicboo, 23 Oct 2026).
+const magicboo = insertBill({
+  orgId: 'cybm', kind: 'cost', status: 'ready', supplier: 'Magicboo Beauty Megamart (S) Pte Ltd', invoiceNumber: 'ORD23407',
+  documentType: 'Invoice', currency: 'SGD', date: '2026-09-16', category: '429 - General Expenses',
+  taxRate: 'Standard-Rated Purchases', description: 'Spa materials', total: '1067.50', tax: '88.14',
+  lineItems: [{ description: 'Spa materials', category: '429 - General Expenses', net: '979.36', tax: '88.14', total: '1067.50', taxRate: 'No Tax' }],
+} as any);
+markBillPosted('cybm', magicboo.id, { xeroInvoiceId: 'inv-magicboo', xeroTenantId: 't-cybm', xeroTenantName: 'CYBM' });
+r = await update(magicboo.id, { taxType: 'INPUTY24' });
+check('the paid bill takes the update', r.status, 200);
+check('a row No Tax beside its own GST posts the chosen code', seen?.body?.Invoices?.[0]?.LineItems?.[0]?.TaxType, 'INPUTY24');
+check('...with the GST as it is', seen?.body?.Invoices?.[0]?.LineItems?.[0]?.TaxAmount, 88.14);
+check('...and nothing is reported as kept', r.body.notApplied, undefined);
+
+// Xero taking the update and keeping the old code is SAID, not called updated.
+keepTaxAs = 'NONE';
+r = await update(magicboo.id, { taxType: 'INPUTY24' });
+check('a code Xero kept is reported', r.body.notApplied, [{ line: 1, field: 'TaxType', sent: 'INPUTY24', kept: 'NONE' }]);
+keepTaxAs = '';
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
 await finish(failures, server, stub);

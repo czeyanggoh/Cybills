@@ -59,6 +59,9 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   const [prepayment, setPrepayment] = useState(null);
   // The payment from the document's own Payment method (Paid on), or why not.
   const [paidOnPublish, setPaidOnPublish] = useState(null);
+  // What Xero accepted an update for and still kept as it was (an account or a
+  // tax code per line), so "Updated" is never said over a change that didn't stick.
+  const [notApplied, setNotApplied] = useState([]);
   // Xero's short code for the ledger, so "Open in Xero" is a deep link that
   // opens the right organisation rather than whichever one the browser last had.
   const xeroShortCode = useXeroShortCode();
@@ -85,6 +88,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
     setDueDate(/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate(bill)) ? effectiveDate(bill) : '');
     setError('');
     setDone(null);
+    setNotApplied([]);
   }, [open]);
 
   // Load the chosen organisation's chart of accounts + tax rates.
@@ -258,6 +262,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
       setBankPayment(result.bankPayment ?? null);
       setPrepayment(result.prepayment ?? null);
       setPaidOnPublish(result.paidOnPublish ?? null);
+      setNotApplied(Array.isArray(result.notApplied) ? result.notApplied : []);
       setRebilled(result.rebilled ?? null);
       onPublished?.(result);
     } catch (err) {
@@ -332,6 +337,20 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               <p className="max-w-sm text-xs text-amber-700">
                 The bill posted, but the bank payment could not be recorded: {bankPayment.message || bankPayment.error} Match it from the
                 Bank tab, or record the payment by hand in Xero.
+              </p>
+            )}
+            {notApplied.length > 0 && (
+              <p className="max-w-sm text-xs text-amber-700">
+                Xero took the update but kept{' '}
+                {notApplied
+                  .map((n) => {
+                    const rate = (code) => (taxRates ?? []).find((t) => t.taxType === code)?.name || code;
+                    const what = n.field === 'TaxType' ? 'tax code' : 'account';
+                    const show = n.field === 'TaxType' ? rate : (code) => code;
+                    return `line ${n.line}'s ${what} as ${show(n.kept)} (not ${show(n.sent)})`;
+                  })
+                  .join(', ')}
+                . Change it in Xero (Edit on the {noun}).
               </p>
             )}
             {paidOnPublish?.ok && !paidOnPublish.skipped && (

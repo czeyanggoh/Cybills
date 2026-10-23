@@ -1495,12 +1495,20 @@ export async function perLineItems(
   // org's list cannot place falls back to the bill's code — except the one
   // every Xero has, which is spelt out so a split made before the list loaded
   // still posts right.
-  const ownType = rows.map((row) => {
+  //
+  // A row whose own code carries NO tax while the row itself carries some is a
+  // contradiction, not a choice — the code left behind by an earlier coding —
+  // so it follows the bill's code instead. Kept, it outranked the code picked
+  // in the dialog: Magicboo's one row said No Tax beside 88.14 of GST, and
+  // Update in Xero restated Standard-Rated Purchases as No Tax again with the
+  // 88.14 as an "adjustment to tax" (23 Oct 2026).
+  const ownType = rows.map((row, i) => {
     const name = String(row.taxRate ?? '').trim();
     if (!name) return null;
-    const known = rateTypes.get(name);
-    if (known) return known;
-    return /^no tax$/i.test(name) ? { code: 'NONE', rate: 0 } : null;
+    const known = rateTypes.get(name) ?? (/^no tax$/i.test(name) ? { code: 'NONE', rate: 0 } : null);
+    if (!known) return null;
+    const zero = known.code === 'NONE' || known.rate === 0;
+    return zero && rowTax[i] !== 0 ? null : known;
   });
   const carriesNoTax = (i: number) => ownType[i] !== null && (ownType[i]!.code === 'NONE' || ownType[i]!.rate === 0);
 
@@ -2623,6 +2631,28 @@ export function withExistingLineIds(sent: any[], existing: any[]): any[] {
   return [...paired, ...keptFees];
 }
 
+// The account and tax code each sent line asked for that Xero's reply does not
+// carry, paired by LineItemID where both have one, else by position. Only what
+// was SENT is compared; a reply with no lines says nothing either way.
+export function linesNotApplied(
+  sent: any[] | undefined,
+  got: any[] | undefined
+): Array<{ line: number; field: 'AccountCode' | 'TaxType'; sent: string; kept: string }> {
+  const out: Array<{ line: number; field: 'AccountCode' | 'TaxType'; sent: string; kept: string }> = [];
+  if (!Array.isArray(sent) || !Array.isArray(got) || !got.length) return out;
+  sent.forEach((li, i) => {
+    const id = String(li?.LineItemID ?? '');
+    const back = (id && got.find((g) => String(g?.LineItemID ?? '') === id)) || got[i];
+    if (!back) return;
+    for (const field of ['AccountCode', 'TaxType'] as const) {
+      const want = String(li?.[field] ?? '');
+      const kept = String(back?.[field] ?? '');
+      if (want && kept && want !== kept) out.push({ line: i + 1, field, sent: want, kept });
+    }
+  });
+  return out;
+}
+
 // POST /api/xero/organisations/:id/update-bill — send a published document's
 // CURRENT figures to the bill it already created in Xero.
 // Body: { billId, accountCode, taxType, status?, dueDate?, description? }.
@@ -2757,6 +2787,12 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
     });
   }
 
+  // Xero can accept an update and still keep a line as it was, so the reply is
+  // read rather than trusted: each line's account and tax code is compared with
+  // what was sent, and anything that did not stick is SAID, not reported as
+  // updated.
+  const notApplied = linesNotApplied(payload.LineItems as any[], invoice.LineItems);
+
   // The answer names the bill's state as it now stands, so the document's own
   // Xero fields are refreshed from it rather than left to the next webhook.
   const payment = paymentFromInvoice(invoice);
@@ -2774,6 +2810,7 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
     },
     lines: prepared.lines,
     perLine: prepared.perLine,
+    ...(notApplied.length ? { notApplied } : {}),
     bill: getBillById(workspace, bill.id),
   });
 });
