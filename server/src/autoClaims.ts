@@ -217,6 +217,10 @@ function txnFor(b: Bill, by: string) {
 
 export const AUTO_ACTOR = 'Auto expense claims';
 
+// What an auto claim is called: the period it covers, after these words. The
+// Xero bill's reference starts with the name and so says the period once.
+export const AUTO_CLAIM_NAME = 'Expense Claim';
+
 export type AutoRunResult = { claims: number; items: number; periods: number; endDate: string };
 
 // File one ended period: every enabled person's eligible documents dated on or
@@ -250,7 +254,7 @@ function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd:
       claimFor: user.name || user.email,
       periodEnd,
       periodLabel: prettyDay(periodEnd),
-      name: `Auto claim — ${prettyDay(periodEnd)}`,
+      name: `${AUTO_CLAIM_NAME} ${prettyDay(periodEnd)}`,
       txns: mine.map((b) => txnFor(b, AUTO_ACTOR)),
       by: AUTO_ACTOR,
     });

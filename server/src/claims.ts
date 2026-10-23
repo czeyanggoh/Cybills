@@ -341,8 +341,25 @@ function load(): Claim[] {
     }
   }
   if (repairClaimNames(items)) changed = true;
+  if (renameAutoClaims(items)) changed = true;
   if (changed) save(items);
   return items;
+}
+
+// Auto claims were first named "Auto claim — 30 Sep 2026"; they are now
+// "Expense Claim 30 Sep 2026", which is what the Xero reference starts with.
+// Only the exact old shape on an AUTO claim, so a name somebody typed stands.
+// Takes effect in Xero on the next publish or Update in Xero.
+function renameAutoClaims(items: Claim[]): boolean {
+  let changed = false;
+  for (const c of items) {
+    if (c.auto !== true) continue;
+    const m = /^Auto claim — (.+)$/.exec(String(c.name || ''));
+    if (!m) continue;
+    c.name = `Expense Claim ${m[1]}`;
+    changed = true;
+  }
+  return changed;
 }
 
 // A claim is made out to a NAME, written when it was raised, so it goes on

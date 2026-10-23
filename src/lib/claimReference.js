@@ -72,11 +72,31 @@ export function claimDateFor(claim) {
   return isoish(claim?.claimDate) || isoish(claim?.endDate) || latestItemDate(claim);
 }
 
+// Does this name already say the date, in any of the ways one is written?
+// "30 Sep 2026", "30-Sep-2026", "2026-09-30", "30/09/2026", day padded or not.
+export function nameStatesDate(name, iso) {
+  const p = dateParts(iso);
+  if (!p) return false;
+  const mon = MONTHS[p.mo - 1].toLowerCase();
+  const days = [String(p.d), pad(p.d)];
+  const forms = [`${p.y}-${pad(p.mo)}-${pad(p.d)}`];
+  for (const d of days) {
+    forms.push(`${d} ${mon} ${p.y}`, `${d}-${mon}-${p.y}`, `${d}/${pad(p.mo)}/${p.y}`, `${d}/${p.mo}/${p.y}`);
+  }
+  const s = String(name || '').toLowerCase().replace(/\s+/g, ' ');
+  return forms.some((f) => s.includes(f));
+}
+
 // The Reference a published bill carries. Name first because that is the part a
 // person recognises and the part they choose ("ST Eng Exp Claim"); then the
 // date and the id, so two months of claims are never the same reference.
+//
+// The date only where the name does not already say it: an Auto Expense claim
+// is NAMED for its period ("Expense Claim 30 Sep 2026"), and a reference that
+// added it again read "… 30 Sep 2026 30-Sep-2026 261013115120" in Xero.
 export function claimReference(claim) {
   const name = String(claim?.name || '').trim() || 'Expense claim';
-  const date = csvDate(claimDateFor(claim));
+  const iso = claimDateFor(claim);
+  const date = nameStatesDate(name, iso) ? '' : csvDate(iso);
   return [name, date, claimRef(claim)].filter(Boolean).join(' ');
 }

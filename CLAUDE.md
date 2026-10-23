@@ -1756,7 +1756,11 @@ when they were switched on (`enrolledAt` per user), not "Ready only vs inbox".
 **A finished claim is not reopened.** Only a DRAFT is added to, so once a
 period's claim has been submitted, approved, or published and paid, the
 person's next submission opens another auto claim for the SAME period end,
-numbered ("Auto claim — 31 Oct 2026 (2)") so the two can be told apart.
+numbered ("Expense Claim 31 Oct 2026 (2)") so the two can be told apart.
+The name carries the period, so the Xero bill's reference (`claimReference`)
+leaves out a date the name already states: "Expense Claim 30 Sep 2026
+261013115120", not the date twice. Claims named the old way ("Auto claim — …")
+are renamed on load and reach Xero on the next publish or Update in Xero.
 Covered by `npm test` in `server/` (`test/auto-claims.test.mts`).
 
 Mark as paid / not paid and Move to review / ready are NOT there. Paid is a
