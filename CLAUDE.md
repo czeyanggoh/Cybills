@@ -2180,7 +2180,14 @@ must not knock it back to Draft and out of somebody's approval queue. What may
 still change is Xero's call: a PAID or VOIDED bill refuses, and its refusal is
 passed through in its own words. The reply names the bill's state, so the
 document's Xero fields are refreshed from it rather than waiting for a webhook.
-Covered by `npm test` in `server/`.
+**Each line names the one the bill already has.** Xero replaces a bill's lines
+with whatever an update sends, and a PAID bill refuses a line it cannot place
+("To update fields on a paid invoice line item, you must supply a LineItemID" —
+Magicboo's proforma, 23 Oct 2026). So the route reads the bill back first and
+`withExistingLineIds` pairs the document's lines with Xero's by position, and
+keeps a bank match's card fee line (`CARD_FEE_LINE_MARK`) as Xero holds it,
+since dropping it would leave the bill short of the payment recorded against
+it. Covered by `npm test` in `server/`.
 
 **And the paperwork links forward.** A claim's "Published to Xero" chip was a
 dead label: it stated that a bill EXISTS and left somebody to go and find it,

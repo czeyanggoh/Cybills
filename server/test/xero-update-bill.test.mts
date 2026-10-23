@@ -35,6 +35,20 @@ const stub = http.createServer((req, res) => {
   res.setHeader('content-type', 'application/json');
   if (path.endsWith('/Accounts')) return void res.end(JSON.stringify({ Accounts: [{ Code: '429', Name: 'General Expenses', Status: 'ACTIVE', Type: 'EXPENSE' }] }));
   if (path.endsWith('/TrackingCategories')) return void res.end(JSON.stringify({ TrackingCategories: [] }));
+  // Reading the bill back: it carries its own line, and the card fee line a
+  // bank match added after it was published.
+  if (path.endsWith('/Invoices/inv-existing') && req.method === 'GET') {
+    return void res.end(JSON.stringify({
+      Invoices: [{
+        InvoiceID: 'inv-existing',
+        Status: 'PAID',
+        LineItems: [
+          { LineItemID: 'li-own', Description: 'Deputec Pty Ltd', Quantity: 1, UnitAmount: 717.75, AccountCode: '429', TaxType: 'NONE', TaxAmount: 0 },
+          { LineItemID: 'li-fee', Description: '1% card fee charged by UOB', Quantity: 1, UnitAmount: 7.18, AccountCode: '404', TaxType: 'NONE', TaxAmount: 0 },
+        ],
+      }],
+    }));
+  }
   if (path.endsWith('/Invoices')) {
     let raw = '';
     req.on('data', (c) => (raw += c));
@@ -42,6 +56,10 @@ const stub = http.createServer((req, res) => {
       const body = raw ? JSON.parse(raw) : null;
       seen = { method: String(req.method), body };
       const sent = body?.Invoices?.[0] ?? {};
+      // What Xero says to a paid bill's line that names no LineItemID.
+      if (sent.InvoiceID && (sent.LineItems ?? []).some((l: any) => !l.LineItemID)) {
+        return void res.end(JSON.stringify({ Invoices: [{ ...sent, HasErrors: true, ValidationErrors: [{ Message: 'To update fields on a paid invoice line item, you must supply a LineItemID' }] }] }));
+      }
       if (refuse) {
         return void res.end(JSON.stringify({ Invoices: [{ ...sent, HasErrors: true, ValidationErrors: [{ Message: refuse }] }] }));
       }
@@ -111,6 +129,12 @@ check('...and it reports the same invoice back', r.body.invoice?.invoiceId, 'inv
 
 // The document's current figures are what goes up.
 check('the current total is what is sent', seen?.body?.Invoices?.[0]?.LineItems?.[0]?.UnitAmount, 717.75);
+// A paid bill refuses a line it cannot place, so each line names the one the
+// bill already has, and the bank's card fee line is kept as Xero holds it —
+// dropped, the bill would fall short of the payment recorded against it.
+check('...on the line id the bill already has', seen?.body?.Invoices?.[0]?.LineItems?.[0]?.LineItemID, 'li-own');
+check('...with the card fee line kept', seen?.body?.Invoices?.[0]?.LineItems?.map((l: any) => l.LineItemID), ['li-own', 'li-fee']);
+check('...as Xero has it', seen?.body?.Invoices?.[0]?.LineItems?.[1]?.UnitAmount, 7.18);
 check('...in the document\'s own currency', seen?.body?.Invoices?.[0]?.CurrencyCode, 'AUD');
 
 // Status is left alone unless the reviewer asks: correcting an approved bill's

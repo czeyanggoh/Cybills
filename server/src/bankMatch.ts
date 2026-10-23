@@ -19,6 +19,7 @@ import {
 } from './store.js';
 import {
   baseCurrencyFor,
+  CARD_FEE_LINE_MARK,
   fetchXeroInvoice,
   paymentFromInvoice,
   postBillToXero,
@@ -496,7 +497,7 @@ export async function settleBillAgainstLine(
 // LineItemIDs — Xero replaces a bill's lines with whatever an update sends, so
 // a line left out would be deleted — plus the fee line. Idempotent: a bill that
 // already carries the fee line (a settle re-pressed) is left as it is.
-const FEE_LINE_MARK = 'card fee charged by';
+const FEE_LINE_MARK = CARD_FEE_LINE_MARK;
 const keepLine = (li: any) => ({
   LineItemID: li.LineItemID,
   Description: li.Description,

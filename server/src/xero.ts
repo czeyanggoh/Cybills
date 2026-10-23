@@ -2587,6 +2587,42 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
   });
 });
 
+// The description a bank's card fee line carries on a bill (bankMatch.ts adds
+// it after the bill is published). Here so update-bill can recognise one: it
+// is not the document's money, so the document's lines never describe it.
+export const CARD_FEE_LINE_MARK = 'card fee charged by';
+
+// The lines an update sends, carrying the LineItemIDs the bill already has.
+// Xero REPLACES a bill's lines with whatever an update sends, and on a PAID
+// bill it refuses a line it cannot place: "To update fields on a paid invoice
+// line item, you must supply a LineItemID" (Magicboo's proforma, 23 Oct 2026).
+// So the document's lines are paired with the bill's own, by position — the
+// order they were sent in, which is the order Xero keeps — and a card fee line
+// a bank match put there is kept as Xero has it: dropped, the bill would fall
+// short of the payment already recorded against it. A line with no partner goes
+// up without an id, which Xero takes as new (and a paid bill refuses in its own
+// words). Unpaid bills gain from it too: a line keeps its identity, and with it
+// any billable-expense link made against it.
+export function withExistingLineIds(sent: any[], existing: any[]): any[] {
+  const fees = existing.filter((li) => String(li?.Description ?? '').includes(CARD_FEE_LINE_MARK));
+  const own = existing.filter((li) => !fees.includes(li));
+  const paired = sent.map((li, i) => {
+    const id = String(own[i]?.LineItemID ?? '');
+    return id ? { ...li, LineItemID: id } : li;
+  });
+  const keptFees = fees.map((li) => ({
+    LineItemID: li.LineItemID,
+    Description: li.Description,
+    Quantity: li.Quantity,
+    UnitAmount: li.UnitAmount,
+    AccountCode: li.AccountCode,
+    TaxType: li.TaxType,
+    TaxAmount: li.TaxAmount,
+    ...(Array.isArray(li.Tracking) && li.Tracking.length ? { Tracking: li.Tracking } : {}),
+  }));
+  return [...paired, ...keptFees];
+}
+
 // POST /api/xero/organisations/:id/update-bill — send a published document's
 // CURRENT figures to the bill it already created in Xero.
 // Body: { billId, accountCode, taxType, status?, dueDate?, description? }.
@@ -2685,11 +2721,22 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
   };
   if (status) payload.Status = status;
 
+  // The bill's own line ids, read back first (see withExistingLineIds). A bill
+  // that cannot be read goes up as before, without them — Xero says so if that
+  // is not enough.
+  const tenantId = bill.xeroTenantId || organisation.tenantId;
+  const current = isCreditDoc(postedAs)
+    ? await fetchXeroCreditNote(tenantId, bill.xeroInvoiceId)
+    : await fetchXeroInvoice(tenantId, bill.xeroInvoiceId);
+  if (Array.isArray(current?.LineItems) && Array.isArray(payload.LineItems)) {
+    payload.LineItems = withExistingLineIds(payload.LineItems as any[], current.LineItems);
+  }
+
   // POST (not PUT) is Xero's update; summarizeErrors=false again, so a rejection
   // comes back per-record with its reasons instead of as a bare 400.
   const result = await relay(endpoint, {
     method: 'POST',
-    tenantId: bill.xeroTenantId || organisation.tenantId,
+    tenantId,
     query: { summarizeErrors: 'false' },
     body: { [endpoint]: [payload] },
   });
