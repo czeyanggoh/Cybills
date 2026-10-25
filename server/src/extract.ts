@@ -118,7 +118,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'The 3-letter ISO code the amounts are in, as the document gives it: AUD, USD, MYR, GBP. Do NOT default to SGD — a Singapore business is billed in every currency, and a foreign amount recorded as local money is wrong in the ledger by the whole exchange rate. Where only a SYMBOL is printed, the supplier decides it: "$" beside an ABN or 10% GST is AUD, beside a UEN or 9%/8%/7% GST is SGD, "RM" is MYR, "£" GBP, "€" EUR, and a US address with "$" is USD. Answer SGD only when nothing on the document — code, symbol, tax rate, registration number or address — says otherwise.',
       },
-      total: { type: 'number', description: 'Grand total amount' },
+      total: {
+        type: 'number',
+        description:
+          'The amount actually PAID. Ordinarily the printed grand total. Where the merchant has corrected it BY HAND — a discount written under the total ("-$200.00", then "$793.38") — or a card slip or payment record photographed with it charged a different figure, the total is what was paid: the card slip\'s amount, else the handwritten figure after a handwritten DEDUCTION. A handwritten figure HIGHER than the printed total (a tip) counts only where a card slip on the same image charged it.',
+      },
       tax: { type: 'number', description: 'Tax / GST amount; 0 if none shown' },
       category: {
         type: 'string',
@@ -838,6 +842,11 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'The amount is worked out afterwards from the distance at the company\'s rate per km — never invent one. ' +
     'Set `motorVehicle` to true for the cost of owning or running a vehicle — fuel, parking, ERP, servicing, repairs, vehicle rental — and false when the business paid somebody else to carry people or goods (a taxi, a Grab ride, a courier): it decides that the GST is not claimed, so do not guess it from the supplier\'s industry alone. ' +
     'Set `medicalProvider` to true when the document was issued by a hospital or clinic that treats patients (a specialist centre, a GP, a dental clinic) — not a pharmacy, a lab billing on its own or an insurer: it decides that the GST is not claimed. ' +
+    'The `total` is the amount actually PAID, and the paper is not always finished at the printed total. ' +
+    'A restaurant or KTV often takes a discount off BY HAND — "-$200.00" written under the printed 993.38, then "$793.38" — and the card slip photographed beside the bill charged 793.38. ' +
+    'Where a card slip or payment record in the same image states the amount charged, that amount is the total. Otherwise a handwritten DEDUCTION with the figure it leaves is taken; ' +
+    'a handwritten figure HIGHER than the printed total (a tip) is taken only where a card slip on the same image charged it, since anybody can write a larger number on a receipt. ' +
+    'Leave `tax` as the GST figure PRINTED — a discount written on afterwards does not restate it — and say in `description` what changed the total ("after a 200.00 discount written on the bill"). ' +
     'If a field is not present, use an empty string or 0. ' +
     'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
     accountsGuide +

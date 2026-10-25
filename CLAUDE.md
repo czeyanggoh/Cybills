@@ -448,6 +448,19 @@ prompt — in the prompt it would invalidate the cache daily. Covered by
 is asserted is the system prompt, the schema and the message that actually go
 out).
 
+**And the TOTAL is what was PAID, which is not always the printed total.** A
+HaveFun KTV bill printed 993.38; the merchant wrote "-$200.00" and "$793.38"
+under it, and the UOB card slip photographed beside it charged 793.38. The read
+took 993.38, because the field said only "Grand total amount". The rule, in the
+schema's `total` description and the cached prompt both: a card slip or payment
+record in the same image decides; otherwise a handwritten DEDUCTION and the
+figure it leaves; a handwritten figure HIGHER than the printed one (a tip) only
+where a slip charged it, since anybody can write a larger number on a receipt.
+`tax` stays the GST figure printed (the off-base split then shows the discount
+as a No Tax row once the code is GST), and the description says what changed
+the total. Documents read before need a Re-read. Covered by `npm test` in
+`server/` (`test/handwritten-discount.test.mts`).
+
 **A cost can name the client it is recharged to.** `customer` is read like the
 category is: an enum of the org's own active Xero customer contacts
 (`customerOptionsForOrg`, capped at 300 — a long-lived Xero holds thousands and
