@@ -169,7 +169,8 @@ Xero already calls PAID, or one CYBills has already settled against a line.
 ```json
 {
   "ok": true, "tenant_id": "…",
-  "organisations": [{ "id": "org-1", "name": "Demo Co" }],
+  "organisations": [{ "id": "org-1", "name": "Demo Co",
+                      "card_fees": [{ "bank_account": "UOB SGD", "percent": 1, "account_code": "404" }] }],
   "candidates": [{
     "id": "bill_…", "item_id": "260822111522",
     "org_id": "org-1", "org_name": "Demo Co", "tenant_id": "…",
@@ -201,14 +202,24 @@ own version of that judgement, if it is useful to mirror.
 Bank match → Card fees): a bank that takes a percentage on a card spend in the
 SAME statement line — UOB's 1%. A line on `bank_account` whose `|amount|` is
 `total × (1 + percent/100)`, rounded to the cent (a cent either way), is that
-document plus the fee — only for a document in the bank's own currency
-(`base_total: null`). Match it as strongly as a same-money line only when the bank
+document plus the fee — only for a document in the bank's own currency (one
+never restated: `base_total` null, or 0, which is what an SGD document that was
+never restated carries). Match it as strongly as a same-money line only when the bank
 text names the supplier or the number; never for being the only document at the
 figure. Settle it exactly as any other line, with the statement amount and the
 line's `bank_account_name`: CYBills re-checks the rule, adds the fee to the bill
 as a No Tax line and records ONE payment for the whole line, which is the shape
 Xero's reconciliation suggests for the line by itself. Empty when the entity has
 none.
+
+The same rules are on each entry of `organisations`, with `account_code` — the
+code the fee posts to ("404 - Bank Fees" → `404`). CYWS uses those for a line
+that pays a bill ALREADY in Xero (not a CYBills document) plus the fee: it adds
+the fee to that bill itself, as the same No Tax line ("1% card fee charged by
+UOB SGD", tracked as the bill's largest line), and pays the whole line. On the
+entity rather than the candidates so it is there when CYBills holds no document
+for the line. Absent from a CYBills before 26 Oct 2026, which CYWS reads as no
+rules.
 
 `postable: false` on an unpublished candidate means the settle would fail at
 the publish step (`blocked_reason` says why — usually a category that is not in

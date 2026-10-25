@@ -603,15 +603,25 @@ paymentsRouter.get('/bank-candidates', async (req, res) => {
     return res.json({ ok: true, tenant_id: tenantId, organisations: [], candidates: [] });
   }
   const candidates: any[] = [];
+  const feesByOrg = new Map<string, Array<{ bank_account: string; percent: number; account_code: string }>>();
   for (const organisation of organisations) {
     const ws = dataScopeForOrg(organisation.id);
     // The entity's card-fee rules (Bank match → Card fees), on every candidate
     // of its, so CYWS's own matcher can pair a line that is a document plus the
     // bank's fee — the same rule CYBills holds again when it settles.
-    const cardFees = cardFeeRules(organisation)
+    const rulesWithCode = cardFeeRules(organisation)
       .map((r: any) => ({ bank_account: String(r?.bankAccount ?? '').trim(), percent: Number(String(r?.percent ?? '').replace(/[^0-9.]/g, '')), account: String(r?.accountCode ?? '').trim() }))
-      .filter((r) => r.bank_account && r.percent > 0 && r.account)
-      .map(({ bank_account, percent }) => ({ bank_account, percent }));
+      .filter((r) => r.bank_account && r.percent > 0 && r.account);
+    const cardFees = rulesWithCode.map(({ bank_account, percent }) => ({ bank_account, percent }));
+    // …and on the entity itself, WITH the fee's account code (feeCodeOf in
+    // src/lib/bankMatch.js: "404 - Bank Fees" → "404"): CYWS pays a bill that is
+    // already in Xero plus the same fee, and adds the fee to that bill as a No
+    // Tax line to this account itself. On the entity, not the candidates, so it
+    // is there when CYBills holds no document for the line at all.
+    feesByOrg.set(organisation.id, rulesWithCode.map((r) => {
+      const m = /^([A-Za-z0-9]*\d[A-Za-z0-9]*)\s*-\s/.exec(r.account);
+      return { bank_account: r.bank_account, percent: r.percent, account_code: m ? m[1] : r.account };
+    }));
     // A stale match (its document no longer linked to the bill it paid) must not
     // keep that document out of the list, nor its line spent.
     repairStaleMatches(ws);
@@ -643,7 +653,7 @@ paymentsRouter.get('/bank-candidates', async (req, res) => {
   res.json({
     ok: true,
     tenant_id: tenantId,
-    organisations: organisations.map((o) => ({ id: o.id, name: o.name })),
+    organisations: organisations.map((o) => ({ id: o.id, name: o.name, card_fees: feesByOrg.get(o.id) ?? [] })),
     candidates,
   });
 });
