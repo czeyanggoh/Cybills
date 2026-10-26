@@ -1326,6 +1326,17 @@ names the rate, what IS visible at it, and points at Business settings → Lists
 Tax rates. A blank field with no explanation is
 indistinguishable from a bug, which is exactly how one was reported.
 
+**The listing's backfill never decides a document still being read.**
+`backfillTaxRates` (`bills.ts`) fills a code on any undecided cost, and it used
+to reach one in Processing — accepted, no figures yet — and code it No Tax ("No
+tax is shown on this document", with no "a total of …" clause, which is the
+tell). The upload decides only where no code is set, so that stuck, and the No
+Tax rule then folded the GST the read found into the cost (an HPL rental
+invoice, GST @ 9% 348.48, 26 Oct 2026). `mayBackfillTaxRate` (`taxRules.ts`)
+now skips a document in `processing` or with no total, and is asked again of the
+live document after the rates arrive over the relay. Covered by
+`test/tax-backfill.test.mts`.
+
 **A cost can be capitalised: asset accounts are categories too, off until
 switched on.** A laptop, a fit-out, a deposit or a prepaid year of insurance is
 paid by bill like anything else and belongs on the balance sheet, so Lists ->

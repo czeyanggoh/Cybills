@@ -36,7 +36,7 @@ import { actor, workspaceId, WORKSPACE_ID } from './workspace.js';
 import { addressIn, canAccessOrg, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg, visibleOwnersFor } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { readSetting } from './settings.js';
-import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, taxContextFor } from './taxRules.js';
+import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, mayBackfillTaxRate, taxContextFor } from './taxRules.js';
 import { enforcePracticeNoTax, keepPracticeNoTax } from './practiceNoTax.js';
 import { shareToken, verifyShareToken, SHARE_TTL_DAYS } from './shareLinks.js';
 import { makeEntityCheck } from './entityCheck.js';
@@ -210,6 +210,9 @@ function repairForeignOwners(ws: string, org: string, scope: string): void {
 //     respected — inferring it from the empty string skipped every document
 //     this was written to repair.
 //   - Never a published document, whose figures are already in the ledger.
+//   - Never one still being READ, nor one with no total (mayBackfillTaxRate):
+//     decided from figures that aren't there yet, the answer is No Tax, and it
+//     sticks over the read that follows.
 // Skipped entirely unless the book changed, and it costs nothing (not even the
 // relay call for the rates) when there is nothing to fill.
 //
@@ -224,13 +227,16 @@ const taxFilledAt = new Map<string, number>();
 async function backfillTaxRates(ws: string, org: string, scope: string): Promise<void> {
   if (taxFilledAt.get(scope) === bookRevision()) return;
   taxFilledAt.set(scope, bookRevision());
-  const undecided = listBills(scope).filter(
-    (b) => b.kind === 'cost' && !b.taxRate && !b.taxRateCleared && !b.xeroInvoiceId
-  );
+  const undecided = listBills(scope).filter(mayBackfillTaxRate);
   if (!undecided.length) return;
   const ctx = await taxContextFor(ws, org);
   if (!ctx.visibleRates.length) return; // no rates to choose from — say nothing
-  for (const b of undecided) {
+  for (const listed of undecided) {
+    // Asked again of the document as it is NOW: the rates come over the relay,
+    // and a read can land (or a person pick a code) while they do — deciding
+    // from the snapshot would put a stale answer over a fresh one.
+    const b = getBillById(scope, listed.id);
+    if (!b || !mayBackfillTaxRate(b)) continue;
     const outcome = await decideTaxRate(ctx, b);
     if (!outcome?.name) continue;
     if (!outcome.claimsTax && parseAmount(b.tax) > 0) continue; // would revise money — leave it

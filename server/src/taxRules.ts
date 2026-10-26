@@ -1,4 +1,5 @@
 import { readSetting } from './settings.js';
+import { parseAmount } from './store.js';
 import { accountsForOrg, taxRatesForOrg } from './xero.js';
 
 // The tax-code decision, server-side.
@@ -118,6 +119,33 @@ export async function taxContextFor(ws: string, orgId: string): Promise<TaxConte
     accountTaxTypes,
     defaultTaxRateCosts: String(settings?.defaultTaxRateCosts || ''),
   };
+}
+
+// Whether the listing's backfill (bills.ts) may decide this document's tax
+// code. Not while it is being READ: the document exists from the moment it is
+// accepted, with no figures, and a decision made then is "no tax shown, so No
+// Tax" — which the read's own decision then never replaces (the upload decides
+// only where no code is set), and which zeroes the GST the read finds, since a
+// No Tax code folds any tax written beside it into the cost. An HPL rental
+// invoice printing "GST @ 9% 348.48" was coded No Tax exactly that way. Nor
+// with no total at all: there is nothing for the arithmetic to decide from, and
+// the answer would be the same wrong sentence.
+export function mayBackfillTaxRate(b: {
+  kind?: unknown;
+  status?: unknown;
+  total?: unknown;
+  taxRate?: unknown;
+  taxRateCleared?: unknown;
+  xeroInvoiceId?: unknown;
+}): boolean {
+  return (
+    b.kind === 'cost' &&
+    b.status !== 'processing' &&
+    parseAmount(b.total) !== 0 &&
+    !b.taxRate &&
+    !b.taxRateCleared &&
+    !b.xeroInvoiceId
+  );
 }
 
 // The tax code for one document's figures. `suggested` is a code the READER
