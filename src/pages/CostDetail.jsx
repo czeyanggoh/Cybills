@@ -607,6 +607,12 @@ export default function CostDetail() {
     setAiError('');
     setLinesNote('');
     setClaimNote('');
+    // The rule offer is about the correction made on THAT document — its
+    // supplier and its value — so it must not follow you to the next one.
+    setTeach(null);
+    setXeroNote('');
+    setLinkNote('');
+    setMoveError('');
     setLineSnapshot(null); // a new document, a new set of rows to fall back to
     const raw = getDoc(routeId);
     if (raw) {
