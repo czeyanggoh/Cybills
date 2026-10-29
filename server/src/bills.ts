@@ -31,6 +31,7 @@ import {
   type Candidate,
 } from './store.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
+import { isHeicFile, heicToJpeg } from './heic.js';
 import { dataScopeForOrg, listOrganisations, primaryOrgId } from './organisations.js';
 import { actor, workspaceId, WORKSPACE_ID } from './workspace.js';
 import { addressIn, canAccessOrg, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg, visibleOwnersFor } from './users.js';
@@ -623,6 +624,31 @@ billsRouter.get('/bills/:id/file', async (req, res) => {
 
   const obj = await getBillFile(bill.storageKey, bill.contentType);
   if (!obj) return res.status(502).json({ error: 'file_unavailable' });
+
+  // A HEIC stored before uploads converted them: no browser but Safari can
+  // draw one, so it is made a JPEG the first time it is asked for and kept in
+  // its place (heic.ts). The original object is left where it is.
+  if (isHeicFile(String(bill.contentType || obj.contentType || ''), bill.fileName || '')) {
+    const chunks: Buffer[] = [];
+    for await (const c of obj.body) chunks.push(Buffer.from(c));
+    const original = Buffer.concat(chunks);
+    const jpeg = await heicToJpeg(original);
+    let out: Buffer = original;
+    let outType = String(bill.contentType || obj.contentType || 'application/octet-stream');
+    if (jpeg) {
+      out = jpeg;
+      outType = 'image/jpeg';
+      try {
+        const stored = await putBillFile(bill.orgId, bill.fileHash || bill.id, 'image/jpeg', jpeg);
+        setBillFile(bill.orgId, bill.id, stored.storageKey, stored.contentType);
+      } catch (err) {
+        console.error('[bills] could not keep the converted HEIC', err);
+      }
+    }
+    res.setHeader('Content-Type', outType);
+    res.setHeader('Content-Disposition', contentDisposition(String(bill.fileName || bill.id).replace(/\.hei[cf]$/i, jpeg ? '.jpg' : '$&')));
+    return res.end(out);
+  }
 
   const type = String(bill.contentType || obj.contentType || 'application/octet-stream');
   res.setHeader('Content-Type', /^[\x20-\x7e]+$/.test(type) ? type : 'application/octet-stream');

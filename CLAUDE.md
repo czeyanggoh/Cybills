@@ -1886,7 +1886,12 @@ Not heic2any: its libheif answers "format not supported" for a current
 iPhone's HEIC. `fetchExtract` / `fetchExtractLines` convert too
 (`readableForReader`), so a HEIC stored before this is read on Re-read. And an
 upload that is NOT read now says why on the document ("Auto-read didn't
-complete (…)"), as the email road always has.
+complete (…)"), as the email road always has. **A HEIC already stored is made a
+JPEG the first time it is fetched**: `GET /bills/:id/file` converts it
+(`server/src/heic.ts`, heic-convert, loaded on demand) and points the document
+at the JPEG (`setBillFile`), leaving the original object alone — so the page's
+preview, the lightbox, the claim PDF and the Xero attachment all get a JPEG.
+Covered by `test/heic-file.test.mts`.
 
 **And a document being READ says so, on every road.** An emailed or WhatsApp'd
 document was created as `new` and read in the background, so for the ten to
