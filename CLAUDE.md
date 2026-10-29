@@ -459,7 +459,13 @@ where a slip charged it, since anybody can write a larger number on a receipt.
 `tax` stays the GST figure printed (the off-base split then shows the discount
 as a No Tax row once the code is GST), and the description says what changed
 the total. Documents read before need a Re-read. Covered by `npm test` in
-`server/` (`test/handwritten-discount.test.mts`).
+`server/` (`test/handwritten-discount.test.mts`). **The tax FIELD says it
+too**: a Cold Storage receipt paid "yuu Points 1.22 / MASTER 9.28" against a
+printed "GST AMT 0.87" came back 9.28 with tax 0 and was coded No Tax (29 Oct
+2026), because the schema's tax description was still "0 if none shown" and
+only the discount paragraph said otherwise. A bill settled partly by points, a
+voucher or a gift card now takes the card or cash part as the total, and the
+printed GST stands whatever the total became.
 
 **A cost can name the client it is recharged to.** `customer` is read like the
 category is: an enum of the org's own active Xero customer contacts

@@ -123,7 +123,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'The amount actually PAID. Ordinarily the printed grand total. Where the merchant has corrected it BY HAND — a discount written under the total ("-$200.00", then "$793.38") — or a card slip or payment record photographed with it charged a different figure, the total is what was paid: the card slip\'s amount, else the handwritten figure after a handwritten DEDUCTION. A handwritten figure HIGHER than the printed total (a tip) counts only where a card slip on the same image charged it.',
       },
-      tax: { type: 'number', description: 'Tax / GST amount; 0 if none shown' },
+      tax: {
+        type: 'number',
+        description:
+          'The tax / GST amount PRINTED on the document ("GST AMT 0.87", "9% GST 17.82"); 0 only when no tax figure is printed. It stays the printed figure even where `total` is a smaller amount actually paid — part settled by loyalty points, a voucher or a gift card, a card slip for less, a discount written on by hand — because the tax was charged on the supply, not on how it was paid for.',
+      },
       category: {
         type: 'string',
         enum: categories,
@@ -845,8 +849,9 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'The `total` is the amount actually PAID, and the paper is not always finished at the printed total. ' +
     'A restaurant or KTV often takes a discount off BY HAND — "-$200.00" written under the printed 993.38, then "$793.38" — and the card slip photographed beside the bill charged 793.38. ' +
     'Where a card slip or payment record in the same image states the amount charged, that amount is the total. Otherwise a handwritten DEDUCTION with the figure it leaves is taken; ' +
+    'where the receipt itself shows the bill settled partly by loyalty points, a voucher or a gift card and the rest by card or cash ("yuu Points 1.22 / MASTER 9.28"), the card or cash part is the total. ' +
     'a handwritten figure HIGHER than the printed total (a tip) is taken only where a card slip on the same image charged it, since anybody can write a larger number on a receipt. ' +
-    'Leave `tax` as the GST figure PRINTED — a discount written on afterwards does not restate it — and say in `description` what changed the total ("after a 200.00 discount written on the bill"). ' +
+    'Leave `tax` as the GST figure PRINTED — a discount written on afterwards does not restate it, and nor does paying part of the bill in points or a voucher; never 0 because the total moved — and say in `description` what changed the total ("after a 200.00 discount written on the bill"). ' +
     'If a field is not present, use an empty string or 0. ' +
     'EXCEPTION: always write a non-empty `description` and `categoryReason` for every document — infer them from the merchant, visible items and document type even for a sparse card slip (never leave these two blank).' +
     accountsGuide +

@@ -94,6 +94,13 @@ check('the printed GST is left as printed', system.includes('Leave `tax` as the 
 // --- and the field says it too ----------------------------------------------
 check('the total field is no longer bare "Grand total amount"', schema.includes('"Grand total amount"'), false);
 check('the total field carries the paid rule', schema.includes('The amount actually PAID'), true);
+// A Cold Storage receipt paid "yuu Points 1.22 / MASTER 9.28" against a printed
+// "GST AMT 0.87" came back total 9.28, tax 0 — and was coded No Tax (29 Oct
+// 2026). The bare "0 if none shown" on the tax field is what let it.
+check('points or a voucher: the card part is the total', system.includes('settled partly by loyalty points, a voucher or a gift card'), true);
+check('…and the GST is never zeroed for it', system.includes('never 0 because the total moved'), true);
+check('the tax field is no longer bare "0 if none shown"', schema.includes('Tax / GST amount; 0 if none shown'), false);
+check('the tax field keeps the printed GST when the total is smaller', schema.includes('It stays the printed figure even where `total` is a smaller amount actually paid'), true);
 
 // --- what the reader answers is what is stored --------------------------------
 check('the paid total comes back', data?.total, 793.38);
