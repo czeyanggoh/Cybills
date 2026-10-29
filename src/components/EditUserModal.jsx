@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { X, ChevronDown, HelpCircle, Copy, Check, Mail, ExternalLink, MessageCircle } from 'lucide-react';
 import { rolesFor, roleTier, ROLE_INFO, updateUser, dismissForward } from '@/lib/userStore';
 import { PRACTICE_ROLES, PRACTICE_ROLE_INFO } from '@/lib/practiceStore';
-import { useOrganisations, useBridgeEntity } from '@/lib/organisations';
+import { useOrganisations, useBridgeEntity, getActiveOrganisationId } from '@/lib/organisations';
 import { cleanHandle, inboundAddress, entityAddress, addressTail, suffixForUser } from '@/lib/inboundAddress';
 import { useWhatsappForUser, connectWhatsappForUser } from '@/lib/whatsapp';
 import { cn } from '@/lib/utils';
@@ -19,7 +19,7 @@ import ConnectDriveFolder from '@/components/ConnectDriveFolder';
 // with one, this person is `martin.redalpha@cybills.sg` rather than `martin@`.
 // It is fixed here, like the domain — one entity, one short form, so choosing
 // it per person is not a thing that could mean anything.
-function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
+function ExtractByEmail({ user, handle, setHandle, suffix, elsewhere, error }) {
   const [copied, setCopied] = useState(false);
   const clean = cleanHandle(handle);
   // The general account is not a person, and its address is not a handle: it
@@ -100,6 +100,15 @@ function ExtractByEmail({ user, handle, setHandle, suffix, error }) {
         clean !== handle.trim().toLowerCase() && handle.trim() && (
           <p className="text-xs text-muted-foreground">Will be saved as {address}</p>
         )
+      )}
+      {/* Somebody filed under another entity still answers to their address
+          there, and it files into THAT book — the one thing this card would
+          otherwise leave them to guess. */}
+      {elsewhere && clean && (
+        <p className="text-xs text-muted-foreground">
+          Bills sent here file into this entity. {inboundAddress(clean, elsewhere.suffix)} still works and files
+          into {elsewhere.name || 'their own entity'}.
+        </p>
       )}
       {/* Changing it takes the old address out of service, and any forwarding
           rule already pointing at it stops arriving — worth saying before Save,
@@ -342,7 +351,18 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
   // The short form this person's entity puts in their address. Read from the
   // entity list the dialog already has, so nothing extra is fetched to print an
   // address.
-  const suffix = suffixForUser(user, organisations);
+  //
+  // Somebody who works in the open entity as well as their own has an address
+  // HERE, under this entity's short form, which files into this book — unless a
+  // person whose own entity this is already answers to it, in which case the
+  // server's `address` is their home one and that is the one that works.
+  const homeSuffix = suffixForUser(user, organisations);
+  const hereSuffix = suffixForUser(user, organisations, getActiveOrganisationId());
+  const suffix =
+    hereSuffix !== homeSuffix && user?.address && user.address !== inboundAddress(user.emailHandle, hereSuffix)
+      ? homeSuffix
+      : hereSuffix;
+  const elsewhere = suffix !== homeSuffix ? { suffix: homeSuffix, name: user?.homeOrgName || '' } : null;
   const [handle, setHandle] = useState(user?.emailHandle || '');
   // No longer edited here (the WhatsApp card has no number box — people join by
   // invite link), but still sent back on Save so the stored number is kept.
@@ -474,6 +494,7 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                 handle={handle}
                 setHandle={(v) => { setHandle(v); setHandleError(''); }}
                 suffix={suffix}
+                elsewhere={elsewhere}
                 error={handleError}
               />
               {/* The other road a bill travels. Same shape as the card above on

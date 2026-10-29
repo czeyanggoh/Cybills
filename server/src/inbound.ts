@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import type { Request } from 'express';
-import { userByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberForSession, defaultProjectFor } from './users.js';
+import { recipientByEmailHandle, generalUserByEmailSuffix, setPendingForward, memberForSession, defaultProjectFor } from './users.js';
 import { dataScopeForOrg, getOrganisation, primaryOrgId } from './organisations.js';
 import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './xero.js';
 import { loadAccountSides } from './accountSides.js';
@@ -1403,7 +1403,8 @@ inboundRouter.post('/email', async (req, res) => {
   // belongs to its GENERAL account: the row that already owns the paperwork
   // nobody claimed. Second, never first, so a person whose bare handle happens
   // to be that word keeps their own mail.
-  const user = userByEmailHandle(local) || generalUserByEmailSuffix(workspaceId(req), local);
+  const recipient = recipientByEmailHandle(local);
+  const user = recipient?.user || generalUserByEmailSuffix(workspaceId(req), local);
   if (!user) return res.status(404).json({ error: 'unknown_recipient', to });
 
   // Two org ids in play, and they differ for the primary entity:
@@ -1413,7 +1414,10 @@ inboundRouter.post('/email', async (req, res) => {
   //   scope     — the bills-store scope. The primary org (CYBM) folds to the
   //               legacy WORKSPACE_ID scope, so an emailed doc lands in the inbox
   //               the user actually sees.
-  const realOrgId = user.organisationId || primaryOrgId();
+  // A person who works in more than one entity has an address in each, and the
+  // address says which book: `nas.lalcoholdings` files into Lalco Holdings even
+  // though her own row is Lalco Trading's (recipientByEmailHandle).
+  const realOrgId = recipient?.orgId || user.organisationId || primaryOrgId();
   const scope = dataScopeForOrg(realOrgId);
   // Attribute this document's API spend to its client entity on the Clients page
   // (recordUsage reads the X-Org-Id header; the Worker sends none).

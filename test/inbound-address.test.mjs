@@ -67,5 +67,20 @@ check('a colleague on no entity falls back to the primary one', suffixForUser({ 
 check('an entity nobody can see is not borrowed from', suffixForUser({ organisationId: 'org_gone' }, orgs), '');
 check('a colleague filed under the practice carries its short form', suffixForUser({ organisationId: '' }, [{ id: 'p', isPrimary: true, emailSuffix: 'cybm' }]), 'cybm');
 
+// Somebody who works in the OPEN entity as well as their own has an address
+// under its short form, and that is the one the page prints.
+{
+  const two = [
+    { id: 'hold', emailSuffix: 'lalcoholdings' },
+    { id: 'trad', emailSuffix: '' },
+  ];
+  const nas = { organisationId: 'trad', extraAccess: [{ orgId: 'hold', role: 'Business Admin' }] };
+  check('an entity she also works in prints its own short form', suffixForUser(nas, two, 'hold'), 'lalcoholdings');
+  check('…her own entity prints its own', suffixForUser(nas, two, 'trad'), '');
+  check('…and with nothing open it is her home one', suffixForUser(nas, two), '');
+  check('an entity she has no access to lends her nothing', suffixForUser({ organisationId: 'trad' }, two, 'hold'), '');
+  check('a practice colleague is not given a client’s', suffixForUser({ ...nas, practice: true }, two, 'hold'), '');
+}
+
 console.log(failures ? `\n${failures} failing` : '\nAll passing');
 process.exit(failures ? 1 : 0);

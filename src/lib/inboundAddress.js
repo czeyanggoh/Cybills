@@ -72,9 +72,23 @@ export function addressTail(suffix, domain = INBOUND_DOMAIN) {
 // cannot open the books of, so there is nothing here to read: '' shows the bare
 // handle rather than borrowing the primary entity's short form, which would
 // print an address that belongs to nobody.
-export function suffixForUser(user, organisations) {
+//
+// `openId` is the entity the page has open. Somebody who works there as well as
+// in their own (extraAccess) answers to their handle under ITS short form too,
+// and mail to that address files into its book — so that is the address to
+// print here. Mirrors extraAddresses in the server's users.ts; a practice
+// colleague holds no such address. An open entity with no short form adds
+// none, so their home address stands.
+export function suffixForUser(user, organisations, openId = '') {
   const list = Array.isArray(organisations) ? organisations : [];
   const own = user?.organisationId;
+  const visiting =
+    openId && openId !== own && !user?.practice && !user?.general &&
+    (Array.isArray(user?.extraAccess) ? user.extraAccess : []).some((e) => e?.orgId === openId);
+  if (visiting) {
+    const here = cleanSuffix(list.find((o) => o.id === openId)?.emailSuffix || '');
+    if (here) return here;
+  }
   const org = own ? list.find((o) => o.id === own) : list.find((o) => o.isPrimary);
   return cleanSuffix(org?.emailSuffix || '');
 }

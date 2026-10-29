@@ -2286,6 +2286,24 @@ the person whose address IS the bare one — and to NOBODY when neither does: th
 delivery 404s and is reported, which is the only honest answer when the address
 cannot say which of them was meant.
 
+**Somebody who works in two entities has an address in each.** Nas runs Lalco
+Holdings and Lalco Trading: her row is Trading's, Holdings is `extraAccess` on
+top of it, and her one address took Trading's short form (none), so Holdings'
+card promised `<handle>.lalcoholdings` while she was `nas@cybills.sg`, and every
+bill she emailed in landed in Trading's book. Now each entity she is given
+access to with a short form of its own adds `<handle>.<that suffix>`
+(`extraAddresses` in `users.ts`), and `recipientByEmailHandle` returns the
+entity the ADDRESS names, which is the book `inbound.ts` files into. The home
+address keeps working and keeps filing at home. A home address always wins: a
+person whose OWN entity already gives them that address keeps it, and the
+visitor is shown their home one there (`addressInOrg`, on the roster and the
+directory). `addressClash` counts a visitor's addresses, so a new handle cannot
+take one. A practice colleague holds none, deliberately — thirty clients would
+be thirty addresses, mostly first names a client's own employee is owed. The
+Edit user details card prints the OPEN entity's address and says the home one
+still files at home (`suffixForUser(user, orgs, openId)`). Covered by
+`test/entity-addresses.test.mts` and `test/inbound-address.test.mjs`.
+
 **Two entities may not share a short form**, and a short form that would hand
 somebody an address another person already answers to is refused by name
 (`PUT /api/organisations/:id/email-suffix`, `suffix_taken` / `address_taken`).

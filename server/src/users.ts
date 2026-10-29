@@ -339,14 +339,65 @@ export function orgIdForUser(u: User): string {
 // lets a sweep over the whole roster read each entity once — every lookup here
 // is a read of the organisations file.
 export function suffixForUser(u: User, memo?: Map<string, string>): string {
-  const ws = u.workspaceId || WORKSPACE_ID;
-  const org = orgIdForUser(u);
+  return suffixForOrg(u.workspaceId || WORKSPACE_ID, orgIdForUser(u), memo);
+}
+
+function suffixForOrg(ws: string, org: string, memo?: Map<string, string>): string {
   const key = `${ws}|${org}`;
   const hit = memo?.get(key);
   if (hit !== undefined) return hit;
   const value = org ? normaliseSuffix(getOrganisation(ws, org)?.emailSuffix || '') : '';
   memo?.set(key, value);
   return value;
+}
+
+// The other entities a person has an address IN: those they work in as well as
+// their own (`extraAccess`), each with a short form of its own. Nas runs Lalco
+// Holdings and Lalco Trading; her row is filed under Trading, and with only the
+// one address everything she emailed in landed in Trading's book whichever of
+// the two the bill was for, while Holdings' Extract by Email card promised her
+// `<handle>.lalcoholdings`. So she answers to the handle under EACH entity's
+// short form, and mail to one files into that entity's book.
+//
+// Not a practice colleague's client access, deliberately: a colleague with
+// every client would hold thirty addresses, most of them first names that a
+// client's own employee is far more entitled to.
+function extraAddresses(u: User, memo?: Map<string, string>): Array<{ orgId: string; local: string }> {
+  const handle = String(u.emailHandle || '').toLowerCase();
+  if (!handle || u.general || u.practice) return [];
+  const ws = u.workspaceId || WORKSPACE_ID;
+  const home = orgIdForUser(u);
+  const out: Array<{ orgId: string; local: string }> = [];
+  for (const e of Array.isArray(u.extraAccess) ? u.extraAccess : []) {
+    if (!e?.orgId || e.orgId === home) continue;
+    const suffix = suffixForOrg(ws, e.orgId, memo);
+    // An entity with no short form adds nothing: the bare handle is already the
+    // home address, and a second meaning for it would be a guess.
+    if (suffix) out.push({ orgId: e.orgId, local: localPart(handle, suffix) });
+  }
+  return out;
+}
+
+// Every live row's HOME local part. A home address always wins: somebody whose
+// own entity gives them `martin.redalpha` keeps it, and a visitor whose handle
+// would make the same address there simply goes on using their home one.
+function homeLocals(memo: Map<string, string>): Set<string> {
+  return new Set(
+    load()
+      .filter((u) => !u.removed && !u.general && u.emailHandle)
+      .map((u) => localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)))
+  );
+}
+
+// This person's address as it should be printed in `org`: their address in that
+// entity where they have one of their own there, else their home address.
+// `homes` is for a caller printing a whole roster (homeLocals, built once).
+export function addressInOrg(u: User, org: string, memo?: Map<string, string>, homes?: Set<string>): string {
+  const extra = org ? extraAddresses(u, memo).find((x) => x.orgId === org) : null;
+  if (extra && !(homes ?? homeLocals(memo ?? new Map())).has(extra.local)) {
+    return `${extra.local}@${INBOUND_MAIL_DOMAIN}`;
+  }
+  return addressForUser(u, memo);
 }
 
 // The local part of an address: the person, then their entity.
@@ -464,16 +515,30 @@ export function normaliseHandle(raw: string): string {
 //      delivery 404s and is reported, which is the only honest answer when the
 //      address does not say which of them was meant.
 export function userByEmailHandle(handle: string): User | null {
+  return recipientByEmailHandle(handle)?.user ?? null;
+}
+
+// Who an address reaches AND which entity's book it files into. A home address
+// first (it always wins), then an address the person holds in another entity
+// they work in (extraAddresses), then the bare handle.
+export function recipientByEmailHandle(handle: string): { user: User; orgId: string } | null {
   const want = String(handle || '').split('+')[0].trim().toLowerCase();
   if (!want) return null;
   const memo = new Map<string, string>();
   const real = load().filter((u) => !u.removed && !u.general && u.emailHandle);
+  const home = (user: User) => ({ user, orgId: orgIdForUser(user) });
   const exact = real.filter((u) => localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)) === want);
-  if (exact.length) return exact.length === 1 ? exact[0] : null;
+  if (exact.length) return exact.length === 1 ? home(exact[0]) : null;
+  const visiting = real.flatMap((u) =>
+    extraAddresses(u, memo)
+      .filter((x) => x.local === want)
+      .map((x) => ({ user: u, orgId: x.orgId }))
+  );
+  if (visiting.length) return visiting.length === 1 ? visiting[0] : null;
   const bare = real.filter((u) => String(u.emailHandle).toLowerCase() === want);
-  if (bare.length === 1) return bare[0];
+  if (bare.length === 1) return home(bare[0]);
   const plain = bare.filter((u) => !suffixForUser(u, memo));
-  return plain.length === 1 ? plain[0] : null;
+  return plain.length === 1 ? home(plain[0]) : null;
 }
 
 // The entity whose own short form IS this local part, or null. Compared as a
@@ -533,6 +598,13 @@ export function addressClash(target: User, handle: string): string {
       localPart(String(u.emailHandle).toLowerCase(), suffixForUser(u, memo)) === want
   );
   if (person) return person.name || person.email;
+  // An address somebody holds in another entity they work in counts too: the
+  // home address would win it, and their mail to that entity would quietly
+  // start filing under this person instead.
+  const visitor = load().find(
+    (u) => u.id !== target.id && !u.removed && extraAddresses(u, memo).some((x) => x.local === want)
+  );
+  if (visitor) return visitor.name || visitor.email;
   return orgWithSuffix(target.workspaceId || WORKSPACE_ID, want)?.name || '';
 }
 
@@ -746,6 +818,7 @@ export function peopleForOrg(
 }> {
   const memo = new Map<string, string>();
   const rows = ensure(ws);
+  const homes = homeLocals(memo);
   const byId = new Map(rows.filter((u) => u.workspaceId === ws && !u.removed).map((u) => [u.id, u]));
   return rows
     .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org))))
@@ -758,7 +831,7 @@ export function peopleForOrg(
       // without the upload. '' where there is none to print — an entity that has
       // set no short form has no address of its own, and inventing one from its
       // name would send paperwork nowhere.
-      address: addressForUser(u, memo),
+      address: addressInOrg(u, org, memo, homes),
       // What each entry IS here, because the two questions differ: a colleague
       // from outside is never OFFERED as a document's owner (that's the general
       // account's job), but their name must still resolve on the documents they
@@ -1696,8 +1769,11 @@ usersRouter.get('/directory', (req, res) => {
 usersRouter.get('/', (req, res) => {
   const ws = workspaceId(req);
   const org = orgScope(req);
+  const memo = new Map<string, string>();
+  const rows = ensure(ws);
+  const homes = homeLocals(memo);
   res.json({
-    users: ensure(ws)
+    users: rows
       .filter((u) => u.workspaceId === ws && !u.removed && !u.practice && inOrg(u, org))
       // Somebody who works here as well as somewhere else holds the role they
       // were given HERE, and their row says which entity they belong to — an
@@ -1706,6 +1782,9 @@ usersRouter.get('/', (req, res) => {
       .map((u) => ({
         ...publicUser(u),
         role: rosterRoleFor(u, org),
+        // Their address HERE: somebody who works in this entity as well as their
+        // own answers to the handle under this entity's short form too.
+        address: addressInOrg(u, org, memo, homes),
         homeOrgName:
           (u.organisationId || '') === org
             ? ''
