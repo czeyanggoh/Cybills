@@ -114,7 +114,7 @@ export const CLAIM_COLUMNS = [
   { key: 'total', label: 'Total', primary: true },
   { key: 'itemId', label: 'Item ID' },
   { key: 'user', label: 'User' },
-  { key: 'project', label: 'PIC' },
+  { key: 'project', label: 'Project' },
 ];
 
 const defaultsFor = (columns) =>

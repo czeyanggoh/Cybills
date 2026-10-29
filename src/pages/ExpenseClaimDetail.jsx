@@ -79,6 +79,7 @@ import { lineWorking } from '@/lib/claimFx';
 import { rememberWalk } from '@/lib/listView';
 import ComboSelect from '@/components/ComboSelect';
 import SortTh, { sortRows } from '@/components/SortTh';
+import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
 
 function TopButton({ children, onClick = () => {}, subtle = false, danger = false, dropdown = false, disabled = false, title = '' }) {
   return (
@@ -326,6 +327,9 @@ export default function ExpenseClaimDetail() {
   // "claim not found" early return below.
   const tablePrefs = useTablePrefs('claimItems');
   const densityClass = DENSITY_CLASS[tablePrefs.density] ?? DENSITY_CLASS.Medium;
+  // The project column is called whatever this entity's Xero calls its first
+  // tracking category ("Outlet"), as it is on Costs, not a fixed word.
+  const projectLabels = useProjectLabels();
 
   // Keep the selection in sync with what actually exists: when items are removed
   // (here or in another tab) drop their ids so the count never counts phantoms.
@@ -672,7 +676,7 @@ export default function ExpenseClaimDetail() {
     user: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (t) => t.addedBy || '—' },
     project: { cellClass: 'whitespace-nowrap text-muted-foreground', cell: (t) => t.project || '—' },
   };
-  const shownColumns = CLAIM_COLUMNS.filter((c) => !c.fixed && tablePrefs.columns[c.key] && CELLS[c.key]);
+  const shownColumns = withProjectLabels(CLAIM_COLUMNS, projectLabels).filter((c) => !c.fixed && tablePrefs.columns[c.key] && CELLS[c.key]);
 
   // ── Item selection + bulk actions (Dext-style) ──────────────────────────────
   const toggleItem = (itemId) =>
