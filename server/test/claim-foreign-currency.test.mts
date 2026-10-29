@@ -31,6 +31,12 @@ const stub = http.createServer((req, res) => {
   const url = new URL(String(req.url), 'http://x');
   const path = decodeURIComponent(url.pathname);
   res.setHeader('content-type', 'application/json');
+  // The wider source, for a currency the ECB does not carry (LKR).
+  if (path.startsWith('/fx2/')) {
+    fxAsked.push(String(req.url));
+    if (path === '/fx2/2026-09-13/lkr.json') { res.end(JSON.stringify({ date: '2026-09-13', lkr: { sgd: 0.0042, usd: 0.0033 } })); return; }
+    res.statusCode = 404; res.end('{}'); return;
+  }
   if (path.startsWith('/fx/')) {
     fxAsked.push(String(req.url));
     const to = url.searchParams.get('to') || '';
@@ -59,6 +65,7 @@ const stub = http.createServer((req, res) => {
 await new Promise<void>((r) => stub.listen(4632, '127.0.0.1', r));
 process.env.CYWORKSPACE_RELAY_URL = 'http://127.0.0.1:4632';
 process.env.FX_RATES_URL = 'http://127.0.0.1:4632/fx';
+process.env.FX_FALLBACK_URL = 'http://127.0.0.1:4632/fx2/{date}/{from}.json';
 
 const express = (await import('express')).default;
 const { claimsRouter } = await import('../src/claims.ts');
@@ -74,6 +81,7 @@ const bill = (f: Record<string, unknown>) =>
 const usd = bill({ supplier: 'HighLevel LLC', currency: 'USD', total: '25', date: '2026-09-14' });
 const restated = bill({ supplier: 'Microsoft', currency: 'USD', total: '17.17', tax: '1.42', baseCurrency: 'SGD', baseTotal: 22.2, baseTax: 1.84, date: '2026-09-10' });
 const nzd = bill({ supplier: 'Air NZ', currency: 'NZD', total: '100', date: '2026-09-12' });
+const lkr = bill({ supplier: 'Alnitak', currency: 'LKR', total: '1352461.54', date: '2026-09-13' });
 const sgd = bill({ supplier: 'Grab', currency: 'SGD', total: '12', date: '2026-09-11' });
 
 const txn = (b: any) => ({ itemId: b.id, date: b.date, supplier: b.supplier, category: b.category, net: String(b.total), tax: '0', total: String(b.total) });
@@ -85,7 +93,7 @@ const claim = (id: string, f: Record<string, unknown>) => ({
   hrSentAt: '', hrSentAmount: '', hrSentBy: '', hrRevision: 0, ...f,
 });
 saveCollection('claims', [
-  claim('c-open', { transactions: [txn(usd), txn(restated), txn(sgd)] }),
+  claim('c-open', { transactions: [txn(usd), txn(restated), txn(sgd), txn(lkr)] }),
   claim('c-norate', { transactions: [txn(nzd)] }),
   // Frozen at approval with the NZD item and no rate: publishing must refuse.
   claim('c-approved-norate', {
@@ -121,6 +129,8 @@ check('USD receipt: counted at the day rate, not as SGD', line(usd).total, '32.5
 check('…and says so', [line(usd).origCurrency, line(usd).origTotal, line(usd).fxRate, line(usd).fxSource], ['USD', '25.00', '1.3', 'day']);
 check('…asked for the receipt\'s own date', fxAsked.some((u) => u.startsWith('/fx/2026-09-14?from=USD&to=SGD')), true);
 check('restated receipt: its own SGD figure, no lookup', [line(restated).total, line(restated).fxSource], ['22.20', 'document']);
+check('LKR receipt (not an ECB currency): converted at the wider source rate', [line(lkr).total, line(lkr).fxRate, line(lkr).fxMissing], ['5680.34', '0.0042', undefined]);
+check('…after the ECB had no answer', [fxAsked.some((u) => u.startsWith('/fx/2026-09-13?from=LKR')), fxAsked.includes('/fx2/2026-09-13/lkr.json')], [true, true]);
 check('SGD receipt: untouched', [line(sgd).total, line(sgd).origCurrency], ['12.00', undefined]);
 const noRate = list.claims.find((c: any) => c.id === 'c-norate').transactions[0];
 check('no rate to be had: kept as printed, and flagged', [noRate.total, noRate.fxMissing], ['100.00', true]);

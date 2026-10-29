@@ -786,7 +786,11 @@ it is synchronous — on the list, add-items and approve). The line carries its
 working (`origCurrency` / `origTotal` / `fxRate` / `fxSource`: `document` or
 `day`), printed beside the description on the claim page and in its PDF
 (`lineWorking` in `src/lib/claimFx.js`, which also carries the mileage working)
-and on the Xero line ("… (USD 25.00 @ 1.3144)"). Add-items stores the converted
+and on the Xero line ("… (USD 25.00 @ 1.3144)"). The ECB carries about thirty
+currencies and LKR is not one of them, so an LKR 1,352,461.54 rental went onto a
+claim as 1.35 million SGD: a currency the ECB has no answer for is asked of
+fawazahmed0's dated currency-api (`FX_FALLBACK_URL`, `{date}` / `{from}`
+template, empty = off; off by default where `FX_RATES_URL` is overridden). Add-items stores the converted
 figures, so an approval email quotes what the claim is worth. A rate that could
 not be had leaves the receipt's own figure and says so (`fxMissing`), and
 publishing refuses such a claim (422 `no_exchange_rate`) rather than posting USD

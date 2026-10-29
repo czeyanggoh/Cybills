@@ -53,7 +53,7 @@ type Txn = {
   // A foreign receipt's working, where the claim's figure is not the
   // receipt's own: "USD 25.00 @ 1.3144" — its currency and total as printed,
   // the rate, and where the rate came from ('document' = the receipt's own
-  // restatement, 'day' = the day's ECB rate for the receipt's date). fxMissing
+  // restatement, 'day' = the day's rate (fx.ts) for the receipt's date). fxMissing
   // says no rate could be had, so the figure is still the receipt's own.
   origCurrency?: string;
   origTotal?: string;
