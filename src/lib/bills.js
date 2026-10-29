@@ -7,6 +7,7 @@ import { isGstRegistered } from '@/lib/businessProfile';
 import { fetchReviewInstructions } from '@/lib/reviewInstructions';
 import { requestedProvider } from '@/lib/readerProvider';
 import { completeLines } from '@/lib/lineItems';
+import { readableForReader } from '@/lib/image';
 
 // Every bill request carries the selected organisation so the server serves that
 // org's own Costs/Sales books (separate per client entity). Omitted when no org
@@ -65,6 +66,9 @@ export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif
 // off the page — the only thing that says which side of a transaction you are
 // on is where the document was filed.
 export async function fetchExtract(imageBase64, mediaType, accounts, note = null, kind = 'cost') {
+  // A HEIC photo stored before uploads converted them is sent as a JPEG; the
+  // reader takes no HEIC at all.
+  ({ base64: imageBase64, mediaType } = await readableForReader(imageBase64, mediaType));
   // The active org's Review instructions (business context + GST/coding rules)
   // ride along so the model classifies with that context. Best-effort.
   const instructions = await fetchReviewInstructions(getActiveOrganisationId());
@@ -232,6 +236,7 @@ export async function fetchClassifyType(imageBase64, mediaType, fileName = '') {
 }
 
 export async function fetchExtractLines(imageBase64, mediaType, accounts) {
+  ({ base64: imageBase64, mediaType } = await readableForReader(imageBase64, mediaType));
   const instructions = await fetchReviewInstructions(getActiveOrganisationId());
   // The org's projects (its first Xero tracking category), so each LINE can be
   // allocated to the outlet or site it names — an invoice billing three outlets

@@ -19,7 +19,7 @@ import {
   lineItemRows,
   VISION_MEDIA,
 } from '@/lib/bills';
-import { prepareUpload } from '@/lib/image';
+import { prepareUpload, isHeic } from '@/lib/image';
 import { getExtractionAccounts, useVisibleTaxRates, useManagedTaxRates, useXeroShortCode } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { autoPublishAfterRead, xeroBillUrl } from '@/lib/autoPublish';
@@ -755,6 +755,16 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           //    artificial delay — it moves the moment reading is done.
           /** @type {any} */
           let fields = null;
+          // Why this document was NOT read, when it isn't — written onto it as
+          // the email road does, so "Nothing read" says why rather than leaving
+          // somebody to find out from the server (six HEIC photos, 29 Oct 2026).
+          let unreadNote = '';
+          if (!isStatement && !visionEnabled) unreadNote = 'no document reader is switched on';
+          else if (!isStatement && !VISION_MEDIA.includes(mediaType)) {
+            unreadNote = isHeic(mediaType, it.file.name)
+              ? "this iPhone photo (HEIC) couldn't be converted — save it as a JPEG and upload that"
+              : `file type ${mediaType || 'unknown'} can't be read — send it as a PDF, PNG or JPEG`;
+          }
           if (!isStatement && visionEnabled && VISION_MEDIA.includes(mediaType)) {
             patch(it.id, { status: 'extracting', bill });
             try {
@@ -766,6 +776,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
               // document is: a Sales upload is read for its CUSTOMER, a cost
               // for its supplier.
               const ex = await fetchExtract(fileBase64, mediaType, await accountsPromise, coveringNote({ fileName: it.file.name }), kind);
+              if (!ex) unreadNote = 'the reader returned an error';
               if (ex) {
                 fields = { ...ex };
                 if (tab === 'Sales') {
@@ -778,6 +789,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
               }
             } catch {
               // Extraction is best-effort — the document is already saved.
+              unreadNote = 'the reader could not be reached';
             }
           }
           if (fields) {
@@ -827,7 +839,10 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           } else {
             // Nothing read (extraction off/failed) — move straight to the inbox;
             // no fuzzy dedup on empty fields.
-            const advanced = await updateBill(bill.id, { status: 'new' }).then((r) => r?.bill).catch(() => null);
+            const advanced = await updateBill(bill.id, {
+              status: 'new',
+              ...(unreadNote ? { categoryReason: `Auto-read didn't complete (${unreadNote}). Use Re-read.` } : {}),
+            }).then((r) => r?.bill).catch(() => null);
             const withDefaults = await applyExtractionDefaults(bill.id, advanced ?? bill, null, { base64: fileBase64, mediaType });
             notifyBillsChanged();
             onAdded?.(withDefaults);

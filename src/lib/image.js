@@ -21,9 +21,52 @@ function loadImage(dataUrl) {
   });
 }
 
+// The image types the reader takes. Anything else that is an image is sent as
+// a JPEG, or the read is skipped (VISION_MEDIA in bills.js) and the document
+// lands as "Nothing read".
+const READER_IMAGES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+
+// An iPhone photo. Chrome and Edge cannot draw one, Windows often gives it no
+// type at all, and neither reader accepts it — so six claim photos uploaded as
+// .HEIC were filed without ever being read (Yakson, 29 Oct 2026). Known by its
+// type, else its name.
+export function isHeic(type, name = '') {
+  return /^image\/hei[cf]/i.test(String(type || '')) || /\.hei[cf]$/i.test(String(name || ''));
+}
+
+// HEIC bytes to a JPEG blob. The decoder is a few MB of WebAssembly, so it is
+// fetched only when a HEIC file actually turns up. Null when it cannot decode.
+async function heicToJpeg(blob, quality) {
+  try {
+    // heic-to, not heic2any: heic2any's libheif is too old for a current
+    // iPhone's HEIC and answers "format not supported" (tried on Yakson's).
+    const { heicTo } = await import('heic-to');
+    return await heicTo({ blob, type: 'image/jpeg', quality });
+  } catch {
+    return null;
+  }
+}
+
+// A stored file the reader cannot take, made into one it can: a HEIC document
+// uploaded before the upload converted them is re-read as a JPEG. Anything
+// else is returned as it is.
+export async function readableForReader(base64, mediaType, name = '') {
+  if (!isHeic(mediaType, name)) return { base64, mediaType };
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const jpeg = await heicToJpeg(new Blob([bytes], { type: 'image/heic' }), 0.85);
+  if (!jpeg) return { base64, mediaType };
+  const { base64: out, mediaType: type } = await prepareUpload(new File([jpeg], 'photo.jpg', { type: 'image/jpeg' }));
+  return { base64: out, mediaType: type };
+}
+
 // Returns { base64, mediaType, previewUrl }. Images larger than `maxDim` on the
-// long edge (or above ~1.2MB) are re-encoded to JPEG at `maxDim`.
+// long edge (or above ~1.2MB) are re-encoded to JPEG at `maxDim`, and so is any
+// image in a format the reader does not take. A HEIC photo is converted first.
 export async function prepareUpload(file, { maxDim = 1600, quality = 0.85 } = {}) {
+  if (isHeic(file.type, file.name)) {
+    const jpeg = await heicToJpeg(file, quality);
+    if (jpeg) file = new File([jpeg], String(file.name || 'photo').replace(/\.hei[cf]$/i, '') + '.jpg', { type: 'image/jpeg' });
+  }
   if (!file.type.startsWith('image/')) {
     const dataUrl = await readDataUrl(file);
     return { base64: dataUrl.slice(dataUrl.indexOf(',') + 1), mediaType: file.type, previewUrl: URL.createObjectURL(file) };
@@ -39,7 +82,7 @@ export async function prepareUpload(file, { maxDim = 1600, quality = 0.85 } = {}
   }
 
   const longEdge = Math.max(img.width, img.height);
-  if (longEdge <= maxDim && file.size < 1_200_000) {
+  if (longEdge <= maxDim && file.size < 1_200_000 && READER_IMAGES.includes(file.type)) {
     return { base64: dataUrl.slice(dataUrl.indexOf(',') + 1), mediaType: file.type, previewUrl: dataUrl };
   }
 

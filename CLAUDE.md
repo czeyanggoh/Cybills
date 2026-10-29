@@ -1875,6 +1875,19 @@ and which would need an image library the server does not carry. Covered by
 `npm test` in `server/` (`test/media-type.test.mts`, over real HTTP so what is
 asserted is the file block that actually goes out).
 
+**An iPhone photo is converted in the BROWSER, because nothing else can.**
+Six HEIC claim photos uploaded to Yakson (29 Oct 2026) were filed without the
+reader ever being asked: Chrome on Windows cannot draw HEIC, so `prepareUpload`
+passed the bytes on as `image/heic`, the drawer's `VISION_MEDIA` gate skipped
+the read, and neither reader takes HEIC anyway. `src/lib/image.js` now turns a
+HEIC (by type, else by `.heic`/`.heif` name — Windows often gives it no type)
+into a JPEG with **heic-to**, fetched only when one turns up (a 3 MB chunk).
+Not heic2any: its libheif answers "format not supported" for a current
+iPhone's HEIC. `fetchExtract` / `fetchExtractLines` convert too
+(`readableForReader`), so a HEIC stored before this is read on Re-read. And an
+upload that is NOT read now says why on the document ("Auto-read didn't
+complete (…)"), as the email road always has.
+
 **And a document being READ says so, on every road.** An emailed or WhatsApp'd
 document was created as `new` and read in the background, so for the ten to
 thirty seconds the read takes it sat in the inbox wearing "New" and a **Nothing
