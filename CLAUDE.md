@@ -465,7 +465,14 @@ printed "GST AMT 0.87" came back 9.28 with tax 0 and was coded No Tax (29 Oct
 2026), because the schema's tax description was still "0 if none shown" and
 only the discount paragraph said otherwise. A bill settled partly by points, a
 voucher or a gift card now takes the card or cash part as the total, and the
-printed GST stands whatever the total became.
+printed GST stands whatever the total became. **And the bill's own total is
+read beside it** (`printedTotal`, 0 unless larger than the total paid), because
+that receipt prints no percentage and 0.87 on the 8.41 paid by card is 10.3%,
+which matches no code. `taxRateOutcome` reads the rate off the bill instead
+(0.87 on 9.63 = 9%) and calls it off-base, and `splitByPrintedRate` takes the
+two lines straight off the paper: 9.63 + 0.87 = 10.50 at 9%, and −1.22 No Tax
+"Paid by loyalty points, a voucher or a discount". Every road passes it (the
+upload, `readDecisions`, `decideTaxRate` / `splitForPrintedRate`).
 
 **A cost can name the client it is recharged to.** `customer` is read like the
 category is: an enum of the org's own active Xero customer contacts

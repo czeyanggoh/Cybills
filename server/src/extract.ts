@@ -237,6 +237,11 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
         description:
           'The percentage the document PRINTS beside its tax, as a number — 9 for "9% GST", "GST 9%" or "GST charged at 9%"; 7 for "VAT 7%". 0 when no percentage is printed anywhere near the tax line. Never work it out from the amounts: this is what the supplier wrote, and it decides the tax code when the amounts cannot (a discount taken off the tax-inclusive bill leaves the tax looking like 13% of the net paid on a receipt that plainly says 9%).',
       },
+      printedTotal: {
+        type: 'number',
+        description:
+          'The bill\'s own grand total AS PRINTED, tax included ("Total (SGD) INCL. GST 10.50"), when `total` is a smaller amount actually paid — part of the bill settled by loyalty points, a voucher or a gift card, or a discount written on afterwards. 0 when the amount paid IS the printed total, which is nearly always. It is what the GST was charged on, so it is how the tax code is decided when a payment changed the total.',
+      },
       motorVehicle: {
         type: 'boolean',
         description:
@@ -290,6 +295,7 @@ function buildSchema(categories: string[], taxRateNames: string[], projectNames:
       'supplierGstRegNo',
       'taxLabel',
       'taxRatePrinted',
+      'printedTotal',
       'motorVehicle',
       'medicalProvider',
       'billedTo',
@@ -329,6 +335,7 @@ const ReceiptSchema = z.object({
   supplierGstRegNo: z.string().optional().default(''),
   taxLabel: z.string().optional().default(''),
   taxRatePrinted: z.number().optional().default(0),
+  printedTotal: z.number().optional().default(0),
   motorVehicle: z.boolean().optional().default(false),
   medicalProvider: z.boolean().optional().default(false),
   billedTo: z.string().optional().default(''),
@@ -850,6 +857,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
     'A restaurant or KTV often takes a discount off BY HAND — "-$200.00" written under the printed 993.38, then "$793.38" — and the card slip photographed beside the bill charged 793.38. ' +
     'Where a card slip or payment record in the same image states the amount charged, that amount is the total. Otherwise a handwritten DEDUCTION with the figure it leaves is taken; ' +
     'where the receipt itself shows the bill settled partly by loyalty points, a voucher or a gift card and the rest by card or cash ("yuu Points 1.22 / MASTER 9.28"), the card or cash part is the total. ' +
+    'Whenever the total is less than the bill\'s own printed total for any of these reasons, put that printed total in `printedTotal` (10.50 for that receipt); otherwise `printedTotal` is 0. ' +
     'a handwritten figure HIGHER than the printed total (a tip) is taken only where a card slip on the same image charged it, since anybody can write a larger number on a receipt. ' +
     'Leave `tax` as the GST figure PRINTED — a discount written on afterwards does not restate it, and nor does paying part of the bill in points or a voucher; never 0 because the total moved — and say in `description` what changed the total ("after a 200.00 discount written on the bill"). ' +
     'If a field is not present, use an empty string or 0. ' +
@@ -1019,6 +1027,12 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
       taxRatePrinted:
         Number.isFinite(parsed.data.taxRatePrinted) && parsed.data.taxRatePrinted > 0 && parsed.data.taxRatePrinted < 100
           ? parsed.data.taxRatePrinted
+          : 0,
+      // The bill's own total where less than it was paid in money; 0 otherwise.
+      // Only a figure ABOVE the total paid means anything.
+      printedTotal:
+        Number.isFinite(parsed.data.printedTotal) && parsed.data.printedTotal > Number(parsed.data.total || 0)
+          ? parsed.data.printedTotal
           : 0,
       // Who the paper says it is FOR. Nothing codes off it — it is what lets
       // CYBills ask whether the document is in the right client's book at all.

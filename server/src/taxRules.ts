@@ -24,6 +24,7 @@ export type TaxOutcome = {
   printedRate?: number;
   workedRate?: number;
   offBase?: boolean;
+  printedTotal?: number;
   // Decided by the motor vehicle rule (src/lib/motorVehicle.js), which a
   // supplier rule's tax code does not overrule.
   motorVehicle?: boolean;
@@ -166,6 +167,7 @@ export async function decideTaxRate(
     supplierGstRegNo?: unknown;
     taxLabel?: unknown;
     taxRatePrinted?: unknown;
+    printedTotal?: unknown;
     supplierGstRegNoRemembered?: unknown;
     supplierGstRegNoFrom?: unknown;
     motorVehicle?: unknown;
@@ -199,6 +201,9 @@ export async function decideTaxRate(
       taxLabel: String(doc.taxLabel ?? ''),
       // The rate the supplier printed, which beats the one the money implies.
       printedRate: Number(doc.taxRatePrinted ?? 0) || 0,
+      // The bill's own total where less than it was paid in money (points, a
+      // voucher): what the GST was charged on.
+      printedTotal: Number(doc.printedTotal ?? 0) || 0,
       // Remembered from an earlier document rather than read off this one, so
       // the reason says so (supplierGst.ts).
       gstRegNoRemembered: doc.supplierGstRegNoRemembered === true ? String(doc.supplierGstRegNoFrom || 'document') : false,
@@ -234,6 +239,7 @@ export async function splitForPrintedRate(
       total: doc.total,
       tax: doc.tax,
       rate: outcome.printedRate,
+      printedTotal: outcome.printedTotal ?? 0,
       category: String(doc.category ?? ''),
       taxRateName: outcome.name,
       noTaxName: rules.noTaxRateName?.(ctx.visibleRates) || 'No Tax',

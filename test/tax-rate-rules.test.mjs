@@ -392,6 +392,23 @@ check('noTaxRateName', [noTaxRateName(SG), noTaxRateName([]), noTaxRateName(hidd
   check('no tax, no split', splitByPrintedRate({ total: 100, tax: 0, rate: 9 }), null);
   check('no rate, no split', splitByPrintedRate({ total: 155.39, tax: 17.82, rate: 0 }), null);
 
+  // Cold Storage, 29 Oct 2026: "Total (SGD) INCL. GST 10.50 / GST AMT 0.87",
+  // paid "yuu Points 1.22 / MASTER 9.28". No percentage printed, and 0.87 on
+  // the 8.41 paid by card reads as 10.3% — a rate no chart has, so the code
+  // was left blank. The bill's own total says 9%, and the lines come straight
+  // off the paper: the bill as printed, and what was not paid in money.
+  const cs = ask({ total: 9.28, tax: 0.87, printedTotal: 10.5, taxLabel: 'GST AMT' });
+  check('points paid: the rate is read off the bill', cs.name, 'Standard-Rated Purchases');
+  check('...and the document is split', [cs.offBase, cs.printedTotal], [true, 10.5]);
+  has('...saying why', cs.reason, '1.22 of it was not paid in money');
+  check('without the bill total it matches nothing', ask({ total: 9.28, tax: 0.87, taxLabel: 'GST AMT' }).name, '');
+  const pts = splitByPrintedRate({ total: 9.28, tax: 0.87, rate: cs.printedRate, printedTotal: cs.printedTotal, taxRateName: cs.name, noTaxName: 'No Tax' });
+  check('the bill as printed, at 9%', [pts.rows[0].net, pts.rows[0].tax, pts.rows[0].total, pts.rows[0].taxRate], ['9.63', '0.87', '10.50', 'Standard-Rated Purchases']);
+  check('what points paid, negative, No Tax', [pts.rows[1].net, pts.rows[1].tax, pts.rows[1].total, pts.rows[1].taxRate], ['-1.22', '0.00', '-1.22', 'No Tax']);
+  check('named for what it is', pts.rows[1].description.startsWith('Paid by loyalty points'), true);
+  check('the rows add up to what was paid', linesAgreeWithTotal(pts.rows, 9.28), true);
+  check('a bill total no larger than the total paid is ignored', ask({ total: 10.5, tax: 0.87, printedTotal: 10.5 }).offBase, false);
+
   // Whether rows are the same money as the document, which decides whether an
   // automatic split may replace them.
   check('rows that add up agree', linesAgreeWithTotal([{ total: '100' }, { net: '50', tax: '5' }], 155), true);

@@ -514,6 +514,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           gstRegNo: extracted?.supplierGstRegNo || '',
           taxLabel: extracted?.taxLabel || '',
           printedRate: extracted?.taxRatePrinted || 0,
+          printedTotal: extracted?.printedTotal || 0,
           gstRegNoRemembered: extracted?.supplierGstRegNoRemembered ? extracted.supplierGstRegNoFrom || 'document' : false,
           // A motor vehicle expense is No Tax, by its account or by the paper.
           category: codedTo,
@@ -560,6 +561,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           total: cur?.total,
           tax: p.tax ?? cur?.tax,
           rate: rateOutcome.printedRate,
+          printedTotal: rateOutcome.printedTotal || 0,
           category: p.category ?? cur?.category ?? '',
           taxRateName: p.taxRate,
           noTaxName: noTaxRateName(visibleTaxRates) || 'No Tax',

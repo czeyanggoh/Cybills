@@ -351,6 +351,7 @@ function taxRateDecision({
   gstRegNo = '',
   taxLabel = '',
   printedRate = 0,
+  printedTotal = 0,
 }) {
   const list = Array.isArray(rates) ? rates : [];
   const everything = Array.isArray(allRates) && allRates.length ? allRates : list;
@@ -423,12 +424,20 @@ function taxRateDecision({
   // invoice falls outside every vintage and is coded No Tax for being foreign.
   // The SGD pair the document itself prints doesn't drift, so it decides.
   const stated = baseNet > 0 && baseGst > 0;
-  const worked = stated ? (baseGst / baseNet) * 100 : (x / net) * 100;
+  // The bill's own total where the amount PAID is less than it — part settled
+  // by loyalty points, a voucher or a discount taken off afterwards. The GST was
+  // charged on the bill, so the rate is read from the bill: a Cold Storage
+  // receipt printing 10.50 with GST AMT 0.87, paid "yuu Points 1.22 / MASTER
+  // 9.28", is 9%, where 0.87 on the 8.41 paid by card reads as 10.3% and
+  // matches nothing (29 Oct 2026).
+  const pt = num(printedTotal);
+  const gross = !stated && pt > t && pt - x > 0 ? pt : 0;
+  const worked = stated ? (baseGst / baseNet) * 100 : (x / (gross ? gross - x : net)) * 100;
   // Said in whichever currency the percentage was read from, so the sentence can
   // be checked against the document rather than only believed.
   const shown = stated
     ? { cur: `${statedCur} `, tax: baseGst, net: baseNet }
-    : { cur: '', tax: x, net };
+    : { cur: '', tax: x, net: gross ? gross - x : net };
   // A rate the document PRINTS beats the one worked out from the money: the
   // supplier states what was charged, the arithmetic infers it, and the two
   // part company whenever the tax base is not the net paid — a discount taken
@@ -438,8 +447,11 @@ function taxRateDecision({
   const givenRate = num(printedRate);
   const printed = givenRate > 0 && givenRate < 100 ? givenRate : printedTaxRate(taxLabel);
   const pct = printed || worked;
-  const offBase = printed > 0 && Math.abs(printed - worked) > TOLERANCE;
-  const baseNote = offBase
+  const offBase = (printed > 0 && Math.abs(printed - worked) > TOLERANCE) || gross > 0;
+  const baseNote = gross
+    ? ` The bill prints ${gross.toFixed(2)} including GST, and ${(gross - t).toFixed(2)} of it was not paid in money (loyalty points, a voucher or a discount), ` +
+      `so the GST was charged on the bill rather than on the ${t.toFixed(2)} paid.`
+    : offBase
     ? ` The document prints ${pctOf(printed)}, and ${shown.cur}${shown.tax.toFixed(2)} on ${shown.cur}${shown.net.toFixed(2)} works out at ${pctOf(worked)} — ` +
       'so the GST was charged on a different base from the net paid (a discount taken off after tax, or a part of the bill outside GST). ' +
       'The printed rate decides; check the Tax amount against the paper.'
@@ -450,7 +462,7 @@ function taxRateDecision({
   // What was found, beside the answer, so a caller can act on the disagreement
   // — splitByPrintedRate turns an off-base document into the two lines that
   // each carry exactly their own rate.
-  const facts = { printedRate: printed || 0, workedRate: worked, offBase };
+  const facts = { printedRate: printed || 0, workedRate: worked, offBase, printedTotal: gross };
 
   // Tax IS charged — but only Singapore GST from a registered supplier can be
   // claimed. Without that evidence the tax is part of the cost, not input tax:
@@ -599,15 +611,24 @@ function taxRateDecision({
 // nothing. `rows` are grid rows (net / tax / total as strings); `note` is the
 // sentence for the Reason.
 const money = (n) => (Math.round(n * 100) / 100).toFixed(2);
-export function splitByPrintedRate({ total, tax, rate, category = '', taxRateName = '', noTaxName = 'No Tax' } = {}) {
+//
+// Where the bill's own total is known (`printedTotal`, larger than what was
+// paid), the lines are taken straight off it rather than worked out from the
+// rate: the bill as printed, and what was not paid in money as a negative line.
+// 10.50 with 0.87 of GST, paid 1.22 in points and 9.28 by card, is 9.63 + 0.87
+// and −1.22 — the paper's own figures, with no rounding of tax ÷ rate in them.
+export function splitByPrintedRate({ total, tax, rate, printedTotal = 0, category = '', taxRateName = '', noTaxName = 'No Tax' } = {}) {
   const t = num(total);
   const x = num(tax);
   const r = Number(rate) || 0;
-  if (!(t > 0 && x > 0 && r > 0)) return null;
-  const base = Math.round((x * 100 * 100) / r) / 100; // net the tax was charged on
-  const rest = Math.round((t - x - base) * 100) / 100; // net it was not charged on
+  const pt = num(printedTotal);
+  const gross = pt > t && pt - x > 0 ? pt : 0;
+  if (!(t > 0 && x > 0 && (r > 0 || gross))) return null;
+  // Net the tax was charged on, and net it was not charged on.
+  const base = gross ? Math.round((gross - x) * 100) / 100 : Math.round((x * 100 * 100) / r) / 100;
+  const rest = gross ? Math.round((t - gross) * 100) / 100 : Math.round((t - x - base) * 100) / 100;
   if (!(base > 0) || Math.abs(rest) < 0.005) return null;
-  const pctText = `${Number(r.toFixed(2))}%`;
+  const pctText = `${Number((r || (x / base) * 100).toFixed(gross && !r ? 0 : 2))}%`;
   const cat = String(category || '');
   const rows = [
     {
@@ -621,7 +642,9 @@ export function splitByPrintedRate({ total, tax, rate, category = '', taxRateNam
       taxRate: String(taxRateName || ''),
     },
     {
-      description: rest < 0 ? 'Discount taken off after tax (outside the GST base)' : 'Part of the bill outside GST',
+      description: gross
+        ? 'Paid by loyalty points, a voucher or a discount (outside the GST base)'
+        : rest < 0 ? 'Discount taken off after tax (outside the GST base)' : 'Part of the bill outside GST',
       category: cat,
       project: '',
       project2: '',
@@ -633,7 +656,7 @@ export function splitByPrintedRate({ total, tax, rate, category = '', taxRateNam
   ];
   const note =
     ` Split into two lines: ${money(base)} taxed at ${pctText}, and ${money(rest)} ` +
-    (rest < 0 ? 'of discount taken off after tax' : 'outside GST') +
+    (gross ? 'not paid in money (points, a voucher or a discount)' : rest < 0 ? 'of discount taken off after tax' : 'outside GST') +
     ' — see Line items.';
   return { rows, note };
 }

@@ -92,6 +92,7 @@ export function readDecisions(
     // The rate the supplier printed beats the one the money implies — see
     // printedTaxRate in taxRateRules.js.
     printedRate: ex.taxRatePrinted || 0,
+    printedTotal: ex.printedTotal || 0,
     gstRegNoRemembered: ex.supplierGstRegNoRemembered ? ex.supplierGstRegNoFrom || 'document' : false,
     // A motor vehicle expense is No Tax — by the account it will carry, or by
     // the reader's judgement of the paper (src/lib/motorVehicle.js).
@@ -183,6 +184,7 @@ export function readDecisions(
           total: exTotal,
           tax: exTaxOut,
           rate: rate.printedRate,
+          printedTotal: rate.printedTotal || 0,
           category: ex.category || current.category || '',
           taxRateName: inferredRate,
           noTaxName: noTaxRateName(taxRates) || 'No Tax',

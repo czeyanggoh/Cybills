@@ -34,7 +34,7 @@ const stub = http.createServer((req, res) => {
       description: 'KTV session with food and drinks after a 200.00 discount written on the bill',
       dueDate: '', period: '', cardLast4: '9482', supplierGstRegNo: '', taxLabel: 'GST-9%', billedTo: '', billedToRegNo: '',
       customer: '', rebillable: false, taxRate: '', taxRateReason: '', project: '', projectReason: '',
-      baseCurrency: '', baseTotal: 0, baseTax: 0, exchangeRate: 0, lineItems: [],
+      baseCurrency: '', baseTotal: 0, baseTax: 0, exchangeRate: 0, lineItems: [], printedTotal: 993.38,
     });
     res.setHeader('content-type', 'application/json');
     res.end(
@@ -101,10 +101,12 @@ check('points or a voucher: the card part is the total', system.includes('settle
 check('…and the GST is never zeroed for it', system.includes('never 0 because the total moved'), true);
 check('the tax field is no longer bare "0 if none shown"', schema.includes('Tax / GST amount; 0 if none shown'), false);
 check('the tax field keeps the printed GST when the total is smaller', schema.includes('It stays the printed figure even where `total` is a smaller amount actually paid'), true);
+check('the bill total is asked for when less was paid', schema.includes('"printedTotal"') && system.includes('put that printed total in `printedTotal`'), true);
 
 // --- what the reader answers is what is stored --------------------------------
 check('the paid total comes back', data?.total, 793.38);
 check('beside the printed GST', data?.tax, 74.57);
+check('the bill total read comes back', data?.printedTotal, 993.38);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, server, stub);
