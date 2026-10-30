@@ -24,7 +24,7 @@ import SplitItemModal from '@/components/SplitItemModal';
 import AddToClaimModal from '@/components/AddToClaimModal';
 import PublishToXeroModal from '@/components/PublishToXeroModal';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
-import { addItemToClaim, createClaim, docToClaimTxn, removeItemsFromClaim, useClaims } from '@/lib/claimStore';
+import { addItemToClaim, createClaim, docToClaimTxn, moveItemsToClaim, removeItemsFromClaim, useClaims } from '@/lib/claimStore';
 import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { trustSender, fetchDocumentLink, useDocumentReplies, saveEmailAsPdf } from '@/lib/mailbox';
@@ -1436,12 +1436,43 @@ export default function CostDetail() {
   const entityMoveBlocked = doc.xeroInvoiceId
     ? 'Already published to Xero — clear the Xero link (and void the bill in Xero) before moving it.'
     : claimForItem || doc.status === 'expenseclaim'
-      ? 'On an expense claim, which posts this cost to Xero as its own bill. Take it off the claim first.'
+      ? 'On an expense claim, which posts this cost to Xero as its own bill. Move it to another claim, or take it off the claim first.'
       : doc.status === 'merged'
         ? 'Merged into another document, which now carries its money. Unmerge it first.'
         : !doc.persisted
           ? 'Save this document first.'
           : '';
+  // Another claim, instead of leaving this one first. Only where both ends can
+  // take the change: this claim must not be approved or already in Xero (its
+  // money is in the ledger as a line of that bill), and the target must be an
+  // open claim of the same entity. The server adds to the target before it takes
+  // the item off this one, so the document never drops back into Costs.
+  const claimMoveTargets =
+    mayClaim && claimForItem && !claimLocked && !claimInXero
+      ? claims.filter(
+          (c) => c.id !== claimForItem.id && !c.archived && !c.deleted && c.approvalStatus !== 'approved' && !c.xeroInvoiceId
+        )
+      : [];
+  const moveToClaim = async (target) => {
+    setMoveOpen(false);
+    if (claimLeaving) return;
+    const line = (claimForItem.transactions || []).find((t) => isItemKey(t.itemId, id));
+    if (!line) return;
+    if (!window.confirm(`Move this document from expense claim ${claimRef(claimForItem)} to ${claimRef(target)} (${target.claimFor} — ${target.name || 'Expense claim'})?`)) return;
+    setClaimLeaving(true);
+    try {
+      await moveItemsToClaim(claimForItem.id, target.id, [line]);
+      setClaimNote(`Moved to expense claim ${claimRef(target)}.`);
+    } catch (err) {
+      window.alert(
+        err?.code === 'claim_locked'
+          ? 'One of those claims is approved, so its items can’t be changed. Unapprove it first.'
+          : err?.message || 'Could not move this document to that claim — please try again.'
+      );
+    } finally {
+      setClaimLeaving(false);
+    }
+  };
   const moveToOrg = (org) => {
     setMoveOpen(false);
     if (entityMoveBlocked) return;
@@ -2426,6 +2457,31 @@ Publish anyway?`
                     {dest.label}
                   </button>
                 ))}
+                {claimForItem && (
+                  <>
+                    <div className="mt-1 border-t px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Another expense claim
+                    </div>
+                    {claimMoveTargets.length === 0 && (
+                      <div className="px-3 pb-1.5 text-xs text-muted-foreground">
+                        {claimLocked || claimInXero
+                          ? 'This claim is approved or already in Xero, so its items can’t be moved.'
+                          : 'No other open claim to move it to.'}
+                      </div>
+                    )}
+                    {claimMoveTargets.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        disabled={claimLeaving}
+                        onClick={() => moveToClaim(c)}
+                        className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <span className="truncate">{c.claimFor} — {c.name || 'Expense claim'}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
                 {entityDests.length > 0 && (
                   <>
                     <div className="mt-1 border-t px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
