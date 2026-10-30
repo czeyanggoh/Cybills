@@ -1573,6 +1573,13 @@ would not otherwise offer. The claim line is written BEFORE the document's
 status, so a failure leaves the document in the inbox rather than marked as
 claimed by a claim that never took it — which is invisible in both places.
 
+**Add to expense claim also moves.** A document is on one claim at a time, so on
+one already claimed the same button MOVES it (`moveFrom` on `AddToClaimModal`):
+another open claim, or a new one starting out made out to the same person — the
+receipt reimbursed on its own, matching the payment. The target is added to
+before the source lets go, so it never drops back into Costs. Disabled, saying
+why, while the claim is approved or in Xero.
+
 **Taking an item off a claim, and DELETING the claim, both hand the documents
 back to the Costs tab.** Removing one line used to ARCHIVE it, on the reasoning
 that "this doesn't belong on this claim" should not put it back at the top of the

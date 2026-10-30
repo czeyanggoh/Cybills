@@ -486,16 +486,20 @@ export default function CostDetail() {
     : [];
   const claimForItem = claims.find((c) => (c.transactions || []).some((t) => isItemKey(t.itemId, id)));
   // Why this document can't go on a claim, or '' when it can. A document already
-  // ON a claim was the gap: the page knew (it draws the banner from the very
-  // same lookup) but the button stayed live, so the obvious thing to try was
-  // adding it a second time.
+  // ON a claim can still go onto another: a document is on one claim at a time,
+  // so the button MOVES it (the server adds to the target before it takes the
+  // item off this one, so it never drops back into Costs). Only where this end
+  // can let go: an approved claim is locked, and one in Xero has this money in
+  // the ledger as a line of its bill.
   const mayClaim = mayClaimRole && !isSales;
   const claimBlocked = doc?.xeroInvoiceId
     ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.`
     : doc?.paperworkMatch
       ? 'Sent to a transaction already in Xero — it can’t also go on an expense claim.'
-    : claimForItem
-      ? `Already on expense claim ${claimRef(claimForItem)}. Take it off that claim first to move it.`
+    : claimForItem?.approvalStatus === 'approved'
+      ? `On approved expense claim ${claimRef(claimForItem)}, so it can’t be moved. Unapprove the claim first.`
+    : claimForItem?.xeroInvoiceId
+      ? `On expense claim ${claimRef(claimForItem)}, which is already in Xero, so it can’t be moved.`
       : '';
   // Take this document off its claim and put it back in Costs — the claim
   // page's Remove, offered on the page somebody is already looking at the
@@ -1152,6 +1156,13 @@ export default function CostDetail() {
   // opened it FROM — the same one Previous / Next walk ("7 / 21") — else the
   // previous one; only a document opened with no list behind it falls back to
   // the inbox order, and then to the Costs list when nothing else is left.
+  // A document just added is finished with, so Close walks on to the next. One
+  // just MOVED was already on a claim and was never part of that walk.
+  const closeClaimAdded = () => {
+    const moved = claimAdded?.moved;
+    setClaimAdded(null);
+    if (!moved) goToNextInbox();
+  };
   const goToNextInbox = () => {
     const walkedId = walk.next ?? walk.prev;
     if (walkedId !== null && walkedId !== undefined && String(walkedId) !== String(id)) {
@@ -1436,43 +1447,12 @@ export default function CostDetail() {
   const entityMoveBlocked = doc.xeroInvoiceId
     ? 'Already published to Xero — clear the Xero link (and void the bill in Xero) before moving it.'
     : claimForItem || doc.status === 'expenseclaim'
-      ? 'On an expense claim, which posts this cost to Xero as its own bill. Move it to another claim, or take it off the claim first.'
+      ? 'On an expense claim, which posts this cost to Xero as its own bill. Take it off the claim first.'
       : doc.status === 'merged'
         ? 'Merged into another document, which now carries its money. Unmerge it first.'
         : !doc.persisted
           ? 'Save this document first.'
           : '';
-  // Another claim, instead of leaving this one first. Only where both ends can
-  // take the change: this claim must not be approved or already in Xero (its
-  // money is in the ledger as a line of that bill), and the target must be an
-  // open claim of the same entity. The server adds to the target before it takes
-  // the item off this one, so the document never drops back into Costs.
-  const claimMoveTargets =
-    mayClaim && claimForItem && !claimLocked && !claimInXero
-      ? claims.filter(
-          (c) => c.id !== claimForItem.id && !c.archived && !c.deleted && c.approvalStatus !== 'approved' && !c.xeroInvoiceId
-        )
-      : [];
-  const moveToClaim = async (target) => {
-    setMoveOpen(false);
-    if (claimLeaving) return;
-    const line = (claimForItem.transactions || []).find((t) => isItemKey(t.itemId, id));
-    if (!line) return;
-    if (!window.confirm(`Move this document from expense claim ${claimRef(claimForItem)} to ${claimRef(target)} (${target.claimFor} — ${target.name || 'Expense claim'})?`)) return;
-    setClaimLeaving(true);
-    try {
-      await moveItemsToClaim(claimForItem.id, target.id, [line]);
-      setClaimNote(`Moved to expense claim ${claimRef(target)}.`);
-    } catch (err) {
-      window.alert(
-        err?.code === 'claim_locked'
-          ? 'One of those claims is approved, so its items can’t be changed. Unapprove it first.'
-          : err?.message || 'Could not move this document to that claim — please try again.'
-      );
-    } finally {
-      setClaimLeaving(false);
-    }
-  };
   const moveToOrg = (org) => {
     setMoveOpen(false);
     if (entityMoveBlocked) return;
@@ -2457,31 +2437,6 @@ Publish anyway?`
                     {dest.label}
                   </button>
                 ))}
-                {claimForItem && (
-                  <>
-                    <div className="mt-1 border-t px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Another expense claim
-                    </div>
-                    {claimMoveTargets.length === 0 && (
-                      <div className="px-3 pb-1.5 text-xs text-muted-foreground">
-                        {claimLocked || claimInXero
-                          ? 'This claim is approved or already in Xero, so its items can’t be moved.'
-                          : 'No other open claim to move it to.'}
-                      </div>
-                    )}
-                    {claimMoveTargets.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        disabled={claimLeaving}
-                        onClick={() => moveToClaim(c)}
-                        className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <span className="truncate">{c.claimFor} — {c.name || 'Expense claim'}</span>
-                      </button>
-                    ))}
-                  </>
-                )}
                 {entityDests.length > 0 && (
                   <>
                     <div className="mt-1 border-t px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -3429,10 +3384,29 @@ Publish anyway?`
       />
       <AddToClaimModal
         open={claimOpen}
+        moveFrom={claimForItem || null}
         onClose={() => setClaimOpen(false)}
         onAdd={async ({ claimId, newClaim }) => {
           setClaimOpen(false);
           setAiError('');
+          if (claimForItem) {
+            const line = (claimForItem.transactions || []).find((t) => isItemKey(t.itemId, id));
+            setClaimLeaving(true);
+            try {
+              const target = newClaim ? await createClaim(newClaim) : claims.find((c) => c.id === claimId);
+              await moveItemsToClaim(claimForItem.id, target.id, [line]);
+              setClaimAdded({ id: target.id, name: target.name || 'Expense claim', moved: true });
+            } catch (err) {
+              setAiError(
+                err?.code === 'claim_locked'
+                  ? 'One of those claims is approved, so its items can’t be changed. Unapprove it first.'
+                  : err?.message || 'Could not move this document to that claim — please try again.'
+              );
+            } finally {
+              setClaimLeaving(false);
+            }
+            return;
+          }
           // Link this cost to the chosen (or newly created) claim so it shows
           // up as a line item there, then mark it as in an expense claim.
           try {
@@ -3476,12 +3450,12 @@ Publish anyway?`
 
       {claimAdded && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-foreground/20" onClick={() => { setClaimAdded(null); goToNextInbox(); }} aria-hidden="true" />
+          <div className="absolute inset-0 bg-foreground/20" onClick={closeClaimAdded} aria-hidden="true" />
           <div className="relative w-full max-w-sm overflow-hidden rounded-lg bg-background shadow-xl">
             <div className="flex flex-col items-center gap-3 p-6 text-center">
               <CheckCircle2 className="h-10 w-10 text-emerald-600" />
               <p className="text-sm">
-                Item added to expense claim <span className="font-medium">{claimAdded.name}</span>.
+                Item {claimAdded.moved ? 'moved' : 'added'} to expense claim <span className="font-medium">{claimAdded.name}</span>.
               </p>
             </div>
             <div className="flex items-center justify-center gap-2 border-t px-6 py-4">
@@ -3494,7 +3468,7 @@ Publish anyway?`
               </button>
               <button
                 type="button"
-                onClick={() => { setClaimAdded(null); goToNextInbox(); }}
+                onClick={closeClaimAdded}
                 className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted"
               >
                 Close

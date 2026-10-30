@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useClaims, isClaimArchived, formatClaimDate, endOfMonthFor, todayIso } from '@/lib/claimStore';
+import { claimRef } from '@/lib/exportFormat';
 import { useClaimantNames, isAdminAccess } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
 import { useOrganisations, getActiveOrganisationId } from '@/lib/organisations';
@@ -9,13 +10,16 @@ import ComboSelect from '@/components/ComboSelect';
 import { cn } from '@/lib/utils';
 
 // "Add item to expense claim" dialog — add to an existing claim or spin up a
-// new one. UI-only: confirming closes and reports the chosen claim.
+// new one. UI-only: confirming closes and reports the chosen claim. Given
+// `moveFrom` (the claim the document already sits on) the same choice MOVES it:
+// a document is on one claim at a time, so adding it elsewhere is taking it off
+// that one.
 // The last day of the month we are in, as the date input wants it. The rule
 // lives in claimDate.js, because the server applies the same one to a Standard
 // user's claim and the two must not disagree.
 const endOfThisMonth = () => endOfMonthFor(todayIso());
 
-export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
+export default function AddToClaimModal({ open, onClose, onAdd, count = 1, moveFrom = null }) {
   const { membership, googleEnabled } = useAuth();
   // Not theirs to move: a Standard user's claim closes at the end of the month
   // it is raised in, and the server settles it whatever this sends.
@@ -34,7 +38,14 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
   // including ones already published to Xero, where a line added here would
   // never reach the ledger, and approved ones, which the server refuses outright
   // (409 claim_locked). Offering those is offering a dead end.
-  const claims = allClaims.filter((c) => !isClaimArchived(c) && c.approvalStatus !== 'approved');
+  const claims = allClaims.filter(
+    (c) =>
+      !isClaimArchived(c) &&
+      c.approvalStatus !== 'approved' &&
+      // Moving: not the claim it is already on, and not one with a bill in Xero,
+      // where the line would not reach the ledger until somebody updated it.
+      (!moveFrom || (c.id !== moveFrom.id && !c.xeroInvoiceId))
+  );
   // Named, then told apart. Three claims called "Expense claim" for the same
   // person are indistinguishable on name alone, so the person, the date and the
   // total come along — and because the picker searches the label, they are also
@@ -52,6 +63,20 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
   const activeOrg = organisations.find((o) => o.id === getActiveOrganisationId()) || organisations[0];
   const userNames = useClaimantNames({ ownEntity: Boolean(activeOrg?.isPrimary) });
 
+  // Moving is nearly always to another claim for the SAME person — a receipt
+  // paid back on its own, say — so a new claim starts out made out to them, and
+  // with no other claim to choose from there is only the one tab worth opening.
+  const moveFromId = moveFrom?.id;
+  const moveFromClaimant = moveFrom?.claimFor || '';
+  const otherClaims = claims.length;
+  useEffect(() => {
+    if (!open || !moveFromId) return;
+    setMode(otherClaims ? 'existing' : 'new');
+    setClaim('');
+    setNewClaim({ claimFor: moveFromClaimant, name: '', endDate: endOfThisMonth() });
+    // Once per opening: a claims refresh must not throw away what was typed.
+  }, [open, moveFromId]);
+
   if (!open) return null;
 
   const canAdd = mode === 'existing' ? Boolean(claim) : Boolean(newClaim.claimFor);
@@ -62,7 +87,7 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
       <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-y-auto rounded-lg bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h2 className="text-base font-semibold tracking-tight">
-            Add {count} item{count === 1 ? '' : 's'} to expense claim
+            {moveFrom ? 'Move item to another expense claim' : `Add ${count} item${count === 1 ? '' : 's'} to expense claim`}
           </h2>
           <button
             type="button"
@@ -75,6 +100,11 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
         </div>
 
         <div className="p-6">
+          {moveFrom && (
+            <p className="mb-4 text-sm text-muted-foreground">
+              This item comes off expense claim {claimRef(moveFrom)} ({moveFrom.name || 'Expense claim'}) and goes onto the claim you choose.
+            </p>
+          )}
           {/* Existing / New tabs */}
           <div className="mb-5 inline-flex rounded-md border p-0.5 text-sm">
             {[
@@ -127,7 +157,7 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
                 <div className="flex-1">
                   <SearchSelect
                     value={newClaim.claimFor}
-                    options={userNames}
+                    options={moveFromClaimant && !userNames.includes(moveFromClaimant) ? [moveFromClaimant, ...userNames] : userNames}
                     placeholder="Select a person"
                     onChange={(v) => setNewClaim((s) => ({ ...s, claimFor: v }))}
                   />
@@ -174,7 +204,7 @@ export default function AddToClaimModal({ open, onClose, onAdd, count = 1 }) {
             onClick={() => onAdd?.(mode === 'existing' ? { claimId: claim } : { newClaim })}
             className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            Add
+            {moveFrom ? 'Move' : 'Add'}
           </button>
         </div>
       </div>
