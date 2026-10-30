@@ -2196,6 +2196,9 @@ whatsappRouter.get('/threads', (req, res) => {
 });
 
 // GET /api/whatsapp/threads/:submissionId — one conversation, oldest first.
+// `?limit=N` returns only the newest N (still oldest first), with
+// `totalMessages` saying how many there are: a group collecting for months
+// holds hundreds of photos, and drawing every one of them hangs the browser.
 whatsappRouter.get('/threads/:submissionId', (req, res) => {
   const channel = channelById(String(req.params.submissionId ?? ''));
   if (!channel) return res.status(404).json({ error: 'unknown_submission' });
@@ -2203,7 +2206,11 @@ whatsappRouter.get('/threads/:submissionId', (req, res) => {
   if (googleEnabled && (!me || !canAccessOrg(me, channel.orgId))) return res.status(403).json({ error: 'no_client_access' });
 
   const person = channel.userId ? personFor(channel.workspaceId, channel.userId) : null;
+  const all = messagesForChannel(channel.id);
+  const limit = Math.floor(Number(req.query.limit));
+  const shown = limit > 0 ? all.slice(-limit) : all;
   res.json({
+    totalMessages: all.length,
     channel: {
       submissionId: channel.id,
       subject: channel.subject,
@@ -2216,7 +2223,7 @@ whatsappRouter.get('/threads/:submissionId', (req, res) => {
       personName: person ? person.user.name || person.user.email || '' : '',
       entityWide: !channel.userId,
     },
-    messages: messagesForChannel(channel.id).map((m) => {
+    messages: shown.map((m) => {
       // Never the raw sender id. WhatsApp increasingly sends a LID
       // ('127676509610071@lid') — an opaque per-user id, not a number and not
       // convertible to one — so showing it puts a meaningless 15-digit string

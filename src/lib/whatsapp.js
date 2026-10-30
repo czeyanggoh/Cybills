@@ -341,23 +341,33 @@ export function useWhatsappThreads(all = false) {
   return [state, reload];
 }
 
-/** One group's messages, oldest first. `submissionId` empty = nothing to load. */
-export function useWhatsappThread(submissionId) {
-  const [state, setState] = useState({ channel: null, messages: [], canManage: false, loading: Boolean(submissionId), error: '' });
+/** One group's newest `limit` messages, oldest first, and how many it holds
+ * in all (`total`). `submissionId` empty = nothing to load. */
+export function useWhatsappThread(submissionId, limit) {
+  const [state, setState] = useState({ channel: null, messages: [], total: 0, canManage: false, loading: Boolean(submissionId), error: '' });
 
   const reload = useCallback(async () => {
     if (!submissionId) {
-      setState({ channel: null, messages: [], canManage: false, loading: false, error: '' });
+      setState({ channel: null, messages: [], total: 0, canManage: false, loading: false, error: '' });
       return;
     }
     setState((s) => ({ ...s, loading: true }));
     try {
-      const data = await json(`/api/whatsapp/threads/${encodeURIComponent(submissionId)}`, { headers: orgHeaders() });
-      setState({ channel: data.channel ?? null, messages: data.messages ?? [], canManage: Boolean(data.canManage), loading: false, error: '' });
+      const q = limit > 0 ? `?limit=${limit}` : '';
+      const data = await json(`/api/whatsapp/threads/${encodeURIComponent(submissionId)}${q}`, { headers: orgHeaders() });
+      const messages = data.messages ?? [];
+      setState({
+        channel: data.channel ?? null,
+        messages,
+        total: data.totalMessages ?? messages.length,
+        canManage: Boolean(data.canManage),
+        loading: false,
+        error: '',
+      });
     } catch (err) {
-      setState({ channel: null, messages: [], canManage: false, loading: false, error: err.message });
+      setState({ channel: null, messages: [], total: 0, canManage: false, loading: false, error: err.message });
     }
-  }, [submissionId]);
+  }, [submissionId, limit]);
 
   useEffect(() => { reload(); }, [reload]);
   return [state, reload];

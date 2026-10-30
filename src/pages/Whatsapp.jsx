@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Download, FileText, Info, Loader2, MessageCircle, Search, Sparkles, Tag, X } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -173,9 +173,32 @@ function ThreadList() {
   );
 }
 
+const PAGE = 30;
+
 function Thread({ submissionId }) {
   const navigate = useNavigate();
-  const [{ channel, messages, canManage, loading, error }, reload] = useWhatsappThread(submissionId);
+  // The newest PAGE messages, more on request. A group collecting for months
+  // holds hundreds of photos, and drawing them all at once hangs the browser.
+  const [limit, setLimit] = useState(PAGE);
+  const [{ channel, messages, total, canManage, loading, error }, reload] = useWhatsappThread(submissionId, limit);
+  // Opened at the newest message, the way a chat opens — once per group, so
+  // filing or correcting a message further up does not throw the reader to
+  // the bottom. "Show earlier" keeps the message that was at the top in view.
+  const bottomRef = useRef(null);
+  const landed = useRef('');
+  const keepInView = useRef('');
+  useEffect(() => { setLimit(PAGE); landed.current = ''; }, [submissionId]);
+  useEffect(() => {
+    if (loading || !messages.length) return;
+    if (keepInView.current) {
+      document.querySelector(`[data-wa-id="${CSS.escape(keepInView.current)}"]`)?.scrollIntoView({ block: 'start' });
+      keepInView.current = '';
+    } else if (landed.current !== submissionId) {
+      bottomRef.current?.scrollIntoView({ block: 'end' });
+      landed.current = submissionId;
+    }
+  }, [loading, messages, submissionId]);
+  const earlier = Math.max(0, total - messages.length);
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
   // The attachment being looked at, or null. In-window rather than a new tab:
@@ -251,6 +274,18 @@ function Thread({ submissionId }) {
         {!loading && !error && messages.length === 0 && (
           <p className="py-12 text-center text-sm text-gray-500">Nothing has arrived in this group yet.</p>
         )}
+        {earlier > 0 && (
+          <div className="mb-3 text-center">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => { keepInView.current = messages[0]?.id || ''; setLimit((n) => n + PAGE); }}
+              className="rounded-full bg-white/80 px-3 py-1 text-xs text-gray-600 shadow-sm hover:bg-white disabled:opacity-60"
+            >
+              Show earlier messages ({earlier} more)
+            </button>
+          </div>
+        )}
         <div className="space-y-2">
           {messages.map((m) => (
             <MessageBubble
@@ -267,6 +302,7 @@ function Thread({ submissionId }) {
             />
           ))}
         </div>
+        <div ref={bottomRef} />
       </div>
 
       {preview && <AttachmentPreview m={preview} onClose={() => setPreview(null)} />}
@@ -327,7 +363,7 @@ function MessageBubble({ m, canManage, busy, onCorrect, onFile, onPreview }) {
   const isOut = m.direction === 'out';
   const hasFile = Boolean(m.r2Key || m.fileUrl);
   return (
-    <div className={cn('flex', isOut ? 'justify-end' : 'justify-start')}>
+    <div data-wa-id={m.id} className={cn('flex', isOut ? 'justify-end' : 'justify-start')}>
       <div className={cn('max-w-[70%] rounded-lg px-3 py-2 text-sm shadow-sm', isOut ? 'bg-green-100 text-gray-900' : 'bg-white text-gray-900')}>
         {/* Name and the number to reply on. The raw WhatsApp id is NOT printed:
             a LID is 15 digits and reads as a second phone number beside the real
@@ -414,7 +450,9 @@ function Attachment({ m, onPreview }) {
   if (type.startsWith('image/')) {
     return (
       <button type="button" onClick={onPreview} className="mb-1.5 block">
-        <img src={href} alt={m.fileName || 'image'} className="max-h-56 max-w-full rounded-md object-cover" />
+        {/* A fixed height, so a photo arriving after the thread has opened at
+            its newest message does not push that message off the screen. */}
+        <img src={href} alt={m.fileName || 'image'} decoding="async" className="h-56 w-auto max-w-full rounded-md object-contain" />
       </button>
     );
   }
