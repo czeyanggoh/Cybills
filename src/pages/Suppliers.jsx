@@ -10,7 +10,7 @@ import SupplierBulkEditModal from '@/components/SupplierBulkEditModal';
 import SupplierMergeModal from '@/components/SupplierMergeModal';
 import { useCategoryOptions, useXeroSuppliers, useXeroCustomers, useXeroProjectOptions, useXeroPaymentMethods, useVisibleTaxRates } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
-import { noTaxRateName } from '@/lib/extractionSettings';
+import { noTaxRateName, taxForCode } from '@/lib/extractionSettings';
 import { useCostsDocs } from '@/lib/costsData';
 import { updateBill } from '@/lib/bills';
 import { CURRENCIES, clearSupplierRule, getSupplierRule, setSupplierRule, supplierRulePatch, supplierRuleCount, useSupplierRules } from '@/lib/supplierRules';
@@ -118,12 +118,14 @@ export default function Suppliers() {
 
   // A tax rate carries the tax amount it implies, worked out from each
   // document's OWN total — the same sum the inline Tax rate cell does.
-  const taxFor = (rateName, total) => {
-    const r = Number(taxRateSource.find((t) => t.name === rateName)?.rate ?? 0);
-    const t = Number(total) || 0;
-    const tax = r > 0 && t > 0 ? (t * r) / (100 + r) : 0;
-    return tax ? tax.toFixed(2) : '0.00';
-  };
+  // A code at the rate the paper prints keeps the GST it printed (taxForCode).
+  const taxFor = (rateName, total, doc) =>
+    taxForCode({
+      total,
+      tax: doc?.tax,
+      rate: Number(taxRateSource.find((t) => t.name === rateName)?.rate ?? 0),
+      taxLabel: doc?.taxLabel,
+    });
 
   // Bulk edit: one standing rule written across every selected supplier. Rules
   // are instructions for the documents that arrive NEXT, so nothing in the inbox

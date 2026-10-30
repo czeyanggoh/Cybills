@@ -138,6 +138,26 @@ const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
 const TOLERANCE = 0.6;
 const pctOf = (n) => `${Number(n).toFixed(1)}%`;
 
+// The tax amount a tax code brings with it when somebody (or a supplier rule)
+// puts that code on a document: total × r/(100 + r) — EXCEPT where the paper
+// already states the GST at that very rate. A HaveFun KTV bill prints "GST-9%
+// 74.57" and then has 200.00 written off it, so 793.38 was paid; the supplier
+// rule coding it Standard-Rated recomputed 9/109 of 793.38 = 65.51 over the
+// printed 74.57, and the document could not keep the GST it was charged. The
+// printed figure is a fact; the sum is only an inference from the total, which
+// is wrong whenever a discount or a points payment came off after tax. So a
+// code whose rate matches the printed percentage keeps the tax already there.
+// Returns a string to 2 places, the shape the form fields hold.
+export function taxForCode({ total, tax, rate, taxLabel } = {}) {
+  const r = num(rate);
+  const t = num(total);
+  if (!(r > 0) || !(t > 0)) return '0.00';
+  const current = num(tax);
+  const printed = printedTaxRate(taxLabel);
+  if (current > 0 && current < t && printed > 0 && Math.abs(printed - r) < TOLERANCE) return current.toFixed(2);
+  return ((t * r) / (100 + r)).toFixed(2);
+}
+
 // A tax code that carries NO tax — so a document coded to it must record a tax
 // amount of 0, whoever chose the code.
 //

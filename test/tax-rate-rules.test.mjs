@@ -14,6 +14,7 @@ import {
   linesAgreeWithTotal,
   taxRateSide,
   taxRatesForSide,
+  taxForCode,
 } from '../src/lib/taxRateRules.js';
 
 let failures = 0;

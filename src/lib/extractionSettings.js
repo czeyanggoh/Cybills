@@ -175,4 +175,5 @@ export {
   taxRateOutcome,
   noTaxRateName,
   zeroTaxRate,
+  taxForCode,
 } from '@/lib/taxRateRules';

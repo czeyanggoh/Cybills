@@ -56,7 +56,7 @@ import TeachRule from '@/components/TeachRule';
 import { useDocsOfKind, rowsFor, isInInbox } from '@/lib/costsData';
 import { readWalk, walkPosition } from '@/lib/listView';
 import { totalOk, counterpartyLabel, effectiveDate, dateFromSubmission } from '@/lib/readiness';
-import { useExtractionSettings, noTaxRateName } from '@/lib/extractionSettings';
+import { useExtractionSettings, noTaxRateName, taxForCode } from '@/lib/extractionSettings';
 import { readDecisions, ruleLineRows } from '@/lib/reRead';
 import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
@@ -891,10 +891,7 @@ export default function CostDetail() {
     // A tax code carries the tax it implies, worked out from THIS document's
     // total — the same sum the Tax rate field does.
     if (patch.taxRate) {
-      const r = rateFor(patch.taxRate);
-      const t = num(data.total);
-      const tax = r > 0 && t > 0 ? (t * r) / (100 + r) : 0;
-      patch.tax = tax ? tax.toFixed(2) : '0.00';
+      patch.tax = taxForCode({ total: data.total, tax: data.tax, rate: rateFor(patch.taxRate), taxLabel: data.taxLabel ?? doc?.taxLabel });
     }
     const next = { supplier: named, ...patch };
     setData((d) => ({ ...d, ...next }));
@@ -1110,10 +1107,7 @@ export default function CostDetail() {
     if (patch.dueDate && !rule?.dueMode && data.dueDate) delete patch.dueDate;
     // A tax code brings the tax it implies, from this document's own total.
     if (patch.taxRate) {
-      const r = rateFor(patch.taxRate);
-      const t = num(data.total);
-      const tax = r > 0 && t > 0 ? (t * r) / (100 + r) : 0;
-      patch.tax = tax ? tax.toFixed(2) : '0.00';
+      patch.tax = taxForCode({ total: data.total, tax: data.tax, rate: rateFor(patch.taxRate), taxLabel: data.taxLabel ?? doc?.taxLabel });
     }
     const fields = Object.keys(patch).filter((k) => k !== 'tax');
     const categoryReason = supplierRuleCategoryReason(rule, data.supplier);
@@ -1679,9 +1673,7 @@ Publish anyway?`
         : 'Left blank by hand. A re-read decides the code again from the document.'
     );
     const r = rateFor(name);
-    const total = num(data.total);
-    const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
-    set('tax', tax ? tax.toFixed(2) : '0.00');
+    set('tax', taxForCode({ total: data.total, tax: data.tax, rate: r, taxLabel: data.taxLabel ?? doc?.taxLabel }));
     // A code carrying no tax means no tax anywhere on the document: the rows
     // give theirs up into their own cost, each still worth what it was worth.
     // Otherwise the lines say 65.25 while the document says 0.00, and the

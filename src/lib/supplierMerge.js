@@ -22,7 +22,7 @@ const norm = (s) => String(s ?? '').trim().toLowerCase();
 //   keep        — the name to keep
 //   mergedAway  — the names being merged into it
 //   rulePatch   — the kept supplier's standing rule, as a field patch
-//   taxFor      — (rateName, total) => tax string, when the rule sets a tax rate
+//   taxFor      — (rateName, total, doc) => tax string, when the rule sets a tax rate
 //
 // Returns { moves, skipped, unchanged }: `moves` is [{ id, patch }] ready to
 // send, `skipped` the published documents that must be left alone.
@@ -46,7 +46,7 @@ export function planSupplierMerge({ docs = [], keep = '', mergedAway = [], ruleP
     // Only stored documents can be patched; one still being read has no row yet.
     if (d?.persisted === false) continue;
     const patch = { supplier: keptName, ...rulePatch };
-    if (patch.taxRate && typeof taxFor === 'function') patch.tax = taxFor(patch.taxRate, d?.total);
+    if (patch.taxRate && typeof taxFor === 'function') patch.tax = taxFor(patch.taxRate, d?.total, d);
     moves.push({ id: d.id, patch });
   }
   return { moves, skipped, unchanged: docs.length - moves.length - skipped.length };

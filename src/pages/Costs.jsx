@@ -33,7 +33,7 @@ import {
   useActiveOrganisation,
 } from '@/lib/organisations';
 import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
-import { useExtractionSettings, noTaxRateName, publishStatusLabel } from '@/lib/extractionSettings';
+import { useExtractionSettings, noTaxRateName, publishStatusLabel, taxForCode } from '@/lib/extractionSettings';
 import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument, retypeIfPaymentProof } from '@/lib/reRead';
 import { isPaymentProof } from '@/lib/paymentProof';
@@ -1135,15 +1135,14 @@ export default function Costs() {
   // and persists — replaces the old fixed "Extracted amount" placeholder.
   const changeTaxRate = (d, name) => {
     const r = Number(taxRates.find((t) => t.name === name)?.rate ?? 0);
-    const total = toNum(d.total);
-    const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
+    const tax = taxForCode({ total: d.total, tax: d.tax, rate: r, taxLabel: d.taxLabel });
     // Choosing the blank option is a decision, and it is recorded as one:
     // an empty tax rate on its own is also what a reader leaves behind when it
     // has no code to offer, and the two must not look alike — otherwise the
     // listing's backfill either overrules this person or never repairs those.
     const patch = {
       taxRate: name,
-      tax: tax ? tax.toFixed(2) : '0.00',
+      tax,
       taxRateCleared: !name,
       // …and a code they PICKED is a decision too, held against a later re-read
       // the same way the blank is held against the backfill.
@@ -1359,9 +1358,7 @@ export default function Costs() {
         // rate cell does.
         if ('taxRate' in p) {
           const r = Number(taxRates.find((t) => t.name === p.taxRate)?.rate ?? 0);
-          const total = toNum(d.total);
-          const tax = r > 0 && total > 0 ? (total * r) / (100 + r) : 0;
-          p.tax = tax ? tax.toFixed(2) : '0.00';
+          p.tax = taxForCode({ total: d.total, tax: d.tax, rate: r, taxLabel: d.taxLabel });
         }
         if (d.persisted) return updateBill(d.id, p).catch(() => null);
         setDocOverride(d.id, p);
