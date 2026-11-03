@@ -11,7 +11,7 @@ import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } 
 import { withRememberedGstRegNo } from './supplierGst.js';
 import { keepPracticeNoTax } from './practiceNoTax.js';
 import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile, type Bill } from './store.js';
-import { emailAsPdf, emailPdfName } from './emailPdf.js';
+import { emailAsPdf, emailPdfName, htmlToText, looksLikeInvoiceMail } from './emailPdf.js';
 import { storeMailBody } from './mailBody.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
@@ -1293,7 +1293,12 @@ async function deliverMail(
   const trustFrom = trustAddressOf({ from: mail.from, forwardedBy: attached?.by });
   const prior = mailById(messageId);
   const settledAlready = Boolean(prior?.pendingBillId || prior?.documents.length || prior?.linkFetchedAt);
-  const followable = !madeBills.length && !children.length && links.length > 0 && !settledAlready && n8nEnabled();
+  // A mail that IS the invoice — figures typed into the body, nothing attached,
+  // nothing to fetch — is saved as a PDF below rather than waiting on a link or
+  // filing nothing. Its sender asked nothing of a portal, so no trust question.
+  const bodyIsInvoice =
+    !madeBills.length && !children.length && !settledAlready && looksLikeInvoiceMail(mail.subject, mail.text, mail.html);
+  const followable = !madeBills.length && !children.length && links.length > 0 && !settledAlready && n8nEnabled() && !bodyIsInvoice;
   const trusted = followable && isTrustedSender(workspaceId(req), realOrgId, scope, trustFrom);
   const pending =
     followable && !trusted
@@ -1326,6 +1331,24 @@ async function deliverMail(
   });
   if (pending) awaiting.push(pending.displayId);
   created += madeBills.length;
+  if (bodyIsInvoice) {
+    try {
+      const out = await saveEmailAsPdf(req, {
+        scope,
+        orgId: realOrgId,
+        // The words are the paper, not an instruction about it.
+        envelope: { ...envelope, text: '' },
+        body: mail.html ? htmlToText(mail.html) : mail.text,
+        message,
+        fill: null,
+        user,
+        provider: d.provider,
+      });
+      if (out.ok) created += 1;
+    } catch (err) {
+      console.error('[inbound] could not save the email as a PDF', err);
+    }
+  }
 
   // The covering message belongs to the EMAIL, the file name to the
   // attachment — one forward can carry three invoices, and reading all three

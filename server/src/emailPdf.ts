@@ -158,6 +158,20 @@ export async function emailAsPdf(mail: EmailForPdf): Promise<Buffer> {
   return Buffer.from(await pdf.save());
 }
 
+/**
+ * Whether the BODY of a mail is itself an invoice or receipt: a payment
+ * confirmation with the figures typed into it, no attachment and nothing to
+ * fetch. Both halves are required — a document word AND a total with cents —
+ * because a newsletter says "invoice" and a promotion prints prices, but
+ * neither states "Total 14,028.30".
+ */
+export function looksLikeInvoiceMail(subject: string, text: string, html: string): boolean {
+  const body = `${subject}\n${html ? htmlToText(html) : text}`;
+  const word = /\b(tax invoice|invoice|receipt|payment (?:has been )?(?:received|confirmation|successful)|order confirmation|statement of account)\b/i;
+  const total = /\b(?:grand total|total(?: amount| due| paid)?|amount (?:due|paid)|sub ?total)\b[^\n\d]{0,40}(?:[A-Z]{3}|[$€£¥])?\s*\d[\d,]*\.\d{2}\b/i;
+  return word.test(body) && total.test(body);
+}
+
 /** A file name for it: what the sender called the mail, made safe to store. */
 export function emailPdfName(subject: string): string {
   const base = String(subject ?? '')

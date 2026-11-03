@@ -37,7 +37,7 @@ const { ensure, save } = await import('../src/users.ts');
 const { listBills, updateBill } = await import('../src/store.ts');
 const { loadMail } = await import('../src/mailThread.ts');
 const { getBillFile } = await import('../src/storage.ts');
-const { emailAsPdf, htmlToText, emailPdfName } = await import('../src/emailPdf.ts');
+const { emailAsPdf, htmlToText, emailPdfName, looksLikeInvoiceMail } = await import('../src/emailPdf.ts');
 
 const users = ensure('cybm');
 const me = users.find((u) => u.email === 'astridy2004@gmail.com')!;
@@ -86,6 +86,9 @@ check('markup is read as lines, rows and entities', htmlToText(
   '<html><head><style>p{color:red}</style></head><body><p>Order &amp; request</p><table><tr><td>Snack Box</td><td>S$&nbsp;12.00</td></tr></table><ul><li>40 pax</li></ul></body></html>'
 ), 'Order & request\nSnack Box S$ 12.00\n\n- 40 pax');
 check('a subject becomes a safe file name', emailPdfName('Fw: 09 OCTOBER 2026 - Order Request: Snack/Box?'), 'Fw 09 OCTOBER 2026 - Order Request Snack Box.pdf');
+const payHtml = '<p>Invoice No.: #9FUAAPQYS</p><p>Your payment has been received successfully.</p><table><tr><td>Total</td><td>14,028.30</td></tr></table>';
+check('a payment confirmation with its total typed in is an invoice mail', looksLikeInvoiceMail('Payment receipt', '', payHtml.replace('Total</td><td>', 'Total SGD </td><td>')), true);
+check('a newsletter that mentions invoices and prices is not', looksLikeInvoiceMail('Invoice your clients faster', 'Plans from $9.00 a month', ''), false);
 const long = await emailAsPdf({
   from: 'a@b.sg',
   to: 'c@cybills.sg',
