@@ -214,7 +214,7 @@ check('a Standard user cannot approve a draft directly', r.status, 409);
 check('and is told to submit it', r.body.error, 'not_submitted');
 
 r = await post('/draft-martin/approve', MARTIN);
-check('a Business Admin cannot approve their own claim', r.status, 403);
+check('a Business Admin with no manager and publish rights may approve their own claim', r.status, 200);
 
 r = await post('/draft-incomplete/approve', MARTIN);
 check('skipping Submit does not skip its checks', r.body.error, 'incomplete_items');

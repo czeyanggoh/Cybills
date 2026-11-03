@@ -494,8 +494,6 @@ export default function ExpenseClaimDetail() {
     iAmClaimant &&
     mayPublish &&
     !isPracticeTeam(membership, googleEnabled) &&
-    !iAmAdmin &&
-    !canManageBusiness(membership, googleEnabled) &&
     !claim.approver &&
     !directManagerFor(users, claim.claimFor);
   const iAmNamedApprover =

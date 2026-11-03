@@ -1291,7 +1291,8 @@ function mayOverride(req: Request, claim: Claim, me: { email: string; name: stri
   return effectiveRoleFor(member, orgScope(req)) === 'Business Admin';
 }
 
-// A claimant with NOBODY to approve for them may approve their own claim — but
+// A claimant with NOBODY to approve for them may approve their own claim — a
+// Business Admin included, who is the person who would otherwise decide it — but
 // only if they hold the publishing privilege (Users -> Edit privileges). The
 // rule that nobody decides their own claim exists so a claim is looked at by a
 // second person; where the roster names no direct manager there is no second
@@ -1304,8 +1305,6 @@ function mayApproveOwn(req: Request, claim: Claim, me: { email: string; name: st
   const member = memberForSession(req);
   if (!member || member.deactivated || member.practice) return false;
   if (!isClaimantOf(claim, me)) return false;
-  // Admins publish by role and keep the rule that a second person decides.
-  if (effectiveRoleFor(member, orgScope(req)) !== 'Standard') return false;
   if (directManagerFor(workspaceId(req), claim.claimFor)) return false;
   return canPublishToXero(member, orgScope(req));
 }

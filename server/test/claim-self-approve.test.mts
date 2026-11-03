@@ -35,6 +35,8 @@ items.unshift(
   employee('boss', 'Boss Person', 'boss@red.example', {}),
   employee('free', 'Free Agent', 'free@red.example', { canPublish: true }),
   employee('nopub', 'No Publish', 'nopub@red.example', { canPublish: false }),
+  employee('admfree', 'Admin Free', 'admfree@red.example', {}, { role: 'Business Admin' }),
+  employee('admmanaged', 'Admin Managed', 'admmanaged@red.example', {}, { role: 'Business Admin', managerId: 'boss' }),
   employee('managed', 'Managed Person', 'managed@red.example', { canPublish: true }, { managerId: 'boss' })
 );
 save(items);
@@ -49,7 +51,7 @@ const claimRow = (id: string, claimFor: string, extra: Record<string, unknown> =
 });
 writeFileSync(
   join(DATA_DIR, 'claims.json'),
-  JSON.stringify({ items: [claimRow('free-1', 'Free Agent'), claimRow('nopub-1', 'No Publish'), claimRow('managed-1', 'Managed Person')] })
+  JSON.stringify({ items: [claimRow('free-1', 'Free Agent'), claimRow('nopub-1', 'No Publish'), claimRow('managed-1', 'Managed Person'), claimRow('admfree-1', 'Admin Free'), claimRow('admmanaged-1', 'Admin Managed')] })
 );
 
 const app = express();
@@ -87,6 +89,11 @@ check('no manager + may publish: approves their own claim', r.status, 200);
 check('the claim is approved', r.body.claim?.approvalStatus, 'approved');
 check('decided by themselves', r.body.claim?.decidedBy, 'Free Agent');
 check('and the trail says why', /no direct manager/.test(r.body.claim?.history?.[0]?.text ?? ''), true);
+
+r = await post('/admfree-1/approve', as('admfree@red.example', 'Admin Free'));
+check('a Business Admin with no manager approves their own claim', r.status, 200);
+r = await post('/admmanaged-1/approve', as('admmanaged@red.example', 'Admin Managed'));
+check('a Business Admin WITH a manager still cannot', r.status, 403);
 
 server.close();
 if (failures) {
