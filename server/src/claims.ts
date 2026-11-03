@@ -4,7 +4,7 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, addressIn, canAccessOrg, canCreateClaims, canonicalPersonName, effectiveRoleFor, normaliseAddress, orgScope, personNameForEmail, visibleOwnersFor } from './users.js';
+import { directManagerFor, canPublishToXero, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, addressIn, canAccessOrg, canCreateClaims, canonicalPersonName, effectiveRoleFor, normaliseAddress, orgScope, personNameForEmail, visibleOwnersFor } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
 import {
   getBillById,
@@ -1291,6 +1291,25 @@ function mayOverride(req: Request, claim: Claim, me: { email: string; name: stri
   return effectiveRoleFor(member, orgScope(req)) === 'Business Admin';
 }
 
+// A claimant with NOBODY to approve for them may approve their own claim — but
+// only if they hold the publishing privilege (Users -> Edit privileges). The
+// rule that nobody decides their own claim exists so a claim is looked at by a
+// second person; where the roster names no direct manager there is no second
+// person to route it to, and the alternative was a claim that could be neither
+// submitted nor published by the one person responsible for it. The privilege
+// is what says they may put money into the ledger, so it is the gate, not a new
+// one. Never a practice colleague, who sits on no client's roster and so would
+// always look managerless: the practice's own claims keep the old rule.
+function mayApproveOwn(req: Request, claim: Claim, me: { email: string; name: string }): boolean {
+  const member = memberForSession(req);
+  if (!member || member.deactivated || member.practice) return false;
+  if (!isClaimantOf(claim, me)) return false;
+  // Admins publish by role and keep the rule that a second person decides.
+  if (effectiveRoleFor(member, orgScope(req)) !== 'Standard') return false;
+  if (directManagerFor(workspaceId(req), claim.claimFor)) return false;
+  return canPublishToXero(member, orgScope(req));
+}
+
 function ensureApprover(
   req: Request,
   claim: Claim,
@@ -1331,8 +1350,9 @@ claimsRouter.post('/:id/approve', async (req, res) => {
     const direct = claim.approvalStatus !== 'awaiting_approval';
     if (direct) {
       const member = memberForSession(req);
-      if (member && isClaimantOf(claim, me)) return res.status(403).json({ error: 'not_approver', approver: claim.approver });
-      if (member && !mayOverride(req, claim, me)) {
+      if (member && isClaimantOf(claim, me)) {
+        if (!mayApproveOwn(req, claim, me)) return res.status(403).json({ error: 'not_approver', approver: claim.approver });
+      } else if (member && !mayOverride(req, claim, me)) {
         return res.status(409).json({ error: 'not_submitted', message: 'Submit this claim for approval first.' });
       }
       const refused = refuseUndecidable(req, claim, res, 'before approving the claim');
@@ -1353,7 +1373,9 @@ claimsRouter.post('/:id/approve', async (req, res) => {
     claim.decidedAt = nowIso();
     claim.decisionReason = '';
     claim.history.unshift({
-      text: direct
+      text: direct && isClaimantOf(claim, me)
+        ? `This claim was approved by ${me.name} themselves — they have no direct manager, so there was nobody to submit it to`
+        : direct
         ? `This claim was approved directly by ${byLine(claim, me)}, without being submitted for approval`
         : `This claim was approved by ${byLine(claim, me)}`,
       by: me.name,

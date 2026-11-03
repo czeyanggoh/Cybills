@@ -1660,6 +1660,8 @@ may decide it and skipped otherwise, each with its PDF, one at a time
 (`approveClaim` resolves with the approved claim so the PDF prints the
 approval). Covered by `test/claim-approve-practice.test.mts`.
 
+**A claimant with no direct manager approves their own claim, if they may publish.** Submit refused them ("has no direct manager set") and nobody else was obliged to pick the claim up, so the one person responsible for it could neither submit nor publish it. `mayApproveOwn` (`claims.ts`, mirrored by `iMayApproveOwn` on the claim page) lets a STANDARD claimant with no `managerId` and the Publishing privilege (`canPublishToXero`) approve a draft or rejected claim directly; the page then shows **Approve** / **Approve & publish** in place of Submit. Admins and practice colleagues keep the old rule (a second person decides), and a claimant who has a manager is refused as before. The history says they approved it themselves and why. Covered by `test/claim-self-approve.test.mts`.
+
 **An approved claim can be UNAPPROVED, back to awaiting approval.** Approval
 locks a claim — its total must not drift once it is on its way to payment — and
 until now the lock had no key: a mistake found afterwards could only be fixed

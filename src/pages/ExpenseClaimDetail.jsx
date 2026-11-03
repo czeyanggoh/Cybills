@@ -48,6 +48,7 @@ import {
   removeClaimAttachment,
   claimAttachmentUrl,
   CLAIM_ATTACHMENT_ACCEPT,
+  directManagerFor,
 } from '@/lib/claimStore';
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { useUsers, canManageUsers, canManageBusiness, isAdminAccess, canPublishToXero, canCreateClaims } from '@/lib/userStore';
@@ -486,6 +487,17 @@ export default function ExpenseClaimDetail() {
   // server's mayOverride).
   const iMayOverride =
     !iAmClaimant && (isPracticeTeam(membership, googleEnabled) || canManageBusiness(membership, googleEnabled));
+  // A claimant with no direct manager has nobody to submit to, so — where they
+  // hold the publishing privilege — they approve their own claim (mirrors the
+  // server's mayApproveOwn). Never a practice colleague.
+  const iMayApproveOwn =
+    iAmClaimant &&
+    mayPublish &&
+    !isPracticeTeam(membership, googleEnabled) &&
+    !iAmAdmin &&
+    !canManageBusiness(membership, googleEnabled) &&
+    !claim.approver &&
+    !directManagerFor(users, claim.claimFor);
   const iAmNamedApprover =
     (claim.approverEmail && meEmail && claim.approverEmail.toLowerCase() === meEmail) ||
     (claim.approver && meName && claim.approver.toLowerCase() === meName);
@@ -516,7 +528,9 @@ export default function ExpenseClaimDetail() {
         `Approve this claim and publish it to Xero?
 
 ` +
-          (submitted && claim.approver
+          (iMayApproveOwn
+            ? 'You have no direct manager, so there is nobody to submit it to; it will be recorded as approved by you.'
+            : submitted && claim.approver
             ? `It is waiting on ${claim.approver}; it will be recorded as approved by you on their behalf.`
             : 'It has not been submitted for approval; it will be recorded as approved directly by you.')
       )
@@ -566,7 +580,7 @@ export default function ExpenseClaimDetail() {
           : 'Published to Xero'}
       <ExternalLink className="h-3.5 w-3.5" />
     </a>
-  ) : !mayPublish ? null : !locked && iMayOverride ? (
+  ) : !mayPublish ? null : !locked && (iMayOverride || iMayApproveOwn) ? (
     <TopButton
       disabled={publishing}
       title="Approve this claim yourself and post it to Xero as a bill payable to the employee"
@@ -825,15 +839,16 @@ export default function ExpenseClaimDetail() {
             >
               Rejected{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}{claim.decidedFor ? ` for ${claim.decidedFor}` : ''}
             </span>
-            <TopButton onClick={() => setApprovalOpen(true)}>Re-submit for approval</TopButton>
-            {iMayOverride && <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>}
+            {!iMayApproveOwn && <TopButton onClick={() => setApprovalOpen(true)}>Re-submit for approval</TopButton>}
+            {(iMayOverride || iMayApproveOwn) && <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>}
           </>
         ) : (
           <>
-            <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>
+            {!iMayApproveOwn && <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>}
             {/* A Business Admin need not ask anybody: the claim is approved
-                directly, and the history says it was never submitted. */}
-            {iMayOverride && <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>}
+                directly, and the history says it was never submitted. So does a
+                claimant with no manager and the publishing privilege. */}
+            {(iMayOverride || iMayApproveOwn) && <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>}
           </>
         )}
         {publishBtn}
