@@ -100,7 +100,9 @@ export type Bill = {
   // Set when somebody here emailed the sender and has no answer yet: the document
   // is waiting on a person, so it is To review, not Ready. Cleared by the
   // answer (a mail carrying `[Item #n]`) or by hand. Not EDITABLE.
-  pendingReply?: { at: string; to: string; by: string };
+  // `answeredAt` is set when the answer arrives: it then reads "Reply received"
+  // and STAYS in To review until a person marks it reviewed.
+  pendingReply?: { at: string; to: string; by: string; answeredAt?: string };
   emailLink?: {
     /** The mirrored message (mailThread.ts) this document came from. */
     messageId: string;

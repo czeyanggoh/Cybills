@@ -2637,8 +2637,9 @@ attach clears the flag. A mail with no HTML kept stays as text.
 sets `Bill.pendingReply` (`{ at, to, by }`, `setPendingReply` in `store.ts`) on the mail's documents that are
 in the inbox and not in Xero. `isReady` / `needsReview` (`readiness.js`) and `applyAutoReady` (server) treat it
 as waiting on a person, so it leaves Ready for To review, and the Costs row's badge reads "Pending reply".
-It clears when an inbound mail's subject carries `[Item #n]` for that document (`inbound.ts`), or by hand
-with "Mark as answered" under the message (`POST /api/email/documents/:billId/reply-received`).
+The answer (an inbound mail whose subject carries `[Item #n]`, `inbound.ts`) does NOT release it: it sets
+`answeredAt`, the badge reads "Reply received", and it stays To review until a person clicks "Mark as
+reviewed" / "Mark as answered" under the message (`POST /api/email/documents/:billId/reply-received`).
 
 **The subject ends with the item's number** (`[Item #1234]`, the document's display id; Cze, 5 Nov 2026): one mail can be sent in twice, and
 a reply with only "Re: …" cannot be told from the other's. Not added twice on a second reply.

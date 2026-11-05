@@ -3196,7 +3196,9 @@ Publish anyway?`
                   {mailReplies.available && doc.pendingReply && (
                     <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md border border-amber-500/50 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                       <span>
-                        Waiting for a reply from {doc.pendingReply.to || 'the sender'} since {new Date(doc.pendingReply.at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })}. It moves back to Ready when it is answered.
+                        {doc.pendingReply.answeredAt
+                          ? `${doc.pendingReply.to || 'The sender'} replied on ${new Date(doc.pendingReply.answeredAt).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })}. It stays in To review until you mark it reviewed.`
+                          : `Waiting for a reply from ${doc.pendingReply.to || 'the sender'} since ${new Date(doc.pendingReply.at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })}. It stays in To review.`}
                       </span>
                       <button
                         type="button"
@@ -3208,7 +3210,7 @@ Publish anyway?`
                         }}
                         className="font-medium underline underline-offset-2"
                       >
-                        Mark as answered
+                        {doc.pendingReply.answeredAt ? 'Mark as reviewed' : 'Mark as answered'}
                       </button>
                     </div>
                   )}

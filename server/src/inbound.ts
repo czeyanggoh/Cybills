@@ -1446,11 +1446,14 @@ inboundRouter.post('/email', async (req, res) => {
   const realOrgId = recipient?.orgId || user.organisationId || primaryOrgId();
   const scope = dataScopeForOrg(realOrgId);
   // An answer to something we asked: its subject ends `[Item #n]` (email.ts adds
-  // the tag), and the item stops waiting for it.
+  // the tag), and the item shows the reply arrived.
   const answered = /\[Item #(\d+)\]/.exec(subject)?.[1];
   if (answered) {
     const asked = getBillById(scope, answered);
-    if (asked?.pendingReply) setPendingReply(scope, asked.id, null);
+    // The answer is in, but a person still has to look at it: it stays To review.
+    if (asked?.pendingReply && !asked.pendingReply.answeredAt) {
+      setPendingReply(scope, asked.id, { ...asked.pendingReply, answeredAt: new Date().toISOString() });
+    }
   }
   // Attribute this document's API spend to its client entity on the Clients page
   // (recordUsage reads the X-Org-Id header; the Worker sends none).

@@ -127,7 +127,7 @@ const TABS = [
 // `published` distinguishes the two ways a document leaves the inbox for
 // Archive: published to Xero, or carried by an expense claim. Both are finished
 // states, and each rules the other out — so the row says which one it is.
-function StatusBadge({ status, published = false, pendingReply = false }) {
+function StatusBadge({ status, published = false, pendingReply = null }) {
   if (published) {
     return (
       <span className="inline-flex whitespace-nowrap rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
@@ -136,9 +136,15 @@ function StatusBadge({ status, published = false, pendingReply = false }) {
     );
   }
   if (pendingReply) {
+    const got = Boolean(pendingReply.answeredAt);
     return (
-      <span className="inline-flex whitespace-nowrap rounded border border-amber-500/60 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
-        Pending reply
+      <span
+        className={cn(
+          'inline-flex whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium',
+          got ? 'border-sky-500/60 bg-sky-50 text-sky-800' : 'border-amber-500/60 bg-amber-50 text-amber-800'
+        )}
+      >
+        {got ? 'Reply received' : 'Pending reply'}
       </span>
     );
   }
@@ -594,7 +600,7 @@ export default function Costs() {
     status: {
       cell: (d) => (
         <div className="flex flex-col items-start gap-1">
-          <StatusBadge status={d.status} published={Boolean(d.xeroInvoiceId || d.paperworkMatch)} pendingReply={Boolean(d.pendingReply)} />
+          <StatusBadge status={d.status} published={Boolean(d.xeroInvoiceId || d.paperworkMatch)} pendingReply={d.pendingReply || null} />
           {/* Billed to somebody who isn't this entity. On the ROW because a
               document nobody opens is exactly the one that gets published into
               the wrong client's ledger — and the badge is the only thing that

@@ -17,6 +17,7 @@ import { autoClaimsRouter } from './autoClaims.js';
 import { usersRouter, memberForSession, canAccessOrg } from './users.js';
 import { practiceRouter } from './practice.js';
 import { digestRouter, startDigestClock } from './digest.js';
+import { backfillPendingReplies } from './pendingReplyBackfill.js';
 import { mailRouter } from './mail.js';
 import { settingsRouter, adoptLegacySettings } from './settings.js';
 import { boardRouter } from './board.js';
@@ -243,6 +244,9 @@ app.listen(env.PORT, () => {
   // the entity it actually describes. Idempotent, so it no-ops after the first.
   const adopted = adoptLegacySettings();
   if (adopted) console.log(`[cybills] primary organisation adopted ${adopted} legacy setting(s)`);
+  // Replies sent before "Pending reply" existed: once, mark last week's as waiting.
+  const waiting = backfillPendingReplies();
+  if (waiting) console.log(`[cybills] ${waiting} document(s) marked as waiting on a reply`);
   // Nothing else here runs on a clock: every other sweep rides on a listing
   // somebody makes. A morning email cannot wait for somebody to open the app.
   startDigestClock();

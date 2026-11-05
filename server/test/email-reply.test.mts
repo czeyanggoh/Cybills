@@ -89,7 +89,8 @@ const express = (await import('express')).default;
 const { inboundRouter } = await import('../src/inbound.ts');
 const { emailRouter } = await import('../src/email.ts');
 const { ensure, save } = await import('../src/users.ts');
-const { listBills } = await import('../src/store.ts');
+const { listBills, setPendingReply } = await import('../src/store.ts');
+const { backfillPendingReplies } = await import('../src/pendingReplyBackfill.ts');
 
 const users = ensure('cybm');
 const me = users.find((u) => u.email === 'astridy2004@gmail.com')!;
@@ -227,11 +228,18 @@ await fetch('http://127.0.0.1:4651/api/inbound/email', {
   }),
 });
 await new Promise((r) => setTimeout(r, 200));
-check('an answer carrying the item number ends the wait', listBills('cybm').find((b) => b.id === bill.id)?.pendingReply, undefined);
+const got = listBills('cybm').find((b) => b.id === bill.id)!;
+check('an answer carrying the item number is noted, and the item stays To review', [Boolean(got.pendingReply?.answeredAt), got.status !== 'ready'], [true, true]);
 refuse = false;
 r = await api('/reply', { billId: bill.id, body: 'And one more thing.' });
-check('a further reply waits again', Boolean(listBills('cybm').find((b) => b.id === bill.id)?.pendingReply), true);
+check('a further reply waits again, unanswered', [Boolean(listBills('cybm').find((b) => b.id === bill.id)?.pendingReply), listBills('cybm').find((b) => b.id === bill.id)?.pendingReply?.answeredAt], [true, undefined]);
 r = await api(`/documents/${bill.id}/reply-received`, {});
 check('…until somebody marks it answered', [r.status, listBills('cybm').find((b) => b.id === bill.id)?.pendingReply], [200, undefined]);
+
+// --- Replies sent before the feature existed -----------------------------------
+setPendingReply('cybm', bill.id, null);
+check('a recent unanswered reply is marked waiting once, on the first boot', [backfillPendingReplies(), Boolean(listBills('cybm').find((b) => b.id === bill.id)?.pendingReply)], [1, true]);
+setPendingReply('cybm', bill.id, null);
+check('…and never again, so a cleared wait stays cleared', [backfillPendingReplies(), listBills('cybm').find((b) => b.id === bill.id)?.pendingReply], [0, undefined]);
 
 await finish(failures, server, smtp);

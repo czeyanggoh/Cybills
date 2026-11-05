@@ -38,6 +38,7 @@ export type MailReply = {
 const COLLECTION = 'email-replies';
 
 const load = () => loadCollection<MailReply>(COLLECTION);
+export const loadReplies = load;
 
 export function recordReply(row: Omit<MailReply, 'id' | 'at'>): MailReply {
   const items = load();
