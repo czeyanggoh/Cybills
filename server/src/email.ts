@@ -1,825 +1,845 @@
-// The Email tab: what actually arrived at this entity's addresses.
-//
-// Costs can only ever show what a delivery PRODUCED. A mail that filed nothing
-// — an invoice as a LINK rather than an attachment, a .docx, a portal login n8n
-// could not complete — appeared nowhere in CYBills at all, so "I emailed that
-// last week" had no answer here. This is the other half: every delivery, with
-// what became of it and why.
-//
-// Threaded by PERSON, the way the WhatsApp tab is threaded by group, because
-// that is what an inbound address is: `martin.redalpha@cybills.sg` is one
-// person's pipe, and the entity's short form standing alone is its general
-// account's. A mail's thread is therefore decided by where it was DELIVERED,
-// never by who sent it.
-//
-// Business Admin, on the route as well as in the rail — the same bar as the
-// Costs inbox it sits beside, and for the same reason: this shows everybody's
-// mail in the entity, not the caller's own.
-import { Router } from 'express';
-import type { Request, Response } from 'express';
-import {
-  ensure as ensureUsers,
-  canAccessOrg,
-  effectiveRoleFor,
-  isBusinessAdminRole,
-  memberForSession,
-  addressForUser,
-  type User,
-} from './users.js';
-import { dataScopeForOrg, primaryOrgId } from './organisations.js';
-import { workspaceId } from './workspace.js';
-import { env, googleEnabled, smtpConfigured } from './env.js';
-import { resolveProvider } from './llm.js';
-import { readSetting } from './settings.js';
-import { mailById, mailForOrg, mailFootprint, mailUnfiled, trustAddressOf, type MailMessage } from './mailThread.js';
-import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
-import { followMessageLinks, saveEmailAsPdf } from './inbound.js';
-import { createHash } from 'node:crypto';
-import { htmlToText, emailAsPdf } from './emailPdf.js';
-import { deleteBillFile, getBillFile, putBillFile } from './storage.js';
-import { combineToPdf, readAll, CombineError, type Part } from './docFiles.js';
-import { readMailBody, measureMailBodies } from './mailBody.js';
-import { n8nEnabled } from './n8n.js';
-import { getBillById, attachFetchedFile, listBills, markFileIsTextEmail, type Bill } from './store.js';
-import { getOrganisation } from './organisations.js';
-import { isInternalAddress } from './users.js';
-import { isMailConnected } from './mailAccount.js';
-import { replyEmail, sendMail } from './mailer.js';
-import { recordReply, repliesFor } from './mailReplies.js';
-
-export const emailRouter = Router();
-
-const orgIdFor = (req: Request) => String(req.header('X-Org-Id') || '').trim();
-
-// The mail this entity holds.
-//
-// A message is stored against the organisation RECORD id, which is what the
-// browser names in X-Org-Id — but also against the bills SCOPE it filed into,
-// and a delivery that arrived before the entity was linked carries only the
-// second. So both are accepted: a scope is a function of the entity and no two
-// entities ever share one, which makes it exactly the boundary the documents
-// themselves are isolated by.
-//
-// A request naming NO entity is the one implicit scope everyone shares — an
-// install with nothing linked yet — exactly as `dataScopeForOrg` and
-// `canAccessOrg` already read it, and as the Costs list beside this one behaves.
-// Returning nothing there made the tab the one page in the app that was empty
-// on a deploy where every other list worked.
-function mailHere(ws: string, orgId: string): MailMessage[] {
-  const scope = dataScopeForOrg(orgId);
-  return mailForOrg(ws, orgId, scope);
-}
-
-// Who may look. Everything here is somebody else's mail, so it is the Costs
-// inbox's bar rather than the roster's.
-function mayRead(req: Request, orgId: string): boolean {
-  const me = memberForSession(req);
-  if (!me) return !googleEnabled; // dev/mock mode has no session to judge
-  if (!canAccessOrg(me, orgId)) return false;
-  return isBusinessAdminRole(effectiveRoleFor(me, orgId));
-}
-
-// One person's row, and the entity their mail is filed under — resolved exactly
-// as the delivery road resolves it (their own organisation, else the practice's
-// primary one), so a thread is listed under the entity its documents went to.
-function personFor(ws: string, userId: string): { user: User; orgId: string } | null {
-  const user = ensureUsers(ws).find((u) => u.id === userId && !u.removed);
-  return user ? { user, orgId: user.organisationId || primaryOrgId() } : null;
-}
-
-const nameOf = (u: User) => u.name || u.email || '';
-
-// The last thing that happened to a message, in one phrase. The tab is read to
-// find out what became of a delivery, so the row says it rather than making
-// somebody open every message to find the one that failed.
-function summaryOf(m: MailMessage): string {
-  if (m.outcome === 'forwarding_confirmation') return 'Forwarding confirmation';
-  if (m.documents.length) return `${m.documents.length} document${m.documents.length === 1 ? '' : 's'}`;
-  // A mail whose paperwork is the emails attached to it: each is its own row,
-  // and saying "Nothing filed" here would send somebody looking for a failure.
-  if (m.outcome === 'forwarded') {
-    const n = m.forwarded?.length || 0;
-    return `${n} attached email${n === 1 ? '' : 's'}, each listed on its own`;
-  }
-  if (m.linkNote) return m.linkNote;
-  const skipped = m.attachments.filter((a) => a.skipped);
-  if (skipped.length) return `${skipped.length} attachment${skipped.length === 1 ? '' : 's'} not read — ${skipped[0].skipped}`;
-  if (m.links.length) return 'Nothing filed — no link was followed';
-  return 'Nothing filed';
-}
-
-// GET /api/email/threads — one row per person mail has arrived for.
-//
-// Only people who have actually received something are listed: an entity's
-// whole roster is the Users page's job, and a thread with no messages in it is
-// not a conversation.
-emailRouter.get('/threads', async (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-
-  const all = mailHere(ws, orgId);
-  // A mail mirrored before sizes were kept has a stored HTML part of unknown
-  // size: measured here, once; `sizing` says the figures are still short.
-  const sizing = await measureMailBodies(all);
-  const isUnfiled = mailUnfiled;
-  const sizeOf = mailFootprint;
-
-  const byUser = new Map<string, MailMessage[]>();
-  for (const m of all) {
-    const rows = byUser.get(m.userId) || [];
-    rows.push(m);
-    byUser.set(m.userId, rows);
-  }
-
-  const threads = [...byUser.entries()]
-    .map(([userId, rows]) => {
-      const person = personFor(ws, userId);
-      const last = rows.reduce<MailMessage | null>(
-        (acc, m) => (!acc || String(m.sentAt) > String(acc.sentAt) ? m : acc),
-        null
-      );
-      return {
-        userId,
-        // Named from the roster where it still resolves, and from the address
-        // the mail was sent to where it does not — a person who has left still
-        // has a mailbox full of what arrived while they were here.
-        personName: person ? nameOf(person.user) : last?.to || '',
-        address: person ? (person.user.general ? last?.to || '' : addressForUser(person.user)) : last?.to || '',
-        general: Boolean(person?.user.general),
-        missing: !person,
-        messages: rows.length,
-        documents: rows.reduce((n, m) => n + m.documents.length, 0),
-        // What arrived and became nothing. This is the number the tab exists
-        // for, so it is counted rather than left to be eyeballed.
-        unfiled: rows.filter(isUnfiled).length,
-        // What the mailbox occupies: the messages themselves, the files of the
-        // documents filed from them, and how much of the first is mail that
-        // became nothing.
-        ...sizeOf(rows),
-        lastMessageAt: last?.sentAt || last?.receivedAt || '',
-        lastSubject: last?.subject || '',
-        lastSummary: last ? summaryOf(last) : '',
-      };
-    })
-    .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
-
-  res.json({
-    threads,
-    messages: all.length,
-    unfiled: threads.reduce((n, t) => n + t.unfiled, 0),
-    ...sizeOf(all),
-    sizing,
-    // Whether "Fetch the document" is a button at all. Said by the server, since
-    // whether the road exists is a deployment fact the browser cannot see.
-    linkFetchEnabled: n8nEnabled(),
-  });
-});
-
-// GET /api/email/threads/:userId — one person's mail, newest first.
-emailRouter.get('/threads/:userId', (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-
-  const userId = String(req.params.userId ?? '');
-  const messages = mailHere(ws, orgId)
-    .filter((m) => m.userId === userId)
-    .sort((a, b) => String(b.sentAt || b.receivedAt).localeCompare(String(a.sentAt || a.receivedAt)));
-  const person = personFor(ws, userId);
-  if (!person && !messages.length) return res.status(404).json({ error: 'unknown_thread' });
-
-  res.json({
-    person: {
-      userId,
-      personName: person ? nameOf(person.user) : messages[0]?.to || '',
-      address: person && !person.user.general ? addressForUser(person.user) : messages[0]?.to || '',
-      general: Boolean(person?.user.general),
-      missing: !person,
-    },
-    // Whether this sender's links are followed without asking. Per MESSAGE
-    // rather than once for the thread: a mailbox receives from everybody, and
-    // the question is always about the address that sent THIS one — or, for an
-    // email attached to another, the address that delivered it.
-    messages: messages.map(({ html: _html, bodyKey: _bodyKey, ...m }) => ({
-      ...m,
-      // Whether there is a laid-out body to ask for (GET /messages/:id/body).
-      // The markup itself is not sent with a listing.
-      hasBody: Boolean(_bodyKey || _html),
-      summary: summaryOf(m),
-      senderTrusted: isTrustedSender(ws, orgId, dataScopeForOrg(orgId), trustAddressOf(m)),
-      // What somebody here answered, and who an answer written now would go to.
-      replies: repliesFor(ws, orgId, dataScopeForOrg(orgId), { messageId: m.id, billIds: billIdsOf(m) }),
-      replyAddress: answerable(normaliseSender(trustAddressOf(m))),
-    })),
-    linkFetchEnabled: n8nEnabled(),
-    replyEnabled: replyEnabled(),
-  });
-});
-
-// POST /api/email/messages/:id/fetch — ask n8n again what is behind this
-// message's links.
-//
-// The delivery road only follows links for a mail that filed NOTHING, and it
-// follows them once. This is the retry a person presses: a workflow that was
-// down, a login that had expired, a link somebody has since told n8n how to
-// follow. It is deliberately allowed on a message that already has a document
-// — pressing it twice on a mail carrying two invoices is how the second one is
-// got — but it is the only road that widens that rule, because it is the one
-// with a person behind it.
-emailRouter.post('/messages/:id/fetch', async (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-
-  const message = mailById(String(req.params.id ?? ''));
-  // 404 rather than 403 on an entity mismatch, the way a document the caller
-  // may not read answers: whether a message exists is itself something they
-  // aren't entitled to learn.
-  if (!message || message.workspaceId !== ws || !mailHere(ws, orgId).some((m) => m.id === message.id)) {
-    return res.status(404).json({ error: 'unknown_message' });
-  }
-  if (!message.links.length) return res.status(422).json({ error: 'no_links', message: 'This message carries no link to follow.' });
-  if (!n8nEnabled()) {
-    return res.status(503).json({ error: 'n8n_not_configured', message: 'No n8n webhook is configured (N8N_FETCH_URL).' });
-  }
-
-  const person = personFor(ws, message.userId);
-  if (!person) return res.status(422).json({ error: 'unknown_owner', message: 'The person this mail was addressed to is no longer on the roster.' });
-
-  const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', message.orgId);
-  const provider = resolveProvider(settings?.readerProvider);
-
-  // Waited on, unlike the delivery road's: somebody is watching this one, and
-  // the answer is the whole point of having pressed it. The READ that follows
-  // still runs in the background — the document exists either way.
-  // The placeholder, where one is waiting: the fetch fills the row that has
-  // been asking rather than standing a second cost beside it.
-  const { note, documents } = await followMessageLinks(req, message, person.user, provider, message.pendingBillId || '');
-  res.json({ ok: documents.length > 0, note, documents });
-});
-
-// What a fetch needs, for one message: who to file under and which reader.
-// Resolved in one place because the three roads below all need the same two.
-function fetchContextFor(ws: string, message: MailMessage) {
-  const person = personFor(ws, message.userId);
-  if (!person) return null;
-  const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', message.orgId);
-  return { user: person.user, provider: resolveProvider(settings?.readerProvider) };
-}
-
-// GET /api/email/senders — whose links this entity follows without asking.
-emailRouter.get('/senders', (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-  const senders = trustedSendersFor(ws, orgId, dataScopeForOrg(orgId)).map((t) => ({
-    address: t.address,
-    at: t.at,
-    by: t.by,
-  }));
-  res.json({ senders, linkFetchEnabled: n8nEnabled() });
-});
-
-/**
- * POST /api/email/senders/trust — this sender may be followed from now on.
- *
- * Two things at once, deliberately. It records the decision, so every later
- * mail from that address is fetched on arrival without asking again; and it
- * acts on it NOW, for every document of theirs already standing in the inbox
- * waiting for exactly this answer. Trusting a sender and then having to press
- * fetch on each of their documents separately would be the same decision made
- * twice, and the second half is the one people forget.
- */
-emailRouter.post('/senders/trust', async (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-
-  const address = normaliseSender(String(req.body?.address ?? ''));
-  if (!address || !address.includes('@')) {
-    return res.status(422).json({ error: 'bad_address', message: 'That is not an email address.' });
-  }
-  const me = memberForSession(req);
-  trustSender(ws, orgId, dataScopeForOrg(orgId), address, me?.email || '');
-
-  // Everything of theirs that was waiting on the answer. Ordered oldest first,
-  // so a backlog is cleared in the order it arrived. An attached email waits on
-  // whoever delivered it, never on the From line inside the file.
-  const waiting = mailHere(ws, orgId)
-    .filter((m) => Boolean(m.pendingBillId) && normaliseSender(trustAddressOf(m)) === address)
-    .sort((a, b) => String(a.sentAt).localeCompare(String(b.sentAt)));
-
-  const notes: string[] = [];
-  let fetched = 0;
-  if (n8nEnabled()) {
-    for (const message of waiting) {
-      const ctx = fetchContextFor(ws, message);
-      if (!ctx) continue;
-      const out = await followMessageLinks(req, message, ctx.user, ctx.provider, message.pendingBillId || '');
-      fetched += out.documents.length;
-      if (!out.documents.length) notes.push(out.note);
-    }
-  } else if (waiting.length) {
-    notes.push('No n8n webhook is configured (N8N_FETCH_URL), so nothing could be fetched.');
-  }
-
-  res.json({ ok: true, address, waiting: waiting.length, fetched, notes });
-});
-
-// POST /api/email/senders/untrust — stop following this sender's links.
-//
-// What was already fetched under the trust stays: those are documents now, and
-// they happened. Only what arrives NEXT goes back to asking.
-emailRouter.post('/senders/untrust', (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-  const address = normaliseSender(String(req.body?.address ?? ''));
-  const removed = untrustSender(ws, orgId, dataScopeForOrg(orgId), address);
-  res.json({ ok: true, address, removed });
-});
-
-/**
- * POST /api/email/documents/:billId/fetch — fetch this one, without trusting.
- *
- * The other answer to the question the inbox row asks. Somebody who recognises
- * one invoice but does not want every future mail from that address followed
- * automatically gets the document and nothing else — no rule written, nothing
- * remembered. Addressed by the DOCUMENT because that is where the question was
- * asked; the message behind it is what actually carries the links.
- */
-emailRouter.post('/documents/:billId/fetch', async (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-
-  const billId = String(req.params.billId ?? '');
-  const message = mailHere(ws, orgId).find((m) => m.pendingBillId === billId)
-    || mailHere(ws, orgId).find((m) => m.documents.some((d) => d.billId === billId));
-  if (!message) return res.status(404).json({ error: 'unknown_document' });
-  if (!message.links.length) return res.status(422).json({ error: 'no_links', message: 'This document carries no link to follow.' });
-  if (!n8nEnabled()) {
-    return res.status(503).json({ error: 'n8n_not_configured', message: 'No n8n webhook is configured (N8N_FETCH_URL).' });
-  }
-
-  const ctx = fetchContextFor(ws, message);
-  if (!ctx) return res.status(422).json({ error: 'unknown_owner', message: 'The person this mail was addressed to is no longer on the roster.' });
-
-  const { note, documents } = await followMessageLinks(req, message, ctx.user, ctx.provider, billId);
-  res.json({ ok: documents.length > 0, note, documents });
-});
-
-// --- Answering a mail --------------------------------------------------------
-//
-// Everything above reads what arrived. This is the one thing that goes the
-// other way: a document that came in as a link with no invoice behind it, a
-// photo too dark to read, a bill with a page missing — each ends with somebody
-// having to ask the sender for something, and until now that meant leaving the
-// app to find the email again in a mailbox CYBills's addresses do not have.
-//
-// It goes out from the deployment's own mailbox (the one that sends invitations),
-// which nobody reads, so the ANSWER is pointed back where the original was
-// delivered: Reply-To is the CYBills address the sender wrote to. Their reply,
-// and whatever they attach to it, then arrives by the ordinary inbound road and
-// is filed under the same person, in the same thread. The person who wrote the
-// reply is on Reply-To as well, because a mirrored row tells nobody anything
-// has happened.
-
-const replyEnabled = () => smtpConfigured || isMailConnected();
-
-const ADDRESS = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
-
-// An address a reply can actually reach, or ''. Never an internal identity
-// (`…@cybills.local`), which is a name for a roster row and not a mailbox.
-const answerable = (address: string) => (ADDRESS.test(address) && !isInternalAddress(address) ? address : '');
-
-// Recipients as typed: a list, or one string with commas between them.
-function addressList(raw: unknown): { ok: string[]; bad: string[] } {
-  const parts = (Array.isArray(raw) ? raw : String(raw ?? '').split(/[,;\n]/))
-    .map((a) => normaliseSender(String(a ?? '')))
-    .filter(Boolean);
-  const unique = [...new Set(parts)];
-  return { ok: unique.filter((a) => answerable(a)), bad: unique.filter((a) => !answerable(a)) };
-}
-
-function billIdsOf(m: MailMessage): string[] {
-  return [...m.documents.map((d) => d.billId), m.pendingBillId || ''].filter(Boolean);
-}
-
-// The Message-ID an answer should name, where the mirror holds a real one. A
-// message named by what it IS (`mail_…`, a Worker that forwarded no MIME) has
-// none, and the suffix a second delivery of one mail is told apart by is ours.
-// An email that arrived ATTACHED to another answers the mail that carried it:
-// that is the message the person being answered actually sent.
-function messageIdToAnswer(m: MailMessage): string {
-  const id = String(m.forwardedIn || m.id || '').split('#')[0].trim();
-  return id.includes('@') && !id.startsWith('mail_') ? id : '';
-}
-
-const stamp = (iso: string) => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ''
-    : d.toLocaleString('en-SG', { dateStyle: 'medium', timeStyle: 'short', timeZone: env.PRACTICE_TIMEZONE });
-};
-
-type Answering = {
-  message: MailMessage | null;
-  bill: Bill | null;
-  envelope: { from: string; to: string; subject: string; date: string; text: string };
-  billIds: string[];
-};
-
-// What is being answered: a mirrored message, named outright or found through
-// the document it produced, else the envelope the document itself carries (one
-// emailed in before the mirror existed). Null when the caller's entity holds
-// neither — which answers 404, like every other message they may not see.
-function answering(ws: string, orgId: string, about: { messageId?: string; billId?: string }): Answering | null {
-  const here = mailHere(ws, orgId);
-  const bill = about.billId ? getBillById(dataScopeForOrg(orgId), about.billId) : null;
-  const message =
-    (about.messageId ? here.find((m) => m.id === about.messageId) : null) ||
-    (bill ? here.find((m) => m.pendingBillId === bill.id) || here.find((m) => m.documents.some((d) => d.billId === bill.id)) : null) ||
-    null;
-  if (message) {
-    return {
-      message,
-      bill,
-      envelope: {
-        from: trustAddressOf(message),
-        to: message.to,
-        subject: message.subject,
-        date: message.sentAt || message.receivedAt,
-        text: message.text,
-      },
-      billIds: [...new Set([...billIdsOf(message), bill?.id || ''].filter(Boolean))],
-    };
-  }
-  if (bill?.email) return { message: null, bill, envelope: bill.email, billIds: [bill.id] };
-  return null;
-}
-
-// GET /api/email/documents/:billId/replies — what has been answered about the
-// mail this document arrived in, and whether (and to whom) it can be answered.
-emailRouter.get('/documents/:billId/replies', (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
-  if (!about) return res.status(404).json({ error: 'unknown_document' });
-  res.json({
-    replies: repliesFor(ws, orgId, dataScopeForOrg(orgId), { messageId: about.message?.id, billIds: about.billIds }),
-    replyAddress: answerable(normaliseSender(about.envelope.from)),
-    replyEnabled: replyEnabled(),
-  });
-});
-
-/**
- * POST /api/email/reply — answer a mail, from the page it is being read on.
- *
- * `{ messageId | billId, body, to?, cc? }`. The recipient defaults to whoever
- * sent the original (for an email attached to another, whoever sent it IN — the
- * From line inside the file is usually a supplier's no-reply address, and
- * never the person who can be asked for anything).
- *
- * Business Admin, the bar everything else here holds: this sends mail to an
- * outside address in the entity's name.
- */
-emailRouter.post('/reply', async (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-
-  const about = answering(ws, orgId, {
-    messageId: String(req.body?.messageId ?? '').trim(),
-    billId: String(req.body?.billId ?? '').trim(),
-  });
-  if (!about) return res.status(404).json({ error: 'unknown_message' });
-
-  const body = String(req.body?.body ?? '').replace(/\r\n/g, '\n').trim();
-  if (!body) return res.status(422).json({ error: 'empty_reply', message: 'Write something to send.' });
-  if (body.length > 10_000) return res.status(422).json({ error: 'reply_too_long', message: 'That reply is too long to send from here.' });
-
-  const typedTo = addressList(req.body?.to);
-  const cc = addressList(req.body?.cc);
-  const fallback = answerable(normaliseSender(about.envelope.from));
-  const to = typedTo.ok.length || typedTo.bad.length ? typedTo.ok : fallback ? [fallback] : [];
-  const bad = [...typedTo.bad, ...cc.bad];
-  if (bad.length) return res.status(422).json({ error: 'bad_address', message: `${bad[0]} is not an email address.` });
-  if (!to.length) {
-    return res.status(422).json({ error: 'no_recipient', message: 'There is nobody to send this to — the original carries no usable sender address.' });
-  }
-  if (to.length + cc.ok.length > 10) {
-    return res.status(422).json({ error: 'too_many_recipients', message: 'A reply from here goes to at most ten addresses.' });
-  }
-
-  if (!replyEnabled()) {
-    return res.status(503).json({
-      error: 'mail_not_connected',
-      message: 'No mailbox is connected to send from. The practice connects one under Business settings -> Email.',
-    });
-  }
-
-  const me = memberForSession(req);
-  // The address the original was delivered to first: that is what files the
-  // sender's answer. Then the person writing, so they hear about it.
-  const replyTo = [
-    ...new Set([answerable(normaliseSender(about.envelope.to)), answerable(normaliseSender(me?.email || ''))].filter(Boolean)),
-  ];
-  const base = /^\s*re\s*:/i.test(about.envelope.subject)
-    ? about.envelope.subject.trim()
-    : `Re: ${about.envelope.subject.trim() || 'your email'}`;
-  // The item's number goes on the END of the subject: one mail can be sent in
-  // twice (two items), and a reply that only says "Re: …" cannot be told apart
-  // from the other's. Not added twice when the subject already carries it.
-  const item = about.bill || (about.billIds[0] ? getBillById(dataScopeForOrg(orgId), about.billIds[0]) : null);
-  const itemNo = String(item?.displayId || item?.id || '').replace(/^#/, '');
-  const tag = itemNo ? `[Item #${itemNo}]` : '';
-  const subject = tag && !base.includes(tag) ? `${base} ${tag}` : base;
-  const inReplyTo = about.message ? messageIdToAnswer(about.message) : '';
-
-  const out = await sendMail({
-    to: to.map((email) => ({ email })),
-    ...(cc.ok.length ? { cc: cc.ok.map((email) => ({ email })) } : {}),
-    replyTo: replyTo.map((email) => ({ email })),
-    ...(inReplyTo ? { inReplyTo } : {}),
-    subject,
-    html: replyEmail({
-      body,
-      fromName: me?.name || me?.email || '',
-      entityName: getOrganisation(ws, orgId)?.name || '',
-      original: { from: about.envelope.from, date: stamp(about.envelope.date), text: about.envelope.text },
-    }),
-  });
-  // Recorded only once it has actually gone: a reply shown under a message is a
-  // claim that the sender was told something.
-  if (!out.sent) {
-    return res.status(502).json({ error: 'send_failed', message: `The reply was not sent — ${out.error || 'the mailbox refused it'}.` });
-  }
-
-  const reply = recordReply({
-    workspaceId: ws,
-    orgId,
-    scope: dataScopeForOrg(orgId),
-    messageId: about.message?.id || '',
-    billIds: about.billIds,
-    to,
-    cc: cc.ok,
-    replyTo,
-    subject,
-    text: body,
-    by: me?.email || '',
-    byName: me?.name || me?.email || '',
-  });
-  res.json({ ok: true, reply });
-});
-
-// --- The email itself, as the document ---------------------------------------
-//
-// Some mail has nothing behind it to fetch: the paperwork is the BODY — an
-// order confirmation typed into a forward, "please PayNow to …" above a thread
-// that carries the amount — and its links are a logo and a mail client's
-// footer. The document it left in the inbox would be published to Xero with no
-// paper at all. So the message can be written out as a PDF and attached, from
-// the document that is asking or from the mail's own row on the Email tab.
-async function saveAsPdf(req: Request, res: Response, about: { messageId?: string; billId?: string }) {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-
-  const found = answering(ws, orgId, about);
-  if (!found) return res.status(404).json({ error: about.billId ? 'unknown_document' : 'unknown_message' });
-  const { message } = found;
-  const scope = dataScopeForOrg(orgId);
-  if (message?.outcome === 'forwarding_confirmation') {
-    return res.status(422).json({ error: 'not_a_document', message: 'That is a forwarding confirmation, not paperwork.' });
-  }
-
-  // The row the PDF lands on: the document it was pressed from, else the one
-  // standing in the inbox for this mail. A mail with neither gets a new one.
-  const fill = found.bill || (message?.pendingBillId ? getBillById(scope, message.pendingBillId) : null);
-  // `replace`: a person asking to swap the wrong file (a booking's terms and
-  // conditions) for the email itself. Never once the document is in Xero, where
-  // the old file has already gone as its attachment.
-  const replace = req.body?.replace === true;
-  const oldKey = fill?.storageKey || '';
-  if (oldKey && !replace) {
-    return res.status(409).json({ error: 'has_file', message: 'This document already has a file attached.' });
-  }
-  if (oldKey && fill?.xeroInvoiceId) {
-    return res.status(409).json({ error: 'in_xero', message: 'This document is already in Xero with its file, so the file cannot be swapped here.' });
-  }
-  if (!fill && message?.documents.length) {
-    return res.status(409).json({ error: 'already_filed', message: 'This mail has already been filed as a document.' });
-  }
-  const person = message ? personFor(ws, message.userId) : null;
-  if (!fill && !person) {
-    return res.status(422).json({ error: 'unknown_owner', message: 'The person this mail was addressed to is no longer on the roster.' });
-  }
-
-  // The message as it was SENT — for an email attached to another, its own
-  // From line, which is what the page should say whoever forwarded it.
-  const envelope = message
-    ? { from: message.from, to: message.to, subject: message.subject, date: message.sentAt || message.receivedAt, text: message.text }
-    : found.envelope;
-  // The stored text is the top of the message, capped; where the markup is
-  // still held and the text ran out (or was never there), the markup has the
-  // rest of the thread — which is where a forwarded order's figures are.
-  const cut = envelope.text.length >= 3900 || !envelope.text.trim();
-  const html = cut ? await readMailBody(message) : '';
-  const body = html ? htmlToText(html) : '';
-
-  // The browser can lay the message's HTML out and this server cannot, so it
-  // may send the page already drawn. Taken only where the bytes ARE a PDF.
-  let rendered: Buffer | null = null;
-  if (typeof req.body?.pdf === 'string' && req.body.pdf) {
-    rendered = Buffer.from(req.body.pdf, 'base64');
-    if (rendered.subarray(0, 5).toString('latin1') !== '%PDF-' || rendered.length > 15 * 1024 * 1024) {
-      return res.status(422).json({ error: 'not_a_pdf', message: 'That is not a PDF this can attach.' });
-    }
-  }
-
-  const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', orgId);
-  const out = await saveEmailAsPdf(req, {
-    scope,
-    orgId: message?.orgId || orgId,
-    envelope,
-    body,
-    message,
-    fill,
-    user: person?.user || { email: fill?.owner || fill?.createdBy || '' },
-    provider: resolveProvider(settings?.readerProvider),
-    rendered,
-  });
-  if (!out.ok) return res.status(502).json({ error: 'not_saved', message: out.note });
-  // The wrong file is removed only once the email is stored in its place.
-  const nowKey = fill?.id ? getBillById(scope, fill.id)?.storageKey : '';
-  if (oldKey && nowKey && nowKey !== oldKey) await deleteBillFile(oldKey).catch(() => {});
-  res.json({ ok: true, note: out.note, document: out.document, reading: out.reading });
-}
-
-// The message as it was SENT: its HTML part, for the page to draw in a frame
-// that can run nothing. '' where only the text was kept — a mail delivered
-// before bodies were stored, or one that never had an HTML part.
-async function sendBody(req: Request, res: Response, about: { messageId?: string; billId?: string }) {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-  const found = answering(ws, orgId, about);
-  if (!found) return res.status(404).json({ error: about.billId ? 'unknown_document' : 'unknown_message' });
-  res.json({ html: await readMailBody(found.message) });
-}
-
-// GET /api/email/documents/:billId/body — the mail a document arrived in.
-emailRouter.get('/documents/:billId/body', (req, res) => sendBody(req, res, { billId: String(req.params.billId ?? '') }));
-
-// --- Files: which of a mail's files stand as the document's proof -------------
-//
-// GET lists what could: the file attached now, the email itself, and the
-// other documents the same mail filed (its other attachments — a booking's
-// terms and conditions arrive beside its e-ticket). POST takes the ones picked,
-// in order, and makes them the document's one file: as it is for a single
-// PDF, joined into one PDF for several. The file it replaces is deleted only
-// after the new one is stored, and not while another document holds it.
-type FileChoice = { key: string; label: string; fileName: string; contentType: string; current?: boolean };
-
-async function serverEmailPdf(about: NonNullable<ReturnType<typeof answering>>): Promise<Buffer> {
-  const env0 = about.envelope;
-  const when = new Date(env0.date);
-  const cut = env0.text.length >= 3900 || !env0.text.trim();
-  const html = cut ? await readMailBody(about.message) : '';
-  return emailAsPdf({
-    from: env0.from,
-    to: env0.to,
-    subject: env0.subject,
-    date: Number.isNaN(when.getTime()) ? env0.date : when.toLocaleString('en-SG', { dateStyle: 'full', timeStyle: 'short', timeZone: env.PRACTICE_TIMEZONE }),
-    text: html ? htmlToText(html) : env0.text,
-    caption: `Email received at ${env0.to || 'CYBills'}, saved as a PDF by CYBills.`,
-  });
-}
-
-// GET /api/email/documents/:billId/email.pdf — the email as the PDF it would be
-// saved as, to look at before choosing. Writes nothing.
-emailRouter.get('/documents/:billId/email.pdf', async (req, res) => {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
-  if (!about) return res.status(404).json({ error: 'unknown_document' });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', 'inline; filename="email.pdf"');
-  res.send(await serverEmailPdf(about));
-});
-
-async function filesAbout(req: Request, res: Response) {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
-  if (!about?.bill) return res.status(404).json({ error: 'unknown_document' });
-  const scope = dataScopeForOrg(orgId);
-  const bill = about.bill;
-  const files: FileChoice[] = [];
-  if (bill.storageKey) {
-    files.push({ key: 'current', label: 'Attached to this document now', fileName: bill.fileName || 'file', contentType: bill.contentType || '', current: true });
-  }
-  files.push({ key: 'email', label: 'This email, saved as a PDF', fileName: `${(about.envelope.subject || 'Email').slice(0, 60)}.pdf`, contentType: 'application/pdf' });
-  for (const d of about.message?.documents ?? []) {
-    if (d.billId === bill.id) continue;
-    const other = getBillById(scope, d.billId);
-    if (!other?.storageKey) continue;
-    files.push({
-      key: `bill:${other.id}`,
-      label: `From the same email — item #${other.displayId || other.id}`,
-      fileName: other.fileName || d.fileName,
-      contentType: other.contentType || '',
-    });
-  }
-  res.json({ files, inXero: Boolean(bill.xeroInvoiceId) });
-}
-
-async function setFiles(req: Request, res: Response) {
-  const ws = workspaceId(req);
-  const orgId = orgIdFor(req);
-  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
-  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
-  if (!about?.bill) return res.status(404).json({ error: 'unknown_document' });
-  const scope = dataScopeForOrg(orgId);
-  const bill = about.bill;
-  if (bill.xeroInvoiceId) {
-    return res.status(409).json({ error: 'in_xero', message: 'This document is already in Xero with its file, so the file cannot be changed here.' });
-  }
-  const keys: string[] = Array.isArray(req.body?.keys) ? [...new Set<string>(req.body.keys.map(String))] : [];
-  if (!keys.length) return res.status(422).json({ error: 'nothing_selected', message: 'Choose at least one file.' });
-  if (keys.length > 10) return res.status(422).json({ error: 'too_many', message: 'Combine at most ten files at once.' });
-  if (keys.length === 1 && keys[0] === 'current') {
-    return res.status(409).json({ error: 'no_change', message: 'That is the file already attached.' });
-  }
-
-  const parts: Part[] = [];
-  for (const key of keys) {
-    let stored: Bill | null = null;
-    if (key === 'current') stored = bill;
-    else if (key.startsWith('bill:')) {
-      const id = key.slice(5);
-      // Only a document this very mail filed: the picker never offers another.
-      if (!(about.message?.documents ?? []).some((d) => d.billId === id)) {
-        return res.status(422).json({ error: 'unknown_file', message: 'One of those files is not part of this email.' });
-      }
-      stored = getBillById(scope, id);
-    } else if (key !== 'email') {
-      return res.status(422).json({ error: 'unknown_file', message: 'One of those files is not available.' });
-    }
-    if (key === 'email') {
-      let bytes: Buffer;
-      if (typeof req.body?.pdf === 'string' && req.body.pdf) {
-        bytes = Buffer.from(req.body.pdf, 'base64');
-        if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-' || bytes.length > 15 * 1024 * 1024) {
-          return res.status(422).json({ error: 'not_a_pdf', message: 'That is not a PDF this can attach.' });
-        }
-      } else {
-        bytes = await serverEmailPdf(about);
-      }
-      parts.push({ name: 'the email', bytes });
-      continue;
-    }
-    if (!stored?.storageKey) return res.status(422).json({ error: 'no_file', message: 'One of those files is no longer stored.' });
-    const obj = await getBillFile(stored.storageKey, stored.contentType);
-    if (!obj) return res.status(422).json({ error: 'no_file', message: `${stored.fileName || 'A file'} could not be read from storage.` });
-    parts.push({ name: stored.fileName || 'a file', bytes: await readAll(obj.body) });
-  }
-
-  let bytes: Buffer;
-  try {
-    bytes = await combineToPdf(parts);
-  } catch (err) {
-    if (err instanceof CombineError) return res.status(422).json({ error: 'cannot_combine', message: err.message });
-    throw err;
-  }
-
-  const fileHash = createHash('sha256').update(bytes).digest('hex');
-  const fileName = `Item ${bill.displayId || bill.id}${keys.length > 1 ? ' combined' : ''}.pdf`;
-  const put = await putBillFile(scope, fileHash, 'application/pdf', bytes).catch(() => null);
-  if (!put?.storageKey) return res.status(502).json({ error: 'not_saved', message: 'The PDF was made but could not be stored.' });
-
-  const oldKey = bill.storageKey || '';
-  const attached = attachFetchedFile(scope, bill.id, { fileHash, fileName, storageKey: put.storageKey, contentType: put.contentType }, false);
-  if (!attached) return res.status(404).json({ error: 'unknown_document' });
-  if (oldKey && oldKey !== put.storageKey && !listBills(scope).some((b) => b.id !== bill.id && b.storageKey === oldKey)) {
-    await deleteBillFile(oldKey).catch(() => {});
-  }
-  res.json({ ok: true, fileName, files: parts.length });
-}
-
-emailRouter.get('/documents/:billId/files', filesAbout);
-emailRouter.post('/documents/:billId/files', setFiles);
-
-// GET /api/email/messages/:id/body — a mail on the Email tab.
-emailRouter.get('/messages/:id/body', (req, res) => sendBody(req, res, { messageId: String(req.params.id ?? '') }));
-
-// POST /api/email/documents/:billId/pdf — from the document that has no file.
-emailRouter.post('/documents/:billId/pdf', (req, res) => saveAsPdf(req, res, { billId: String(req.params.billId ?? '') }));
-
-// POST /api/email/messages/:id/pdf — from the mail's own row on the Email tab.
-emailRouter.post('/messages/:id/pdf', (req, res) => saveAsPdf(req, res, { messageId: String(req.params.id ?? '') }));
+// The Email tab: what actually arrived at this entity's addresses.
+//
+// Costs can only ever show what a delivery PRODUCED. A mail that filed nothing
+// — an invoice as a LINK rather than an attachment, a .docx, a portal login n8n
+// could not complete — appeared nowhere in CYBills at all, so "I emailed that
+// last week" had no answer here. This is the other half: every delivery, with
+// what became of it and why.
+//
+// Threaded by PERSON, the way the WhatsApp tab is threaded by group, because
+// that is what an inbound address is: `martin.redalpha@cybills.sg` is one
+// person's pipe, and the entity's short form standing alone is its general
+// account's. A mail's thread is therefore decided by where it was DELIVERED,
+// never by who sent it.
+//
+// Business Admin, on the route as well as in the rail — the same bar as the
+// Costs inbox it sits beside, and for the same reason: this shows everybody's
+// mail in the entity, not the caller's own.
+import { Router } from 'express';
+import type { Request, Response } from 'express';
+import {
+  ensure as ensureUsers,
+  canAccessOrg,
+  effectiveRoleFor,
+  isBusinessAdminRole,
+  memberForSession,
+  addressForUser,
+  type User,
+} from './users.js';
+import { dataScopeForOrg, primaryOrgId } from './organisations.js';
+import { workspaceId } from './workspace.js';
+import { env, googleEnabled, smtpConfigured } from './env.js';
+import { resolveProvider } from './llm.js';
+import { readSetting } from './settings.js';
+import { mailById, mailForOrg, mailFootprint, mailUnfiled, trustAddressOf, type MailMessage } from './mailThread.js';
+import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
+import { followMessageLinks, saveEmailAsPdf } from './inbound.js';
+import { createHash } from 'node:crypto';
+import { htmlToText, emailAsPdf } from './emailPdf.js';
+import { deleteBillFile, getBillFile, putBillFile } from './storage.js';
+import { combineToPdf, readAll, CombineError, type Part } from './docFiles.js';
+import { readMailBody, measureMailBodies } from './mailBody.js';
+import { n8nEnabled } from './n8n.js';
+import { getBillById, attachFetchedFile, listBills, markFileIsTextEmail, setPendingReply, type Bill } from './store.js';
+import { getOrganisation } from './organisations.js';
+import { isInternalAddress } from './users.js';
+import { isMailConnected } from './mailAccount.js';
+import { replyEmail, sendMail } from './mailer.js';
+import { recordReply, repliesFor } from './mailReplies.js';
+
+export const emailRouter = Router();
+
+const orgIdFor = (req: Request) => String(req.header('X-Org-Id') || '').trim();
+
+// The mail this entity holds.
+//
+// A message is stored against the organisation RECORD id, which is what the
+// browser names in X-Org-Id — but also against the bills SCOPE it filed into,
+// and a delivery that arrived before the entity was linked carries only the
+// second. So both are accepted: a scope is a function of the entity and no two
+// entities ever share one, which makes it exactly the boundary the documents
+// themselves are isolated by.
+//
+// A request naming NO entity is the one implicit scope everyone shares — an
+// install with nothing linked yet — exactly as `dataScopeForOrg` and
+// `canAccessOrg` already read it, and as the Costs list beside this one behaves.
+// Returning nothing there made the tab the one page in the app that was empty
+// on a deploy where every other list worked.
+function mailHere(ws: string, orgId: string): MailMessage[] {
+  const scope = dataScopeForOrg(orgId);
+  return mailForOrg(ws, orgId, scope);
+}
+
+// Who may look. Everything here is somebody else's mail, so it is the Costs
+// inbox's bar rather than the roster's.
+function mayRead(req: Request, orgId: string): boolean {
+  const me = memberForSession(req);
+  if (!me) return !googleEnabled; // dev/mock mode has no session to judge
+  if (!canAccessOrg(me, orgId)) return false;
+  return isBusinessAdminRole(effectiveRoleFor(me, orgId));
+}
+
+// One person's row, and the entity their mail is filed under — resolved exactly
+// as the delivery road resolves it (their own organisation, else the practice's
+// primary one), so a thread is listed under the entity its documents went to.
+function personFor(ws: string, userId: string): { user: User; orgId: string } | null {
+  const user = ensureUsers(ws).find((u) => u.id === userId && !u.removed);
+  return user ? { user, orgId: user.organisationId || primaryOrgId() } : null;
+}
+
+const nameOf = (u: User) => u.name || u.email || '';
+
+// The last thing that happened to a message, in one phrase. The tab is read to
+// find out what became of a delivery, so the row says it rather than making
+// somebody open every message to find the one that failed.
+function summaryOf(m: MailMessage): string {
+  if (m.outcome === 'forwarding_confirmation') return 'Forwarding confirmation';
+  if (m.documents.length) return `${m.documents.length} document${m.documents.length === 1 ? '' : 's'}`;
+  // A mail whose paperwork is the emails attached to it: each is its own row,
+  // and saying "Nothing filed" here would send somebody looking for a failure.
+  if (m.outcome === 'forwarded') {
+    const n = m.forwarded?.length || 0;
+    return `${n} attached email${n === 1 ? '' : 's'}, each listed on its own`;
+  }
+  if (m.linkNote) return m.linkNote;
+  const skipped = m.attachments.filter((a) => a.skipped);
+  if (skipped.length) return `${skipped.length} attachment${skipped.length === 1 ? '' : 's'} not read — ${skipped[0].skipped}`;
+  if (m.links.length) return 'Nothing filed — no link was followed';
+  return 'Nothing filed';
+}
+
+// GET /api/email/threads — one row per person mail has arrived for.
+//
+// Only people who have actually received something are listed: an entity's
+// whole roster is the Users page's job, and a thread with no messages in it is
+// not a conversation.
+emailRouter.get('/threads', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const all = mailHere(ws, orgId);
+  // A mail mirrored before sizes were kept has a stored HTML part of unknown
+  // size: measured here, once; `sizing` says the figures are still short.
+  const sizing = await measureMailBodies(all);
+  const isUnfiled = mailUnfiled;
+  const sizeOf = mailFootprint;
+
+  const byUser = new Map<string, MailMessage[]>();
+  for (const m of all) {
+    const rows = byUser.get(m.userId) || [];
+    rows.push(m);
+    byUser.set(m.userId, rows);
+  }
+
+  const threads = [...byUser.entries()]
+    .map(([userId, rows]) => {
+      const person = personFor(ws, userId);
+      const last = rows.reduce<MailMessage | null>(
+        (acc, m) => (!acc || String(m.sentAt) > String(acc.sentAt) ? m : acc),
+        null
+      );
+      return {
+        userId,
+        // Named from the roster where it still resolves, and from the address
+        // the mail was sent to where it does not — a person who has left still
+        // has a mailbox full of what arrived while they were here.
+        personName: person ? nameOf(person.user) : last?.to || '',
+        address: person ? (person.user.general ? last?.to || '' : addressForUser(person.user)) : last?.to || '',
+        general: Boolean(person?.user.general),
+        missing: !person,
+        messages: rows.length,
+        documents: rows.reduce((n, m) => n + m.documents.length, 0),
+        // What arrived and became nothing. This is the number the tab exists
+        // for, so it is counted rather than left to be eyeballed.
+        unfiled: rows.filter(isUnfiled).length,
+        // What the mailbox occupies: the messages themselves, the files of the
+        // documents filed from them, and how much of the first is mail that
+        // became nothing.
+        ...sizeOf(rows),
+        lastMessageAt: last?.sentAt || last?.receivedAt || '',
+        lastSubject: last?.subject || '',
+        lastSummary: last ? summaryOf(last) : '',
+      };
+    })
+    .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
+
+  res.json({
+    threads,
+    messages: all.length,
+    unfiled: threads.reduce((n, t) => n + t.unfiled, 0),
+    ...sizeOf(all),
+    sizing,
+    // Whether "Fetch the document" is a button at all. Said by the server, since
+    // whether the road exists is a deployment fact the browser cannot see.
+    linkFetchEnabled: n8nEnabled(),
+  });
+});
+
+// GET /api/email/threads/:userId — one person's mail, newest first.
+emailRouter.get('/threads/:userId', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const userId = String(req.params.userId ?? '');
+  const messages = mailHere(ws, orgId)
+    .filter((m) => m.userId === userId)
+    .sort((a, b) => String(b.sentAt || b.receivedAt).localeCompare(String(a.sentAt || a.receivedAt)));
+  const person = personFor(ws, userId);
+  if (!person && !messages.length) return res.status(404).json({ error: 'unknown_thread' });
+
+  res.json({
+    person: {
+      userId,
+      personName: person ? nameOf(person.user) : messages[0]?.to || '',
+      address: person && !person.user.general ? addressForUser(person.user) : messages[0]?.to || '',
+      general: Boolean(person?.user.general),
+      missing: !person,
+    },
+    // Whether this sender's links are followed without asking. Per MESSAGE
+    // rather than once for the thread: a mailbox receives from everybody, and
+    // the question is always about the address that sent THIS one — or, for an
+    // email attached to another, the address that delivered it.
+    messages: messages.map(({ html: _html, bodyKey: _bodyKey, ...m }) => ({
+      ...m,
+      // Whether there is a laid-out body to ask for (GET /messages/:id/body).
+      // The markup itself is not sent with a listing.
+      hasBody: Boolean(_bodyKey || _html),
+      summary: summaryOf(m),
+      senderTrusted: isTrustedSender(ws, orgId, dataScopeForOrg(orgId), trustAddressOf(m)),
+      // What somebody here answered, and who an answer written now would go to.
+      replies: repliesFor(ws, orgId, dataScopeForOrg(orgId), { messageId: m.id, billIds: billIdsOf(m) }),
+      replyAddress: answerable(normaliseSender(trustAddressOf(m))),
+    })),
+    linkFetchEnabled: n8nEnabled(),
+    replyEnabled: replyEnabled(),
+  });
+});
+
+// POST /api/email/messages/:id/fetch — ask n8n again what is behind this
+// message's links.
+//
+// The delivery road only follows links for a mail that filed NOTHING, and it
+// follows them once. This is the retry a person presses: a workflow that was
+// down, a login that had expired, a link somebody has since told n8n how to
+// follow. It is deliberately allowed on a message that already has a document
+// — pressing it twice on a mail carrying two invoices is how the second one is
+// got — but it is the only road that widens that rule, because it is the one
+// with a person behind it.
+emailRouter.post('/messages/:id/fetch', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const message = mailById(String(req.params.id ?? ''));
+  // 404 rather than 403 on an entity mismatch, the way a document the caller
+  // may not read answers: whether a message exists is itself something they
+  // aren't entitled to learn.
+  if (!message || message.workspaceId !== ws || !mailHere(ws, orgId).some((m) => m.id === message.id)) {
+    return res.status(404).json({ error: 'unknown_message' });
+  }
+  if (!message.links.length) return res.status(422).json({ error: 'no_links', message: 'This message carries no link to follow.' });
+  if (!n8nEnabled()) {
+    return res.status(503).json({ error: 'n8n_not_configured', message: 'No n8n webhook is configured (N8N_FETCH_URL).' });
+  }
+
+  const person = personFor(ws, message.userId);
+  if (!person) return res.status(422).json({ error: 'unknown_owner', message: 'The person this mail was addressed to is no longer on the roster.' });
+
+  const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', message.orgId);
+  const provider = resolveProvider(settings?.readerProvider);
+
+  // Waited on, unlike the delivery road's: somebody is watching this one, and
+  // the answer is the whole point of having pressed it. The READ that follows
+  // still runs in the background — the document exists either way.
+  // The placeholder, where one is waiting: the fetch fills the row that has
+  // been asking rather than standing a second cost beside it.
+  const { note, documents } = await followMessageLinks(req, message, person.user, provider, message.pendingBillId || '');
+  res.json({ ok: documents.length > 0, note, documents });
+});
+
+// What a fetch needs, for one message: who to file under and which reader.
+// Resolved in one place because the three roads below all need the same two.
+function fetchContextFor(ws: string, message: MailMessage) {
+  const person = personFor(ws, message.userId);
+  if (!person) return null;
+  const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', message.orgId);
+  return { user: person.user, provider: resolveProvider(settings?.readerProvider) };
+}
+
+// GET /api/email/senders — whose links this entity follows without asking.
+emailRouter.get('/senders', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const senders = trustedSendersFor(ws, orgId, dataScopeForOrg(orgId)).map((t) => ({
+    address: t.address,
+    at: t.at,
+    by: t.by,
+  }));
+  res.json({ senders, linkFetchEnabled: n8nEnabled() });
+});
+
+/**
+ * POST /api/email/senders/trust — this sender may be followed from now on.
+ *
+ * Two things at once, deliberately. It records the decision, so every later
+ * mail from that address is fetched on arrival without asking again; and it
+ * acts on it NOW, for every document of theirs already standing in the inbox
+ * waiting for exactly this answer. Trusting a sender and then having to press
+ * fetch on each of their documents separately would be the same decision made
+ * twice, and the second half is the one people forget.
+ */
+emailRouter.post('/senders/trust', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const address = normaliseSender(String(req.body?.address ?? ''));
+  if (!address || !address.includes('@')) {
+    return res.status(422).json({ error: 'bad_address', message: 'That is not an email address.' });
+  }
+  const me = memberForSession(req);
+  trustSender(ws, orgId, dataScopeForOrg(orgId), address, me?.email || '');
+
+  // Everything of theirs that was waiting on the answer. Ordered oldest first,
+  // so a backlog is cleared in the order it arrived. An attached email waits on
+  // whoever delivered it, never on the From line inside the file.
+  const waiting = mailHere(ws, orgId)
+    .filter((m) => Boolean(m.pendingBillId) && normaliseSender(trustAddressOf(m)) === address)
+    .sort((a, b) => String(a.sentAt).localeCompare(String(b.sentAt)));
+
+  const notes: string[] = [];
+  let fetched = 0;
+  if (n8nEnabled()) {
+    for (const message of waiting) {
+      const ctx = fetchContextFor(ws, message);
+      if (!ctx) continue;
+      const out = await followMessageLinks(req, message, ctx.user, ctx.provider, message.pendingBillId || '');
+      fetched += out.documents.length;
+      if (!out.documents.length) notes.push(out.note);
+    }
+  } else if (waiting.length) {
+    notes.push('No n8n webhook is configured (N8N_FETCH_URL), so nothing could be fetched.');
+  }
+
+  res.json({ ok: true, address, waiting: waiting.length, fetched, notes });
+});
+
+// POST /api/email/senders/untrust — stop following this sender's links.
+//
+// What was already fetched under the trust stays: those are documents now, and
+// they happened. Only what arrives NEXT goes back to asking.
+emailRouter.post('/senders/untrust', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const address = normaliseSender(String(req.body?.address ?? ''));
+  const removed = untrustSender(ws, orgId, dataScopeForOrg(orgId), address);
+  res.json({ ok: true, address, removed });
+});
+
+/**
+ * POST /api/email/documents/:billId/fetch — fetch this one, without trusting.
+ *
+ * The other answer to the question the inbox row asks. Somebody who recognises
+ * one invoice but does not want every future mail from that address followed
+ * automatically gets the document and nothing else — no rule written, nothing
+ * remembered. Addressed by the DOCUMENT because that is where the question was
+ * asked; the message behind it is what actually carries the links.
+ */
+emailRouter.post('/documents/:billId/fetch', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const billId = String(req.params.billId ?? '');
+  const message = mailHere(ws, orgId).find((m) => m.pendingBillId === billId)
+    || mailHere(ws, orgId).find((m) => m.documents.some((d) => d.billId === billId));
+  if (!message) return res.status(404).json({ error: 'unknown_document' });
+  if (!message.links.length) return res.status(422).json({ error: 'no_links', message: 'This document carries no link to follow.' });
+  if (!n8nEnabled()) {
+    return res.status(503).json({ error: 'n8n_not_configured', message: 'No n8n webhook is configured (N8N_FETCH_URL).' });
+  }
+
+  const ctx = fetchContextFor(ws, message);
+  if (!ctx) return res.status(422).json({ error: 'unknown_owner', message: 'The person this mail was addressed to is no longer on the roster.' });
+
+  const { note, documents } = await followMessageLinks(req, message, ctx.user, ctx.provider, billId);
+  res.json({ ok: documents.length > 0, note, documents });
+});
+
+// --- Answering a mail --------------------------------------------------------
+//
+// Everything above reads what arrived. This is the one thing that goes the
+// other way: a document that came in as a link with no invoice behind it, a
+// photo too dark to read, a bill with a page missing — each ends with somebody
+// having to ask the sender for something, and until now that meant leaving the
+// app to find the email again in a mailbox CYBills's addresses do not have.
+//
+// It goes out from the deployment's own mailbox (the one that sends invitations),
+// which nobody reads, so the ANSWER is pointed back where the original was
+// delivered: Reply-To is the CYBills address the sender wrote to. Their reply,
+// and whatever they attach to it, then arrives by the ordinary inbound road and
+// is filed under the same person, in the same thread. The person who wrote the
+// reply is on Reply-To as well, because a mirrored row tells nobody anything
+// has happened.
+
+const replyEnabled = () => smtpConfigured || isMailConnected();
+
+const ADDRESS = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
+
+// An address a reply can actually reach, or ''. Never an internal identity
+// (`…@cybills.local`), which is a name for a roster row and not a mailbox.
+const answerable = (address: string) => (ADDRESS.test(address) && !isInternalAddress(address) ? address : '');
+
+// Recipients as typed: a list, or one string with commas between them.
+function addressList(raw: unknown): { ok: string[]; bad: string[] } {
+  const parts = (Array.isArray(raw) ? raw : String(raw ?? '').split(/[,;\n]/))
+    .map((a) => normaliseSender(String(a ?? '')))
+    .filter(Boolean);
+  const unique = [...new Set(parts)];
+  return { ok: unique.filter((a) => answerable(a)), bad: unique.filter((a) => !answerable(a)) };
+}
+
+function billIdsOf(m: MailMessage): string[] {
+  return [...m.documents.map((d) => d.billId), m.pendingBillId || ''].filter(Boolean);
+}
+
+// The Message-ID an answer should name, where the mirror holds a real one. A
+// message named by what it IS (`mail_…`, a Worker that forwarded no MIME) has
+// none, and the suffix a second delivery of one mail is told apart by is ours.
+// An email that arrived ATTACHED to another answers the mail that carried it:
+// that is the message the person being answered actually sent.
+function messageIdToAnswer(m: MailMessage): string {
+  const id = String(m.forwardedIn || m.id || '').split('#')[0].trim();
+  return id.includes('@') && !id.startsWith('mail_') ? id : '';
+}
+
+const stamp = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleString('en-SG', { dateStyle: 'medium', timeStyle: 'short', timeZone: env.PRACTICE_TIMEZONE });
+};
+
+type Answering = {
+  message: MailMessage | null;
+  bill: Bill | null;
+  envelope: { from: string; to: string; subject: string; date: string; text: string };
+  billIds: string[];
+};
+
+// What is being answered: a mirrored message, named outright or found through
+// the document it produced, else the envelope the document itself carries (one
+// emailed in before the mirror existed). Null when the caller's entity holds
+// neither — which answers 404, like every other message they may not see.
+function answering(ws: string, orgId: string, about: { messageId?: string; billId?: string }): Answering | null {
+  const here = mailHere(ws, orgId);
+  const bill = about.billId ? getBillById(dataScopeForOrg(orgId), about.billId) : null;
+  const message =
+    (about.messageId ? here.find((m) => m.id === about.messageId) : null) ||
+    (bill ? here.find((m) => m.pendingBillId === bill.id) || here.find((m) => m.documents.some((d) => d.billId === bill.id)) : null) ||
+    null;
+  if (message) {
+    return {
+      message,
+      bill,
+      envelope: {
+        from: trustAddressOf(message),
+        to: message.to,
+        subject: message.subject,
+        date: message.sentAt || message.receivedAt,
+        text: message.text,
+      },
+      billIds: [...new Set([...billIdsOf(message), bill?.id || ''].filter(Boolean))],
+    };
+  }
+  if (bill?.email) return { message: null, bill, envelope: bill.email, billIds: [bill.id] };
+  return null;
+}
+
+// GET /api/email/documents/:billId/replies — what has been answered about the
+// mail this document arrived in, and whether (and to whom) it can be answered.
+emailRouter.get('/documents/:billId/replies', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
+  if (!about) return res.status(404).json({ error: 'unknown_document' });
+  res.json({
+    replies: repliesFor(ws, orgId, dataScopeForOrg(orgId), { messageId: about.message?.id, billIds: about.billIds }),
+    replyAddress: answerable(normaliseSender(about.envelope.from)),
+    replyEnabled: replyEnabled(),
+  });
+});
+
+/**
+ * POST /api/email/reply — answer a mail, from the page it is being read on.
+ *
+ * `{ messageId | billId, body, to?, cc? }`. The recipient defaults to whoever
+ * sent the original (for an email attached to another, whoever sent it IN — the
+ * From line inside the file is usually a supplier's no-reply address, and
+ * never the person who can be asked for anything).
+ *
+ * Business Admin, the bar everything else here holds: this sends mail to an
+ * outside address in the entity's name.
+ */
+emailRouter.post('/reply', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const about = answering(ws, orgId, {
+    messageId: String(req.body?.messageId ?? '').trim(),
+    billId: String(req.body?.billId ?? '').trim(),
+  });
+  if (!about) return res.status(404).json({ error: 'unknown_message' });
+
+  const body = String(req.body?.body ?? '').replace(/\r\n/g, '\n').trim();
+  if (!body) return res.status(422).json({ error: 'empty_reply', message: 'Write something to send.' });
+  if (body.length > 10_000) return res.status(422).json({ error: 'reply_too_long', message: 'That reply is too long to send from here.' });
+
+  const typedTo = addressList(req.body?.to);
+  const cc = addressList(req.body?.cc);
+  const fallback = answerable(normaliseSender(about.envelope.from));
+  const to = typedTo.ok.length || typedTo.bad.length ? typedTo.ok : fallback ? [fallback] : [];
+  const bad = [...typedTo.bad, ...cc.bad];
+  if (bad.length) return res.status(422).json({ error: 'bad_address', message: `${bad[0]} is not an email address.` });
+  if (!to.length) {
+    return res.status(422).json({ error: 'no_recipient', message: 'There is nobody to send this to — the original carries no usable sender address.' });
+  }
+  if (to.length + cc.ok.length > 10) {
+    return res.status(422).json({ error: 'too_many_recipients', message: 'A reply from here goes to at most ten addresses.' });
+  }
+
+  if (!replyEnabled()) {
+    return res.status(503).json({
+      error: 'mail_not_connected',
+      message: 'No mailbox is connected to send from. The practice connects one under Business settings -> Email.',
+    });
+  }
+
+  const me = memberForSession(req);
+  // The address the original was delivered to first: that is what files the
+  // sender's answer. Then the person writing, so they hear about it.
+  const replyTo = [
+    ...new Set([answerable(normaliseSender(about.envelope.to)), answerable(normaliseSender(me?.email || ''))].filter(Boolean)),
+  ];
+  const base = /^\s*re\s*:/i.test(about.envelope.subject)
+    ? about.envelope.subject.trim()
+    : `Re: ${about.envelope.subject.trim() || 'your email'}`;
+  // The item's number goes on the END of the subject: one mail can be sent in
+  // twice (two items), and a reply that only says "Re: …" cannot be told apart
+  // from the other's. Not added twice when the subject already carries it.
+  const item = about.bill || (about.billIds[0] ? getBillById(dataScopeForOrg(orgId), about.billIds[0]) : null);
+  const itemNo = String(item?.displayId || item?.id || '').replace(/^#/, '');
+  const tag = itemNo ? `[Item #${itemNo}]` : '';
+  const subject = tag && !base.includes(tag) ? `${base} ${tag}` : base;
+  const inReplyTo = about.message ? messageIdToAnswer(about.message) : '';
+
+  const out = await sendMail({
+    to: to.map((email) => ({ email })),
+    ...(cc.ok.length ? { cc: cc.ok.map((email) => ({ email })) } : {}),
+    replyTo: replyTo.map((email) => ({ email })),
+    ...(inReplyTo ? { inReplyTo } : {}),
+    subject,
+    html: replyEmail({
+      body,
+      fromName: me?.name || me?.email || '',
+      entityName: getOrganisation(ws, orgId)?.name || '',
+      original: { from: about.envelope.from, date: stamp(about.envelope.date), text: about.envelope.text },
+    }),
+  });
+  // Recorded only once it has actually gone: a reply shown under a message is a
+  // claim that the sender was told something.
+  if (!out.sent) {
+    return res.status(502).json({ error: 'send_failed', message: `The reply was not sent — ${out.error || 'the mailbox refused it'}.` });
+  }
+
+  const reply = recordReply({
+    workspaceId: ws,
+    orgId,
+    scope: dataScopeForOrg(orgId),
+    messageId: about.message?.id || '',
+    billIds: about.billIds,
+    to,
+    cc: cc.ok,
+    replyTo,
+    subject,
+    text: body,
+    by: me?.email || '',
+    byName: me?.name || me?.email || '',
+  });
+  // Waiting on the sender now: the documents of this mail are To review, with
+  // the status "Pending reply", until the answer comes back or somebody clears it.
+  for (const id of about.billIds) {
+    const b = getBillById(dataScopeForOrg(orgId), id);
+    if (b && !b.xeroInvoiceId && ['new', 'ready'].includes(String(b.status))) {
+      setPendingReply(dataScopeForOrg(orgId), id, { at: reply.at, to: to.join(', '), by: me?.email || '' });
+    }
+  }
+  res.json({ ok: true, reply });
+});
+
+// --- The email itself, as the document ---------------------------------------
+//
+// Some mail has nothing behind it to fetch: the paperwork is the BODY — an
+// order confirmation typed into a forward, "please PayNow to …" above a thread
+// that carries the amount — and its links are a logo and a mail client's
+// footer. The document it left in the inbox would be published to Xero with no
+// paper at all. So the message can be written out as a PDF and attached, from
+// the document that is asking or from the mail's own row on the Email tab.
+async function saveAsPdf(req: Request, res: Response, about: { messageId?: string; billId?: string }) {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+
+  const found = answering(ws, orgId, about);
+  if (!found) return res.status(404).json({ error: about.billId ? 'unknown_document' : 'unknown_message' });
+  const { message } = found;
+  const scope = dataScopeForOrg(orgId);
+  if (message?.outcome === 'forwarding_confirmation') {
+    return res.status(422).json({ error: 'not_a_document', message: 'That is a forwarding confirmation, not paperwork.' });
+  }
+
+  // The row the PDF lands on: the document it was pressed from, else the one
+  // standing in the inbox for this mail. A mail with neither gets a new one.
+  const fill = found.bill || (message?.pendingBillId ? getBillById(scope, message.pendingBillId) : null);
+  // `replace`: a person asking to swap the wrong file (a booking's terms and
+  // conditions) for the email itself. Never once the document is in Xero, where
+  // the old file has already gone as its attachment.
+  const replace = req.body?.replace === true;
+  const oldKey = fill?.storageKey || '';
+  if (oldKey && !replace) {
+    return res.status(409).json({ error: 'has_file', message: 'This document already has a file attached.' });
+  }
+  if (oldKey && fill?.xeroInvoiceId) {
+    return res.status(409).json({ error: 'in_xero', message: 'This document is already in Xero with its file, so the file cannot be swapped here.' });
+  }
+  if (!fill && message?.documents.length) {
+    return res.status(409).json({ error: 'already_filed', message: 'This mail has already been filed as a document.' });
+  }
+  const person = message ? personFor(ws, message.userId) : null;
+  if (!fill && !person) {
+    return res.status(422).json({ error: 'unknown_owner', message: 'The person this mail was addressed to is no longer on the roster.' });
+  }
+
+  // The message as it was SENT — for an email attached to another, its own
+  // From line, which is what the page should say whoever forwarded it.
+  const envelope = message
+    ? { from: message.from, to: message.to, subject: message.subject, date: message.sentAt || message.receivedAt, text: message.text }
+    : found.envelope;
+  // The stored text is the top of the message, capped; where the markup is
+  // still held and the text ran out (or was never there), the markup has the
+  // rest of the thread — which is where a forwarded order's figures are.
+  const cut = envelope.text.length >= 3900 || !envelope.text.trim();
+  const html = cut ? await readMailBody(message) : '';
+  const body = html ? htmlToText(html) : '';
+
+  // The browser can lay the message's HTML out and this server cannot, so it
+  // may send the page already drawn. Taken only where the bytes ARE a PDF.
+  let rendered: Buffer | null = null;
+  if (typeof req.body?.pdf === 'string' && req.body.pdf) {
+    rendered = Buffer.from(req.body.pdf, 'base64');
+    if (rendered.subarray(0, 5).toString('latin1') !== '%PDF-' || rendered.length > 15 * 1024 * 1024) {
+      return res.status(422).json({ error: 'not_a_pdf', message: 'That is not a PDF this can attach.' });
+    }
+  }
+
+  const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', orgId);
+  const out = await saveEmailAsPdf(req, {
+    scope,
+    orgId: message?.orgId || orgId,
+    envelope,
+    body,
+    message,
+    fill,
+    user: person?.user || { email: fill?.owner || fill?.createdBy || '' },
+    provider: resolveProvider(settings?.readerProvider),
+    rendered,
+  });
+  if (!out.ok) return res.status(502).json({ error: 'not_saved', message: out.note });
+  // The wrong file is removed only once the email is stored in its place.
+  const nowKey = fill?.id ? getBillById(scope, fill.id)?.storageKey : '';
+  if (oldKey && nowKey && nowKey !== oldKey) await deleteBillFile(oldKey).catch(() => {});
+  res.json({ ok: true, note: out.note, document: out.document, reading: out.reading });
+}
+
+// The message as it was SENT: its HTML part, for the page to draw in a frame
+// that can run nothing. '' where only the text was kept — a mail delivered
+// before bodies were stored, or one that never had an HTML part.
+async function sendBody(req: Request, res: Response, about: { messageId?: string; billId?: string }) {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const found = answering(ws, orgId, about);
+  if (!found) return res.status(404).json({ error: about.billId ? 'unknown_document' : 'unknown_message' });
+  res.json({ html: await readMailBody(found.message) });
+}
+
+// GET /api/email/documents/:billId/body — the mail a document arrived in.
+emailRouter.get('/documents/:billId/body', (req, res) => sendBody(req, res, { billId: String(req.params.billId ?? '') }));
+
+// --- Files: which of a mail's files stand as the document's proof -------------
+//
+// GET lists what could: the file attached now, the email itself, and the
+// other documents the same mail filed (its other attachments — a booking's
+// terms and conditions arrive beside its e-ticket). POST takes the ones picked,
+// in order, and makes them the document's one file: as it is for a single
+// PDF, joined into one PDF for several. The file it replaces is deleted only
+// after the new one is stored, and not while another document holds it.
+type FileChoice = { key: string; label: string; fileName: string; contentType: string; current?: boolean };
+
+async function serverEmailPdf(about: NonNullable<ReturnType<typeof answering>>): Promise<Buffer> {
+  const env0 = about.envelope;
+  const when = new Date(env0.date);
+  const cut = env0.text.length >= 3900 || !env0.text.trim();
+  const html = cut ? await readMailBody(about.message) : '';
+  return emailAsPdf({
+    from: env0.from,
+    to: env0.to,
+    subject: env0.subject,
+    date: Number.isNaN(when.getTime()) ? env0.date : when.toLocaleString('en-SG', { dateStyle: 'full', timeStyle: 'short', timeZone: env.PRACTICE_TIMEZONE }),
+    text: html ? htmlToText(html) : env0.text,
+    caption: `Email received at ${env0.to || 'CYBills'}, saved as a PDF by CYBills.`,
+  });
+}
+
+// GET /api/email/documents/:billId/email.pdf — the email as the PDF it would be
+// saved as, to look at before choosing. Writes nothing.
+emailRouter.get('/documents/:billId/email.pdf', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
+  if (!about) return res.status(404).json({ error: 'unknown_document' });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'inline; filename="email.pdf"');
+  res.send(await serverEmailPdf(about));
+});
+
+async function filesAbout(req: Request, res: Response) {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
+  if (!about?.bill) return res.status(404).json({ error: 'unknown_document' });
+  const scope = dataScopeForOrg(orgId);
+  const bill = about.bill;
+  const files: FileChoice[] = [];
+  if (bill.storageKey) {
+    files.push({ key: 'current', label: 'Attached to this document now', fileName: bill.fileName || 'file', contentType: bill.contentType || '', current: true });
+  }
+  files.push({ key: 'email', label: 'This email, saved as a PDF', fileName: `${(about.envelope.subject || 'Email').slice(0, 60)}.pdf`, contentType: 'application/pdf' });
+  for (const d of about.message?.documents ?? []) {
+    if (d.billId === bill.id) continue;
+    const other = getBillById(scope, d.billId);
+    if (!other?.storageKey) continue;
+    files.push({
+      key: `bill:${other.id}`,
+      label: `From the same email — item #${other.displayId || other.id}`,
+      fileName: other.fileName || d.fileName,
+      contentType: other.contentType || '',
+    });
+  }
+  res.json({ files, inXero: Boolean(bill.xeroInvoiceId) });
+}
+
+async function setFiles(req: Request, res: Response) {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
+  if (!about?.bill) return res.status(404).json({ error: 'unknown_document' });
+  const scope = dataScopeForOrg(orgId);
+  const bill = about.bill;
+  if (bill.xeroInvoiceId) {
+    return res.status(409).json({ error: 'in_xero', message: 'This document is already in Xero with its file, so the file cannot be changed here.' });
+  }
+  const keys: string[] = Array.isArray(req.body?.keys) ? [...new Set<string>(req.body.keys.map(String))] : [];
+  if (!keys.length) return res.status(422).json({ error: 'nothing_selected', message: 'Choose at least one file.' });
+  if (keys.length > 10) return res.status(422).json({ error: 'too_many', message: 'Combine at most ten files at once.' });
+  if (keys.length === 1 && keys[0] === 'current') {
+    return res.status(409).json({ error: 'no_change', message: 'That is the file already attached.' });
+  }
+
+  const parts: Part[] = [];
+  for (const key of keys) {
+    let stored: Bill | null = null;
+    if (key === 'current') stored = bill;
+    else if (key.startsWith('bill:')) {
+      const id = key.slice(5);
+      // Only a document this very mail filed: the picker never offers another.
+      if (!(about.message?.documents ?? []).some((d) => d.billId === id)) {
+        return res.status(422).json({ error: 'unknown_file', message: 'One of those files is not part of this email.' });
+      }
+      stored = getBillById(scope, id);
+    } else if (key !== 'email') {
+      return res.status(422).json({ error: 'unknown_file', message: 'One of those files is not available.' });
+    }
+    if (key === 'email') {
+      let bytes: Buffer;
+      if (typeof req.body?.pdf === 'string' && req.body.pdf) {
+        bytes = Buffer.from(req.body.pdf, 'base64');
+        if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-' || bytes.length > 15 * 1024 * 1024) {
+          return res.status(422).json({ error: 'not_a_pdf', message: 'That is not a PDF this can attach.' });
+        }
+      } else {
+        bytes = await serverEmailPdf(about);
+      }
+      parts.push({ name: 'the email', bytes });
+      continue;
+    }
+    if (!stored?.storageKey) return res.status(422).json({ error: 'no_file', message: 'One of those files is no longer stored.' });
+    const obj = await getBillFile(stored.storageKey, stored.contentType);
+    if (!obj) return res.status(422).json({ error: 'no_file', message: `${stored.fileName || 'A file'} could not be read from storage.` });
+    parts.push({ name: stored.fileName || 'a file', bytes: await readAll(obj.body) });
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = await combineToPdf(parts);
+  } catch (err) {
+    if (err instanceof CombineError) return res.status(422).json({ error: 'cannot_combine', message: err.message });
+    throw err;
+  }
+
+  const fileHash = createHash('sha256').update(bytes).digest('hex');
+  const fileName = `Item ${bill.displayId || bill.id}${keys.length > 1 ? ' combined' : ''}.pdf`;
+  const put = await putBillFile(scope, fileHash, 'application/pdf', bytes).catch(() => null);
+  if (!put?.storageKey) return res.status(502).json({ error: 'not_saved', message: 'The PDF was made but could not be stored.' });
+
+  const oldKey = bill.storageKey || '';
+  const attached = attachFetchedFile(scope, bill.id, { fileHash, fileName, storageKey: put.storageKey, contentType: put.contentType }, false);
+  if (!attached) return res.status(404).json({ error: 'unknown_document' });
+  if (oldKey && oldKey !== put.storageKey && !listBills(scope).some((b) => b.id !== bill.id && b.storageKey === oldKey)) {
+    await deleteBillFile(oldKey).catch(() => {});
+  }
+  res.json({ ok: true, fileName, files: parts.length });
+}
+
+// POST /api/email/documents/:billId/reply-received — the answer has come, or is
+// no longer wanted: the document stops waiting.
+emailRouter.post('/documents/:billId/reply-received', (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
+  if (!about?.bill) return res.status(404).json({ error: 'unknown_document' });
+  const updated = setPendingReply(dataScopeForOrg(orgId), about.bill.id, null);
+  res.json({ ok: true, pendingReply: updated?.pendingReply ?? null });
+});
+
+emailRouter.get('/documents/:billId/files', filesAbout);
+emailRouter.post('/documents/:billId/files', setFiles);
+
+// GET /api/email/messages/:id/body — a mail on the Email tab.
+emailRouter.get('/messages/:id/body', (req, res) => sendBody(req, res, { messageId: String(req.params.id ?? '') }));
+
+// POST /api/email/documents/:billId/pdf — from the document that has no file.
+emailRouter.post('/documents/:billId/pdf', (req, res) => saveAsPdf(req, res, { billId: String(req.params.billId ?? '') }));
+
+// POST /api/email/messages/:id/pdf — from the mail's own row on the Email tab.
+emailRouter.post('/messages/:id/pdf', (req, res) => saveAsPdf(req, res, { messageId: String(req.params.id ?? '') }));

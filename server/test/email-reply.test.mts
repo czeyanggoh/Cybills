@@ -212,4 +212,26 @@ check('a refused send says so', [r.status, r.body.error], [502, 'send_failed']);
 r = await api(`/documents/${bill.id}/replies`);
 check('…and leaves no reply on the record', r.body.replies.length, 2);
 
+// --- Waiting for the answer ---------------------------------------------------
+const waiting = listBills('cybm').find((b) => b.id === bill.id)!;
+check('a sent reply leaves the document waiting, To review not Ready', [waiting.pendingReply?.to, waiting.status !== 'ready'], ['ivor@dart.com.sg', true]);
+await fetch('http://127.0.0.1:4651/api/inbound/email', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'X-Inbound-Secret': 'test-inbound-secret' },
+  body: JSON.stringify({
+    to: 'astrid4@cybills.sg',
+    from: 'Martin Lim <martin.lim@dart.com.sg>',
+    subject: `Re: Fw: Order Request: Snack Box [Item #${bill.displayId}]`,
+    text: 'Here is the invoice, attached next.',
+    messageId: '<answer-1@dart.com.sg>',
+  }),
+});
+await new Promise((r) => setTimeout(r, 200));
+check('an answer carrying the item number ends the wait', listBills('cybm').find((b) => b.id === bill.id)?.pendingReply, undefined);
+refuse = false;
+r = await api('/reply', { billId: bill.id, body: 'And one more thing.' });
+check('a further reply waits again', Boolean(listBills('cybm').find((b) => b.id === bill.id)?.pendingReply), true);
+r = await api(`/documents/${bill.id}/reply-received`, {});
+check('…until somebody marks it answered', [r.status, listBills('cybm').find((b) => b.id === bill.id)?.pendingReply], [200, undefined]);
+
 await finish(failures, server, smtp);

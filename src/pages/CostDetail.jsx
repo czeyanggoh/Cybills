@@ -1,3613 +1,3628 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import {
-  ChevronLeft,
-  ChevronRight,
-  Flag,
-  Sparkles,
-  Upload,
-  ChevronDown,
-  FileText,
-  CheckCircle2,
-  AlertCircle,
-  Info,
-  ExternalLink,
-  Link2 as LinkIcon,
-  Archive as ArchiveIcon,
-  Loader2,
-} from 'lucide-react';
-import AppShell from '@/components/AppShell';
-import CostsSubnav from '@/components/CostsSubnav';
-import SalesSubnav from '@/components/SalesSubnav';
-import CustomerRulesModal from '@/components/CustomerRulesModal';
-import SplitItemModal from '@/components/SplitItemModal';
-import AddToClaimModal from '@/components/AddToClaimModal';
-import PublishToXeroModal from '@/components/PublishToXeroModal';
-import DuplicateReviewModal from '@/components/DuplicateReviewModal';
-import { addItemToClaim, createClaim, docToClaimTxn, moveItemsToClaim, removeItemsFromClaim, useClaims } from '@/lib/claimStore';
-import { claimRef } from '@/lib/exportFormat';
-import { useAuth } from '@/lib/auth';
-import { trustSender, fetchDocumentLink, useDocumentReplies, saveEmailAsPdf, drawEmailPdf } from '@/lib/mailbox';
-import EmailReply from '@/components/EmailReply';
-import DocumentFiles from '@/components/DocumentFiles';
-import MailBody from '@/components/MailBody';
-import { getDoc } from '@/data/docs';
-import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
-import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, useOrganisations, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
-import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
-import { useProjectOptions } from '@/lib/listsStore';
-import { useProjectLabels, singular } from '@/lib/projectLabels';
-import { useUsers, useOwnerNames, canPublishToXero, canCreateClaims, canManageBusiness } from '@/lib/userStore';
-import { isPracticeTeam } from '@/lib/practiceStore';
-import { setWhatsappSender } from '@/lib/whatsapp';
-import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
-import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, deleteBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, salesPath, docPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, moveBillToWorkspace, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
-import { unmergeCost } from '@/lib/mergeDocs';
-import SupplierRulesModal from '@/components/SupplierRulesModal';
-import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
-import {
-  matchSupplierRule,
-  supplierRuleCategoryReason,
-  supplierRuleCount,
-  supplierRulePatch,
-  supplierRuleProjectReason,
-  useSupplierRules,
-} from '@/lib/supplierRules';
-import TeachRule from '@/components/TeachRule';
-import { useDocsOfKind, rowsFor, isInInbox } from '@/lib/costsData';
-import { readWalk, walkPosition } from '@/lib/listView';
-import { totalOk, counterpartyLabel, effectiveDate, dateFromSubmission } from '@/lib/readiness';
-import { useExtractionSettings, noTaxRateName, taxForCode } from '@/lib/extractionSettings';
-import { readDecisions, ruleLineRows } from '@/lib/reRead';
-import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
-import { useSalesEnabled } from '@/lib/workspaceSettings';
-import { useAutoSave } from '@/lib/useAutoSave';
-import { isMileage, mileagePatch, mileageSummary } from '@/lib/mileage';
-import { isPaymentProof, paymentProofPatch } from '@/lib/paymentProof';
-import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
-import { xeroBillUrl } from '@/lib/autoPublish';
-import { useXeroShortCode } from '@/lib/organisations';
-import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
-import { formatDate } from '@/lib/date';
-import BankMatchPanel from '@/components/BankMatchPanel';
-import PaymentProofPanel from '@/components/PaymentProofPanel';
-import PrepaymentPanel from '@/components/PrepaymentPanel';
-import PaperworkMatchPanel from '@/components/PaperworkMatchPanel';
-import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
-import { paperworkSuggestion } from '@/lib/paperworkMatch';
-import { isAdvanceDocument, advancePatch, firmPrepayment, ADVANCE_TYPES } from '@/lib/prepayment';
-import SaveStatus from '@/components/SaveStatus';
-import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
-import { prepareUpload } from '@/lib/image';
-import { balanceLine, foldTaxIntoCost, applyLineTaxRate } from '@/lib/lineItems';
-import { coveringNote } from '@/lib/coveringNote';
-import { cn } from '@/lib/utils';
-import ComboSelect from '@/components/ComboSelect';
-import ZoomableImage from '@/components/ZoomableImage';
-import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from '@/lib/motorVehicle';
-import { isMedicalProviderExpense, medicalProviderReason } from '@/lib/medicalProvider';
-
-function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title || undefined}
-      className={cn(
-        'inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
-        disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted',
-        subtle && 'border-transparent'
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Field({ label, children }) {
-  return (
-    <div className="flex items-start gap-4 py-2">
-      <div className="w-40 shrink-0 pt-2 text-sm text-muted-foreground">{label}</div>
-      <div className="flex-1">{children}</div>
-    </div>
-  );
-}
-
-function Input({ value, onChange = null, readOnly = false }) {
-  return (
-    <input
-      value={value}
-      readOnly={readOnly || !onChange}
-      onChange={onChange ? (e) => onChange(e.target.value) : undefined}
-      className={cn(
-        'h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        readOnly || !onChange ? 'bg-muted text-muted-foreground' : 'bg-background'
-      )}
-    />
-  );
-}
-
-
-function SectionHeading({ children }) {
-  return (
-    <h3 className="mb-1 mt-6 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-      {children}
-    </h3>
-  );
-}
-
-// Left panel: the uploaded file once one exists, else a monochrome stand-in.
-// `fill` = take the height of whatever holds it rather than a fixed one: always
-// (the line items editor, whose document pane is dragged to size), or `'lg'`,
-// only once the page is two columns — stacked above the form on a narrow
-// screen there is nothing to fill, so it keeps its own height there.
-function ReceiptPreview({ doc, imageUrl, previewType, fill = false }) {
-  const frame = fill === 'lg'
-    ? 'h-[45vh] w-full md:h-[560px] lg:h-auto lg:min-h-0 lg:flex-1'
-    : fill ? 'min-h-0 w-full flex-1' : 'h-[45vh] w-full md:h-[560px]';
-  if (imageUrl) {
-    return (
-      <div
-        className={cn(
-          'overflow-hidden rounded-lg border bg-background',
-          fill === 'lg' ? 'lg:flex lg:h-full lg:flex-col' : fill && 'flex h-full flex-col'
-        )}
-      >
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 text-sm font-medium">
-          <span>{doc?.kind === 'sales' ? 'Uploaded document' : 'Uploaded receipt'}</span>
-          {/* Which page of the original this is. "Split PDF by page" turns one
-              file into several documents that all look alike at a glance, and
-              there was no way to tell from here which page you had open. */}
-          {doc?.splitGroup && doc.splitPages > 1 && (
-            <span
-              className="rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
-              title="This document is one page of a PDF you split on upload. The other pages are separate documents — merge them back if they are one receipt."
-            >
-              Page {doc.splitPage || '?'} of {doc.splitPages}
-            </span>
-          )}
-        </div>
-        {previewType === 'pdf' ? (
-          <iframe src={imageUrl} title="Uploaded document" className={frame} />
-        ) : (
-          <ZoomableImage src={imageUrl} alt={doc?.kind === 'sales' ? 'Uploaded document' : 'Uploaded receipt'} className={frame} />
-        )}
-      </div>
-    );
-  }
-  // No stored file yet — neutral placeholder for every document (no seeded
-  // "Grab receipt" mock). Use "Upload receipt" to attach the original.
-  return (
-    <div className={cn('overflow-hidden rounded-lg border bg-background', fill === true && 'h-full overflow-auto')}>
-      <div className="border-b px-4 py-3 text-sm">
-        <span className="font-medium">{doc.supplier || 'Document'}</span>
-        {doc.date && doc.date !== '—' && <span className="ml-2 text-muted-foreground">· {doc.date}</span>}
-      </div>
-      <div className="flex h-80 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
-        <FileText className="h-8 w-8" strokeWidth={1.5} />
-        <p className="text-sm">No file preview for this document.</p>
-        <p className="text-xs">Use “Upload {doc?.kind === 'sales' ? 'document' : 'receipt'}” to attach the original.</p>
-      </div>
-    </div>
-  );
-}
-
-// Document types offered in the Type dropdown (mirrors Dext's list).
-const DOC_TYPES = [
-  'Receipt',
-  'Invoice',
-  'Payment proof',
-  // Paid before the tax invoice exists: recorded in Xero as a prepayment to the
-  // supplier rather than published as a bill (src/lib/prepayment.js).
-  ...ADVANCE_TYPES,
-  'Credit note/refund',
-  'Statement/remittance advice',
-  'Expense statement',
-  'Delivery note',
-  'ATM withdrawal',
-  'Mileage',
-  'Other',
-];
-
-// What a sales document can be. The other side of the ledger has no payment
-// proofs, quotations paid in advance or mileage: each is a question about money
-// going OUT, and publishing one as a sale would post it as revenue.
-const SALES_DOC_TYPES = ['Invoice', 'Credit note/refund', 'Receipt', 'Statement/remittance advice', 'Other'];
-
-// A rule's field, in the words the form uses for it.
-const FIELD_LABELS = {
-  category: 'Category',
-  customer: 'Customer',
-  project: 'Project',
-  currency: 'Currency',
-  paymentMethod: 'Payment method',
-  description: 'Description',
-  taxRate: 'Tax rate',
-  paid: 'Paid',
-  dueDate: 'Due date',
-};
-const FIELD_LABEL = (k) => FIELD_LABELS[k] || k;
-
-function initialData(doc) {
-  return {
-    user: doc.user,
-    type: doc.type,
-    date: doc.date,
-    supplier: doc.supplier,
-    ref: doc.ref ?? doc.invoiceNumber ?? '',
-    category: doc.category,
-    categoryReason: doc.categoryReason ?? '',
-    currency: doc.currency,
-    total: doc.total,
-    tax: doc.tax,
-    // What the document is worth in the entity's own currency, and the rate
-    // between the two. One fact in three parts, so they are held together and
-    // written together — see setBaseTotal.
-    baseCurrency: doc.baseCurrency ?? '',
-    baseTotal: doc.baseTotal ? String(doc.baseTotal) : '',
-    baseTax: doc.baseTax ? String(doc.baseTax) : '',
-    exchangeRate: doc.exchangeRate ? String(doc.exchangeRate) : '',
-    taxRate: doc.taxRate ?? '',
-    taxRateReason: doc.taxRateReason ?? '',
-    taxRateCleared: Boolean(doc.taxRateCleared),
-    taxRateEdited: Boolean(doc.taxRateEdited),
-    description: doc.description ?? '',
-    paymentMethod: doc.paymentMethod ?? '',
-    paid: Boolean(doc.paid),
-    cardLast4: doc.cardLast4 ?? '',
-    // A Mileage document's own two figures. Its total is derived from them
-    // (setMileage below), never typed.
-    distanceKm: doc.distanceKm ? String(doc.distanceKm) : '',
-    mileageRate: doc.mileageRate ? String(doc.mileageRate) : '',
-    customer: doc.customer ?? '',
-    // Left out, the form read every document as not rebillable: the switch
-    // showed No on load whatever was saved, and flicked Yes -> No when a
-    // re-read that turned it on finished and the page took the document back.
-    rebillable: doc.rebillable === true,
-    project: doc.project ?? '',
-    project2: doc.project2 ?? '',
-    projectReason: doc.projectReason ?? '',
-    note: doc.note ?? '',
-    dueDate: doc.dueDate ?? '',
-    lineItems: Array.isArray(doc.lineItems) ? doc.lineItems : [],
-  };
-}
-
-export default function CostDetail() {
-  // The URL carries the document's ITEM ID — the number shown on the page and in
-  // the list (/costs/260822123051). An internal id still resolves, so older
-  // links and links built from a claim line item keep working; once the document
-  // loads, `id` below is always the internal id the API is addressed by.
-  const { id: routeId } = useParams();
-  const navigate = useNavigate();
-  // One page for both workspaces. A sales invoice is the same act on the other
-  // side of the ledger — read it, code it, publish it — so it is opened here
-  // rather than on a page of its own, which is how the Sales one fell behind:
-  // no re-read, no line items, no tax code, and a Delete that deleted nothing.
-  // Which workspace is decided by the ROUTE until the document has loaded (the
-  // list to walk, the subnav), then by the document's own `kind`.
-  const location = useLocation();
-  const salesRoute = location.pathname.startsWith('/sales/');
-  const Subnav = salesRoute ? SalesSubnav : CostsSubnav;
-  const listPath = salesRoute ? '/sales' : '/costs';
-  const pathOf = (d) => (salesRoute ? salesPath(d) : costPath(d));
-  const { visionEnabled, user, membership, googleEnabled } = useAuth();
-  // "Publishing permissions" in Edit privileges. Only a Standard user carries
-  // the setting; both admin tiers publish by role. Refused server-side too, on
-  // all four Xero routes — this is what stops the button being offered at all.
-  const mayPublish = canPublishToXero(membership, googleEnabled);
-  // "Create expense claims" in Edit privileges. Only a Standard user carries
-  // the setting; both admin tiers do this by role. Refused server-side on both
-  // halves of the act — opening a claim and putting items on it.
-  const mayClaimRole = canCreateClaims(membership, googleEnabled);
-  const teamUsers = useUsers();
-  // Who this document can belong to: the client's own people plus its general
-  // account, which is where anything a practice colleague added sits. A
-  // colleague is not on the list — reassigning a client's document to the
-  // bookkeeper doing their books is never the answer.
-  const ownerNames = useOwnerNames();
-  // Somebody who has been deactivated isn't offered — they can't sign in, so
-  // handing them a document only hides it behind a name nobody is using. The
-  // document's CURRENT owner is added back below, so one who has since left
-  // still shows rather than silently emptying the field.
-  const ownerOptions = Array.from(
-    new Set([...ownerNames, ...teamUsers.filter((u) => !u.deactivated).map((u) => u.name || u.email)].filter(Boolean))
-  );
-  // Revenue accounts for a sales invoice, expense accounts for a cost.
-  const categoryOptions = useCategoryOptions(salesRoute ? 'sales' : 'cost');
-  const catMode = useCategoryDisplayMode();
-  // Projects come from the active org's live Xero tracking category (managed in
-  // Lists → Projects); fall back to the bundled seed only when Xero isn't linked.
-  // Xero contacts AND the merchants this entity's own documents already name.
-  // A bridge entity has no Xero to ask, so without the second half its Supplier
-  // field offered nothing at all and every name had to be typed.
-  const bridge = useBridgeEntity();
-  // Names the entity in the "Open in Xero" link, so a bill opens in the ledger
-  // it was actually posted to rather than in whichever organisation the
-  // browser last had open there.
-  const xeroShortCode = useXeroShortCode();
-  const supplierOptions = mergeSupplierNames(useXeroSuppliers(), [
-    ...useDocumentSuppliers(),
-    ...addedSuppliers(),
-  ]);
-  const xeroProjects = useXeroProjectOptions();
-  const seedProjects = useProjectOptions();
-  // What this entity calls its project lists — a bridge entity's are PO numbers.
-  const projectLabels = useProjectLabels();
-  const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;
-  // Per-line tracking, one column per Xero tracking category the linked org
-  // actually has (Xero allows two; the second is its "Projects 2"). Deliberately
-  // NOT the seeded project list the document-level field falls back to: a
-  // per-line project only means something on publish, and publish can only tag a
-  // real Xero category. No Xero tracking, no columns — the grid is cramped
-  // enough without two dropdowns that could never reach the ledger.
-  const project2Options = useXeroProjectOptions(1);
-  const lineProjects = xeroProjects;
-  // Customers come from the active org's (CYBM) live Xero customer contacts.
-  const customerOptions = useXeroCustomers();
-  const paymentMethods = useXeroPaymentMethods();
-  // GST/tax rates — one managed list shared with Business settings → Lists →
-  // Tax rates: the live Xero rates (seed fallback), showing only the rates left
-  // Visible there, for each side of the ledger. A cost is offered the purchase
-  // codes and a sale the supply (output) codes; which applies is only known
-  // once the document is (see `isSales` below). `rateFor` gives the % for the
-  // tax math.
-  const costTaxRates = useVisibleTaxRates('cost');
-  const salesTaxRates = useVisibleTaxRates('sales');
-  // The unfiltered lists too: a code switched off in Lists is still the
-  // standard one for its rate, and this is how the org's own name for it is found.
-  const allCostTaxRates = useManagedTaxRates('cost');
-  const allSalesTaxRates = useManagedTaxRates('sales');
-  // Not GST-registered → every document codes to No Tax and no GST is split out,
-  // and the picker offers nothing else.
-  const gstRegistered = useGstRegistered();
-  const salesEnabled = useSalesEnabled();
-  // The entity's own currency, and whether this document was billed in another.
-  const baseCurrency = useBaseCurrency();
-  const extractionSettings = useExtractionSettings();
-  useSupplierRules(); // the Supplier field's rules link tracks whether a rule exists
-  const [pmModalOpen, setPmModalOpen] = useState(false);
-  const [rulesOpen, setRulesOpen] = useState(false);
-  const [customerRulesOpen, setCustomerRulesOpen] = useState(false);
-  const [linesOpen, setLinesOpen] = useState(false); // full-screen line-item editor
-  const fileInputRef = useRef(null);
-
-  // Sample docs carry any local (localStorage) edits applied on top.
-  const rawMock = getDoc(routeId);
-  const mockDoc = rawMock ? { ...rawMock, ...(getDocOverrides()[routeId] || {}) } : null;
-  const [tab, setTab] = useState('details');
-  const [persisted, setPersisted] = useState(null);
-  // Set when the document addressed by the URL lives in ANOTHER entity's book:
-  // null = it doesn't (or nothing has asked yet), else where it lives.
-  const [elsewhere, setElsewhere] = useState(null);
-  const [loading, setLoading] = useState(!mockDoc);
-  const [data, setData] = useState(() => initialData(mockDoc ?? {}));
-  const [imageUrl, setImageUrl] = useState('');
-  const [previewType, setPreviewType] = useState('image');
-
-  const [fieldSave, setFieldSave] = useState('idle'); // auto-save status for the document's fields
-  const [aiError, setAiError] = useState('');
-  // What the line-item read had to say, kept apart from aiError so it can be
-  // shown BESIDE the button that starts it. It used to land in the panel's
-  // header, ~190 lines of form above that button, so a document with no
-  // itemised table answered "No itemised charges found" completely off-screen —
-  // and pressing Extract line items looked like it had done nothing at all.
-  const [linesNote, setLinesNote] = useState('');
-  // The line items as they last stood before anybody edited them: how the
-  // document arrived, or what the last read produced. The grid writes through on
-  // every keystroke, so once a figure is typed over, the old one is gone from
-  // both the page and the server — and on a row that never added up (a stated
-  // tax against a rounded total) it cannot even be retyped, because the cells
-  // now keep each other true. Something has to remember it.
-  const [lineSnapshot, setLineSnapshot] = useState(null);
-  // Which fields a supplier's standing rule just filled in, so applying it is
-  // visible rather than fields quietly changing under the cursor.
-  const [ruleApplied, setRuleApplied] = useState(null);
-  // One block, so the panel and the full-screen editor can't drift apart.
-  const linesNoteBlock = linesNote ? (
-    <p className="mt-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-xs text-foreground">
-      {linesNote}
-    </p>
-  ) : null;
-  const [splitOpen, setSplitOpen] = useState(false);
-  const [splitNote, setSplitNote] = useState('');
-  const [claimOpen, setClaimOpen] = useState(false);
-  const [moveOpen, setMoveOpen] = useState(false);
-  const [publishOpen, setPublishOpen] = useState(false);
-  const [publishMode, setPublishMode] = useState('publish');
-  const [readyError, setReadyError] = useState([]); // required fields missing when trying to move to Ready
-  const [gstOpen, setGstOpen] = useState(false); // GST-split panel open
-  const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
-  const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
-  const [claimLeaving, setClaimLeaving] = useState(false); // taking this document off its claim
-  const [claimNote, setClaimNote] = useState(''); // where it went, once it has come off
-  const [compareOpen, setCompareOpen] = useState(false); // side-by-side duplicate review
-  const [moving, setMoving] = useState(false); // moving this document to another entity
-  const { data: organisations } = useOrganisations();
-  const [moveError, setMoveError] = useState('');
-  const [xeroBusy, setXeroBusy] = useState(''); // '' | 'attach' | 'clear'
-  const [xeroNote, setXeroNote] = useState('');
-  const [teach, setTeach] = useState(null); // { field, value } after a manual correction
-  // The link question: fetching this document's invoice from behind its link,
-  // and whether its sender may be followed without asking next time.
-  const [linkBusy, setLinkBusy] = useState('');
-  const [linkNote, setLinkNote] = useState('');
-
-  const doc = mockDoc ?? persisted;
-  // A sales invoice: the counterparty is the CUSTOMER, and nothing that asks
-  // about money going out (claims, bank match, payment proofs, prepayments,
-  // paperwork match, supplier rules) is offered.
-  const isSales = doc ? doc.kind === 'sales' : salesRoute;
-  const taxRateSource = isSales ? salesTaxRates : costTaxRates;
-  const allTaxRates = isSales ? allSalesTaxRates : allCostTaxRates;
-  const noTaxName = noTaxRateName(taxRateSource);
-  const taxRateOptions = gstRegistered
-    ? taxRateSource.map((t) => t.name)
-    : [noTaxName].filter(Boolean);
-  const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
-  // The key everything server-side is addressed by. Falls back to the URL's key
-  // while the document is still loading.
-  const id = doc?.id ?? routeId;
-  // What has been answered about the mail this document arrived in. Asked only
-  // of a document that came by email.
-  const [mailReplies, reloadMailReplies] = useDocumentReplies(doc?.email ? doc.id : '');
-  // The server writes an email out as TEXT (it has no browser to lay HTML out),
-  // and does so on arrival. Opened here, where a browser is, such a file is
-  // redrawn as the email looked and swapped in place — once per document per
-  // visit, and only when the drawing worked, so a mail with no HTML kept is not
-  // retried in a loop. Not in Xero (the file has gone there as it was).
-  const redrawnRef = useRef(new Set());
-  useEffect(() => {
-    if (!doc?.persisted || !doc.fileIsTextEmail || doc.xeroInvoiceId || !mailReplies.available) return;
-    if (redrawnRef.current.has(doc.id)) return;
-    redrawnRef.current.add(doc.id);
-    let cancelled = false;
-    (async () => {
-      try {
-        const pdf = await drawEmailPdf({ billId: doc.id, envelope: doc.email });
-        if (!pdf || cancelled) return;
-        await saveEmailAsPdf({ billId: doc.id, envelope: doc.email, replace: true });
-        const r = await fetchBillById(doc.id).catch(() => null);
-        if (r?.bill && !cancelled) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-        notifyBillsChanged();
-      } catch {
-        // Leave the text copy: it is still the email.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [doc?.id, doc?.persisted, doc?.fileIsTextEmail, doc?.xeroInvoiceId, mailReplies.available]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // The read running for THIS document, if any — including one started before
-  // this page was mounted, or before the reviewer moved away and came back.
-  const job = useExtractionJob(id);
-  // Refs, because the handler below outlives the render it was created in: the
-  // read it waits on can finish long after this page last re-rendered.
-  const persistedIdRef = useRef(null);
-  persistedIdRef.current = persisted?.id ?? null;
-  const handledJob = useRef(null);
-  const mounted = useRef(true);
-  // A document that has just been MOVED here has never been coded against this
-  // entity's chart: its category, tax code and tracking options were left behind
-  // on purpose, because they were names in the chart it came from. So it reads
-  // itself again on arrival, against THIS entity's accounts, tax rules, projects
-  // and supplier rules — otherwise moving a document CYBills has already read
-  // hands somebody three empty fields to type in.
-  //
-  // Started here rather than at the moment of the move, because moving reloads
-  // the app into the new entity and a reload aborts a read in progress.
-  const [readOnArrival, setReadOnArrival] = useState(false);
-  const reReadRef = useRef(null);
-  useEffect(() => () => { mounted.current = false; }, []);
-  const extracting = job?.kind === 'read';
-  const extractingLines = job?.kind === 'lines';
-  // If this document is a line item inside an expense claim, keep the page in
-  // that context: a note links back to the claim, and Back returns to it.
-  const claims = useClaims();
-  const { allDocs: inboxAllDocs } = useDocsOfKind(salesRoute ? 'sales' : 'cost');
-  // A sale's counterparty is a CUSTOMER: the org's Xero customer contacts, plus
-  // the names this entity's own sales documents already carry (a customer read
-  // off an invoice is often not a contact yet).
-  const salesCustomerOptions = salesRoute
-    ? mergeSupplierNames(customerOptions, inboxAllDocs.map((d) => d.supplier).filter((n) => n && !/^unknown (supplier|customer)$/i.test(n)))
-    : [];
-  const claimForItem = claims.find((c) => (c.transactions || []).some((t) => isItemKey(t.itemId, id)));
-  // Why this document can't go on a claim, or '' when it can. A document already
-  // ON a claim can still go onto another: a document is on one claim at a time,
-  // so the button MOVES it (the server adds to the target before it takes the
-  // item off this one, so it never drops back into Costs). Only where this end
-  // can let go: an approved claim is locked, and one in Xero has this money in
-  // the ledger as a line of its bill.
-  const mayClaim = mayClaimRole && !isSales;
-  const claimBlocked = doc?.xeroInvoiceId
-    ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.`
-    : doc?.paperworkMatch
-      ? 'Sent to a transaction already in Xero — it can’t also go on an expense claim.'
-    : claimForItem?.approvalStatus === 'approved'
-      ? `On approved expense claim ${claimRef(claimForItem)}, so it can’t be moved. Unapprove the claim first.`
-    : claimForItem?.xeroInvoiceId
-      ? `On expense claim ${claimRef(claimForItem)}, which is already in Xero, so it can’t be moved.`
-      : '';
-  // Take this document off its claim and put it back in Costs — the claim
-  // page's Remove, offered on the page somebody is already looking at the
-  // document on. Two states the server holds to, said before
-  // the click: an approved claim is locked, and a claim whose bill is already
-  // in Xero sets the document aside instead, because its money is in the
-  // ledger as a line of that bill until the claim is updated there.
-  const claimLocked = claimForItem?.approvalStatus === 'approved';
-  const claimInXero = Boolean(claimForItem?.xeroInvoiceId);
-  // On an APPROVED claim the item is the figure the approver signed off, so it
-  // is read-only for the people who raised it. The entity's Business Admin and
-  // the practice's colleagues may still correct it for posting, and the server
-  // carries their correction onto the claim (lockedOnApprovedClaim /
-  // carryCorrectionIntoClaim in server/src). The server holds the rule; this
-  // only draws it.
-  const mayCorrectApproved = isPracticeTeam(membership, googleEnabled) || canManageBusiness(membership, googleEnabled);
-  const itemLocked = claimLocked && !mayCorrectApproved;
-  const removeFromClaim = async () => {
-    if (!claimForItem || claimLocked || claimLeaving) return;
-    const ref = claimRef(claimForItem);
-    if (
-      !window.confirm(
-        claimInXero
-          ? `Remove this document from expense claim ${ref}?\n\n` +
-              'The claim is already published to Xero, so the document goes to Archived rather than back into Costs: ' +
-              'its cost is in the ledger as a line of the claim’s bill until the claim is updated in Xero.'
-          : `Remove this document from expense claim ${ref} and move it back to Costs?\n\n` +
-              'It comes off the claim and returns to the Costs inbox, where it can be published or added to another claim.'
-      )
-    )
-      return;
-    setClaimLeaving(true);
-    setAiError('');
-    try {
-      // Named the way the CLAIM names it: the line's own itemId is what the
-      // server takes off, and the banner found the claim by the same lookup.
-      const line = (claimForItem.transactions || []).find((t) => isItemKey(t.itemId, id));
-      await removeItemsFromClaim(claimForItem.id, [String(line?.itemId ?? doc.id)]);
-      const fresh = await fetchBillById(doc.id);
-      if (fresh) setPersisted(billToDoc({ ...fresh, hasFile: Boolean(fresh.storageKey ?? fresh.hasFile) }));
-      setClaimNote(
-        claimInXero
-          ? `Removed from expense claim ${ref}. The claim is in Xero, so this document is in Archived — update the claim in Xero to take its line off the bill.`
-          : `Removed from expense claim ${ref} — this document is back in Costs.`
-      );
-    } catch (err) {
-      setAiError(
-        err?.code === 'claim_locked'
-          ? 'That claim is approved, so its items can’t be changed. Unapprove the claim first.'
-          : 'Could not remove this document from the claim — please try again.'
-      );
-    } finally {
-      setClaimLeaving(false);
-    }
-  };
-  // Where this document stands in the list it was opened from — the Costs
-  // page's rows as they were on screen (rememberWalk), else the inbox — so
-  // Previous / Next walk that list and never anything else. Ids the book no
-  // longer holds (deleted since the list was drawn) are dropped rather than
-  // navigated to.
-  // A document on an expense claim walks that CLAIM's items instead — in the
-  // order the claim page showed them (rememberWalk there), else the order they
-  // were added — since a claimed document is in no Costs list to walk.
-  const claimWalkIds = claimForItem
-    ? (() => {
-        const items = (claimForItem.transactions || []).map((t) => String(t.itemId));
-        const onClaim = new Set(items);
-        const shown = readWalk(`claim:${claimForItem.id}`).filter((v) => onClaim.has(v));
-        return (shown.length === items.length ? shown : items).join('|');
-      })()
-    : '';
-  const walk = useMemo(() => {
-    if (claimWalkIds) {
-      const ids = claimWalkIds.split('|');
-      const here = ids.find((v) => isItemKey(v, id)) ?? id;
-      return walkPosition(ids, here);
-    }
-    const inBook = new Set(inboxAllDocs.map((d) => String(d.id)));
-    const remembered = readWalk(salesRoute ? 'sales' : 'costs').filter((v) => inBook.has(v));
-    const fromList = walkPosition(remembered, id);
-    if (fromList.index !== -1) return fromList;
-    return walkPosition(rowsFor(inboxAllDocs, 'inbox').map((d) => d.id), id);
-  }, [inboxAllDocs, id, claimWalkIds, salesRoute]);
-  const index = walk.index;
-
-  // Left / Right arrow keys press Previous / Next. Not while typing in a field
-  // (the arrows move the caret there), with a modifier held, or while a popup
-  // is open on top of the page — the arrows belong to whatever is focused.
-  const goRef = useRef(null);
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-      const t = e.target;
-      if (t instanceof HTMLElement && (t.isContentEditable || t.closest('input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"], [role="slider"]'))) return;
-      const popupOpen = [...document.querySelectorAll('.fixed.inset-0')].some((el) => el.getClientRects().length > 0);
-      if (popupOpen) return;
-      e.preventDefault();
-      goRef.current?.(e.key === 'ArrowLeft' ? -1 : 1);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  // Reset the form when navigating between documents. Sample docs resolve from
-  // the in-memory mock; uploaded bills are fetched by id from the store.
-  useEffect(() => {
-    setImageUrl('');
-    setAiError('');
-    setLinesNote('');
-    setClaimNote('');
-    // The rule offer is about the correction made on THAT document — its
-    // supplier and its value — so it must not follow you to the next one.
-    setTeach(null);
-    setXeroNote('');
-    setLinkNote('');
-    setMoveError('');
-    setLineSnapshot(null); // a new document, a new set of rows to fall back to
-    const raw = getDoc(routeId);
-    if (raw) {
-      const seeded = initialData({ ...raw, ...(getDocOverrides()[routeId] || {}) });
-      setData(seeded);
-      setLineSnapshot(Array.isArray(seeded.lineItems) ? seeded.lineItems : []);
-      setPersisted(null);
-      setLoading(false);
-      return;
-    }
-    let alive = true;
-    setLoading(true);
-    // Prefer the active org's list (drives prev/next); fall back to a global
-    // by-id fetch so a claim's line item resolves even if its document sits in
-    // another org's book.
-    setElsewhere(null);
-    fetchBills()
-      .then(async (bills) => {
-        // The ROWS, not their ids: a row carries the assigned number, and
-        // matching on the id alone can only derive one — which another document
-        // uploaded in the same second derives too, and answered to first.
-        const match = findByItemKey(bills, routeId);
-        if (match) return { bill: match };
-        // Not in this entity's list. It may still be this entity's document —
-        // the by-id fetch below is what resolves those — but it may equally
-        // live in another client's book, and rendering THAT here would put one
-        // client's supplier and amounts under another client's name in the
-        // header, with nothing on the page to say so. Ask where it lives first.
-        const where = await whereIsBill(routeId);
-        const active = getActiveOrganisationId();
-        if (where?.orgId && active && where.orgId !== active) return { where };
-        return { bill: await fetchBillById(routeId) };
-      })
-      .then(({ bill, where }) => {
-        if (!alive) return;
-        if (where) {
-          setElsewhere(where);
-          setPersisted(null);
-          setLoading(false);
-          return;
-        }
-        const pd = bill ? billToDoc(bill) : null;
-        setPersisted(pd);
-        if (pd) {
-          // Opened by internal id (an old bookmark, or a claim line item): swap
-          // the address bar for the item-id form without adding a history entry.
-          // And into the workspace it belongs to: a sales invoice opened at
-          // /costs/<number> moves to /sales/<number>, and the other way round.
-          const want = docPath(pd);
-          if (window.location.pathname !== want) navigate(want, { replace: true });
-          const seeded = initialData(pd);
-          setData(seeded);
-          // The rows as the document arrived with them — what Revert edits
-          // restores, captured before the grid can write over them.
-          setLineSnapshot(Array.isArray(seeded.lineItems) ? seeded.lineItems : []);
-          if (pd.hasFile) {
-            setImageUrl(billFileUrl(pd.id));
-            setPreviewType(pd.contentType.includes('pdf') ? 'pdf' : 'image');
-          }
-        }
-        setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [routeId, navigate]);
-
-  // A read that finished while this page was elsewhere (or unmounted) wrote its
-  // answer to the server, not to this form. So when the job for this document
-  // settles, take the document back from the server rather than trusting what
-  // is on screen — otherwise the fields shown are the pre-read ones, and the
-  // next keystroke saves them back over the answer.
-  useEffect(() => {
-    // Attached once per job, and NOT torn down when the job clears — the job
-    // clearing is precisely the moment this has to run. Only unmounting stops
-    // it, and a later mount re-reads the document from the server anyway.
-    if (!job || handledJob.current === job) return;
-    handledJob.current = job;
-    const kind = job.kind;
-    job.promise.then(async (outcome) => {
-      if (!mounted.current) return;
-      if (!outcome.ok && outcome.error) setAiError(outcome.error);
-      const docId = persistedIdRef.current; // read now: it may have loaded since
-      if (!docId) return; // sample docs have nothing on the server to take back
-      const fresh = await fetchBillById(docId).catch(() => null);
-      if (!mounted.current || !fresh) return;
-      const pd = billToDoc(fresh);
-      setPersisted(pd);
-      // A line-items read only touched the rows; leave the rest of the form
-      // alone in case something else was being typed while it ran.
-      if (kind === 'lines') setData((d) => ({ ...d, lineItems: pd.lineItems }));
-      else setData(initialData(pd));
-    });
-  }, [job]);
-
-  // Being read on the SERVER (an emailed or WhatsApp'd document, or an upload
-  // whose read is still running): the Costs row says Processing, so the page
-  // must too — otherwise it shows "Missing: …" on a document nobody has had the
-  // chance to fill in yet, and the next keystroke races the read. Nothing in
-  // this browser will hear when that read ends, so ask the server until the
-  // status moves on, then take the document back as the job-settle path does.
-  const serverReading = Boolean(persisted && persisted.status === 'processing' && !persisted.xeroInvoiceId);
-  useEffect(() => {
-    if (!serverReading || job) return undefined;
-    const docId = persisted.id;
-    const started = Date.now();
-    let stopped = false;
-    const timer = setInterval(async () => {
-      // sweepStuckProcessing is the server's backstop, and it now counts from
-      // the last sign of life from whoever is doing the reading rather than
-      // from the upload — so a document can legitimately be processing for as
-      // long as its read takes, which for a batch read in parallel is minutes.
-      // Half an hour is ours, and it is only ever there so the timer ends.
-      if (Date.now() - started > 30 * 60 * 1000) { clearInterval(timer); return; }
-      const fresh = await fetchBillById(docId).catch(() => null);
-      if (stopped || !mounted.current || !fresh || fresh.status === 'processing') return;
-      clearInterval(timer);
-      const pd = billToDoc(fresh);
-      setPersisted(pd);
-      setData(initialData(pd));
-      notifyBillsChanged();
-    }, 4000);
-    return () => { stopped = true; clearInterval(timer); };
-  }, [serverReading, job, persisted?.id]);
-
-  // Not GST-registered: force the document onto No Tax with no GST split out,
-  // and persist it. The picker offers nothing else, but a document coded before
-  // the profile changed (or before it was answered) still carries the old rate —
-  // this is what actually corrects it, rather than just warning about it.
-  useEffect(() => {
-    if (gstRegistered || !doc || !noTaxName) return;
-    const staleRate = data.taxRate !== noTaxName;
-    const staleTax = (Number(String(data.tax ?? '').replace(/[^0-9.-]/g, '')) || 0) !== 0;
-    if (!staleRate && !staleTax) return;
-    setData((d) => ({ ...d, taxRate: noTaxName, tax: '0.00', taxRateReason: '' }));
-    if (doc.persisted) {
-      updateBill(doc.id, { taxRate: noTaxName, tax: '0.00', taxRateReason: '' })
-        .then((r) => {
-          if (r?.bill) {
-            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-            notifyBillsChanged();
-          }
-        })
-        .catch(() => {});
-    } else {
-      setDocOverride(doc.id, { taxRate: noTaxName, tax: '0.00' });
-    }
-  }, [gstRegistered, noTaxName, doc, data.taxRate, data.tax]);
-
-  // The Note tab saves itself too, on a pause rather than per keystroke — it's
-  // free text, so a PATCH per character would be a write storm.
-  const noteSave = useAutoSave(
-    data.note,
-    async (note) => {
-      if (doc?.persisted) {
-        const r = await updateBill(doc.id, { note });
-        if (r?.bill) {
-          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-          notifyBillsChanged();
-        }
-      } else {
-        setDocOverride(id, { note });
-      }
-    },
-    { delay: 900, enabled: Boolean(doc) },
-  );
-
-  // Arriving from a move: take the note the move left (once — taking it is what
-  // stops a refresh from re-reading, and paying for, the same document again).
-  useEffect(() => {
-    if (!persisted?.id || !takeReadAfterMove(persisted.id)) return;
-    // Unless there is nothing to read: a document typed in by hand has no file,
-    // and the read would only put "No receipt attached" on a page nobody asked
-    // to read anything on.
-    if (persisted.hasFile) setReadOnArrival(true);
-  }, [persisted?.id, persisted?.hasFile]);
-
-  // …and run the same read the button runs. The ref is how a hook that must sit
-  // above the early return reaches a handler defined below it; effects run after
-  // the render that assigns it, so it is always there by the time this fires.
-  // Paperwork match (Xero already holding this money) — above the early return,
-  // since it is a hook; read by openPublish below.
-  const paperwork = usePaperworkMatches({ enabled: Boolean(doc?.persisted) && !doc?.xeroInvoiceId && doc?.kind !== 'sales' });
-
-  useEffect(() => {
-    if (!readOnArrival || !reReadRef.current) return;
-    setReadOnArrival(false);
-    void reReadRef.current();
-  }, [readOnArrival]);
-
-  if (!doc) {
-    // A document URL is the kind of thing that gets pasted into chat, linked
-    // from cyworkspace or held by a claim's line item, so arriving at one from
-    // the wrong entity is ordinary. Say where it is and offer to go there —
-    // never show it here, where the header names a different client.
-    if (elsewhere) {
-      return (
-        <AppShell subnav={<Subnav />}>
-          <div className="max-w-lg rounded-lg border p-5">
-            <h1 className="text-base font-semibold tracking-tight">
-              This document belongs to {elsewhere.orgName || 'another client entity'}
-            </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {elsewhere.supplier ? `${elsewhere.supplier}’s document is` : 'It is'} in a different
-              entity&rsquo;s book, so it isn&rsquo;t in the list you are looking at. Switch to open it.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                // Reload into the new entity rather than re-render: the header,
-                // the subnav counts and every request in flight are scoped to
-                // the entity being left behind.
-                onClick={() => switchOrganisationTo(elsewhere.orgId, pathOf(elsewhere.itemId))}
-                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-              >
-                Switch to {elsewhere.orgName || 'that entity'}
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate(listPath)}
-                className="inline-flex h-9 items-center rounded-md border px-4 text-sm transition-colors hover:bg-muted"
-              >
-                Back to {salesRoute ? 'Sales' : 'Costs'}
-              </button>
-            </div>
-          </div>
-        </AppShell>
-      );
-    }
-    return (
-      <AppShell subnav={<Subnav />}>
-        <p className="text-sm text-muted-foreground">
-          {loading ? 'Loading document…' : 'Document not found.'}
-        </p>
-      </AppShell>
-    );
-  }
-
-  // Detail field key → the server bill field it maps to. Editing one of these on
-  // a persisted cost auto-saves it so the server can re-derive ready vs inbox
-  // (readiness is automatic now — no manual "Move to ready" needed).
-  const SERVER_FIELDS = {
-    supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
-    currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
-    baseCurrency: 'baseCurrency', baseTotal: 'baseTotal', baseTax: 'baseTax', exchangeRate: 'exchangeRate',
-    taxRate: 'taxRate', taxRateReason: 'taxRateReason', taxRateCleared: 'taxRateCleared',
-    taxRateEdited: 'taxRateEdited',
-    description: 'description', user: 'owner',
-    paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
-    customer: 'customer', rebillable: 'rebillable', project: 'project', project2: 'project2', projectReason: 'projectReason', cardLast4: 'cardLast4',
-    dueDate: 'dueDate', distanceKm: 'distanceKm', mileageRate: 'mileageRate',
-  };
-  // Naming the supplier by hand applies that supplier's standing rule.
-  //
-  // A rule fires when a document is READ, keyed on the supplier the reader
-  // found. So a receipt the reader couldn't identify — then named here — got
-  // none of it: the rules dialog promises "applied to this document and to
-  // everything new that arrives from Grab", and this is the case where the
-  // document arrives first and the name second.
-  //
-  // The rule wins over what is already on the document, the same precedence a
-  // re-read applies (src/lib/reRead.js): a rule is an instruction. Nothing is
-  // silent about it — what it filled in is listed underneath.
-  const setSupplier = (value) => {
-    const named = String(value || '').trim();
-    if (!named || named === data.supplier || isSales) return set('supplier', value);
-    const rule = matchSupplierRule(named);
-    // keepMonthEnd: this document's date may already be the one the rule moved it
-    // to, and applying the rule again must not walk 31/08 back to 31/07.
-    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered, keepMonthEnd: true });
-    // The rule keeps the printed invoice date as the due date when it moves the
-    // date — for a READ, which starts with none. A due date already on this
-    // document is somebody's, and only the rule's own payment terms replace it.
-    if (patch.dueDate && !rule?.dueMode && data.dueDate) delete patch.dueDate;
-    if (!Object.keys(patch).length) return set('supplier', value);
-    // A tax code carries the tax it implies, worked out from THIS document's
-    // total — the same sum the Tax rate field does.
-    if (patch.taxRate) {
-      patch.tax = taxForCode({ total: data.total, tax: data.tax, rate: rateFor(patch.taxRate), taxLabel: data.taxLabel ?? doc?.taxLabel });
-    }
-    const next = { supplier: named, ...patch };
-    setData((d) => ({ ...d, ...next }));
-    if (readyError.length) setReadyError([]);
-    // The rule's own fields — not `tax`, which is arithmetic that follows from
-    // the tax rate rather than something the rule was asked to set.
-    setRuleApplied(Object.keys(patch).filter((k) => k !== 'tax'));
-    if (doc?.persisted) {
-      const body = {};
-      for (const [k, v] of Object.entries(next)) {
-        const sf = SERVER_FIELDS[k];
-        if (sf) body[sf] = v;
-      }
-      setFieldSave('saving');
-      updateBill(doc.id, body)
-        .then((r) => {
-          setFieldSave('saved');
-          if (r?.bill) {
-            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-            notifyBillsChanged();
-          }
-        })
-        .catch(() => setFieldSave('error'));
-    }
-  };
-
-  const set = (key, value) => {
-    // Overruling the reader on an allocation is the one moment both halves of a
-    // rule are known — what it got wrong and what's right. Offer to keep it.
-    if (!isSales && (key === 'category' || key === 'project') && doc?.persisted && value && value !== data[key]) {
-      setTeach({ field: key, value });
-    }
-    setData((d) => ({ ...d, [key]: value }));
-    // Moved onto a motor vehicle account: No Tax, the same as the server holds it
-    // (server/src/practiceNoTax.ts) — shown here at once, so the form does not
-    // keep claiming GST the stored document has already given up. Not where a
-    // person picked the code themselves.
-    // Renamed to a hospital or clinic: No Tax the same way (medicalProvider.js).
-    const noTaxBecause = isSales || data.taxRateEdited || data.taxRateCleared
-      ? ''
-      : key === 'category' && isMotorVehicleExpense({ category: value, motorVehicle: doc?.motorVehicle === true })
-        ? motorVehicleReason({ category: value })
-        : key === 'supplier' && isMedicalProviderExpense({ supplier: value, medicalProvider: doc?.medicalProvider === true })
-          ? medicalProviderReason({ supplier: value })
-          : '';
-    if (noTaxBecause) {
-      const noTaxName = noTaxRateName(taxRateSource) || MOTOR_VEHICLE_TAX_RATE;
-      setData((d) => ({
-        ...d,
-        taxRate: noTaxName,
-        taxRateReason: noTaxBecause,
-        tax: '0.00',
-        lineItems: Array.isArray(d.lineItems) && d.lineItems.length ? foldTaxIntoCost(d.lineItems) : d.lineItems,
-      }));
-    }
-    if (readyError.length) setReadyError([]); // fixing a field clears the "not ready" banner
-    const sf = SERVER_FIELDS[key];
-    if (doc?.persisted && sf) {
-      // Persist + adopt the returned status so the action bar flips to "In Ready"
-      // the moment the last required field is filled (and back if one is cleared).
-      setFieldSave('saving');
-      updateBill(doc.id, { [sf]: value })
-        .then((r) => {
-          setFieldSave('saved');
-          if (r?.bill) {
-            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-            notifyBillsChanged();
-          }
-        })
-        .catch(() => setFieldSave('error'));
-    }
-  };
-
-  // Several fields at once (applying a supplier rule) — one state update and
-  // one PATCH rather than a burst of single-field saves racing each other.
-  const setMany = (patch) => {
-    const entries = Object.entries(patch).filter(([k]) => k in data);
-    if (!entries.length) return;
-    setData((d) => ({ ...d, ...Object.fromEntries(entries) }));
-    if (readyError.length) setReadyError([]);
-    if (!doc?.persisted) return;
-    const server = {};
-    for (const [k, v] of entries) {
-      const sf = SERVER_FIELDS[k];
-      if (sf) server[sf] = v;
-    }
-    if (!Object.keys(server).length) return;
-    setFieldSave('saving');
-    updateBill(doc.id, server)
-      .then((r) => {
-        setFieldSave('saved');
-        if (r?.bill) {
-          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-          notifyBillsChanged();
-        }
-      })
-      .catch(() => setFieldSave('error'));
-  };
-
-  // Billed in something other than the entity's own currency. Blank currency is
-  // not foreign — an unread document says nothing either way.
-  const foreign =
-    Boolean(String(data.currency || '').trim()) &&
-    String(data.currency).trim().toUpperCase().slice(0, 3) !== baseCurrency;
-
-  // --- The document in the entity's own currency ------------------------------
-  // A foreign-currency document is worth two amounts: what the supplier billed,
-  // and what it is worth here — which is the one the GST return is made from. A
-  // Singapore GST-registered supplier prints both on the invoice (IRAS requires
-  // it), so the reader takes them off the paper; this is where they are checked,
-  // and where somebody supplies them for a document that printed none rather
-  // than letting the ledger convert at a rate the invoice never mentions.
-  //
-  // The total, the tax inside it and the rate between the currencies are one
-  // fact, so all three are written together. A base total edited on its own
-  // would put a figure in the GST return that the document's own split
-  // contradicts, and the publish path would then post a rate that doesn't
-  // reproduce either of them.
-  const setBaseTotal = (value) => {
-    const bt = num(value);
-    const t = num(data.total);
-    if (!(bt > 0) || !(t > 0)) {
-      return setMany({ baseCurrency: '', baseTotal: value, baseTax: '', exchangeRate: '' });
-    }
-    const rate = bt / t;
-    return setMany({
-      baseCurrency,
-      baseTotal: value,
-      baseTax: (num(data.tax) * rate).toFixed(2),
-      exchangeRate: String(rate),
-    });
-  };
-
-  // Total and Tax carry that pair with them. The RATE is what the reviewer
-  // settled (or the supplier printed), so it is held and the two base figures
-  // follow — the other way round, correcting a total would silently restate the
-  // exchange rate as well.
-  const setAmount = (key, value) => {
-    const rate = num(data.exchangeRate);
-    if (!foreign || !(rate > 0)) return set(key, value);
-    const next = { ...data, [key]: value };
-    const t = num(next.total);
-    const x = num(next.tax);
-    return setMany({
-      [key]: value,
-      baseTotal: t > 0 ? (t * rate).toFixed(2) : '',
-      baseTax: x > 0 ? (x * rate).toFixed(2) : '',
-    });
-  };
-
-  // --- Mileage -----------------------------------------------------------------
-  // A mileage claim is a cost with no receipt: a map route, an odometer photo, a
-  // log line. What it carries is a DISTANCE, and the money is distance × the
-  // rate per km — the entity's default (Business settings → Extraction →
-  // Mileage) unless this document says otherwise. So on a Mileage document the
-  // total is shown read-only and written here, from the two figures it comes
-  // from, and the tax is 0: there is no tax invoice behind a mileage allowance.
-  // The same arithmetic runs again on the server (keepMileageInStep), so the
-  // stored total can never disagree with the stored distance.
-  const mileage = isMileage(data.type);
-  // What the form holds for the rule to read — its strings, under the names the
-  // pure module knows.
-  const mileageDoc = () => ({ type: data.type, distanceKm: data.distanceKm, mileageRate: data.mileageRate });
-  // The rule's numbers, as this form's strings.
-  const mileageStrings = (p) => ({
-    ...(p.mileageRate != null ? { mileageRate: String(p.mileageRate) } : {}),
-    ...(p.total != null ? { total: Number(p.total).toFixed(2) } : {}),
-    ...(p.tax != null ? { tax: Number(p.tax).toFixed(2) } : {}),
-  });
-  const setMileage = (key, value) => {
-    const p = mileagePatch(mileageDoc(), { [key]: value }, extractionSettings.mileageRate);
-    setMany({ [key]: value, ...mileageStrings(p) });
-  };
-  // Switching a document's type INTO Mileage prices it from whatever distance it
-  // carries, at the entity's rate; switching out of it leaves the figures where
-  // they are — the total was real money either way.
-  const setType = (value) => {
-    // Typed as a payment proof, the document is paid — that is what the paper
-    // proves — and states no tax, unless a code was picked by hand. The server
-    // applies the same rule to the write (keepPaymentProofInStep).
-    if (isPaymentProof(value)) {
-      const p = paymentProofPatch({ ...data, type: value }, noTaxName);
-      const { baseTax: _baseTax, ...rest } = p;
-      return setMany({ type: value, ...rest, ...(p.tax != null ? { tax: '0.00' } : {}) });
-    }
-    // A quotation / pro-forma is not a tax invoice: No Tax, with its reason,
-    // unless a code was picked by hand. The server applies the same rule.
-    if (isAdvanceDocument(value)) {
-      const p = advancePatch({ ...data, type: value }, noTaxName);
-      const { baseTax: _baseTax, ...rest } = p;
-      return setMany({ type: value, ...rest, ...(p.tax != null ? { tax: '0.00' } : {}) });
-    }
-    if (!isMileage(value)) return set('type', value);
-    const p = mileagePatch(mileageDoc(), { type: value }, extractionSettings.mileageRate);
-    const patch = { type: value, ...mileageStrings(p) };
-    // No GST is claimed on a mileage allowance. Said with its reason, and only
-    // where nobody has chosen a code by hand — a person's decision is theirs.
-    if (noTaxName && !data.taxRateEdited && !data.taxRateCleared && data.taxRate !== noTaxName) {
-      patch.taxRate = noTaxName;
-      patch.taxRateReason = 'Mileage allowance — there is no tax invoice behind a journey, so no GST is claimed on it.';
-    }
-    setMany(patch);
-  };
-
-  // A rule saved from the Supplier field lands on this document straight away —
-  // that's the point of writing it here rather than on the Suppliers list.
-  const applySupplierRuleToForm = (rule) => {
-    // keepMonthEnd: this document's date may already be the one the rule moved it
-    // to, and applying the rule again must not walk 31/08 back to 31/07.
-    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered, keepMonthEnd: true });
-    // A due date already on this document is somebody's; only the rule's own
-    // payment terms replace it, never the printed-date fallback.
-    if (patch.dueDate && !rule?.dueMode && data.dueDate) delete patch.dueDate;
-    // A tax code brings the tax it implies, from this document's own total.
-    if (patch.taxRate) {
-      patch.tax = taxForCode({ total: data.total, tax: data.tax, rate: rateFor(patch.taxRate), taxLabel: data.taxLabel ?? doc?.taxLabel });
-    }
-    const fields = Object.keys(patch).filter((k) => k !== 'tax');
-    const categoryReason = supplierRuleCategoryReason(rule, data.supplier);
-    const projectReason = supplierRuleProjectReason(rule, data.supplier);
-    if (categoryReason) patch.categoryReason = categoryReason;
-    if (projectReason) patch.projectReason = projectReason;
-    setMany(patch);
-    setRuleApplied(fields);
-    // "Extract line items" is the one part of a rule that is not a field: it is
-    // a READ, and saving the rule here used to code this document and leave it a
-    // single total, which read as the switch not working. Only where there are
-    // no rows yet — rows already on the document are somebody's, or a read's.
-    if (rule?.extractLineItems && !lineItems.length && imageUrl) {
-      extractLineItems(patch.category || data.category);
-    }
-  };
-
-
-  // A customer's standing rule, saved from the Customer field of a sales
-  // invoice, lands on it straight away — the sales twin of the supplier rule.
-  const applyCustomerRuleToForm = (rule) => {
-    const patch = {};
-    if (rule.currency) patch.currency = rule.currency;
-    if (rule.category) patch.category = rule.category;
-    if (rule.project) patch.project = rule.project;
-    if (rule.description) patch.description = rule.description;
-    setMany(patch);
-    setRuleApplied(Object.keys(patch));
-  };
-
-  const go = (delta) => {
-    const nextId = delta < 0 ? walk.prev : walk.next;
-    if (nextId === null) return;
-    const next = inboxAllDocs.find((d) => String(d.id) === nextId);
-    navigate(pathOf(next ?? nextId));
-  };
-  goRef.current = go;
-
-  // After an action that finishes with this document (Archive, Delete, Add to
-  // expense claim, Publish to Xero), jump to the next item so the reviewer can
-  // keep working without going Back each time. The next item in the list they
-  // opened it FROM — the same one Previous / Next walk ("7 / 21") — else the
-  // previous one; only a document opened with no list behind it falls back to
-  // the inbox order, and then to the Costs list when nothing else is left.
-  // A document just added is finished with, so Close walks on to the next. One
-  // just MOVED was already on a claim and was never part of that walk.
-  const closeClaimAdded = () => {
-    const moved = claimAdded?.moved;
-    setClaimAdded(null);
-    if (!moved) goToNextInbox();
-  };
-  const goToNextInbox = () => {
-    const walkedId = walk.next ?? walk.prev;
-    if (walkedId !== null && walkedId !== undefined && String(walkedId) !== String(id)) {
-      const target = inboxAllDocs.find((d) => String(d.id) === String(walkedId));
-      navigate(pathOf(target ?? walkedId));
-      return;
-    }
-    const rows = rowsFor(inboxAllDocs, 'inbox');
-    const i = rows.findIndex((d) => String(d.id) === String(id));
-    const next = i !== -1 ? (rows[i + 1] ?? rows[i - 1]) : rows[0];
-    navigate(next && String(next.id) !== String(id) ? pathOf(next) : listPath);
-  };
-
-  // Activity timeline for the History tab — a vertical, dotted feed (newest
-  // first) built from the document's real events, mirroring the expense-claim
-  // approval-history layout.
-  const fmtStamp = (iso) => {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return String(iso);
-    return d.toLocaleString('en-SG', {
-      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
-    });
-  };
-  const docHistoryEvents = (() => {
-    if (!doc) return [];
-    const created = doc.createdAt || '';
-    const owner = doc.user || 'a user';
-    const events = [
-      { text: 'This document was uploaded', by: owner, at: fmtStamp(created), origin: true },
-      { text: 'Data was extracted by CYBills AI', by: 'CYBills AI', at: fmtStamp(created) },
-    ];
-    if (doc.xeroPostedAt) {
-      events.push({
-        text: `This document was published to Xero${doc.xeroTenantName ? ` (${doc.xeroTenantName})` : ''}`,
-        by: owner,
-        at: fmtStamp(doc.xeroPostedAt),
-      });
-    }
-    if (doc.status === 'expenseclaim') {
-      events.push({ text: 'This document was added to an expense claim', by: owner, at: '' });
-    }
-    // Which client's book it used to be in. A document that changes entity has
-    // lost its category and its tax code on the way (they were names in the
-    // other entity's chart), so the trail has to say why they are blank.
-    if (doc.movedFrom?.at) {
-      events.push({
-        text: `This document was moved here from ${doc.movedFrom.orgName || 'another entity'}`,
-        by: doc.movedFrom.by || 'a user',
-        at: fmtStamp(doc.movedFrom.at),
-      });
-    }
-    events.push({ text: 'This document was viewed', by: user?.name || user?.email || 'you', at: '' });
-    return events.reverse(); // newest first
-  })();
-
-  // The document this one matched, for the side-by-side review. Resolved from
-  // the loaded Costs set; if it's since been deleted there's nothing to compare
-  // and the review stays shut.
-  const duplicateOf = doc?.duplicateOfId
-    ? inboxAllDocs.find((d) => String(d.id) === String(doc.duplicateOfId)) || null
-    : null;
-
-  // "These are different documents" — clears the flag for good, so later
-  // re-checks don't keep raising it.
-  const dismissDuplicate = async () => {
-    const r = await markNotDuplicate(doc.id).catch(() => null);
-    if (r?.bill) {
-      setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-      notifyBillsChanged();
-    }
-  };
-
-  // The document is billed to somebody who isn't this entity (server/src/
-  // entityCheck.ts). A warning, never a refusal: an intercompany recharge, a
-  // trading name and a group company paying for a subsidiary all look like this
-  // and are all perfectly correct — so the two answers are "it is right" and
-  // "put it where it belongs", and both are one click.
-  const entityCheck = doc?.entityCheck;
-  const wrongEntity = entityCheck?.status === 'mismatch';
-  const moveTargets = wrongEntity ? entityCheck.candidates || [] : [];
-
-  // An invoice that arrived as a LINK, with nobody having yet said its sender
-  // may be followed. The document is already here — this is the question it is
-  // standing in the inbox to ask, and the two answers are "trust them from now
-  // on" and "just fetch this one".
-  const link = doc?.emailLink || null;
-  const askingToFetch = link?.status === 'awaiting_trust';
-  const linkFailed = link?.status === 'failed' && !doc?.hasFile;
-
-  // Business Admin, the same bar the Email tab holds and the server enforces:
-  // this decides what CYBills will do by itself with a stranger's URL.
-  const mayDecideLinks = !googleEnabled || Boolean(membership?.businessAdmin || membership?.admin);
-
-  const runLink = async (what, fn) => {
-    setLinkBusy(what);
-    setLinkNote('');
-    try {
-      const out = await fn();
-      // A fetch that found nothing is an ANSWER, not a failure: n8n's own words
-      // are what tell somebody whether to fix the workflow or the login.
-      setLinkNote(out?.ok ? '' : out?.note || out?.notes?.[0] || 'Nothing came back from that link.');
-      const r = await fetchBillById(doc.id).catch(() => null);
-      if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-      notifyBillsChanged();
-    } catch (err) {
-      setLinkNote(err.message);
-    } finally {
-      setLinkBusy('');
-    }
-  };
-
-  const confirmEntity = async () => {
-    const r = await updateBill(doc.id, { entityCheckDismissed: true }).catch(() => null);
-    if (r?.bill) {
-      setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-      notifyBillsChanged();
-    }
-  };
-
-  const moveToEntity = async (target) => {
-    if (moving) return;
-    setMoving(true);
-    setMoveError('');
-    const r = await moveBillToEntity(doc.id, target.id).catch(() => null);
-    if (!r?.ok) {
-      setMoving(false);
-      setMoveError(r?.message || 'This document could not be moved.');
-      return;
-    }
-    // Follow the document. A re-render would leave the header, the subnav counts
-    // and every request in flight scoped to the entity it has just left — the
-    // same reason opening a document that lives elsewhere reloads.
-    switchOrganisationTo(target.id, docPath(doc));
-  };
-
-  // billToDoc shows an empty date as the placeholder '—'; never persist that
-  // literal back — coerce anything that isn't a real ISO date to blank.
-  const isoDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
-
-  // Persist the current edits + set a workflow status. Uploaded bills save
-  // server-side; sample docs save to localStorage.
-  const persistStatus = async (status) => {
-    if (doc.persisted) {
-      try {
-        await updateBill(doc.id, {
-          status,
-          supplier: data.supplier,
-          date: isoDate(data.date),
-          documentType: data.type,
-          category: data.category,
-          categoryReason: data.categoryReason,
-          currency: data.currency,
-          total: data.total,
-          tax: data.tax,
-          invoiceNumber: data.ref,
-          taxRate: data.taxRate,
-          taxRateReason: data.taxRateReason,
-          description: data.description,
-          paymentMethod: data.paymentMethod,
-          paid: data.paid,
-          customer: data.customer,
-          project: data.project,
-          project2: data.project2,
-          projectReason: data.projectReason,
-          lineItems: data.lineItems,
-        });
-        notifyBillsChanged();
-      } catch {
-        // best-effort; still navigate back
-      }
-    } else {
-      setDocOverride(id, {
-        status,
-        user: data.user,
-        type: data.type,
-        date: isoDate(data.date),
-        supplier: data.supplier,
-        ref: data.ref,
-        category: data.category,
-        currency: data.currency,
-        total: data.total,
-        tax: data.tax,
-        description: data.description,
-      });
-    }
-  };
-
-  // Save + set status, then return to the inbox (default) or a given route.
-  const saveWithStatus = async (status, to = listPath) => {
-    await persistStatus(status);
-    navigate(to);
-  };
-
-  // "Ready" means a document is complete enough to export / publish, so it must
-  // carry the fields the rest of the workflow depends on. Instead of silently
-  // advancing a half-filled doc, Move to ready validates these and tells you
-  // exactly what's missing (answers "what does Move to Ready do?").
-  const isBlank = (v) => !v || String(v).trim() === '' || String(v).trim() === '—';
-  // The same rule readiness.js applies: above 0 for a bill, non-zero for a
-  // credit note, whose total is often typed with the minus the paper shows.
-  const amountOk = (v) => totalOk({ type: data.type, total: v });
-  const READY_REQUIRED = [
-    ['supplier', counterpartyLabel(doc)],
-    ['date', 'Date'],
-    ['category', 'Category'],
-    ['total', 'Total amount'],
-  ];
-  const missingForReady = () =>
-    READY_REQUIRED.filter(([k]) => {
-      if (k === 'total') return !amountOk(data.total);
-      if (k === 'category')
-        return isBlank(data.category) || String(data.category).trim().toLowerCase() === 'uncategorised';
-      return isBlank(data[k]);
-    }).map(([, label]) => label);
-
-  // Validate before advancing — only a complete document moves to Ready.
-  const moveToReady = () => {
-    const missing = missingForReady();
-    if (missing.length) {
-      setReadyError(missing);
-      return;
-    }
-    setReadyError([]);
-    saveWithStatus('ready');
-  };
-
-  // "Move to" another workspace — takes the item out of the Costs inbox and
-  // lands on that workspace. Persist an archived status so it leaves the list.
-  // Sales is offered only where the entity uses it: moving a document to a
-  // workspace nobody here can open would archive it out of the inbox and leave
-  // it nowhere.
-  const MOVE_DESTS = isSales
-    ? [{ label: 'Costs', move: 'cost' }]
-    : [
-        ...(salesEnabled ? [{ label: 'Sales', move: 'sales' }] : []),
-        { label: 'Supplier statements', to: '/supplier-statements' },
-      ];
-  const moveTo = async (dest) => {
-    setMoveOpen(false);
-    // Sales MOVES the document. It used to archive it here and navigate to the
-    // Sales tab, so the document was in neither list a reviewer was looking at
-    // — a button that appears to work. The category and tax code cannot come
-    // across: an account code and a tax code mean the opposite side of the
-    // ledger there, and carried over they would still post.
-    if (dest.move) {
-      const toSales = dest.move === 'sales';
-      if (
-        !window.confirm(
-          `Move this document to ${toSales ? 'Sales' : 'Costs'}?` +
-            '\n\n' +
-            'Its category and tax code are cleared: an account code and a tax code there mean ' +
-            'the opposite side of the ledger, so neither can come across. It lands in To review ' +
-            `for somebody to code as a ${toSales ? 'sale' : 'cost'}.`
-        )
-      )
-        return;
-      try {
-        await moveBillToWorkspace(doc.id, dest.move);
-        navigate(toSales ? '/sales' : '/costs');
-      } catch (err) {
-        window.alert(err.message);
-      }
-      return;
-    }
-    saveWithStatus('archived', dest.to);
-  };
-
-  // Every entity the signed-in person can open, bar this one, as a destination
-  // in the same menu. The entity-check banner offers a move only where the
-  // paper AGREES with the destination — a registration number or two words of
-  // a name — because that answer is computed and a near-miss must produce
-  // nothing. This is the other road: a person who KNOWS the document is in the
-  // wrong book, on a receipt that names no customer at all (most till receipts)
-  // and so was never asked about. The server already takes any entity the
-  // caller may open; only the page was narrower than the route.
-  const activeOrgId = getActiveOrganisationId();
-  const entityDests = (organisations || []).filter((o) => o.id !== activeOrgId);
-  // The server's four refusals, said before the click rather than after it —
-  // each a way of counting one payment twice, and each a state the reviewer can
-  // undo first, so the reason is the instruction.
-  const entityMoveBlocked = doc.xeroInvoiceId
-    ? 'Already published to Xero — clear the Xero link (and void the bill in Xero) before moving it.'
-    : claimForItem || doc.status === 'expenseclaim'
-      ? 'On an expense claim, which posts this cost to Xero as its own bill. Take it off the claim first.'
-      : doc.status === 'merged'
-        ? 'Merged into another document, which now carries its money. Unmerge it first.'
-        : !doc.persisted
-          ? 'Save this document first.'
-          : '';
-  const moveToOrg = (org) => {
-    setMoveOpen(false);
-    if (entityMoveBlocked) return;
-    if (!window.confirm(`Move this document to ${org.name}? Its category, tax rate, customer and project are names in this entity’s chart, so they are cleared and the document is read again against ${org.name}’s own.`)) return;
-    moveToEntity(org);
-  };
-
-  // Unmerge: split a merged document back into its original items (they return
-  // to the inbox) and remove the combined document. Dext parity.
-  const doUnmerge = async () => {
-    if (!window.confirm('Unmerge this document back into its original items? They return to the inbox and this combined document is removed.')) return;
-    await unmergeCost(doc);
-    navigate(listPath);
-  };
-
-  // Deleting is finishing with this document, not finishing with the pile — the
-  // reviewer got here by walking the inbox and has more of it to walk. So it
-  // lands on the next item, the same as Publish and Add to expense claim, and
-  // only falls back to the list when there is nothing left to go to.
-  //
-  // PERMANENT, the same act as the Costs list's Delete: the record goes and its
-  // stored file is reclaimed from R2. It used to archive, which left a document
-  // somebody had asked to be rid of sitting in Archived with its file. Archive
-  // is the button beside it for keeping one.
-  const deleteDoc = async () => {
-    const inXero = doc.xeroInvoiceId
-      ? `\n\nIt is already published to ${doc.xeroTenantName || 'Xero'} — this does NOT delete or void the bill there.`
-      : '';
-    if (!window.confirm(`Permanently delete this document from ${data.supplier || 'Unknown supplier'}?\n\nThis removes it everywhere and deletes the file from storage — it can't be undone. To keep it out of the inbox but recoverable, use Archive.${inXero}`)) return;
-    if (doc.persisted) {
-      try {
-        await deleteBill(doc.id);
-      } catch {
-        window.alert("Couldn't delete this document. Please try again.");
-        return;
-      }
-      notifyBillsChanged();
-    }
-    goToNextInbox();
-  };
-
-  // Archiving finishes with this document too, so it moves on to the next one in
-  // the list rather than dropping the reviewer back at the top of Costs.
-  //
-  // Set aside by hand = archived with no Xero bill of its own. A published
-  // document is archived as well, but its chip is "Open in Xero" and pulling it
-  // back into the inbox would make it look like unpublished work.
-  const setAside = doc?.persisted && doc.status === 'archived' && !doc.xeroInvoiceId && !doc.paperworkMatch;
-  const archiveDoc = async () => {
-    await persistStatus('archived');
-    goToNextInbox();
-  };
-  // Back into the inbox. 'new' rather than 'ready': readiness is derived, so the
-  // server moves a complete document straight on to Ready by itself.
-  const unarchiveDoc = async () => {
-    await persistStatus('new');
-  };
-  const archiveControl = setAside ? (
-    <TopButton onClick={unarchiveDoc} title={`Put this document back in the ${isSales ? 'Sales' : 'Costs'} inbox`}>Unarchive</TopButton>
-  ) : (
-    <TopButton onClick={archiveDoc}>Archive</TopButton>
-  );
-
-  // Publish to Xero (persisted bills only — the server posts the SAVED bill,
-  // so flush any on-screen edits first, keeping the current workflow status).
-  // Paperwork match: Xero may already hold this money (a Spend Money off the
-  // card feed). Publishing beside it posts the spending twice, so say so first.
-  const paperworkFirm = doc?.persisted && !isSales && !doc.paperworkMatch ? paperworkSuggestion(paperwork.matches[doc.id]) : null;
-  const openPublish = async () => {
-    if (
-      paperworkFirm &&
-      !window.confirm(
-        `Xero already has this payment — a ${paperworkFirm.txn.kind === 'bill' ? 'bill' : 'Spend Money'} to ${paperworkFirm.txn.contact || 'this supplier'} for ${paperworkFirm.txn.currency} ${Number(paperworkFirm.txn.total).toFixed(2)} on ${paperworkFirm.txn.date}.
-
-Publishing posts it a second time. Use "Send to Xero transaction" on the Details tab instead.
-
-Publish anyway?`
-      )
-    )
-      return;
-    await persistStatus(persisted?.status ?? 'new');
-    setPublishMode('publish');
-    setPublishOpen(true);
-  };
-  // Send a correction to the bill this document already created in Xero. Same
-  // dialog, same questions; the difference is that Xero is asked to restate an
-  // existing bill rather than create one. Edits are flushed first for the same
-  // reason publishing flushes them — the server sends the SAVED document, so
-  // anything still only on screen would not be in the update.
-  const openXeroUpdate = async () => {
-    await persistStatus(persisted?.status ?? 'archived');
-    setPublishMode('update');
-    setPublishOpen(true);
-  };
-  // Put the stored file on the Xero bill. For documents published before
-  // attachments were sent, or when that upload failed at publish time.
-  const sendFileToXero = async () => {
-    setXeroBusy('attach');
-    setXeroNote('');
-    try {
-      const orgId = await resolveCategorisationOrgId();
-      if (!orgId) throw new Error('No Xero organisation is linked.');
-      await attachBillFileToXero(orgId, doc.id);
-      // Name mid-sentence: a tenant name ending in "Ltd." would otherwise give
-      // the line two full stops.
-      setXeroNote(`File attached to the bill in ${doc.xeroTenantName || 'Xero'} — it shows there under Related Files.`);
-    } catch (err) {
-      setXeroNote(err?.message || 'Could not attach the file to Xero.');
-    } finally {
-      setXeroBusy('');
-    }
-  };
-
-  // "This bill no longer exists in Xero" — clear the provenance so the document
-  // comes back out of Archive and can be published again. Nothing is deleted in
-  // Xero from here, so say so before doing it.
-  const clearXeroLink = async () => {
-    if (!window.confirm(`Clear this document's Xero link?\n\nIt goes back to your ${isSales ? 'Sales' : 'Costs'} inbox and can be published again. Nothing is deleted in ${doc.xeroTenantName || 'Xero'} — if the bill is still there, delete or void it in Xero first, or you'll end up with two.`)) return;
-    setXeroBusy('clear');
-    setXeroNote('');
-    try {
-      const r = await clearXeroPublish(doc.id);
-      if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-      notifyBillsChanged();
-      setXeroNote('Xero link cleared — this document is back in your inbox.');
-    } catch {
-      setXeroNote('Could not clear the Xero link — please try again.');
-    } finally {
-      setXeroBusy('');
-    }
-  };
-
-  // The page takes the published document back and STAYS on it. Moving on the
-  // instant the publish succeeded put the next document under the success
-  // dialog, so closing it left the reviewer somewhere else with no way back to
-  // the bill they had just posted. The dialog now offers both: Back to this
-  // document, or Next document (onNext below).
-  // The quotation paid in advance that publishing this invoice will use up by
-  // itself, said in the dialog before the click (src/lib/prepayment.js).
-  const prepaymentMatch = (() => {
-    if (!doc?.persisted || isSales || doc.xeroInvoiceId || doc.prepaymentsApplied?.length) return null;
-    const hit = firmPrepayment({ ...doc, type: data.type, supplier: data.supplier, total: data.total, date: data.date, invoiceNumber: data.invoiceNumber, description: data.description, note: data.note }, inboxAllDocs);
-    return hit ? { reference: hit.reference, amount: hit.amountCents / 100, currency: hit.doc.prepayment.currency } : null;
-  })();
-
-  const onPublished = ({ bill }) => {
-    if (bill) setPersisted(billToDoc({ ...bill, hasFile: Boolean(bill.storageKey) }));
-    notifyBillsChanged();
-  };
-
-  // Grab the current receipt's bytes (so the split's new item shares the image).
-  const receiptToUpload = async () => {
-    if (!imageUrl) return null;
-    try {
-      const resp = await fetch(imageUrl);
-      const blob = await resp.blob();
-      const type = blob.type || (previewType === 'pdf' ? 'application/pdf' : 'image/jpeg');
-      const file = new File([blob], doc.fileName || 'receipt', { type });
-      return await prepareUpload(file);
-    } catch {
-      return null;
-    }
-  };
-
-  // Split: keep the current item (updated amounts/category) and create a second
-  // line item from the SAME receipt with the new item's amounts/category.
-  const doSplit = async ({ current, next }) => {
-    setSplitOpen(false);
-    // 1) apply the "current item" values to this document.
-    const curPatch = { category: current.category, total: current.total, tax: current.tax };
-    setData((d) => ({ ...d, ...curPatch }));
-    if (doc.persisted) await updateBill(doc.id, curPatch).catch(() => {});
-    else setDocOverride(doc.id, curPatch);
-
-    // 2) create the new line item as a persisted cost, sharing the receipt image.
-    const rec = await receiptToUpload();
-    /** @type {any} */
-    const payload = {
-      fileHash: `split_${doc.id}_${Date.now()}`,
-      fileName: doc.fileName || `${data.supplier || 'receipt'}`,
-      supplier: data.supplier,
-      invoiceNumber: data.invoiceNumber || '',
-      documentType: data.type || 'Receipt',
-      date: isoDate(data.date),
-      currency: data.currency || 'SGD',
-      category: next.category,
-      total: next.total,
-      tax: next.tax,
-      // The half split off stays in the workspace the document is in.
-      kind: doc.kind || 'cost',
-    };
-    if (rec) { payload.fileBase64 = rec.base64; payload.mediaType = rec.mediaType; }
-    try {
-      const result = await addBill(payload, { force: true });
-      // Put the split item in the same pipeline tab as the current one.
-      const status = doc.persisted ? doc.status : (getDocOverrides()[doc.id]?.status || doc.status);
-      if (result?.bill?.id && status && status !== 'new') {
-        await updateBill(result.bill.id, { status }).catch(() => {});
-      }
-      notifyBillsChanged();
-      setSplitNote(`Split done — a new item for ${data.supplier || 'this receipt'} was created.`);
-    } catch {
-      setSplitNote('Could not create the split item. Please try again.');
-    }
-  };
-
-  const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
-
-  // Pick a specific GST/tax rate (replaces the "Extracted amount" placeholder).
-  // A rate with a % also fills the tax amount from the GST-inclusive total.
-  const setTaxRate = (name) => {
-    set('taxRate', name);
-    // Both halves of the decision are recorded, because both have to outlast
-    // anything that runs by itself: leaving it blank on purpose is not a reader
-    // with no code to offer, and a code somebody PICKED is not one the
-    // arithmetic reached for — a re-read revises the second and must not touch
-    // this one. See changeTaxRate in Costs.jsx, which writes the same pair.
-    set('taxRateCleared', !name);
-    set('taxRateEdited', Boolean(name));
-    // The reason is rewritten with the code, because the two are one answer:
-    // left standing, the reader's sentence ("Left blank: this document is taxed
-    // at 13.0% …") sits under the code a person just chose, and the page reads
-    // as though nothing was decided — which is how a hand-picked code was
-    // reported as a re-read that "still shows 13%".
-    set(
-      'taxRateReason',
-      name
-        ? `${name} — chosen by hand. A re-read decides the code again from the document.`
-        : 'Left blank by hand. A re-read decides the code again from the document.'
-    );
-    const r = rateFor(name);
-    set('tax', taxForCode({ total: data.total, tax: data.tax, rate: r, taxLabel: data.taxLabel ?? doc?.taxLabel }));
-    // A code carrying no tax means no tax anywhere on the document: the rows
-    // give theirs up into their own cost, each still worth what it was worth.
-    // Otherwise the lines say 65.25 while the document says 0.00, and the
-    // publish path refuses a breakdown that contradicts its own paper.
-    if (name && !r && Array.isArray(data.lineItems) && data.lineItems.length) {
-      set('lineItems', foldTaxIntoCost(data.lineItems));
-    }
-  };
-
-  // Split an invoice that mixes GST and non-GST costs into two lines: the
-  // GST-inclusive portion (carrying the tax) and the remainder (no tax). Uses the
-  // selected rate, or SG's 9% default.
-  // Open the GST-split panel. Pre-fill the GST-inclusive amount: if a tax amount
-  // is already set, derive the taxed portion from it; otherwise start at the full
-  // total so the user just types how much of it has GST.
-  const openGstSplit = () => {
-    const total = num(data.total);
-    const r = rateFor(data.taxRate) || 9;
-    const tax = num(data.tax);
-    const preset = tax > 0 && r > 0 ? (tax * (100 + r)) / r : total;
-    setGstWith(Math.min(preset, total).toFixed(2));
-    setGstOpen(true);
-  };
-
-  // Split into a GST line (the entered amount, carrying its GST) + a no-tax line
-  // for the remainder. Matches the Support Desk ask for invoices that mix GST and
-  // non-GST costs.
-  const runGstSplit = () => {
-    const total = num(data.total);
-    const withGst = num(gstWith);
-    const withoutGst = total - withGst;
-    const r = rateFor(data.taxRate) || 9;
-    if (withGst <= 0 || withGst > total + 0.005) {
-      window.alert('Enter a “with GST” amount between 0 and the total.');
-      return;
-    }
-    if (withoutGst <= 0.005) {
-      window.alert('Nothing to split — the whole total has GST, so leave it as one line.');
-      return;
-    }
-    const gstTax = (withGst * r) / (100 + r); // GST inside the GST-inclusive amount
-    setGstOpen(false);
-    doSplit({
-      current: { category: data.category, total: withGst.toFixed(2), tax: gstTax.toFixed(2) },
-      next: { category: data.category, total: withoutGst.toFixed(2), tax: '0.00' },
-    });
-  };
-
-  // Run extraction on the given bytes (with the org's Review instructions + live
-  // chart), then apply + persist the results. Shared by upload and re-read.
-  // Runs as a JOB (extractionJobs.js), so leaving this page for the next
-  // document doesn't abandon the read: it keeps going, saves what it finds, and
-  // the page picks it back up whenever it returns. Everything inside here must
-  // therefore stand on its own — the setState calls are a courtesy to whoever
-  // is still watching, the updateBill is what actually makes it count.
-  const extractAndApply = (imageBase64, mediaType) =>
-    startExtraction(doc.id, 'read', async () => {
-    setAiError('');
-    try {
-      const accounts = await getExtractionAccounts(isSales ? 'sales' : 'cost');
-      // A document that arrived with a covering message — emailed in, or
-      // attached in a WhatsApp bill collection group — is re-read with it, so a
-      // re-read can't quietly undo what that message asked for.
-      // Told which side it is on: a sales invoice read as a cost names this
-      // business as its own supplier.
-      const ex = await fetchExtract(imageBase64, mediaType, accounts, coveringNote(doc), isSales ? 'sales' : 'cost');
-      if (!ex) { setAiError('Extraction failed — please try again.'); return; }
-      // Which value wins — the supplier rule, the document's own paper, this
-      // read, or what the document already carried — is decided in one place
-      // (readDecisions), so this page and the inbox's bulk re-read agree.
-      const {
-        patch, rule, descr, supplierName, categoryReason, projectReason, ruleLines,
-      } = readDecisions({ ...data, kind: doc.kind }, ex, {
-        gstRegistered,
-        taxRates: taxRateSource,
-        allTaxRates,
-        defaultTaxRateCosts: extractionSettings.defaultTaxRateCosts,
-        defaultTaxRateSales: extractionSettings.defaultTaxRateSales,
-        accounts,
-        mileageRate: extractionSettings.mileageRate,
-        // The dedicated line-items pass, where the supplier's rule asks for
-        // rows and the document has none: reconciled, and with each row's
-        // outlet, which the general read's summary of the table carries neither of.
-        lineRows: await ruleLineRows({ ...data, kind: doc.kind }, ex, { base64: imageBase64, mediaType }, accounts),
-      });
-      setData((d) => ({
-        ...d,
-        supplier: ex.supplier || d.supplier,
-        date: ex.date || d.date,
-        type: ex.documentType || d.type,
-        ref: ex.invoiceNumber || d.ref,
-        currency: rule.currency || ex.currency || d.currency,
-        category: rule.category || ex.category || d.category,
-        categoryReason: categoryReason || d.categoryReason,
-        // Who it is recharged to and whether it is billed back, exactly as
-        // SAVED: the form left both behind, so a re-read that turned Rebillable
-        // on still showed No until the page was reloaded.
-        customer: 'customer' in patch ? patch.customer : d.customer,
-        rebillable: 'rebillable' in patch ? patch.rebillable : d.rebillable,
-        // A mileage record's total is not read but WORKED OUT — distance × the
-        // rate per km — and readDecisions has already done the sum into the
-        // patch. Every other document takes the total the reader found.
-        distanceKm: patch.distanceKm != null ? String(patch.distanceKm) : d.distanceKm,
-        mileageRate: patch.mileageRate != null ? String(patch.mileageRate) : d.mileageRate,
-        total: isMileage(ex.documentType || d.type) && patch.total != null
-          ? Number(patch.total).toFixed(2)
-          : ex.total != null ? String(ex.total) : d.total,
-        // Exactly what was SAVED — 0 when the document's tax isn't Singapore
-        // GST this business can claim — so the form and the stored bill can't
-        // disagree. Untouched when the read didn't decide the tax at all.
-        tax: patch.tax != null ? Number(patch.tax).toFixed(2) : d.tax,
-        // The code and its reason are exactly what readDecisions is about to
-        // SAVE — a re-read decides the tax code again whatever was there, a
-        // hand-picked one included, and the form must not show an answer the
-        // server no longer holds.
-        taxRate: 'taxRate' in patch ? patch.taxRate : d.taxRate,
-        taxRateReason: 'taxRateReason' in patch ? patch.taxRateReason : d.taxRateReason,
-        taxRateEdited: 'taxRateEdited' in patch ? patch.taxRateEdited : d.taxRateEdited,
-        taxRateCleared: 'taxRateCleared' in patch ? patch.taxRateCleared : d.taxRateCleared,
-        description: rule.description || descr || d.description,
-        paymentMethod: rule.paymentMethod || d.paymentMethod,
-        paid: 'paid' in rule ? rule.paid : d.paid,
-        cardLast4: ex.cardLast4 || d.cardLast4,
-        // A re-read is the way a rule written AFTER the upload reaches a
-        // document — writing a rule and pressing this is the whole point — so
-        // an allocation it returns wins. Returning nothing leaves what's there.
-        // A supplier rule outranks both: it's a standing instruction.
-        project: rule.project || ex.project || d.project,
-        projectReason: projectReason || d.projectReason,
-        // The due date printed on the document is the supplier's own answer, so
-        // the rule's payment terms only fill a gap it leaves.
-        dueDate: ex.dueDate || rule.dueDate || d.dueDate,
-        // "Extract line items" on the rule pulls the printed lines in with the
-        // read — but never over rows already on the document, which may have
-        // been edited by hand.
-        // Exactly the rows readDecisions is about to save: a supplier rule's
-        // extracted lines over an empty grid, or the two-line split an off-base
-        // document gets. Rows already on the document that add up are kept.
-        lineItems: 'lineItems' in patch ? patch.lineItems : d.lineItems,
-      }));
-      if (doc?.persisted) {
-        const r = await updateBill(doc.id, patch).catch(() => null);
-        if (r?.bill) {
-          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-          notifyBillsChanged();
-          return r.bill;
-        }
-      }
-      return null;
-    } catch {
-      setAiError('Could not read that file.');
-      throw new Error('Could not read that file.');
-    }
-  });
-
-  // --- Line items (Dext-style per-line breakdown) --------------------------
-  // The Supplier field's rules link labels itself from the rule this supplier
-  // already carries.
-  const supplierNamed = String(data.supplier || '').trim();
-  const supplierRuleN = supplierRuleCount(matchSupplierRule(data.supplier));
-
-  // The message this document arrived in, if it did. It is the DOCUMENT's, not
-  // the form's: the envelope is a record of what was received and is never
-  // edited here, so it must not round-trip through the editable form state.
-  const mail = doc?.email || null;
-  const mailDate = mail?.date ? fmtStamp(mail.date) : '';
-  // The WhatsApp message this document was attached to, for one sent into a
-  // bill collection group. Like the envelope above it is the DOCUMENT's record
-  // of what was received, never edited here.
-  const chat = doc?.whatsapp || null;
-  const chatDate = chat?.sentAt ? fmtStamp(chat.sentAt) : '';
-  // The Google Drive file this document was, for one saved into a connected
-  // folder. The same kind of record, and the thinnest of the three: nobody
-  // writes a covering message to a folder.
-  const driveFile = doc?.drive || null;
-  const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
-  const lineItemsEdited =
-    Array.isArray(lineSnapshot) && JSON.stringify(lineSnapshot) !== JSON.stringify(lineItems);
-  const setLineItems = (rows) => set('lineItems', rows);
-  // Net, Tax and Total are three views of ONE row, so editing any of them keeps
-  // the other two true instead of leaving the row contradicting itself. Typing a
-  // net and then having to type the total as well is not a second decision — it
-  // is the same decision, entered twice, with a chance to get it wrong.
-  // The arithmetic itself lives in lib/lineItems.js, where it is tested.
-  // A line's own tax code is applied through applyLineTaxRate — the row's total
-  // stays and its split follows the code — so a line coded No Tax cannot go on
-  // carrying GST, which the publish path would refuse.
-  const updateLineItem = (i, patch) =>
-    setLineItems(
-      lineItems.map((li, idx) =>
-        idx !== i
-          ? li
-          : 'taxRate' in patch
-            ? applyLineTaxRate(li, patch.taxRate, patch.taxRate ? rateFor(patch.taxRate) : rateFor(data.taxRate))
-            : balanceLine(li, patch)
-      )
-    );
-  const addLineItem = () =>
-    setLineItems([
-      ...lineItems,
-      { description: '', category: data.category || 'Uncategorised', project: data.project || '', project2: '', net: '', tax: '', total: '', taxRate: '' },
-    ]);
-  const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
-  // Put the rows back as they arrived. Deliberately NOT a per-keystroke undo:
-  // the grid fires on every character, so stepping back one edit at a time would
-  // mean six presses to take back "125.39". One press, one known-good state.
-  const revertLineItems = () => {
-    if (!Array.isArray(lineSnapshot)) return;
-    setLineItems(lineSnapshot);
-    setLinesNote('Line items put back as they were read.');
-  };
-  // One set of props for the grid, so the panel and the full-screen editor are
-  // rendering the same thing over the same state.
-  const lineGrid = {
-    rows: lineItems,
-    total: data.total,
-    onUpdate: updateLineItem,
-    onRemove: removeLineItem,
-    categoryOptions,
-    catMode,
-    lineProjects,
-    project2Options,
-    // A line may carry its own tax code; the options are the document's own.
-    taxRateOptions: gstRegistered ? taxRateOptions : [],
-    docProject: data.project || '',
-  };
-
-  // Read the attached receipt and turn its printed lines into editable rows.
-  // Its own pass (see server/src/extract.ts): the rows come back already checked
-  // against the document's own grand total, so anything that doesn't add up is
-  // said out loud here rather than left for the "Out by" row to be noticed.
-  const extractLineItems = async (category) => {
-    // The grid's button passes its click event; only a rule passes a category.
-    const fallbackCategory = typeof category === 'string' ? category : data.category;
-    setLinesNote('');
-    const rec = await receiptToUpload();
-    if (!rec) { setLinesNote('Attach a receipt first, then extract line items.'); return; }
-    // A job, like the whole-document read: long enough that nobody watches it,
-    // so it has to survive the reviewer moving on to the next document.
-    startExtraction(doc.id, 'lines', async () => {
-    try {
-      const accounts = await getExtractionAccounts(isSales ? 'sales' : 'cost');
-      const ex = await fetchExtractLines(rec.base64, rec.mediaType, accounts);
-      const rows = Array.isArray(ex?.lines) ? ex.lines : [];
-      if (!rows.length) { setLinesNote('No itemised charges found on this document.'); return null; }
-      // Saved here rather than through `set`, whose write is fire-and-forget:
-      // the job must not resolve before the rows are actually stored, or the
-      // page could re-sync itself from the server a moment too early.
-      const built = lineItemRows(rows, fallbackCategory);
-      setData((d) => ({ ...d, lineItems: built }));
-      setLineSnapshot(built); // a fresh read is the new set to fall back to
-      if (doc?.persisted) {
-        const r = await updateBill(doc.id, { lineItems: built }).catch(() => null);
-        if (r?.bill) {
-          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-          notifyBillsChanged();
-        }
-      }
-      const money = (n) => Number(n || 0).toFixed(2);
-      if (!ex.reconciled) {
-        setLinesNote(
-          `Read ${rows.length} line${rows.length === 1 ? '' : 's'} totalling ${money(ex.linesTotal)}, but the ` +
-            `document's total reads as ${money(ex.grandTotal)}. ` +
-            (ex.note || 'Check for a row that was missed, or one that is really a subtotal.')
-        );
-      } else if (Math.abs(num(data.total) - Number(ex.grandTotal || 0)) > 0.005) {
-        // The lines agree with the document; it's this bill's total that doesn't.
-        setLinesNote(
-          `The lines add up to ${money(ex.linesTotal)}, which is the document's own total — but this bill ` +
-            `says ${money(data.total)}. Check the Total amount field.`
-        );
-      }
-      return built;
-    } catch {
-      setLinesNote('Could not extract line items.');
-      throw new Error('Could not extract line items.');
-    }
-    });
-  };
-
-  const onUploadClick = () => {
-    setAiError('');
-    fileInputRef.current?.click();
-  };
-
-  // Re-read the EXISTING receipt with the configured reader (no file replacement) — for fixing
-  // a wrong field the AI read (date, category, description…) without re-uploading.
-  const reReadExisting = async () => {
-    setAiError('');
-    const rec = await receiptToUpload();
-    if (!rec) { setAiError('No receipt attached to re-read. Upload one first.'); return; }
-    await extractAndApply(rec.base64, rec.mediaType);
-  };
-  // What the arrival effect above calls. Assigned every render so it closes over
-  // the current document rather than the one that was on screen at mount.
-  reReadRef.current = reReadExisting;
-
-  const onFile = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setAiError('');
-    // Downscale large photos so the base64 payload stays under the server body
-    // limit (a raw phone photo can exceed it once encoded, which silently failed
-    // the attach and lost the image on reload).
-    const { base64: imageBase64, mediaType, previewUrl } = await prepareUpload(file);
-    // Always attach + show the uploaded image, regardless of AI availability.
-    setPreviewType(mediaType.includes('pdf') ? 'pdf' : 'image');
-    setImageUrl(previewUrl);
-    // Persist the file onto a real bill so it survives reload (fixes docs that
-    // were uploaded before file storage worked).
-    if (doc.persisted) {
-      try {
-        await uploadBillFile(doc.id, imageBase64, mediaType);
-        notifyBillsChanged();
-      } catch {
-        // Surface it — a swallowed failure here is exactly why the image used to
-        // vanish on reload.
-        setAiError('Could not save the receipt to this document. Please try uploading again.');
-      }
-    }
-    // Only run auto-fill when a reader is configured; otherwise the user
-    // fills the (editable) fields manually.
-    if (!visionEnabled) return;
-    await extractAndApply(imageBase64, mediaType);
-  };
-
-  const readyMissing = missingForReady();
-  // What the paper is called on this page: a sales invoice is not a receipt.
-  const paperNoun = isSales ? 'document' : 'receipt';
-
-  return (
-    <AppShell subnav={<Subnav />}>
-      {claimForItem && (
-        <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted px-3 py-2 text-sm">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            This item belongs to expense claim{' '}
-            <button
-              type="button"
-              onClick={() => navigate(`/expense-claims/${claimForItem.id}`)}
-              className="font-medium text-foreground underline underline-offset-2 hover:opacity-80"
-            >
-              {claimRef(claimForItem)}
-            </button>{' '}
-            {claimForItem.name ? (
-              <>
-                {' '}called <span className="font-medium text-foreground">{claimForItem.name}</span>
-              </>
-            ) : null}
-            {/* WHO the claim reimburses is a different question from whose
-                document this is, and the banner used to print the claimant
-                after the word "called" — so a claim named "Expense claim" for
-                Astrid read as a claim called "astrid yang". */}
-            {claimForItem.claimFor ? (
-              <>
-                , to be reimbursed to{' '}
-                <span className="font-medium text-foreground">{claimForItem.claimFor}</span>
-              </>
-            ) : null}
-            {claimForItem.endDate ? ` (${claimForItem.endDate})` : ''}.
-            {itemLocked ? (
-              <>
-                {' '}The claim is approved, so this item is locked. A Business Admin can correct it for posting.
-              </>
-            ) : claimLocked ? (
-              <>
-                {' '}The claim is approved: a correction saved here is carried onto the claim
-                {claimInXero ? ', then press Update in Xero on the claim to send it.' : '.'}
-              </>
-            ) : null}
-          </span>
-          {doc?.persisted && (
-            <button
-              type="button"
-              disabled={claimLocked || claimLeaving}
-              onClick={removeFromClaim}
-              title={
-                claimLocked
-                  ? 'The claim is approved, so its items can’t be changed. Unapprove the claim first.'
-                  : claimInXero
-                    ? 'Take this document off the claim. The claim is in Xero, so it goes to Archived.'
-                    : 'Take this document off the claim and put it back in the Costs inbox'
-              }
-              className="ml-auto inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-md border bg-background px-2.5 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {claimLeaving ? 'Removing…' : claimInXero ? 'Remove from claim' : 'Remove from claim & move to Costs'}
-            </button>
-          )}
-        </div>
-      )}
-      {claimNote && (
-        <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          <CheckCircle2 className="h-4 w-4" /> {claimNote}
-          <button type="button" onClick={() => setClaimNote('')} className="ml-auto text-emerald-700/70 hover:text-emerald-700">Dismiss</button>
-        </div>
-      )}
-      {splitNote && (
-        <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          <CheckCircle2 className="h-4 w-4" /> {splitNote}
-          <button type="button" onClick={() => setSplitNote('')} className="ml-auto text-emerald-700/70 hover:text-emerald-700">Dismiss</button>
-        </div>
-      )}
-      {readyError.length > 0 && (
-        <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            Not ready yet — this document still needs {readyError.join(', ')}. Fill{' '}
-            {readyError.length === 1 ? 'it' : 'them'} in, then Move to ready.
-          </span>
-          <button type="button" onClick={() => setReadyError([])} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
-        </div>
-      )}
-      {/* An invoice that came as a LINK. First of the banners, because until it
-          is answered there is nothing else on this page to do: the document has
-          no file, no supplier and no figures — it is the question itself. */}
-      {(askingToFetch || linkFailed) && (
-        <div className="mb-3 rounded-md border border-sky-600/40 bg-sky-50 px-3 py-2 text-sm text-sky-950">
-          <div className="flex flex-wrap items-start gap-2">
-            <LinkIcon className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="min-w-[18rem] flex-1">
-              <p>
-                {askingToFetch ? 'This arrived by email as a link, with no attachment.' : 'The link could not be fetched.'}{' '}
-                {/* An email attached to another: the link waits on whoever
-                    DELIVERED it, and the original sender is named beside. */}
-                {doc?.email?.from && !doc.email.from.toLowerCase().includes(String(link.from || '').toLowerCase()) ? (
-                  <>
-                    <span className="font-medium">{link.from}</span> forwarded it, as an attached email from {doc.email.from}
-                  </>
-                ) : (
-                  <>
-                    <span className="font-medium">{link.from || 'an unknown sender'}</span> sent it
-                  </>
-                )}
-                {doc?.email?.subject ? ` — “${doc.email.subject}”` : ''}.
-                {askingToFetch
-                  ? ' Fetching the invoice means opening that link with the credentials n8n holds, so somebody has to say the sender is trusted.'
-                  : ''}
-              </p>
-              {(linkNote || (linkFailed && link.note)) && (
-                <p className="mt-1 font-medium">{linkNote || link.note}</p>
-              )}
-              {/* The links themselves, whatever is decided: one somebody can
-                  open in their own browser beats a dead end. */}
-              <div className="mt-1 space-y-0.5">
-                {(link.links || []).slice(0, 3).map((href) => (
-                  <a
-                    key={href}
-                    href={href}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="block max-w-full truncate text-xs underline underline-offset-2"
-                  >
-                    {href}
-                  </a>
-                ))}
-              </div>
-              {!mayDecideLinks && (
-                <p className="mt-1 text-xs">A Business Admin can fetch it, or trust this sender.</p>
-              )}
-            </div>
-            {mayDecideLinks && (
-              <span className="ml-auto flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={Boolean(linkBusy)}
-                  onClick={() => runLink('trust', () => trustSender(link.from))}
-                  className="inline-flex h-7 items-center rounded-md border border-sky-700/40 bg-sky-100 px-2.5 text-xs font-medium transition-colors hover:bg-sky-200 disabled:opacity-60"
-                >
-                  {linkBusy === 'trust' ? 'Fetching…' : 'Trust this sender & fetch'}
-                </button>
-                <button
-                  type="button"
-                  disabled={Boolean(linkBusy)}
-                  onClick={() => runLink('once', () => fetchDocumentLink(doc.id))}
-                  className="whitespace-nowrap text-xs text-sky-900/70 underline underline-offset-2 hover:text-sky-900 disabled:opacity-60"
-                >
-                  {linkBusy === 'once' ? 'Fetching…' : askingToFetch ? 'Just fetch this one' : 'Try again'}
-                </button>
-                {/* The third answer: there is nothing behind these links, and
-                    the paperwork is the email itself. */}
-                <button
-                  type="button"
-                  disabled={Boolean(linkBusy)}
-                  onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id, envelope: doc.email }))}
-                  title="Attach the email itself to this document as a PDF, so it goes to Xero with the bill."
-                  className="whitespace-nowrap text-xs text-sky-900/70 underline underline-offset-2 hover:text-sky-900 disabled:opacity-60"
-                >
-                  {linkBusy === 'pdf' ? 'Saving…' : 'Save email as PDF'}
-                </button>
-              </span>
-            )}
-          </div>
-          {askingToFetch && (
-            <p className="mt-1.5 pl-6 text-xs text-sky-900/80">
-              Trusting them fetches this and everything else of theirs that is waiting, and every later invoice from
-              that address is fetched on arrival. Not sure who they are? Archive this instead.
-            </p>
-          )}
-        </div>
-      )}
-      {/* Billed to somebody who isn't this entity. It sits above the duplicate
-          warning because it is the bigger question: a duplicate is one cost
-          counted twice in the right book, this is a cost in the wrong client's
-          book altogether — published, it puts one client's money and one
-          client's input tax in another client's ledger. */}
-      {wrongEntity && (
-        <div className="mb-3 flex flex-wrap items-start gap-2 rounded-md border border-amber-600/40 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span className="min-w-[16rem] flex-1">
-            {entityCheck.reason}{' '}
-            {moveTargets.length
-              ? 'CYBills holds a book for them.'
-              : 'Check it was filed under the right client before publishing it.'}
-            {moveError && <span className="mt-1 block font-medium">{moveError}</span>}
-          </span>
-          <span className="ml-auto flex flex-wrap items-center gap-2">
-            {moveTargets.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                disabled={moving}
-                onClick={() => moveToEntity(t)}
-                className="inline-flex h-7 items-center rounded-md border border-amber-700/40 bg-amber-100 px-2.5 text-xs font-medium transition-colors hover:bg-amber-200 disabled:opacity-60"
-              >
-                {moving ? 'Moving…' : `Move to ${t.name}`}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={confirmEntity}
-              className="whitespace-nowrap text-xs text-amber-900/70 underline underline-offset-2 hover:text-amber-900"
-            >
-              This is right
-            </button>
-          </span>
-        </div>
-      )}
-      {/* A move refused from the menu, where there is no banner to carry the
-          reason: the entity-check banner prints moveError itself. */}
-      {moveError && !wrongEntity && (
-        <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{moveError}</span>
-          <button type="button" onClick={() => setMoveError('')} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
-        </div>
-      )}
-      {isInInbox(doc) && doc.duplicateOfId && !doc.duplicateDismissed && (
-        <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            {DUPLICATE_REASON[doc.duplicateType] || 'This looks like a document already submitted.'}{' '}
-            <button
-              type="button"
-              onClick={() => setCompareOpen(true)}
-              className="font-medium underline underline-offset-2"
-            >
-              Compare side by side
-            </button>
-            {' · '}
-            <button
-              type="button"
-              onClick={() => navigate(pathOf(doc.duplicateOfId))}
-              className="underline underline-offset-2"
-            >
-              Open the one it matches
-            </button>
-          </span>
-          <button
-            type="button"
-            onClick={dismissDuplicate}
-            className="ml-auto whitespace-nowrap text-destructive/70 hover:text-destructive"
-          >
-            Not a duplicate
-          </button>
-        </div>
-      )}
-
-      {/* Action bar — one scrolling row on a phone, where wrapping stacked it
-          four deep above the document itself. */}
-      <div className="mb-2 flex items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-x-visible md:pb-0">
-        <TopButton subtle onClick={() => navigate(claimForItem ? `/expense-claims/${claimForItem.id}` : listPath)}>
-          <ChevronLeft className="h-4 w-4" /> Back
-        </TopButton>
-        <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
-        {doc.persisted && doc.xeroInvoiceId ? (
-          // In Xero, the ledger is where it stands: "Ready" on a bill already
-          // posted read as work still to do.
-          <span
-            title={`Published to ${doc.xeroTenantName || 'Xero'}`}
-            className="inline-flex h-8 items-center gap-1 rounded-md border border-green-600/40 bg-green-600/10 px-3 text-sm text-green-800"
-          >
-            <CheckCircle2 className="h-4 w-4" /> Published
-            {xeroPaidStatus(doc) ? <span className="text-green-700/80">· {xeroPaidStatus(doc).label}</span> : null}
-          </span>
-        ) : serverReading ? (
-          <span
-            title="The document is still being read. The fields fill in by themselves when it finishes."
-            className="inline-flex h-8 items-center gap-1 rounded-md border bg-muted px-3 text-sm text-muted-foreground"
-          >
-            <Loader2 className="h-4 w-4 animate-spin" /> Processing
-          </span>
-        ) : setAside ? (
-          // Said where the status always is. Without it an archived document
-          // wore "Missing: Category" and an Archive button, which reads exactly
-          // like a document nobody had touched.
-          <span
-            title="Set aside in Archived — not in the Costs inbox. Unarchive puts it back."
-            className="inline-flex h-8 items-center gap-1 rounded-md border border-amber-600/40 bg-amber-50 px-3 text-sm text-amber-900"
-          >
-            <ArchiveIcon className="h-4 w-4" /> Archived
-          </span>
-        ) : doc.status === 'ready' ? (
-          <span className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm text-foreground">
-            <CheckCircle2 className="h-4 w-4" /> In Ready
-          </span>
-        ) : doc.persisted ? (
-          // Readiness is auto-derived from the fields — show status, no manual button.
-          <span
-            title={readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'All required fields present'}
-            className={cn(
-              'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-xs',
-              readyMissing.length ? 'text-muted-foreground' : 'border-foreground/40 text-foreground'
-            )}
-          >
-            {readyMissing.length ? (
-              `Missing: ${readyMissing.join(', ')}`
-            ) : (
-              <>
-                <CheckCircle2 className="h-3.5 w-3.5" /> Ready
-              </>
-            )}
-          </span>
-        ) : (
-          // Sample/demo docs have no server to auto-derive — keep the manual move.
-          <>
-            <TopButton onClick={moveToReady}>Move to ready</TopButton>
-            <span
-              className={cn(
-                'inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs',
-                readyMissing.length ? 'text-muted-foreground' : 'border-foreground/40 text-foreground'
-              )}
-            >
-              {readyMissing.length ? (
-                `Missing ${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'}`
-              ) : (
-                <>
-                  <CheckCircle2 className="h-3.5 w-3.5" /> All fields complete
-                </>
-              )}
-            </span>
-          </>
-        )}
-        {doc.persisted &&
-          (doc.xeroInvoiceId ? (
-            <a
-              href={xeroBillUrl(doc.xeroInvoiceId, xeroShortCode, doc.xeroDocType)}
-              target="_blank"
-              rel="noreferrer"
-              title={`Open this ${/CREDIT$/.test(doc.xeroDocType || '') ? 'credit note' : isSales ? 'invoice' : 'bill'} in ${doc.xeroTenantName || 'Xero'}`}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700 transition-colors hover:bg-green-600/20"
-            >
-              {/* Not "View in <entity>": a name like "CY Business Management
-                  Pte. Ltd." made one button as wide as three and pushed the
-                  rest of the toolbar onto another row. The entity is already
-                  named in the header and in this button's own tooltip. */}
-              Open in Xero
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          ) : (
-            // Sent to a transaction Xero already had (Paperwork match): that
-            // transaction is where it lives, and publishing would post it twice.
-            doc.paperworkMatch ? (
-              <a
-                href={xeroTxnUrl(doc.paperworkMatch, xeroShortCode)}
-                target="_blank"
-                rel="noreferrer"
-                title={`Open the ${doc.paperworkMatch.kind === 'bill' ? 'bill' : 'Spend Money'} this document was sent to`}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700 transition-colors hover:bg-green-600/20"
-              >
-                Open in Xero
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            ) :
-            // On a claim, this cost reaches Xero as a line of the claim's own
-            // bill — publishing it separately would post it twice.
-            //
-            // And in a bridge entity there is no separate route at all: no Xero
-            // of its own, and a plain category with no account code in it. The
-            // claim IS how these costs reach the parent's ledger, so the button
-            // isn't offered rather than offered and refused.
-            // A quotation / pro-forma is recorded as a prepayment instead
-            // (Payment section), never published as a bill.
-            !bridge && mayPublish && !isAdvanceDocument(data.type) && (
-              <TopButton
-                onClick={openPublish}
-                disabled={Boolean(claimForItem)}
-                title={claimForItem ? 'On an expense claim — the claim posts this cost to Xero. Remove it from the claim to publish it on its own.' : ''}
-              >
-                Publish to Xero
-              </TopButton>
-            )
-          ))}
-        {/* A correction found after publishing used to have nowhere to go: the
-            document could be fixed here and the ledger kept the first answer.
-            Only offered where there is a bill to update, and never for a cost
-            sitting on an expense claim, which reaches Xero as the claim's line. */}
-        {doc.persisted && doc.xeroInvoiceId && mayPublish && (
-          <TopButton onClick={openXeroUpdate} disabled={xeroBusy} title={`Send this document's current figures to the ${/CREDIT$/.test(doc.xeroDocType || '') ? 'credit note' : isSales ? 'invoice' : 'bill'} it created in Xero`}>
-            Update in Xero
-          </TopButton>
-        )}
-        {doc.persisted && doc.xeroInvoiceId && doc.hasFile && (
-          <TopButton onClick={sendFileToXero} disabled={xeroBusy} title={`Upload this document's file to the Xero ${isSales ? 'invoice' : 'bill'} as an attachment`}>
-            {xeroBusy === 'attach' ? 'Sending…' : 'Send file to Xero'}
-          </TopButton>
-        )}
-        {doc.persisted && doc.xeroInvoiceId && (
-          <TopButton onClick={clearXeroLink} disabled={xeroBusy} title="Forget that this was published — does not delete anything in Xero">
-            {xeroBusy === 'clear' ? 'Clearing…' : 'Clear Xero link'}
-          </TopButton>
-        )}
-        {mayClaim && (
-          <TopButton
-            onClick={() => setClaimOpen(true)}
-            disabled={Boolean(claimBlocked)}
-            title={claimBlocked}
-          >
-            Add to expense claim
-          </TopButton>
-        )}
-        <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
-        {doc.mergedFrom?.length > 0 && <TopButton onClick={doUnmerge}>Unmerge</TopButton>}
-        {archiveControl}
-        <div className="relative">
-          <TopButton onClick={() => setMoveOpen((o) => !o)}>
-            Move to <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', moveOpen && 'rotate-180')} />
-          </TopButton>
-          {moveOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setMoveOpen(false)} aria-hidden="true" />
-              <div className="absolute left-0 z-20 mt-1 w-64 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
-                {MOVE_DESTS.map((dest) => (
-                  <button
-                    key={dest.label}
-                    type="button"
-                    onClick={() => moveTo(dest)}
-                    className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-                  >
-                    {dest.label}
-                  </button>
-                ))}
-                {entityDests.length > 0 && (
-                  <>
-                    <div className="mt-1 border-t px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Another entity
-                    </div>
-                    {entityMoveBlocked && (
-                      <div className="px-3 pb-1.5 text-xs text-muted-foreground">{entityMoveBlocked}</div>
-                    )}
-                    {entityDests.map((org) => (
-                      <button
-                        key={org.id}
-                        type="button"
-                        disabled={moving || Boolean(entityMoveBlocked)}
-                        title={entityMoveBlocked || `Move this document into ${org.name}’s book`}
-                        onClick={() => moveToOrg(org)}
-                        className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <span className="truncate">{moving ? 'Moving…' : org.name}</span>
-                      </button>
-                    ))}
-                  </>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-        <div className="ml-auto flex items-center gap-3 text-sm">
-          <button
-            type="button"
-            onClick={() => go(-1)}
-            title="Previous (←)"
-            disabled={walk.prev === null}
-            className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
-          >
-            <ChevronLeft className="h-4 w-4" /> Previous
-          </button>
-          <span className="tabular-nums text-muted-foreground">
-            {index >= 0 ? index + 1 : '–'} / {walk.total}
-          </span>
-          <button
-            type="button"
-            onClick={() => go(1)}
-            title="Next (→)"
-            disabled={walk.next === null}
-            className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-      {xeroNote && (
-        <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted px-3 py-2 text-sm">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{xeroNote}</span>
-          <button type="button" onClick={() => setXeroNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
-        </div>
-      )}
-      <div className="mb-4">
-        <button
-          type="button"
-          onClick={deleteDoc}
-          className="inline-flex h-8 items-center rounded-md border px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          Delete
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Left: preview. As tall as the window and held in place while the
-            form beside it scrolls: at a fixed 560px it showed half a page above
-            a column of blank card, and scrolled away from the fields being
-            checked against it. */}
-        <div className={cn(imageUrl && 'lg:sticky lg:top-0 lg:h-[calc(100dvh-6.5rem)] lg:min-h-[560px] lg:self-start')}>
-          <ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} fill="lg" />
-        </div>
-
-        {/* Right: extracted fields */}
-        <div>
-          <div className="mb-4 flex items-center justify-between border-b">
-            <div className="flex gap-6">
-              {/* A Drive tab only on a document that came from Drive: it has
-                  nothing to say about any other, and five tabs already say
-                  "not by this road" about two of them. */}
-              {['details', 'email', ...(mailReplies.available ? ['files'] : []), 'whatsapp', ...(driveFile ? ['drive'] : []), 'note', 'history'].map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTab(t)}
-                  className={cn(
-                    '-mb-px border-b-2 pb-3 pt-1 text-sm capitalize transition-colors',
-                    tab === t
-                      ? 'border-foreground font-medium text-foreground'
-                      : 'border-transparent text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  {t === 'whatsapp' ? 'WhatsApp' : t === 'drive' ? 'Google Drive' : t}
-                </button>
-              ))}
-            </div>
-            <span className="mb-2 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">Viewed</span>
-          </div>
-
-          {tab === 'details' && (
-            // A disabled fieldset disables every control inside it, so a locked
-            // item cannot be edited, re-read, archived or split from here.
-            <fieldset disabled={itemLocked} className="m-0 min-w-0 border-0 p-0">
-              {/* Upload a receipt image (always) + AI auto-fill (when a reader is on) */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp,application/pdf"
-                className="hidden"
-                onChange={onFile}
-              />
-              <button
-                type="button"
-                onClick={imageUrl && visionEnabled ? reReadExisting : onUploadClick}
-                disabled={Boolean(job) || serverReading}
-                className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
-              >
-                {visionEnabled ? <Sparkles className="h-4 w-4" strokeWidth={2} /> : <Upload className="h-4 w-4" strokeWidth={2} />}
-                {/* The button says what it DOES, not who does it. Which engine
-                    reads the document is a setting somebody made in Business
-                    settings once, and naming it here made the control read as a
-                    choice between two of them. */}
-                {extracting || serverReading
-                  ? `Reading ${paperNoun}…`
-                  : imageUrl
-                    ? visionEnabled ? `Re-read ${paperNoun}` : 'Replace file'
-                    : visionEnabled ? `Upload ${paperNoun} & auto-fill` : `Upload ${paperNoun}`}
-              </button>
-              {imageUrl && visionEnabled ? (
-                <p className="mb-2 text-center text-xs text-muted-foreground">
-                  Re-reads the attached {paperNoun} to fix a wrong field —{' '}
-                  <button type="button" onClick={onUploadClick} disabled={Boolean(job)} className="font-medium text-emerald-600 hover:underline disabled:opacity-60">
-                    replace the file
-                  </button>{' '}
-                  instead if the photo is unclear.
-                </p>
-              ) : (
-                <p className="mb-2 text-center text-xs text-muted-foreground">
-                  {imageUrl
-                    ? 'Replaces the file on this same document — it won’t create a new one.'
-                    : `Attaches the ${paperNoun} to this document — it won’t create a new one.`}
-                </p>
-              )}
-              {/* Paperwork match: Xero already holds this money, so the
-                  document is sent there (attached, and recoded when asked)
-                  rather than published a second time. */}
-              {persisted && !persisted.xeroInvoiceId && !isSales && (
-                <div className="mb-4">
-                  <PaperworkMatchPanel
-                    doc={{
-                      ...persisted,
-                      supplier: data.supplier,
-                      total: data.total,
-                      date: isoDate(data.date) || persisted.date,
-                      invoiceNumber: data.ref,
-                      currency: data.currency || persisted.currency,
-                      type: data.type || persisted.type,
-                      category: data.category,
-                      taxRate: data.taxRate,
-                      project: data.project,
-                      project2: data.project2,
-                      lineItems: data.lineItems ?? persisted.lineItems,
-                    }}
-                    mayPublish={mayPublish && !bridge}
-                    xeroShortCode={xeroShortCode}
-                    onBeforeSend={() => persistStatus(persisted?.status ?? 'new')}
-                    onChanged={async () => {
-                      const bill = await fetchBillById(persisted.id);
-                      if (!bill) return;
-                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
-                      setPersisted(pd);
-                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
-                    }}
-                  />
-                </div>
-              )}
-              {aiError && (
-                <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
-                  {aiError}
-                </p>
-              )}
-              {imageUrl && !visionEnabled && (
-                <p className="mb-2 rounded-md border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
-                  {isSales ? 'Document' : 'Receipt'} attached. AI auto-fill is off — fill in the fields below manually.
-                </p>
-              )}
-
-              <SectionHeading>Item details</SectionHeading>
-              <Field label="Item ID"><Input value={itemNumber(doc)} readOnly /></Field>
-              {/* Whoever it says today stays offered, so a document written
-                  before the general account existed still shows its own owner
-                  rather than silently reading as someone else. */}
-              <Field label="Document owner">
-                <ComboSelect
-                  value={data.user}
-                  options={data.user && !ownerOptions.includes(data.user) ? [data.user, ...ownerOptions] : ownerOptions}
-                  onChange={(v) => set('user', v)}
-                />
-              </Field>
-              <Field label="Type"><ComboSelect value={data.type} options={isSales ? SALES_DOC_TYPES : DOC_TYPES} onChange={setType} /></Field>
-              <Field label="Date">
-                <input
-                  type="date"
-                  value={/^\d{4}-\d{2}-\d{2}$/.test(data.date) ? data.date : ''}
-                  onChange={(e) => set('date', e.target.value)}
-                  className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-                {/* No date read: the day it was submitted stands in, and is what
-                    publishing posts — said here, where the field is blank. */}
-                {dateFromSubmission({ ...doc, date: data.date }) && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    None printed — goes by the day it was submitted, {formatDate(effectiveDate({ ...doc, date: data.date }))}.
-                  </p>
-                )}
-              </Field>
-              <Field label={counterpartyLabel(doc)}>
-                {/* The org's Xero supplier contacts, but not ONLY them: a name
-                    read off a receipt is very often not a contact yet, and a
-                    picker that refused it would make the commonest case
-                    unenterable. Typing filters the list and offers the words as
-                    typed when nothing matches — so the list is used where it
-                    can be, which is what stops one supplier arriving under
-                    three spellings. */}
-                <ComboSelect
-                  aria-label={counterpartyLabel(doc)}
-                  value={data.supplier || ''}
-                  options={['', ...(isSales ? salesCustomerOptions : supplierOptions).filter((o) => o !== data.supplier)]}
-                  onChange={setSupplier}
-                  allowCustom
-                  emptyLabel="— None —"
-                  placeholder={isSales ? 'Search or type a customer…' : 'Search or type a supplier…'}
-                />
-                <button
-                  type="button"
-                  onClick={() => (isSales ? setCustomerRulesOpen(true) : setRulesOpen(true))}
-                  disabled={!supplierNamed}
-                  title={supplierNamed ? '' : `Fill in the ${isSales ? 'customer' : 'supplier'} first`}
-                  className={cn(
-                    'mt-1 text-xs font-medium',
-                    supplierNamed ? 'text-emerald-600 hover:underline' : 'cursor-not-allowed text-muted-foreground/60'
-                  )}
-                >
-                  {isSales ? 'Set customer rules' : supplierRuleN > 0 ? `Edit supplier rules (${supplierRuleN})` : 'Set supplier rules'}
-                </button>
-                {ruleApplied?.length > 0 && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Standing rule applied — it set{' '}
-                    <span className="font-medium text-foreground">{ruleApplied.map(FIELD_LABEL).join(', ')}</span>.
-                  </p>
-                )}
-              </Field>
-              <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
-              <Field label="Category">
-                <ComboSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
-                {teach?.field === 'category' && (
-                  <TeachRule field="category" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
-                )}
-              </Field>
-              <Field label="Reason">
-                <textarea
-                  rows={2}
-                  value={data.categoryReason}
-                  onChange={(e) => set('categoryReason', e.target.value)}
-                  placeholder={extracting ? 'Reading…' : 'Why this category — filled in by the AI, editable'}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </Field>
-
-              <SectionHeading>Allocation</SectionHeading>
-              {/* Who a COST is recharged to. A sales invoice's customer is its
-                  counterparty, above, so it has no second customer to name. */}
-              {!isSales && (
-                <Field label="Customer"><ComboSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
-              )}
-              {/* Xero's billable expense, Dext's "rebillable": a cost incurred
-                  for this client that gets billed back to them. Publishing links
-                  the posted bill's lines to that client, so Xero offers them up
-                  on their next invoice. Only offered once there IS a customer —
-                  a rebillable cost with nobody to bill can never be acted on. */}
-              {!isSales && Boolean(data.customer) && (
-                <Field label="Rebillable">
-                  <div className="pt-1">
-                    <button type="button" onClick={() => set('rebillable', !data.rebillable)} className="flex items-center gap-2">
-                      <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', data.rebillable ? 'justify-end bg-foreground' : 'justify-start border')}>
-                        <span className={cn('h-4 w-4 rounded-full', data.rebillable ? 'bg-background' : 'bg-muted-foreground/50')} />
-                      </span>
-                      <span className="text-sm text-muted-foreground">{data.rebillable ? 'Yes' : 'No'}</span>
-                    </button>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Bills this cost back to {data.customer}. Published to Xero as a billable expense, so it is offered
-                      on that client&rsquo;s next invoice.
-                    </p>
-                  </div>
-                </Field>
-              )}
-              <Field label={singular(projectLabels.project)}>
-                <ComboSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} />
-                {teach?.field === 'project' && (
-                  <TeachRule field="project" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
-                )}
-              </Field>
-              <Field label="Reason">
-                <textarea
-                  rows={2}
-                  value={data.projectReason || ''}
-                  onChange={(e) => set('projectReason', e.target.value)}
-                  placeholder="Why this project — filled in by the AI, editable"
-                  className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </Field>
-              {/* The org's SECOND tracking category ("Staff"), for the whole
-                  document. It used to exist only per line item, so a document
-                  with one total had nowhere to say it. Offered only where the
-                  linked Xero org actually has a second category. */}
-              {project2Options.length > 0 && (
-                <Field label={singular(projectLabels.project2)}>
-                  <ComboSelect value={data.project2 || ''} options={project2Options} onChange={(v) => set('project2', v)} />
-                </Field>
-              )}
-              <Field label="Description">
-                <textarea
-                  rows={2}
-                  value={data.description}
-                  onChange={(e) => set('description', e.target.value)}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </Field>
-
-              <SectionHeading>Amount</SectionHeading>
-              <Field label="Currency"><Input value={data.currency} onChange={(v) => set('currency', v)} /></Field>
-              {/* A mileage claim: the distance is the fact, the rate is the
-                  policy, and the total is the one times the other. So the two
-                  are typed and the total is shown, with its working, rather than
-                  the other way round — a total typed by hand on a mileage
-                  document is exactly the sum this exists to stop somebody doing
-                  on a calculator. */}
-              {mileage && (
-                <>
-                  <Field label="Distance (km)">
-                    <Input value={data.distanceKm} onChange={(v) => setMileage('distanceKm', v)} placeholder="e.g. 13" />
-                    <p className="mt-1.5 text-xs text-muted-foreground">
-                      Read off the route or odometer by the reader; correct it here if it misread.
-                    </p>
-                  </Field>
-                  <Field label={`Rate per km (${String(data.currency || baseCurrency).trim().toUpperCase().slice(0, 3)})`}>
-                    <Input value={data.mileageRate} onChange={(v) => setMileage('mileageRate', v)} placeholder="e.g. 0.60" />
-                    <p className="mt-1.5 text-xs text-muted-foreground">
-                      {num(extractionSettings.mileageRate) > 0
-                        ? `This company reimburses ${num(extractionSettings.mileageRate).toFixed(2)} per km (Business settings → Extraction → Mileage). Change it here for this claim only.`
-                        : 'This company has no default rate yet — set one under Business settings → Extraction → Mileage so new mileage documents are priced as they arrive.'}
-                    </p>
-                  </Field>
-                </>
-              )}
-              {mileage ? (
-                <Field label="Total amount">
-                  <Input value={data.total} readOnly />
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    {mileageSummary(data.distanceKm, data.mileageRate, data.currency || baseCurrency)
-                      ? `${mileageSummary(data.distanceKm, data.mileageRate, data.currency || baseCurrency)}${num(data.total) > 0 ? ` = ${num(data.total).toFixed(2)}` : ' — enter the rate to price it'}.`
-                      : 'Worked out from the distance and the rate per km once both are filled in.'}
-                  </p>
-                </Field>
-              ) : (
-                <Field label="Total amount"><Input value={data.total} onChange={(v) => setAmount('total', v)} /></Field>
-              )}
-              {/* A bridge entity has no tax position of its own: its claims post
-                  with No Tax at the full amount (the tax the document records is
-                  folded into the cost). A tax code chosen here could never reach
-                  the ledger, so it isn't offered — the tax AMOUNT still is, since
-                  that is what the paper says. */}
-              {!bridge && !mileage && (
-                <Field label="Tax rate">
-                  <ComboSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
-                  {!gstRegistered && (
-                    <p className="mt-1.5 text-xs text-muted-foreground">
-                      Fixed to No Tax — this company isn’t GST-registered. Change that under Business
-                      settings → Business profile.
-                    </p>
-                  )}
-                  {gstRegistered && data.taxRateReason && (
-                    <p className="mt-1.5 text-xs text-muted-foreground">{data.taxRateReason}</p>
-                  )}
-                  {/* What the code was decided on, as the read found it. A
-                      code picked by hand replaces the reason above, and without
-                      this there was nothing left to say whether the reader had
-                      seen the supplier's GST number at all. */}
-                  {gstRegistered && !isSales && doc?.persisted && doc.taxEvidenceRecorded && (
-                    <p className="mt-1 text-xs text-muted-foreground/80">
-                      Read from the document: supplier GST no.{' '}
-                      {doc.supplierGstRegNo
-                        ? <span className="font-medium text-muted-foreground">{doc.supplierGstRegNo}</span>
-                        : 'not found'}
-                      {doc.supplierGstRegNoRemembered
-                        ? doc.supplierGstRegNoFrom === 'rule'
-                          ? ' (not read off this document — from this supplier’s rule)'
-                          : doc.supplierGstRegNoFrom === 'ruleOther'
-                            ? ' (not read off this document — from another client’s rule for this supplier)'
-                            : ' (not on this document — remembered from an earlier one of this supplier’s)'
-                        : ''}
-                      {doc.taxLabel ? <> · tax printed as “{doc.taxLabel}”</> : ''}
-                    </p>
-                  )}
-                </Field>
-              )}
-              <Field label="Tax amount">
-                <Input value={data.tax} onChange={(v) => setAmount('tax', v)} readOnly={mileage} />
-                {mileage && (
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    No GST on a mileage allowance — there is no tax invoice behind a journey.
-                  </p>
-                )}
-                {bridge && !mileage && (
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    Claims raised here post with No Tax at the full amount, so this is recorded but not claimed.
-                  </p>
-                )}
-              </Field>
-              <Field label="Net amount"><Input value={(num(data.total) - num(data.tax)).toFixed(2)} readOnly /></Field>
-              {/* A foreign-currency document is worth two amounts, and the
-                  second one is the one that reaches the GST return. The reader
-                  takes both off the paper where the supplier printed them — a
-                  Singapore GST-registered supplier billing in USD has to — and
-                  this is where they are checked, or supplied for a document
-                  that printed none. Editing the total re-derives the tax and
-                  the rate from this document's own split, so the two currencies
-                  can never say different things about the same invoice. */}
-              {foreign && (
-                <>
-                  <Field label={`Total amount (${baseCurrency})`}>
-                    <Input value={data.baseTotal} onChange={setBaseTotal} />
-                    <p className="mt-1.5 text-xs text-muted-foreground">
-                      {num(data.exchangeRate) > 0
-                        ? `At 1 ${String(data.currency).trim().toUpperCase().slice(0, 3)} = ${num(data.exchangeRate).toFixed(4)} ${baseCurrency}. Published to Xero with the bill, so the ledger converts at the document's own rate rather than the day's.`
-                        : `The document didn't state one. Without it Xero converts at its own rate for the day, and the GST it reports won't be the figure on this invoice.`}
-                    </p>
-                  </Field>
-                  <Field label={`Tax amount (${baseCurrency})`}>
-                    <Input value={data.baseTax} readOnly />
-                  </Field>
-                </>
-              )}
-              {num(data.total) > 0 && !mileage && (
-                <div className="flex items-start gap-4 py-2">
-                  <div className="w-40 shrink-0" />
-                  <div className="flex-1">
-                    {!gstOpen ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={openGstSplit}
-                          className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted"
-                        >
-                          Split GST / non-GST
-                        </button>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Invoice mixes GST and non-GST costs? Split it into a line with GST and a line without.
-                        </p>
-                      </>
-                    ) : (
-                      <div className="space-y-2 rounded-md border p-3">
-                        <p className="text-xs font-medium">Split into a GST line + a non-GST line</p>
-                        <label className="flex items-center gap-2 text-xs">
-                          <span className="w-32 shrink-0 text-muted-foreground">Amount with GST</span>
-                          <input
-                            value={gstWith}
-                            onChange={(e) => setGstWith(e.target.value)}
-                            className="h-8 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          />
-                        </label>
-                        <label className="flex items-center gap-2 text-xs">
-                          <span className="w-32 shrink-0 text-muted-foreground">Amount without GST</span>
-                          <span className="flex-1 tabular-nums">{(num(data.total) - num(gstWith)).toFixed(2)}</span>
-                        </label>
-                        <p className="text-[11px] text-muted-foreground">
-                          GST rate: {data.taxRate || 'Standard-Rated Purchases (9%)'}. The GST line carries the tax; the other line has none.
-                        </p>
-                        <div className="flex gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={runGstSplit}
-                            className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"
-                          >
-                            Create 2 lines
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setGstOpen(false)}
-                            className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <SectionHeading>Payment</SectionHeading>
-              {/* Dext's Bank match, on the page: the bank statement line that
-                  pays this document, and Autofill payment. Shown only where
-                  there is a match to show. Autofill turns Paid on and names the
-                  bank account below; PUBLISH records the payment. */}
-              {persisted && !isSales && (
-                <div className="col-span-full">
-                  <BankMatchPanel
-                    doc={persisted}
-                    onChanged={(bill) => {
-                      if (!bill) return;
-                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
-                      setPersisted(pd);
-                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
-                    }}
-                  />
-                </div>
-              )}
-              {/* A payment proof and the invoices it pays: on a proof, which
-                  invoices it settles; on an invoice, the proof that paid it.
-                  Applying marks the invoices Paid, so the page takes the
-                  document back from the server afterwards. */}
-              {persisted && !isSales && (
-                <div className="col-span-full">
-                  <PaymentProofPanel
-                    doc={{ ...persisted, type: data.type || persisted.type }}
-                    onChanged={async () => {
-                      const bill = await fetchBillById(persisted.id);
-                      if (!bill) return;
-                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
-                      setPersisted(pd);
-                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
-                    }}
-                  />
-                </div>
-              )}
-              {/* A quotation paid in advance (record it as a prepayment in
-                  Xero), or the invoice that uses one up. */}
-              {persisted && !isSales && (
-                <div className="col-span-full">
-                  <PrepaymentPanel
-                    doc={{ ...persisted, type: data.type || persisted.type, supplier: data.supplier, total: data.total, date: data.date, invoiceNumber: data.invoiceNumber, currency: data.currency || persisted.currency }}
-                    book={inboxAllDocs}
-                    mayPublish={mayPublish}
-                    onChanged={async () => {
-                      const bill = await fetchBillById(persisted.id);
-                      if (!bill) return;
-                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
-                      setPersisted(pd);
-                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
-                    }}
-                  />
-                </div>
-              )}
-              {/* The reviewer's own flag, in Dext's sense: "this was already
-                  settled when it was captured, so publish it as paid". It is
-                  NOT what Xero reports about the bill afterwards — that is the
-                  read-only "In Xero" block below, and conflating the two would
-                  let a webhook overwrite somebody's setting with a different
-                  question's answer. */}
-              <Field label="Paid">
-                <button type="button" onClick={() => set('paid', !data.paid)} className="flex items-center gap-2 pt-1">
-                  <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', data.paid ? 'justify-end bg-foreground' : 'justify-start border')}>
-                    <span className={cn('h-4 w-4 rounded-full', data.paid ? 'bg-background' : 'bg-muted-foreground/50')} />
-                  </span>
-                  <span className="text-sm text-muted-foreground">{data.paid ? 'Yes' : 'No'}</span>
-                </button>
-              </Field>
-              <Field label="Payment method">
-                <ComboSelect
-                  value={data.paymentMethod || ''}
-                  options={paymentMethods.map((p) => p.label)}
-                  onChange={(v) => set('paymentMethod', v)}
-                />
-                <button
-                  type="button"
-                  onClick={() => setPmModalOpen(true)}
-                  className="mt-1 text-xs font-medium text-emerald-600 hover:underline"
-                >
-                  Add payment method
-                </button>
-              </Field>
-
-              {/* What the ledger says has happened since this document was
-                  published. Read-only, and absent until Xero has told us
-                  something: it arrives on the bill's invoice webhook, so an
-                  unpublished document has no such block at all. */}
-              {doc.xeroInvoiceId && (
-                <>
-                  <SectionHeading>In Xero</SectionHeading>
-                  <Field label="Paid status">
-                    {(() => {
-                      const status = xeroPaidStatus(doc);
-                      if (!status) {
-                        return (
-                          <p className="pt-1 text-sm text-muted-foreground">
-                            Nothing heard yet — Xero reports this when the {isSales ? 'invoice' : 'bill'} is approved, paid or changed.
-                          </p>
-                        );
-                      }
-                      return (
-                        <p className="pt-1 text-sm">
-                          <span
-                            className={cn(
-                              status.tone === 'paid' && 'font-medium text-green-700',
-                              status.tone === 'void' && 'text-muted-foreground line-through',
-                              status.tone === 'awaiting' && 'text-muted-foreground'
-                            )}
-                          >
-                            {status.label}
-                          </span>
-                          {doc.xeroPaidDate && (
-                            <span className="text-muted-foreground"> on {formatDate(doc.xeroPaidDate)}</span>
-                          )}
-                        </p>
-                      );
-                    })()}
-                  </Field>
-                  <Field label="Payment reference">
-                    <p className="pt-1 text-sm text-muted-foreground">{doc.xeroPaymentRef || '—'}</p>
-                  </Field>
-                </>
-              )}
-
-              <SectionHeading>Line items</SectionHeading>
-              <LineItemsGrid {...lineGrid} />
-              <LineItemsActions
-                onExtract={extractLineItems}
-                onAdd={addLineItem}
-                onExpand={() => setLinesOpen(true)}
-                onRevert={revertLineItems}
-                canRevert={lineItemsEdited}
-                extracting={extractingLines}
-                busy={Boolean(job)}
-                visionEnabled={visionEnabled}
-                canExpand={lineItems.length > 0}
-              />
-              {linesNoteBlock}
-
-              <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
-                {serverReading ? (
-                  <span className="inline-flex h-9 items-center gap-1 rounded-md border bg-muted px-3 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Processing
-                  </span>
-                ) : doc.status === 'ready' ? (
-                  <span className="inline-flex h-9 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm font-medium text-foreground">
-                    <CheckCircle2 className="h-4 w-4" /> In Ready
-                  </span>
-                ) : doc.persisted ? (
-                  <span className="inline-flex h-9 items-center gap-1 rounded-md border px-3 text-sm text-muted-foreground">
-                    {readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'Ready'}
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={moveToReady}
-                    className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                  >
-                    Move to ready
-                  </button>
-                )}
-                {doc.persisted && <SaveStatus status={fieldSave} className="px-1" />}
-                {mayClaim && (
-                  <TopButton
-                    onClick={() => setClaimOpen(true)}
-                    disabled={Boolean(claimBlocked)}
-                    title={claimBlocked}
-                  >
-                    Add to expense claim
-                  </TopButton>
-                )}
-                {archiveControl}
-                <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
-              </div>
-            </fieldset>
-          )}
-
-          {tab === 'email' && (
-            <div className="text-sm">
-              {mail ? (
-                <>
-                  {/* The envelope, laid out as a message header: labels aligned
-                      in their own column so the addresses line up and can be
-                      read down. */}
-                  <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
-                    <dt className="text-muted-foreground">From</dt>
-                    <dd className="m-0 break-words">{mail.from || '—'}</dd>
-                    <dt className="text-muted-foreground">Date</dt>
-                    <dd className="m-0">{mailDate || '—'}</dd>
-                    <dt className="text-muted-foreground">Subject</dt>
-                    <dd className="m-0 break-words">{mail.subject || '(no subject)'}</dd>
-                    <dt className="text-muted-foreground">To</dt>
-                    <dd className="m-0 break-words">{mail.to || '—'}</dd>
-                  </dl>
-                  {/* What the sender actually wrote: as it was SENT where the
-                      mail's HTML was kept (an order confirmation is a table,
-                      and its text part is that table flattened), else as
-                      typed — a forwarded note is evidence about the document,
-                      so it is not reflowed or tidied. */}
-                  <div className="mt-4 border-t pt-4">
-                    <MailBody
-                      billId={doc.persisted ? doc.id : ''}
-                      text={mail.text}
-                      empty={<p className="text-muted-foreground">The message had no text — just the attachment.</p>}
-                    />
-                  </div>
-                  {/* Answering it, where the caller may see the entity's mail at
-                      all (the server says). Under the message rather than in
-                      the toolbar: it is an answer to THIS, and what was already
-                      said back belongs beside it. */}
-                  {/* A document that came by email and has no file: the email
-                      can BE the file. Offered here as well as in the banner
-                      above, since a mail with no links at all never shows one. */}
-                  {mailReplies.available && !doc.hasFile && (
-                    <div className="mt-4 flex flex-wrap items-center gap-3 border-t pt-4">
-                      <button
-                        type="button"
-                        disabled={Boolean(linkBusy)}
-                        onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id, envelope: doc.email }))}
-                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-60"
-                      >
-                        <FileText className="h-3.5 w-3.5" /> {linkBusy === 'pdf' ? 'Saving…' : 'Save this email as a PDF'}
-                      </button>
-                      <span className="text-xs text-muted-foreground">
-                        {linkNote ||
-                          'Attaches the message to this document as its file, so it goes to Xero with the bill.'}
-                      </span>
-                    </div>
-                  )}
-                  {mailReplies.available && (
-                    <div className="mt-4 border-t pt-4">
-                      <EmailReply
-                        target={{ billId: doc.id }}
-                        replies={mailReplies.replies}
-                        replyAddress={mailReplies.replyAddress}
-                        replyEnabled={mailReplies.replyEnabled}
-                        onSent={reloadMailReplies}
-                      />
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
-                  This document didn&rsquo;t arrive by email — it was{' '}
-                  {driveFile ? 'saved into a Google Drive folder' : chat ? 'sent in over WhatsApp' : 'uploaded'}.
-                  <br />
-                  <span className="text-xs">
-                    Forwarding one in? Each person has their own address under Users &rarr; Edit &rarr; Extract by email.
-                  </span>
-                </p>
-              )}
-            </div>
-          )}
-
-          {tab === 'files' && mailReplies.available && (
-            <DocumentFiles
-              billId={doc.id}
-              envelope={doc.email}
-              onChanged={async () => {
-                const r = await fetchBillById(doc.id).catch(() => null);
-                if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
-                notifyBillsChanged();
-              }}
-            />
-          )}
-
-          {tab === 'drive' && driveFile && (
-            <div className="text-sm">
-              {/* Where the file came from. There is no message to show — a
-                  folder has none — so this is the whole of the envelope: the
-                  folder, the file as it was named there, and who Drive says
-                  put it there. */}
-              <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
-                <dt className="text-muted-foreground">Folder</dt>
-                <dd className="m-0 break-words">
-                  <a
-                    href={`https://drive.google.com/drive/folders/${encodeURIComponent(driveFile.folderId)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline underline-offset-2 hover:text-foreground"
-                  >
-                    {driveFile.folderName || 'Google Drive folder'}
-                  </a>
-                </dd>
-                <dt className="text-muted-foreground">File</dt>
-                {/* Linked by the file's own id rather than by its name: in
-                    Filed it wears the day and a running number in front of the
-                    name shown here, and the id opens it whatever it is called
-                    and wherever it has been moved. */}
-                <dd className="m-0 break-words">
-                  {driveFile.fileId ? (
-                    <a
-                      href={`https://drive.google.com/file/d/${encodeURIComponent(driveFile.fileId)}/view`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline underline-offset-2 hover:text-foreground"
-                    >
-                      {driveFile.fileName || 'Open in Google Drive'}
-                    </a>
-                  ) : (
-                    driveFile.fileName || '—'
-                  )}
-                </dd>
-                <dt className="text-muted-foreground">Saved by</dt>
-                <dd className="m-0 break-words">
-                  {driveFile.addedByName || driveFile.addedBy || 'Not stated by Google Drive'}
-                  {driveFile.addedByName && driveFile.addedBy ? (
-                    <span className="ml-2 text-muted-foreground">{driveFile.addedBy}</span>
-                  ) : null}
-                </dd>
-                <dt className="text-muted-foreground">Date</dt>
-                <dd className="m-0">{driveFile.addedAt ? fmtStamp(driveFile.addedAt) : '—'}</dd>
-              </dl>
-              <p className="mt-4 border-t pt-4 text-muted-foreground">
-                Saved into a folder connected to CYBills, and filed under the person that folder belongs to. Once
-                filed, the file is moved into the folder&rsquo;s &ldquo;Filed&rdquo; subfolder, with the day it was
-                filed and a running number in front of its name.
-              </p>
-            </div>
-          )}
-
-          {tab === 'whatsapp' && (
-            <div className="text-sm">
-              {chat ? (
-                <>
-                  {/* Who sent it and where from. A chat has no subject and no
-                      recipient, so this is the message header a chat actually
-                      has: the person, their number, the group, and when. */}
-                  <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
-                    <dt className="text-muted-foreground">From</dt>
-                    {/* The name and the number, never the raw sender id: WhatsApp
-                        increasingly sends a LID there — an opaque fifteen-digit
-                        per-user id, not a phone number — and printed here it read
-                        as somebody's mobile. Both fields are resolved server-side
-                        (the group's own person, or the roster row the number
-                        matches), so this tab and the WhatsApp thread agree. The
-                        id stays reachable in the tooltip, for tracing. */}
-                    <dd className="m-0 break-words" title={chat.from || undefined}>
-                      {/* Nothing identified the sender, and the name on file is
-                          only whose GROUP it is. Printed as "From" it read as a
-                          fact, and in a group several people post into it names
-                          the wrong one — so it is said as the guess it is. */}
-                      {chat.senderStandIn ? (
-                        <>
-                          Unknown sender
-                          {chat.senderName ? (
-                            <span className="ml-2 text-muted-foreground">(sent into {chat.senderName}’s group)</span>
-                          ) : null}
-                        </>
-                      ) : (
-                        chat.senderName || chat.senderNumber || 'Unknown'
-                      )}
-                      {!chat.senderStandIn && chat.senderName && chat.senderNumber ? (
-                        <span className="ml-2 text-muted-foreground">{chat.senderNumber}</span>
-                      ) : null}
-                      {/* Nobody on the roster was identified as the sender: the
-                          name above is a stand-in (the group's own person, a
-                          push name) or nothing. "Pls pay." is an approval, and
-                          an approval needs a name on it, so the reviewer who
-                          knows the group says who — once, for every message
-                          that account has sent or will send. */}
-                      {!chat.senderUserId && chat.from && !mockDoc ? (
-                        <WhatsappSenderPicker
-                          chat={chat}
-                          people={teamUsers.filter((u) => !u.deactivated && u.email)}
-                          onSaved={(who) =>
-                            setPersisted((p) =>
-                              p ? { ...p, whatsapp: { ...p.whatsapp, senderName: who.name, senderNumber: who.number, senderUserId: who.userId, senderStandIn: false } } : p
-                            )
-                          }
-                        />
-                      ) : null}
-                    </dd>
-                    <dt className="text-muted-foreground">Date</dt>
-                    <dd className="m-0">{chatDate || '—'}</dd>
-                    <dt className="text-muted-foreground">Group</dt>
-                    <dd className="m-0 break-words">{chat.chatSubject || '—'}</dd>
-                    <dt className="text-muted-foreground">File</dt>
-                    <dd className="m-0 break-words">{chat.fileName || '—'}</dd>
-                  </dl>
-                  {/* What they typed when they attached it. Kept as typed: this
-                      is the instruction the document was read with, so it is
-                      evidence rather than presentation. */}
-                  {chat.text ? (
-                    <p className="mt-4 whitespace-pre-wrap border-t pt-4 text-muted-foreground">{chat.text}</p>
-                  ) : (
-                    <p className="mt-4 border-t pt-4 text-muted-foreground">
-                      Sent with no message — just the file.
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
-                  This document didn&rsquo;t come in over WhatsApp.
-                  <br />
-                  <span className="text-xs">
-                    Bills sent into this entity&rsquo;s collection group show their message here, the way emailed
-                    ones do. Business settings &rarr; Connections sets the group up.
-                  </span>
-                </p>
-              )}
-            </div>
-          )}
-
-          {tab === 'note' && (
-            <div className="space-y-3">
-              <textarea
-                rows={6}
-                value={data.note}
-                onChange={(e) => set('note', e.target.value)}
-                placeholder="Add a note about this document…"
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-              <div className="flex items-center gap-3">
-                <SaveStatus status={noteSave} />
-              </div>
-            </div>
-          )}
-
-          {tab === 'history' && (
-            <ol className="relative space-y-6 text-sm">
-              {docHistoryEvents.map((e, i) => (
-                <li key={i} className="relative flex gap-4">
-                  <div className="flex flex-col items-center">
-                    <span
-                      className={
-                        e.origin
-                          ? 'mt-1 h-3 w-3 rounded-full bg-foreground ring-4 ring-muted'
-                          : 'mt-1 h-3 w-3 rounded-full border-2 border-foreground bg-background'
-                      }
-                    />
-                    {i < docHistoryEvents.length - 1 && <span className="mt-1 w-px flex-1 bg-border" />}
-                  </div>
-                  <div className="pb-1">
-                    <p className="text-sm">
-                      <span className="font-medium">{e.text}</span>
-                      {e.by && <span className="text-muted-foreground"> by {e.by}</span>}
-                    </p>
-                    {e.at && <p className="mt-0.5 text-xs text-muted-foreground">{e.at}</p>}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
-      </div>
-
-      <SplitItemModal
-        open={splitOpen}
-        onClose={() => setSplitOpen(false)}
-        onSplit={doSplit}
-        imageUrl={imageUrl}
-        previewType={previewType}
-        current={{ category: data.category, total: data.total, tax: data.tax }}
-      />
-      <AddToClaimModal
-        open={claimOpen}
-        moveFrom={claimForItem || null}
-        onClose={() => setClaimOpen(false)}
-        onAdd={async ({ claimId, newClaim }) => {
-          setClaimOpen(false);
-          setAiError('');
-          if (claimForItem) {
-            const line = (claimForItem.transactions || []).find((t) => isItemKey(t.itemId, id));
-            setClaimLeaving(true);
-            try {
-              const target = newClaim ? await createClaim(newClaim) : claims.find((c) => c.id === claimId);
-              await moveItemsToClaim(claimForItem.id, target.id, [line]);
-              setClaimAdded({ id: target.id, name: target.name || 'Expense claim', moved: true });
-            } catch (err) {
-              setAiError(
-                err?.code === 'claim_locked'
-                  ? 'One of those claims is approved, so its items can’t be changed. Unapprove it first.'
-                  : err?.message || 'Could not move this document to that claim — please try again.'
-              );
-            } finally {
-              setClaimLeaving(false);
-            }
-            return;
-          }
-          // Link this cost to the chosen (or newly created) claim so it shows
-          // up as a line item there, then mark it as in an expense claim.
-          try {
-            const targetId = newClaim ? (await createClaim(newClaim)).id : claimId;
-            const actor = user?.name || user?.email || 'You';
-            if (targetId) await addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
-            await persistStatus('expenseclaim');
-            notifyBillsChanged();
-            // Confirm before moving on: let the user jump to the claim they just
-            // added to, or close to advance to the next inbox item.
-            const name = newClaim ? (newClaim.name || 'Expense claim') : (claims.find((c) => c.id === targetId)?.name || 'Expense claim');
-            setClaimAdded({ id: targetId, name });
-          } catch (err) {
-            setAiError(
-              err?.code === 'claim_locked'
-                ? 'That claim is already approved, so items can’t be added to it.'
-                : err?.code === 'published_to_xero'
-                  ? 'This document is already published to Xero, so it can’t also go on an expense claim.'
-                  : 'Could not add this item to the claim — please try again.'
-            );
-          }
-        }}
-      />
-      <DuplicateReviewModal
-        open={compareOpen && Boolean(duplicateOf)}
-        pairs={duplicateOf ? [{ duplicate: doc, original: duplicateOf }] : []}
-        onClose={() => setCompareOpen(false)}
-        onResolved={() => { setCompareOpen(false); goToNextInbox(); }}
-      />
-
-      <PublishToXeroModal
-        open={publishOpen}
-        onClose={() => setPublishOpen(false)}
-        bill={{ id: doc.id, kind: doc.kind, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, createdAt: doc.createdAt, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType, xeroStatus: doc.xeroStatus, paid: data.paid, paymentMethod: data.paymentMethod, bankMatch: doc.bankMatch, prepaymentMatch }}
-        onPublished={onPublished}
-        // A first publish finishes the document, so moving on is offered; a
-        // correction sent to an existing bill is not, which is just Done.
-        onNext={publishMode === 'publish' ? goToNextInbox : undefined}
-        mode={publishMode}
-      />
-
-      {claimAdded && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-foreground/20" onClick={closeClaimAdded} aria-hidden="true" />
-          <div className="relative w-full max-w-sm overflow-hidden rounded-lg bg-background shadow-xl">
-            <div className="flex flex-col items-center gap-3 p-6 text-center">
-              <CheckCircle2 className="h-10 w-10 text-emerald-600" />
-              <p className="text-sm">
-                Item {claimAdded.moved ? 'moved' : 'added'} to expense claim <span className="font-medium">{claimAdded.name}</span>.
-              </p>
-            </div>
-            <div className="flex items-center justify-center gap-2 border-t px-6 py-4">
-              <button
-                type="button"
-                onClick={() => { const id = claimAdded.id; setClaimAdded(null); navigate(`/expense-claims/${id}`); }}
-                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-              >
-                Go to expense claim
-              </button>
-              <button
-                type="button"
-                onClick={closeClaimAdded}
-                className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <LineItemsEditor
-        open={linesOpen}
-        onClose={() => setLinesOpen(false)}
-        title={data.supplier}
-        preview={<ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} fill />}
-        actions={
-<>
-            <LineItemsActions
-              onExtract={extractLineItems}
-              onAdd={addLineItem}
-              onRevert={revertLineItems}
-              canRevert={lineItemsEdited}
-              extracting={extractingLines}
-              busy={Boolean(job)}
-              visionEnabled={visionEnabled}
-            />
-            {linesNoteBlock}
-          </>
-        }
-        {...lineGrid}
-      />
-
-      <SupplierRulesModal
-        open={rulesOpen}
-        supplier={data.supplier}
-        categoryOptions={categoryOptions}
-        customerOptions={customerOptions}
-        projectOptions={projectOptions}
-        taxRateOptions={taxRateOptions}
-        paymentMethodOptions={paymentMethods.map((p) => p.label)}
-        gstRegistered={gstRegistered}
-        onClose={() => setRulesOpen(false)}
-        onApply={applySupplierRuleToForm}
-      />
-
-      <CustomerRulesModal
-        open={customerRulesOpen}
-        customer={data.supplier}
-        categoryOptions={categoryOptions}
-        onClose={() => setCustomerRulesOpen(false)}
-        onApply={applyCustomerRuleToForm}
-      />
-
-      <AddPaymentMethodModal
-        open={pmModalOpen}
-        onClose={() => setPmModalOpen(false)}
-        onAdded={(pm) => set('paymentMethod', pm.label)}
-      />
-    </AppShell>
-  );
-}
-
-// "Sent by …" for a WhatsApp'd document whose sender the roster could not
-// vouch for. Picking a person stores what that WhatsApp account IS, so it is
-// asked once per account rather than once per receipt; the thread and every
-// document from the same sender follow. Hoisted, so it can live down here.
-function WhatsappSenderPicker({ chat, people, onSaved }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const pick = async (email) => {
-    if (!email) return;
-    setBusy(true);
-    setError('');
-    try {
-      const who = await setWhatsappSender({ lid: chat.from, email });
-      onSaved(who);
-    } catch (err) {
-      setError(err?.message || 'Could not save who sent this.');
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <span className="ml-2 inline-flex items-center gap-2 align-middle">
-      <select
-        className="h-7 rounded-md border bg-background px-2 text-xs"
-        value=""
-        disabled={busy}
-        onChange={(e) => pick(e.target.value)}
-        aria-label="Who sent this?"
-      >
-        <option value="">{chat.senderName && !chat.senderStandIn ? 'Not confirmed — who sent this?' : 'Who sent this?'}</option>
-        {people.map((u) => (
-          <option key={u.email} value={u.email}>
-            {u.name || u.email}
-          </option>
-        ))}
-      </select>
-      {error ? <span className="text-xs text-destructive">{error}</span> : null}
-    </span>
-  );
-}
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Flag,
+  Sparkles,
+  Upload,
+  ChevronDown,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
+  Info,
+  ExternalLink,
+  Link2 as LinkIcon,
+  Archive as ArchiveIcon,
+  Loader2,
+} from 'lucide-react';
+import AppShell from '@/components/AppShell';
+import CostsSubnav from '@/components/CostsSubnav';
+import SalesSubnav from '@/components/SalesSubnav';
+import CustomerRulesModal from '@/components/CustomerRulesModal';
+import SplitItemModal from '@/components/SplitItemModal';
+import AddToClaimModal from '@/components/AddToClaimModal';
+import PublishToXeroModal from '@/components/PublishToXeroModal';
+import DuplicateReviewModal from '@/components/DuplicateReviewModal';
+import { addItemToClaim, createClaim, docToClaimTxn, moveItemsToClaim, removeItemsFromClaim, useClaims } from '@/lib/claimStore';
+import { claimRef } from '@/lib/exportFormat';
+import { useAuth } from '@/lib/auth';
+import { trustSender, fetchDocumentLink, useDocumentReplies, saveEmailAsPdf, drawEmailPdf, markReplyReceived } from '@/lib/mailbox';
+import EmailReply from '@/components/EmailReply';
+import DocumentFiles from '@/components/DocumentFiles';
+import MailBody from '@/components/MailBody';
+import { getDoc } from '@/data/docs';
+import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
+import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, useOrganisations, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
+import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
+import { useProjectOptions } from '@/lib/listsStore';
+import { useProjectLabels, singular } from '@/lib/projectLabels';
+import { useUsers, useOwnerNames, canPublishToXero, canCreateClaims, canManageBusiness } from '@/lib/userStore';
+import { isPracticeTeam } from '@/lib/practiceStore';
+import { setWhatsappSender } from '@/lib/whatsapp';
+import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
+import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, deleteBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, salesPath, docPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, moveBillToWorkspace, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
+import { unmergeCost } from '@/lib/mergeDocs';
+import SupplierRulesModal from '@/components/SupplierRulesModal';
+import { LineItemsActions, LineItemsEditor, LineItemsGrid } from '@/components/LineItemsGrid';
+import {
+  matchSupplierRule,
+  supplierRuleCategoryReason,
+  supplierRuleCount,
+  supplierRulePatch,
+  supplierRuleProjectReason,
+  useSupplierRules,
+} from '@/lib/supplierRules';
+import TeachRule from '@/components/TeachRule';
+import { useDocsOfKind, rowsFor, isInInbox } from '@/lib/costsData';
+import { readWalk, walkPosition } from '@/lib/listView';
+import { totalOk, counterpartyLabel, effectiveDate, dateFromSubmission } from '@/lib/readiness';
+import { useExtractionSettings, noTaxRateName, taxForCode } from '@/lib/extractionSettings';
+import { readDecisions, ruleLineRows } from '@/lib/reRead';
+import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
+import { useSalesEnabled } from '@/lib/workspaceSettings';
+import { useAutoSave } from '@/lib/useAutoSave';
+import { isMileage, mileagePatch, mileageSummary } from '@/lib/mileage';
+import { isPaymentProof, paymentProofPatch } from '@/lib/paymentProof';
+import { startExtraction, useExtractionJob } from '@/lib/extractionJobs';
+import { xeroBillUrl } from '@/lib/autoPublish';
+import { useXeroShortCode } from '@/lib/organisations';
+import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
+import { formatDate } from '@/lib/date';
+import BankMatchPanel from '@/components/BankMatchPanel';
+import PaymentProofPanel from '@/components/PaymentProofPanel';
+import PrepaymentPanel from '@/components/PrepaymentPanel';
+import PaperworkMatchPanel from '@/components/PaperworkMatchPanel';
+import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
+import { paperworkSuggestion } from '@/lib/paperworkMatch';
+import { isAdvanceDocument, advancePatch, firmPrepayment, ADVANCE_TYPES } from '@/lib/prepayment';
+import SaveStatus from '@/components/SaveStatus';
+import { getDocOverrides, setDocOverride } from '@/lib/docOverrides';
+import { prepareUpload } from '@/lib/image';
+import { balanceLine, foldTaxIntoCost, applyLineTaxRate } from '@/lib/lineItems';
+import { coveringNote } from '@/lib/coveringNote';
+import { cn } from '@/lib/utils';
+import ComboSelect from '@/components/ComboSelect';
+import ZoomableImage from '@/components/ZoomableImage';
+import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from '@/lib/motorVehicle';
+import { isMedicalProviderExpense, medicalProviderReason } from '@/lib/medicalProvider';
+
+function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title || undefined}
+      className={cn(
+        'inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
+        disabled ? 'cursor-not-allowed text-muted-foreground/50' : 'hover:bg-muted',
+        subtle && 'border-transparent'
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <div className="flex items-start gap-4 py-2">
+      <div className="w-40 shrink-0 pt-2 text-sm text-muted-foreground">{label}</div>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+}
+
+function Input({ value, onChange = null, readOnly = false }) {
+  return (
+    <input
+      value={value}
+      readOnly={readOnly || !onChange}
+      onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+      className={cn(
+        'h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        readOnly || !onChange ? 'bg-muted text-muted-foreground' : 'bg-background'
+      )}
+    />
+  );
+}
+
+
+function SectionHeading({ children }) {
+  return (
+    <h3 className="mb-1 mt-6 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </h3>
+  );
+}
+
+// Left panel: the uploaded file once one exists, else a monochrome stand-in.
+// `fill` = take the height of whatever holds it rather than a fixed one: always
+// (the line items editor, whose document pane is dragged to size), or `'lg'`,
+// only once the page is two columns — stacked above the form on a narrow
+// screen there is nothing to fill, so it keeps its own height there.
+function ReceiptPreview({ doc, imageUrl, previewType, fill = false }) {
+  const frame = fill === 'lg'
+    ? 'h-[45vh] w-full md:h-[560px] lg:h-auto lg:min-h-0 lg:flex-1'
+    : fill ? 'min-h-0 w-full flex-1' : 'h-[45vh] w-full md:h-[560px]';
+  if (imageUrl) {
+    return (
+      <div
+        className={cn(
+          'overflow-hidden rounded-lg border bg-background',
+          fill === 'lg' ? 'lg:flex lg:h-full lg:flex-col' : fill && 'flex h-full flex-col'
+        )}
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 text-sm font-medium">
+          <span>{doc?.kind === 'sales' ? 'Uploaded document' : 'Uploaded receipt'}</span>
+          {/* Which page of the original this is. "Split PDF by page" turns one
+              file into several documents that all look alike at a glance, and
+              there was no way to tell from here which page you had open. */}
+          {doc?.splitGroup && doc.splitPages > 1 && (
+            <span
+              className="rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+              title="This document is one page of a PDF you split on upload. The other pages are separate documents — merge them back if they are one receipt."
+            >
+              Page {doc.splitPage || '?'} of {doc.splitPages}
+            </span>
+          )}
+        </div>
+        {previewType === 'pdf' ? (
+          <iframe src={imageUrl} title="Uploaded document" className={frame} />
+        ) : (
+          <ZoomableImage src={imageUrl} alt={doc?.kind === 'sales' ? 'Uploaded document' : 'Uploaded receipt'} className={frame} />
+        )}
+      </div>
+    );
+  }
+  // No stored file yet — neutral placeholder for every document (no seeded
+  // "Grab receipt" mock). Use "Upload receipt" to attach the original.
+  return (
+    <div className={cn('overflow-hidden rounded-lg border bg-background', fill === true && 'h-full overflow-auto')}>
+      <div className="border-b px-4 py-3 text-sm">
+        <span className="font-medium">{doc.supplier || 'Document'}</span>
+        {doc.date && doc.date !== '—' && <span className="ml-2 text-muted-foreground">· {doc.date}</span>}
+      </div>
+      <div className="flex h-80 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
+        <FileText className="h-8 w-8" strokeWidth={1.5} />
+        <p className="text-sm">No file preview for this document.</p>
+        <p className="text-xs">Use “Upload {doc?.kind === 'sales' ? 'document' : 'receipt'}” to attach the original.</p>
+      </div>
+    </div>
+  );
+}
+
+// Document types offered in the Type dropdown (mirrors Dext's list).
+const DOC_TYPES = [
+  'Receipt',
+  'Invoice',
+  'Payment proof',
+  // Paid before the tax invoice exists: recorded in Xero as a prepayment to the
+  // supplier rather than published as a bill (src/lib/prepayment.js).
+  ...ADVANCE_TYPES,
+  'Credit note/refund',
+  'Statement/remittance advice',
+  'Expense statement',
+  'Delivery note',
+  'ATM withdrawal',
+  'Mileage',
+  'Other',
+];
+
+// What a sales document can be. The other side of the ledger has no payment
+// proofs, quotations paid in advance or mileage: each is a question about money
+// going OUT, and publishing one as a sale would post it as revenue.
+const SALES_DOC_TYPES = ['Invoice', 'Credit note/refund', 'Receipt', 'Statement/remittance advice', 'Other'];
+
+// A rule's field, in the words the form uses for it.
+const FIELD_LABELS = {
+  category: 'Category',
+  customer: 'Customer',
+  project: 'Project',
+  currency: 'Currency',
+  paymentMethod: 'Payment method',
+  description: 'Description',
+  taxRate: 'Tax rate',
+  paid: 'Paid',
+  dueDate: 'Due date',
+};
+const FIELD_LABEL = (k) => FIELD_LABELS[k] || k;
+
+function initialData(doc) {
+  return {
+    user: doc.user,
+    type: doc.type,
+    date: doc.date,
+    supplier: doc.supplier,
+    ref: doc.ref ?? doc.invoiceNumber ?? '',
+    category: doc.category,
+    categoryReason: doc.categoryReason ?? '',
+    currency: doc.currency,
+    total: doc.total,
+    tax: doc.tax,
+    // What the document is worth in the entity's own currency, and the rate
+    // between the two. One fact in three parts, so they are held together and
+    // written together — see setBaseTotal.
+    baseCurrency: doc.baseCurrency ?? '',
+    baseTotal: doc.baseTotal ? String(doc.baseTotal) : '',
+    baseTax: doc.baseTax ? String(doc.baseTax) : '',
+    exchangeRate: doc.exchangeRate ? String(doc.exchangeRate) : '',
+    taxRate: doc.taxRate ?? '',
+    taxRateReason: doc.taxRateReason ?? '',
+    taxRateCleared: Boolean(doc.taxRateCleared),
+    taxRateEdited: Boolean(doc.taxRateEdited),
+    description: doc.description ?? '',
+    paymentMethod: doc.paymentMethod ?? '',
+    paid: Boolean(doc.paid),
+    cardLast4: doc.cardLast4 ?? '',
+    // A Mileage document's own two figures. Its total is derived from them
+    // (setMileage below), never typed.
+    distanceKm: doc.distanceKm ? String(doc.distanceKm) : '',
+    mileageRate: doc.mileageRate ? String(doc.mileageRate) : '',
+    customer: doc.customer ?? '',
+    // Left out, the form read every document as not rebillable: the switch
+    // showed No on load whatever was saved, and flicked Yes -> No when a
+    // re-read that turned it on finished and the page took the document back.
+    rebillable: doc.rebillable === true,
+    project: doc.project ?? '',
+    project2: doc.project2 ?? '',
+    projectReason: doc.projectReason ?? '',
+    note: doc.note ?? '',
+    dueDate: doc.dueDate ?? '',
+    lineItems: Array.isArray(doc.lineItems) ? doc.lineItems : [],
+  };
+}
+
+export default function CostDetail() {
+  // The URL carries the document's ITEM ID — the number shown on the page and in
+  // the list (/costs/260822123051). An internal id still resolves, so older
+  // links and links built from a claim line item keep working; once the document
+  // loads, `id` below is always the internal id the API is addressed by.
+  const { id: routeId } = useParams();
+  const navigate = useNavigate();
+  // One page for both workspaces. A sales invoice is the same act on the other
+  // side of the ledger — read it, code it, publish it — so it is opened here
+  // rather than on a page of its own, which is how the Sales one fell behind:
+  // no re-read, no line items, no tax code, and a Delete that deleted nothing.
+  // Which workspace is decided by the ROUTE until the document has loaded (the
+  // list to walk, the subnav), then by the document's own `kind`.
+  const location = useLocation();
+  const salesRoute = location.pathname.startsWith('/sales/');
+  const Subnav = salesRoute ? SalesSubnav : CostsSubnav;
+  const listPath = salesRoute ? '/sales' : '/costs';
+  const pathOf = (d) => (salesRoute ? salesPath(d) : costPath(d));
+  const { visionEnabled, user, membership, googleEnabled } = useAuth();
+  // "Publishing permissions" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers publish by role. Refused server-side too, on
+  // all four Xero routes — this is what stops the button being offered at all.
+  const mayPublish = canPublishToXero(membership, googleEnabled);
+  // "Create expense claims" in Edit privileges. Only a Standard user carries
+  // the setting; both admin tiers do this by role. Refused server-side on both
+  // halves of the act — opening a claim and putting items on it.
+  const mayClaimRole = canCreateClaims(membership, googleEnabled);
+  const teamUsers = useUsers();
+  // Who this document can belong to: the client's own people plus its general
+  // account, which is where anything a practice colleague added sits. A
+  // colleague is not on the list — reassigning a client's document to the
+  // bookkeeper doing their books is never the answer.
+  const ownerNames = useOwnerNames();
+  // Somebody who has been deactivated isn't offered — they can't sign in, so
+  // handing them a document only hides it behind a name nobody is using. The
+  // document's CURRENT owner is added back below, so one who has since left
+  // still shows rather than silently emptying the field.
+  const ownerOptions = Array.from(
+    new Set([...ownerNames, ...teamUsers.filter((u) => !u.deactivated).map((u) => u.name || u.email)].filter(Boolean))
+  );
+  // Revenue accounts for a sales invoice, expense accounts for a cost.
+  const categoryOptions = useCategoryOptions(salesRoute ? 'sales' : 'cost');
+  const catMode = useCategoryDisplayMode();
+  // Projects come from the active org's live Xero tracking category (managed in
+  // Lists → Projects); fall back to the bundled seed only when Xero isn't linked.
+  // Xero contacts AND the merchants this entity's own documents already name.
+  // A bridge entity has no Xero to ask, so without the second half its Supplier
+  // field offered nothing at all and every name had to be typed.
+  const bridge = useBridgeEntity();
+  // Names the entity in the "Open in Xero" link, so a bill opens in the ledger
+  // it was actually posted to rather than in whichever organisation the
+  // browser last had open there.
+  const xeroShortCode = useXeroShortCode();
+  const supplierOptions = mergeSupplierNames(useXeroSuppliers(), [
+    ...useDocumentSuppliers(),
+    ...addedSuppliers(),
+  ]);
+  const xeroProjects = useXeroProjectOptions();
+  const seedProjects = useProjectOptions();
+  // What this entity calls its project lists — a bridge entity's are PO numbers.
+  const projectLabels = useProjectLabels();
+  const projectOptions = xeroProjects.length ? xeroProjects : seedProjects;
+  // Per-line tracking, one column per Xero tracking category the linked org
+  // actually has (Xero allows two; the second is its "Projects 2"). Deliberately
+  // NOT the seeded project list the document-level field falls back to: a
+  // per-line project only means something on publish, and publish can only tag a
+  // real Xero category. No Xero tracking, no columns — the grid is cramped
+  // enough without two dropdowns that could never reach the ledger.
+  const project2Options = useXeroProjectOptions(1);
+  const lineProjects = xeroProjects;
+  // Customers come from the active org's (CYBM) live Xero customer contacts.
+  const customerOptions = useXeroCustomers();
+  const paymentMethods = useXeroPaymentMethods();
+  // GST/tax rates — one managed list shared with Business settings → Lists →
+  // Tax rates: the live Xero rates (seed fallback), showing only the rates left
+  // Visible there, for each side of the ledger. A cost is offered the purchase
+  // codes and a sale the supply (output) codes; which applies is only known
+  // once the document is (see `isSales` below). `rateFor` gives the % for the
+  // tax math.
+  const costTaxRates = useVisibleTaxRates('cost');
+  const salesTaxRates = useVisibleTaxRates('sales');
+  // The unfiltered lists too: a code switched off in Lists is still the
+  // standard one for its rate, and this is how the org's own name for it is found.
+  const allCostTaxRates = useManagedTaxRates('cost');
+  const allSalesTaxRates = useManagedTaxRates('sales');
+  // Not GST-registered → every document codes to No Tax and no GST is split out,
+  // and the picker offers nothing else.
+  const gstRegistered = useGstRegistered();
+  const salesEnabled = useSalesEnabled();
+  // The entity's own currency, and whether this document was billed in another.
+  const baseCurrency = useBaseCurrency();
+  const extractionSettings = useExtractionSettings();
+  useSupplierRules(); // the Supplier field's rules link tracks whether a rule exists
+  const [pmModalOpen, setPmModalOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [customerRulesOpen, setCustomerRulesOpen] = useState(false);
+  const [linesOpen, setLinesOpen] = useState(false); // full-screen line-item editor
+  const fileInputRef = useRef(null);
+
+  // Sample docs carry any local (localStorage) edits applied on top.
+  const rawMock = getDoc(routeId);
+  const mockDoc = rawMock ? { ...rawMock, ...(getDocOverrides()[routeId] || {}) } : null;
+  const [tab, setTab] = useState('details');
+  const [persisted, setPersisted] = useState(null);
+  // Set when the document addressed by the URL lives in ANOTHER entity's book:
+  // null = it doesn't (or nothing has asked yet), else where it lives.
+  const [elsewhere, setElsewhere] = useState(null);
+  const [loading, setLoading] = useState(!mockDoc);
+  const [data, setData] = useState(() => initialData(mockDoc ?? {}));
+  const [imageUrl, setImageUrl] = useState('');
+  const [previewType, setPreviewType] = useState('image');
+
+  const [fieldSave, setFieldSave] = useState('idle'); // auto-save status for the document's fields
+  const [aiError, setAiError] = useState('');
+  // What the line-item read had to say, kept apart from aiError so it can be
+  // shown BESIDE the button that starts it. It used to land in the panel's
+  // header, ~190 lines of form above that button, so a document with no
+  // itemised table answered "No itemised charges found" completely off-screen —
+  // and pressing Extract line items looked like it had done nothing at all.
+  const [linesNote, setLinesNote] = useState('');
+  // The line items as they last stood before anybody edited them: how the
+  // document arrived, or what the last read produced. The grid writes through on
+  // every keystroke, so once a figure is typed over, the old one is gone from
+  // both the page and the server — and on a row that never added up (a stated
+  // tax against a rounded total) it cannot even be retyped, because the cells
+  // now keep each other true. Something has to remember it.
+  const [lineSnapshot, setLineSnapshot] = useState(null);
+  // Which fields a supplier's standing rule just filled in, so applying it is
+  // visible rather than fields quietly changing under the cursor.
+  const [ruleApplied, setRuleApplied] = useState(null);
+  // One block, so the panel and the full-screen editor can't drift apart.
+  const linesNoteBlock = linesNote ? (
+    <p className="mt-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-xs text-foreground">
+      {linesNote}
+    </p>
+  ) : null;
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [splitNote, setSplitNote] = useState('');
+  const [claimOpen, setClaimOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishMode, setPublishMode] = useState('publish');
+  const [readyError, setReadyError] = useState([]); // required fields missing when trying to move to Ready
+  const [gstOpen, setGstOpen] = useState(false); // GST-split panel open
+  const [gstWith, setGstWith] = useState(''); // the GST-inclusive amount that carries GST
+  const [claimAdded, setClaimAdded] = useState(null); // { id, name } after Add to expense claim
+  const [claimLeaving, setClaimLeaving] = useState(false); // taking this document off its claim
+  const [claimNote, setClaimNote] = useState(''); // where it went, once it has come off
+  const [compareOpen, setCompareOpen] = useState(false); // side-by-side duplicate review
+  const [moving, setMoving] = useState(false); // moving this document to another entity
+  const { data: organisations } = useOrganisations();
+  const [moveError, setMoveError] = useState('');
+  const [xeroBusy, setXeroBusy] = useState(''); // '' | 'attach' | 'clear'
+  const [xeroNote, setXeroNote] = useState('');
+  const [teach, setTeach] = useState(null); // { field, value } after a manual correction
+  // The link question: fetching this document's invoice from behind its link,
+  // and whether its sender may be followed without asking next time.
+  const [linkBusy, setLinkBusy] = useState('');
+  const [linkNote, setLinkNote] = useState('');
+
+  const doc = mockDoc ?? persisted;
+  // A sales invoice: the counterparty is the CUSTOMER, and nothing that asks
+  // about money going out (claims, bank match, payment proofs, prepayments,
+  // paperwork match, supplier rules) is offered.
+  const isSales = doc ? doc.kind === 'sales' : salesRoute;
+  const taxRateSource = isSales ? salesTaxRates : costTaxRates;
+  const allTaxRates = isSales ? allSalesTaxRates : allCostTaxRates;
+  const noTaxName = noTaxRateName(taxRateSource);
+  const taxRateOptions = gstRegistered
+    ? taxRateSource.map((t) => t.name)
+    : [noTaxName].filter(Boolean);
+  const rateFor = (name) => Number(taxRateSource.find((t) => t.name === name)?.rate ?? 0);
+  // The key everything server-side is addressed by. Falls back to the URL's key
+  // while the document is still loading.
+  const id = doc?.id ?? routeId;
+  // What has been answered about the mail this document arrived in. Asked only
+  // of a document that came by email.
+  const [mailReplies, reloadMailReplies] = useDocumentReplies(doc?.email ? doc.id : '');
+  // The server writes an email out as TEXT (it has no browser to lay HTML out),
+  // and does so on arrival. Opened here, where a browser is, such a file is
+  // redrawn as the email looked and swapped in place — once per document per
+  // visit, and only when the drawing worked, so a mail with no HTML kept is not
+  // retried in a loop. Not in Xero (the file has gone there as it was).
+  const redrawnRef = useRef(new Set());
+  useEffect(() => {
+    if (!doc?.persisted || !doc.fileIsTextEmail || doc.xeroInvoiceId || !mailReplies.available) return;
+    if (redrawnRef.current.has(doc.id)) return;
+    redrawnRef.current.add(doc.id);
+    (async () => {
+      try {
+        const pdf = await drawEmailPdf({ billId: doc.id, envelope: doc.email });
+        if (!pdf) return;
+        await saveEmailAsPdf({ billId: doc.id, envelope: doc.email, replace: true, drawn: pdf });
+        const r = await fetchBillById(doc.id).catch(() => null);
+        if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+        notifyBillsChanged();
+      } catch {
+        // Leave the text copy: it is still the email.
+      }
+    })();
+  }, [doc?.id, doc?.persisted, doc?.fileIsTextEmail, doc?.xeroInvoiceId, mailReplies.available]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The read running for THIS document, if any — including one started before
+  // this page was mounted, or before the reviewer moved away and came back.
+  const job = useExtractionJob(id);
+  // Refs, because the handler below outlives the render it was created in: the
+  // read it waits on can finish long after this page last re-rendered.
+  const persistedIdRef = useRef(null);
+  persistedIdRef.current = persisted?.id ?? null;
+  const handledJob = useRef(null);
+  const mounted = useRef(true);
+  // A document that has just been MOVED here has never been coded against this
+  // entity's chart: its category, tax code and tracking options were left behind
+  // on purpose, because they were names in the chart it came from. So it reads
+  // itself again on arrival, against THIS entity's accounts, tax rules, projects
+  // and supplier rules — otherwise moving a document CYBills has already read
+  // hands somebody three empty fields to type in.
+  //
+  // Started here rather than at the moment of the move, because moving reloads
+  // the app into the new entity and a reload aborts a read in progress.
+  const [readOnArrival, setReadOnArrival] = useState(false);
+  const reReadRef = useRef(null);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const extracting = job?.kind === 'read';
+  const extractingLines = job?.kind === 'lines';
+  // If this document is a line item inside an expense claim, keep the page in
+  // that context: a note links back to the claim, and Back returns to it.
+  const claims = useClaims();
+  const { allDocs: inboxAllDocs } = useDocsOfKind(salesRoute ? 'sales' : 'cost');
+  // A sale's counterparty is a CUSTOMER: the org's Xero customer contacts, plus
+  // the names this entity's own sales documents already carry (a customer read
+  // off an invoice is often not a contact yet).
+  const salesCustomerOptions = salesRoute
+    ? mergeSupplierNames(customerOptions, inboxAllDocs.map((d) => d.supplier).filter((n) => n && !/^unknown (supplier|customer)$/i.test(n)))
+    : [];
+  const claimForItem = claims.find((c) => (c.transactions || []).some((t) => isItemKey(t.itemId, id)));
+  // Why this document can't go on a claim, or '' when it can. A document already
+  // ON a claim can still go onto another: a document is on one claim at a time,
+  // so the button MOVES it (the server adds to the target before it takes the
+  // item off this one, so it never drops back into Costs). Only where this end
+  // can let go: an approved claim is locked, and one in Xero has this money in
+  // the ledger as a line of its bill.
+  const mayClaim = mayClaimRole && !isSales;
+  const claimBlocked = doc?.xeroInvoiceId
+    ? `Already published to ${doc.xeroTenantName || 'Xero'} — it can’t also go on an expense claim.`
+    : doc?.paperworkMatch
+      ? 'Sent to a transaction already in Xero — it can’t also go on an expense claim.'
+    : claimForItem?.approvalStatus === 'approved'
+      ? `On approved expense claim ${claimRef(claimForItem)}, so it can’t be moved. Unapprove the claim first.`
+    : claimForItem?.xeroInvoiceId
+      ? `On expense claim ${claimRef(claimForItem)}, which is already in Xero, so it can’t be moved.`
+      : '';
+  // Take this document off its claim and put it back in Costs — the claim
+  // page's Remove, offered on the page somebody is already looking at the
+  // document on. Two states the server holds to, said before
+  // the click: an approved claim is locked, and a claim whose bill is already
+  // in Xero sets the document aside instead, because its money is in the
+  // ledger as a line of that bill until the claim is updated there.
+  const claimLocked = claimForItem?.approvalStatus === 'approved';
+  const claimInXero = Boolean(claimForItem?.xeroInvoiceId);
+  // On an APPROVED claim the item is the figure the approver signed off, so it
+  // is read-only for the people who raised it. The entity's Business Admin and
+  // the practice's colleagues may still correct it for posting, and the server
+  // carries their correction onto the claim (lockedOnApprovedClaim /
+  // carryCorrectionIntoClaim in server/src). The server holds the rule; this
+  // only draws it.
+  const mayCorrectApproved = isPracticeTeam(membership, googleEnabled) || canManageBusiness(membership, googleEnabled);
+  const itemLocked = claimLocked && !mayCorrectApproved;
+  const removeFromClaim = async () => {
+    if (!claimForItem || claimLocked || claimLeaving) return;
+    const ref = claimRef(claimForItem);
+    if (
+      !window.confirm(
+        claimInXero
+          ? `Remove this document from expense claim ${ref}?\n\n` +
+              'The claim is already published to Xero, so the document goes to Archived rather than back into Costs: ' +
+              'its cost is in the ledger as a line of the claim’s bill until the claim is updated in Xero.'
+          : `Remove this document from expense claim ${ref} and move it back to Costs?\n\n` +
+              'It comes off the claim and returns to the Costs inbox, where it can be published or added to another claim.'
+      )
+    )
+      return;
+    setClaimLeaving(true);
+    setAiError('');
+    try {
+      // Named the way the CLAIM names it: the line's own itemId is what the
+      // server takes off, and the banner found the claim by the same lookup.
+      const line = (claimForItem.transactions || []).find((t) => isItemKey(t.itemId, id));
+      await removeItemsFromClaim(claimForItem.id, [String(line?.itemId ?? doc.id)]);
+      const fresh = await fetchBillById(doc.id);
+      if (fresh) setPersisted(billToDoc({ ...fresh, hasFile: Boolean(fresh.storageKey ?? fresh.hasFile) }));
+      setClaimNote(
+        claimInXero
+          ? `Removed from expense claim ${ref}. The claim is in Xero, so this document is in Archived — update the claim in Xero to take its line off the bill.`
+          : `Removed from expense claim ${ref} — this document is back in Costs.`
+      );
+    } catch (err) {
+      setAiError(
+        err?.code === 'claim_locked'
+          ? 'That claim is approved, so its items can’t be changed. Unapprove the claim first.'
+          : 'Could not remove this document from the claim — please try again.'
+      );
+    } finally {
+      setClaimLeaving(false);
+    }
+  };
+  // Where this document stands in the list it was opened from — the Costs
+  // page's rows as they were on screen (rememberWalk), else the inbox — so
+  // Previous / Next walk that list and never anything else. Ids the book no
+  // longer holds (deleted since the list was drawn) are dropped rather than
+  // navigated to.
+  // A document on an expense claim walks that CLAIM's items instead — in the
+  // order the claim page showed them (rememberWalk there), else the order they
+  // were added — since a claimed document is in no Costs list to walk.
+  const claimWalkIds = claimForItem
+    ? (() => {
+        const items = (claimForItem.transactions || []).map((t) => String(t.itemId));
+        const onClaim = new Set(items);
+        const shown = readWalk(`claim:${claimForItem.id}`).filter((v) => onClaim.has(v));
+        return (shown.length === items.length ? shown : items).join('|');
+      })()
+    : '';
+  const walk = useMemo(() => {
+    if (claimWalkIds) {
+      const ids = claimWalkIds.split('|');
+      const here = ids.find((v) => isItemKey(v, id)) ?? id;
+      return walkPosition(ids, here);
+    }
+    const inBook = new Set(inboxAllDocs.map((d) => String(d.id)));
+    const remembered = readWalk(salesRoute ? 'sales' : 'costs').filter((v) => inBook.has(v));
+    const fromList = walkPosition(remembered, id);
+    if (fromList.index !== -1) return fromList;
+    return walkPosition(rowsFor(inboxAllDocs, 'inbox').map((d) => d.id), id);
+  }, [inboxAllDocs, id, claimWalkIds, salesRoute]);
+  const index = walk.index;
+
+  // Left / Right arrow keys press Previous / Next. Not while typing in a field
+  // (the arrows move the caret there), with a modifier held, or while a popup
+  // is open on top of the page — the arrows belong to whatever is focused.
+  const goRef = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const t = e.target;
+      if (t instanceof HTMLElement && (t.isContentEditable || t.closest('input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"], [role="slider"]'))) return;
+      const popupOpen = [...document.querySelectorAll('.fixed.inset-0')].some((el) => el.getClientRects().length > 0);
+      if (popupOpen) return;
+      e.preventDefault();
+      goRef.current?.(e.key === 'ArrowLeft' ? -1 : 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Reset the form when navigating between documents. Sample docs resolve from
+  // the in-memory mock; uploaded bills are fetched by id from the store.
+  useEffect(() => {
+    setImageUrl('');
+    setAiError('');
+    setLinesNote('');
+    setClaimNote('');
+    // The rule offer is about the correction made on THAT document — its
+    // supplier and its value — so it must not follow you to the next one.
+    setTeach(null);
+    setXeroNote('');
+    setLinkNote('');
+    setMoveError('');
+    setLineSnapshot(null); // a new document, a new set of rows to fall back to
+    const raw = getDoc(routeId);
+    if (raw) {
+      const seeded = initialData({ ...raw, ...(getDocOverrides()[routeId] || {}) });
+      setData(seeded);
+      setLineSnapshot(Array.isArray(seeded.lineItems) ? seeded.lineItems : []);
+      setPersisted(null);
+      setLoading(false);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    // Prefer the active org's list (drives prev/next); fall back to a global
+    // by-id fetch so a claim's line item resolves even if its document sits in
+    // another org's book.
+    setElsewhere(null);
+    fetchBills()
+      .then(async (bills) => {
+        // The ROWS, not their ids: a row carries the assigned number, and
+        // matching on the id alone can only derive one — which another document
+        // uploaded in the same second derives too, and answered to first.
+        const match = findByItemKey(bills, routeId);
+        if (match) return { bill: match };
+        // Not in this entity's list. It may still be this entity's document —
+        // the by-id fetch below is what resolves those — but it may equally
+        // live in another client's book, and rendering THAT here would put one
+        // client's supplier and amounts under another client's name in the
+        // header, with nothing on the page to say so. Ask where it lives first.
+        const where = await whereIsBill(routeId);
+        const active = getActiveOrganisationId();
+        if (where?.orgId && active && where.orgId !== active) return { where };
+        return { bill: await fetchBillById(routeId) };
+      })
+      .then(({ bill, where }) => {
+        if (!alive) return;
+        if (where) {
+          setElsewhere(where);
+          setPersisted(null);
+          setLoading(false);
+          return;
+        }
+        const pd = bill ? billToDoc(bill) : null;
+        setPersisted(pd);
+        if (pd) {
+          // Opened by internal id (an old bookmark, or a claim line item): swap
+          // the address bar for the item-id form without adding a history entry.
+          // And into the workspace it belongs to: a sales invoice opened at
+          // /costs/<number> moves to /sales/<number>, and the other way round.
+          const want = docPath(pd);
+          if (window.location.pathname !== want) navigate(want, { replace: true });
+          const seeded = initialData(pd);
+          setData(seeded);
+          // The rows as the document arrived with them — what Revert edits
+          // restores, captured before the grid can write over them.
+          setLineSnapshot(Array.isArray(seeded.lineItems) ? seeded.lineItems : []);
+          if (pd.hasFile) {
+            setImageUrl(billFileUrl(pd.id));
+            setPreviewType(pd.contentType.includes('pdf') ? 'pdf' : 'image');
+          }
+        }
+        setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [routeId, navigate]);
+
+  // A read that finished while this page was elsewhere (or unmounted) wrote its
+  // answer to the server, not to this form. So when the job for this document
+  // settles, take the document back from the server rather than trusting what
+  // is on screen — otherwise the fields shown are the pre-read ones, and the
+  // next keystroke saves them back over the answer.
+  useEffect(() => {
+    // Attached once per job, and NOT torn down when the job clears — the job
+    // clearing is precisely the moment this has to run. Only unmounting stops
+    // it, and a later mount re-reads the document from the server anyway.
+    if (!job || handledJob.current === job) return;
+    handledJob.current = job;
+    const kind = job.kind;
+    job.promise.then(async (outcome) => {
+      if (!mounted.current) return;
+      if (!outcome.ok && outcome.error) setAiError(outcome.error);
+      const docId = persistedIdRef.current; // read now: it may have loaded since
+      if (!docId) return; // sample docs have nothing on the server to take back
+      const fresh = await fetchBillById(docId).catch(() => null);
+      if (!mounted.current || !fresh) return;
+      const pd = billToDoc(fresh);
+      setPersisted(pd);
+      // A line-items read only touched the rows; leave the rest of the form
+      // alone in case something else was being typed while it ran.
+      if (kind === 'lines') setData((d) => ({ ...d, lineItems: pd.lineItems }));
+      else setData(initialData(pd));
+    });
+  }, [job]);
+
+  // Being read on the SERVER (an emailed or WhatsApp'd document, or an upload
+  // whose read is still running): the Costs row says Processing, so the page
+  // must too — otherwise it shows "Missing: …" on a document nobody has had the
+  // chance to fill in yet, and the next keystroke races the read. Nothing in
+  // this browser will hear when that read ends, so ask the server until the
+  // status moves on, then take the document back as the job-settle path does.
+  const serverReading = Boolean(persisted && persisted.status === 'processing' && !persisted.xeroInvoiceId);
+  useEffect(() => {
+    if (!serverReading || job) return undefined;
+    const docId = persisted.id;
+    const started = Date.now();
+    let stopped = false;
+    const timer = setInterval(async () => {
+      // sweepStuckProcessing is the server's backstop, and it now counts from
+      // the last sign of life from whoever is doing the reading rather than
+      // from the upload — so a document can legitimately be processing for as
+      // long as its read takes, which for a batch read in parallel is minutes.
+      // Half an hour is ours, and it is only ever there so the timer ends.
+      if (Date.now() - started > 30 * 60 * 1000) { clearInterval(timer); return; }
+      const fresh = await fetchBillById(docId).catch(() => null);
+      if (stopped || !mounted.current || !fresh || fresh.status === 'processing') return;
+      clearInterval(timer);
+      const pd = billToDoc(fresh);
+      setPersisted(pd);
+      setData(initialData(pd));
+      notifyBillsChanged();
+    }, 4000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [serverReading, job, persisted?.id]);
+
+  // Not GST-registered: force the document onto No Tax with no GST split out,
+  // and persist it. The picker offers nothing else, but a document coded before
+  // the profile changed (or before it was answered) still carries the old rate —
+  // this is what actually corrects it, rather than just warning about it.
+  useEffect(() => {
+    if (gstRegistered || !doc || !noTaxName) return;
+    const staleRate = data.taxRate !== noTaxName;
+    const staleTax = (Number(String(data.tax ?? '').replace(/[^0-9.-]/g, '')) || 0) !== 0;
+    if (!staleRate && !staleTax) return;
+    setData((d) => ({ ...d, taxRate: noTaxName, tax: '0.00', taxRateReason: '' }));
+    if (doc.persisted) {
+      updateBill(doc.id, { taxRate: noTaxName, tax: '0.00', taxRateReason: '' })
+        .then((r) => {
+          if (r?.bill) {
+            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+            notifyBillsChanged();
+          }
+        })
+        .catch(() => {});
+    } else {
+      setDocOverride(doc.id, { taxRate: noTaxName, tax: '0.00' });
+    }
+  }, [gstRegistered, noTaxName, doc, data.taxRate, data.tax]);
+
+  // The Note tab saves itself too, on a pause rather than per keystroke — it's
+  // free text, so a PATCH per character would be a write storm.
+  const noteSave = useAutoSave(
+    data.note,
+    async (note) => {
+      if (doc?.persisted) {
+        const r = await updateBill(doc.id, { note });
+        if (r?.bill) {
+          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+          notifyBillsChanged();
+        }
+      } else {
+        setDocOverride(id, { note });
+      }
+    },
+    { delay: 900, enabled: Boolean(doc) },
+  );
+
+  // Arriving from a move: take the note the move left (once — taking it is what
+  // stops a refresh from re-reading, and paying for, the same document again).
+  useEffect(() => {
+    if (!persisted?.id || !takeReadAfterMove(persisted.id)) return;
+    // Unless there is nothing to read: a document typed in by hand has no file,
+    // and the read would only put "No receipt attached" on a page nobody asked
+    // to read anything on.
+    if (persisted.hasFile) setReadOnArrival(true);
+  }, [persisted?.id, persisted?.hasFile]);
+
+  // …and run the same read the button runs. The ref is how a hook that must sit
+  // above the early return reaches a handler defined below it; effects run after
+  // the render that assigns it, so it is always there by the time this fires.
+  // Paperwork match (Xero already holding this money) — above the early return,
+  // since it is a hook; read by openPublish below.
+  const paperwork = usePaperworkMatches({ enabled: Boolean(doc?.persisted) && !doc?.xeroInvoiceId && doc?.kind !== 'sales' });
+
+  useEffect(() => {
+    if (!readOnArrival || !reReadRef.current) return;
+    setReadOnArrival(false);
+    void reReadRef.current();
+  }, [readOnArrival]);
+
+  if (!doc) {
+    // A document URL is the kind of thing that gets pasted into chat, linked
+    // from cyworkspace or held by a claim's line item, so arriving at one from
+    // the wrong entity is ordinary. Say where it is and offer to go there —
+    // never show it here, where the header names a different client.
+    if (elsewhere) {
+      return (
+        <AppShell subnav={<Subnav />}>
+          <div className="max-w-lg rounded-lg border p-5">
+            <h1 className="text-base font-semibold tracking-tight">
+              This document belongs to {elsewhere.orgName || 'another client entity'}
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {elsewhere.supplier ? `${elsewhere.supplier}’s document is` : 'It is'} in a different
+              entity&rsquo;s book, so it isn&rsquo;t in the list you are looking at. Switch to open it.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                // Reload into the new entity rather than re-render: the header,
+                // the subnav counts and every request in flight are scoped to
+                // the entity being left behind.
+                onClick={() => switchOrganisationTo(elsewhere.orgId, pathOf(elsewhere.itemId))}
+                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Switch to {elsewhere.orgName || 'that entity'}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(listPath)}
+                className="inline-flex h-9 items-center rounded-md border px-4 text-sm transition-colors hover:bg-muted"
+              >
+                Back to {salesRoute ? 'Sales' : 'Costs'}
+              </button>
+            </div>
+          </div>
+        </AppShell>
+      );
+    }
+    return (
+      <AppShell subnav={<Subnav />}>
+        <p className="text-sm text-muted-foreground">
+          {loading ? 'Loading document…' : 'Document not found.'}
+        </p>
+      </AppShell>
+    );
+  }
+
+  // Detail field key → the server bill field it maps to. Editing one of these on
+  // a persisted cost auto-saves it so the server can re-derive ready vs inbox
+  // (readiness is automatic now — no manual "Move to ready" needed).
+  const SERVER_FIELDS = {
+    supplier: 'supplier', date: 'date', category: 'category', categoryReason: 'categoryReason',
+    currency: 'currency', total: 'total', tax: 'tax', ref: 'invoiceNumber', type: 'documentType',
+    baseCurrency: 'baseCurrency', baseTotal: 'baseTotal', baseTax: 'baseTax', exchangeRate: 'exchangeRate',
+    taxRate: 'taxRate', taxRateReason: 'taxRateReason', taxRateCleared: 'taxRateCleared',
+    taxRateEdited: 'taxRateEdited',
+    description: 'description', user: 'owner',
+    paymentMethod: 'paymentMethod', paid: 'paid', lineItems: 'lineItems',
+    customer: 'customer', rebillable: 'rebillable', project: 'project', project2: 'project2', projectReason: 'projectReason', cardLast4: 'cardLast4',
+    dueDate: 'dueDate', distanceKm: 'distanceKm', mileageRate: 'mileageRate',
+  };
+  // Naming the supplier by hand applies that supplier's standing rule.
+  //
+  // A rule fires when a document is READ, keyed on the supplier the reader
+  // found. So a receipt the reader couldn't identify — then named here — got
+  // none of it: the rules dialog promises "applied to this document and to
+  // everything new that arrives from Grab", and this is the case where the
+  // document arrives first and the name second.
+  //
+  // The rule wins over what is already on the document, the same precedence a
+  // re-read applies (src/lib/reRead.js): a rule is an instruction. Nothing is
+  // silent about it — what it filled in is listed underneath.
+  const setSupplier = (value) => {
+    const named = String(value || '').trim();
+    if (!named || named === data.supplier || isSales) return set('supplier', value);
+    const rule = matchSupplierRule(named);
+    // keepMonthEnd: this document's date may already be the one the rule moved it
+    // to, and applying the rule again must not walk 31/08 back to 31/07.
+    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered, keepMonthEnd: true });
+    // The rule keeps the printed invoice date as the due date when it moves the
+    // date — for a READ, which starts with none. A due date already on this
+    // document is somebody's, and only the rule's own payment terms replace it.
+    if (patch.dueDate && !rule?.dueMode && data.dueDate) delete patch.dueDate;
+    if (!Object.keys(patch).length) return set('supplier', value);
+    // A tax code carries the tax it implies, worked out from THIS document's
+    // total — the same sum the Tax rate field does.
+    if (patch.taxRate) {
+      patch.tax = taxForCode({ total: data.total, tax: data.tax, rate: rateFor(patch.taxRate), taxLabel: data.taxLabel ?? doc?.taxLabel });
+    }
+    const next = { supplier: named, ...patch };
+    setData((d) => ({ ...d, ...next }));
+    if (readyError.length) setReadyError([]);
+    // The rule's own fields — not `tax`, which is arithmetic that follows from
+    // the tax rate rather than something the rule was asked to set.
+    setRuleApplied(Object.keys(patch).filter((k) => k !== 'tax'));
+    if (doc?.persisted) {
+      const body = {};
+      for (const [k, v] of Object.entries(next)) {
+        const sf = SERVER_FIELDS[k];
+        if (sf) body[sf] = v;
+      }
+      setFieldSave('saving');
+      updateBill(doc.id, body)
+        .then((r) => {
+          setFieldSave('saved');
+          if (r?.bill) {
+            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+            notifyBillsChanged();
+          }
+        })
+        .catch(() => setFieldSave('error'));
+    }
+  };
+
+  const set = (key, value) => {
+    // Overruling the reader on an allocation is the one moment both halves of a
+    // rule are known — what it got wrong and what's right. Offer to keep it.
+    if (!isSales && (key === 'category' || key === 'project') && doc?.persisted && value && value !== data[key]) {
+      setTeach({ field: key, value });
+    }
+    setData((d) => ({ ...d, [key]: value }));
+    // Moved onto a motor vehicle account: No Tax, the same as the server holds it
+    // (server/src/practiceNoTax.ts) — shown here at once, so the form does not
+    // keep claiming GST the stored document has already given up. Not where a
+    // person picked the code themselves.
+    // Renamed to a hospital or clinic: No Tax the same way (medicalProvider.js).
+    const noTaxBecause = isSales || data.taxRateEdited || data.taxRateCleared
+      ? ''
+      : key === 'category' && isMotorVehicleExpense({ category: value, motorVehicle: doc?.motorVehicle === true })
+        ? motorVehicleReason({ category: value })
+        : key === 'supplier' && isMedicalProviderExpense({ supplier: value, medicalProvider: doc?.medicalProvider === true })
+          ? medicalProviderReason({ supplier: value })
+          : '';
+    if (noTaxBecause) {
+      const noTaxName = noTaxRateName(taxRateSource) || MOTOR_VEHICLE_TAX_RATE;
+      setData((d) => ({
+        ...d,
+        taxRate: noTaxName,
+        taxRateReason: noTaxBecause,
+        tax: '0.00',
+        lineItems: Array.isArray(d.lineItems) && d.lineItems.length ? foldTaxIntoCost(d.lineItems) : d.lineItems,
+      }));
+    }
+    if (readyError.length) setReadyError([]); // fixing a field clears the "not ready" banner
+    const sf = SERVER_FIELDS[key];
+    if (doc?.persisted && sf) {
+      // Persist + adopt the returned status so the action bar flips to "In Ready"
+      // the moment the last required field is filled (and back if one is cleared).
+      setFieldSave('saving');
+      updateBill(doc.id, { [sf]: value })
+        .then((r) => {
+          setFieldSave('saved');
+          if (r?.bill) {
+            setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+            notifyBillsChanged();
+          }
+        })
+        .catch(() => setFieldSave('error'));
+    }
+  };
+
+  // Several fields at once (applying a supplier rule) — one state update and
+  // one PATCH rather than a burst of single-field saves racing each other.
+  const setMany = (patch) => {
+    const entries = Object.entries(patch).filter(([k]) => k in data);
+    if (!entries.length) return;
+    setData((d) => ({ ...d, ...Object.fromEntries(entries) }));
+    if (readyError.length) setReadyError([]);
+    if (!doc?.persisted) return;
+    const server = {};
+    for (const [k, v] of entries) {
+      const sf = SERVER_FIELDS[k];
+      if (sf) server[sf] = v;
+    }
+    if (!Object.keys(server).length) return;
+    setFieldSave('saving');
+    updateBill(doc.id, server)
+      .then((r) => {
+        setFieldSave('saved');
+        if (r?.bill) {
+          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+          notifyBillsChanged();
+        }
+      })
+      .catch(() => setFieldSave('error'));
+  };
+
+  // Billed in something other than the entity's own currency. Blank currency is
+  // not foreign — an unread document says nothing either way.
+  const foreign =
+    Boolean(String(data.currency || '').trim()) &&
+    String(data.currency).trim().toUpperCase().slice(0, 3) !== baseCurrency;
+
+  // --- The document in the entity's own currency ------------------------------
+  // A foreign-currency document is worth two amounts: what the supplier billed,
+  // and what it is worth here — which is the one the GST return is made from. A
+  // Singapore GST-registered supplier prints both on the invoice (IRAS requires
+  // it), so the reader takes them off the paper; this is where they are checked,
+  // and where somebody supplies them for a document that printed none rather
+  // than letting the ledger convert at a rate the invoice never mentions.
+  //
+  // The total, the tax inside it and the rate between the currencies are one
+  // fact, so all three are written together. A base total edited on its own
+  // would put a figure in the GST return that the document's own split
+  // contradicts, and the publish path would then post a rate that doesn't
+  // reproduce either of them.
+  const setBaseTotal = (value) => {
+    const bt = num(value);
+    const t = num(data.total);
+    if (!(bt > 0) || !(t > 0)) {
+      return setMany({ baseCurrency: '', baseTotal: value, baseTax: '', exchangeRate: '' });
+    }
+    const rate = bt / t;
+    return setMany({
+      baseCurrency,
+      baseTotal: value,
+      baseTax: (num(data.tax) * rate).toFixed(2),
+      exchangeRate: String(rate),
+    });
+  };
+
+  // Total and Tax carry that pair with them. The RATE is what the reviewer
+  // settled (or the supplier printed), so it is held and the two base figures
+  // follow — the other way round, correcting a total would silently restate the
+  // exchange rate as well.
+  const setAmount = (key, value) => {
+    const rate = num(data.exchangeRate);
+    if (!foreign || !(rate > 0)) return set(key, value);
+    const next = { ...data, [key]: value };
+    const t = num(next.total);
+    const x = num(next.tax);
+    return setMany({
+      [key]: value,
+      baseTotal: t > 0 ? (t * rate).toFixed(2) : '',
+      baseTax: x > 0 ? (x * rate).toFixed(2) : '',
+    });
+  };
+
+  // --- Mileage -----------------------------------------------------------------
+  // A mileage claim is a cost with no receipt: a map route, an odometer photo, a
+  // log line. What it carries is a DISTANCE, and the money is distance × the
+  // rate per km — the entity's default (Business settings → Extraction →
+  // Mileage) unless this document says otherwise. So on a Mileage document the
+  // total is shown read-only and written here, from the two figures it comes
+  // from, and the tax is 0: there is no tax invoice behind a mileage allowance.
+  // The same arithmetic runs again on the server (keepMileageInStep), so the
+  // stored total can never disagree with the stored distance.
+  const mileage = isMileage(data.type);
+  // What the form holds for the rule to read — its strings, under the names the
+  // pure module knows.
+  const mileageDoc = () => ({ type: data.type, distanceKm: data.distanceKm, mileageRate: data.mileageRate });
+  // The rule's numbers, as this form's strings.
+  const mileageStrings = (p) => ({
+    ...(p.mileageRate != null ? { mileageRate: String(p.mileageRate) } : {}),
+    ...(p.total != null ? { total: Number(p.total).toFixed(2) } : {}),
+    ...(p.tax != null ? { tax: Number(p.tax).toFixed(2) } : {}),
+  });
+  const setMileage = (key, value) => {
+    const p = mileagePatch(mileageDoc(), { [key]: value }, extractionSettings.mileageRate);
+    setMany({ [key]: value, ...mileageStrings(p) });
+  };
+  // Switching a document's type INTO Mileage prices it from whatever distance it
+  // carries, at the entity's rate; switching out of it leaves the figures where
+  // they are — the total was real money either way.
+  const setType = (value) => {
+    // Typed as a payment proof, the document is paid — that is what the paper
+    // proves — and states no tax, unless a code was picked by hand. The server
+    // applies the same rule to the write (keepPaymentProofInStep).
+    if (isPaymentProof(value)) {
+      const p = paymentProofPatch({ ...data, type: value }, noTaxName);
+      const { baseTax: _baseTax, ...rest } = p;
+      return setMany({ type: value, ...rest, ...(p.tax != null ? { tax: '0.00' } : {}) });
+    }
+    // A quotation / pro-forma is not a tax invoice: No Tax, with its reason,
+    // unless a code was picked by hand. The server applies the same rule.
+    if (isAdvanceDocument(value)) {
+      const p = advancePatch({ ...data, type: value }, noTaxName);
+      const { baseTax: _baseTax, ...rest } = p;
+      return setMany({ type: value, ...rest, ...(p.tax != null ? { tax: '0.00' } : {}) });
+    }
+    if (!isMileage(value)) return set('type', value);
+    const p = mileagePatch(mileageDoc(), { type: value }, extractionSettings.mileageRate);
+    const patch = { type: value, ...mileageStrings(p) };
+    // No GST is claimed on a mileage allowance. Said with its reason, and only
+    // where nobody has chosen a code by hand — a person's decision is theirs.
+    if (noTaxName && !data.taxRateEdited && !data.taxRateCleared && data.taxRate !== noTaxName) {
+      patch.taxRate = noTaxName;
+      patch.taxRateReason = 'Mileage allowance — there is no tax invoice behind a journey, so no GST is claimed on it.';
+    }
+    setMany(patch);
+  };
+
+  // A rule saved from the Supplier field lands on this document straight away —
+  // that's the point of writing it here rather than on the Suppliers list.
+  const applySupplierRuleToForm = (rule) => {
+    // keepMonthEnd: this document's date may already be the one the rule moved it
+    // to, and applying the rule again must not walk 31/08 back to 31/07.
+    const patch = supplierRulePatch(rule, { invoiceDate: data.date, gstRegistered, keepMonthEnd: true });
+    // A due date already on this document is somebody's; only the rule's own
+    // payment terms replace it, never the printed-date fallback.
+    if (patch.dueDate && !rule?.dueMode && data.dueDate) delete patch.dueDate;
+    // A tax code brings the tax it implies, from this document's own total.
+    if (patch.taxRate) {
+      patch.tax = taxForCode({ total: data.total, tax: data.tax, rate: rateFor(patch.taxRate), taxLabel: data.taxLabel ?? doc?.taxLabel });
+    }
+    const fields = Object.keys(patch).filter((k) => k !== 'tax');
+    const categoryReason = supplierRuleCategoryReason(rule, data.supplier);
+    const projectReason = supplierRuleProjectReason(rule, data.supplier);
+    if (categoryReason) patch.categoryReason = categoryReason;
+    if (projectReason) patch.projectReason = projectReason;
+    setMany(patch);
+    setRuleApplied(fields);
+    // "Extract line items" is the one part of a rule that is not a field: it is
+    // a READ, and saving the rule here used to code this document and leave it a
+    // single total, which read as the switch not working. Only where there are
+    // no rows yet — rows already on the document are somebody's, or a read's.
+    if (rule?.extractLineItems && !lineItems.length && imageUrl) {
+      extractLineItems(patch.category || data.category);
+    }
+  };
+
+
+  // A customer's standing rule, saved from the Customer field of a sales
+  // invoice, lands on it straight away — the sales twin of the supplier rule.
+  const applyCustomerRuleToForm = (rule) => {
+    const patch = {};
+    if (rule.currency) patch.currency = rule.currency;
+    if (rule.category) patch.category = rule.category;
+    if (rule.project) patch.project = rule.project;
+    if (rule.description) patch.description = rule.description;
+    setMany(patch);
+    setRuleApplied(Object.keys(patch));
+  };
+
+  const go = (delta) => {
+    const nextId = delta < 0 ? walk.prev : walk.next;
+    if (nextId === null) return;
+    const next = inboxAllDocs.find((d) => String(d.id) === nextId);
+    navigate(pathOf(next ?? nextId));
+  };
+  goRef.current = go;
+
+  // After an action that finishes with this document (Archive, Delete, Add to
+  // expense claim, Publish to Xero), jump to the next item so the reviewer can
+  // keep working without going Back each time. The next item in the list they
+  // opened it FROM — the same one Previous / Next walk ("7 / 21") — else the
+  // previous one; only a document opened with no list behind it falls back to
+  // the inbox order, and then to the Costs list when nothing else is left.
+  // A document just added is finished with, so Close walks on to the next. One
+  // just MOVED was already on a claim and was never part of that walk.
+  const closeClaimAdded = () => {
+    const moved = claimAdded?.moved;
+    setClaimAdded(null);
+    if (!moved) goToNextInbox();
+  };
+  const goToNextInbox = () => {
+    const walkedId = walk.next ?? walk.prev;
+    if (walkedId !== null && walkedId !== undefined && String(walkedId) !== String(id)) {
+      const target = inboxAllDocs.find((d) => String(d.id) === String(walkedId));
+      navigate(pathOf(target ?? walkedId));
+      return;
+    }
+    const rows = rowsFor(inboxAllDocs, 'inbox');
+    const i = rows.findIndex((d) => String(d.id) === String(id));
+    const next = i !== -1 ? (rows[i + 1] ?? rows[i - 1]) : rows[0];
+    navigate(next && String(next.id) !== String(id) ? pathOf(next) : listPath);
+  };
+
+  // Activity timeline for the History tab — a vertical, dotted feed (newest
+  // first) built from the document's real events, mirroring the expense-claim
+  // approval-history layout.
+  const fmtStamp = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString('en-SG', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+    });
+  };
+  const docHistoryEvents = (() => {
+    if (!doc) return [];
+    const created = doc.createdAt || '';
+    const owner = doc.user || 'a user';
+    const events = [
+      { text: 'This document was uploaded', by: owner, at: fmtStamp(created), origin: true },
+      { text: 'Data was extracted by CYBills AI', by: 'CYBills AI', at: fmtStamp(created) },
+    ];
+    if (doc.xeroPostedAt) {
+      events.push({
+        text: `This document was published to Xero${doc.xeroTenantName ? ` (${doc.xeroTenantName})` : ''}`,
+        by: owner,
+        at: fmtStamp(doc.xeroPostedAt),
+      });
+    }
+    if (doc.status === 'expenseclaim') {
+      events.push({ text: 'This document was added to an expense claim', by: owner, at: '' });
+    }
+    // Which client's book it used to be in. A document that changes entity has
+    // lost its category and its tax code on the way (they were names in the
+    // other entity's chart), so the trail has to say why they are blank.
+    if (doc.movedFrom?.at) {
+      events.push({
+        text: `This document was moved here from ${doc.movedFrom.orgName || 'another entity'}`,
+        by: doc.movedFrom.by || 'a user',
+        at: fmtStamp(doc.movedFrom.at),
+      });
+    }
+    events.push({ text: 'This document was viewed', by: user?.name || user?.email || 'you', at: '' });
+    return events.reverse(); // newest first
+  })();
+
+  // The document this one matched, for the side-by-side review. Resolved from
+  // the loaded Costs set; if it's since been deleted there's nothing to compare
+  // and the review stays shut.
+  const duplicateOf = doc?.duplicateOfId
+    ? inboxAllDocs.find((d) => String(d.id) === String(doc.duplicateOfId)) || null
+    : null;
+
+  // "These are different documents" — clears the flag for good, so later
+  // re-checks don't keep raising it.
+  const dismissDuplicate = async () => {
+    const r = await markNotDuplicate(doc.id).catch(() => null);
+    if (r?.bill) {
+      setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+      notifyBillsChanged();
+    }
+  };
+
+  // The document is billed to somebody who isn't this entity (server/src/
+  // entityCheck.ts). A warning, never a refusal: an intercompany recharge, a
+  // trading name and a group company paying for a subsidiary all look like this
+  // and are all perfectly correct — so the two answers are "it is right" and
+  // "put it where it belongs", and both are one click.
+  const entityCheck = doc?.entityCheck;
+  const wrongEntity = entityCheck?.status === 'mismatch';
+  const moveTargets = wrongEntity ? entityCheck.candidates || [] : [];
+
+  // An invoice that arrived as a LINK, with nobody having yet said its sender
+  // may be followed. The document is already here — this is the question it is
+  // standing in the inbox to ask, and the two answers are "trust them from now
+  // on" and "just fetch this one".
+  const link = doc?.emailLink || null;
+  const askingToFetch = link?.status === 'awaiting_trust';
+  const linkFailed = link?.status === 'failed' && !doc?.hasFile;
+
+  // Business Admin, the same bar the Email tab holds and the server enforces:
+  // this decides what CYBills will do by itself with a stranger's URL.
+  const mayDecideLinks = !googleEnabled || Boolean(membership?.businessAdmin || membership?.admin);
+
+  const runLink = async (what, fn) => {
+    setLinkBusy(what);
+    setLinkNote('');
+    try {
+      const out = await fn();
+      // A fetch that found nothing is an ANSWER, not a failure: n8n's own words
+      // are what tell somebody whether to fix the workflow or the login.
+      setLinkNote(out?.ok ? '' : out?.note || out?.notes?.[0] || 'Nothing came back from that link.');
+      const r = await fetchBillById(doc.id).catch(() => null);
+      if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+      notifyBillsChanged();
+    } catch (err) {
+      setLinkNote(err.message);
+    } finally {
+      setLinkBusy('');
+    }
+  };
+
+  const confirmEntity = async () => {
+    const r = await updateBill(doc.id, { entityCheckDismissed: true }).catch(() => null);
+    if (r?.bill) {
+      setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+      notifyBillsChanged();
+    }
+  };
+
+  const moveToEntity = async (target) => {
+    if (moving) return;
+    setMoving(true);
+    setMoveError('');
+    const r = await moveBillToEntity(doc.id, target.id).catch(() => null);
+    if (!r?.ok) {
+      setMoving(false);
+      setMoveError(r?.message || 'This document could not be moved.');
+      return;
+    }
+    // Follow the document. A re-render would leave the header, the subnav counts
+    // and every request in flight scoped to the entity it has just left — the
+    // same reason opening a document that lives elsewhere reloads.
+    switchOrganisationTo(target.id, docPath(doc));
+  };
+
+  // billToDoc shows an empty date as the placeholder '—'; never persist that
+  // literal back — coerce anything that isn't a real ISO date to blank.
+  const isoDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
+
+  // Persist the current edits + set a workflow status. Uploaded bills save
+  // server-side; sample docs save to localStorage.
+  const persistStatus = async (status) => {
+    if (doc.persisted) {
+      try {
+        await updateBill(doc.id, {
+          status,
+          supplier: data.supplier,
+          date: isoDate(data.date),
+          documentType: data.type,
+          category: data.category,
+          categoryReason: data.categoryReason,
+          currency: data.currency,
+          total: data.total,
+          tax: data.tax,
+          invoiceNumber: data.ref,
+          taxRate: data.taxRate,
+          taxRateReason: data.taxRateReason,
+          description: data.description,
+          paymentMethod: data.paymentMethod,
+          paid: data.paid,
+          customer: data.customer,
+          project: data.project,
+          project2: data.project2,
+          projectReason: data.projectReason,
+          lineItems: data.lineItems,
+        });
+        notifyBillsChanged();
+      } catch {
+        // best-effort; still navigate back
+      }
+    } else {
+      setDocOverride(id, {
+        status,
+        user: data.user,
+        type: data.type,
+        date: isoDate(data.date),
+        supplier: data.supplier,
+        ref: data.ref,
+        category: data.category,
+        currency: data.currency,
+        total: data.total,
+        tax: data.tax,
+        description: data.description,
+      });
+    }
+  };
+
+  // Save + set status, then return to the inbox (default) or a given route.
+  const saveWithStatus = async (status, to = listPath) => {
+    await persistStatus(status);
+    navigate(to);
+  };
+
+  // "Ready" means a document is complete enough to export / publish, so it must
+  // carry the fields the rest of the workflow depends on. Instead of silently
+  // advancing a half-filled doc, Move to ready validates these and tells you
+  // exactly what's missing (answers "what does Move to Ready do?").
+  const isBlank = (v) => !v || String(v).trim() === '' || String(v).trim() === '—';
+  // The same rule readiness.js applies: above 0 for a bill, non-zero for a
+  // credit note, whose total is often typed with the minus the paper shows.
+  const amountOk = (v) => totalOk({ type: data.type, total: v });
+  const READY_REQUIRED = [
+    ['supplier', counterpartyLabel(doc)],
+    ['date', 'Date'],
+    ['category', 'Category'],
+    ['total', 'Total amount'],
+  ];
+  const missingForReady = () =>
+    READY_REQUIRED.filter(([k]) => {
+      if (k === 'total') return !amountOk(data.total);
+      if (k === 'category')
+        return isBlank(data.category) || String(data.category).trim().toLowerCase() === 'uncategorised';
+      return isBlank(data[k]);
+    }).map(([, label]) => label);
+
+  // Validate before advancing — only a complete document moves to Ready.
+  const moveToReady = () => {
+    const missing = missingForReady();
+    if (missing.length) {
+      setReadyError(missing);
+      return;
+    }
+    setReadyError([]);
+    saveWithStatus('ready');
+  };
+
+  // "Move to" another workspace — takes the item out of the Costs inbox and
+  // lands on that workspace. Persist an archived status so it leaves the list.
+  // Sales is offered only where the entity uses it: moving a document to a
+  // workspace nobody here can open would archive it out of the inbox and leave
+  // it nowhere.
+  const MOVE_DESTS = isSales
+    ? [{ label: 'Costs', move: 'cost' }]
+    : [
+        ...(salesEnabled ? [{ label: 'Sales', move: 'sales' }] : []),
+        { label: 'Supplier statements', to: '/supplier-statements' },
+      ];
+  const moveTo = async (dest) => {
+    setMoveOpen(false);
+    // Sales MOVES the document. It used to archive it here and navigate to the
+    // Sales tab, so the document was in neither list a reviewer was looking at
+    // — a button that appears to work. The category and tax code cannot come
+    // across: an account code and a tax code mean the opposite side of the
+    // ledger there, and carried over they would still post.
+    if (dest.move) {
+      const toSales = dest.move === 'sales';
+      if (
+        !window.confirm(
+          `Move this document to ${toSales ? 'Sales' : 'Costs'}?` +
+            '\n\n' +
+            'Its category and tax code are cleared: an account code and a tax code there mean ' +
+            'the opposite side of the ledger, so neither can come across. It lands in To review ' +
+            `for somebody to code as a ${toSales ? 'sale' : 'cost'}.`
+        )
+      )
+        return;
+      try {
+        await moveBillToWorkspace(doc.id, dest.move);
+        navigate(toSales ? '/sales' : '/costs');
+      } catch (err) {
+        window.alert(err.message);
+      }
+      return;
+    }
+    saveWithStatus('archived', dest.to);
+  };
+
+  // Every entity the signed-in person can open, bar this one, as a destination
+  // in the same menu. The entity-check banner offers a move only where the
+  // paper AGREES with the destination — a registration number or two words of
+  // a name — because that answer is computed and a near-miss must produce
+  // nothing. This is the other road: a person who KNOWS the document is in the
+  // wrong book, on a receipt that names no customer at all (most till receipts)
+  // and so was never asked about. The server already takes any entity the
+  // caller may open; only the page was narrower than the route.
+  const activeOrgId = getActiveOrganisationId();
+  const entityDests = (organisations || []).filter((o) => o.id !== activeOrgId);
+  // The server's four refusals, said before the click rather than after it —
+  // each a way of counting one payment twice, and each a state the reviewer can
+  // undo first, so the reason is the instruction.
+  const entityMoveBlocked = doc.xeroInvoiceId
+    ? 'Already published to Xero — clear the Xero link (and void the bill in Xero) before moving it.'
+    : claimForItem || doc.status === 'expenseclaim'
+      ? 'On an expense claim, which posts this cost to Xero as its own bill. Take it off the claim first.'
+      : doc.status === 'merged'
+        ? 'Merged into another document, which now carries its money. Unmerge it first.'
+        : !doc.persisted
+          ? 'Save this document first.'
+          : '';
+  const moveToOrg = (org) => {
+    setMoveOpen(false);
+    if (entityMoveBlocked) return;
+    if (!window.confirm(`Move this document to ${org.name}? Its category, tax rate, customer and project are names in this entity’s chart, so they are cleared and the document is read again against ${org.name}’s own.`)) return;
+    moveToEntity(org);
+  };
+
+  // Unmerge: split a merged document back into its original items (they return
+  // to the inbox) and remove the combined document. Dext parity.
+  const doUnmerge = async () => {
+    if (!window.confirm('Unmerge this document back into its original items? They return to the inbox and this combined document is removed.')) return;
+    await unmergeCost(doc);
+    navigate(listPath);
+  };
+
+  // Deleting is finishing with this document, not finishing with the pile — the
+  // reviewer got here by walking the inbox and has more of it to walk. So it
+  // lands on the next item, the same as Publish and Add to expense claim, and
+  // only falls back to the list when there is nothing left to go to.
+  //
+  // PERMANENT, the same act as the Costs list's Delete: the record goes and its
+  // stored file is reclaimed from R2. It used to archive, which left a document
+  // somebody had asked to be rid of sitting in Archived with its file. Archive
+  // is the button beside it for keeping one.
+  const deleteDoc = async () => {
+    const inXero = doc.xeroInvoiceId
+      ? `\n\nIt is already published to ${doc.xeroTenantName || 'Xero'} — this does NOT delete or void the bill there.`
+      : '';
+    if (!window.confirm(`Permanently delete this document from ${data.supplier || 'Unknown supplier'}?\n\nThis removes it everywhere and deletes the file from storage — it can't be undone. To keep it out of the inbox but recoverable, use Archive.${inXero}`)) return;
+    if (doc.persisted) {
+      try {
+        await deleteBill(doc.id);
+      } catch {
+        window.alert("Couldn't delete this document. Please try again.");
+        return;
+      }
+      notifyBillsChanged();
+    }
+    goToNextInbox();
+  };
+
+  // Archiving finishes with this document too, so it moves on to the next one in
+  // the list rather than dropping the reviewer back at the top of Costs.
+  //
+  // Set aside by hand = archived with no Xero bill of its own. A published
+  // document is archived as well, but its chip is "Open in Xero" and pulling it
+  // back into the inbox would make it look like unpublished work.
+  const setAside = doc?.persisted && doc.status === 'archived' && !doc.xeroInvoiceId && !doc.paperworkMatch;
+  const archiveDoc = async () => {
+    await persistStatus('archived');
+    goToNextInbox();
+  };
+  // Back into the inbox. 'new' rather than 'ready': readiness is derived, so the
+  // server moves a complete document straight on to Ready by itself.
+  const unarchiveDoc = async () => {
+    await persistStatus('new');
+  };
+  const archiveControl = setAside ? (
+    <TopButton onClick={unarchiveDoc} title={`Put this document back in the ${isSales ? 'Sales' : 'Costs'} inbox`}>Unarchive</TopButton>
+  ) : (
+    <TopButton onClick={archiveDoc}>Archive</TopButton>
+  );
+
+  // Publish to Xero (persisted bills only — the server posts the SAVED bill,
+  // so flush any on-screen edits first, keeping the current workflow status).
+  // Paperwork match: Xero may already hold this money (a Spend Money off the
+  // card feed). Publishing beside it posts the spending twice, so say so first.
+  const paperworkFirm = doc?.persisted && !isSales && !doc.paperworkMatch ? paperworkSuggestion(paperwork.matches[doc.id]) : null;
+  const openPublish = async () => {
+    if (
+      paperworkFirm &&
+      !window.confirm(
+        `Xero already has this payment — a ${paperworkFirm.txn.kind === 'bill' ? 'bill' : 'Spend Money'} to ${paperworkFirm.txn.contact || 'this supplier'} for ${paperworkFirm.txn.currency} ${Number(paperworkFirm.txn.total).toFixed(2)} on ${paperworkFirm.txn.date}.
+
+Publishing posts it a second time. Use "Send to Xero transaction" on the Details tab instead.
+
+Publish anyway?`
+      )
+    )
+      return;
+    await persistStatus(persisted?.status ?? 'new');
+    setPublishMode('publish');
+    setPublishOpen(true);
+  };
+  // Send a correction to the bill this document already created in Xero. Same
+  // dialog, same questions; the difference is that Xero is asked to restate an
+  // existing bill rather than create one. Edits are flushed first for the same
+  // reason publishing flushes them — the server sends the SAVED document, so
+  // anything still only on screen would not be in the update.
+  const openXeroUpdate = async () => {
+    await persistStatus(persisted?.status ?? 'archived');
+    setPublishMode('update');
+    setPublishOpen(true);
+  };
+  // Put the stored file on the Xero bill. For documents published before
+  // attachments were sent, or when that upload failed at publish time.
+  const sendFileToXero = async () => {
+    setXeroBusy('attach');
+    setXeroNote('');
+    try {
+      const orgId = await resolveCategorisationOrgId();
+      if (!orgId) throw new Error('No Xero organisation is linked.');
+      await attachBillFileToXero(orgId, doc.id);
+      // Name mid-sentence: a tenant name ending in "Ltd." would otherwise give
+      // the line two full stops.
+      setXeroNote(`File attached to the bill in ${doc.xeroTenantName || 'Xero'} — it shows there under Related Files.`);
+    } catch (err) {
+      setXeroNote(err?.message || 'Could not attach the file to Xero.');
+    } finally {
+      setXeroBusy('');
+    }
+  };
+
+  // "This bill no longer exists in Xero" — clear the provenance so the document
+  // comes back out of Archive and can be published again. Nothing is deleted in
+  // Xero from here, so say so before doing it.
+  const clearXeroLink = async () => {
+    if (!window.confirm(`Clear this document's Xero link?\n\nIt goes back to your ${isSales ? 'Sales' : 'Costs'} inbox and can be published again. Nothing is deleted in ${doc.xeroTenantName || 'Xero'} — if the bill is still there, delete or void it in Xero first, or you'll end up with two.`)) return;
+    setXeroBusy('clear');
+    setXeroNote('');
+    try {
+      const r = await clearXeroPublish(doc.id);
+      if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+      notifyBillsChanged();
+      setXeroNote('Xero link cleared — this document is back in your inbox.');
+    } catch {
+      setXeroNote('Could not clear the Xero link — please try again.');
+    } finally {
+      setXeroBusy('');
+    }
+  };
+
+  // The page takes the published document back and STAYS on it. Moving on the
+  // instant the publish succeeded put the next document under the success
+  // dialog, so closing it left the reviewer somewhere else with no way back to
+  // the bill they had just posted. The dialog now offers both: Back to this
+  // document, or Next document (onNext below).
+  // The quotation paid in advance that publishing this invoice will use up by
+  // itself, said in the dialog before the click (src/lib/prepayment.js).
+  const prepaymentMatch = (() => {
+    if (!doc?.persisted || isSales || doc.xeroInvoiceId || doc.prepaymentsApplied?.length) return null;
+    const hit = firmPrepayment({ ...doc, type: data.type, supplier: data.supplier, total: data.total, date: data.date, invoiceNumber: data.invoiceNumber, description: data.description, note: data.note }, inboxAllDocs);
+    return hit ? { reference: hit.reference, amount: hit.amountCents / 100, currency: hit.doc.prepayment.currency } : null;
+  })();
+
+  const onPublished = ({ bill }) => {
+    if (bill) setPersisted(billToDoc({ ...bill, hasFile: Boolean(bill.storageKey) }));
+    notifyBillsChanged();
+  };
+
+  // Grab the current receipt's bytes (so the split's new item shares the image).
+  const receiptToUpload = async () => {
+    if (!imageUrl) return null;
+    try {
+      const resp = await fetch(imageUrl);
+      const blob = await resp.blob();
+      const type = blob.type || (previewType === 'pdf' ? 'application/pdf' : 'image/jpeg');
+      const file = new File([blob], doc.fileName || 'receipt', { type });
+      return await prepareUpload(file);
+    } catch {
+      return null;
+    }
+  };
+
+  // Split: keep the current item (updated amounts/category) and create a second
+  // line item from the SAME receipt with the new item's amounts/category.
+  const doSplit = async ({ current, next }) => {
+    setSplitOpen(false);
+    // 1) apply the "current item" values to this document.
+    const curPatch = { category: current.category, total: current.total, tax: current.tax };
+    setData((d) => ({ ...d, ...curPatch }));
+    if (doc.persisted) await updateBill(doc.id, curPatch).catch(() => {});
+    else setDocOverride(doc.id, curPatch);
+
+    // 2) create the new line item as a persisted cost, sharing the receipt image.
+    const rec = await receiptToUpload();
+    /** @type {any} */
+    const payload = {
+      fileHash: `split_${doc.id}_${Date.now()}`,
+      fileName: doc.fileName || `${data.supplier || 'receipt'}`,
+      supplier: data.supplier,
+      invoiceNumber: data.invoiceNumber || '',
+      documentType: data.type || 'Receipt',
+      date: isoDate(data.date),
+      currency: data.currency || 'SGD',
+      category: next.category,
+      total: next.total,
+      tax: next.tax,
+      // The half split off stays in the workspace the document is in.
+      kind: doc.kind || 'cost',
+    };
+    if (rec) { payload.fileBase64 = rec.base64; payload.mediaType = rec.mediaType; }
+    try {
+      const result = await addBill(payload, { force: true });
+      // Put the split item in the same pipeline tab as the current one.
+      const status = doc.persisted ? doc.status : (getDocOverrides()[doc.id]?.status || doc.status);
+      if (result?.bill?.id && status && status !== 'new') {
+        await updateBill(result.bill.id, { status }).catch(() => {});
+      }
+      notifyBillsChanged();
+      setSplitNote(`Split done — a new item for ${data.supplier || 'this receipt'} was created.`);
+    } catch {
+      setSplitNote('Could not create the split item. Please try again.');
+    }
+  };
+
+  const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
+
+  // Pick a specific GST/tax rate (replaces the "Extracted amount" placeholder).
+  // A rate with a % also fills the tax amount from the GST-inclusive total.
+  const setTaxRate = (name) => {
+    set('taxRate', name);
+    // Both halves of the decision are recorded, because both have to outlast
+    // anything that runs by itself: leaving it blank on purpose is not a reader
+    // with no code to offer, and a code somebody PICKED is not one the
+    // arithmetic reached for — a re-read revises the second and must not touch
+    // this one. See changeTaxRate in Costs.jsx, which writes the same pair.
+    set('taxRateCleared', !name);
+    set('taxRateEdited', Boolean(name));
+    // The reason is rewritten with the code, because the two are one answer:
+    // left standing, the reader's sentence ("Left blank: this document is taxed
+    // at 13.0% …") sits under the code a person just chose, and the page reads
+    // as though nothing was decided — which is how a hand-picked code was
+    // reported as a re-read that "still shows 13%".
+    set(
+      'taxRateReason',
+      name
+        ? `${name} — chosen by hand. A re-read decides the code again from the document.`
+        : 'Left blank by hand. A re-read decides the code again from the document.'
+    );
+    const r = rateFor(name);
+    set('tax', taxForCode({ total: data.total, tax: data.tax, rate: r, taxLabel: data.taxLabel ?? doc?.taxLabel }));
+    // A code carrying no tax means no tax anywhere on the document: the rows
+    // give theirs up into their own cost, each still worth what it was worth.
+    // Otherwise the lines say 65.25 while the document says 0.00, and the
+    // publish path refuses a breakdown that contradicts its own paper.
+    if (name && !r && Array.isArray(data.lineItems) && data.lineItems.length) {
+      set('lineItems', foldTaxIntoCost(data.lineItems));
+    }
+  };
+
+  // Split an invoice that mixes GST and non-GST costs into two lines: the
+  // GST-inclusive portion (carrying the tax) and the remainder (no tax). Uses the
+  // selected rate, or SG's 9% default.
+  // Open the GST-split panel. Pre-fill the GST-inclusive amount: if a tax amount
+  // is already set, derive the taxed portion from it; otherwise start at the full
+  // total so the user just types how much of it has GST.
+  const openGstSplit = () => {
+    const total = num(data.total);
+    const r = rateFor(data.taxRate) || 9;
+    const tax = num(data.tax);
+    const preset = tax > 0 && r > 0 ? (tax * (100 + r)) / r : total;
+    setGstWith(Math.min(preset, total).toFixed(2));
+    setGstOpen(true);
+  };
+
+  // Split into a GST line (the entered amount, carrying its GST) + a no-tax line
+  // for the remainder. Matches the Support Desk ask for invoices that mix GST and
+  // non-GST costs.
+  const runGstSplit = () => {
+    const total = num(data.total);
+    const withGst = num(gstWith);
+    const withoutGst = total - withGst;
+    const r = rateFor(data.taxRate) || 9;
+    if (withGst <= 0 || withGst > total + 0.005) {
+      window.alert('Enter a “with GST” amount between 0 and the total.');
+      return;
+    }
+    if (withoutGst <= 0.005) {
+      window.alert('Nothing to split — the whole total has GST, so leave it as one line.');
+      return;
+    }
+    const gstTax = (withGst * r) / (100 + r); // GST inside the GST-inclusive amount
+    setGstOpen(false);
+    doSplit({
+      current: { category: data.category, total: withGst.toFixed(2), tax: gstTax.toFixed(2) },
+      next: { category: data.category, total: withoutGst.toFixed(2), tax: '0.00' },
+    });
+  };
+
+  // Run extraction on the given bytes (with the org's Review instructions + live
+  // chart), then apply + persist the results. Shared by upload and re-read.
+  // Runs as a JOB (extractionJobs.js), so leaving this page for the next
+  // document doesn't abandon the read: it keeps going, saves what it finds, and
+  // the page picks it back up whenever it returns. Everything inside here must
+  // therefore stand on its own — the setState calls are a courtesy to whoever
+  // is still watching, the updateBill is what actually makes it count.
+  const extractAndApply = (imageBase64, mediaType) =>
+    startExtraction(doc.id, 'read', async () => {
+    setAiError('');
+    try {
+      const accounts = await getExtractionAccounts(isSales ? 'sales' : 'cost');
+      // A document that arrived with a covering message — emailed in, or
+      // attached in a WhatsApp bill collection group — is re-read with it, so a
+      // re-read can't quietly undo what that message asked for.
+      // Told which side it is on: a sales invoice read as a cost names this
+      // business as its own supplier.
+      const ex = await fetchExtract(imageBase64, mediaType, accounts, coveringNote(doc), isSales ? 'sales' : 'cost');
+      if (!ex) { setAiError('Extraction failed — please try again.'); return; }
+      // Which value wins — the supplier rule, the document's own paper, this
+      // read, or what the document already carried — is decided in one place
+      // (readDecisions), so this page and the inbox's bulk re-read agree.
+      const {
+        patch, rule, descr, supplierName, categoryReason, projectReason, ruleLines,
+      } = readDecisions({ ...data, kind: doc.kind }, ex, {
+        gstRegistered,
+        taxRates: taxRateSource,
+        allTaxRates,
+        defaultTaxRateCosts: extractionSettings.defaultTaxRateCosts,
+        defaultTaxRateSales: extractionSettings.defaultTaxRateSales,
+        accounts,
+        mileageRate: extractionSettings.mileageRate,
+        // The dedicated line-items pass, where the supplier's rule asks for
+        // rows and the document has none: reconciled, and with each row's
+        // outlet, which the general read's summary of the table carries neither of.
+        lineRows: await ruleLineRows({ ...data, kind: doc.kind }, ex, { base64: imageBase64, mediaType }, accounts),
+      });
+      setData((d) => ({
+        ...d,
+        supplier: ex.supplier || d.supplier,
+        date: ex.date || d.date,
+        type: ex.documentType || d.type,
+        ref: ex.invoiceNumber || d.ref,
+        currency: rule.currency || ex.currency || d.currency,
+        category: rule.category || ex.category || d.category,
+        categoryReason: categoryReason || d.categoryReason,
+        // Who it is recharged to and whether it is billed back, exactly as
+        // SAVED: the form left both behind, so a re-read that turned Rebillable
+        // on still showed No until the page was reloaded.
+        customer: 'customer' in patch ? patch.customer : d.customer,
+        rebillable: 'rebillable' in patch ? patch.rebillable : d.rebillable,
+        // A mileage record's total is not read but WORKED OUT — distance × the
+        // rate per km — and readDecisions has already done the sum into the
+        // patch. Every other document takes the total the reader found.
+        distanceKm: patch.distanceKm != null ? String(patch.distanceKm) : d.distanceKm,
+        mileageRate: patch.mileageRate != null ? String(patch.mileageRate) : d.mileageRate,
+        total: isMileage(ex.documentType || d.type) && patch.total != null
+          ? Number(patch.total).toFixed(2)
+          : ex.total != null ? String(ex.total) : d.total,
+        // Exactly what was SAVED — 0 when the document's tax isn't Singapore
+        // GST this business can claim — so the form and the stored bill can't
+        // disagree. Untouched when the read didn't decide the tax at all.
+        tax: patch.tax != null ? Number(patch.tax).toFixed(2) : d.tax,
+        // The code and its reason are exactly what readDecisions is about to
+        // SAVE — a re-read decides the tax code again whatever was there, a
+        // hand-picked one included, and the form must not show an answer the
+        // server no longer holds.
+        taxRate: 'taxRate' in patch ? patch.taxRate : d.taxRate,
+        taxRateReason: 'taxRateReason' in patch ? patch.taxRateReason : d.taxRateReason,
+        taxRateEdited: 'taxRateEdited' in patch ? patch.taxRateEdited : d.taxRateEdited,
+        taxRateCleared: 'taxRateCleared' in patch ? patch.taxRateCleared : d.taxRateCleared,
+        description: rule.description || descr || d.description,
+        paymentMethod: rule.paymentMethod || d.paymentMethod,
+        paid: 'paid' in rule ? rule.paid : d.paid,
+        cardLast4: ex.cardLast4 || d.cardLast4,
+        // A re-read is the way a rule written AFTER the upload reaches a
+        // document — writing a rule and pressing this is the whole point — so
+        // an allocation it returns wins. Returning nothing leaves what's there.
+        // A supplier rule outranks both: it's a standing instruction.
+        project: rule.project || ex.project || d.project,
+        projectReason: projectReason || d.projectReason,
+        // The due date printed on the document is the supplier's own answer, so
+        // the rule's payment terms only fill a gap it leaves.
+        dueDate: ex.dueDate || rule.dueDate || d.dueDate,
+        // "Extract line items" on the rule pulls the printed lines in with the
+        // read — but never over rows already on the document, which may have
+        // been edited by hand.
+        // Exactly the rows readDecisions is about to save: a supplier rule's
+        // extracted lines over an empty grid, or the two-line split an off-base
+        // document gets. Rows already on the document that add up are kept.
+        lineItems: 'lineItems' in patch ? patch.lineItems : d.lineItems,
+      }));
+      if (doc?.persisted) {
+        const r = await updateBill(doc.id, patch).catch(() => null);
+        if (r?.bill) {
+          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+          notifyBillsChanged();
+          return r.bill;
+        }
+      }
+      return null;
+    } catch {
+      setAiError('Could not read that file.');
+      throw new Error('Could not read that file.');
+    }
+  });
+
+  // --- Line items (Dext-style per-line breakdown) --------------------------
+  // The Supplier field's rules link labels itself from the rule this supplier
+  // already carries.
+  const supplierNamed = String(data.supplier || '').trim();
+  const supplierRuleN = supplierRuleCount(matchSupplierRule(data.supplier));
+
+  // The message this document arrived in, if it did. It is the DOCUMENT's, not
+  // the form's: the envelope is a record of what was received and is never
+  // edited here, so it must not round-trip through the editable form state.
+  const mail = doc?.email || null;
+  const mailDate = mail?.date ? fmtStamp(mail.date) : '';
+  // The WhatsApp message this document was attached to, for one sent into a
+  // bill collection group. Like the envelope above it is the DOCUMENT's record
+  // of what was received, never edited here.
+  const chat = doc?.whatsapp || null;
+  const chatDate = chat?.sentAt ? fmtStamp(chat.sentAt) : '';
+  // The Google Drive file this document was, for one saved into a connected
+  // folder. The same kind of record, and the thinnest of the three: nobody
+  // writes a covering message to a folder.
+  const driveFile = doc?.drive || null;
+  const lineItems = Array.isArray(data.lineItems) ? data.lineItems : [];
+  const lineItemsEdited =
+    Array.isArray(lineSnapshot) && JSON.stringify(lineSnapshot) !== JSON.stringify(lineItems);
+  const setLineItems = (rows) => set('lineItems', rows);
+  // Net, Tax and Total are three views of ONE row, so editing any of them keeps
+  // the other two true instead of leaving the row contradicting itself. Typing a
+  // net and then having to type the total as well is not a second decision — it
+  // is the same decision, entered twice, with a chance to get it wrong.
+  // The arithmetic itself lives in lib/lineItems.js, where it is tested.
+  // A line's own tax code is applied through applyLineTaxRate — the row's total
+  // stays and its split follows the code — so a line coded No Tax cannot go on
+  // carrying GST, which the publish path would refuse.
+  const updateLineItem = (i, patch) =>
+    setLineItems(
+      lineItems.map((li, idx) =>
+        idx !== i
+          ? li
+          : 'taxRate' in patch
+            ? applyLineTaxRate(li, patch.taxRate, patch.taxRate ? rateFor(patch.taxRate) : rateFor(data.taxRate))
+            : balanceLine(li, patch)
+      )
+    );
+  const addLineItem = () =>
+    setLineItems([
+      ...lineItems,
+      { description: '', category: data.category || 'Uncategorised', project: data.project || '', project2: '', net: '', tax: '', total: '', taxRate: '' },
+    ]);
+  const removeLineItem = (i) => setLineItems(lineItems.filter((_, idx) => idx !== i));
+  // Put the rows back as they arrived. Deliberately NOT a per-keystroke undo:
+  // the grid fires on every character, so stepping back one edit at a time would
+  // mean six presses to take back "125.39". One press, one known-good state.
+  const revertLineItems = () => {
+    if (!Array.isArray(lineSnapshot)) return;
+    setLineItems(lineSnapshot);
+    setLinesNote('Line items put back as they were read.');
+  };
+  // One set of props for the grid, so the panel and the full-screen editor are
+  // rendering the same thing over the same state.
+  const lineGrid = {
+    rows: lineItems,
+    total: data.total,
+    onUpdate: updateLineItem,
+    onRemove: removeLineItem,
+    categoryOptions,
+    catMode,
+    lineProjects,
+    project2Options,
+    // A line may carry its own tax code; the options are the document's own.
+    taxRateOptions: gstRegistered ? taxRateOptions : [],
+    docProject: data.project || '',
+  };
+
+  // Read the attached receipt and turn its printed lines into editable rows.
+  // Its own pass (see server/src/extract.ts): the rows come back already checked
+  // against the document's own grand total, so anything that doesn't add up is
+  // said out loud here rather than left for the "Out by" row to be noticed.
+  const extractLineItems = async (category) => {
+    // The grid's button passes its click event; only a rule passes a category.
+    const fallbackCategory = typeof category === 'string' ? category : data.category;
+    setLinesNote('');
+    const rec = await receiptToUpload();
+    if (!rec) { setLinesNote('Attach a receipt first, then extract line items.'); return; }
+    // A job, like the whole-document read: long enough that nobody watches it,
+    // so it has to survive the reviewer moving on to the next document.
+    startExtraction(doc.id, 'lines', async () => {
+    try {
+      const accounts = await getExtractionAccounts(isSales ? 'sales' : 'cost');
+      const ex = await fetchExtractLines(rec.base64, rec.mediaType, accounts);
+      const rows = Array.isArray(ex?.lines) ? ex.lines : [];
+      if (!rows.length) { setLinesNote('No itemised charges found on this document.'); return null; }
+      // Saved here rather than through `set`, whose write is fire-and-forget:
+      // the job must not resolve before the rows are actually stored, or the
+      // page could re-sync itself from the server a moment too early.
+      const built = lineItemRows(rows, fallbackCategory);
+      setData((d) => ({ ...d, lineItems: built }));
+      setLineSnapshot(built); // a fresh read is the new set to fall back to
+      if (doc?.persisted) {
+        const r = await updateBill(doc.id, { lineItems: built }).catch(() => null);
+        if (r?.bill) {
+          setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+          notifyBillsChanged();
+        }
+      }
+      const money = (n) => Number(n || 0).toFixed(2);
+      if (!ex.reconciled) {
+        setLinesNote(
+          `Read ${rows.length} line${rows.length === 1 ? '' : 's'} totalling ${money(ex.linesTotal)}, but the ` +
+            `document's total reads as ${money(ex.grandTotal)}. ` +
+            (ex.note || 'Check for a row that was missed, or one that is really a subtotal.')
+        );
+      } else if (Math.abs(num(data.total) - Number(ex.grandTotal || 0)) > 0.005) {
+        // The lines agree with the document; it's this bill's total that doesn't.
+        setLinesNote(
+          `The lines add up to ${money(ex.linesTotal)}, which is the document's own total — but this bill ` +
+            `says ${money(data.total)}. Check the Total amount field.`
+        );
+      }
+      return built;
+    } catch {
+      setLinesNote('Could not extract line items.');
+      throw new Error('Could not extract line items.');
+    }
+    });
+  };
+
+  const onUploadClick = () => {
+    setAiError('');
+    fileInputRef.current?.click();
+  };
+
+  // Re-read the EXISTING receipt with the configured reader (no file replacement) — for fixing
+  // a wrong field the AI read (date, category, description…) without re-uploading.
+  const reReadExisting = async () => {
+    setAiError('');
+    const rec = await receiptToUpload();
+    if (!rec) { setAiError('No receipt attached to re-read. Upload one first.'); return; }
+    await extractAndApply(rec.base64, rec.mediaType);
+  };
+  // What the arrival effect above calls. Assigned every render so it closes over
+  // the current document rather than the one that was on screen at mount.
+  reReadRef.current = reReadExisting;
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setAiError('');
+    // Downscale large photos so the base64 payload stays under the server body
+    // limit (a raw phone photo can exceed it once encoded, which silently failed
+    // the attach and lost the image on reload).
+    const { base64: imageBase64, mediaType, previewUrl } = await prepareUpload(file);
+    // Always attach + show the uploaded image, regardless of AI availability.
+    setPreviewType(mediaType.includes('pdf') ? 'pdf' : 'image');
+    setImageUrl(previewUrl);
+    // Persist the file onto a real bill so it survives reload (fixes docs that
+    // were uploaded before file storage worked).
+    if (doc.persisted) {
+      try {
+        await uploadBillFile(doc.id, imageBase64, mediaType);
+        notifyBillsChanged();
+      } catch {
+        // Surface it — a swallowed failure here is exactly why the image used to
+        // vanish on reload.
+        setAiError('Could not save the receipt to this document. Please try uploading again.');
+      }
+    }
+    // Only run auto-fill when a reader is configured; otherwise the user
+    // fills the (editable) fields manually.
+    if (!visionEnabled) return;
+    await extractAndApply(imageBase64, mediaType);
+  };
+
+  const readyMissing = missingForReady();
+  // What the paper is called on this page: a sales invoice is not a receipt.
+  const paperNoun = isSales ? 'document' : 'receipt';
+
+  return (
+    <AppShell subnav={<Subnav />}>
+      {claimForItem && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted px-3 py-2 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            This item belongs to expense claim{' '}
+            <button
+              type="button"
+              onClick={() => navigate(`/expense-claims/${claimForItem.id}`)}
+              className="font-medium text-foreground underline underline-offset-2 hover:opacity-80"
+            >
+              {claimRef(claimForItem)}
+            </button>{' '}
+            {claimForItem.name ? (
+              <>
+                {' '}called <span className="font-medium text-foreground">{claimForItem.name}</span>
+              </>
+            ) : null}
+            {/* WHO the claim reimburses is a different question from whose
+                document this is, and the banner used to print the claimant
+                after the word "called" — so a claim named "Expense claim" for
+                Astrid read as a claim called "astrid yang". */}
+            {claimForItem.claimFor ? (
+              <>
+                , to be reimbursed to{' '}
+                <span className="font-medium text-foreground">{claimForItem.claimFor}</span>
+              </>
+            ) : null}
+            {claimForItem.endDate ? ` (${claimForItem.endDate})` : ''}.
+            {itemLocked ? (
+              <>
+                {' '}The claim is approved, so this item is locked. A Business Admin can correct it for posting.
+              </>
+            ) : claimLocked ? (
+              <>
+                {' '}The claim is approved: a correction saved here is carried onto the claim
+                {claimInXero ? ', then press Update in Xero on the claim to send it.' : '.'}
+              </>
+            ) : null}
+          </span>
+          {doc?.persisted && (
+            <button
+              type="button"
+              disabled={claimLocked || claimLeaving}
+              onClick={removeFromClaim}
+              title={
+                claimLocked
+                  ? 'The claim is approved, so its items can’t be changed. Unapprove the claim first.'
+                  : claimInXero
+                    ? 'Take this document off the claim. The claim is in Xero, so it goes to Archived.'
+                    : 'Take this document off the claim and put it back in the Costs inbox'
+              }
+              className="ml-auto inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-md border bg-background px-2.5 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {claimLeaving ? 'Removing…' : claimInXero ? 'Remove from claim' : 'Remove from claim & move to Costs'}
+            </button>
+          )}
+        </div>
+      )}
+      {claimNote && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4" /> {claimNote}
+          <button type="button" onClick={() => setClaimNote('')} className="ml-auto text-emerald-700/70 hover:text-emerald-700">Dismiss</button>
+        </div>
+      )}
+      {splitNote && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4" /> {splitNote}
+          <button type="button" onClick={() => setSplitNote('')} className="ml-auto text-emerald-700/70 hover:text-emerald-700">Dismiss</button>
+        </div>
+      )}
+      {readyError.length > 0 && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Not ready yet — this document still needs {readyError.join(', ')}. Fill{' '}
+            {readyError.length === 1 ? 'it' : 'them'} in, then Move to ready.
+          </span>
+          <button type="button" onClick={() => setReadyError([])} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
+        </div>
+      )}
+      {/* An invoice that came as a LINK. First of the banners, because until it
+          is answered there is nothing else on this page to do: the document has
+          no file, no supplier and no figures — it is the question itself. */}
+      {(askingToFetch || linkFailed) && (
+        <div className="mb-3 rounded-md border border-sky-600/40 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+          <div className="flex flex-wrap items-start gap-2">
+            <LinkIcon className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-[18rem] flex-1">
+              <p>
+                {askingToFetch ? 'This arrived by email as a link, with no attachment.' : 'The link could not be fetched.'}{' '}
+                {/* An email attached to another: the link waits on whoever
+                    DELIVERED it, and the original sender is named beside. */}
+                {doc?.email?.from && !doc.email.from.toLowerCase().includes(String(link.from || '').toLowerCase()) ? (
+                  <>
+                    <span className="font-medium">{link.from}</span> forwarded it, as an attached email from {doc.email.from}
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium">{link.from || 'an unknown sender'}</span> sent it
+                  </>
+                )}
+                {doc?.email?.subject ? ` — “${doc.email.subject}”` : ''}.
+                {askingToFetch
+                  ? ' Fetching the invoice means opening that link with the credentials n8n holds, so somebody has to say the sender is trusted.'
+                  : ''}
+              </p>
+              {(linkNote || (linkFailed && link.note)) && (
+                <p className="mt-1 font-medium">{linkNote || link.note}</p>
+              )}
+              {/* The links themselves, whatever is decided: one somebody can
+                  open in their own browser beats a dead end. */}
+              <div className="mt-1 space-y-0.5">
+                {(link.links || []).slice(0, 3).map((href) => (
+                  <a
+                    key={href}
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="block max-w-full truncate text-xs underline underline-offset-2"
+                  >
+                    {href}
+                  </a>
+                ))}
+              </div>
+              {!mayDecideLinks && (
+                <p className="mt-1 text-xs">A Business Admin can fetch it, or trust this sender.</p>
+              )}
+            </div>
+            {mayDecideLinks && (
+              <span className="ml-auto flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={Boolean(linkBusy)}
+                  onClick={() => runLink('trust', () => trustSender(link.from))}
+                  className="inline-flex h-7 items-center rounded-md border border-sky-700/40 bg-sky-100 px-2.5 text-xs font-medium transition-colors hover:bg-sky-200 disabled:opacity-60"
+                >
+                  {linkBusy === 'trust' ? 'Fetching…' : 'Trust this sender & fetch'}
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(linkBusy)}
+                  onClick={() => runLink('once', () => fetchDocumentLink(doc.id))}
+                  className="whitespace-nowrap text-xs text-sky-900/70 underline underline-offset-2 hover:text-sky-900 disabled:opacity-60"
+                >
+                  {linkBusy === 'once' ? 'Fetching…' : askingToFetch ? 'Just fetch this one' : 'Try again'}
+                </button>
+                {/* The third answer: there is nothing behind these links, and
+                    the paperwork is the email itself. */}
+                <button
+                  type="button"
+                  disabled={Boolean(linkBusy)}
+                  onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id, envelope: doc.email }))}
+                  title="Attach the email itself to this document as a PDF, so it goes to Xero with the bill."
+                  className="whitespace-nowrap text-xs text-sky-900/70 underline underline-offset-2 hover:text-sky-900 disabled:opacity-60"
+                >
+                  {linkBusy === 'pdf' ? 'Saving…' : 'Save email as PDF'}
+                </button>
+              </span>
+            )}
+          </div>
+          {askingToFetch && (
+            <p className="mt-1.5 pl-6 text-xs text-sky-900/80">
+              Trusting them fetches this and everything else of theirs that is waiting, and every later invoice from
+              that address is fetched on arrival. Not sure who they are? Archive this instead.
+            </p>
+          )}
+        </div>
+      )}
+      {/* Billed to somebody who isn't this entity. It sits above the duplicate
+          warning because it is the bigger question: a duplicate is one cost
+          counted twice in the right book, this is a cost in the wrong client's
+          book altogether — published, it puts one client's money and one
+          client's input tax in another client's ledger. */}
+      {wrongEntity && (
+        <div className="mb-3 flex flex-wrap items-start gap-2 rounded-md border border-amber-600/40 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-[16rem] flex-1">
+            {entityCheck.reason}{' '}
+            {moveTargets.length
+              ? 'CYBills holds a book for them.'
+              : 'Check it was filed under the right client before publishing it.'}
+            {moveError && <span className="mt-1 block font-medium">{moveError}</span>}
+          </span>
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            {moveTargets.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                disabled={moving}
+                onClick={() => moveToEntity(t)}
+                className="inline-flex h-7 items-center rounded-md border border-amber-700/40 bg-amber-100 px-2.5 text-xs font-medium transition-colors hover:bg-amber-200 disabled:opacity-60"
+              >
+                {moving ? 'Moving…' : `Move to ${t.name}`}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={confirmEntity}
+              className="whitespace-nowrap text-xs text-amber-900/70 underline underline-offset-2 hover:text-amber-900"
+            >
+              This is right
+            </button>
+          </span>
+        </div>
+      )}
+      {/* A move refused from the menu, where there is no banner to carry the
+          reason: the entity-check banner prints moveError itself. */}
+      {moveError && !wrongEntity && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{moveError}</span>
+          <button type="button" onClick={() => setMoveError('')} className="ml-auto text-destructive/70 hover:text-destructive">Dismiss</button>
+        </div>
+      )}
+      {isInInbox(doc) && doc.duplicateOfId && !doc.duplicateDismissed && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {DUPLICATE_REASON[doc.duplicateType] || 'This looks like a document already submitted.'}{' '}
+            <button
+              type="button"
+              onClick={() => setCompareOpen(true)}
+              className="font-medium underline underline-offset-2"
+            >
+              Compare side by side
+            </button>
+            {' · '}
+            <button
+              type="button"
+              onClick={() => navigate(pathOf(doc.duplicateOfId))}
+              className="underline underline-offset-2"
+            >
+              Open the one it matches
+            </button>
+          </span>
+          <button
+            type="button"
+            onClick={dismissDuplicate}
+            className="ml-auto whitespace-nowrap text-destructive/70 hover:text-destructive"
+          >
+            Not a duplicate
+          </button>
+        </div>
+      )}
+
+      {/* Action bar — one scrolling row on a phone, where wrapping stacked it
+          four deep above the document itself. */}
+      <div className="mb-2 flex items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-x-visible md:pb-0">
+        <TopButton subtle onClick={() => navigate(claimForItem ? `/expense-claims/${claimForItem.id}` : listPath)}>
+          <ChevronLeft className="h-4 w-4" /> Back
+        </TopButton>
+        <Flag className="mx-1 h-4 w-4 text-muted-foreground" />
+        {doc.persisted && doc.xeroInvoiceId ? (
+          // In Xero, the ledger is where it stands: "Ready" on a bill already
+          // posted read as work still to do.
+          <span
+            title={`Published to ${doc.xeroTenantName || 'Xero'}`}
+            className="inline-flex h-8 items-center gap-1 rounded-md border border-green-600/40 bg-green-600/10 px-3 text-sm text-green-800"
+          >
+            <CheckCircle2 className="h-4 w-4" /> Published
+            {xeroPaidStatus(doc) ? <span className="text-green-700/80">· {xeroPaidStatus(doc).label}</span> : null}
+          </span>
+        ) : serverReading ? (
+          <span
+            title="The document is still being read. The fields fill in by themselves when it finishes."
+            className="inline-flex h-8 items-center gap-1 rounded-md border bg-muted px-3 text-sm text-muted-foreground"
+          >
+            <Loader2 className="h-4 w-4 animate-spin" /> Processing
+          </span>
+        ) : setAside ? (
+          // Said where the status always is. Without it an archived document
+          // wore "Missing: Category" and an Archive button, which reads exactly
+          // like a document nobody had touched.
+          <span
+            title="Set aside in Archived — not in the Costs inbox. Unarchive puts it back."
+            className="inline-flex h-8 items-center gap-1 rounded-md border border-amber-600/40 bg-amber-50 px-3 text-sm text-amber-900"
+          >
+            <ArchiveIcon className="h-4 w-4" /> Archived
+          </span>
+        ) : doc.status === 'ready' ? (
+          <span className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm text-foreground">
+            <CheckCircle2 className="h-4 w-4" /> In Ready
+          </span>
+        ) : doc.persisted ? (
+          // Readiness is auto-derived from the fields — show status, no manual button.
+          <span
+            title={readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'All required fields present'}
+            className={cn(
+              'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-xs',
+              readyMissing.length ? 'text-muted-foreground' : 'border-foreground/40 text-foreground'
+            )}
+          >
+            {readyMissing.length ? (
+              `Missing: ${readyMissing.join(', ')}`
+            ) : (
+              <>
+                <CheckCircle2 className="h-3.5 w-3.5" /> Ready
+              </>
+            )}
+          </span>
+        ) : (
+          // Sample/demo docs have no server to auto-derive — keep the manual move.
+          <>
+            <TopButton onClick={moveToReady}>Move to ready</TopButton>
+            <span
+              className={cn(
+                'inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs',
+                readyMissing.length ? 'text-muted-foreground' : 'border-foreground/40 text-foreground'
+              )}
+            >
+              {readyMissing.length ? (
+                `Missing ${readyMissing.length} field${readyMissing.length === 1 ? '' : 's'}`
+              ) : (
+                <>
+                  <CheckCircle2 className="h-3.5 w-3.5" /> All fields complete
+                </>
+              )}
+            </span>
+          </>
+        )}
+        {doc.persisted &&
+          (doc.xeroInvoiceId ? (
+            <a
+              href={xeroBillUrl(doc.xeroInvoiceId, xeroShortCode, doc.xeroDocType)}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open this ${/CREDIT$/.test(doc.xeroDocType || '') ? 'credit note' : isSales ? 'invoice' : 'bill'} in ${doc.xeroTenantName || 'Xero'}`}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700 transition-colors hover:bg-green-600/20"
+            >
+              {/* Not "View in <entity>": a name like "CY Business Management
+                  Pte. Ltd." made one button as wide as three and pushed the
+                  rest of the toolbar onto another row. The entity is already
+                  named in the header and in this button's own tooltip. */}
+              Open in Xero
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          ) : (
+            // Sent to a transaction Xero already had (Paperwork match): that
+            // transaction is where it lives, and publishing would post it twice.
+            doc.paperworkMatch ? (
+              <a
+                href={xeroTxnUrl(doc.paperworkMatch, xeroShortCode)}
+                target="_blank"
+                rel="noreferrer"
+                title={`Open the ${doc.paperworkMatch.kind === 'bill' ? 'bill' : 'Spend Money'} this document was sent to`}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700 transition-colors hover:bg-green-600/20"
+              >
+                Open in Xero
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            ) :
+            // On a claim, this cost reaches Xero as a line of the claim's own
+            // bill — publishing it separately would post it twice.
+            //
+            // And in a bridge entity there is no separate route at all: no Xero
+            // of its own, and a plain category with no account code in it. The
+            // claim IS how these costs reach the parent's ledger, so the button
+            // isn't offered rather than offered and refused.
+            // A quotation / pro-forma is recorded as a prepayment instead
+            // (Payment section), never published as a bill.
+            !bridge && mayPublish && !isAdvanceDocument(data.type) && (
+              <TopButton
+                onClick={openPublish}
+                disabled={Boolean(claimForItem)}
+                title={claimForItem ? 'On an expense claim — the claim posts this cost to Xero. Remove it from the claim to publish it on its own.' : ''}
+              >
+                Publish to Xero
+              </TopButton>
+            )
+          ))}
+        {/* A correction found after publishing used to have nowhere to go: the
+            document could be fixed here and the ledger kept the first answer.
+            Only offered where there is a bill to update, and never for a cost
+            sitting on an expense claim, which reaches Xero as the claim's line. */}
+        {doc.persisted && doc.xeroInvoiceId && mayPublish && (
+          <TopButton onClick={openXeroUpdate} disabled={xeroBusy} title={`Send this document's current figures to the ${/CREDIT$/.test(doc.xeroDocType || '') ? 'credit note' : isSales ? 'invoice' : 'bill'} it created in Xero`}>
+            Update in Xero
+          </TopButton>
+        )}
+        {doc.persisted && doc.xeroInvoiceId && doc.hasFile && (
+          <TopButton onClick={sendFileToXero} disabled={xeroBusy} title={`Upload this document's file to the Xero ${isSales ? 'invoice' : 'bill'} as an attachment`}>
+            {xeroBusy === 'attach' ? 'Sending…' : 'Send file to Xero'}
+          </TopButton>
+        )}
+        {doc.persisted && doc.xeroInvoiceId && (
+          <TopButton onClick={clearXeroLink} disabled={xeroBusy} title="Forget that this was published — does not delete anything in Xero">
+            {xeroBusy === 'clear' ? 'Clearing…' : 'Clear Xero link'}
+          </TopButton>
+        )}
+        {mayClaim && (
+          <TopButton
+            onClick={() => setClaimOpen(true)}
+            disabled={Boolean(claimBlocked)}
+            title={claimBlocked}
+          >
+            Add to expense claim
+          </TopButton>
+        )}
+        <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
+        {doc.mergedFrom?.length > 0 && <TopButton onClick={doUnmerge}>Unmerge</TopButton>}
+        {archiveControl}
+        <div className="relative">
+          <TopButton onClick={() => setMoveOpen((o) => !o)}>
+            Move to <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', moveOpen && 'rotate-180')} />
+          </TopButton>
+          {moveOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setMoveOpen(false)} aria-hidden="true" />
+              <div className="absolute left-0 z-20 mt-1 w-64 overflow-hidden rounded-md border bg-background py-1 shadow-lg">
+                {MOVE_DESTS.map((dest) => (
+                  <button
+                    key={dest.label}
+                    type="button"
+                    onClick={() => moveTo(dest)}
+                    className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                  >
+                    {dest.label}
+                  </button>
+                ))}
+                {entityDests.length > 0 && (
+                  <>
+                    <div className="mt-1 border-t px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Another entity
+                    </div>
+                    {entityMoveBlocked && (
+                      <div className="px-3 pb-1.5 text-xs text-muted-foreground">{entityMoveBlocked}</div>
+                    )}
+                    {entityDests.map((org) => (
+                      <button
+                        key={org.id}
+                        type="button"
+                        disabled={moving || Boolean(entityMoveBlocked)}
+                        title={entityMoveBlocked || `Move this document into ${org.name}’s book`}
+                        onClick={() => moveToOrg(org)}
+                        className="flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <span className="truncate">{moving ? 'Moving…' : org.name}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="ml-auto flex items-center gap-3 text-sm">
+          <button
+            type="button"
+            onClick={() => go(-1)}
+            title="Previous (←)"
+            disabled={walk.prev === null}
+            className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
+          >
+            <ChevronLeft className="h-4 w-4" /> Previous
+          </button>
+          <span className="tabular-nums text-muted-foreground">
+            {index >= 0 ? index + 1 : '–'} / {walk.total}
+          </span>
+          <button
+            type="button"
+            onClick={() => go(1)}
+            title="Next (→)"
+            disabled={walk.next === null}
+            className="flex items-center gap-1 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
+          >
+            Next <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      {xeroNote && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted px-3 py-2 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{xeroNote}</span>
+          <button type="button" onClick={() => setXeroNote('')} className="ml-auto text-muted-foreground hover:text-foreground">Dismiss</button>
+        </div>
+      )}
+      <div className="mb-4">
+        <button
+          type="button"
+          onClick={deleteDoc}
+          className="inline-flex h-8 items-center rounded-md border px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          Delete
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Left: preview. As tall as the window and held in place while the
+            form beside it scrolls: at a fixed 560px it showed half a page above
+            a column of blank card, and scrolled away from the fields being
+            checked against it. */}
+        <div className={cn(imageUrl && 'lg:sticky lg:top-0 lg:h-[calc(100dvh-6.5rem)] lg:min-h-[560px] lg:self-start')}>
+          <ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} fill="lg" />
+        </div>
+
+        {/* Right: extracted fields */}
+        <div>
+          <div className="mb-4 flex items-center justify-between border-b">
+            <div className="flex gap-6">
+              {/* A Drive tab only on a document that came from Drive: it has
+                  nothing to say about any other, and five tabs already say
+                  "not by this road" about two of them. */}
+              {['details', 'email', ...(mailReplies.available ? ['files'] : []), 'whatsapp', ...(driveFile ? ['drive'] : []), 'note', 'history'].map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTab(t)}
+                  className={cn(
+                    '-mb-px border-b-2 pb-3 pt-1 text-sm capitalize transition-colors',
+                    tab === t
+                      ? 'border-foreground font-medium text-foreground'
+                      : 'border-transparent text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {t === 'whatsapp' ? 'WhatsApp' : t === 'drive' ? 'Google Drive' : t}
+                </button>
+              ))}
+            </div>
+            <span className="mb-2 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">Viewed</span>
+          </div>
+
+          {tab === 'details' && (
+            // A disabled fieldset disables every control inside it, so a locked
+            // item cannot be edited, re-read, archived or split from here.
+            <fieldset disabled={itemLocked} className="m-0 min-w-0 border-0 p-0">
+              {/* Upload a receipt image (always) + AI auto-fill (when a reader is on) */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,application/pdf"
+                className="hidden"
+                onChange={onFile}
+              />
+              <button
+                type="button"
+                onClick={imageUrl && visionEnabled ? reReadExisting : onUploadClick}
+                disabled={Boolean(job) || serverReading}
+                className="mb-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+              >
+                {visionEnabled ? <Sparkles className="h-4 w-4" strokeWidth={2} /> : <Upload className="h-4 w-4" strokeWidth={2} />}
+                {/* The button says what it DOES, not who does it. Which engine
+                    reads the document is a setting somebody made in Business
+                    settings once, and naming it here made the control read as a
+                    choice between two of them. */}
+                {extracting || serverReading
+                  ? `Reading ${paperNoun}…`
+                  : imageUrl
+                    ? visionEnabled ? `Re-read ${paperNoun}` : 'Replace file'
+                    : visionEnabled ? `Upload ${paperNoun} & auto-fill` : `Upload ${paperNoun}`}
+              </button>
+              {imageUrl && visionEnabled ? (
+                <p className="mb-2 text-center text-xs text-muted-foreground">
+                  Re-reads the attached {paperNoun} to fix a wrong field —{' '}
+                  <button type="button" onClick={onUploadClick} disabled={Boolean(job)} className="font-medium text-emerald-600 hover:underline disabled:opacity-60">
+                    replace the file
+                  </button>{' '}
+                  instead if the photo is unclear.
+                </p>
+              ) : (
+                <p className="mb-2 text-center text-xs text-muted-foreground">
+                  {imageUrl
+                    ? 'Replaces the file on this same document — it won’t create a new one.'
+                    : `Attaches the ${paperNoun} to this document — it won’t create a new one.`}
+                </p>
+              )}
+              {/* Paperwork match: Xero already holds this money, so the
+                  document is sent there (attached, and recoded when asked)
+                  rather than published a second time. */}
+              {persisted && !persisted.xeroInvoiceId && !isSales && (
+                <div className="mb-4">
+                  <PaperworkMatchPanel
+                    doc={{
+                      ...persisted,
+                      supplier: data.supplier,
+                      total: data.total,
+                      date: isoDate(data.date) || persisted.date,
+                      invoiceNumber: data.ref,
+                      currency: data.currency || persisted.currency,
+                      type: data.type || persisted.type,
+                      category: data.category,
+                      taxRate: data.taxRate,
+                      project: data.project,
+                      project2: data.project2,
+                      lineItems: data.lineItems ?? persisted.lineItems,
+                    }}
+                    mayPublish={mayPublish && !bridge}
+                    xeroShortCode={xeroShortCode}
+                    onBeforeSend={() => persistStatus(persisted?.status ?? 'new')}
+                    onChanged={async () => {
+                      const bill = await fetchBillById(persisted.id);
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+                    }}
+                  />
+                </div>
+              )}
+              {aiError && (
+                <p className="mb-2 rounded-md border border-foreground/20 bg-muted px-3 py-2 text-center text-xs text-foreground">
+                  {aiError}
+                </p>
+              )}
+              {imageUrl && !visionEnabled && (
+                <p className="mb-2 rounded-md border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
+                  {isSales ? 'Document' : 'Receipt'} attached. AI auto-fill is off — fill in the fields below manually.
+                </p>
+              )}
+
+              <SectionHeading>Item details</SectionHeading>
+              <Field label="Item ID"><Input value={itemNumber(doc)} readOnly /></Field>
+              {/* Whoever it says today stays offered, so a document written
+                  before the general account existed still shows its own owner
+                  rather than silently reading as someone else. */}
+              <Field label="Document owner">
+                <ComboSelect
+                  value={data.user}
+                  options={data.user && !ownerOptions.includes(data.user) ? [data.user, ...ownerOptions] : ownerOptions}
+                  onChange={(v) => set('user', v)}
+                />
+              </Field>
+              <Field label="Type"><ComboSelect value={data.type} options={isSales ? SALES_DOC_TYPES : DOC_TYPES} onChange={setType} /></Field>
+              <Field label="Date">
+                <input
+                  type="date"
+                  value={/^\d{4}-\d{2}-\d{2}$/.test(data.date) ? data.date : ''}
+                  onChange={(e) => set('date', e.target.value)}
+                  className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                {/* No date read: the day it was submitted stands in, and is what
+                    publishing posts — said here, where the field is blank. */}
+                {dateFromSubmission({ ...doc, date: data.date }) && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    None printed — goes by the day it was submitted, {formatDate(effectiveDate({ ...doc, date: data.date }))}.
+                  </p>
+                )}
+              </Field>
+              <Field label={counterpartyLabel(doc)}>
+                {/* The org's Xero supplier contacts, but not ONLY them: a name
+                    read off a receipt is very often not a contact yet, and a
+                    picker that refused it would make the commonest case
+                    unenterable. Typing filters the list and offers the words as
+                    typed when nothing matches — so the list is used where it
+                    can be, which is what stops one supplier arriving under
+                    three spellings. */}
+                <ComboSelect
+                  aria-label={counterpartyLabel(doc)}
+                  value={data.supplier || ''}
+                  options={['', ...(isSales ? salesCustomerOptions : supplierOptions).filter((o) => o !== data.supplier)]}
+                  onChange={setSupplier}
+                  allowCustom
+                  emptyLabel="— None —"
+                  placeholder={isSales ? 'Search or type a customer…' : 'Search or type a supplier…'}
+                />
+                <button
+                  type="button"
+                  onClick={() => (isSales ? setCustomerRulesOpen(true) : setRulesOpen(true))}
+                  disabled={!supplierNamed}
+                  title={supplierNamed ? '' : `Fill in the ${isSales ? 'customer' : 'supplier'} first`}
+                  className={cn(
+                    'mt-1 text-xs font-medium',
+                    supplierNamed ? 'text-emerald-600 hover:underline' : 'cursor-not-allowed text-muted-foreground/60'
+                  )}
+                >
+                  {isSales ? 'Set customer rules' : supplierRuleN > 0 ? `Edit supplier rules (${supplierRuleN})` : 'Set supplier rules'}
+                </button>
+                {ruleApplied?.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Standing rule applied — it set{' '}
+                    <span className="font-medium text-foreground">{ruleApplied.map(FIELD_LABEL).join(', ')}</span>.
+                  </p>
+                )}
+              </Field>
+              <Field label="Document reference"><Input value={data.ref} onChange={(v) => set('ref', v)} /></Field>
+              <Field label="Category">
+                <ComboSelect value={data.category} options={categoryOptions} onChange={(v) => set('category', v)} format={(c) => formatCategory(c, catMode)} />
+                {teach?.field === 'category' && (
+                  <TeachRule field="category" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
+                )}
+              </Field>
+              <Field label="Reason">
+                <textarea
+                  rows={2}
+                  value={data.categoryReason}
+                  onChange={(e) => set('categoryReason', e.target.value)}
+                  placeholder={extracting ? 'Reading…' : 'Why this category — filled in by the AI, editable'}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </Field>
+
+              <SectionHeading>Allocation</SectionHeading>
+              {/* Who a COST is recharged to. A sales invoice's customer is its
+                  counterparty, above, so it has no second customer to name. */}
+              {!isSales && (
+                <Field label="Customer"><ComboSelect value={data.customer || ''} options={customerOptions} onChange={(v) => set('customer', v)} /></Field>
+              )}
+              {/* Xero's billable expense, Dext's "rebillable": a cost incurred
+                  for this client that gets billed back to them. Publishing links
+                  the posted bill's lines to that client, so Xero offers them up
+                  on their next invoice. Only offered once there IS a customer —
+                  a rebillable cost with nobody to bill can never be acted on. */}
+              {!isSales && Boolean(data.customer) && (
+                <Field label="Rebillable">
+                  <div className="pt-1">
+                    <button type="button" onClick={() => set('rebillable', !data.rebillable)} className="flex items-center gap-2">
+                      <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', data.rebillable ? 'justify-end bg-foreground' : 'justify-start border')}>
+                        <span className={cn('h-4 w-4 rounded-full', data.rebillable ? 'bg-background' : 'bg-muted-foreground/50')} />
+                      </span>
+                      <span className="text-sm text-muted-foreground">{data.rebillable ? 'Yes' : 'No'}</span>
+                    </button>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Bills this cost back to {data.customer}. Published to Xero as a billable expense, so it is offered
+                      on that client&rsquo;s next invoice.
+                    </p>
+                  </div>
+                </Field>
+              )}
+              <Field label={singular(projectLabels.project)}>
+                <ComboSelect value={data.project || ''} options={projectOptions} onChange={(v) => set('project', v)} />
+                {teach?.field === 'project' && (
+                  <TeachRule field="project" value={teach.value} supplier={data.supplier} onClose={() => setTeach(null)} />
+                )}
+              </Field>
+              <Field label="Reason">
+                <textarea
+                  rows={2}
+                  value={data.projectReason || ''}
+                  onChange={(e) => set('projectReason', e.target.value)}
+                  placeholder="Why this project — filled in by the AI, editable"
+                  className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </Field>
+              {/* The org's SECOND tracking category ("Staff"), for the whole
+                  document. It used to exist only per line item, so a document
+                  with one total had nowhere to say it. Offered only where the
+                  linked Xero org actually has a second category. */}
+              {project2Options.length > 0 && (
+                <Field label={singular(projectLabels.project2)}>
+                  <ComboSelect value={data.project2 || ''} options={project2Options} onChange={(v) => set('project2', v)} />
+                </Field>
+              )}
+              <Field label="Description">
+                <textarea
+                  rows={2}
+                  value={data.description}
+                  onChange={(e) => set('description', e.target.value)}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </Field>
+
+              <SectionHeading>Amount</SectionHeading>
+              <Field label="Currency"><Input value={data.currency} onChange={(v) => set('currency', v)} /></Field>
+              {/* A mileage claim: the distance is the fact, the rate is the
+                  policy, and the total is the one times the other. So the two
+                  are typed and the total is shown, with its working, rather than
+                  the other way round — a total typed by hand on a mileage
+                  document is exactly the sum this exists to stop somebody doing
+                  on a calculator. */}
+              {mileage && (
+                <>
+                  <Field label="Distance (km)">
+                    <Input value={data.distanceKm} onChange={(v) => setMileage('distanceKm', v)} placeholder="e.g. 13" />
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      Read off the route or odometer by the reader; correct it here if it misread.
+                    </p>
+                  </Field>
+                  <Field label={`Rate per km (${String(data.currency || baseCurrency).trim().toUpperCase().slice(0, 3)})`}>
+                    <Input value={data.mileageRate} onChange={(v) => setMileage('mileageRate', v)} placeholder="e.g. 0.60" />
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      {num(extractionSettings.mileageRate) > 0
+                        ? `This company reimburses ${num(extractionSettings.mileageRate).toFixed(2)} per km (Business settings → Extraction → Mileage). Change it here for this claim only.`
+                        : 'This company has no default rate yet — set one under Business settings → Extraction → Mileage so new mileage documents are priced as they arrive.'}
+                    </p>
+                  </Field>
+                </>
+              )}
+              {mileage ? (
+                <Field label="Total amount">
+                  <Input value={data.total} readOnly />
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {mileageSummary(data.distanceKm, data.mileageRate, data.currency || baseCurrency)
+                      ? `${mileageSummary(data.distanceKm, data.mileageRate, data.currency || baseCurrency)}${num(data.total) > 0 ? ` = ${num(data.total).toFixed(2)}` : ' — enter the rate to price it'}.`
+                      : 'Worked out from the distance and the rate per km once both are filled in.'}
+                  </p>
+                </Field>
+              ) : (
+                <Field label="Total amount"><Input value={data.total} onChange={(v) => setAmount('total', v)} /></Field>
+              )}
+              {/* A bridge entity has no tax position of its own: its claims post
+                  with No Tax at the full amount (the tax the document records is
+                  folded into the cost). A tax code chosen here could never reach
+                  the ledger, so it isn't offered — the tax AMOUNT still is, since
+                  that is what the paper says. */}
+              {!bridge && !mileage && (
+                <Field label="Tax rate">
+                  <ComboSelect value={data.taxRate} options={taxRateOptions} onChange={setTaxRate} />
+                  {!gstRegistered && (
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      Fixed to No Tax — this company isn’t GST-registered. Change that under Business
+                      settings → Business profile.
+                    </p>
+                  )}
+                  {gstRegistered && data.taxRateReason && (
+                    <p className="mt-1.5 text-xs text-muted-foreground">{data.taxRateReason}</p>
+                  )}
+                  {/* What the code was decided on, as the read found it. A
+                      code picked by hand replaces the reason above, and without
+                      this there was nothing left to say whether the reader had
+                      seen the supplier's GST number at all. */}
+                  {gstRegistered && !isSales && doc?.persisted && doc.taxEvidenceRecorded && (
+                    <p className="mt-1 text-xs text-muted-foreground/80">
+                      Read from the document: supplier GST no.{' '}
+                      {doc.supplierGstRegNo
+                        ? <span className="font-medium text-muted-foreground">{doc.supplierGstRegNo}</span>
+                        : 'not found'}
+                      {doc.supplierGstRegNoRemembered
+                        ? doc.supplierGstRegNoFrom === 'rule'
+                          ? ' (not read off this document — from this supplier’s rule)'
+                          : doc.supplierGstRegNoFrom === 'ruleOther'
+                            ? ' (not read off this document — from another client’s rule for this supplier)'
+                            : ' (not on this document — remembered from an earlier one of this supplier’s)'
+                        : ''}
+                      {doc.taxLabel ? <> · tax printed as “{doc.taxLabel}”</> : ''}
+                    </p>
+                  )}
+                </Field>
+              )}
+              <Field label="Tax amount">
+                <Input value={data.tax} onChange={(v) => setAmount('tax', v)} readOnly={mileage} />
+                {mileage && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    No GST on a mileage allowance — there is no tax invoice behind a journey.
+                  </p>
+                )}
+                {bridge && !mileage && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Claims raised here post with No Tax at the full amount, so this is recorded but not claimed.
+                  </p>
+                )}
+              </Field>
+              <Field label="Net amount"><Input value={(num(data.total) - num(data.tax)).toFixed(2)} readOnly /></Field>
+              {/* A foreign-currency document is worth two amounts, and the
+                  second one is the one that reaches the GST return. The reader
+                  takes both off the paper where the supplier printed them — a
+                  Singapore GST-registered supplier billing in USD has to — and
+                  this is where they are checked, or supplied for a document
+                  that printed none. Editing the total re-derives the tax and
+                  the rate from this document's own split, so the two currencies
+                  can never say different things about the same invoice. */}
+              {foreign && (
+                <>
+                  <Field label={`Total amount (${baseCurrency})`}>
+                    <Input value={data.baseTotal} onChange={setBaseTotal} />
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      {num(data.exchangeRate) > 0
+                        ? `At 1 ${String(data.currency).trim().toUpperCase().slice(0, 3)} = ${num(data.exchangeRate).toFixed(4)} ${baseCurrency}. Published to Xero with the bill, so the ledger converts at the document's own rate rather than the day's.`
+                        : `The document didn't state one. Without it Xero converts at its own rate for the day, and the GST it reports won't be the figure on this invoice.`}
+                    </p>
+                  </Field>
+                  <Field label={`Tax amount (${baseCurrency})`}>
+                    <Input value={data.baseTax} readOnly />
+                  </Field>
+                </>
+              )}
+              {num(data.total) > 0 && !mileage && (
+                <div className="flex items-start gap-4 py-2">
+                  <div className="w-40 shrink-0" />
+                  <div className="flex-1">
+                    {!gstOpen ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={openGstSplit}
+                          className="inline-flex h-8 items-center rounded-md border px-3 text-sm transition-colors hover:bg-muted"
+                        >
+                          Split GST / non-GST
+                        </button>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Invoice mixes GST and non-GST costs? Split it into a line with GST and a line without.
+                        </p>
+                      </>
+                    ) : (
+                      <div className="space-y-2 rounded-md border p-3">
+                        <p className="text-xs font-medium">Split into a GST line + a non-GST line</p>
+                        <label className="flex items-center gap-2 text-xs">
+                          <span className="w-32 shrink-0 text-muted-foreground">Amount with GST</span>
+                          <input
+                            value={gstWith}
+                            onChange={(e) => setGstWith(e.target.value)}
+                            className="h-8 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-xs">
+                          <span className="w-32 shrink-0 text-muted-foreground">Amount without GST</span>
+                          <span className="flex-1 tabular-nums">{(num(data.total) - num(gstWith)).toFixed(2)}</span>
+                        </label>
+                        <p className="text-[11px] text-muted-foreground">
+                          GST rate: {data.taxRate || 'Standard-Rated Purchases (9%)'}. The GST line carries the tax; the other line has none.
+                        </p>
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={runGstSplit}
+                            className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"
+                          >
+                            Create 2 lines
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setGstOpen(false)}
+                            className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <SectionHeading>Payment</SectionHeading>
+              {/* Dext's Bank match, on the page: the bank statement line that
+                  pays this document, and Autofill payment. Shown only where
+                  there is a match to show. Autofill turns Paid on and names the
+                  bank account below; PUBLISH records the payment. */}
+              {persisted && !isSales && (
+                <div className="col-span-full">
+                  <BankMatchPanel
+                    doc={persisted}
+                    onChanged={(bill) => {
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+                    }}
+                  />
+                </div>
+              )}
+              {/* A payment proof and the invoices it pays: on a proof, which
+                  invoices it settles; on an invoice, the proof that paid it.
+                  Applying marks the invoices Paid, so the page takes the
+                  document back from the server afterwards. */}
+              {persisted && !isSales && (
+                <div className="col-span-full">
+                  <PaymentProofPanel
+                    doc={{ ...persisted, type: data.type || persisted.type }}
+                    onChanged={async () => {
+                      const bill = await fetchBillById(persisted.id);
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+                    }}
+                  />
+                </div>
+              )}
+              {/* A quotation paid in advance (record it as a prepayment in
+                  Xero), or the invoice that uses one up. */}
+              {persisted && !isSales && (
+                <div className="col-span-full">
+                  <PrepaymentPanel
+                    doc={{ ...persisted, type: data.type || persisted.type, supplier: data.supplier, total: data.total, date: data.date, invoiceNumber: data.invoiceNumber, currency: data.currency || persisted.currency }}
+                    book={inboxAllDocs}
+                    mayPublish={mayPublish}
+                    onChanged={async () => {
+                      const bill = await fetchBillById(persisted.id);
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+                    }}
+                  />
+                </div>
+              )}
+              {/* The reviewer's own flag, in Dext's sense: "this was already
+                  settled when it was captured, so publish it as paid". It is
+                  NOT what Xero reports about the bill afterwards — that is the
+                  read-only "In Xero" block below, and conflating the two would
+                  let a webhook overwrite somebody's setting with a different
+                  question's answer. */}
+              <Field label="Paid">
+                <button type="button" onClick={() => set('paid', !data.paid)} className="flex items-center gap-2 pt-1">
+                  <span className={cn('flex h-5 w-9 items-center rounded-full p-0.5 transition-colors', data.paid ? 'justify-end bg-foreground' : 'justify-start border')}>
+                    <span className={cn('h-4 w-4 rounded-full', data.paid ? 'bg-background' : 'bg-muted-foreground/50')} />
+                  </span>
+                  <span className="text-sm text-muted-foreground">{data.paid ? 'Yes' : 'No'}</span>
+                </button>
+              </Field>
+              <Field label="Payment method">
+                <ComboSelect
+                  value={data.paymentMethod || ''}
+                  options={paymentMethods.map((p) => p.label)}
+                  onChange={(v) => set('paymentMethod', v)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setPmModalOpen(true)}
+                  className="mt-1 text-xs font-medium text-emerald-600 hover:underline"
+                >
+                  Add payment method
+                </button>
+              </Field>
+
+              {/* What the ledger says has happened since this document was
+                  published. Read-only, and absent until Xero has told us
+                  something: it arrives on the bill's invoice webhook, so an
+                  unpublished document has no such block at all. */}
+              {doc.xeroInvoiceId && (
+                <>
+                  <SectionHeading>In Xero</SectionHeading>
+                  <Field label="Paid status">
+                    {(() => {
+                      const status = xeroPaidStatus(doc);
+                      if (!status) {
+                        return (
+                          <p className="pt-1 text-sm text-muted-foreground">
+                            Nothing heard yet — Xero reports this when the {isSales ? 'invoice' : 'bill'} is approved, paid or changed.
+                          </p>
+                        );
+                      }
+                      return (
+                        <p className="pt-1 text-sm">
+                          <span
+                            className={cn(
+                              status.tone === 'paid' && 'font-medium text-green-700',
+                              status.tone === 'void' && 'text-muted-foreground line-through',
+                              status.tone === 'awaiting' && 'text-muted-foreground'
+                            )}
+                          >
+                            {status.label}
+                          </span>
+                          {doc.xeroPaidDate && (
+                            <span className="text-muted-foreground"> on {formatDate(doc.xeroPaidDate)}</span>
+                          )}
+                        </p>
+                      );
+                    })()}
+                  </Field>
+                  <Field label="Payment reference">
+                    <p className="pt-1 text-sm text-muted-foreground">{doc.xeroPaymentRef || '—'}</p>
+                  </Field>
+                </>
+              )}
+
+              <SectionHeading>Line items</SectionHeading>
+              <LineItemsGrid {...lineGrid} />
+              <LineItemsActions
+                onExtract={extractLineItems}
+                onAdd={addLineItem}
+                onExpand={() => setLinesOpen(true)}
+                onRevert={revertLineItems}
+                canRevert={lineItemsEdited}
+                extracting={extractingLines}
+                busy={Boolean(job)}
+                visionEnabled={visionEnabled}
+                canExpand={lineItems.length > 0}
+              />
+              {linesNoteBlock}
+
+              <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
+                {serverReading ? (
+                  <span className="inline-flex h-9 items-center gap-1 rounded-md border bg-muted px-3 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Processing
+                  </span>
+                ) : doc.status === 'ready' ? (
+                  <span className="inline-flex h-9 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm font-medium text-foreground">
+                    <CheckCircle2 className="h-4 w-4" /> In Ready
+                  </span>
+                ) : doc.persisted ? (
+                  <span className="inline-flex h-9 items-center gap-1 rounded-md border px-3 text-sm text-muted-foreground">
+                    {readyMissing.length ? `Missing: ${readyMissing.join(', ')}` : 'Ready'}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={moveToReady}
+                    className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                  >
+                    Move to ready
+                  </button>
+                )}
+                {doc.persisted && <SaveStatus status={fieldSave} className="px-1" />}
+                {mayClaim && (
+                  <TopButton
+                    onClick={() => setClaimOpen(true)}
+                    disabled={Boolean(claimBlocked)}
+                    title={claimBlocked}
+                  >
+                    Add to expense claim
+                  </TopButton>
+                )}
+                {archiveControl}
+                <TopButton onClick={() => setSplitOpen(true)}>Split</TopButton>
+              </div>
+            </fieldset>
+          )}
+
+          {tab === 'email' && (
+            <div className="text-sm">
+              {mail ? (
+                <>
+                  {/* The envelope, laid out as a message header: labels aligned
+                      in their own column so the addresses line up and can be
+                      read down. */}
+                  <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
+                    <dt className="text-muted-foreground">From</dt>
+                    <dd className="m-0 break-words">{mail.from || '—'}</dd>
+                    <dt className="text-muted-foreground">Date</dt>
+                    <dd className="m-0">{mailDate || '—'}</dd>
+                    <dt className="text-muted-foreground">Subject</dt>
+                    <dd className="m-0 break-words">{mail.subject || '(no subject)'}</dd>
+                    <dt className="text-muted-foreground">To</dt>
+                    <dd className="m-0 break-words">{mail.to || '—'}</dd>
+                  </dl>
+                  {/* What the sender actually wrote: as it was SENT where the
+                      mail's HTML was kept (an order confirmation is a table,
+                      and its text part is that table flattened), else as
+                      typed — a forwarded note is evidence about the document,
+                      so it is not reflowed or tidied. */}
+                  <div className="mt-4 border-t pt-4">
+                    <MailBody
+                      billId={doc.persisted ? doc.id : ''}
+                      text={mail.text}
+                      empty={<p className="text-muted-foreground">The message had no text — just the attachment.</p>}
+                    />
+                  </div>
+                  {/* Answering it, where the caller may see the entity's mail at
+                      all (the server says). Under the message rather than in
+                      the toolbar: it is an answer to THIS, and what was already
+                      said back belongs beside it. */}
+                  {/* A document that came by email and has no file: the email
+                      can BE the file. Offered here as well as in the banner
+                      above, since a mail with no links at all never shows one. */}
+                  {mailReplies.available && !doc.hasFile && (
+                    <div className="mt-4 flex flex-wrap items-center gap-3 border-t pt-4">
+                      <button
+                        type="button"
+                        disabled={Boolean(linkBusy)}
+                        onClick={() => runLink('pdf', () => saveEmailAsPdf({ billId: doc.id, envelope: doc.email }))}
+                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-60"
+                      >
+                        <FileText className="h-3.5 w-3.5" /> {linkBusy === 'pdf' ? 'Saving…' : 'Save this email as a PDF'}
+                      </button>
+                      <span className="text-xs text-muted-foreground">
+                        {linkNote ||
+                          'Attaches the message to this document as its file, so it goes to Xero with the bill.'}
+                      </span>
+                    </div>
+                  )}
+                  {mailReplies.available && doc.pendingReply && (
+                    <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md border border-amber-500/50 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      <span>
+                        Waiting for a reply from {doc.pendingReply.to || 'the sender'} since {new Date(doc.pendingReply.at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })}. It moves back to Ready when it is answered.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await markReplyReceived(doc.id).catch(() => null);
+                          const r = await fetchBillById(doc.id).catch(() => null);
+                          if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+                          notifyBillsChanged();
+                        }}
+                        className="font-medium underline underline-offset-2"
+                      >
+                        Mark as answered
+                      </button>
+                    </div>
+                  )}
+                  {mailReplies.available && (
+                    <div className="mt-4 border-t pt-4">
+                      <EmailReply
+                        target={{ billId: doc.id }}
+                        replies={mailReplies.replies}
+                        replyAddress={mailReplies.replyAddress}
+                        replyEnabled={mailReplies.replyEnabled}
+                        onSent={reloadMailReplies}
+                      />
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
+                  This document didn&rsquo;t arrive by email — it was{' '}
+                  {driveFile ? 'saved into a Google Drive folder' : chat ? 'sent in over WhatsApp' : 'uploaded'}.
+                  <br />
+                  <span className="text-xs">
+                    Forwarding one in? Each person has their own address under Users &rarr; Edit &rarr; Extract by email.
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
+
+          {tab === 'files' && mailReplies.available && (
+            <DocumentFiles
+              billId={doc.id}
+              envelope={doc.email}
+              onChanged={async () => {
+                const r = await fetchBillById(doc.id).catch(() => null);
+                if (r?.bill) setPersisted(billToDoc({ ...r.bill, hasFile: Boolean(r.bill.storageKey) }));
+                notifyBillsChanged();
+              }}
+            />
+          )}
+
+          {tab === 'drive' && driveFile && (
+            <div className="text-sm">
+              {/* Where the file came from. There is no message to show — a
+                  folder has none — so this is the whole of the envelope: the
+                  folder, the file as it was named there, and who Drive says
+                  put it there. */}
+              <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
+                <dt className="text-muted-foreground">Folder</dt>
+                <dd className="m-0 break-words">
+                  <a
+                    href={`https://drive.google.com/drive/folders/${encodeURIComponent(driveFile.folderId)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    {driveFile.folderName || 'Google Drive folder'}
+                  </a>
+                </dd>
+                <dt className="text-muted-foreground">File</dt>
+                {/* Linked by the file's own id rather than by its name: in
+                    Filed it wears the day and a running number in front of the
+                    name shown here, and the id opens it whatever it is called
+                    and wherever it has been moved. */}
+                <dd className="m-0 break-words">
+                  {driveFile.fileId ? (
+                    <a
+                      href={`https://drive.google.com/file/d/${encodeURIComponent(driveFile.fileId)}/view`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline underline-offset-2 hover:text-foreground"
+                    >
+                      {driveFile.fileName || 'Open in Google Drive'}
+                    </a>
+                  ) : (
+                    driveFile.fileName || '—'
+                  )}
+                </dd>
+                <dt className="text-muted-foreground">Saved by</dt>
+                <dd className="m-0 break-words">
+                  {driveFile.addedByName || driveFile.addedBy || 'Not stated by Google Drive'}
+                  {driveFile.addedByName && driveFile.addedBy ? (
+                    <span className="ml-2 text-muted-foreground">{driveFile.addedBy}</span>
+                  ) : null}
+                </dd>
+                <dt className="text-muted-foreground">Date</dt>
+                <dd className="m-0">{driveFile.addedAt ? fmtStamp(driveFile.addedAt) : '—'}</dd>
+              </dl>
+              <p className="mt-4 border-t pt-4 text-muted-foreground">
+                Saved into a folder connected to CYBills, and filed under the person that folder belongs to. Once
+                filed, the file is moved into the folder&rsquo;s &ldquo;Filed&rdquo; subfolder, with the day it was
+                filed and a running number in front of its name.
+              </p>
+            </div>
+          )}
+
+          {tab === 'whatsapp' && (
+            <div className="text-sm">
+              {chat ? (
+                <>
+                  {/* Who sent it and where from. A chat has no subject and no
+                      recipient, so this is the message header a chat actually
+                      has: the person, their number, the group, and when. */}
+                  <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5">
+                    <dt className="text-muted-foreground">From</dt>
+                    {/* The name and the number, never the raw sender id: WhatsApp
+                        increasingly sends a LID there — an opaque fifteen-digit
+                        per-user id, not a phone number — and printed here it read
+                        as somebody's mobile. Both fields are resolved server-side
+                        (the group's own person, or the roster row the number
+                        matches), so this tab and the WhatsApp thread agree. The
+                        id stays reachable in the tooltip, for tracing. */}
+                    <dd className="m-0 break-words" title={chat.from || undefined}>
+                      {/* Nothing identified the sender, and the name on file is
+                          only whose GROUP it is. Printed as "From" it read as a
+                          fact, and in a group several people post into it names
+                          the wrong one — so it is said as the guess it is. */}
+                      {chat.senderStandIn ? (
+                        <>
+                          Unknown sender
+                          {chat.senderName ? (
+                            <span className="ml-2 text-muted-foreground">(sent into {chat.senderName}’s group)</span>
+                          ) : null}
+                        </>
+                      ) : (
+                        chat.senderName || chat.senderNumber || 'Unknown'
+                      )}
+                      {!chat.senderStandIn && chat.senderName && chat.senderNumber ? (
+                        <span className="ml-2 text-muted-foreground">{chat.senderNumber}</span>
+                      ) : null}
+                      {/* Nobody on the roster was identified as the sender: the
+                          name above is a stand-in (the group's own person, a
+                          push name) or nothing. "Pls pay." is an approval, and
+                          an approval needs a name on it, so the reviewer who
+                          knows the group says who — once, for every message
+                          that account has sent or will send. */}
+                      {!chat.senderUserId && chat.from && !mockDoc ? (
+                        <WhatsappSenderPicker
+                          chat={chat}
+                          people={teamUsers.filter((u) => !u.deactivated && u.email)}
+                          onSaved={(who) =>
+                            setPersisted((p) =>
+                              p ? { ...p, whatsapp: { ...p.whatsapp, senderName: who.name, senderNumber: who.number, senderUserId: who.userId, senderStandIn: false } } : p
+                            )
+                          }
+                        />
+                      ) : null}
+                    </dd>
+                    <dt className="text-muted-foreground">Date</dt>
+                    <dd className="m-0">{chatDate || '—'}</dd>
+                    <dt className="text-muted-foreground">Group</dt>
+                    <dd className="m-0 break-words">{chat.chatSubject || '—'}</dd>
+                    <dt className="text-muted-foreground">File</dt>
+                    <dd className="m-0 break-words">{chat.fileName || '—'}</dd>
+                  </dl>
+                  {/* What they typed when they attached it. Kept as typed: this
+                      is the instruction the document was read with, so it is
+                      evidence rather than presentation. */}
+                  {chat.text ? (
+                    <p className="mt-4 whitespace-pre-wrap border-t pt-4 text-muted-foreground">{chat.text}</p>
+                  ) : (
+                    <p className="mt-4 border-t pt-4 text-muted-foreground">
+                      Sent with no message — just the file.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="rounded-md border bg-muted/20 px-4 py-10 text-center text-muted-foreground">
+                  This document didn&rsquo;t come in over WhatsApp.
+                  <br />
+                  <span className="text-xs">
+                    Bills sent into this entity&rsquo;s collection group show their message here, the way emailed
+                    ones do. Business settings &rarr; Connections sets the group up.
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
+
+          {tab === 'note' && (
+            <div className="space-y-3">
+              <textarea
+                rows={6}
+                value={data.note}
+                onChange={(e) => set('note', e.target.value)}
+                placeholder="Add a note about this document…"
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <div className="flex items-center gap-3">
+                <SaveStatus status={noteSave} />
+              </div>
+            </div>
+          )}
+
+          {tab === 'history' && (
+            <ol className="relative space-y-6 text-sm">
+              {docHistoryEvents.map((e, i) => (
+                <li key={i} className="relative flex gap-4">
+                  <div className="flex flex-col items-center">
+                    <span
+                      className={
+                        e.origin
+                          ? 'mt-1 h-3 w-3 rounded-full bg-foreground ring-4 ring-muted'
+                          : 'mt-1 h-3 w-3 rounded-full border-2 border-foreground bg-background'
+                      }
+                    />
+                    {i < docHistoryEvents.length - 1 && <span className="mt-1 w-px flex-1 bg-border" />}
+                  </div>
+                  <div className="pb-1">
+                    <p className="text-sm">
+                      <span className="font-medium">{e.text}</span>
+                      {e.by && <span className="text-muted-foreground"> by {e.by}</span>}
+                    </p>
+                    {e.at && <p className="mt-0.5 text-xs text-muted-foreground">{e.at}</p>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </div>
+
+      <SplitItemModal
+        open={splitOpen}
+        onClose={() => setSplitOpen(false)}
+        onSplit={doSplit}
+        imageUrl={imageUrl}
+        previewType={previewType}
+        current={{ category: data.category, total: data.total, tax: data.tax }}
+      />
+      <AddToClaimModal
+        open={claimOpen}
+        moveFrom={claimForItem || null}
+        onClose={() => setClaimOpen(false)}
+        onAdd={async ({ claimId, newClaim }) => {
+          setClaimOpen(false);
+          setAiError('');
+          if (claimForItem) {
+            const line = (claimForItem.transactions || []).find((t) => isItemKey(t.itemId, id));
+            setClaimLeaving(true);
+            try {
+              const target = newClaim ? await createClaim(newClaim) : claims.find((c) => c.id === claimId);
+              await moveItemsToClaim(claimForItem.id, target.id, [line]);
+              setClaimAdded({ id: target.id, name: target.name || 'Expense claim', moved: true });
+            } catch (err) {
+              setAiError(
+                err?.code === 'claim_locked'
+                  ? 'One of those claims is approved, so its items can’t be changed. Unapprove it first.'
+                  : err?.message || 'Could not move this document to that claim — please try again.'
+              );
+            } finally {
+              setClaimLeaving(false);
+            }
+            return;
+          }
+          // Link this cost to the chosen (or newly created) claim so it shows
+          // up as a line item there, then mark it as in an expense claim.
+          try {
+            const targetId = newClaim ? (await createClaim(newClaim)).id : claimId;
+            const actor = user?.name || user?.email || 'You';
+            if (targetId) await addItemToClaim(targetId, docToClaimTxn(doc, data, actor));
+            await persistStatus('expenseclaim');
+            notifyBillsChanged();
+            // Confirm before moving on: let the user jump to the claim they just
+            // added to, or close to advance to the next inbox item.
+            const name = newClaim ? (newClaim.name || 'Expense claim') : (claims.find((c) => c.id === targetId)?.name || 'Expense claim');
+            setClaimAdded({ id: targetId, name });
+          } catch (err) {
+            setAiError(
+              err?.code === 'claim_locked'
+                ? 'That claim is already approved, so items can’t be added to it.'
+                : err?.code === 'published_to_xero'
+                  ? 'This document is already published to Xero, so it can’t also go on an expense claim.'
+                  : 'Could not add this item to the claim — please try again.'
+            );
+          }
+        }}
+      />
+      <DuplicateReviewModal
+        open={compareOpen && Boolean(duplicateOf)}
+        pairs={duplicateOf ? [{ duplicate: doc, original: duplicateOf }] : []}
+        onClose={() => setCompareOpen(false)}
+        onResolved={() => { setCompareOpen(false); goToNextInbox(); }}
+      />
+
+      <PublishToXeroModal
+        open={publishOpen}
+        onClose={() => setPublishOpen(false)}
+        bill={{ id: doc.id, kind: doc.kind, supplier: data.supplier, type: data.type, total: data.total, tax: data.tax, currency: data.currency, date: data.date, createdAt: doc.createdAt, dueDate: data.dueDate, category: data.category, taxRate: data.taxRate, lineItems: data.lineItems, entityCheck: doc.entityCheck, xeroDocType: doc.xeroDocType, xeroStatus: doc.xeroStatus, paid: data.paid, paymentMethod: data.paymentMethod, bankMatch: doc.bankMatch, prepaymentMatch }}
+        onPublished={onPublished}
+        // A first publish finishes the document, so moving on is offered; a
+        // correction sent to an existing bill is not, which is just Done.
+        onNext={publishMode === 'publish' ? goToNextInbox : undefined}
+        mode={publishMode}
+      />
+
+      {claimAdded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-foreground/20" onClick={closeClaimAdded} aria-hidden="true" />
+          <div className="relative w-full max-w-sm overflow-hidden rounded-lg bg-background shadow-xl">
+            <div className="flex flex-col items-center gap-3 p-6 text-center">
+              <CheckCircle2 className="h-10 w-10 text-emerald-600" />
+              <p className="text-sm">
+                Item {claimAdded.moved ? 'moved' : 'added'} to expense claim <span className="font-medium">{claimAdded.name}</span>.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 border-t px-6 py-4">
+              <button
+                type="button"
+                onClick={() => { const id = claimAdded.id; setClaimAdded(null); navigate(`/expense-claims/${id}`); }}
+                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Go to expense claim
+              </button>
+              <button
+                type="button"
+                onClick={closeClaimAdded}
+                className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-muted"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <LineItemsEditor
+        open={linesOpen}
+        onClose={() => setLinesOpen(false)}
+        title={data.supplier}
+        preview={<ReceiptPreview doc={doc} imageUrl={imageUrl} previewType={previewType} fill />}
+        actions={
+<>
+            <LineItemsActions
+              onExtract={extractLineItems}
+              onAdd={addLineItem}
+              onRevert={revertLineItems}
+              canRevert={lineItemsEdited}
+              extracting={extractingLines}
+              busy={Boolean(job)}
+              visionEnabled={visionEnabled}
+            />
+            {linesNoteBlock}
+          </>
+        }
+        {...lineGrid}
+      />
+
+      <SupplierRulesModal
+        open={rulesOpen}
+        supplier={data.supplier}
+        categoryOptions={categoryOptions}
+        customerOptions={customerOptions}
+        projectOptions={projectOptions}
+        taxRateOptions={taxRateOptions}
+        paymentMethodOptions={paymentMethods.map((p) => p.label)}
+        gstRegistered={gstRegistered}
+        onClose={() => setRulesOpen(false)}
+        onApply={applySupplierRuleToForm}
+      />
+
+      <CustomerRulesModal
+        open={customerRulesOpen}
+        customer={data.supplier}
+        categoryOptions={categoryOptions}
+        onClose={() => setCustomerRulesOpen(false)}
+        onApply={applyCustomerRuleToForm}
+      />
+
+      <AddPaymentMethodModal
+        open={pmModalOpen}
+        onClose={() => setPmModalOpen(false)}
+        onAdded={(pm) => set('paymentMethod', pm.label)}
+      />
+    </AppShell>
+  );
+}
+
+// "Sent by …" for a WhatsApp'd document whose sender the roster could not
+// vouch for. Picking a person stores what that WhatsApp account IS, so it is
+// asked once per account rather than once per receipt; the thread and every
+// document from the same sender follow. Hoisted, so it can live down here.
+function WhatsappSenderPicker({ chat, people, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pick = async (email) => {
+    if (!email) return;
+    setBusy(true);
+    setError('');
+    try {
+      const who = await setWhatsappSender({ lid: chat.from, email });
+      onSaved(who);
+    } catch (err) {
+      setError(err?.message || 'Could not save who sent this.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="ml-2 inline-flex items-center gap-2 align-middle">
+      <select
+        className="h-7 rounded-md border bg-background px-2 text-xs"
+        value=""
+        disabled={busy}
+        onChange={(e) => pick(e.target.value)}
+        aria-label="Who sent this?"
+      >
+        <option value="">{chat.senderName && !chat.senderStandIn ? 'Not confirmed — who sent this?' : 'Who sent this?'}</option>
+        {people.map((u) => (
+          <option key={u.email} value={u.email}>
+            {u.name || u.email}
+          </option>
+        ))}
+      </select>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </span>
+  );
+}

@@ -141,10 +141,10 @@ export const isInInbox = (d) => INBOX_STATUSES.includes(d?.status) && !d?.xeroIn
 // human. Both read the document rather than its stored status, so a legacy row
 // (or one edited without the server re-deriving) can't fall between them.
 export function isReady(d) {
-  return isInInbox(d) && isComplete(d);
+  return isInInbox(d) && isComplete(d) && !d?.pendingReply;
 }
 export function needsReview(d) {
-  return isInInbox(d) && !isComplete(d);
+  return isInInbox(d) && (!isComplete(d) || Boolean(d?.pendingReply));
 }
 
 // The settled statuses — everything that has left the inbox. These used to be a

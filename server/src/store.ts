@@ -97,6 +97,10 @@ export type Bill = {
   // has no browser to lay its HTML out); the page redraws it when opened and
   // clears this by attaching the drawn one. Not EDITABLE.
   fileIsTextEmail?: boolean;
+  // Set when somebody here emailed the sender and has no answer yet: the document
+  // is waiting on a person, so it is To review, not Ready. Cleared by the
+  // answer (a mail carrying `[Item #n]`) or by hand. Not EDITABLE.
+  pendingReply?: { at: string; to: string; by: string };
   emailLink?: {
     /** The mirrored message (mailThread.ts) this document came from. */
     messageId: string;
@@ -548,7 +552,7 @@ function load(): Bill[] {
     // Readiness is now auto-derived: promote already-complete inbox costs into
     // Ready so existing data matches the rule. Promote-only here (never yank a
     // doc already in Ready back) to avoid surprising demotions on deploy.
-    if (b.kind !== 'supplier_statement' && b.status === 'new' && costComplete(b)) {
+    if (b.kind !== 'supplier_statement' && b.status === 'new' && costComplete(b) && !b.pendingReply) {
       b.status = 'ready';
       migrated = true;
     }
@@ -1047,8 +1051,8 @@ export function costComplete(b: Bill): boolean {
 // about it.
 function applyAutoReady(b: Bill): boolean {
   if (b.kind === 'supplier_statement') return false;
-  if (b.status === 'new' && costComplete(b)) { b.status = 'ready'; return true; }
-  if (b.status === 'ready' && !costComplete(b)) { b.status = 'new'; return true; }
+  if (b.status === 'new' && costComplete(b) && !b.pendingReply) { b.status = 'ready'; return true; }
+  if (b.status === 'ready' && (!costComplete(b) || b.pendingReply)) { b.status = 'new'; return true; }
   return false;
 }
 
@@ -1352,6 +1356,20 @@ export function markBillXeroPayment(
 // reason markBillXeroPayment has one: this is what HAPPENED to the document, not
 // a field a reviewer fills in, and a PATCH from the browser must not be able to
 // declare a document fetched.
+// A reply has gone to the sender (`info`), or has come back / been given up on
+// (null). Re-derives Ready vs To review, since a document waiting on a person
+// is not Ready.
+export function setPendingReply(orgId: string, id: string, info: Bill['pendingReply'] | null): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  if (info) bill.pendingReply = info;
+  else delete bill.pendingReply;
+  applyAutoReady(bill);
+  persist(bills);
+  return bill;
+}
+
 export function markFileIsTextEmail(orgId: string, id: string, on: boolean): void {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
