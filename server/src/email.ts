@@ -524,9 +524,16 @@ emailRouter.post('/reply', async (req, res) => {
   const replyTo = [
     ...new Set([answerable(normaliseSender(about.envelope.to)), answerable(normaliseSender(me?.email || ''))].filter(Boolean)),
   ];
-  const subject = /^\s*re\s*:/i.test(about.envelope.subject)
+  const base = /^\s*re\s*:/i.test(about.envelope.subject)
     ? about.envelope.subject.trim()
     : `Re: ${about.envelope.subject.trim() || 'your email'}`;
+  // The item's number goes on the END of the subject: one mail can be sent in
+  // twice (two items), and a reply that only says "Re: …" cannot be told apart
+  // from the other's. Not added twice when the subject already carries it.
+  const item = about.bill || (about.billIds[0] ? getBillById(dataScopeForOrg(orgId), about.billIds[0]) : null);
+  const itemNo = String(item?.displayId || item?.id || '').replace(/^#/, '');
+  const tag = itemNo ? `[Item #${itemNo}]` : '';
+  const subject = tag && !base.includes(tag) ? `${base} ${tag}` : base;
   const inReplyTo = about.message ? messageIdToAnswer(about.message) : '';
 
   const out = await sendMail({

@@ -155,7 +155,7 @@ check('the page learns it can be answered, and who the answer goes to', [r.statu
 r = await api('/reply', { billId: bill.id, body: 'Hi Martin,\nThis only carried logos. Could you send the invoice itself?' });
 check('the reply is sent', [r.status, r.body.ok], [200, true]);
 check('…to whoever sent the original, by address', sent[0]?.rcpt, ['martin.lim@dart.com.sg']);
-check('…with the subject of the mail it answers', header(sent[0]?.data || '', 'Subject'), 'Re: Fw: Order Request: Snack Box');
+check('…with the subject of the mail it answers, and the item number at the end', header(sent[0]?.data || '', 'Subject'), `Re: Fw: Order Request: Snack Box [Item #${String(bill.displayId || bill.id).replace(/^#/, '')}]`);
 check('…their answer comes back to the address the original was delivered to, not the deploy default', header(sent[0]?.data || '', 'Reply-To'), 'astrid4@cybills.sg');
 check('…and it names the message it answers, so their mail client threads it', [
   header(sent[0]?.data || '', 'In-Reply-To'),

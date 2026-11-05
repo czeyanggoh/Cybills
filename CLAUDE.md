@@ -2615,6 +2615,8 @@ that the sender was told something. Business Admin like the rest of the router
 (the document page draws nothing for anybody else), an internal
 `@cybills.local` identity is never a recipient, a recipient that is not an
 address is refused rather than dropped, and another entity's message is a 404.
+**The subject ends with the item's number** (`[Item #1234]`, the document's display id; Cze, 5 Nov 2026): one mail can be sent in twice, and
+a reply with only "Re: …" cannot be told from the other's. Not added twice on a second reply.
 **Cc starts as the person writing** (Cze, 5 Nov 2026; `useAuth().user.email`,
 skipped when it is the To address), shown and editable, so they clear it if they
 do not want the copy. With no mailbox connected the button is there and disabled, saying so. Covered
