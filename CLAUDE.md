@@ -2626,6 +2626,13 @@ is the old one deleted, and not while another document holds the same stored fil
 document is in Xero (`in_xero`). It changes this document only: the other documents keep their files.
 `npm test` in `server/` (`test/document-files.test.mts`).
 
+**A text-only email PDF is redrawn when the item is opened** (Cze, 5 Nov 2026: the copy made on
+arrival lost the table and layout). The server has no browser, so the PDF it writes on arrival is the
+mail's text; it marks the bill `fileIsTextEmail`. `CostDetail` (an effect near `useDocumentReplies`)
+draws the email in the browser (`drawEmailPdf`) and swaps it in with `replace: true`, once per
+document per visit and only if the drawing worked, never once the document is in Xero. Any other
+attach clears the flag. A mail with no HTML kept stays as text.
+
 **The subject ends with the item's number** (`[Item #1234]`, the document's display id; Cze, 5 Nov 2026): one mail can be sent in twice, and
 a reply with only "Re: …" cannot be told from the other's. Not added twice on a second reply.
 **Cc starts as the person writing** (Cze, 5 Nov 2026; `useAuth().user.email`,

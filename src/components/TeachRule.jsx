@@ -39,7 +39,18 @@ import {
 // turn that correction into a rule they could not go and edit afterwards. Shown
 // to them it would be a button that fails, or worse, one that quietly rewrites
 // the chart of accounts from a document page.
-export default function TeachRule({ field, value, supplier, onClose }) {
+//
+// It is keyed by the field AND the value it was opened for. Everything below is
+// state about ONE account — which Xero account was looked up (its id, name and
+// code, which saveRule writes back to), the text typed, "Saved" — and the page
+// keeps this mounted when the Category is changed again, so without the key the
+// heading moved to the new account while the box still held the first one's
+// description and saved it onto the first one's id.
+export default function TeachRule(props) {
+  return <TeachRuleFor key={`${props.field}:${props.value || ''}`} {...props} />;
+}
+
+function TeachRuleFor({ field, value, supplier, onClose }) {
   const { membership, googleEnabled } = useAuth();
   const [mode, setMode] = useState('');
   const [rule, setRule] = useState('');

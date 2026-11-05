@@ -93,6 +93,10 @@ export type Bill = {
   // is the question and its answer: who sent it, what the links were, and where
   // the fetch got to. Not EDITABLE — like `whatsapp`, it is the record of what
   // was received rather than a field anybody types into.
+  // True while the file is the SERVER's text-only copy of the email (the server
+  // has no browser to lay its HTML out); the page redraws it when opened and
+  // clears this by attaching the drawn one. Not EDITABLE.
+  fileIsTextEmail?: boolean;
   emailLink?: {
     /** The mirrored message (mailThread.ts) this document came from. */
     messageId: string;
@@ -1348,6 +1352,15 @@ export function markBillXeroPayment(
 // reason markBillXeroPayment has one: this is what HAPPENED to the document, not
 // a field a reviewer fills in, and a PATCH from the browser must not be able to
 // declare a document fetched.
+export function markFileIsTextEmail(orgId: string, id: string, on: boolean): void {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return;
+  if (on) bill.fileIsTextEmail = true;
+  else delete bill.fileIsTextEmail;
+  persist(bills);
+}
+
 export function setBillEmailLink(orgId: string, id: string, patch: Partial<NonNullable<Bill['emailLink']>>): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
@@ -1389,6 +1402,8 @@ export function attachFetchedFile(
   bill.fileName = file.fileName;
   bill.storageKey = file.storageKey;
   bill.contentType = file.contentType;
+  // A new file is no longer the text copy, unless the caller says so after.
+  delete bill.fileIsTextEmail;
   // Being read, and saying so — the same state the attachment road creates a
   // document in, cleared by autoRead's finally.
   if (reading) bill.status = 'processing';

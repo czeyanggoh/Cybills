@@ -1,822 +1,824 @@
-// Client helpers for the persisted-bills API (upload + duplicate detection).
-import { personLabel } from '@/lib/userStore';
-import { useState, useEffect } from 'react';
-import { getActiveOrganisationId, ORGANISATION_EVENT, getExtractionTaxRates, getExtractionProjects, getExtractionCategories, getExtractionCustomers } from '@/lib/organisations';
-import { supplierNamesFromDocs } from '@/lib/supplierList';
-import { isGstRegistered } from '@/lib/businessProfile';
-import { fetchReviewInstructions } from '@/lib/reviewInstructions';
-import { requestedProvider } from '@/lib/readerProvider';
-import { completeLines } from '@/lib/lineItems';
-import { readableForReader } from '@/lib/image';
-
-// Every bill request carries the selected organisation so the server serves that
-// org's own Costs/Sales books (separate per client entity). Omitted when no org
-// is selected — the server then falls back to the primary org's data.
-function orgHeaders() {
-  const id = getActiveOrganisationId();
-  return id ? { 'X-Org-Id': id } : {};
-}
-
-// Fires after a successful upload so open lists (e.g. the Costs inbox) refetch.
-export const BILLS_CHANGED_EVENT = 'cybills:bills-changed';
-export function notifyBillsChanged() {
-  window.dispatchEvent(new Event(BILLS_CHANGED_EVENT));
-}
-
-// SHA-256 hex of a File via Web Crypto (available in secure contexts — HTTPS in
-// prod, localhost in dev). This is the exact-file duplicate key.
-export async function sha256Hex(file) {
-  const buf = await file.arrayBuffer();
-  const digest = await crypto.subtle.digest('SHA-256', buf);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-// Bare base64 (no data-URL prefix) for the Vision extract endpoint.
-export function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result);
-      resolve(result.slice(result.indexOf(',') + 1));
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
-
-// Run a receipt image or PDF invoice through the extract endpoint, read by the
-// engine this client entity picked (Business settings → Extraction → Document
-// reader): Claude or OpenAI.
-// `accounts` is the Xero chart of accounts (code/name/description) so the model
-// classifies each expense into the account it should post to, using the
-// descriptions. Returns the extracted fields object, or null if extraction is
-// unavailable/failed (best-effort — the file is still stored + dedup-checked).
-// `emailNote` is the covering message a document arrived with — the email it
-// was forwarded in, or the WhatsApp message it was attached to (see
-// lib/coveringNote.js, which reads either off the document into one shape). A
-// re-read has to see it too: read once WITH "recharge this to CY-Biz" and again
-// without it, and the second read quietly undoes the first.
-// `kind` is the workspace the document is being captured into, and it decides
-// which END of the paper the counterparty is read from: a cost names the
-// supplier it came from, a sales invoice the customer it went to. Never a guess
-// off the page — the only thing that says which side of a transaction you are
-// on is where the document was filed.
-export async function fetchExtract(imageBase64, mediaType, accounts, note = null, kind = 'cost') {
-  // A HEIC photo stored before uploads converted them is sent as a JPEG; the
-  // reader takes no HEIC at all.
-  ({ base64: imageBase64, mediaType } = await readableForReader(imageBase64, mediaType));
-  // The active org's Review instructions (business context + GST/coding rules)
-  // ride along so the model classifies with that context. Best-effort.
-  const instructions = await fetchReviewInstructions(getActiveOrganisationId());
-  // Tax codes the org wrote a "when to use" rule for (Lists → Tax rates), so the
-  // model can reach codes the arithmetic fallback deliberately won't. A company
-  // that isn't GST-registered sends none — every document codes to No Tax.
-  const taxRates = isGstRegistered()
-    ? await getExtractionTaxRates().then((rows) => rows.filter((t) => t.rules)).catch(() => [])
-    : [];
-  // Projects the org wrote a "when to use" rule for (Lists → Projects), so a
-  // document can be allocated by what it says rather than only by who uploaded
-  // it. None written → the field isn't offered to the model at all.
-  const projects = await getExtractionProjects().catch(() => []);
-  // A bridge entity has no chart of accounts, so it classifies into the plain
-  // names its people claim against instead. Empty for a linked entity, whose
-  // `accounts` are the list — the server prefers accounts whenever it has them.
-  const categories = await getExtractionCategories().catch(() => []);
-  // Who a cost can be recharged to. Usually decided by a covering message
-  // ("recharge this to CY-Biz") rather than by the document, which says nothing
-  // about who it is billed back to.
-  const customers = await getExtractionCustomers().catch(() => []);
-  const res = await fetch('/api/costs/extract', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({
-      imageBase64,
-      mediaType,
-      accounts,
-      categories,
-      customers,
-      instructions,
-      ...(note ? { emailNote: note } : {}),
-      taxRates,
-      projects,
-      ...(kind === 'sales' ? { kind } : {}),
-      // '' = no org preference; the server applies its own default.
-      provider: requestedProvider(),
-    }),
-  });
-  if (!res.ok) return null;
-  const { data } = await res.json();
-  return data ?? null;
-}
-
-// Re-check every stored document in ONE book against every other in it, and
-// record the verdicts. Costs, Sales and Supplier statements are separate books —
-// a bill you received is never a duplicate of an invoice you issued — so the
-// count comes back matching the list the scan was launched from.
-// Returns { flagged, changed }.
-export async function scanDuplicates(kind = 'cost') {
-  const res = await fetch(`/api/costs/bills/scan-duplicates?kind=${encodeURIComponent(kind)}`, { method: 'POST', headers: orgHeaders() });
-  if (!res.ok) return { flagged: 0, changed: 0 };
-  return res.json();
-}
-
-// The reviewer's "these are different documents" — clears the flag for good.
-export function markNotDuplicate(id) {
-  return updateBill(id, { duplicateDismissed: true });
-}
-
-// The reviewer's "these are not one document", from the merge review. Each
-// document names the others, so the pair is never suggested again whichever of
-// them the scan meets first.
-export function markNotMerge(docs) {
-  const ids = (docs || []).filter((d) => d?.persisted).map((d) => d.id);
-  return Promise.all(
-    ids.map((id) => updateBill(id, { notMergeWith: ids.filter((other) => other !== id) }))
-  );
-}
-
-// Forget that a document was published to Xero: clears the stored invoice id,
-// tenant and date, and brings it back out of Archive so it can be published
-// again. Local only — it does NOT delete or void the bill in Xero. Use it when
-// the bill was removed at the Xero end.
-export async function clearXeroPublish(id) {
-  const res = await fetch(`/api/costs/bills/${id}/unpublish`, { method: 'POST', headers: orgHeaders() });
-  if (!res.ok) throw new Error('unpublish_failed');
-  return res.json();
-}
-
-export async function fetchBills() {
-  const res = await fetch('/api/costs/bills', { headers: orgHeaders() });
-  if (!res.ok) return [];
-  const { bills } = await res.json();
-  return Array.isArray(bills) ? bills : [];
-}
-
-// Persist a bill. Returns { ok, bill } on success, or { duplicate, rejected }
-// when the server flags a duplicate (HTTP 409). `rejected:true` means a
-// byte-identical file already exists and cannot be added even with force.
-// Throws on error.
-export async function addBill(payload, { force = false } = {}) {
-  const res = await fetch('/api/costs/bills', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ ...payload, force }),
-  });
-  if (res.status === 409) {
-    const body = await res.json().catch(() => ({}));
-    // A Dext import naming an Item ID this entity already holds. Not a
-    // duplicate verdict to review: the row is simply already here.
-    if (body.error === 'already_imported') return { alreadyImported: true };
-    return { duplicate: body.duplicate ?? null, rejected: Boolean(body.rejected) };
-  }
-  if (!res.ok) throw new Error('add_failed');
-  return res.json();
-}
-
-// Hold a document in "Processing" for as long as THIS browser is reading it.
-//
-// The document is created as processing and the read that follows takes ten to
-// thirty seconds — longer when a batch of receipts goes out together, since they
-// are read in parallel and the reader answers them one behind another. The
-// server's stuck-document sweep is what rescues a read whose tab was closed
-// mid-way, and it used to count from the moment the document was uploaded: a
-// minute in, every receipt still being read was filed into the inbox wearing
-// "New" and "Needs: Category, Total" — the badge of a document the reader got
-// nothing off — and a reviewer clicking into one was offered "Re-read receipt"
-// on a document that was being read at that very moment.
-//
-// So the read says it is still running, and the sweep counts from that instead.
-// Returns the stop function, which every caller must reach: the pings are the
-// only thing keeping the document out of the sweep's hands.
-const READING_PING_MS = 20_000;
-export function keepReading(id) {
-  if (!id) return () => {};
-  const ping = () => {
-    fetch(`/api/costs/bills/${id}/reading`, { method: 'POST', headers: orgHeaders() }).catch(() => {});
-  };
-  ping(); // the read has started NOW, not twenty seconds from now
-  const timer = setInterval(ping, READING_PING_MS);
-  return () => clearInterval(timer);
-}
-
-// Apply the Vision-read fields to a doc created up-front (in Processing), then
-// run the fuzzy duplicate check. Returns { ok, bill, duplicate }.
-// `checkDuplicates:false` (Business settings → Extraction → Duplicate detection
-// "Off") skips recording a duplicate verdict on the document.
-export async function finalizeBill(id, fields, { checkDuplicates = true } = {}) {
-  const res = await fetch(`/api/costs/bills/${id}/finalize`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ ...fields, checkDuplicates }),
-  });
-  if (!res.ok) return { ok: false, duplicate: null };
-  return res.json();
-}
-
-// Read the itemised table off a document — its own pass, not a field on the
-// general read (see server/src/extract.ts). Returns { lines, grandTotal,
-// linesTotal, reconciled, note } so the caller can say whether the rows can be
-// trusted, or null when the read failed.
-// Ask the reader what KIND of document this is, and nothing else — the sweep
-// that finds payment proofs among documents read before the type existed.
-// Returns { documentType, reason } or null when the reader could not say.
-export async function fetchClassifyType(imageBase64, mediaType, fileName = '') {
-  const res = await fetch('/api/costs/classify-type', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ imageBase64, mediaType, fileName, provider: requestedProvider() }),
-  });
-  if (!res.ok) return null;
-  const data = await res.json().catch(() => null);
-  return data?.ok ? { documentType: String(data.documentType || ''), reason: String(data.reason || '') } : null;
-}
-
-export async function fetchExtractLines(imageBase64, mediaType, accounts) {
-  ({ base64: imageBase64, mediaType } = await readableForReader(imageBase64, mediaType));
-  const instructions = await fetchReviewInstructions(getActiveOrganisationId());
-  // The org's projects (its first Xero tracking category), so each LINE can be
-  // allocated to the outlet or site it names — an invoice billing three outlets
-  // on one page is exactly what a per-line breakdown is for.
-  const projects = await getExtractionProjects().catch(() => []);
-  const categories = await getExtractionCategories().catch(() => []);
-  const res = await fetch('/api/costs/extract-lines', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({
-      imageBase64,
-      mediaType,
-      accounts,
-      categories,
-      instructions,
-      projects,
-      provider: requestedProvider(),
-    }),
-  });
-  if (!res.ok) return null;
-  const { data } = await res.json();
-  return data ?? null;
-}
-
-// Will this document's line items reach Xero as themselves? Mirrors the rule
-// the publish path enforces server-side (`perLineItems` in server/src/xero.ts,
-// which is the authority): the rows must add up to the document's total, and
-// their tax must add up to its tax — or carry no tax at all, in which case a
-// single stated GST figure is apportioned across them. This is here so the
-// publish dialog can say which of the two will happen BEFORE anyone presses the
-// button; a bill quietly losing its breakdown is the surprise worth avoiding.
-// How far a breakdown may sit from its own document and still be the same
-// money: a cent per row, at most five. Each row's figures are rounded to the
-// cent on their own, so three rows printed as 208.29 / 208.29 / 208.28 add up to
-// 624.86 against a stated GST of 624.87 — rounding, not a contradiction. Anything
-// wider is still refused. Mirrored by roundingToleranceCents in server/src/xero.ts,
-// which puts the difference on the largest line so what Xero receives is the
-// document's exact total and tax.
-export const roundingToleranceCents = (rowCount) => Math.min(5, Math.max(1, Number(rowCount) || 0));
-
-export function lineItemsPostable(lineItems, total, tax) {
-  const rows = Array.isArray(lineItems) ? lineItems : [];
-  const c = (v) => Math.round((Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0) * 100);
-  const linesTotal = rows.reduce((t, r) => t + (c(r.total) || c(r.net) + c(r.tax)), 0);
-  const billTotal = c(total);
-  const billTax = c(tax);
-  const rowTax = rows.reduce((t, r) => t + c(r.tax), 0);
-  const tolerance = roundingToleranceCents(rows.length);
-  const out = {
-    rows: rows.length,
-    linesTotal: linesTotal / 100,
-    linesTax: rowTax / 100,
-    outBy: (billTotal - linesTotal) / 100,
-    hasProjects: rows.some((r) => String(r.project || '').trim() || String(r.project2 || '').trim()),
-    // The rounding absorbed on the largest line, when there is any — signed,
-    // document minus rows, so the dialog can say how much.
-    roundingTotal: 0,
-    roundingTax: 0,
-    postable: false,
-    reason: '',
-  };
-  if (!rows.length) return { ...out, reason: 'no-rows' };
-  if (Math.abs(billTotal - linesTotal) > tolerance) return { ...out, reason: 'total' };
-  out.roundingTotal = (billTotal - linesTotal) / 100;
-  if (rowTax !== billTax) {
-    // Rows carrying no tax against one stated GST figure: shared across them at
-    // publish. Rows carrying tax within rounding of the document's: the
-    // difference goes on the largest line. Anything else is a disagreement.
-    if (rowTax === 0 && billTax !== 0) return { ...out, postable: true };
-    if (billTax === 0 || Math.abs(billTax - rowTax) > tolerance) return { ...out, reason: 'tax' };
-    out.roundingTax = (billTax - rowTax) / 100;
-  }
-  return { ...out, postable: true };
-}
-
-// Turn the reader's line items into the editable rows a bill stores: amounts as
-// fixed-2 strings, and a category on every row (the document's own when the
-// reader didn't code that line). Used by the manual "Extract line items" button
-// and by the supplier rule that pulls them automatically.
-export function lineItemRows(rows, fallbackCategory = '') {
-  const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
-  return (Array.isArray(rows) ? rows : []).map((li) => {
-    const total = li?.amount != null ? Number(li.amount) : num(li?.net) + num(li?.tax);
-    const tax = li?.tax != null ? Number(li.tax) : 0;
-    const net = li?.net != null ? Number(li.net) : total - tax;
-    return {
-      description: li?.description || '',
-      category: li?.category || fallbackCategory || 'Uncategorised',
-      // `project` IS read per line — from what the row names, or the section
-      // heading above it — because one invoice often bills several sites in
-      // blocks, and putting every row on the document's single project throws
-      // that away. Blank means the row named nothing, and the line then follows
-      // the document's own project.
-      project: li?.project || '',
-      // `project2` is the org's SECOND tracking category, and is only ever set
-      // by hand: the publish path tags a bill with it, but nothing reads it.
-      project2: li?.project2 || '',
-      net: net.toFixed(2),
-      tax: tax.toFixed(2),
-      total: total.toFixed(2),
-    };
-  });
-}
-
-// '' when the document records nobody — it was stored with no signed-in user,
-// so there is no owner to name. It used to read "You", which is not a person:
-// every viewer saw it as themselves.
-const ownerName = (who) => personLabel(who);
-
-// Shape a persisted bill into the row/doc form the Costs list + detail expect.
-export function billToDoc(b) {
-  return {
-    id: b.id,
-    persisted: true,
-    // Billed back to the customer named above — Xero's billable expense.
-    rebillable: Boolean(b.rebillable),
-    // Cut from a multi-page PDF on upload: which file, and which page of it.
-    // Merge detection uses this to tie the pages back together, and the row and
-    // the detail page use it to say which page they are.
-    ...(b.splitGroup
-      ? { splitGroup: b.splitGroup, splitPage: Number(b.splitPage) || 0, splitPages: Number(b.splitPages) || 0 }
-      : {}),
-    kind: b.kind || 'cost',
-    itemId: b.id,
-    // The document's public number, as ASSIGNED by the server. Falls back to the
-    // derived one only for a record written before numbers were stored (the
-    // server backfills those on load, so this is a first-render safety net).
-    displayId: b.displayId || displayItemId(b.id),
-    unread: !b.status || b.status === 'new',
-    status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted', 'processing', 'merged'].includes(b.status)
-      ? b.status
-      : 'new',
-    mergedFrom: Array.isArray(b.mergedFrom) ? b.mergedFrom : [],
-    // The owner if one was set, else whoever uploaded it — resolved to the one
-    // display name that person is known by. The old fallback to the email's
-    // local-part is gone: it is what listed "czeyang.goh" beside "Cze Yang Goh"
-    // as if they were two people. An address the directory can't place is shown
-    // whole, which at least reads as one person.
-    user: ownerName(b.owner || b.createdBy),
-    ownerEmail: b.owner || '',
-    createdByEmail: b.createdBy || '',
-    fileName: b.fileName || '',
-    createdAt: b.createdAt || '',
-    date: b.date || '—',
-    supplier: b.supplier || 'Unknown supplier',
-    type: b.documentType || 'Document',
-    category: b.category || 'Uncategorised',
-    categoryReason: b.categoryReason || '',
-    projectReason: b.projectReason || '',
-    taxRateReason: b.taxRateReason || '',
-    currency: b.currency || 'SGD',
-    total: b.total != null ? String(b.total) : '—',
-    tax: b.tax != null ? String(b.tax) : '0.00',
-    // What a foreign-currency document says the same money is worth in the base
-    // currency, and the rate it printed to say so. Zeroes on every ordinary
-    // document, which is what the page reads to know it has nothing to show.
-    baseCurrency: b.baseCurrency || '',
-    baseTotal: Number(b.baseTotal) || 0,
-    baseTax: Number(b.baseTax) || 0,
-    exchangeRate: Number(b.exchangeRate) || 0,
-    invoiceNumber: b.invoiceNumber || '',
-    // Who the document is billed TO, and the server's verdict on whether that
-    // is this entity at all. The verdict is computed per request rather than
-    // stored (server/src/entityCheck.ts), so it is absent on a document read
-    // from anywhere that doesn't compute it — which reads as "nothing to say".
-    billedTo: b.billedTo || '',
-    billedToRegNo: b.billedToRegNo || '',
-    // What the tax code was decided on — the supplier's GST number and what the
-    // paper calls its tax — and whether that number was remembered from an
-    // earlier document rather than read off this one.
-    supplierGstRegNo: b.supplierGstRegNo || '',
-    supplierGstRegNoRemembered: Boolean(b.supplierGstRegNoRemembered),
-    supplierGstRegNoFrom: b.supplierGstRegNoRemembered ? b.supplierGstRegNoFrom || 'document' : '',
-    taxLabel: b.taxLabel || '',
-    // The reader judged the paper a motor vehicle expense: No Tax (motorVehicle.js).
-    motorVehicle: Boolean(b.motorVehicle),
-    // The reader judged the supplier a hospital or clinic: No Tax (medicalProvider.js).
-    medicalProvider: Boolean(b.medicalProvider),
-    // Whether a read has recorded that evidence at all. Documents read before it
-    // was kept carry neither key, and "no GST number found" would be a claim
-    // about a read nobody wrote down.
-    taxEvidenceRecorded: typeof b.supplierGstRegNo === 'string' || typeof b.taxLabel === 'string',
-    entityCheck: b.entityCheck || null,
-    entityCheckDismissed: Boolean(b.entityCheckDismissed),
-    movedFrom: b.movedFrom || null,
-    taxRate: b.taxRate || '',
-    // Whether a PERSON settled the code (or the blank). What a re-read reads to
-    // know whose answer it is about to revise.
-    taxRateCleared: Boolean(b.taxRateCleared),
-    taxRateEdited: Boolean(b.taxRateEdited),
-    description: b.description || '',
-    paymentMethod: b.paymentMethod || '',
-    paid: Boolean(b.paid),
-    // The bank statement line this document will be paid against on publish
-    // (Dext's "Autofill payment") — null until a person accepts a match in the
-    // inbox's Match column. See src/lib/bankMatch.js.
-    bankMatch: b.bankMatch || null,
-    // A payment proof and the invoices it pays (src/lib/proofMatch.js): on an
-    // invoice, the proof that paid it; on a proof, the invoices it settles.
-    paidByProof: b.paidByProof || null,
-    paysBills: Array.isArray(b.paysBills) ? b.paysBills : [],
-    paysBillsAuto: Boolean(b.paysBillsAuto),
-    // A quotation paid in advance, recorded in Xero as an overpayment to the
-    // supplier, and the invoices it has been applied to; on an invoice, the
-    // prepayments it used (src/lib/prepayment.js).
-    prepayment: b.prepayment || null,
-    // The Xero transaction this document was sent to (src/lib/paperworkMatch.js).
-    paperworkMatch: b.paperworkMatch || null,
-    prepaymentsApplied: Array.isArray(b.prepaymentsApplied) ? b.prepaymentsApplied : [],
-    customer: b.customer || '',
-    project: b.project || '',
-    project2: b.project2 || '',
-    cardLast4: b.cardLast4 || '',
-    // A Mileage document's own two figures; its total is derived from them
-    // (src/lib/mileage.js). Zero on every ordinary document.
-    distanceKm: Number(b.distanceKm) || 0,
-    mileageRate: Number(b.mileageRate) || 0,
-    note: b.note || '',
-    // The message this document arrived in, when it came by email. Null for an
-    // upload, which is what the Email tab reads to know it has nothing to show.
-    email: b.email || null,
-    // The WhatsApp message it arrived in, for a document sent into a bill
-    // collection group. Null for anything else, which is what the WhatsApp tab
-    // reads to know it has nothing to show.
-    whatsapp: b.whatsapp || null,
-    // An invoice that arrived as a LINK rather than a file, and where the fetch
-    // got to: 'awaiting_trust' is the document in the inbox ASKING whether its
-    // sender may be followed, and it is what the row's badge and the page's
-    // banner read. Null on everything else.
-    emailLink: b.emailLink || null,
-    // The Google Drive file it was, for a document saved into a connected
-    // folder: which folder, and who put it there. Null on everything else,
-    // which is what keeps the Drive tab off a document that has nothing to
-    // show in it.
-    drive: b.drive || null,
-    dueDate: b.dueDate || '',
-    // Completed on the way in, so a row stored before the server did it — a net
-    // with no total — reads as what it is worth rather than as nothing. The
-    // grid would otherwise total it at 0.00 and report the document "out by"
-    // its own amount.
-    lineItems: completeLines(Array.isArray(b.lineItems) ? b.lineItems : []),
-    hasFile: Boolean(b.hasFile),
-    contentType: b.contentType || '',
-    // Xero provenance (set once published through the cyworkspace relay).
-    // Duplicate detection, as recorded on the document by the server.
-    duplicateOfId: b.duplicateOfId || '',
-    duplicateType: b.duplicateType || '',
-    duplicateDismissed: Boolean(b.duplicateDismissed),
-    notMergeWith: Array.isArray(b.notMergeWith) ? b.notMergeWith : [],
-    xeroInvoiceId: b.xeroInvoiceId || '',
-    // What it went up as: a bill (ACCPAY) or a credit note (ACCPAYCREDIT). The
-    // two live under different pages in Xero, so the link needs to know.
-    xeroDocType: b.xeroDocType || '',
-    xeroTenantName: b.xeroTenantName || '',
-    xeroPostedAt: b.xeroPostedAt || '',
-    // What Xero says about the published bill, read back on its invoice
-    // webhook. Read-only here, and nothing to do with `paid` above — see
-    // src/lib/xeroPaidStatus.js for why those are two different questions.
-    xeroStatus: b.xeroStatus || '',
-    xeroPaidDate: b.xeroPaidDate || '',
-    xeroPaymentRef: b.xeroPaymentRef || '',
-  };
-}
-
-// How a document is NAMED and ADDRESSED lives in a pure leaf (itemId.js),
-// because the claim PDF's import graph has to be loadable by the SERVER as
-// well as the browser — it builds the same PDF behind a signed link, and this
-// module pulls in React, the org store and the supplier list. Re-exported so
-// every existing caller is unchanged.
-export { displayItemId, itemNumber, costPath, salesPath, docPath, claimAttachmentUrl, costFileUrl } from '@/lib/itemId';
-// Imported as well as re-exported: `export … from` re-publishes a name without
-// binding it locally, and this module calls displayItemId itself.
-import { displayItemId } from '@/lib/itemId';
-
-// Which document a URL key names, out of a list of them.
-//
-// Answering per-document is not enough: the ASSIGNED number is unique but the
-// DERIVED one is not, so a scan that accepts the first document to answer by
-// either rule hands back a document that merely shares a second with the one
-// whose number was asked for. Two passes, so an exact answer always beats a
-// derived one no matter what order the list is in. Mirrors `byItemId` in the
-// server's store.ts, which is the authority — where two derive the same number
-// the oldest wins there too.
-export function findByItemKey(list, key) {
-  const k = String(key ?? '');
-  if (!k) return null;
-  const rows = Array.isArray(list) ? list : [];
-  const exact = rows.find((r) => String(r?.displayId || '') === k || String(r?.id ?? '') === k);
-  if (exact) return exact;
-  return rows
-    .filter((r) => displayItemId(r?.id) === k)
-    .sort((a, b) => String(a.id).localeCompare(String(b.id)))[0] ?? null;
-}
-
-// Does a document answer to this URL key? Links now carry the item id, but the
-// internal id still resolves it — older bookmarks hold one, and an expense
-// claim's line item stores one as its `itemId`.
-export function isItemKey(docOrId, key) {
-  const doc = docOrId && typeof docOrId === 'object' ? docOrId : null;
-  const a = String((doc ? doc.id : docOrId) ?? '');
-  const b = String(key ?? '');
-  if (!b) return false;
-  // The assigned number first; the derived one still answers, so a link made
-  // before a document was renumbered opens the same page it always did.
-  if (doc?.displayId && doc.displayId === b) return true;
-  return a === b || displayItemId(a) === b;
-}
-
-// URL that streams a persisted bill's original file from the server.
-export function billFileUrl(id) {
-  return `/api/costs/bills/${id}/file`;
-}
-
-// Share links for an EXPORT's document links — an exported CSV or a claim PDF
-// is read outside CYBills, by an accountant or an approver with no sign-in
-// here, so a plain file URL would just bounce them to the login page. The
-// server signs one short-lived link per document, and only for documents this
-// caller can already open in an entity that allows sharing (Business settings
-// -> Exports -> Image sharing). Returns { id: url }; ids it won't share are
-// simply absent, so the export writes no link for them.
-export async function fetchShareLinks(ids) {
-  const wanted = [...new Set((ids || []).map((v) => String(v ?? '')).filter(Boolean))];
-  if (!wanted.length) return {};
-  try {
-    const res = await fetch('/api/costs/share-links', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-      body: JSON.stringify({ ids: wanted }),
-    });
-    if (!res.ok) return {};
-    const data = await res.json();
-    return data?.links && typeof data.links === 'object' ? data.links : {};
-  } catch {
-    return {};
-  }
-}
-
-// The suppliers this entity's own documents name, for the pickers. Kept here
-// rather than in each page because two of them ask (the document's Supplier
-// field and the Suppliers list) and a bridge entity has no Xero contacts to
-// fall back on. Never throws: an unreachable server yields no options, and the
-// field stays free text.
-export function useDocumentSuppliers() {
-  const [names, setNames] = useState([]);
-  useEffect(() => {
-    let live = true;
-    const load = () =>
-      fetchBills()
-        .then((bills) => {
-          if (live) setNames(supplierNamesFromDocs(bills.filter((b) => b.kind !== 'sales')));
-        })
-        .catch(() => {});
-    load();
-    window.addEventListener(BILLS_CHANGED_EVENT, load);
-    window.addEventListener(ORGANISATION_EVENT, load);
-    return () => {
-      live = false;
-      window.removeEventListener(BILLS_CHANGED_EVENT, load);
-      window.removeEventListener(ORGANISATION_EVENT, load);
-    };
-  }, []);
-  return names;
-}
-
-// Whether a bill has a stored file (+ its type), resolved globally by id — works
-// even when the bill sits outside the active org's book (e.g. a claim item).
-export async function fetchBillFileMeta(id) {
-  try {
-    const res = await fetch(`/api/costs/bills/${id}/file-meta`, { headers: orgHeaders() });
-    if (!res.ok) return { hasFile: false };
-    return await res.json();
-  } catch {
-    return { hasFile: false };
-  }
-}
-
-// One bill by id, with a global fallback so claim line items resolve regardless
-// of which org's book the document lives in. Returns null when truly absent.
-// Which entity a document belongs to, for the case where it isn't in the list
-// this entity shows. Mirrors whereIsClaim: null both when there is no such
-// document and when it is in a book this person may not open — the server
-// refuses those alike, so neither can be told apart from here, which is the
-// point.
-export async function whereIsBill(id) {
-  try {
-    const res = await fetch(`/api/costs/bills/${encodeURIComponent(id)}/where`, { headers: orgHeaders() });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-export async function fetchBillById(id) {
-  try {
-    const res = await fetch(`/api/costs/bills/${id}`, { headers: orgHeaders() });
-    if (!res.ok) return null;
-    const { bill } = await res.json();
-    return bill ?? null;
-  } catch {
-    return null;
-  }
-}
-
-// Attach/replace the original file on an existing bill. Returns the updated
-// bill; throws on failure.
-export async function uploadBillFile(id, fileBase64, mediaType) {
-  const res = await fetch(`/api/costs/bills/${id}/file`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ fileBase64, mediaType }),
-  });
-  if (!res.ok) throw new Error('attach_failed');
-  return res.json();
-}
-
-// Update an existing bill's editable fields / workflow status. Returns the
-// updated bill; throws on failure.
-export async function updateBill(id, patch) {
-  const res = await fetch(`/api/costs/bills/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify(patch),
-  });
-  if (!res.ok) throw new Error('update_failed');
-  return res.json();
-}
-
-// A payment proof and the invoices it pays, seen from either side. For a proof:
-// `{ kind: 'proof', applied, auto, matches, candidates }`; for anything else:
-// `{ kind: 'invoice', paidBy, offers }`. Null when it cannot be asked.
-export async function fetchProofMatches(id) {
-  try {
-    const res = await fetch(`/api/costs/bills/${id}/proof`, { headers: orgHeaders() });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function proofAct(path, body) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify(body ?? {}),
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.message || 'That could not be saved.');
-  return data;
-}
-
-// Mark these invoices paid by this proof. The server holds the set to adding up
-// to the proof exactly, and refuses it in its own words otherwise.
-export const applyPaymentProof = (proofId, billIds) =>
-  proofAct(`/api/costs/bills/${proofId}/apply-proof`, { billIds });
-
-// Undo a proof's match: its invoices go back to what Paid said before.
-export const unapplyPaymentProof = (proofId) => proofAct(`/api/costs/bills/${proofId}/unapply-proof`);
-
-// Put a misfiled document in the entity it is actually addressed to. Returns
-// { ok, orgName } on success, or { ok: false, message } carrying the server's
-// own words — every refusal is a state the reviewer has to undo first
-// (published, on a claim, merged), so the message is the instruction.
-// A document that has just been moved has never been coded against the entity it
-// has arrived in: its category, tax code and tracking options were left behind
-// on purpose, because they were names in the chart it has left. So it is read
-// again on arrival — and the note has to survive a page LOAD, because moving
-// reloads the app into the new entity (every store and request in flight is
-// scoped to the old one) and a reload aborts a read in progress. sessionStorage,
-// not the job store, for exactly that reason.
-const READ_AFTER_MOVE = 'cybills.read-after-move.v1';
-
-// Does this document owe itself a read? Answers once — taking the note is what
-// stops a refresh from re-reading, and paying for, the same document again.
-export function takeReadAfterMove(id) {
-  try {
-    if (sessionStorage.getItem(READ_AFTER_MOVE) !== String(id)) return false;
-    sessionStorage.removeItem(READ_AFTER_MOVE);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function moveBillToEntity(id, orgId) {
-  const res = await fetch(`/api/costs/bills/${id}/move-entity`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ orgId }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) return { ok: false, message: body.message || 'This document could not be moved.' };
-  try {
-    sessionStorage.setItem(READ_AFTER_MOVE, String(id));
-  } catch {
-    // No sessionStorage (a locked-down browser): the move still stands, and the
-    // reviewer codes it by hand or presses Re-read. Never a reason to refuse.
-  }
-  notifyBillsChanged();
-  return { ok: true, orgName: body.orgName || '', orgId: body.orgId || orgId };
-}
-
-// Move a document between the Costs and Sales workspaces — a sales invoice
-// uploaded on the Costs tab, or a supplier's bill dropped into Sales.
-//
-// The account code and the tax code do NOT come across, and the server says so
-// in the reply: a purchase code and a supply code are different vocabularies,
-// and carried over they would still post — under a code recording the opposite
-// side of the ledger. The document lands in To review, which is what it is.
-//
-// Throws with the server's own message, so the four refusals (published, on a
-// claim, merged away, already there) reach the reviewer as the instruction for
-// undoing them.
-export async function moveBillToWorkspace(id, kind) {
-  const res = await fetch(`/api/costs/bills/${encodeURIComponent(id)}/move-workspace`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ kind }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.message || 'That document could not be moved.');
-  notifyBillsChanged();
-  return body;
-}
-
-// Permanently delete a bill: removes the record AND reclaims its stored file
-// from Cloudflare R2 (or local disk). Destructive — callers confirm first. This
-// is distinct from a soft delete/archive (updateBill with a status change),
-// which keeps the row and its file so it can be restored.
-export async function deleteBill(id) {
-  const res = await fetch(`/api/costs/bills/${id}`, {
-    method: 'DELETE',
-    headers: orgHeaders(),
-  });
-  if (!res.ok) throw new Error('delete_failed');
-  return res.json();
-}
-
-// Human summary of a duplicate match, e.g. for a warning banner.
-export function describeDuplicate(dup) {
-  if (!dup) return '';
-  const { type, bill } = dup;
-  const who = bill.createdBy ? ` by ${bill.createdBy.split('@')[0]}` : '';
-  const when = bill.createdAt ? new Date(bill.createdAt).toLocaleDateString() : '';
-  const label =
-    type === 'exact_file'
-      ? 'This exact file was already uploaded'
-      : type === 'same_invoice'
-        ? `Invoice ${bill.invoiceNumber || ''} from ${bill.supplier} was already added`.trim()
-        : `A ${bill.currency} ${bill.total} ${bill.supplier} document from ${bill.date} was already added`;
-  return `${label}${when ? ` on ${when}` : ''}${who}.`;
-}
-
-// Why a document was flagged, in the reviewer's terms — one wording, shared by
-// the document page's banner and the side-by-side review.
-export const DUPLICATE_REASON = {
-  exact_file: 'The identical file has already been submitted.',
-  same_invoice: 'The same supplier and document reference, for the same amount, is already on file.',
-  likely_duplicate: 'The same supplier, amount and date is already on file.',
-};
-
-// Fetch one document from a Dext export's Image link, through the server.
-//
-// Those links carry no CORS headers, so the browser is refused the bytes even
-// though the URL is right there in the CSV — the server has no such
-// restriction. It only follows Dext's own image host; anything else is refused
-// there rather than here. Returns null when it can't be had, so a migration
-// carries on and reports which documents arrived without their file.
-export async function fetchDextImage(url) {
-  try {
-    const res = await fetch('/api/costs/import/fetch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-      body: JSON.stringify({ url }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data?.base64 ? { base64: data.base64, contentType: data.contentType || '' } : null;
-  } catch {
-    return null;
-  }
-}
+// Client helpers for the persisted-bills API (upload + duplicate detection).
+import { personLabel } from '@/lib/userStore';
+import { useState, useEffect } from 'react';
+import { getActiveOrganisationId, ORGANISATION_EVENT, getExtractionTaxRates, getExtractionProjects, getExtractionCategories, getExtractionCustomers } from '@/lib/organisations';
+import { supplierNamesFromDocs } from '@/lib/supplierList';
+import { isGstRegistered } from '@/lib/businessProfile';
+import { fetchReviewInstructions } from '@/lib/reviewInstructions';
+import { requestedProvider } from '@/lib/readerProvider';
+import { completeLines } from '@/lib/lineItems';
+import { readableForReader } from '@/lib/image';
+
+// Every bill request carries the selected organisation so the server serves that
+// org's own Costs/Sales books (separate per client entity). Omitted when no org
+// is selected — the server then falls back to the primary org's data.
+function orgHeaders() {
+  const id = getActiveOrganisationId();
+  return id ? { 'X-Org-Id': id } : {};
+}
+
+// Fires after a successful upload so open lists (e.g. the Costs inbox) refetch.
+export const BILLS_CHANGED_EVENT = 'cybills:bills-changed';
+export function notifyBillsChanged() {
+  window.dispatchEvent(new Event(BILLS_CHANGED_EVENT));
+}
+
+// SHA-256 hex of a File via Web Crypto (available in secure contexts — HTTPS in
+// prod, localhost in dev). This is the exact-file duplicate key.
+export async function sha256Hex(file) {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// Bare base64 (no data-URL prefix) for the Vision extract endpoint.
+export function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result);
+      resolve(result.slice(result.indexOf(',') + 1));
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+export const VISION_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
+
+// Run a receipt image or PDF invoice through the extract endpoint, read by the
+// engine this client entity picked (Business settings → Extraction → Document
+// reader): Claude or OpenAI.
+// `accounts` is the Xero chart of accounts (code/name/description) so the model
+// classifies each expense into the account it should post to, using the
+// descriptions. Returns the extracted fields object, or null if extraction is
+// unavailable/failed (best-effort — the file is still stored + dedup-checked).
+// `emailNote` is the covering message a document arrived with — the email it
+// was forwarded in, or the WhatsApp message it was attached to (see
+// lib/coveringNote.js, which reads either off the document into one shape). A
+// re-read has to see it too: read once WITH "recharge this to CY-Biz" and again
+// without it, and the second read quietly undoes the first.
+// `kind` is the workspace the document is being captured into, and it decides
+// which END of the paper the counterparty is read from: a cost names the
+// supplier it came from, a sales invoice the customer it went to. Never a guess
+// off the page — the only thing that says which side of a transaction you are
+// on is where the document was filed.
+export async function fetchExtract(imageBase64, mediaType, accounts, note = null, kind = 'cost') {
+  // A HEIC photo stored before uploads converted them is sent as a JPEG; the
+  // reader takes no HEIC at all.
+  ({ base64: imageBase64, mediaType } = await readableForReader(imageBase64, mediaType));
+  // The active org's Review instructions (business context + GST/coding rules)
+  // ride along so the model classifies with that context. Best-effort.
+  const instructions = await fetchReviewInstructions(getActiveOrganisationId());
+  // Tax codes the org wrote a "when to use" rule for (Lists → Tax rates), so the
+  // model can reach codes the arithmetic fallback deliberately won't. A company
+  // that isn't GST-registered sends none — every document codes to No Tax.
+  const taxRates = isGstRegistered()
+    ? await getExtractionTaxRates().then((rows) => rows.filter((t) => t.rules)).catch(() => [])
+    : [];
+  // Projects the org wrote a "when to use" rule for (Lists → Projects), so a
+  // document can be allocated by what it says rather than only by who uploaded
+  // it. None written → the field isn't offered to the model at all.
+  const projects = await getExtractionProjects().catch(() => []);
+  // A bridge entity has no chart of accounts, so it classifies into the plain
+  // names its people claim against instead. Empty for a linked entity, whose
+  // `accounts` are the list — the server prefers accounts whenever it has them.
+  const categories = await getExtractionCategories().catch(() => []);
+  // Who a cost can be recharged to. Usually decided by a covering message
+  // ("recharge this to CY-Biz") rather than by the document, which says nothing
+  // about who it is billed back to.
+  const customers = await getExtractionCustomers().catch(() => []);
+  const res = await fetch('/api/costs/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({
+      imageBase64,
+      mediaType,
+      accounts,
+      categories,
+      customers,
+      instructions,
+      ...(note ? { emailNote: note } : {}),
+      taxRates,
+      projects,
+      ...(kind === 'sales' ? { kind } : {}),
+      // '' = no org preference; the server applies its own default.
+      provider: requestedProvider(),
+    }),
+  });
+  if (!res.ok) return null;
+  const { data } = await res.json();
+  return data ?? null;
+}
+
+// Re-check every stored document in ONE book against every other in it, and
+// record the verdicts. Costs, Sales and Supplier statements are separate books —
+// a bill you received is never a duplicate of an invoice you issued — so the
+// count comes back matching the list the scan was launched from.
+// Returns { flagged, changed }.
+export async function scanDuplicates(kind = 'cost') {
+  const res = await fetch(`/api/costs/bills/scan-duplicates?kind=${encodeURIComponent(kind)}`, { method: 'POST', headers: orgHeaders() });
+  if (!res.ok) return { flagged: 0, changed: 0 };
+  return res.json();
+}
+
+// The reviewer's "these are different documents" — clears the flag for good.
+export function markNotDuplicate(id) {
+  return updateBill(id, { duplicateDismissed: true });
+}
+
+// The reviewer's "these are not one document", from the merge review. Each
+// document names the others, so the pair is never suggested again whichever of
+// them the scan meets first.
+export function markNotMerge(docs) {
+  const ids = (docs || []).filter((d) => d?.persisted).map((d) => d.id);
+  return Promise.all(
+    ids.map((id) => updateBill(id, { notMergeWith: ids.filter((other) => other !== id) }))
+  );
+}
+
+// Forget that a document was published to Xero: clears the stored invoice id,
+// tenant and date, and brings it back out of Archive so it can be published
+// again. Local only — it does NOT delete or void the bill in Xero. Use it when
+// the bill was removed at the Xero end.
+export async function clearXeroPublish(id) {
+  const res = await fetch(`/api/costs/bills/${id}/unpublish`, { method: 'POST', headers: orgHeaders() });
+  if (!res.ok) throw new Error('unpublish_failed');
+  return res.json();
+}
+
+export async function fetchBills() {
+  const res = await fetch('/api/costs/bills', { headers: orgHeaders() });
+  if (!res.ok) return [];
+  const { bills } = await res.json();
+  return Array.isArray(bills) ? bills : [];
+}
+
+// Persist a bill. Returns { ok, bill } on success, or { duplicate, rejected }
+// when the server flags a duplicate (HTTP 409). `rejected:true` means a
+// byte-identical file already exists and cannot be added even with force.
+// Throws on error.
+export async function addBill(payload, { force = false } = {}) {
+  const res = await fetch('/api/costs/bills', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ ...payload, force }),
+  });
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({}));
+    // A Dext import naming an Item ID this entity already holds. Not a
+    // duplicate verdict to review: the row is simply already here.
+    if (body.error === 'already_imported') return { alreadyImported: true };
+    return { duplicate: body.duplicate ?? null, rejected: Boolean(body.rejected) };
+  }
+  if (!res.ok) throw new Error('add_failed');
+  return res.json();
+}
+
+// Hold a document in "Processing" for as long as THIS browser is reading it.
+//
+// The document is created as processing and the read that follows takes ten to
+// thirty seconds — longer when a batch of receipts goes out together, since they
+// are read in parallel and the reader answers them one behind another. The
+// server's stuck-document sweep is what rescues a read whose tab was closed
+// mid-way, and it used to count from the moment the document was uploaded: a
+// minute in, every receipt still being read was filed into the inbox wearing
+// "New" and "Needs: Category, Total" — the badge of a document the reader got
+// nothing off — and a reviewer clicking into one was offered "Re-read receipt"
+// on a document that was being read at that very moment.
+//
+// So the read says it is still running, and the sweep counts from that instead.
+// Returns the stop function, which every caller must reach: the pings are the
+// only thing keeping the document out of the sweep's hands.
+const READING_PING_MS = 20_000;
+export function keepReading(id) {
+  if (!id) return () => {};
+  const ping = () => {
+    fetch(`/api/costs/bills/${id}/reading`, { method: 'POST', headers: orgHeaders() }).catch(() => {});
+  };
+  ping(); // the read has started NOW, not twenty seconds from now
+  const timer = setInterval(ping, READING_PING_MS);
+  return () => clearInterval(timer);
+}
+
+// Apply the Vision-read fields to a doc created up-front (in Processing), then
+// run the fuzzy duplicate check. Returns { ok, bill, duplicate }.
+// `checkDuplicates:false` (Business settings → Extraction → Duplicate detection
+// "Off") skips recording a duplicate verdict on the document.
+export async function finalizeBill(id, fields, { checkDuplicates = true } = {}) {
+  const res = await fetch(`/api/costs/bills/${id}/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ ...fields, checkDuplicates }),
+  });
+  if (!res.ok) return { ok: false, duplicate: null };
+  return res.json();
+}
+
+// Read the itemised table off a document — its own pass, not a field on the
+// general read (see server/src/extract.ts). Returns { lines, grandTotal,
+// linesTotal, reconciled, note } so the caller can say whether the rows can be
+// trusted, or null when the read failed.
+// Ask the reader what KIND of document this is, and nothing else — the sweep
+// that finds payment proofs among documents read before the type existed.
+// Returns { documentType, reason } or null when the reader could not say.
+export async function fetchClassifyType(imageBase64, mediaType, fileName = '') {
+  const res = await fetch('/api/costs/classify-type', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ imageBase64, mediaType, fileName, provider: requestedProvider() }),
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  return data?.ok ? { documentType: String(data.documentType || ''), reason: String(data.reason || '') } : null;
+}
+
+export async function fetchExtractLines(imageBase64, mediaType, accounts) {
+  ({ base64: imageBase64, mediaType } = await readableForReader(imageBase64, mediaType));
+  const instructions = await fetchReviewInstructions(getActiveOrganisationId());
+  // The org's projects (its first Xero tracking category), so each LINE can be
+  // allocated to the outlet or site it names — an invoice billing three outlets
+  // on one page is exactly what a per-line breakdown is for.
+  const projects = await getExtractionProjects().catch(() => []);
+  const categories = await getExtractionCategories().catch(() => []);
+  const res = await fetch('/api/costs/extract-lines', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({
+      imageBase64,
+      mediaType,
+      accounts,
+      categories,
+      instructions,
+      projects,
+      provider: requestedProvider(),
+    }),
+  });
+  if (!res.ok) return null;
+  const { data } = await res.json();
+  return data ?? null;
+}
+
+// Will this document's line items reach Xero as themselves? Mirrors the rule
+// the publish path enforces server-side (`perLineItems` in server/src/xero.ts,
+// which is the authority): the rows must add up to the document's total, and
+// their tax must add up to its tax — or carry no tax at all, in which case a
+// single stated GST figure is apportioned across them. This is here so the
+// publish dialog can say which of the two will happen BEFORE anyone presses the
+// button; a bill quietly losing its breakdown is the surprise worth avoiding.
+// How far a breakdown may sit from its own document and still be the same
+// money: a cent per row, at most five. Each row's figures are rounded to the
+// cent on their own, so three rows printed as 208.29 / 208.29 / 208.28 add up to
+// 624.86 against a stated GST of 624.87 — rounding, not a contradiction. Anything
+// wider is still refused. Mirrored by roundingToleranceCents in server/src/xero.ts,
+// which puts the difference on the largest line so what Xero receives is the
+// document's exact total and tax.
+export const roundingToleranceCents = (rowCount) => Math.min(5, Math.max(1, Number(rowCount) || 0));
+
+export function lineItemsPostable(lineItems, total, tax) {
+  const rows = Array.isArray(lineItems) ? lineItems : [];
+  const c = (v) => Math.round((Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0) * 100);
+  const linesTotal = rows.reduce((t, r) => t + (c(r.total) || c(r.net) + c(r.tax)), 0);
+  const billTotal = c(total);
+  const billTax = c(tax);
+  const rowTax = rows.reduce((t, r) => t + c(r.tax), 0);
+  const tolerance = roundingToleranceCents(rows.length);
+  const out = {
+    rows: rows.length,
+    linesTotal: linesTotal / 100,
+    linesTax: rowTax / 100,
+    outBy: (billTotal - linesTotal) / 100,
+    hasProjects: rows.some((r) => String(r.project || '').trim() || String(r.project2 || '').trim()),
+    // The rounding absorbed on the largest line, when there is any — signed,
+    // document minus rows, so the dialog can say how much.
+    roundingTotal: 0,
+    roundingTax: 0,
+    postable: false,
+    reason: '',
+  };
+  if (!rows.length) return { ...out, reason: 'no-rows' };
+  if (Math.abs(billTotal - linesTotal) > tolerance) return { ...out, reason: 'total' };
+  out.roundingTotal = (billTotal - linesTotal) / 100;
+  if (rowTax !== billTax) {
+    // Rows carrying no tax against one stated GST figure: shared across them at
+    // publish. Rows carrying tax within rounding of the document's: the
+    // difference goes on the largest line. Anything else is a disagreement.
+    if (rowTax === 0 && billTax !== 0) return { ...out, postable: true };
+    if (billTax === 0 || Math.abs(billTax - rowTax) > tolerance) return { ...out, reason: 'tax' };
+    out.roundingTax = (billTax - rowTax) / 100;
+  }
+  return { ...out, postable: true };
+}
+
+// Turn the reader's line items into the editable rows a bill stores: amounts as
+// fixed-2 strings, and a category on every row (the document's own when the
+// reader didn't code that line). Used by the manual "Extract line items" button
+// and by the supplier rule that pulls them automatically.
+export function lineItemRows(rows, fallbackCategory = '') {
+  const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
+  return (Array.isArray(rows) ? rows : []).map((li) => {
+    const total = li?.amount != null ? Number(li.amount) : num(li?.net) + num(li?.tax);
+    const tax = li?.tax != null ? Number(li.tax) : 0;
+    const net = li?.net != null ? Number(li.net) : total - tax;
+    return {
+      description: li?.description || '',
+      category: li?.category || fallbackCategory || 'Uncategorised',
+      // `project` IS read per line — from what the row names, or the section
+      // heading above it — because one invoice often bills several sites in
+      // blocks, and putting every row on the document's single project throws
+      // that away. Blank means the row named nothing, and the line then follows
+      // the document's own project.
+      project: li?.project || '',
+      // `project2` is the org's SECOND tracking category, and is only ever set
+      // by hand: the publish path tags a bill with it, but nothing reads it.
+      project2: li?.project2 || '',
+      net: net.toFixed(2),
+      tax: tax.toFixed(2),
+      total: total.toFixed(2),
+    };
+  });
+}
+
+// '' when the document records nobody — it was stored with no signed-in user,
+// so there is no owner to name. It used to read "You", which is not a person:
+// every viewer saw it as themselves.
+const ownerName = (who) => personLabel(who);
+
+// Shape a persisted bill into the row/doc form the Costs list + detail expect.
+export function billToDoc(b) {
+  return {
+    id: b.id,
+    persisted: true,
+    // Billed back to the customer named above — Xero's billable expense.
+    rebillable: Boolean(b.rebillable),
+    // Cut from a multi-page PDF on upload: which file, and which page of it.
+    // Merge detection uses this to tie the pages back together, and the row and
+    // the detail page use it to say which page they are.
+    ...(b.splitGroup
+      ? { splitGroup: b.splitGroup, splitPage: Number(b.splitPage) || 0, splitPages: Number(b.splitPages) || 0 }
+      : {}),
+    kind: b.kind || 'cost',
+    itemId: b.id,
+    // The document's public number, as ASSIGNED by the server. Falls back to the
+    // derived one only for a record written before numbers were stored (the
+    // server backfills those on load, so this is a first-render safety net).
+    displayId: b.displayId || displayItemId(b.id),
+    unread: !b.status || b.status === 'new',
+    status: ['ready', 'expenseclaim', 'archived', 'review', 'deleted', 'processing', 'merged'].includes(b.status)
+      ? b.status
+      : 'new',
+    mergedFrom: Array.isArray(b.mergedFrom) ? b.mergedFrom : [],
+    // The owner if one was set, else whoever uploaded it — resolved to the one
+    // display name that person is known by. The old fallback to the email's
+    // local-part is gone: it is what listed "czeyang.goh" beside "Cze Yang Goh"
+    // as if they were two people. An address the directory can't place is shown
+    // whole, which at least reads as one person.
+    user: ownerName(b.owner || b.createdBy),
+    ownerEmail: b.owner || '',
+    createdByEmail: b.createdBy || '',
+    fileName: b.fileName || '',
+    createdAt: b.createdAt || '',
+    date: b.date || '—',
+    supplier: b.supplier || 'Unknown supplier',
+    type: b.documentType || 'Document',
+    category: b.category || 'Uncategorised',
+    categoryReason: b.categoryReason || '',
+    projectReason: b.projectReason || '',
+    taxRateReason: b.taxRateReason || '',
+    currency: b.currency || 'SGD',
+    total: b.total != null ? String(b.total) : '—',
+    tax: b.tax != null ? String(b.tax) : '0.00',
+    // What a foreign-currency document says the same money is worth in the base
+    // currency, and the rate it printed to say so. Zeroes on every ordinary
+    // document, which is what the page reads to know it has nothing to show.
+    baseCurrency: b.baseCurrency || '',
+    baseTotal: Number(b.baseTotal) || 0,
+    baseTax: Number(b.baseTax) || 0,
+    exchangeRate: Number(b.exchangeRate) || 0,
+    invoiceNumber: b.invoiceNumber || '',
+    // Who the document is billed TO, and the server's verdict on whether that
+    // is this entity at all. The verdict is computed per request rather than
+    // stored (server/src/entityCheck.ts), so it is absent on a document read
+    // from anywhere that doesn't compute it — which reads as "nothing to say".
+    billedTo: b.billedTo || '',
+    billedToRegNo: b.billedToRegNo || '',
+    // What the tax code was decided on — the supplier's GST number and what the
+    // paper calls its tax — and whether that number was remembered from an
+    // earlier document rather than read off this one.
+    supplierGstRegNo: b.supplierGstRegNo || '',
+    supplierGstRegNoRemembered: Boolean(b.supplierGstRegNoRemembered),
+    supplierGstRegNoFrom: b.supplierGstRegNoRemembered ? b.supplierGstRegNoFrom || 'document' : '',
+    taxLabel: b.taxLabel || '',
+    // The reader judged the paper a motor vehicle expense: No Tax (motorVehicle.js).
+    motorVehicle: Boolean(b.motorVehicle),
+    // The reader judged the supplier a hospital or clinic: No Tax (medicalProvider.js).
+    medicalProvider: Boolean(b.medicalProvider),
+    // Whether a read has recorded that evidence at all. Documents read before it
+    // was kept carry neither key, and "no GST number found" would be a claim
+    // about a read nobody wrote down.
+    taxEvidenceRecorded: typeof b.supplierGstRegNo === 'string' || typeof b.taxLabel === 'string',
+    entityCheck: b.entityCheck || null,
+    entityCheckDismissed: Boolean(b.entityCheckDismissed),
+    movedFrom: b.movedFrom || null,
+    taxRate: b.taxRate || '',
+    // Whether a PERSON settled the code (or the blank). What a re-read reads to
+    // know whose answer it is about to revise.
+    taxRateCleared: Boolean(b.taxRateCleared),
+    taxRateEdited: Boolean(b.taxRateEdited),
+    description: b.description || '',
+    paymentMethod: b.paymentMethod || '',
+    paid: Boolean(b.paid),
+    // The bank statement line this document will be paid against on publish
+    // (Dext's "Autofill payment") — null until a person accepts a match in the
+    // inbox's Match column. See src/lib/bankMatch.js.
+    bankMatch: b.bankMatch || null,
+    // A payment proof and the invoices it pays (src/lib/proofMatch.js): on an
+    // invoice, the proof that paid it; on a proof, the invoices it settles.
+    paidByProof: b.paidByProof || null,
+    paysBills: Array.isArray(b.paysBills) ? b.paysBills : [],
+    paysBillsAuto: Boolean(b.paysBillsAuto),
+    // A quotation paid in advance, recorded in Xero as an overpayment to the
+    // supplier, and the invoices it has been applied to; on an invoice, the
+    // prepayments it used (src/lib/prepayment.js).
+    prepayment: b.prepayment || null,
+    // The Xero transaction this document was sent to (src/lib/paperworkMatch.js).
+    paperworkMatch: b.paperworkMatch || null,
+    prepaymentsApplied: Array.isArray(b.prepaymentsApplied) ? b.prepaymentsApplied : [],
+    customer: b.customer || '',
+    project: b.project || '',
+    project2: b.project2 || '',
+    cardLast4: b.cardLast4 || '',
+    // A Mileage document's own two figures; its total is derived from them
+    // (src/lib/mileage.js). Zero on every ordinary document.
+    distanceKm: Number(b.distanceKm) || 0,
+    mileageRate: Number(b.mileageRate) || 0,
+    note: b.note || '',
+    // The message this document arrived in, when it came by email. Null for an
+    // upload, which is what the Email tab reads to know it has nothing to show.
+    email: b.email || null,
+    // The WhatsApp message it arrived in, for a document sent into a bill
+    // collection group. Null for anything else, which is what the WhatsApp tab
+    // reads to know it has nothing to show.
+    whatsapp: b.whatsapp || null,
+    // An invoice that arrived as a LINK rather than a file, and where the fetch
+    // got to: 'awaiting_trust' is the document in the inbox ASKING whether its
+    // sender may be followed, and it is what the row's badge and the page's
+    // banner read. Null on everything else.
+    emailLink: b.emailLink || null,
+    // The file is the server's text-only copy of the email; the page redraws it.
+    fileIsTextEmail: Boolean(b.fileIsTextEmail),
+    // The Google Drive file it was, for a document saved into a connected
+    // folder: which folder, and who put it there. Null on everything else,
+    // which is what keeps the Drive tab off a document that has nothing to
+    // show in it.
+    drive: b.drive || null,
+    dueDate: b.dueDate || '',
+    // Completed on the way in, so a row stored before the server did it — a net
+    // with no total — reads as what it is worth rather than as nothing. The
+    // grid would otherwise total it at 0.00 and report the document "out by"
+    // its own amount.
+    lineItems: completeLines(Array.isArray(b.lineItems) ? b.lineItems : []),
+    hasFile: Boolean(b.hasFile),
+    contentType: b.contentType || '',
+    // Xero provenance (set once published through the cyworkspace relay).
+    // Duplicate detection, as recorded on the document by the server.
+    duplicateOfId: b.duplicateOfId || '',
+    duplicateType: b.duplicateType || '',
+    duplicateDismissed: Boolean(b.duplicateDismissed),
+    notMergeWith: Array.isArray(b.notMergeWith) ? b.notMergeWith : [],
+    xeroInvoiceId: b.xeroInvoiceId || '',
+    // What it went up as: a bill (ACCPAY) or a credit note (ACCPAYCREDIT). The
+    // two live under different pages in Xero, so the link needs to know.
+    xeroDocType: b.xeroDocType || '',
+    xeroTenantName: b.xeroTenantName || '',
+    xeroPostedAt: b.xeroPostedAt || '',
+    // What Xero says about the published bill, read back on its invoice
+    // webhook. Read-only here, and nothing to do with `paid` above — see
+    // src/lib/xeroPaidStatus.js for why those are two different questions.
+    xeroStatus: b.xeroStatus || '',
+    xeroPaidDate: b.xeroPaidDate || '',
+    xeroPaymentRef: b.xeroPaymentRef || '',
+  };
+}
+
+// How a document is NAMED and ADDRESSED lives in a pure leaf (itemId.js),
+// because the claim PDF's import graph has to be loadable by the SERVER as
+// well as the browser — it builds the same PDF behind a signed link, and this
+// module pulls in React, the org store and the supplier list. Re-exported so
+// every existing caller is unchanged.
+export { displayItemId, itemNumber, costPath, salesPath, docPath, claimAttachmentUrl, costFileUrl } from '@/lib/itemId';
+// Imported as well as re-exported: `export … from` re-publishes a name without
+// binding it locally, and this module calls displayItemId itself.
+import { displayItemId } from '@/lib/itemId';
+
+// Which document a URL key names, out of a list of them.
+//
+// Answering per-document is not enough: the ASSIGNED number is unique but the
+// DERIVED one is not, so a scan that accepts the first document to answer by
+// either rule hands back a document that merely shares a second with the one
+// whose number was asked for. Two passes, so an exact answer always beats a
+// derived one no matter what order the list is in. Mirrors `byItemId` in the
+// server's store.ts, which is the authority — where two derive the same number
+// the oldest wins there too.
+export function findByItemKey(list, key) {
+  const k = String(key ?? '');
+  if (!k) return null;
+  const rows = Array.isArray(list) ? list : [];
+  const exact = rows.find((r) => String(r?.displayId || '') === k || String(r?.id ?? '') === k);
+  if (exact) return exact;
+  return rows
+    .filter((r) => displayItemId(r?.id) === k)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)))[0] ?? null;
+}
+
+// Does a document answer to this URL key? Links now carry the item id, but the
+// internal id still resolves it — older bookmarks hold one, and an expense
+// claim's line item stores one as its `itemId`.
+export function isItemKey(docOrId, key) {
+  const doc = docOrId && typeof docOrId === 'object' ? docOrId : null;
+  const a = String((doc ? doc.id : docOrId) ?? '');
+  const b = String(key ?? '');
+  if (!b) return false;
+  // The assigned number first; the derived one still answers, so a link made
+  // before a document was renumbered opens the same page it always did.
+  if (doc?.displayId && doc.displayId === b) return true;
+  return a === b || displayItemId(a) === b;
+}
+
+// URL that streams a persisted bill's original file from the server.
+export function billFileUrl(id) {
+  return `/api/costs/bills/${id}/file`;
+}
+
+// Share links for an EXPORT's document links — an exported CSV or a claim PDF
+// is read outside CYBills, by an accountant or an approver with no sign-in
+// here, so a plain file URL would just bounce them to the login page. The
+// server signs one short-lived link per document, and only for documents this
+// caller can already open in an entity that allows sharing (Business settings
+// -> Exports -> Image sharing). Returns { id: url }; ids it won't share are
+// simply absent, so the export writes no link for them.
+export async function fetchShareLinks(ids) {
+  const wanted = [...new Set((ids || []).map((v) => String(v ?? '')).filter(Boolean))];
+  if (!wanted.length) return {};
+  try {
+    const res = await fetch('/api/costs/share-links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+      body: JSON.stringify({ ids: wanted }),
+    });
+    if (!res.ok) return {};
+    const data = await res.json();
+    return data?.links && typeof data.links === 'object' ? data.links : {};
+  } catch {
+    return {};
+  }
+}
+
+// The suppliers this entity's own documents name, for the pickers. Kept here
+// rather than in each page because two of them ask (the document's Supplier
+// field and the Suppliers list) and a bridge entity has no Xero contacts to
+// fall back on. Never throws: an unreachable server yields no options, and the
+// field stays free text.
+export function useDocumentSuppliers() {
+  const [names, setNames] = useState([]);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetchBills()
+        .then((bills) => {
+          if (live) setNames(supplierNamesFromDocs(bills.filter((b) => b.kind !== 'sales')));
+        })
+        .catch(() => {});
+    load();
+    window.addEventListener(BILLS_CHANGED_EVENT, load);
+    window.addEventListener(ORGANISATION_EVENT, load);
+    return () => {
+      live = false;
+      window.removeEventListener(BILLS_CHANGED_EVENT, load);
+      window.removeEventListener(ORGANISATION_EVENT, load);
+    };
+  }, []);
+  return names;
+}
+
+// Whether a bill has a stored file (+ its type), resolved globally by id — works
+// even when the bill sits outside the active org's book (e.g. a claim item).
+export async function fetchBillFileMeta(id) {
+  try {
+    const res = await fetch(`/api/costs/bills/${id}/file-meta`, { headers: orgHeaders() });
+    if (!res.ok) return { hasFile: false };
+    return await res.json();
+  } catch {
+    return { hasFile: false };
+  }
+}
+
+// One bill by id, with a global fallback so claim line items resolve regardless
+// of which org's book the document lives in. Returns null when truly absent.
+// Which entity a document belongs to, for the case where it isn't in the list
+// this entity shows. Mirrors whereIsClaim: null both when there is no such
+// document and when it is in a book this person may not open — the server
+// refuses those alike, so neither can be told apart from here, which is the
+// point.
+export async function whereIsBill(id) {
+  try {
+    const res = await fetch(`/api/costs/bills/${encodeURIComponent(id)}/where`, { headers: orgHeaders() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchBillById(id) {
+  try {
+    const res = await fetch(`/api/costs/bills/${id}`, { headers: orgHeaders() });
+    if (!res.ok) return null;
+    const { bill } = await res.json();
+    return bill ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Attach/replace the original file on an existing bill. Returns the updated
+// bill; throws on failure.
+export async function uploadBillFile(id, fileBase64, mediaType) {
+  const res = await fetch(`/api/costs/bills/${id}/file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ fileBase64, mediaType }),
+  });
+  if (!res.ok) throw new Error('attach_failed');
+  return res.json();
+}
+
+// Update an existing bill's editable fields / workflow status. Returns the
+// updated bill; throws on failure.
+export async function updateBill(id, patch) {
+  const res = await fetch(`/api/costs/bills/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error('update_failed');
+  return res.json();
+}
+
+// A payment proof and the invoices it pays, seen from either side. For a proof:
+// `{ kind: 'proof', applied, auto, matches, candidates }`; for anything else:
+// `{ kind: 'invoice', paidBy, offers }`. Null when it cannot be asked.
+export async function fetchProofMatches(id) {
+  try {
+    const res = await fetch(`/api/costs/bills/${id}/proof`, { headers: orgHeaders() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function proofAct(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.message || 'That could not be saved.');
+  return data;
+}
+
+// Mark these invoices paid by this proof. The server holds the set to adding up
+// to the proof exactly, and refuses it in its own words otherwise.
+export const applyPaymentProof = (proofId, billIds) =>
+  proofAct(`/api/costs/bills/${proofId}/apply-proof`, { billIds });
+
+// Undo a proof's match: its invoices go back to what Paid said before.
+export const unapplyPaymentProof = (proofId) => proofAct(`/api/costs/bills/${proofId}/unapply-proof`);
+
+// Put a misfiled document in the entity it is actually addressed to. Returns
+// { ok, orgName } on success, or { ok: false, message } carrying the server's
+// own words — every refusal is a state the reviewer has to undo first
+// (published, on a claim, merged), so the message is the instruction.
+// A document that has just been moved has never been coded against the entity it
+// has arrived in: its category, tax code and tracking options were left behind
+// on purpose, because they were names in the chart it has left. So it is read
+// again on arrival — and the note has to survive a page LOAD, because moving
+// reloads the app into the new entity (every store and request in flight is
+// scoped to the old one) and a reload aborts a read in progress. sessionStorage,
+// not the job store, for exactly that reason.
+const READ_AFTER_MOVE = 'cybills.read-after-move.v1';
+
+// Does this document owe itself a read? Answers once — taking the note is what
+// stops a refresh from re-reading, and paying for, the same document again.
+export function takeReadAfterMove(id) {
+  try {
+    if (sessionStorage.getItem(READ_AFTER_MOVE) !== String(id)) return false;
+    sessionStorage.removeItem(READ_AFTER_MOVE);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function moveBillToEntity(id, orgId) {
+  const res = await fetch(`/api/costs/bills/${id}/move-entity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ orgId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, message: body.message || 'This document could not be moved.' };
+  try {
+    sessionStorage.setItem(READ_AFTER_MOVE, String(id));
+  } catch {
+    // No sessionStorage (a locked-down browser): the move still stands, and the
+    // reviewer codes it by hand or presses Re-read. Never a reason to refuse.
+  }
+  notifyBillsChanged();
+  return { ok: true, orgName: body.orgName || '', orgId: body.orgId || orgId };
+}
+
+// Move a document between the Costs and Sales workspaces — a sales invoice
+// uploaded on the Costs tab, or a supplier's bill dropped into Sales.
+//
+// The account code and the tax code do NOT come across, and the server says so
+// in the reply: a purchase code and a supply code are different vocabularies,
+// and carried over they would still post — under a code recording the opposite
+// side of the ledger. The document lands in To review, which is what it is.
+//
+// Throws with the server's own message, so the four refusals (published, on a
+// claim, merged away, already there) reach the reviewer as the instruction for
+// undoing them.
+export async function moveBillToWorkspace(id, kind) {
+  const res = await fetch(`/api/costs/bills/${encodeURIComponent(id)}/move-workspace`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ kind }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.message || 'That document could not be moved.');
+  notifyBillsChanged();
+  return body;
+}
+
+// Permanently delete a bill: removes the record AND reclaims its stored file
+// from Cloudflare R2 (or local disk). Destructive — callers confirm first. This
+// is distinct from a soft delete/archive (updateBill with a status change),
+// which keeps the row and its file so it can be restored.
+export async function deleteBill(id) {
+  const res = await fetch(`/api/costs/bills/${id}`, {
+    method: 'DELETE',
+    headers: orgHeaders(),
+  });
+  if (!res.ok) throw new Error('delete_failed');
+  return res.json();
+}
+
+// Human summary of a duplicate match, e.g. for a warning banner.
+export function describeDuplicate(dup) {
+  if (!dup) return '';
+  const { type, bill } = dup;
+  const who = bill.createdBy ? ` by ${bill.createdBy.split('@')[0]}` : '';
+  const when = bill.createdAt ? new Date(bill.createdAt).toLocaleDateString() : '';
+  const label =
+    type === 'exact_file'
+      ? 'This exact file was already uploaded'
+      : type === 'same_invoice'
+        ? `Invoice ${bill.invoiceNumber || ''} from ${bill.supplier} was already added`.trim()
+        : `A ${bill.currency} ${bill.total} ${bill.supplier} document from ${bill.date} was already added`;
+  return `${label}${when ? ` on ${when}` : ''}${who}.`;
+}
+
+// Why a document was flagged, in the reviewer's terms — one wording, shared by
+// the document page's banner and the side-by-side review.
+export const DUPLICATE_REASON = {
+  exact_file: 'The identical file has already been submitted.',
+  same_invoice: 'The same supplier and document reference, for the same amount, is already on file.',
+  likely_duplicate: 'The same supplier, amount and date is already on file.',
+};
+
+// Fetch one document from a Dext export's Image link, through the server.
+//
+// Those links carry no CORS headers, so the browser is refused the bytes even
+// though the URL is right there in the CSV — the server has no such
+// restriction. It only follows Dext's own image host; anything else is refused
+// there rather than here. Returns null when it can't be had, so a migration
+// carries on and reports which documents arrived without their file.
+export async function fetchDextImage(url) {
+  try {
+    const res = await fetch('/api/costs/import/fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.base64 ? { base64: data.base64, contentType: data.contentType || '' } : null;
+  } catch {
+    return null;
+  }
+}
