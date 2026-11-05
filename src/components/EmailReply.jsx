@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CornerUpLeft, Loader2, Send } from 'lucide-react';
 import { sendReply } from '@/lib/mailbox';
+import { useAuth } from '@/lib/auth';
 
 // Answering a mail from the page it is being read on.
 //
@@ -34,8 +35,16 @@ export default function EmailReply({ target, replies = [], replyAddress = '', re
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  // The person writing is copied by default: the sender's answer comes back to
+  // the CYBills address, and a mirrored row tells nobody anything has happened.
+  const { user } = useAuth();
+  const myAddress = String(user?.email || '').trim();
+
   const start = () => {
     setTo(replyAddress);
+    const copyMe = myAddress && myAddress.toLowerCase() !== String(replyAddress || '').trim().toLowerCase();
+    setCc(copyMe ? myAddress : '');
+    setShowCc(Boolean(copyMe));
     setError('');
     setOpen(true);
   };

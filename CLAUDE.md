@@ -2615,7 +2615,9 @@ that the sender was told something. Business Admin like the rest of the router
 (the document page draws nothing for anybody else), an internal
 `@cybills.local` identity is never a recipient, a recipient that is not an
 address is refused rather than dropped, and another entity's message is a 404.
-With no mailbox connected the button is there and disabled, saying so. Covered
+**Cc starts as the person writing** (Cze, 5 Nov 2026; `useAuth().user.email`,
+skipped when it is the To address), shown and editable, so they clear it if they
+do not want the copy. With no mailbox connected the button is there and disabled, saying so. Covered
 by `npm test` in `server/` (`test/email-reply.test.mts`, over real HTTP in and a
 real SMTP conversation out, so what is asserted is the mail that leaves).
 
