@@ -266,7 +266,7 @@ export async function setDocumentFiles({ billId, keys, envelope }) {
 // Drawn HERE where the mail's HTML was kept: laying markup out takes a
 // browser, and the server's own page is the message's text. Anything that
 // goes wrong on the way falls back to that page rather than to no paper.
-async function drawEmailPdf({ billId, messageId, envelope }) {
+export async function drawEmailPdf({ billId, messageId, envelope }) {
   let pdf = '';
   try {
     const html = await fetchMailBody({ billId, messageId });

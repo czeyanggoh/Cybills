@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FileText, Loader2 } from 'lucide-react';
-import { fetchDocumentFiles, setDocumentFiles } from '@/lib/mailbox';
+import { fetchDocumentFiles, setDocumentFiles, drawEmailPdf } from '@/lib/mailbox';
+import { billFileUrl } from '@/lib/bills';
 
 // The Files tab: which files stand as this document's proof.
 //
@@ -15,6 +16,35 @@ export default function DocumentFiles({ billId, envelope, onChanged }) {
   const [picked, setPicked] = useState([]); // keys, in the order they were ticked
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
+  // The file being looked at: { key, name, url, image }. A blob URL for the
+  // email (drawn here), otherwise the stored file's own URL.
+  const [preview, setPreview] = useState(null);
+  const [previewBusy, setPreviewBusy] = useState('');
+
+  useEffect(() => () => preview?.blob && URL.revokeObjectURL(preview.url), [preview]);
+
+  async function look(f) {
+    if (preview?.key === f.key) return setPreview(null);
+    setPreviewBusy(f.key);
+    try {
+      if (f.key === 'email') {
+        const b64 = await drawEmailPdf({ billId, envelope });
+        if (b64) {
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          setPreview({ key: f.key, name: f.fileName, url: URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })), blob: true });
+        } else {
+          setPreview({ key: f.key, name: f.fileName, url: `/api/email/documents/${encodeURIComponent(billId)}/email.pdf` });
+        }
+      } else {
+        const id = f.key === 'current' ? billId : f.key.slice(5);
+        setPreview({ key: f.key, name: f.fileName, url: billFileUrl(id), image: /^image\//.test(f.contentType || '') });
+      }
+    } catch (err) {
+      setNote(err.message);
+    } finally {
+      setPreviewBusy('');
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -75,6 +105,16 @@ export default function DocumentFiles({ billId, envelope, onChanged }) {
                   <span className="block truncate font-medium">{f.fileName}</span>
                   <span className="block text-xs text-muted-foreground">{f.label}</span>
                 </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    look(f);
+                  }}
+                  className="shrink-0 text-xs font-medium text-emerald-600 hover:underline"
+                >
+                  {previewBusy === f.key ? 'Opening…' : preview?.key === f.key ? 'Hide' : 'Preview'}
+                </button>
                 {n > 0 && picked.length > 1 && (
                   <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{n}</span>
                 )}
@@ -83,6 +123,16 @@ export default function DocumentFiles({ billId, envelope, onChanged }) {
           );
         })}
       </ul>
+      {preview && (
+        <div className="overflow-hidden rounded-md border">
+          <p className="truncate border-b bg-muted/40 px-3 py-1.5 text-xs font-medium">{preview.name}</p>
+          {preview.image ? (
+            <img src={preview.url} alt={preview.name} className="mx-auto max-h-[70vh] w-full object-contain" />
+          ) : (
+            <iframe src={preview.url} title={preview.name} className="h-[70vh] w-full" />
+          )}
+        </div>
+      )}
       {state.inXero ? (
         <p className="text-xs text-muted-foreground">
           This document is already in Xero with its file, so the file can’t be changed here.
