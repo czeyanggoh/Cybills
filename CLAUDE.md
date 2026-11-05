@@ -2615,10 +2615,16 @@ that the sender was told something. Business Admin like the rest of the router
 (the document page draws nothing for anybody else), an internal
 `@cybills.local` identity is never a recipient, a recipient that is not an
 address is refused rather than dropped, and another entity's message is a 404.
-**A wrong file can be swapped for the email** (Cze, 5 Nov 2026: a booking's terms and conditions
-attached instead of the confirmation): "Replace the file with this email as a PDF" under the message
-sends `replace: true` to the save-as-PDF route, which stores the email first and only then deletes the
-old file. Refused once the document is in Xero (`in_xero`).
+**The Files tab chooses what proves a document** (Cze, 5 Nov 2026: a booking's terms and conditions
+were attached instead of the confirmation). `DocumentFiles.jsx`, on documents that arrived by email
+(`GET/POST /api/email/documents/:billId/files`, `docFiles.ts`): it lists the file attached now, the
+email itself, and the other documents the SAME mail filed (a booking's e-ticket arrives beside its
+terms). Ticked in order; one is used as it is, several are joined into one PDF (PDFs page for page, a
+PNG/JPEG on its own A4 page; anything else is refused by name, never dropped). The email is drawn in the
+browser (`renderMailPdf`) as for Save as PDF. The new file is stored and attached first, and only then
+is the old one deleted, and not while another document holds the same stored file. Refused once the
+document is in Xero (`in_xero`). It changes this document only: the other documents keep their files.
+`npm test` in `server/` (`test/document-files.test.mts`).
 
 **The subject ends with the item's number** (`[Item #1234]`, the document's display id; Cze, 5 Nov 2026): one mail can be sent in twice, and
 a reply with only "Re: …" cannot be told from the other's. Not added twice on a second reply.

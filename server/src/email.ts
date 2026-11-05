@@ -34,11 +34,13 @@ import { readSetting } from './settings.js';
 import { mailById, mailForOrg, mailFootprint, mailUnfiled, trustAddressOf, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
 import { followMessageLinks, saveEmailAsPdf } from './inbound.js';
-import { htmlToText } from './emailPdf.js';
-import { deleteBillFile } from './storage.js';
+import { createHash } from 'node:crypto';
+import { htmlToText, emailAsPdf } from './emailPdf.js';
+import { deleteBillFile, getBillFile, putBillFile } from './storage.js';
+import { combineToPdf, readAll, CombineError, type Part } from './docFiles.js';
 import { readMailBody, measureMailBodies } from './mailBody.js';
 import { n8nEnabled } from './n8n.js';
-import { getBillById, type Bill } from './store.js';
+import { getBillById, attachFetchedFile, listBills, type Bill } from './store.js';
 import { getOrganisation } from './organisations.js';
 import { isInternalAddress } from './users.js';
 import { isMailConnected } from './mailAccount.js';
@@ -671,6 +673,130 @@ async function sendBody(req: Request, res: Response, about: { messageId?: string
 
 // GET /api/email/documents/:billId/body — the mail a document arrived in.
 emailRouter.get('/documents/:billId/body', (req, res) => sendBody(req, res, { billId: String(req.params.billId ?? '') }));
+
+// --- Files: which of a mail's files stand as the document's proof -------------
+//
+// GET lists what could: the file attached now, the email itself, and the
+// other documents the same mail filed (its other attachments — a booking's
+// terms and conditions arrive beside its e-ticket). POST takes the ones picked,
+// in order, and makes them the document's one file: as it is for a single
+// PDF, joined into one PDF for several. The file it replaces is deleted only
+// after the new one is stored, and not while another document holds it.
+type FileChoice = { key: string; label: string; fileName: string; contentType: string; current?: boolean };
+
+async function filesAbout(req: Request, res: Response) {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
+  if (!about?.bill) return res.status(404).json({ error: 'unknown_document' });
+  const scope = dataScopeForOrg(orgId);
+  const bill = about.bill;
+  const files: FileChoice[] = [];
+  if (bill.storageKey) {
+    files.push({ key: 'current', label: 'Attached to this document now', fileName: bill.fileName || 'file', contentType: bill.contentType || '', current: true });
+  }
+  files.push({ key: 'email', label: 'This email, saved as a PDF', fileName: `${(about.envelope.subject || 'Email').slice(0, 60)}.pdf`, contentType: 'application/pdf' });
+  for (const d of about.message?.documents ?? []) {
+    if (d.billId === bill.id) continue;
+    const other = getBillById(scope, d.billId);
+    if (!other?.storageKey) continue;
+    files.push({
+      key: `bill:${other.id}`,
+      label: `From the same email — item #${other.displayId || other.id}`,
+      fileName: other.fileName || d.fileName,
+      contentType: other.contentType || '',
+    });
+  }
+  res.json({ files, inXero: Boolean(bill.xeroInvoiceId) });
+}
+
+async function setFiles(req: Request, res: Response) {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
+  if (!about?.bill) return res.status(404).json({ error: 'unknown_document' });
+  const scope = dataScopeForOrg(orgId);
+  const bill = about.bill;
+  if (bill.xeroInvoiceId) {
+    return res.status(409).json({ error: 'in_xero', message: 'This document is already in Xero with its file, so the file cannot be changed here.' });
+  }
+  const keys: string[] = Array.isArray(req.body?.keys) ? [...new Set<string>(req.body.keys.map(String))] : [];
+  if (!keys.length) return res.status(422).json({ error: 'nothing_selected', message: 'Choose at least one file.' });
+  if (keys.length > 10) return res.status(422).json({ error: 'too_many', message: 'Combine at most ten files at once.' });
+  if (keys.length === 1 && keys[0] === 'current') {
+    return res.status(409).json({ error: 'no_change', message: 'That is the file already attached.' });
+  }
+
+  const parts: Part[] = [];
+  for (const key of keys) {
+    let stored: Bill | null = null;
+    if (key === 'current') stored = bill;
+    else if (key.startsWith('bill:')) {
+      const id = key.slice(5);
+      // Only a document this very mail filed: the picker never offers another.
+      if (!(about.message?.documents ?? []).some((d) => d.billId === id)) {
+        return res.status(422).json({ error: 'unknown_file', message: 'One of those files is not part of this email.' });
+      }
+      stored = getBillById(scope, id);
+    } else if (key !== 'email') {
+      return res.status(422).json({ error: 'unknown_file', message: 'One of those files is not available.' });
+    }
+    if (key === 'email') {
+      let bytes: Buffer;
+      if (typeof req.body?.pdf === 'string' && req.body.pdf) {
+        bytes = Buffer.from(req.body.pdf, 'base64');
+        if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-' || bytes.length > 15 * 1024 * 1024) {
+          return res.status(422).json({ error: 'not_a_pdf', message: 'That is not a PDF this can attach.' });
+        }
+      } else {
+        const env0 = about.envelope;
+        const when = new Date(env0.date);
+        const cut = env0.text.length >= 3900 || !env0.text.trim();
+        const html = cut ? await readMailBody(about.message) : '';
+        bytes = await emailAsPdf({
+          from: env0.from,
+          to: env0.to,
+          subject: env0.subject,
+          date: Number.isNaN(when.getTime()) ? env0.date : when.toLocaleString('en-SG', { dateStyle: 'full', timeStyle: 'short', timeZone: env.PRACTICE_TIMEZONE }),
+          text: html ? htmlToText(html) : env0.text,
+          caption: `Email received at ${env0.to || 'CYBills'}, saved as a PDF by CYBills.`,
+        });
+      }
+      parts.push({ name: 'the email', bytes });
+      continue;
+    }
+    if (!stored?.storageKey) return res.status(422).json({ error: 'no_file', message: 'One of those files is no longer stored.' });
+    const obj = await getBillFile(stored.storageKey, stored.contentType);
+    if (!obj) return res.status(422).json({ error: 'no_file', message: `${stored.fileName || 'A file'} could not be read from storage.` });
+    parts.push({ name: stored.fileName || 'a file', bytes: await readAll(obj.body) });
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = await combineToPdf(parts);
+  } catch (err) {
+    if (err instanceof CombineError) return res.status(422).json({ error: 'cannot_combine', message: err.message });
+    throw err;
+  }
+
+  const fileHash = createHash('sha256').update(bytes).digest('hex');
+  const fileName = `Item ${bill.displayId || bill.id}${keys.length > 1 ? ' combined' : ''}.pdf`;
+  const put = await putBillFile(scope, fileHash, 'application/pdf', bytes).catch(() => null);
+  if (!put?.storageKey) return res.status(502).json({ error: 'not_saved', message: 'The PDF was made but could not be stored.' });
+
+  const oldKey = bill.storageKey || '';
+  const attached = attachFetchedFile(scope, bill.id, { fileHash, fileName, storageKey: put.storageKey, contentType: put.contentType }, false);
+  if (!attached) return res.status(404).json({ error: 'unknown_document' });
+  if (oldKey && oldKey !== put.storageKey && !listBills(scope).some((b) => b.id !== bill.id && b.storageKey === oldKey)) {
+    await deleteBillFile(oldKey).catch(() => {});
+  }
+  res.json({ ok: true, fileName, files: parts.length });
+}
+
+emailRouter.get('/documents/:billId/files', filesAbout);
+emailRouter.post('/documents/:billId/files', setFiles);
 
 // GET /api/email/messages/:id/body — a mail on the Email tab.
 emailRouter.get('/messages/:id/body', (req, res) => sendBody(req, res, { messageId: String(req.params.id ?? '') }));

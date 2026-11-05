@@ -240,9 +240,33 @@ export async function saveEmailAsPdf({ billId, messageId, envelope, replace = fa
   const path = billId
     ? `/api/email/documents/${encodeURIComponent(billId)}/pdf`
     : `/api/email/messages/${encodeURIComponent(messageId)}/pdf`;
-  // Drawn HERE where the mail's HTML was kept: laying markup out takes a
-  // browser, and the server's own page is the message's text. Anything that
-  // goes wrong on the way falls back to that page rather than to no paper.
+  const pdf = await drawEmailPdf({ billId, messageId, envelope });
+  return json(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ ...(pdf ? { pdf } : {}), ...(replace ? { replace: true } : {}) }),
+  });
+}
+
+/** What the Files tab offers for a document, and `inXero` when it is locked. */
+export async function fetchDocumentFiles(billId) {
+  return json(`/api/email/documents/${encodeURIComponent(billId)}/files`, { headers: orgHeaders() });
+}
+
+/** Make the chosen files (`keys`, in order) the document's one file. */
+export async function setDocumentFiles({ billId, keys, envelope }) {
+  const pdf = keys.includes('email') ? await drawEmailPdf({ billId, envelope }) : '';
+  return json(`/api/email/documents/${encodeURIComponent(billId)}/files`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ keys, ...(pdf ? { pdf } : {}) }),
+  });
+}
+
+// Drawn HERE where the mail's HTML was kept: laying markup out takes a
+// browser, and the server's own page is the message's text. Anything that
+// goes wrong on the way falls back to that page rather than to no paper.
+async function drawEmailPdf({ billId, messageId, envelope }) {
   let pdf = '';
   try {
     const html = await fetchMailBody({ billId, messageId });
@@ -266,11 +290,7 @@ export async function saveEmailAsPdf({ billId, messageId, envelope, replace = fa
   } catch {
     pdf = '';
   }
-  return json(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
-    body: JSON.stringify({ ...(pdf ? { pdf } : {}), ...(replace ? { replace: true } : {}) }),
-  });
+  return pdf;
 }
 
 /**
