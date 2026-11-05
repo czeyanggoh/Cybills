@@ -3168,6 +3168,27 @@ Publish anyway?`
                       </span>
                     </div>
                   )}
+                  {/* The wrong file is attached (a booking's terms and
+                      conditions, say) and the email is the real proof: swap
+                      it. Not once the document is in Xero. */}
+                  {mailReplies.available && doc.hasFile && !doc.xeroInvoiceId && (
+                    <div className="mt-4 flex flex-wrap items-center gap-3 border-t pt-4">
+                      <button
+                        type="button"
+                        disabled={Boolean(linkBusy)}
+                        onClick={() => {
+                          if (!window.confirm('Remove the attached file and attach this email, saved as a PDF, in its place?')) return;
+                          runLink('pdf', () => saveEmailAsPdf({ billId: doc.id, envelope: doc.email, replace: true }));
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted/60 disabled:opacity-60"
+                      >
+                        <FileText className="h-3.5 w-3.5" /> {linkBusy === 'pdf' ? 'Saving…' : 'Replace the file with this email as a PDF'}
+                      </button>
+                      <span className="text-xs text-muted-foreground">
+                        {linkNote || 'Deletes the attached file and uses this email as the document’s proof.'}
+                      </span>
+                    </div>
+                  )}
                   {mailReplies.available && (
                     <div className="mt-4 border-t pt-4">
                       <EmailReply

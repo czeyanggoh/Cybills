@@ -35,6 +35,7 @@ import { mailById, mailForOrg, mailFootprint, mailUnfiled, trustAddressOf, type 
 import { isTrustedSender, normaliseSender, trustSender, trustedSendersFor, untrustSender } from './trustedSenders.js';
 import { followMessageLinks, saveEmailAsPdf } from './inbound.js';
 import { htmlToText } from './emailPdf.js';
+import { deleteBillFile } from './storage.js';
 import { readMailBody, measureMailBodies } from './mailBody.js';
 import { n8nEnabled } from './n8n.js';
 import { getBillById, type Bill } from './store.js';
@@ -596,8 +597,16 @@ async function saveAsPdf(req: Request, res: Response, about: { messageId?: strin
   // The row the PDF lands on: the document it was pressed from, else the one
   // standing in the inbox for this mail. A mail with neither gets a new one.
   const fill = found.bill || (message?.pendingBillId ? getBillById(scope, message.pendingBillId) : null);
-  if (fill?.storageKey) {
+  // `replace`: a person asking to swap the wrong file (a booking's terms and
+  // conditions) for the email itself. Never once the document is in Xero, where
+  // the old file has already gone as its attachment.
+  const replace = req.body?.replace === true;
+  const oldKey = fill?.storageKey || '';
+  if (oldKey && !replace) {
     return res.status(409).json({ error: 'has_file', message: 'This document already has a file attached.' });
+  }
+  if (oldKey && fill?.xeroInvoiceId) {
+    return res.status(409).json({ error: 'in_xero', message: 'This document is already in Xero with its file, so the file cannot be swapped here.' });
   }
   if (!fill && message?.documents.length) {
     return res.status(409).json({ error: 'already_filed', message: 'This mail has already been filed as a document.' });
@@ -642,6 +651,9 @@ async function saveAsPdf(req: Request, res: Response, about: { messageId?: strin
     rendered,
   });
   if (!out.ok) return res.status(502).json({ error: 'not_saved', message: out.note });
+  // The wrong file is removed only once the email is stored in its place.
+  const nowKey = fill?.id ? getBillById(scope, fill.id)?.storageKey : '';
+  if (oldKey && nowKey && nowKey !== oldKey) await deleteBillFile(oldKey).catch(() => {});
   res.json({ ok: true, note: out.note, document: out.document, reading: out.reading });
 }
 
