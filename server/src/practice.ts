@@ -1,3 +1,4 @@
+import { planStateFor } from './plan.js';
 import { Router, type Request, type Response } from 'express';
 import { env } from './env.js';
 import { readSession } from './auth.js';
@@ -229,6 +230,9 @@ practiceRouter.get('/clients', async (req, res) => {
         kind: o.kind ?? 'xero',
         parentOrgId: o.parentOrgId ?? '',
         isPrimary: o.id === primary,
+        // The subscription (a monthly document limit) and this month's count.
+        // Null = a client from before subscriptions, unlimited.
+        plan: planStateFor(ws, o.id),
         createdAt: o.createdAt,
         // Who on the practice team works on this client — the account managers,
         // read straight off client access rather than kept as a second list.

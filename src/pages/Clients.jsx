@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Building2, ExternalLink, Info, CalendarRange } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import StorageStatusCard from '@/components/StorageStatusCard';
+import PlanCell from '@/components/PlanCell';
+import { useQueryClient } from '@tanstack/react-query';
 import { useClients, formatUsd, formatTokens } from '@/lib/practiceStore';
 import {
   USAGE_RANGES,
@@ -43,6 +45,7 @@ export default function Clients() {
   // is chosen here; the dates come back resolved, in the practice's timezone.
   const [range, setRange] = useState({ key: DEFAULT_USAGE_RANGE, from: '', to: '' });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data, isLoading, error, isFetching } = useClients(range);
   // The switcher's list is what the signed-in user may actually open; a practice
   // manager can see clients here that they haven't given themselves access to.
@@ -222,6 +225,7 @@ export default function Clients() {
               <th className="px-3 py-2.5 font-medium">Name</th>
               <th className="px-3 py-2.5 font-medium">Xero organisation</th>
               <th className="px-3 py-2.5 font-medium">Account managers</th>
+              <th className="px-3 py-2.5 font-medium">Plan (docs this month)</th>
               {showToday && <th className="px-3 py-2.5 text-right font-medium">API today</th>}
               <th className="px-3 py-2.5 text-right font-medium">API · {periodLabel}</th>
               <th className="px-3 py-2.5 text-right font-medium">Email stored</th>
@@ -258,6 +262,9 @@ export default function Clients() {
                   ) : (
                     <span className="text-xs text-muted-foreground">Nobody assigned</span>
                   )}
+                </td>
+                <td className="px-3 py-3">
+                  <PlanCell client={c} onChanged={() => queryClient.invalidateQueries({ queryKey: ['practice-clients'] })} />
                 </td>
                 {showToday && (
                   <td className="px-3 py-3 text-right tabular-nums">
@@ -296,7 +303,7 @@ export default function Clients() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={showToday ? 7 : 6} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={showToday ? 8 : 7} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {error
                     ? 'Only the practice team can see the client list.'
                     : isLoading

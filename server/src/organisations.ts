@@ -26,6 +26,7 @@ import {
   INBOUND_MAIL_DOMAIN,
 } from './users.js';
 import { renameChannelsForUsers } from './waRename.js';
+import type { Plan } from './planRules.js';
 
 // Organisations = the client entities bills are published for. Each one is
 // linked to a Xero organisation (tenant) that cyworkspace holds a connection
@@ -62,9 +63,30 @@ export type Organisation = {
   // is talked to (shortCodeFor in xero.ts) rather than asked for, because it is
   // fixed for the life of the tenant.
   shortCode?: string;
+  // The subscription this entity is on (planRules.ts): a monthly document cap.
+  // Absent = a client from before subscriptions, unlimited. Set only by the
+  // practice (PUT /api/plan/:id), never by the entity's own admin.
+  plan?: Plan;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
 };
+
+// Which entity a bills-store scope belongs to. The primary entity's books are the
+// legacy workspace scope; every other entity's scope is its own id.
+export function organisationForScope(ws: string, scope: string): Organisation | undefined {
+  return load().find((o) => o.orgId === ws && dataScopeForOrg(o.id) === scope);
+}
+
+// Set (or clear, with null) an entity's plan. Returns the entity, or null when
+// it is not in this workspace.
+export function setOrganisationPlan(ws: string, id: string, plan: Plan | null): Organisation | null {
+  const organisations = load();
+  const organisation = organisations.find((o) => o.orgId === ws && o.id === id);
+  if (!organisation) return null;
+  if (plan) organisation.plan = plan; else delete organisation.plan;
+  persist(organisations);
+  return organisation;
+}
 
 // Record Xero's short code for an entity. Written once, from the first Xero
 // call that happens to be made for it — a no-op when it is already right, so

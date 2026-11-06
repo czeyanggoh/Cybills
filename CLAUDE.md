@@ -2798,6 +2798,39 @@ handed `robotRequest` (`robotRequest.ts`, shared with the Drive poller). Covered
 by `npm test` in `server/` (`test/retrieve-schedule.test.mts`: the rule at fixed
 dates, and `runDueRetrievals(now)` over real HTTP to a stub n8n).
 
+## Subscription plans: a monthly document limit, and what happens past it
+
+Cze, Nov 2026: external subscribers take CYBills at four levels (SGD a month ->
+documents a month): **39.90 -> 100, 69.90 -> 300, 99.90 -> 600, 199.90 -> 1,500**
+(`PLAN_LEVELS`, `server/src/planRules.ts`, pure). An entity's plan is
+`Organisation.plan` (`{ level, docCap, since, setBy }`); **no plan is a client from
+before subscriptions and is unlimited**. Only the practice sets it
+(`PUT /api/plan/:id`, `plan.ts`; the Plan column on Practice -> Clients,
+`PlanCell.jsx`): it is a commercial term, so a client's own admin cannot raise it.
+A custom cap (`docCap`) is the API's agreed exception; a plan with no usable cap
+is refused, never stored as unlimited.
+
+**Past the limit a document is FILED but not READ.** Nothing a client sends is
+ever refused or lost, but no model is paid for work the plan does not cover:
+`/extract`, `/extract-lines` and `/classify-type` answer `402 plan_cap_reached`
+(`refuseIfOverPlan`) and the server-side read (`readIntoBill`, which every
+emailed, WhatsApp'd, Drive and Retrieve document goes through) leaves the
+document unread with "Not read: ..." on its row. **Reading stops only when the
+plan is EXCEEDED** (`readsBlocked`: used > cap): the document that reaches the
+cap is still read. A new month, or a higher level, reads again (Re-read). Because
+the gate is on the READ, one check covers all seven roads that create a
+document; `insertBill` has no request and was deliberately left alone.
+
+**What counts** (`documentsThisMonth`, `plan.ts`): documents CREATED this month in
+the practice's month, counted from the book and not from usage rows (one
+document makes several model calls). Not counted: deleted, merged away, a Dext
+import row (a migration is not a month's work), a link placeholder that never
+got a file. Remembered per `bookRevision`. A counting fault allows the read.
+`GET /api/plan` gives the open entity its own plan and count for `PlanBanner`
+(amber from 80%, red past the limit). **Overage is not billed yet** - the count
+is there to bill from. `npm test` in `server/` (`test/plan-cap.test.mts`) pins it,
+with a clock it sets rather than the month it runs in.
+
 ## Bill collection through a Google Drive folder
 
 The third road a document travels without anybody signing in, and the same

@@ -1,3 +1,4 @@
+import { refuseIfOverPlan } from './plan.js';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { visionEnabled } from './env.js';
@@ -1061,6 +1062,7 @@ export async function runExtraction(inp: ExtractionInputs): Promise<ExtractionRe
 // ANTHROPIC_API_KEY / OPENAI_API_KEY is configured.
 extractRouter.post('/extract', async (req, res) => {
   if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+  if (refuseIfOverPlan(req, res)) return;
 
   const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
   const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
@@ -1494,6 +1496,7 @@ export async function runLineExtraction(req: Request, inp: LineExtractionInputs)
 
 extractRouter.post('/extract-lines', async (req, res) => {
   if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+  if (refuseIfOverPlan(req, res)) return;
 
   const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
   const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
@@ -1554,6 +1557,7 @@ const CLASSIFY_PROMPT =
 
 extractRouter.post('/classify-type', async (req, res) => {
   if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+  if (refuseIfOverPlan(req, res)) return;
   const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
   const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
   if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType)) {

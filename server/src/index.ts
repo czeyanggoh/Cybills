@@ -16,6 +16,7 @@ import { claimsRouter } from './claims.js';
 import { autoClaimsRouter } from './autoClaims.js';
 import { usersRouter, memberForSession, canAccessOrg } from './users.js';
 import { practiceRouter } from './practice.js';
+import { planRouter } from './plan.js';
 import { digestRouter, startDigestClock } from './digest.js';
 import { backfillPendingReplies } from './pendingReplyBackfill.js';
 import { mailRouter } from './mail.js';
@@ -218,6 +219,7 @@ app.use('/api/drive', driveRouter);
 // The practice (CYBM) itself: its colleagues, their client access, and the
 // connected-client list with what each has cost in Claude API usage.
 app.use('/api/practice', practiceRouter);
+app.use('/api/plan', planRouter);
 
 // The daily digest a colleague is emailed about their clients' paperwork still
 // waiting to be paid — the subscriptions, and the clock that sends them.

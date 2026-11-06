@@ -1,3 +1,4 @@
+import { capRefusal } from './plan.js';
 import { Router } from 'express';
 import { createHash, randomBytes } from 'node:crypto';
 import { simpleParser } from 'mailparser';
@@ -203,6 +204,13 @@ const RETRY_DELAY_MS = Number(process.env.INBOUND_READ_RETRY_MS ?? 2000);
 async function readIntoBill(req: Request, scope: string, realOrgId: string, preferred: Provider, billId: string, fileBase64: string, mediaType: string, envelope: CoveringNote | null = null): Promise<ReadEnd> {
   if (!visionEnabled) return 'failed';
   const ws = workspaceId(req);
+  // Past the plan's monthly document limit the document is FILED but not READ,
+  // and says why on the row; reading it is a click away next month.
+  const overPlan = capRefusal(ws, realOrgId);
+  if (overPlan) {
+    updateBill(scope, billId, { categoryReason: `Not read: ${overPlan}` });
+    return 'failed';
+  }
   let inputs: Awaited<ReturnType<typeof extractionInputsFor>>;
   try {
     inputs = await extractionInputsFor(ws, realOrgId);

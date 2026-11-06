@@ -199,3 +199,28 @@ export function formatTokens(value) {
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
   return `${(n / 1_000_000).toFixed(2)}M`;
 }
+
+// The open entity's own subscription plan and this month's document count, for
+// the banner. Null plan = a client from before subscriptions, unlimited.
+export function useOwnPlan(enabled = true) {
+  return useQuery({
+    queryKey: ['own-plan'],
+    queryFn: () => getJson('/api/plan'),
+    enabled,
+    retry: false,
+    staleTime: 2 * 60_000,
+    refetchInterval: 10 * 60_000,
+  });
+}
+
+// Set (or clear, with level '') a client's plan. The practice's alone; the server enforces it.
+export async function setClientPlan(id, level) {
+  const res = await fetch(`/api/plan/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(level ? { level } : { clear: true }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.message || body.error || `Request failed (${res.status})`);
+  return body;
+}
