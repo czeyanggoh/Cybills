@@ -54,7 +54,7 @@ export default function PlanCell({ client, onChanged }) {
           aria-label={`Plan for ${client.name}`}
           className="h-7 rounded-md border bg-background px-1.5 text-xs"
         >
-          <option value="">None · included in CYBM fee (unlimited)</option>
+          <option value="">None (unlimited)</option>
           {!known && <option value={plan.level}>{plan.level} · custom {plan.cap}</option>}
           {LEVELS.map((l) => (
             <option key={l.level} value={l.level}>{l.level} · {l.cap} docs</option>
