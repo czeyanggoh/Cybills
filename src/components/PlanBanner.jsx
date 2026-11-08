@@ -12,8 +12,11 @@ export default function PlanBanner() {
   const plan = data?.plan;
   if (!plan || dismissed || plan.state === 'ok') return null;
 
-  const over = plan.state === 'over';
-  const text = over
+  const suspended = plan.state === 'suspended';
+  const over = plan.state === 'over' || suspended;
+  const text = suspended
+    ? 'The free trial or subscription for this organisation has ended. New documents are filed but not read. Choose a plan and add your payment details in CYWorkspace (Plan & billing) to carry on.'
+    : over
     ? `This month's limit of ${plan.cap} documents has been passed (${plan.used}). New documents are filed but not read until next month, or until the plan is upgraded. Contact CYBM to upgrade.`
     : plan.state === 'at'
       ? `This month's limit of ${plan.cap} documents has been reached. The next document will be filed but not read.`

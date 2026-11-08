@@ -234,3 +234,13 @@ Answers `{ok, entity_id, entity_name, entity_created, status, error?}` with
 `status` one of `invited` (set-password email sent), `linked` (an existing
 person, or a practice colleague, gained access), `already_member`, or
 `not_sent` (no usable address, or the email could not be sent). Idempotent.
+
+## POST /api/payments/suspend: stop reading an entity's documents (trial or subscription ended)
+
+CYWorkspace calls this (same `X-API-Key`) when an organisation's free trial or
+subscription ends, and again with `suspended: false` once it is paid for. Body
+`{tenant_id, suspended}` (`suspended` must be a boolean). Every entity linked to the
+tenant takes a plan marked `suspended`: documents are still filed and nothing is
+lost, but none is read (the monthly cap's gentle stop; plan state `suspended`,
+with its own banner). Lifting it restores the entity's own plan, or none when the
+suspension was all it had. Idempotent. Answers `{ok, entities}`.

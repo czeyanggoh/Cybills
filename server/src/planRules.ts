@@ -16,7 +16,9 @@ export const PLAN_LEVELS = [
   { level: '199.90', docCap: 1500 },
 ] as const;
 
-export type Plan = { level: string; docCap: number; since: string; setBy: string };
+// `suspended`: CYWorkspace says this entity's trial (or subscription) has ended. Documents are still
+// filed, nothing is lost, but none is read until it is lifted (POST /api/payments/suspend).
+export type Plan = { level: string; docCap: number; since: string; setBy: string; suspended?: boolean };
 
 /** Warn from this share of the cap. */
 export const NEAR_SHARE = 0.8;
@@ -43,11 +45,12 @@ export type PlanState = {
   level: string;
   cap: number;
   used: number;
-  /** 'ok' | 'near' (80% or more) | 'at' (exactly the cap) | 'over' (more than the cap) */
-  state: 'ok' | 'near' | 'at' | 'over';
+  /** 'ok' | 'near' (80% or more) | 'at' (exactly the cap) | 'over' (more than the cap) | 'suspended' (trial or subscription ended) */
+  state: 'ok' | 'near' | 'at' | 'over' | 'suspended';
 };
 
 export function stateOf(plan: Plan | undefined | null, used: number): PlanState | null {
+  if (plan?.suspended) return { level: plan.level, cap: plan.docCap, used, state: 'suspended' };
   if (!plan || !(plan.docCap > 0)) return null;
   const cap = plan.docCap;
   const state = used > cap ? 'over' : used === cap ? 'at' : used >= cap * NEAR_SHARE ? 'near' : 'ok';
@@ -56,11 +59,14 @@ export function stateOf(plan: Plan | undefined | null, used: number): PlanState 
 
 /** Reading stops only once the plan is exceeded: the document that reaches the cap is still read. */
 export function readsBlocked(s: PlanState | null): boolean {
-  return !!s && s.state === 'over';
+  return !!s && (s.state === 'over' || s.state === 'suspended');
 }
 
 export const CAP_MESSAGE =
   'This month\'s document limit for your plan has been reached, so new documents are filed but not read. They can be read from next month, or when the plan is upgraded. Contact CYBM to upgrade.';
+
+export const SUSPENDED_MESSAGE =
+  'The free trial or subscription for this organisation has ended, so new documents are filed but not read. Choose a plan and add your payment details in CYWorkspace (Plan & billing) to start reading again.';
 
 /** The month a timestamp falls in, in the practice's day: 'YYYY-MM'. */
 export function monthOf(dayKey: string): string {

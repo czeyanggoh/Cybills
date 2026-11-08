@@ -6,6 +6,7 @@ import {
   ensureOrganisationForTenant,
   listOrganisations,
   publishTargetFor,
+  setOrganisationPlan,
   type Organisation,
 } from './organisations.js';
 import { rechargeClaims } from './claims.js';
@@ -84,6 +85,32 @@ paymentsRouter.post('/invites', async (req, res) => {
     console.error('[payments/invites]', err instanceof Error ? err.message : String(err));
     res.status(500).json({ error: 'invite_failed', message: 'The invitation could not be made.' });
   }
+});
+
+// POST /api/payments/suspend — CYWorkspace, when a free trial or subscription ends
+// (or is paid for again). Body: { tenant_id, suspended }. A suspended entity still
+// FILES every document but none is read (the same gentle stop as the monthly cap),
+// so nothing a client sent is lost and nothing is paid for by the practice. Lifting
+// it restores the entity's own plan, or none when the suspension was all it had.
+// Idempotent. Answers { ok, entities }.
+paymentsRouter.post('/suspend', (req, res) => {
+  if (unauthorised(req, res)) return;
+  const tenantId = String(req.body?.tenant_id ?? '').trim();
+  if (!tenantId || typeof req.body?.suspended !== 'boolean') {
+    return res.status(400).json({ error: 'invalid_input', message: 'tenant_id and a true / false suspended are required.' });
+  }
+  const suspended: boolean = req.body.suspended;
+  const entities = organisationsForTenant(tenantId);
+  for (const o of entities) {
+    const p = o.plan;
+    if (suspended) {
+      setOrganisationPlan(WORKSPACE_ID, o.id, { level: p?.level ?? '', docCap: p && p.docCap > 0 ? p.docCap : 1, since: p?.since ?? new Date().toISOString(), setBy: p?.setBy ?? 'cyworkspace', suspended: true });
+    } else if (p?.suspended) {
+      if (!p.level) setOrganisationPlan(WORKSPACE_ID, o.id, null);
+      else { const { suspended: _s, ...rest } = p; setOrganisationPlan(WORKSPACE_ID, o.id, rest); }
+    }
+  }
+  res.json({ ok: true, entities: entities.length });
 });
 
 // Every entity linked to this Xero tenant. Normally one — but the practice can

@@ -10,7 +10,7 @@ import {
   organisationForScope,
   setOrganisationPlan,
 } from './organisations.js';
-import { CAP_MESSAGE, PLAN_LEVELS, cleanPlan, monthOf, readsBlocked, stateOf, type PlanState } from './planRules.js';
+import { CAP_MESSAGE, SUSPENDED_MESSAGE, PLAN_LEVELS, cleanPlan, monthOf, readsBlocked, stateOf, type PlanState } from './planRules.js';
 
 /**
  * Documents counted against an entity's plan this month, and the gate that
@@ -52,7 +52,9 @@ export function planStateFor(ws: string, realOrgId: string, now: Date = new Date
 /** The words to refuse a read with, or null when reading is allowed. */
 export function capRefusal(ws: string, realOrgId: string): string | null {
   try {
-    return readsBlocked(planStateFor(ws, realOrgId)) ? CAP_MESSAGE : null;
+    const state = planStateFor(ws, realOrgId);
+    if (!readsBlocked(state)) return null;
+    return state?.state === 'suspended' ? SUSPENDED_MESSAGE : CAP_MESSAGE;
   } catch (err) {
     // A counting fault must never stop a client's documents being read.
     console.error('[plan] could not count documents; allowing the read', err);
