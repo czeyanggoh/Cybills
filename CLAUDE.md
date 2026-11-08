@@ -2712,8 +2712,25 @@ bytes), and the share that is mail which filed nothing. A skipped attachment was
 never stored and counts for nothing. Shown as **Size** on the Email tab and
 **Email stored** per client on Practice -> Clients. Mail mirrored before sizes
 were kept is measured off those listings, a bounded batch per request
-(`measureMailBodies`), and the page says while figures are still short. Nothing
-deletes mail yet: there is no retention rule.
+(`measureMailBodies`), and the page says while figures are still short. Mail is cleared by the
+retention rule below.
+
+**The Email tab keeps 60 days, and what became a document lives on the document.**
+`server/src/mailRetention.ts`. Past the window (`mailRetentionDays` on the
+organisation, set by the practice: `PUT /api/email/retention`, 0 = for ever;
+env default `MAIL_RETENTION_DAYS`, 60) a mail that produced a document is
+marked `onDocuments`: the row stays, because the document's Email tab, "Show as
+sent", its replies, the Files tab and delivery dedup all read it, but the
+entity's Email tab (`/threads`) no longer lists it. A mail that filed nothing
+(or a forwarding confirmation) is deleted with its stored HTML part. Left alone
+whatever its age: a placeholder waiting on a trusted sender, and a document
+with a Pending reply. Attachments are the documents' own files and are never
+touched. `GET /api/email/retention` is the dry run, `POST .../run` applies it to
+the open entity, and `startMailRetentionClock` runs it once a practice day
+(`MAIL_RETENTION_AUTO=off` disables the clock). Not kept: a tombstone of a
+deleted mail's id — a re-forward after the window is filed again and left to
+the duplicate check. Covered by `npm test` in `server/`
+(`test/mail-retention.test.mts`).
 
 Env (server/.env): `N8N_FETCH_URL`, `N8N_API_KEY`, `N8N_TIMEOUT_MS` (default
 120s). Unset, the road is simply not there: the mail is still mirrored and the
