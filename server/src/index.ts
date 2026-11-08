@@ -28,6 +28,7 @@ import { paymentsRouter } from './payments.js';
 import { bankRouter } from './bankMatch.js';
 import { driveRouter, startDriveClock } from './drive.js';
 import { startStorageClock } from './storageCare.js';
+import { startMailRetentionClock } from './mailRetention.js';
 import { scrubFillerText } from './store.js';
 import { verifyShareToken } from './shareLinks.js';
 
@@ -262,4 +263,5 @@ app.listen(env.PORT, () => {
   // And the files: anything still on this server's own disk is moved into the
   // bucket, and the records are backed up there once a day (storageCare.ts).
   startStorageClock();
+  startMailRetentionClock();
 });

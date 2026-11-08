@@ -40,8 +40,9 @@ import { deleteBillFile, getBillFile, putBillFile } from './storage.js';
 import { combineToPdf, readAll, CombineError, type Part } from './docFiles.js';
 import { readMailBody, measureMailBodies } from './mailBody.js';
 import { n8nEnabled } from './n8n.js';
+import { DEFAULT_RETENTION_DAYS, planRetention, retentionDaysFor, runRetention } from './mailRetention.js';
 import { getBillById, attachFetchedFile, listBills, markFileIsTextEmail, setPendingReply, type Bill } from './store.js';
-import { getOrganisation } from './organisations.js';
+import { getOrganisation, setOrganisationMailRetention } from './organisations.js';
 import { isInternalAddress } from './users.js';
 import { isMailConnected } from './mailAccount.js';
 import { replyEmail, sendMail } from './mailer.js';
@@ -118,7 +119,9 @@ emailRouter.get('/threads', async (req, res) => {
   const orgId = orgIdFor(req);
   if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
 
-  const all = mailHere(ws, orgId);
+  // Mail past its retention window that became a document lives on the
+  // document, not in this tab (mailRetention.ts).
+  const all = mailHere(ws, orgId).filter((m) => !m.onDocuments);
   // A mail mirrored before sizes were kept has a stored HTML part of unknown
   // size: measured here, once; `sizing` says the figures are still short.
   const sizing = await measureMailBodies(all);
@@ -184,7 +187,7 @@ emailRouter.get('/threads/:userId', (req, res) => {
 
   const userId = String(req.params.userId ?? '');
   const messages = mailHere(ws, orgId)
-    .filter((m) => m.userId === userId)
+    .filter((m) => m.userId === userId && !m.onDocuments)
     .sort((a, b) => String(b.sentAt || b.receivedAt).localeCompare(String(a.sentAt || a.receivedAt)));
   const person = personFor(ws, userId);
   if (!person && !messages.length) return res.status(404).json({ error: 'unknown_thread' });
@@ -843,3 +846,55 @@ emailRouter.post('/documents/:billId/pdf', (req, res) => saveAsPdf(req, res, { b
 
 // POST /api/email/messages/:id/pdf — from the mail's own row on the Email tab.
 emailRouter.post('/messages/:id/pdf', (req, res) => saveAsPdf(req, res, { messageId: String(req.params.id ?? '') }));
+
+// --- Retention (mailRetention.ts) --------------------------------------------
+// The practice's alone: how long mail stays is a deployment decision, and the
+// run deletes. Nothing is changed by the GET — it is the dry run.
+function practiceOnly(req: Request, res: Response): boolean {
+  const me = memberForSession(req);
+  if (googleEnabled && !(me?.practice && !me.deactivated)) {
+    res.status(403).json({ error: 'not_practice_team', message: 'Only the practice team can manage mail retention.' });
+    return false;
+  }
+  return true;
+}
+
+// GET /api/email/retention — the window, and what a run would do right now.
+emailRouter.get('/retention', (req, res) => {
+  if (!practiceOnly(req, res)) return;
+  const ws = workspaceId(req);
+  const scope = dataScopeForOrg(orgIdFor(req));
+  const plan = planRetention(Date.now(), { ws, scope });
+  res.json({
+    days: retentionDaysFor(ws, scope),
+    defaultDays: DEFAULT_RETENTION_DAYS,
+    wouldHandToDocuments: plan.handToDocuments.length,
+    wouldRemove: plan.remove.length,
+    stillWaiting: plan.kept,
+  });
+});
+
+// PUT /api/email/retention — { days } (0 = keep for ever), or { clear: true } for the default.
+emailRouter.put('/retention', (req, res) => {
+  if (!practiceOnly(req, res)) return;
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (req.body?.clear === true) {
+    setOrganisationMailRetention(ws, orgId, null);
+    return res.json({ ok: true, days: retentionDaysFor(ws, dataScopeForOrg(orgId)) });
+  }
+  const days = Number(req.body?.days);
+  if (!Number.isInteger(days) || days < 0 || days > 3650) {
+    return res.status(400).json({ error: 'invalid_days', message: 'Give a whole number of days, or 0 to keep mail for ever.' });
+  }
+  if (!setOrganisationMailRetention(ws, orgId, days)) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, days });
+});
+
+// POST /api/email/retention/run — apply it to the open entity now.
+emailRouter.post('/retention/run', async (req, res) => {
+  if (!practiceOnly(req, res)) return;
+  const ws = workspaceId(req);
+  const scope = dataScopeForOrg(orgIdFor(req));
+  res.json({ ok: true, ...(await runRetention(Date.now(), { ws, scope })) });
+});

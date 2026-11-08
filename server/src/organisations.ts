@@ -67,6 +67,9 @@ export type Organisation = {
   // Absent = a client from before subscriptions, unlimited. Set only by the
   // practice (PUT /api/plan/:id), never by the entity's own admin.
   plan?: Plan;
+  // Days the Email tab keeps a mail (mailRetention.ts); absent = the default,
+  // 0 = for ever. Set by the practice only.
+  mailRetentionDays?: number;
   createdAt: string; // ISO timestamp
   createdBy: string; // signed-in email, or '' in mock mode
 };
@@ -84,6 +87,16 @@ export function setOrganisationPlan(ws: string, id: string, plan: Plan | null): 
   const organisation = organisations.find((o) => o.orgId === ws && o.id === id);
   if (!organisation) return null;
   if (plan) organisation.plan = plan; else delete organisation.plan;
+  persist(organisations);
+  return organisation;
+}
+
+// Set (or clear, with null) how long an entity's Email tab keeps mail.
+export function setOrganisationMailRetention(ws: string, id: string, days: number | null): Organisation | null {
+  const organisations = load();
+  const organisation = organisations.find((o) => o.orgId === ws && o.id === id);
+  if (!organisation) return null;
+  if (days == null) delete organisation.mailRetentionDays; else organisation.mailRetentionDays = days;
   persist(organisations);
   return organisation;
 }

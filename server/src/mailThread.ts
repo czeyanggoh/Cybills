@@ -89,6 +89,10 @@ export type MailMessage = {
   forwardedIn?: string;
   /** The emails attached to THIS one, each mirrored as its own row. */
   forwarded?: Array<{ id: string; subject: string; from: string }>;
+  /** Set (ISO) once the retention window has passed on a mail that became a
+   *  document: it is no longer listed in the entity's Email tab and lives on
+   *  through its document (mailRetention.ts). */
+  onDocuments?: string;
 };
 
 /**
