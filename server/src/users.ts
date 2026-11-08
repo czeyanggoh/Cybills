@@ -1752,6 +1752,49 @@ export async function sendInvites(
   return invites;
 }
 
+export type OrgInviteStatus = 'invited' | 'linked' | 'already_member' | 'not_sent';
+
+/**
+ * Invite a person to an entity as its Business Admin, asked for by CYWorkspace
+ * when they connect that entity's Xero organisation. One address is one person
+ * (sign-in is by email): somebody who already has a row here gains access to
+ * this entity instead of getting a second identity, a practice colleague gets
+ * client access, and somebody already in the entity is left alone. A new person
+ * gets the usual set-password invitation.
+ */
+export async function inviteOrganisationAdmin(
+  req: Request,
+  ws: string,
+  org: string,
+  orgName: string,
+  who: { email: string; name: string },
+): Promise<{ status: OrgInviteStatus; error?: string }> {
+  const email = norm(who.email);
+  if (!email || !email.includes('@') || isInternalAddress(email)) return { status: 'not_sent', error: 'No usable email address.' };
+  const items = ensure(ws);
+  const dup = items.find((x) => x.workspaceId === ws && !x.removed && norm(x.email) === email);
+  if (dup) {
+    if (dup.practice) {
+      return { status: grantClientAccess(ws, email, org) ? 'linked' : 'already_member' };
+    }
+    if (inOrg(dup, org)) return { status: 'already_member' };
+    dup.extraAccess = [
+      ...(Array.isArray(dup.extraAccess) ? dup.extraAccess : []).filter((e) => e.orgId !== org),
+      { orgId: org, role: 'Business Admin' },
+    ];
+    save(items);
+    return { status: 'linked' };
+  }
+  const person = full(
+    { email, name: who.name, login: 'Yes', role: 'Business Admin', general: false, organisationId: org, companyId: org, companyName: orgName },
+    ws,
+  );
+  items.unshift(person);
+  const [sent] = await sendInvites(req, [person], { orgName });
+  save(items);
+  return sent?.sent ? { status: 'invited' } : { status: 'not_sent', error: sent?.error || 'The invitation email was not sent.' };
+}
+
 export const usersRouter = Router();
 
 // GET /api/users — the selected organisation's OWN people. Tenant-scoped, so

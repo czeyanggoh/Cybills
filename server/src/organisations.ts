@@ -171,6 +171,46 @@ export function getOrganisation(orgId: string, id: string): Organisation | null 
   return load().find((o) => o.orgId === orgId && o.id === id) ?? null;
 }
 
+/**
+ * The entity linked to a Xero tenant, created when there is none. Machine-to-
+ * machine: CYWorkspace asks for it when a new Xero organisation is connected and
+ * its plan includes CYBills, so the person who connected it can be invited to
+ * their own entity. Creating one follows POST /api/organisations (linked entity,
+ * its general user), with the tenant's name as the entity's name; a name already
+ * taken by another tenant's entity gets the start of the tenant id appended, so
+ * a clash never blocks the invite.
+ */
+export function ensureOrganisationForTenant(
+  ws: string,
+  input: { tenantId: string; tenantName: string; createdBy: string },
+): { organisation: Organisation; created: boolean } {
+  const tenantId = input.tenantId.trim();
+  const organisations = load();
+  const have = organisations.find((o) => o.orgId === ws && o.tenantId.trim().toLowerCase() === tenantId.toLowerCase());
+  if (have) return { organisation: have, created: false };
+
+  const normName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+  const base = input.tenantName.trim() || 'Untitled organisation';
+  const taken = organisations.some((o) => o.orgId === ws && normName(o.name) === normName(base));
+  const organisation: Organisation = {
+    id: `org_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`,
+    orgId: ws,
+    name: taken ? `${base} (${tenantId.slice(0, 4)})` : base,
+    tenantId,
+    tenantName: input.tenantName.trim(),
+    createdAt: new Date().toISOString(),
+    createdBy: input.createdBy,
+  };
+  organisations.push(organisation);
+  persist(organisations);
+  try {
+    ensureGeneralUser(ws, organisation.id);
+  } catch (err) {
+    console.error('[organisations] could not create the general user', err);
+  }
+  return { organisation, created: true };
+}
+
 // The "primary" organisation owns the legacy data (bills created before books
 // were split per-org). Prefer the CY Business Management entity by name, else
 // the oldest org. Empty string when no orgs are linked yet.

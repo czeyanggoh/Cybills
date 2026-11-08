@@ -3,6 +3,7 @@ import { keyMatches } from './inboundKey.js';
 import { WORKSPACE_ID } from './workspace.js';
 import {
   dataScopeForOrg,
+  ensureOrganisationForTenant,
   listOrganisations,
   publishTargetFor,
   type Organisation,
@@ -18,7 +19,7 @@ import {
   type Bill,
 } from './store.js';
 import { getBillFile } from './storage.js';
-import { appOrigin, peopleForOrg, REPORTING_OFFICER } from './users.js';
+import { appOrigin, inviteOrganisationAdmin, peopleForOrg, REPORTING_OFFICER } from './users.js';
 import {
   accountsForOrg,
   gstRegisteredFor,
@@ -62,6 +63,28 @@ function unauthorised(req: any, res: any): boolean {
   res.status(401).json({ error: 'bad_key', message: 'X-API-Key did not match.' });
   return true;
 }
+
+// POST /api/payments/invites — CYWorkspace, on a new Xero organisation whose plan
+// includes CYBills, asks for the person who connected it to be invited to that
+// organisation's entity as its Business Admin (the entity is created, linked to
+// the tenant, when there is none). Idempotent: an address already in the entity
+// answers `already_member`. Body: { tenant_id, tenant_name, email, name }.
+paymentsRouter.post('/invites', async (req, res) => {
+  if (unauthorised(req, res)) return;
+  const tenantId = String(req.body?.tenant_id ?? '').trim();
+  const tenantName = String(req.body?.tenant_name ?? '').trim();
+  const email = String(req.body?.email ?? '').trim();
+  const name = String(req.body?.name ?? '').trim();
+  if (!tenantId || !email) return res.status(400).json({ error: 'invalid_input', message: 'tenant_id and email are required.' });
+  try {
+    const { organisation, created } = ensureOrganisationForTenant(WORKSPACE_ID, { tenantId, tenantName, createdBy: 'cyworkspace' });
+    const r = await inviteOrganisationAdmin(req, WORKSPACE_ID, organisation.id, organisation.name, { email, name });
+    res.json({ ok: true, entity_id: organisation.id, entity_name: organisation.name, entity_created: created, status: r.status, error: r.error });
+  } catch (err) {
+    console.error('[payments/invites]', err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: 'invite_failed', message: 'The invitation could not be made.' });
+  }
+});
 
 // Every entity linked to this Xero tenant. Normally one — but the practice can
 // link the same Xero organisation twice under different names, and a payment run

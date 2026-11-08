@@ -223,3 +223,14 @@ the overpayment is allocated against it automatically.
 | `409 not_payable` | archived, marked paid or published since the list was read |
 | `400 amount_too_large` / `no_amount` | the amount is more than the total, or not above 0 |
 | `422 xero_validation_failed` | Xero refused the overpayment (its words in `message`) |
+
+## POST /api/payments/invites: invite a person to a Xero organisation's entity
+
+CYWorkspace calls this (same `X-API-Key`) when a Xero organisation whose plan
+includes CYBills is connected or subscribed. Body `{tenant_id, tenant_name,
+email, name}`. The entity linked to `tenant_id` is created when there is none
+(named for the tenant), then the person is invited as its Business Admin.
+Answers `{ok, entity_id, entity_name, entity_created, status, error?}` with
+`status` one of `invited` (set-password email sent), `linked` (an existing
+person, or a practice colleague, gained access), `already_member`, or
+`not_sent` (no usable address, or the email could not be sent). Idempotent.
