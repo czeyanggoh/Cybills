@@ -261,6 +261,22 @@ with `DecompressionStream('deflate-raw')`, which the browser and Node both have.
 `src/lib/rosterSheet.js` is the plan (pure). Covered by `npm test` at the root
 (`roster-sheet`, including a workbook re-saved by openpyxl in `test/fixtures`).
 
+**The Support Desk is private to whoever filed a ticket.** Tickets and feature
+requests (`server/src/board.ts`) were one shared board, so everyone in the
+workspace read everyone's. Now a ticket carries `authorEmail` (the SESSION's
+address — the `author` the browser sends is only a display name and is never
+believed) and `orgId` (the entity they had open). Three readers: the author;
+a **Business Admin of the ticket's entity** (`effectiveRoleFor` + `canAccessOrg`,
+so a practice colleague carries it into every client they can open); and a
+**site admin** (`isAccountOwner` or `canManagePractice`), who sees every ticket
+in every entity. Visibility follows the TICKET's entity, not the `X-Org-Id` the
+request happens to name. Anything else is a 404, never a 403. The author may
+reply, close/reopen and delete their own; assigning and deleting others' is
+staff's (`canManage` rides on each item). Tickets filed before this carry no
+owner, so only a site admin sees them. The Testing checklist is a shared
+worklist and stays open to everyone. Covered by `npm test` in `server/`
+(`test/support-desk-visibility.test.mts`).
+
 ## The document reader: Claude or OpenAI
 
 Uploaded receipts, invoices and Vault documents are read by one of two

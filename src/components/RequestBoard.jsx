@@ -36,11 +36,21 @@ const FILTERS = ['all', 'open', 'done', 'closed'];
 
 const UNASSIGNED = '';
 
+// What the list is, said out loud: a short list is otherwise indistinguishable
+// from a lost one.
+const SCOPE_NOTE = {
+  own: 'You see only the tickets you submitted.',
+  org: 'You see your own tickets and every ticket from the organisations you administer.',
+  all: 'Site admin: you see every ticket from every organisation.',
+};
+
 export default function RequestBoard({ title, intro, emptyLabel, composerPlaceholder, board, legacyKey = '', viewToggle = null }) {
   const { user } = useAuth();
   const author = user?.name || user?.email || '';
 
   const [tickets, setTickets] = useState([]);
+  // Whose tickets the server returned: 'own' | 'org' | 'all' | 'shared'.
+  const [scope, setScope] = useState('');
   const [assignees, setAssignees] = useState([]); // [{ id, email, name }]
   const [input, setInput] = useState('');
   const [pendingImgs, setPendingImgs] = useState([]); // [{ url, name }]
@@ -63,6 +73,7 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
       if (!res.ok) { setError(failureMessage(res)); return; }
       const d = await res.json();
       setTickets(Array.isArray(d.items) ? d.items : []);
+      setScope(typeof d.scope === 'string' ? d.scope : '');
       if (!keepError) setError('');
     } catch {
       setError(failureMessage(null));
@@ -254,7 +265,8 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
       </div>
       <div className="mb-4 mt-2 h-0.5 w-10 bg-foreground" />
       {viewToggle && <div className="mb-4">{viewToggle}</div>}
-      <p className="mb-4 text-sm text-muted-foreground">{intro}</p>
+      <p className="mb-2 text-sm text-muted-foreground">{intro}</p>
+      {SCOPE_NOTE[scope] && <p className="mb-4 text-xs text-muted-foreground">{SCOPE_NOTE[scope]}</p>}
 
       {error && (
         <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -320,10 +332,15 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
               )}
               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                 <span>{t.author || '—'}{t.created_at ? ` · ${fmtTime(t.created_at)}` : ''}</span>
+                {t.orgName && (scope === 'all' || scope === 'org') && (
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{t.orgName}</span>
+                )}
                 {t.status === 'closed' && (
                   <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">Closed</span>
                 )}
-                <label className="flex items-center gap-1">
+                {/* Handing a ticket to somebody is staff's act; the person who filed it just sees who has it. */}
+                {!t.canManage && t.assignee?.name && <span>Assigned to {t.assignee.name}</span>}
+                {t.canManage && <label className="flex items-center gap-1">
                   <span className="sr-only">Assignee</span>
                   <select
                     value={t.assignee?.id ?? UNASSIGNED}
@@ -336,7 +353,7 @@ export default function RequestBoard({ title, intro, emptyLabel, composerPlaceho
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                   </select>
-                </label>
+                </label>}
               </div>
 
               {/* Comment thread */}

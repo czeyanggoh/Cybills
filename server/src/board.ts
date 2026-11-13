@@ -2,6 +2,11 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { workspaceId, actor } from './workspace.js';
+import {
+  memberForSession, orgScope, canManagePractice, isAccountOwner, canAccessOrg, effectiveRoleFor,
+  type User,
+} from './users.js';
+import { getOrganisation } from './organisations.js';
 
 // Support Desk boards — Support tickets, Feature requests, and the Testing
 // checklist — now server-backed + shared across the workspace (same JSON-store
@@ -21,6 +26,11 @@ type Item = {
   assignee: { id: string; name: string } | null;
   seq: number; // stable ordering (seed order for the checklist)
   deleted: boolean;
+  // WHO filed it (the session's address, never what the browser says) and WHICH
+  // entity they had open. Absent on tickets filed before the desk was private:
+  // those belong to nobody, so only a site admin can see them.
+  authorEmail?: string;
+  orgId?: string;
 };
 
 const COLLECTION = 'board_items';
@@ -87,6 +97,48 @@ function ensure(ws: string, board: string): Item[] {
   return items;
 }
 
+// --- Who may see a ticket -------------------------------------------------------
+// Tickets and feature requests are private to whoever filed them, with two
+// readers beyond that: a SITE ADMIN (an account owner, or the practice's Owner /
+// Practice Admin) sees every ticket in every entity, and a Business Admin sees
+// the tickets filed in the entities they are Business Admin of (a practice
+// colleague is one inside every client they can open, so effectiveRoleFor
+// carries them). The Testing checklist is a shared worklist with no author and
+// stays open to everybody, as before.
+//
+// 404 throughout, never 403: whether a ticket exists is itself something the
+// caller isn't entitled to learn (the same rule documents follow).
+const isPrivate = (board: string) => board !== 'testing';
+const lower = (s: string | undefined) => (s || '').trim().toLowerCase();
+
+type Viewer = { email: string; me: User | null; all: boolean };
+
+function viewerOf(req: Request): Viewer {
+  const email = lower(actor(req).email);
+  const me = memberForSession(req);
+  // The sessionless mock/dev context stays open like the rest of the app.
+  const all = (!email && !me) || isAccountOwner(me) || canManagePractice(me);
+  return { email, me, all };
+}
+
+// May this viewer run the ticket: assign it, delete it, see it as staff.
+function mayManage(v: Viewer, item: Item): boolean {
+  if (!isPrivate(item.board) || v.all) return true;
+  if (!item.orgId || !v.me) return false;
+  return canAccessOrg(v.me, item.orgId) && effectiveRoleFor(v.me, item.orgId) === 'Business Admin';
+}
+
+const isAuthor = (v: Viewer, item: Item) => Boolean(v.email) && lower(item.authorEmail) === v.email;
+const mayRead = (v: Viewer, item: Item) => mayManage(v, item) || isAuthor(v, item);
+
+function present(v: Viewer, ws: string, item: Item) {
+  return {
+    ...item,
+    orgName: item.orgId ? getOrganisation(ws, item.orgId)?.name || '' : '',
+    canManage: mayManage(v, item),
+  };
+}
+
 export const boardRouter = Router();
 
 // GET /api/board/:board — the board's items. Checklist keeps seed order; tickets
@@ -94,9 +146,14 @@ export const boardRouter = Router();
 boardRouter.get('/:board', (req, res) => {
   const ws = workspaceId(req);
   const board = req.params.board;
-  const rows = ensure(ws, board).filter((x) => x.workspaceId === ws && x.board === board && !x.deleted);
+  const v = viewerOf(req);
+  const rows = ensure(ws, board).filter((x) => x.workspaceId === ws && x.board === board && !x.deleted && mayRead(v, x));
   rows.sort((a, b) => (board === 'testing' ? a.seq - b.seq : b.created_at.localeCompare(a.created_at)));
-  res.json({ items: rows });
+  res.json({
+    items: rows.map((x) => present(v, ws, x)),
+    // Which view this is, so the page can say whose tickets it is showing.
+    scope: !isPrivate(board) ? 'shared' : v.all ? 'all' : v.me && effectiveRoleFor(v.me, orgScope(req)) === 'Business Admin' ? 'org' : 'own',
+  });
 });
 
 // POST /api/board/:board — create an item (ticket / request / extra check).
@@ -114,11 +171,12 @@ boardRouter.post('/:board', (req, res) => {
     screenshots: Array.isArray(b.screenshots) ? b.screenshots : [],
     status: 'open', author: b.author || me.name, created_at: createdAt, comments: [], assignee: null,
     seq: Date.now(), deleted: false,
+    authorEmail: lower(me.email), orgId: orgScope(req),
   };
   const items = load();
   items.push(item);
   save(items);
-  res.json({ item });
+  res.json({ item: present(viewerOf(req), ws, item) });
 });
 
 // POST /api/board/:board/import — adopt items that predate the server-backed
@@ -158,8 +216,11 @@ boardRouter.post('/:board/import', (req, res) => {
   const board = req.params.board;
   const incoming = Array.isArray(req.body?.items) ? req.body.items.slice(0, IMPORT_LIMIT) : [];
 
+  const v = viewerOf(req);
   const items = ensure(ws, board);
-  const mine = items.filter((x) => x.workspaceId === ws && x.board === board && !x.deleted);
+  // Only what this caller may already see is merged into: importing must not be
+  // a way to graft a screenshot or a reply onto somebody else's ticket.
+  const mine = items.filter((x) => x.workspaceId === ws && x.board === board && !x.deleted && mayRead(v, x));
   const byText = new Map(mine.map((x) => [norm(x.text), x]));
   const maxSeq = mine.reduce((m, x) => Math.max(m, x.seq), 0);
 
@@ -203,6 +264,7 @@ boardRouter.post('/:board/import', (req, res) => {
       id: randomUUID(), workspaceId: ws, board, text, screenshots, status,
       author: String(raw.author || ''), created_at, comments, assignee,
       seq: maxSeq + 1 + imported, deleted: false,
+      authorEmail: v.email, orgId: orgScope(req),
     };
     items.push(item);
     if (text) byText.set(norm(text), item);
@@ -213,20 +275,35 @@ boardRouter.post('/:board/import', (req, res) => {
   res.json({ imported, merged, skipped: incoming.length - imported - merged });
 });
 
-function mutate(req: Request, res: Response, fn: (item: Item, me: { email: string; name: string }) => void) {
+type Need = 'read' | 'manage' | 'author-or-manage';
+
+// A fn may return an error code to refuse the change; nothing is saved then.
+function mutate(
+  req: Request,
+  res: Response,
+  need: Need,
+  fn: (item: Item, me: { email: string; name: string }, v: Viewer) => string | void
+) {
   const ws = workspaceId(req);
   const items = load();
   const item = items.find((x) => x.id === req.params.id && x.workspaceId === ws && x.board === req.params.board);
-  if (!item) return res.status(404).json({ error: 'not_found' });
-  fn(item, actor(req));
+  const v = viewerOf(req);
+  if (!item || !mayRead(v, item)) return res.status(404).json({ error: 'not_found' });
+  const allowed =
+    need === 'read' || mayManage(v, item) || (need === 'author-or-manage' && isAuthor(v, item));
+  if (!allowed) return res.status(403).json({ error: 'not_allowed' });
+  const refused = fn(item, actor(req), v);
+  if (refused) return res.status(403).json({ error: refused });
   save(items);
-  return res.json({ item });
+  return res.json({ item: present(v, ws, item) });
 }
 
-// PATCH /api/board/:board/:id — status and/or assignee.
+// PATCH /api/board/:board/:id — status and/or assignee. Whoever can see a ticket
+// can close or reopen it; handing it to somebody is the staff's act.
 boardRouter.patch('/:board/:id', (req, res) =>
-  mutate(req, res, (item) => {
+  mutate(req, res, 'read', (item, _me, v) => {
     const b = req.body ?? {};
+    if ('assignee' in b && !mayManage(v, item)) return 'not_allowed';
     if (typeof b.status === 'string') item.status = b.status;
     if ('assignee' in b) item.assignee = b.assignee || null;
   })
@@ -234,7 +311,7 @@ boardRouter.patch('/:board/:id', (req, res) =>
 
 // POST /api/board/:board/:id/comment — reply with text and/or screenshots.
 boardRouter.post('/:board/:id/comment', (req, res) =>
-  mutate(req, res, (item, me) => {
+  mutate(req, res, 'read', (item, me) => {
     const b = req.body ?? {};
     item.comments.push({
       author: b.author || me.name,
@@ -245,5 +322,7 @@ boardRouter.post('/:board/:id/comment', (req, res) =>
   })
 );
 
-// DELETE /api/board/:board/:id — soft delete.
-boardRouter.delete('/:board/:id', (req, res) => mutate(req, res, (item) => { item.deleted = true; }));
+// DELETE /api/board/:board/:id — soft delete, by its author or its staff.
+boardRouter.delete('/:board/:id', (req, res) =>
+  mutate(req, res, 'author-or-manage', (item) => { item.deleted = true; })
+);
