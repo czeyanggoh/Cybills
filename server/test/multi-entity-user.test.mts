@@ -124,5 +124,20 @@ const m3 = rowFor('martin@redalphacyber.com');
 check('removed here, he can no longer open it', canAccessOrg(m3, 'org-ste'), false);
 check('…but still works in the other', [canAccessOrg(m3, 'org-red'), Boolean(m3.removed)], [true, false]);
 
+
+// Removed from the entity his row was FIRST added in (the company sold), he
+// keeps the others — with their own settings.
+r = await call('POST', '/api/users', 'org-ste', { firstName: 'Martin', lastName: 'Lim', email: 'martin@redalphacyber.com', login: 'Yes', role: 'User Admin', notify: false });
+await call('PATCH', `/api/users/${martinId}`, 'org-ste', { managerId: samId, project: 'Tangs', privileges: { canPublish: true } });
+const RITA = `cyb_session=${jwt.sign({ sub: 'rita@redalphacyber.com', email: 'rita@redalphacyber.com', name: 'Rita Red' }, 'test-session-secret', { expiresIn: '1h' })}`;
+r = await call('DELETE', `/api/users/${martinId}`, 'org-red', undefined, RITA);
+check('his first entity’s admin may remove him from it', r.status, 200);
+const m4 = rowFor('martin@redalphacyber.com');
+check('…he is gone from it', canAccessOrg(m4, 'org-red'), false);
+check('…but not removed, and still in the other', [Boolean(m4.removed), canAccessOrg(m4, 'org-ste')], [false, true]);
+check('…keeping that entity’s role, manager, project and privileges', [effectiveRoleFor(m4, 'org-ste'), directManagerFor('cybm', 'Martin Lim', 'org-ste')?.name, peopleForOrg('cybm', 'org-ste').find((p) => p.name === 'Martin Lim')?.project, canPublishToXero(m4, 'org-ste')], ['User Admin', 'Sam Ste', 'Tangs', true]);
+r = await call('GET', '/api/users', 'org-red');
+check('…and off the first entity’s roster', r.body.users.some((u: any) => u.id === martinId), false);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, server);

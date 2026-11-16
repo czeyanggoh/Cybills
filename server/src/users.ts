@@ -2795,12 +2795,36 @@ usersRouter.delete('/:id', (req, res) => {
     // Removing somebody from THIS entity takes away this entity's access and
     // nothing else: they may still work in others, and their row (their login,
     // their documents there) is not this entity's to delete.
-    if (!user.practice && org && (user.organisationId || '') !== org && extraAccessFor(user, org)) {
-      user.extraAccess = (user.extraAccess || []).filter((e) => e.orgId !== org);
+    const clearReportsHere = () => {
       for (const u of items) {
-        if (u.workspaceId !== user.workspaceId || u.removed || u.practice || !canAccessOrg(u, org)) continue;
+        if (u.workspaceId !== user.workspaceId || u.removed || u.practice || u.id === user.id || !canAccessOrg(u, org)) continue;
         if (settingsIn(u, org).managerId === user.id) writeSettingsIn(u, org, { managerId: '' });
       }
+    };
+    if (!user.practice && org && (user.organisationId || '') !== org && extraAccessFor(user, org)) {
+      user.extraAccess = (user.extraAccess || []).filter((e) => e.orgId !== org);
+      clearReportsHere();
+      return;
+    }
+    // The same when it is the entity their row was FIRST added in — a company
+    // that is sold, or that somebody leaves, must not take their access to the
+    // others with it. The row moves to the next entity they work in, carrying
+    // that entity's own settings, and this entity's are dropped.
+    const next = (user.extraAccess || [])[0];
+    if (!user.practice && org && (user.organisationId || '') === org && next) {
+      const ws = workspaceId(req);
+      user.extraAccess = (user.extraAccess || []).slice(1);
+      user.organisationId = next.orgId;
+      user.companyId = next.orgId;
+      user.companyName = getOrganisation(ws, next.orgId)?.name || '';
+      user.role = currentRole(next.role);
+      user.managerId = next.managerId || '';
+      user.project = next.project || '';
+      user.privileges = (next.privileges || {}) as User['privileges'];
+      clearReportsHere();
+      // Their address is named after the entity the row lives in, and so is
+      // their WhatsApp group — the group follows the address, as on any move.
+      void renameChannelsForUser(ws, user.id, groupSubjectFor(user, user.companyName));
       return;
     }
     const risk = lockoutRisk(workspaceId(req), user, { removed: true }, me?.id || '');

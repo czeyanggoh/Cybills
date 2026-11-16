@@ -3691,7 +3691,11 @@ the OPEN entity. `materialiseMemberships` copied the row's privileges, project
 and (where they work there too) manager onto older entries once, so nothing in
 effect changed. The Users page lost its Company column, the "Also in …" badge
 and Edit details' Organisation picker; DELETE in an entity somebody is in by
-extra access removes that access only. Covered by
+extra access removes that access only — and so does DELETE in the row's FIRST
+entity when they work anywhere else (a company sold, or left): the row moves to
+their next entity, taking that entity's own role, manager, project and
+privileges, and their WhatsApp group is renamed to follow the address. Only
+somebody in no other entity is removed outright. Covered by
 `test/multi-entity-user.test.mts`.
 
 **A bridge entity's approvers are Reporting Officers.** ST Engineering's staff
