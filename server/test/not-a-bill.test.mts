@@ -227,5 +227,34 @@ check('…and the payment link it came with asks instead',
 check('…recorded on the mail', Boolean(loadMail().find((m) => m.id === '<pp-banner@redalphacyber.com>')?.pendingBillId), true);
 check('nothing was fetched without trust', n8nCalls, 0);
 
+// --- An invoice typed into the email itself, nothing attached ---------------------
+const { statesBillAmount } = await import('../src/emailPdf.ts');
+check('"Total: S$1,200" with no cents is an inline bill', statesBillAmount('Invoice INV-204', 'Consulting, October.\nTotal: S$1,200', ''), true);
+check('"Total payable 480" is', statesBillAmount('Your bill for November', 'Room hire 3 hours\nTotal payable 480', ''), true);
+check('"Fee: SGD 350.00" on a payment request is', statesBillAmount('Payment request', 'Course fee: SGD 350.00, please pay by Friday', ''), true);
+check('a promotion with prices is not', statesBillAmount('Invoice your clients faster', 'Plans from $9.00 a month', ''), false);
+check('an order confirmation with a total is not (not about a bill)', statesBillAmount('Your order is confirmed!', 'Total: $45.20', ''), false);
+
+const inline = async (id: string, subject: string, body: string) => {
+  await deliver([
+    'From: sefi@redalphacyber.com',
+    'To: amex@cybills.sg',
+    `Subject: ${subject}`,
+    `Message-ID: <${id}@redalphacyber.com>`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    body,
+    '',
+  ].join(CRLF));
+  await settle(800);
+  return listBills('cybm').filter((b) => b.email?.subject === subject);
+};
+answer = { ...FIELDS, supplier: 'Acme Consulting', documentType: 'Invoice', total: 1200, date: '2026-11-10' };
+let docs = await inline('inline-1', 'Invoice INV-204 from Acme', 'Consulting for October.\nTotal: S$1,200\nPlease pay to UOB 123-456-789.');
+check('an inline invoice with a round total is saved as a PDF and filed', [docs.length, docs[0]?.contentType, docs[0]?.status === 'archived'], [1, 'application/pdf', false]);
+docs = await inline('inline-2', 'Invoice INV-205 from Acme', 'Your invoice is ready.\nAmount due: SGD 99\nhttps://acme.example/files/INV-205.pdf');
+check('…but one whose link IS the file waits for the link instead', [docs.length, docs[0]?.emailLink?.status], [1, 'awaiting_trust']);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, server, reader, n8n);

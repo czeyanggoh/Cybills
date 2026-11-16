@@ -173,6 +173,22 @@ export function looksLikeInvoiceMail(subject: string, text: string, html: string
 }
 
 /**
+ * The wider half of "this mail IS the bill": a mail ABOUT a bill
+ * (looksLikeBillMail) that states an amount beside a money label, with or
+ * without cents — "Total: S$1,200", "Total payable 480", "Fee: SGD 350.00",
+ * "Amount 99.90". looksLikeInvoiceMail asks for one of a short list of total
+ * labels with cents, which is how an inline invoice with a round figure filed
+ * nothing (Cze, 16 Nov 2026). A price in a promotion ("Plans from $9.00") has
+ * no such label, so it still does not count.
+ */
+export function statesBillAmount(subject: string, text: string, html: string): boolean {
+  const body = `${subject}\n${html ? htmlToText(html) : text}`;
+  const labelled =
+    /\b(?:grand total|total(?: amount| due| paid| payable| charges?)?|sub ?total|amount(?: due| paid| payable| owing| outstanding| to pay)?|balance(?: due| payable| outstanding)?|(?:service |booking |room |course |membership |subscription )?fees?|charges?|deposit|payable|price)\b[^\n\d]{0,40}(?:[A-Z]{2,3}\s?\$?|[$€£¥]|S\$|US\$|RM)?\s*\d[\d,]*(?:\.\d{1,2})?\b/i;
+  return looksLikeBillMail(subject, text, html) && labelled.test(body);
+}
+
+/**
  * Whether a mail with nothing attached is ABOUT a bill: an invoice, a receipt,
  * a statement, or somebody asking to be paid. Only such a mail is worth a
  * document in the Costs inbox asking whether its links may be fetched.

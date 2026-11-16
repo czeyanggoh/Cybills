@@ -12,7 +12,7 @@ import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } 
 import { withRememberedGstRegNo } from './supplierGst.js';
 import { keepPracticeNoTax } from './practiceNoTax.js';
 import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile, markFileIsTextEmail, setPendingReply, type Bill } from './store.js';
-import { emailAsPdf, emailPdfName, htmlToText, looksLikeBillMail, looksLikeInvoiceMail } from './emailPdf.js';
+import { emailAsPdf, emailPdfName, htmlToText, looksLikeBillMail, looksLikeInvoiceMail, statesBillAmount } from './emailPdf.js';
 import { storeMailBody } from './mailBody.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
@@ -1348,8 +1348,15 @@ async function deliverMail(
   // A mail that IS the invoice — figures typed into the body, nothing attached,
   // nothing to fetch — is saved as a PDF below rather than waiting on a link or
   // filing nothing. Its sender asked nothing of a portal, so no trust question.
+  // The wider test (statesBillAmount: about a bill, an amount beside a money
+  // label, cents optional) only where no link plainly leads to a FILE — there
+  // the file is the better paper, and the link road fetches it.
   const bodyIsInvoice =
-    !madeBills.length && !children.length && !settledAlready && looksLikeInvoiceMail(mail.subject, mail.text, mail.html);
+    !madeBills.length &&
+    !children.length &&
+    !settledAlready &&
+    (looksLikeInvoiceMail(mail.subject, mail.text, mail.html) ||
+      (statesBillAmount(mail.subject, mail.text, mail.html) && !links.some(looksLikeDocumentLink)));
   // And only a mail ABOUT a bill (looksLikeBillMail): an order acknowledgement,
   // a newsletter or a meeting thread with nothing attached is mirrored on the
   // Email tab, links and all, and is not stood in the Costs inbox as a cost.

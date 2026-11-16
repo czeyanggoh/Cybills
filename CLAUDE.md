@@ -2562,6 +2562,13 @@ amount due …, Hebrew קבלה / חשבונית) or a link that is plainly a fi
 (`looksLikeDocumentLink`, `n8n.ts`); anything else is only mirrored on the
 Email tab. Where EVERY attachment of a mail was set aside, the mail falls
 through to that same link road (a payment link under a banner still asks).
+**An invoice typed into the email itself is still filed** — saved as a PDF
+before any of this is asked. `looksLikeInvoiceMail` wants a total label with
+cents, so a round figure ("Total: S$1,200", "Total payable 480") filed nothing;
+`statesBillAmount` also takes a mail about a bill with an amount beside a money
+label (total / amount / fee / balance / deposit / payable …), cents optional —
+but only where no link plainly leads to a file, which the link road fetches as
+better paper. A promotion's "Plans from $9.00" has no such label.
 Covered by `npm test` in `server/` (`test/not-a-bill.test.mts`).
 
 **Only where the attachments produced nothing.** A mail carrying both the
