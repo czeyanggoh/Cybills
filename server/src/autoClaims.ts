@@ -12,7 +12,7 @@ import {
   type User,
 } from './users.js';
 import { dataScopeForOrg, primaryOrgId } from './organisations.js';
-import { listBills, parseAmount, type Bill } from './store.js';
+import { listBills, parseAmount, submissionDay, type Bill } from './store.js';
 import { claimedBillIds, fileAutoClaim } from './claims.js';
 
 // Auto Expense claims — the schedule that bundles a person's finished cost
@@ -164,6 +164,35 @@ export function nextPeriodEnd(iso: string, frequency: Frequency, endOfMonth: boo
   return fmtIso(ny, nm, endOfMonth ? last : Math.min(d, last));
 }
 
+// The claims-end date before this one — nextPeriodEnd run backwards.
+export function prevPeriodEnd(iso: string, frequency: Frequency, endOfMonth: boolean): string {
+  if (frequency === 'weekly') return shiftDays(iso, -7);
+  if (frequency === 'fortnightly') return shiftDays(iso, -14);
+  const [y, m, d] = iso.split('-').map(Number);
+  const py = m === 1 ? y - 1 : y;
+  const pm = m === 1 ? 12 : m - 1;
+  const last = daysInMonth(py, pm);
+  return fmtIso(py, pm, endOfMonth ? last : Math.min(d, last));
+}
+
+// The claims-end date of the period a day falls in, counting back from the
+// period now running: the end E with prev(E) < day <= E. A document dated
+// 27 Oct belongs to the period ending 31 Oct even when it is read on 3 Nov,
+// after that period has rolled over — it used to land on November's claim,
+// because only the running period was filed and its only bound was "on or
+// before the end". Null for a day after the running period (it waits) or one
+// further back than the guard reaches (left for a person).
+export function periodEndFor(day: string, runningEnd: string, frequency: Frequency, endOfMonth: boolean): string | null {
+  if (!isIsoDay(day) || !isIsoDay(runningEnd) || day > runningEnd) return null;
+  let end = runningEnd;
+  for (let guard = 0; guard < 500; guard += 1) {
+    const prev = prevPeriodEnd(end, frequency, endOfMonth);
+    if (prev < day) return end;
+    end = prev;
+  }
+  return null;
+}
+
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // "2026-08-26" → "26 Aug 2026", for the claim name a person actually reads.
 function prettyDay(iso: string): string {
@@ -185,8 +214,11 @@ const CLAIMABLE = new Set(['new', 'review', 'ready']);
 
 // The day a document counts against — its own date when the reader determined
 // one, else the day it was uploaded. Keeps an undated receipt out of limbo.
+// The submission day is the PRACTICE's day, not the UTC date of the
+// timestamp (submissionDay) — uploaded at 07:00 Singapore time on the 1st is the 1st, not the
+// last day of the month before.
 function billDay(b: Bill): string {
-  return isIsoDay(b.date) ? b.date : String(b.createdAt || '').slice(0, 10);
+  return isIsoDay(b.date) ? b.date : submissionDay(b);
 }
 
 // Who a document belongs to. `owner` is the answer where one was set (an
@@ -223,8 +255,8 @@ export const AUTO_CLAIM_NAME = 'Expense Claim';
 
 export type AutoRunResult = { claims: number; items: number; periods: number; endDate: string };
 
-// File one ended period: every enabled person's eligible documents dated on or
-// before `periodEnd` become their claim for it.
+// File up to one period end: every enabled person's eligible documents dated on
+// or before `periodEnd`, each onto the claim of the period its own date is in.
 function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd: string): { claims: number; items: number } {
   const claimed = claimedBillIds(s.orgId);
   const eligible = listBills(s.orgId).filter(
@@ -250,16 +282,27 @@ function filePeriod(ws: string, s: AutoClaimSettings, roster: User[], periodEnd:
       (b) => keys.has(norm(b.owner || b.createdBy)) && (!since || String(b.createdAt || '') >= since)
     );
     if (!mine.length) continue; // never file an empty claim
-    const filed = fileAutoClaim(ws, s.orgId, {
-      claimFor: user.name || user.email,
-      periodEnd,
-      periodLabel: prettyDay(periodEnd),
-      name: `${AUTO_CLAIM_NAME} ${prettyDay(periodEnd)}`,
-      txns: mine.map((b) => txnFor(b, AUTO_ACTOR)),
-      by: AUTO_ACTOR,
-    });
-    if (filed.created) claims += 1;
-    items += filed.added;
+    // Each document onto the claim for the period ITS date falls in — an
+    // October receipt read in November is October's — not onto whichever
+    // period happens to be filing now. A period whose claim has already been
+    // submitted gets a fresh numbered draft for the same period (fileAutoClaim).
+    const byPeriod = new Map<string, Bill[]>();
+    for (const b of mine) {
+      const own = periodEndFor(billDay(b), periodEnd, s.frequency, s.endOfMonth) || periodEnd;
+      byPeriod.set(own, [...(byPeriod.get(own) || []), b]);
+    }
+    for (const [end, docs] of [...byPeriod.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const filed = fileAutoClaim(ws, s.orgId, {
+        claimFor: user.name || user.email,
+        periodEnd: end,
+        periodLabel: prettyDay(end),
+        name: `${AUTO_CLAIM_NAME} ${prettyDay(end)}`,
+        txns: docs.map((b) => txnFor(b, AUTO_ACTOR)),
+        by: AUTO_ACTOR,
+      });
+      if (filed.created) claims += 1;
+      items += filed.added;
+    }
   }
   return { claims, items };
 }

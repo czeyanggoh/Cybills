@@ -1561,6 +1561,67 @@ Actions do nothing; the list is the entity's Xero contacts and only the
 per-customer Category/Project cells write anything), and Sales has no filter
 popover, no column customisation and no approvals step.
 
+## A document is on ONE expense claim, and the claims say so
+
+Cze, 16 Nov 2026. GCY AUS's Tanda receipt (item 261029000237) showed "In
+expense claim" on both the October and the November claim, and Costs and the
+claims disagreed about what was claimed. The causes:
+- **Membership was two records that nothing kept in step:** a claim's
+  `transactions[]` array and the document's `status: 'expenseclaim'`.
+- **Duplicates were only caught within one claim.**
+- **A Move was two separate browser requests**, so one that failed left the
+  document on both claims or on neither.
+- **A line stored under the Item ID people see**, rather than the `bill_…` id,
+  was invisible to every id comparison. Auto Expense claims then filed it onto
+  a second claim.
+
+What `server/src/claims.ts` now does:
+
+- **Every claims write goes through `save`**, which throws
+  `ClaimMembershipError` when any document would be on two live claims of one
+  entity (`duplicateMemberships`). `mutate` answers that as 409
+  `item_on_two_claims`. This is the backstop. The mechanism is that
+  `POST /:id/items` MOVES a document already on another claim, in the same
+  write (`takeOffOtherClaims`; the answer carries `moved_from`). It refuses
+  (409 `item_on_locked_claim`) when the other claim is approved or in Xero.
+- **The browser's `moveItemsToClaim` is one request.** An older tab's
+  follow-up remove finds nothing and does nothing.
+- **Claim lines are stored under the `bill_…` id** (`canonicalItemId`),
+  whatever the caller sent.
+- **A one-off repair at start-up** (`repairMembership`, on the first `load`)
+  rewrites old ids, then keeps each duplicate on one claim only:
+  - the claim that is approved or in Xero, else the one the document was put on
+    first (`keeperOf`);
+  - with a history line on the claim it left.
+- **Costs reads membership** (`syncClaimStatuses`, run by `GET /bills`):
+  - a document on a claim reads `expenseclaim`;
+  - one marked `expenseclaim` but on no claim is ARCHIVED, which is the tab
+    that already listed it, so nobody's inbox fills with stranded receipts;
+  - each row carries `claim: { id, name }`.
+- **Auto Expense claims file a document under the period its OWN date is in**
+  (`periodEndFor`, `prevPeriodEnd` in `autoClaims.ts`). A 27 Oct receipt read
+  on 3 Nov goes on October's claim, or on a fresh numbered draft for October
+  if that claim was already submitted. It used to go on November's, because
+  only the running period was filed and its only bound was "on or before the
+  end". An undated document goes by its submission day in Singapore time, not
+  the UTC date.
+
+Test fixtures that put one document on two claims were changed to give each
+claim its own documents. `test/claim-membership.test.mts` replays the GCY AUS
+case.
+
+**The agent API** (`server/src/agentApi.ts`, `deploy/AGENT-API.md`, allowlisted
+past the session guard like `/api/payments`) offers the same actions to
+CYWorkspace's connector:
+- the caller proves itself with `X-API-Key`;
+- the entity comes from `tenant_id`;
+- each action is done as `acting_email`, through the pages' own routes over
+  loopback, with a five-minute session;
+- Xero actions are a dry run unless `confirm: true`;
+- nothing deletes.
+
+`test/agent-api.test.mts`.
+
 ## The Costs inbox's bulk actions
 
 Every bulk action is a **button**. The "Move to" and "Actions" dropdowns this

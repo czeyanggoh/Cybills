@@ -182,6 +182,8 @@ check('re-publishing is refused', [r.status, r.body.error], [409, 'already_poste
 //    whatever month the claim was published in.
 const dateless = {
   ...claim('claim-3'),
+  // Its own documents: a document is on one claim at a time.
+  transactions: claim('claim-3').transactions.map((t) => ({ ...t, itemId: t.itemId.replace(/0$/, '9') })),
   claimDate: '',
   endDate: '',
 };

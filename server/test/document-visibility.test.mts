@@ -105,7 +105,9 @@ writeFileSync(
   JSON.stringify({
     items: [
       claim('c-deanna', 'Deanna Chua', 'deanna.chua@redalphacyber.com', 'Martin Lim', 'martin@redalphacyber.com'),
-      claim('c-astrid', 'Astrid Test', 'astrid@redalphacyber.com', 'Deanna Chua', 'deanna.chua@redalphacyber.com'),
+      // Holding her claimed receipt: 'In expense claim' is what the claims say.
+      { ...claim('c-astrid', 'Astrid Test', 'astrid@redalphacyber.com', 'Deanna Chua', 'deanna.chua@redalphacyber.com'),
+        transactions: [{ itemId: ids['d-astrid-claimed'], date: '2026-09-01', supplier: 'Grab', category: '', net: '31.99', tax: '0', total: '31.99' }] },
       claim('c-boss', 'Bee Admin', 'boss@redalphacyber.com', '', ''),
     ],
   })

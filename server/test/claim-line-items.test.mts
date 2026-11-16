@@ -45,6 +45,8 @@ writeFileSync(
     bills: [
       doc('260919183938', { supplier: 'LINKUS', total: 275.49, tax: 20.84, lineItems: linkusLines, customer: MGH, rebillable: true }),
       doc('260923110349', { supplier: 'ROYAL CHINA', total: 155.39, tax: 17.82 }),
+      // claim-2's copy of it: a document is on one claim at a time.
+      doc('260923110350', { supplier: 'ROYAL CHINA', total: 155.39, tax: 17.82 }),
       doc('260920124457', { supplier: 'Trip.com', total: 1032.6, tax: 0, taxRate: 'No Tax', category: '8616 - TRAVELLING - AIR TICKETS' }),
       // Rows that do NOT add up to the document: posted as one line, never refused.
       doc('260914202712', {
@@ -77,7 +79,7 @@ writeFileSync(
     items: [
       claimOf('claim-3', [txn('260929211213', 'TIONG BAHRU', ENT, '200.59', '16.56')]),
       claimOf('claim-2', [
-        txn('260923110349', 'ROYAL CHINA', ENT, '155.39', '17.82'),
+        txn('260923110350', 'ROYAL CHINA', ENT, '155.39', '17.82'),
         txn('260908115607', 'ROYAL CHINA', ENT, '155.39', '17.82'),
         txn('260908115608', 'ODD CAFE', ENT, '10.90', '0.90'),
       ]),

@@ -260,6 +260,15 @@ const standingClaimed = insertBill({
   ...base, fileHash: 'proof-standing-claimed', status: 'expenseclaim', supplier: 'UOB Transfer', documentType: 'Payment proof',
   date: '2026-07-04', total: 45.6, paid: true, taxRate: 'No Tax',
 } as any);
+// On a real claim: 'In expense claim' is what the claims say (claims.ts syncClaimStatuses).
+{
+  const { saveCollection } = await import('../src/jsonStore.ts');
+  saveCollection('claims', [{
+    id: 'c-proof', workspaceId: 'cybm', orgId: standingClaimed.orgId, claimFor: 'Someone', type: 'Regular', name: 'Claim', claimDate: '', endDate: '',
+    currency: 'SGD', transactions: [{ itemId: standingClaimed.id, date: '2026-07-04', supplier: 'UOB Transfer', category: '', net: '45.6', tax: '0', total: '45.6' }],
+    history: [], approvalStatus: '', approver: '', approverEmail: '', decidedBy: '', decidedAt: '', archived: false, deleted: false, createdBy: '', createdAt: new Date(0).toISOString(),
+  }]);
+}
 await list();
 check('a proof left in the inbox from before is archived by the listing', [getBillById(scope, standing.id)?.status, getBillById(scope, standing.id)?.proofSetAside], ['archived', true]);
 // A PUBLISHED proof is not this sweep's to set aside — proofSetAside is what

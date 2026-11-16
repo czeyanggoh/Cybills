@@ -139,7 +139,7 @@ export function saveClaimXero(org: string, id: string, patch: Partial<Pick<Claim
   const claim = items.find((c) => c.id === id && c.orgId === org && !c.deleted);
   if (!claim) return null;
   Object.assign(claim, patch);
-  saveCollection(COLLECTION, items);
+  save(items);
   return claim;
 }
 
@@ -321,7 +321,148 @@ export async function rechargeClaims(org: string, origin = ''): Promise<Recharge
 }
 
 const COLLECTION = 'claims';
-const save = (items: Claim[]) => saveCollection(COLLECTION, items);
+// ONE claim per document. A claim's items are the only record of membership
+// that the claim, its PDF and its Xero bill read, and a document on two live
+// claims is one receipt reimbursed twice. Nothing in the JSON store can hold
+// that line, so every claims write passes through here and is refused when it
+// would leave any document on two live (not deleted) claims of one entity.
+// The routes move a document off its old claim BEFORE this runs
+// (takeOffOtherClaims), so the guard is a backstop, not the mechanism.
+export class ClaimMembershipError extends Error {
+  constructor(public readonly duplicates: MembershipDuplicate[]) {
+    super(`A document would be on two expense claims: ${duplicates.map((d) => `${d.itemId} on ${d.claimIds.join(' + ')}`).join('; ')}`);
+  }
+}
+export type MembershipDuplicate = { orgId: string; itemId: string; claimIds: string[] };
+
+// Every document sitting on more than one live claim of the same entity. Pure:
+// tests call it on a hand-made list.
+export function duplicateMemberships(items: Pick<Claim, 'id' | 'orgId' | 'deleted' | 'transactions'>[]): MembershipDuplicate[] {
+  const where = new Map<string, string[]>();
+  for (const c of items) {
+    if (c.deleted) continue;
+    for (const t of c.transactions || []) {
+      const key = `${c.orgId}|${String(t.itemId)}`;
+      const list = where.get(key) || [];
+      if (!list.includes(c.id)) list.push(c.id);
+      where.set(key, list);
+    }
+  }
+  const out: MembershipDuplicate[] = [];
+  for (const [key, claimIds] of where) {
+    if (claimIds.length < 2) continue;
+    const i = key.indexOf('|');
+    out.push({ orgId: key.slice(0, i), itemId: key.slice(i + 1), claimIds });
+  }
+  return out;
+}
+
+const save = (items: Claim[]) => {
+  const dups = duplicateMemberships(items);
+  if (dups.length) throw new ClaimMembershipError(dups);
+  saveCollection(COLLECTION, items);
+};
+
+// The one id a document is known by on a claim: its internal `bill_…` id.
+// getBillById also answers to the Item ID people see (261029000237), and a
+// claim line stored under THAT is invisible to everything that compares ids —
+// markBillsClaimed never flags the document, and Auto Expense claims, not seeing
+// it as claimed, file it onto a second claim.
+export function canonicalItemId(org: string, raw: unknown): string {
+  const id = String(raw ?? '').trim();
+  if (!id || id.startsWith('bill_')) return id;
+  return getBillById(org, id)?.id || id;
+}
+
+// Which claim keeps a document found on two: one that is approved or already
+// in Xero (its money is committed there), else the one it was put on FIRST —
+// the second membership is the one the bug made. Exported for the test.
+export function keeperOf(claims: Pick<Claim, 'id' | 'createdAt' | 'approvalStatus' | 'xeroInvoiceId'>[]): string {
+  const committed = claims.filter((c) => c.approvalStatus === 'approved' || c.xeroInvoiceId);
+  const pool = committed.length ? committed : claims;
+  return [...pool].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0].id;
+}
+
+// Repair what the old code left behind, once at start-up: item ids rewritten
+// to the canonical bill id, then any document still on two claims taken off
+// all but the keeper, with a history line on the claim it left so a person can
+// see why. Returns whether anything changed.
+function repairMembership(items: Claim[]): boolean {
+  let changed = false;
+  for (const c of items) {
+    if (c.deleted) continue;
+    const seen = new Set<string>();
+    const kept: Txn[] = [];
+    for (const t of c.transactions || []) {
+      const id = canonicalItemId(c.orgId, t.itemId);
+      if (id !== String(t.itemId)) {
+        t.itemId = id;
+        changed = true;
+      }
+      if (seen.has(id)) {
+        changed = true; // the same document twice on ONE claim
+        continue;
+      }
+      seen.add(id);
+      kept.push(t);
+    }
+    c.transactions = kept;
+  }
+  for (const d of duplicateMemberships(items)) {
+    const on = items.filter((c) => d.claimIds.includes(c.id));
+    const keep = keeperOf(on);
+    const kept = on.find((c) => c.id === keep)!;
+    for (const c of on) {
+      if (c.id === keep) continue;
+      const line = c.transactions.find((t) => String(t.itemId) === d.itemId);
+      c.transactions = c.transactions.filter((t) => String(t.itemId) !== d.itemId);
+      c.history = c.history || [];
+      c.history.unshift({
+        text: `Item ${line?.displayId || d.itemId} was also on "${kept.name}" and has been left there only (a document is on one claim at a time)`,
+        by: 'CYBills',
+        at: nowIso(),
+      });
+      console.warn(`[claims] repaired duplicate membership: ${d.itemId} kept on ${keep}, removed from ${c.id}`);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// Take these documents off every OTHER live claim of the entity, so putting
+// them on `targetId` leaves each on exactly one. Refuses (and changes nothing)
+// when any of them sits on a claim that is approved or in Xero: moving it off
+// would change a total somebody has signed off or the ledger already holds.
+export function takeOffOtherClaims(
+  items: Claim[],
+  org: string,
+  targetId: string,
+  ids: string[],
+  by: string,
+  targetName: string
+): { refused: { claimId: string; name: string; itemIds: string[] } | null; movedFrom: Array<{ claimId: string; name: string; itemIds: string[]; claim: Claim }> } {
+  const wanted = new Set(ids.map(String));
+  const holders = items.filter(
+    (c) => c.orgId === org && !c.deleted && c.id !== targetId && c.transactions.some((t) => wanted.has(String(t.itemId)))
+  );
+  for (const c of holders) {
+    if (c.approvalStatus === 'approved' || c.xeroInvoiceId) {
+      return {
+        refused: { claimId: c.id, name: c.name, itemIds: c.transactions.filter((t) => wanted.has(String(t.itemId))).map((t) => String(t.itemId)) },
+        movedFrom: [],
+      };
+    }
+  }
+  const movedFrom: Array<{ claimId: string; name: string; itemIds: string[]; claim: Claim }> = [];
+  for (const c of holders) {
+    const taken = c.transactions.filter((t) => wanted.has(String(t.itemId)));
+    c.transactions = c.transactions.filter((t) => !wanted.has(String(t.itemId)));
+    c.history = c.history || [];
+    c.history.unshift({ text: `${taken.length} item(s) moved to "${targetName}"`, by, at: nowIso() });
+    movedFrom.push({ claimId: c.id, name: c.name, itemIds: taken.map((t) => String(t.itemId)), claim: c });
+  }
+  return { refused: null, movedFrom };
+}
 
 // Claims written before per-entity scoping carry no orgId. Read it off their own
 // items — a claim's transactions are bills, and a bill already knows its entity
@@ -339,6 +480,7 @@ function load(): Claim[] {
       c.orgId = fromItems[0] || WORKSPACE_ID;
       changed = true;
     }
+    if (repairMembership(items)) changed = true;
   }
   if (repairClaimNames(items)) changed = true;
   if (renameAutoClaims(items)) changed = true;
@@ -516,7 +658,7 @@ export function carryCorrectionIntoClaim(
     ? ` — total ${old.total} → ${fresh.total}, tax ${old.tax} → ${fresh.tax}`
     : '';
   claim.history.unshift({ text: `Item ${shown} (${fresh.supplier}) was corrected after approval${money}`, by, at: nowIso() });
-  saveCollection(COLLECTION, items);
+  save(items);
   return {
     claimId: claim.id,
     name: claim.name,
@@ -536,6 +678,51 @@ export function claimedBillIds(org: string): Set<string> {
     for (const t of c.transactions) out.add(String(t.itemId));
   }
   return out;
+}
+
+// Which live claim each document is on, by its `bill_…` id. The Costs list
+// says "In expense claim" from this, not from the document's stored status.
+export function claimMembership(org: string): Map<string, { id: string; name: string }> {
+  const out = new Map<string, { id: string; name: string }>();
+  for (const c of load()) {
+    if (c.orgId !== org || c.deleted) continue;
+    for (const t of c.transactions) out.set(String(t.itemId), { id: c.id, name: c.name });
+  }
+  return out;
+}
+
+// Bring each document's status into line with the claims, which are the
+// record: on a claim → 'expenseclaim'; marked 'expenseclaim' but on no claim →
+// 'archived'. Archive, not the inbox: the Archive tab is where such a document
+// already shows (it lists 'expenseclaim' too), so nobody's inbox suddenly fills
+// with old receipts the earlier remove bug stranded — only the false "In
+// expense claim" label goes. Run before the Costs list is read, so the list and the claims
+// can never disagree (they did: the status was a second copy of membership,
+// written by separate requests and by a client PATCH, and drifted).
+// `statusOf` / the writers are passed in so the rule can be tested on its own.
+export function membershipStatusFixes(
+  bills: Array<{ id: string; status: string; xeroInvoiceId?: string; kind?: string }>,
+  onClaim: Set<string>
+): { toClaimed: string[]; toCosts: string[] } {
+  const toClaimed: string[] = [];
+  const toCosts: string[] = [];
+  for (const b of bills) {
+    if (b.status === 'deleted' || b.status === 'merged' || b.status === 'processing') continue;
+    const claimed = onClaim.has(b.id);
+    if (claimed && b.status !== 'expenseclaim' && !b.xeroInvoiceId) toClaimed.push(b.id);
+    else if (!claimed && b.status === 'expenseclaim') toCosts.push(b.id);
+  }
+  return { toClaimed, toCosts };
+}
+
+export function syncClaimStatuses(org: string, bills: Array<{ id: string; status: string; xeroInvoiceId?: string }>): { toClaimed: number; toArchive: number } {
+  const fixes = membershipStatusFixes(bills, new Set(claimMembership(org).keys()));
+  if (fixes.toClaimed.length) markBillsClaimed(fixes.toClaimed);
+  if (fixes.toCosts.length) unmarkBillsClaimed(fixes.toCosts);
+  if (fixes.toClaimed.length || fixes.toCosts.length) {
+    console.warn(`[claims] status drift in ${org}: ${fixes.toClaimed.length} marked claimed, ${fixes.toCosts.length} on no claim archived`);
+  }
+  return { toClaimed: fixes.toClaimed.length, toArchive: fixes.toCosts.length };
 }
 
 // File a set of items onto the auto claim for one person and one period,
@@ -881,15 +1068,28 @@ claimsRouter.post('/', async (req, res) => {
 });
 
 // Find + mutate one claim in the caller's workspace, then persist + return it.
-function mutate(req: Request, res: Response, fn: (claim: Claim, me: { email: string; name: string }) => Response | void) {
+function mutate(
+  req: Request,
+  res: Response,
+  fn: (claim: Claim, me: { email: string; name: string }, items: Claim[]) => Response | void,
+  extra?: () => Record<string, unknown>
+) {
   const org = orgIdFor(req);
   const items = load();
   const claim = items.find((c) => c.id === req.params.id && c.orgId === org);
   if (!claim) return res.status(404).json({ error: 'not_found' });
-  const early = fn(claim, actor(req));
+  const early = fn(claim, actor(req), items);
   if (early) return early; // handler already responded (e.g. 403)
-  save(items);
-  return res.json({ claim });
+  try {
+    save(items);
+  } catch (err) {
+    if (err instanceof ClaimMembershipError) {
+      console.error('[claims] refused a write that would put a document on two claims', err.duplicates);
+      return res.status(409).json({ error: 'item_on_two_claims', message: err.message, duplicates: err.duplicates });
+    }
+    throw err;
+  }
+  return res.json({ claim, ...(extra ? extra() : {}) });
 }
 
 // A claim is locked from item edits once APPROVED — its total must not drift
@@ -962,9 +1162,14 @@ claimsRouter.post('/:id/items', async (req, res) => {
   if (!mayCreateClaims(req, res)) return;
   const incomingIds = (Array.isArray(req.body?.items) ? req.body.items : []).map((t: any) => String(t?.itemId ?? ''));
   await warmClaimRates(load().filter((c) => c.id === req.params.id), incomingIds);
-  return mutate(req, res, (claim, me) => {
+  let movedFrom: Array<{ claimId: string; name: string; itemIds: string[] }> = [];
+  return mutate(req, res, (claim, me, all) => {
     if (claim.approvalStatus === 'approved') return res.status(409).json({ error: 'claim_locked' });
-    const incoming: Txn[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    // Every line is stored under the document's own `bill_…` id, whatever the
+    // caller addressed it by (see canonicalItemId).
+    const incoming: Txn[] = (Array.isArray(req.body?.items) ? req.body.items : [])
+      .filter(Boolean)
+      .map((t: Txn) => ({ ...t, itemId: canonicalItemId(claim.orgId, t.itemId) }));
     // A document lives in one entity's book. Putting another entity's bill on
     // this claim would carry its cost — and its supplier and description — into
     // the wrong company's ledger. An item with no bill behind it at all (a
@@ -997,7 +1202,22 @@ claimsRouter.post('/:id/items', async (req, res) => {
             : `${published.length} of those documents are already published to Xero, so they can’t also go on an expense claim.`,
       });
     }
-    const seen = new Set(claim.transactions.map((t) => t.itemId));
+    // A document is on ONE claim. Adding one already on another claim MOVES it,
+    // in this same write — it used to be left on both, and the browser's Move
+    // (add here, then remove there, as separate requests) relied on a second
+    // request that could fail or never be sent.
+    const fresh = incoming.map((t) => String(t.itemId)).filter((id) => !claim.transactions.some((x) => String(x.itemId) === id));
+    const off = takeOffOtherClaims(all, claim.orgId, claim.id, fresh, me.name, claim.name);
+    if (off.refused) {
+      return res.status(409).json({
+        error: 'item_on_locked_claim',
+        message: `Item(s) ${off.refused.itemIds.join(', ')} are on "${off.refused.name}", which is approved or in Xero, so they can’t be moved. Unapprove that claim first.`,
+        claim_id: off.refused.claimId,
+      });
+    }
+    for (const m of off.movedFrom) noteChangeAfterSubmit(req, m.claim, me.name, `${m.itemIds.length} item(s) moved to another claim`);
+    movedFrom = off.movedFrom.map(({ claimId, name, itemIds }) => ({ claimId, name, itemIds }));
+    const seen = new Set(claim.transactions.map((t) => String(t.itemId)));
     let added = 0;
     const claimed: string[] = [];
     for (const t of incoming) {
@@ -1017,20 +1237,23 @@ claimsRouter.post('/:id/items', async (req, res) => {
     // inbox, into Archive. Done here rather than left to the caller so it holds
     // however the item arrived (Costs list, document page, moved from another
     // claim) and can't be lost to a half-finished round of requests.
-    markBillsClaimed(claimed);
+    // Every document named, not only the new lines: one already on this claim
+    // whose status had drifted out of 'expenseclaim' is put right by adding it
+    // again, which is what a person does when the two disagree.
+    markBillsClaimed(incoming.map((t) => String(t.itemId)));
     // Stored as the claim counts them — a foreign receipt at its figure in the
     // claim's currency — not as the browser happened to send them, so the total
     // an approval email quotes is the total the claim is worth.
     if (added) claim.transactions = liveTxns(claim);
     if (added) noteChangeAfterSubmit(req, claim, me.name, `${added} item(s) added`);
-  });
+  }, () => ({ moved_from: movedFrom }));
 });
 
 // POST /api/claims/:id/items/remove — remove items (by itemId) from the claim.
 claimsRouter.post('/:id/items/remove', (req, res) =>
   mutate(req, res, (claim, me) => {
     if (isLocked(claim)) return res.status(409).json({ error: 'claim_locked' });
-    const ids = new Set((Array.isArray(req.body?.itemIds) ? req.body.itemIds : []).map(String));
+    const ids = new Set((Array.isArray(req.body?.itemIds) ? req.body.itemIds : []).map((id: unknown) => canonicalItemId(claim.orgId, id)));
     // Only what this claim was actually holding: an id named here that sits on
     // ANOTHER claim must keep its status, or it is on a claim and in a list.
     const taken = claim.transactions.filter((t) => ids.has(String(t.itemId))).map((t) => String(t.itemId));
@@ -1075,7 +1298,7 @@ claimsRouter.post('/:id/items/remove', (req, res) =>
 claimsRouter.post('/:id/items/update', (req, res) =>
   mutate(req, res, (claim, me) => {
     if (isLocked(claim)) return res.status(409).json({ error: 'claim_locked' });
-    const ids = new Set((Array.isArray(req.body?.itemIds) ? req.body.itemIds : []).map(String));
+    const ids = new Set((Array.isArray(req.body?.itemIds) ? req.body.itemIds : []).map((id: unknown) => canonicalItemId(claim.orgId, id)));
     const patch = (req.body?.patch ?? {}) as Partial<Txn>;
     let n = 0;
     for (const t of claim.transactions) {

@@ -13,6 +13,7 @@ import { retrieveRouter, startRetrieveClock } from './retrieve.js';
 import { organisationsRouter } from './organisations.js';
 import { xeroRouter } from './xero.js';
 import { claimsRouter } from './claims.js';
+import { agentRouter } from './agentApi.js';
 import { autoClaimsRouter } from './autoClaims.js';
 import { usersRouter, memberForSession, canAccessOrg } from './users.js';
 import { practiceRouter } from './practice.js';
@@ -104,6 +105,9 @@ app.use((req, res, next) => {
   // every client's book, and a payment run naming the wrong one would post into
   // somebody else's ledger.
   if (p.startsWith('/api/payments/')) return next();
+  // The agent API (agentApi.ts): same key, and every action is then done AS a
+  // named person, through the session-guarded routes below.
+  if (p.startsWith('/api/agent/')) return next();
   // n8n posting a portal retrieval's invoices back, for a run it answered 202.
   // It carries the one-time token minted for that run instead (retrieve.ts).
   if (/^\/api\/retrieve\/callback\/[^/]+$/.test(p)) return next();
@@ -204,6 +208,10 @@ app.use('/api/whatsapp', whatsappRouter);
 // puts a document in the ledger so it can be paid. Machine-to-machine, on the
 // same shared key.
 app.use('/api/payments', paymentsRouter);
+
+// The agent API: expense claims and cost documents for CYWorkspace's connector,
+// done as a named person through the routes the pages use. deploy/AGENT-API.md.
+app.use('/api/agent', agentRouter);
 
 // Bank match: the statement lines CYWorkspace's auto bank reconciliation could
 // not settle, offered against the documents here that pay them, and settled —

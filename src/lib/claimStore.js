@@ -183,14 +183,13 @@ export async function updateClaimItems(claimId, itemIds, patch) {
   notifyClaimsChanged();
 }
 
-// Move items from one claim to another: add to the target, then remove from the
-// source. `txns` are the full transaction rows (so the target keeps their data).
+// Move items from one claim to another. ONE request: adding a document that is
+// on another claim moves it there on the server, in the same write, so it can
+// never be left on both (or on neither) by a request that failed half way.
+// `txns` are the full transaction rows (so the target keeps their data); the
+// server finds the source claim itself.
 export async function moveItemsToClaim(fromClaimId, toClaimId, txns) {
-  for (const t of txns) {
-    // eslint-disable-next-line no-await-in-loop
-    await post(`/${toClaimId}/items`, { items: [t] });
-  }
-  await post(`/${fromClaimId}/items/remove`, { itemIds: txns.map((t) => t.itemId) });
+  await post(`/${toClaimId}/items`, { items: txns });
   notifyClaimsChanged();
 }
 

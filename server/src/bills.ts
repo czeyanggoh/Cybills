@@ -36,6 +36,7 @@ import { dataScopeForOrg, listOrganisations, primaryOrgId } from './organisation
 import { actor, workspaceId, WORKSPACE_ID } from './workspace.js';
 import { addressIn, canAccessOrg, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg, visibleOwnersFor } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
+import { claimMembership, syncClaimStatuses } from './claims.js';
 import { readSetting } from './settings.js';
 import { decideTaxRate, foldLineTaxIntoCost, isZeroTaxRate, mayBackfillTaxRate, taxContextFor } from './taxRules.js';
 import { enforcePracticeNoTax, keepPracticeNoTax } from './practiceNoTax.js';
@@ -391,6 +392,14 @@ billsRouter.get('/bills', async (req, res) => {
   } catch (err) {
     console.error('[autoClaims] sweep failed', err);
   }
+  // "In expense claim" is what the CLAIMS say, not a second copy of it on the
+  // document (claims.ts syncClaimStatuses): put any drift right before reading.
+  try {
+    syncClaimStatuses(orgId, listBills(orgId));
+  } catch (err) {
+    console.error('[claims] status sync failed', err);
+  }
+  const onClaim = claimMembership(orgId);
   // Is each document in the right client's book? Computed here rather than
   // stored (see entityCheck.ts), and attached to the row rather than left to the
   // document page — a document nobody opens is exactly the one that gets
@@ -407,6 +416,8 @@ billsRouter.get('/bills', async (req, res) => {
       ...b,
       hasFile: Boolean(b.storageKey),
       entityCheck: check(b, entityIdForBill(b)),
+      // The claim it is on, by name, so the list can say which.
+      claim: onClaim.get(b.id) || null,
     }));
   res.json({ bills });
 });

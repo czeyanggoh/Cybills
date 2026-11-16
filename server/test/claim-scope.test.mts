@@ -37,6 +37,13 @@ const redBill = insertBill({
   documentType: 'Invoice', currency: 'SGD', date: '2026-07-31', category: '470 - IT Services',
   description: 'Red Alpha hosting', total: '250', tax: '0',
 } as any);
+// A second Red Alpha document for the new claim below: `redBill` sits on the
+// approved legacy claim, and a document is on one claim at a time.
+const redBill2 = insertBill({
+  orgId: 'org-red', kind: 'cost', status: 'ready', supplier: 'AWS', invoiceNumber: 'A-2',
+  documentType: 'Invoice', currency: 'SGD', date: '2026-07-31', category: '470 - IT Services',
+  description: 'Red Alpha hosting', total: '250', tax: '0',
+} as any);
 
 // A claim written before entity scoping: no orgId, one item from Red Alpha's
 // book — and one with no items at all.
@@ -116,7 +123,7 @@ const addedForeign = await post('org-red', `/${made.body.claim.id}/items`, {
 check('adding CYBM’s bill to a Red Alpha claim is refused', [addedForeign.status, addedForeign.body.error], [409, 'foreign_item']);
 
 const addedOwn = await post('org-red', `/${made.body.claim.id}/items`, {
-  items: [{ itemId: redBill.id, date: '2026-07-31', supplier: 'AWS', category: '470 - IT Services', net: '250', tax: '0', total: '250' }],
+  items: [{ itemId: redBill2.id, date: '2026-07-31', supplier: 'AWS', category: '470 - IT Services', net: '250', tax: '0', total: '250' }],
 });
 check('adding its own entity’s bill works', addedOwn.status, 200);
 

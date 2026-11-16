@@ -129,15 +129,17 @@ check('a person can put it on another claim', [r.status, getBillByIdAny(taxi.id)
 check('…which answers the mark', Boolean(getBillByIdAny(taxi.id)?.autoClaimDeclined), false);
 
 // --- Moving between claims is not a removal -----------------------------------
-// The claim page's Move adds the items to the target, then removes them from
-// the source. The document is the target's by then, and stays claimed.
+// Adding a document that is on another claim MOVES it, in one write (an older
+// tab's Move still follows with a remove from the source, which by then holds
+// nothing and does nothing). The document is the target's, and stays claimed.
 r = await api('/', { name: 'Second trip', claimFor: 'Astrid Test' });
 const second = r.body.claim.id as string;
-await api(`/${second}/items`, { items: [asItem(taxi)] });
+r = await api(`/${second}/items`, { items: [asItem(taxi)] });
+check('the add says where it came from', r.body.moved_from?.map((m: any) => m.claimId), [trip]);
 r = await api(`/${trip}/items/remove`, { itemIds: [taxi.id] });
 check('a moved document comes off the source', r.body.claim.transactions.length, 0);
 check('…and stays claimed, on the target', [getBillByIdAny(taxi.id)?.status, claimOf(taxi.id)?.id], ['expenseclaim', second]);
-check('…with nothing said about Costs', r.body.claim.history[0].text, '1 item(s) removed from the expense claim');
+check('…with nothing said about Costs', r.body.claim.history[0].text, '1 item(s) moved to "Second trip"');
 
 // --- Only what THIS claim was holding ----------------------------------------
 // An id named in the request that sits on another claim keeps its place.

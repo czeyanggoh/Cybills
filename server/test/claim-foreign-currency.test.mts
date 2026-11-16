@@ -81,6 +81,8 @@ const bill = (f: Record<string, unknown>) =>
 const usd = bill({ supplier: 'HighLevel LLC', currency: 'USD', total: '25', date: '2026-09-14' });
 const restated = bill({ supplier: 'Microsoft', currency: 'USD', total: '17.17', tax: '1.42', baseCurrency: 'SGD', baseTotal: 22.2, baseTax: 1.84, date: '2026-09-10' });
 const nzd = bill({ supplier: 'Air NZ', currency: 'NZD', total: '100', date: '2026-09-12' });
+// The approved claim's own (a document is on one claim at a time).
+const nzd2 = bill({ supplier: 'Air NZ', currency: 'NZD', total: '100', date: '2026-09-12', invoiceNumber: 'NZ-2' });
 const lkr = bill({ supplier: 'Alnitak', currency: 'LKR', total: '1352461.54', date: '2026-09-13' });
 const sgd = bill({ supplier: 'Grab', currency: 'SGD', total: '12', date: '2026-09-11' });
 
@@ -98,7 +100,7 @@ saveCollection('claims', [
   // Frozen at approval with the NZD item and no rate: publishing must refuse.
   claim('c-approved-norate', {
     approvalStatus: 'approved',
-    transactions: [{ ...txn(nzd), origCurrency: 'NZD', origTotal: '100.00', fxMissing: true }],
+    transactions: [{ ...txn(nzd2), origCurrency: 'NZD', origTotal: '100.00', fxMissing: true }],
   }),
   // A claim raised IN US dollars, for a SGD-only Xero.
   claim('c-usd', {

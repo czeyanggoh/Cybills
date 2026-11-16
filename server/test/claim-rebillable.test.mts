@@ -35,6 +35,8 @@ writeFileSync(
     bills: [
       doc('260929211213', { customer: MGH, rebillable: true }),
       doc('260914112218', {}),
+      // claim-2's own: a document is on one claim at a time.
+      doc('260914112219', {}),
       doc('260915000001', { customer: MGH, rebillable: false }), // a customer, but not billed back
     ],
   })
@@ -52,7 +54,7 @@ const claim = (id: string, itemIds: string[]) => ({
 });
 writeFileSync(
   join(DATA_DIR, 'claims.json'),
-  JSON.stringify({ items: [claim('claim-1', ['260929211213', '260914112218', '260915000001']), claim('claim-2', ['260914112218'])] })
+  JSON.stringify({ items: [claim('claim-1', ['260929211213', '260914112218', '260915000001']), claim('claim-2', ['260914112219'])] })
 );
 
 // --- stub relay --------------------------------------------------------------
