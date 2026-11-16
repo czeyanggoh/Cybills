@@ -1598,13 +1598,12 @@ What `server/src/claims.ts` now does:
   - one marked `expenseclaim` but on no claim is ARCHIVED, which is the tab
     that already listed it, so nobody's inbox fills with stranded receipts;
   - each row carries `claim: { id, name }`.
-- **Auto Expense claims file a document under the period its OWN date is in**
-  (`periodEndFor`, `prevPeriodEnd` in `autoClaims.ts`). A 27 Oct receipt read
-  on 3 Nov goes on October's claim, or on a fresh numbered draft for October
-  if that claim was already submitted. It used to go on November's, because
-  only the running period was filed and its only bound was "on or before the
-  end". An undated document goes by its submission day in Singapore time, not
-  the UTC date.
+- **Auto Expense claims put a LATE receipt on the running period's claim, on
+  purpose** (Cze, 16 Nov 2026: "it is intended to prevent late people
+  submitting to old claims"). A 27 Oct receipt read on 3 Nov goes on
+  November's claim. A closed period's claim is never reopened, so don't
+  "fix" this by date-bucketing. It was changed for an hour on 16 Nov 2026 and
+  put back.
 
 Test fixtures that put one document on two claims were changed to give each
 claim its own documents. `test/claim-membership.test.mts` replays the GCY AUS

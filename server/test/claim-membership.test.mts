@@ -1,5 +1,6 @@
-// A document is on ONE expense claim — the regression for three bugs seen on
-// GCY AUS's October / November claims (Nov 2026):
+// A document is on ONE expense claim — the regression for two bugs seen on
+// GCY AUS's October / November claims (Nov 2026), and the rule a third report
+// turned out to be:
 //
 //  1. Tanda's 28 Oct receipt (item 261029000237) was "In expense claim" on BOTH
 //     claims. Membership was only ever de-duplicated within one claim, a line
@@ -8,7 +9,8 @@
 //  2. The Costs list said "In expense claim" off a status flag that could drift
 //     from what the claims actually hold.
 //  3. Auto Expense claims put October-dated invoices on November's claim when
-//     they were read after October had rolled over.
+//     they were read after October had rolled over. That is INTENDED: a late
+//     submission does not reopen a closed period's claim. Pinned here.
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,7 +33,7 @@ const { ensure, save } = await import('../src/users.ts');
 const claims = await import('../src/claims.ts');
 const { claimsRouter, saveClaimXero, duplicateMemberships, keeperOf, membershipStatusFixes, syncClaimStatuses } = claims;
 const { insertBill, getBillByIdAny, itemIdFor, listBills, updateBill } = await import('../src/store.ts');
-const { runAutoClaims, todayIso, endOfMonthFor, periodEndFor, prevPeriodEnd } = await import('../src/autoClaims.ts');
+const { runAutoClaims, todayIso, endOfMonthFor } = await import('../src/autoClaims.ts');
 const { loadCollection, saveCollection } = await import('../src/jsonStore.ts');
 
 const ORG = 'org-gcy';
@@ -156,16 +158,13 @@ check('the sync puts both right', fixed, { toClaimed: 1, toArchive: 1 });
 check('…the claimed one reads In expense claim again', getBillByIdAny(deputy.id)?.status, 'expenseclaim');
 check('…the stranded one is set aside in Archive', getBillByIdAny(stray.id)?.status, 'archived');
 
-// --- 6. Auto Expense claims: a document's own date picks its period ---------------
-check('27 Oct belongs to the period ending 31 Oct', periodEndFor('2026-10-27', '2026-11-30', 'monthly', true), '2026-10-31');
-check('31 Oct too', periodEndFor('2026-10-31', '2026-11-30', 'monthly', true), '2026-10-31');
-check('1 Nov is November', periodEndFor('2026-11-01', '2026-11-30', 'monthly', true), '2026-11-30');
-check('after the running period, it waits', periodEndFor('2026-12-01', '2026-11-30', 'monthly', true), null);
-check('weekly periods count back by weeks', periodEndFor('2026-11-10', '2026-11-22', 'weekly', false), '2026-11-15');
-check('the month before 31 Mar is 28 Feb on end of month', prevPeriodEnd('2026-03-31', 'monthly', true), '2026-02-28');
-
+// --- 6. Auto Expense claims: a LATE receipt goes on the running period's claim ----
+// Intended (Cze, 16 Nov 2026): somebody submitting after a period has closed is
+// not let back into that period's claim. The receipt files onto the claim for
+// the period now running, and still onto one claim only.
 const thisEnd = endOfMonthFor(today);
-const lastEnd = prevPeriodEnd(thisEnd, 'monthly', true);
+const [ty, tm] = thisEnd.split('-').map(Number);
+const lastEnd = endOfMonthFor(`${tm === 1 ? ty - 1 : ty}-${String(tm === 1 ? 12 : tm - 1).padStart(2, '0')}-01`);
 saveCollection('autoClaims', [
   {
     workspaceId: 'cybm', orgId: ORG, endDate: thisEnd, endOfMonth: true, frequency: 'monthly',
@@ -177,8 +176,8 @@ const late = bill('EPI Capital Pty Ltd', `${lastEnd.slice(0, 8)}27`);
 const current = bill('Current month', `${thisEnd.slice(0, 8)}01`);
 runAutoClaims('cybm', ORG);
 const onClaim = (id: string) => stored().find((c) => !c.deleted && c.transactions.some((t) => String(t.itemId) === id));
-check('a late receipt goes on ITS month\'s claim', onClaim(late.id)?.autoPeriodEnd, lastEnd);
-check('…and this month\'s receipt on this month\'s', onClaim(current.id)?.autoPeriodEnd, thisEnd);
+check('a late receipt goes on the RUNNING period\'s claim, not its own closed month\'s', onClaim(late.id)?.autoPeriodEnd, thisEnd);
+check('…with this month\'s receipt', onClaim(current.id)?.autoPeriodEnd, thisEnd);
 check('…each on one claim only', duplicateMemberships(stored() as never), []);
 
 await finish(failures, server);
