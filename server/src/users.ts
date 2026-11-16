@@ -150,7 +150,14 @@ export type User = {
   // A distinct field from `clientAccess` on purpose: that one belongs to the
   // practice team and is WIPED from every non-practice row on load
   // (assignPractice), so it could never carry this.
-  extraAccess?: Array<{ orgId: string; role: string }>;
+  //
+  // Everything a person is GIVEN by an entity is that entity's to give: their
+  // role, their direct manager, their default project and the three privileges.
+  // So each entry carries its own, and nothing set in one entity reaches
+  // another (`settingsIn`). The row's own fields are the settings for the
+  // entity the row was first added to; which entity that was is a detail of
+  // storage, not something the roster shows.
+  extraAccess?: OrgMembership[];
   // The user's direct manager (another user's id) — the approver a claim is
   // auto-routed to when this person submits it for approval.
   managerId?: string;
@@ -188,6 +195,14 @@ export type User = {
   totpEnabledAt?: string;
   // SHA-256 of each unused recovery code, never the codes themselves.
   totpRecovery?: string[];
+};
+
+export type OrgMembership = {
+  orgId: string;
+  role: string;
+  managerId?: string;
+  project?: string;
+  privileges?: Record<string, unknown>;
 };
 
 // Public shape sent to the client — never leak the password hash or the reset
@@ -644,17 +659,97 @@ export function orgScope(req: Request): string {
 
 // Whatever was stored, as a clean list. Junk reads as "no extra access" rather
 // than throwing: this is consulted on every request that names an entity.
-function normaliseExtraAccess(v: unknown): Array<{ orgId: string; role: string }> {
+function normaliseExtraAccess(v: unknown): OrgMembership[] {
   if (!Array.isArray(v)) return [];
   const seen = new Set<string>();
-  const out: Array<{ orgId: string; role: string }> = [];
+  const out: OrgMembership[] = [];
   for (const raw of v) {
-    const orgId = String((raw as { orgId?: unknown })?.orgId ?? '').trim();
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const orgId = String(r.orgId ?? '').trim();
     if (!orgId || seen.has(orgId)) continue;
     seen.add(orgId);
-    out.push({ orgId, role: currentRole(String((raw as { role?: unknown })?.role ?? '')) });
+    const entry: OrgMembership = { orgId, role: currentRole(String(r.role ?? '')) };
+    // Absent stays absent: materialiseMemberships tells an entry written before
+    // these were per-entity from one whose manager was deliberately cleared.
+    if ('managerId' in r) entry.managerId = String(r.managerId ?? '');
+    if ('project' in r) entry.project = String(r.project ?? '');
+    if ('privileges' in r) {
+      entry.privileges = r.privileges && typeof r.privileges === 'object' ? (r.privileges as Record<string, unknown>) : {};
+    }
+    out.push(entry);
   }
   return out;
+}
+
+// What this person holds IN a given entity: role, direct manager, default
+// project and privileges. Every reader of those four goes through here, so a
+// manager set in one entity is never a manager in another, and "Can publish"
+// ticked for one client does not publish into the next.
+export type MemberSettings = { role: string; managerId: string; project: string; privileges: Record<string, unknown> };
+export function settingsIn(u: User | null | undefined, org: string): MemberSettings {
+  if (!u) return { role: 'Standard', managerId: '', project: '', privileges: {} };
+  const extra = org && (u.organisationId || '') !== org ? extraAccessFor(u, org) : null;
+  if (!extra) {
+    return {
+      role: currentRole(u.role),
+      managerId: u.managerId || '',
+      project: u.project || '',
+      privileges: (u.privileges as Record<string, unknown>) || {},
+    };
+  }
+  return {
+    role: currentRole(extra.role),
+    managerId: extra.managerId || '',
+    project: extra.project || '',
+    privileges: extra.privileges || {},
+  };
+}
+
+// The entries written while only the ROLE was per-entity carry no manager,
+// project or privileges of their own; until now they borrowed the row's. Copy
+// what was in effect onto the entry once, so nothing anybody relied on changes
+// the day the borrowing stops — from then on each entity's settings are its
+// own. A manager is carried across only where that manager works in the entity
+// too: one from another company could never approve here.
+function materialiseMemberships(items: User[], ws: string): boolean {
+  let changed = false;
+  const byId = new Map(items.filter((u) => u.workspaceId === ws && !u.removed).map((u) => [u.id, u]));
+  for (const u of items) {
+    if (u.workspaceId !== ws || u.removed || !Array.isArray(u.extraAccess)) continue;
+    for (const e of u.extraAccess) {
+      if (!('privileges' in e)) {
+        e.privileges = { ...((u.privileges as Record<string, unknown>) || {}) };
+        changed = true;
+      }
+      if (!('project' in e)) {
+        e.project = u.project || '';
+        changed = true;
+      }
+      if (!('managerId' in e)) {
+        const m = u.managerId ? byId.get(u.managerId) : undefined;
+        e.managerId = m && (inOrg(m, e.orgId) || (m.practice && canAccessOrg(m, e.orgId))) ? m.id : '';
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+// Write settings for ONE entity: onto its entry when the person is there by
+// extra access, onto the row when it is the row's own entity.
+function writeSettingsIn(u: User, org: string, patch: Partial<MemberSettings>): void {
+  const extra = org && (u.organisationId || '') !== org ? extraAccessFor(u, org) : null;
+  if (!extra) {
+    if (patch.role !== undefined) u.role = currentRole(patch.role);
+    if (patch.managerId !== undefined) u.managerId = patch.managerId;
+    if (patch.project !== undefined) u.project = patch.project;
+    if (patch.privileges !== undefined) u.privileges = patch.privileges as User['privileges'];
+    return;
+  }
+  if (patch.role !== undefined) extra.role = currentRole(patch.role);
+  if (patch.managerId !== undefined) extra.managerId = patch.managerId;
+  if (patch.project !== undefined) extra.project = patch.project;
+  if (patch.privileges !== undefined) extra.privileges = patch.privileges;
 }
 
 const extraAccessFor = (u: User | null | undefined, org: string) =>
@@ -847,13 +942,13 @@ export function peopleForOrg(
       role: rosterRoleFor(u, org),
       // Their Direct manager: who their claims are routed to for a decision.
       // '' where none is set, or the row it named has since been removed.
-      managerEmail: (u.managerId && byId.get(u.managerId)?.email) || '',
-      managerName: (u.managerId && byId.get(u.managerId)?.name) || '',
+      managerEmail: byId.get(settingsIn(u, org).managerId)?.email || '',
+      managerName: byId.get(settingsIn(u, org).managerId)?.name || '',
       // Their default project — what a document of theirs is allocated to when
       // nothing on it names one. A project is a name in ONE entity's tracking
       // list, so a colleague working here from outside carries none: theirs is
       // a name in the practice's own list and means nothing in this one.
-      project: isOutsider(u, org) ? '' : String(u.project || '').trim(),
+      project: isOutsider(u, org) ? '' : settingsIn(u, org).project.trim(),
     }));
 }
 
@@ -1032,8 +1127,7 @@ export function rosterRoleFor(u: User | null | undefined, orgId: string): string
   if (u.practice) return canAccessOrg(u, orgId) ? 'Business Admin' : 'Standard';
   // In a second entity they hold the role they were given THERE — an admin of
   // their own company is not automatically an admin of somebody else's.
-  const extra = extraAccessFor(u, orgId);
-  return currentRole(extra ? extra.role : u.role);
+  return settingsIn(u, orgId).role;
 }
 
 // What this person may do INSIDE a given entity: the access tier of the role
@@ -1063,7 +1157,7 @@ export function effectiveRole(req: Request): string {
 export function seesEveryDocument(u: User | null | undefined, orgId: string): boolean {
   if (!u) return true; // the sessionless mock/dev context, open like the rest of the app
   if (effectiveRoleFor(u, orgId) !== 'Standard') return true;
-  return Boolean((u.privileges as { accessAll?: unknown } | undefined)?.accessAll);
+  return Boolean(settingsIn(u, orgId).privileges.accessAll);
 }
 
 // The addresses a restricted caller's view is confined to. Null when they see
@@ -1093,8 +1187,8 @@ export function visibleOwnersFor(req: Request, orgId: string, withReports = fals
   if (!withReports) return seen;
   for (const u of ensure(workspaceId(req))) {
     if (u.workspaceId !== workspaceId(req) || u.removed || !u.email) continue;
-    if (!u.managerId || u.managerId !== mine.id) continue;
     if (!inOrg(u, orgId) && !(u.practice && canAccessOrg(u, orgId))) continue;
+    if (settingsIn(u, orgId).managerId !== mine.id) continue;
     add(u.email);
   }
   return seen;
@@ -1114,7 +1208,7 @@ export function visibleOwnersFor(req: Request, orgId: string, withReports = fals
 export function canCreateClaims(u: User | null | undefined, orgId: string): boolean {
   if (!u) return true; // the sessionless mock/dev context, open like the rest of the app
   if (effectiveRoleFor(u, orgId) !== 'Standard') return true;
-  return Boolean((u.privileges as { createClaims?: unknown } | undefined)?.createClaims);
+  return Boolean(settingsIn(u, orgId).privileges.createClaims);
 }
 
 // May this person publish to the accounting software? "Publishing permissions"
@@ -1129,7 +1223,7 @@ export function canCreateClaims(u: User | null | undefined, orgId: string): bool
 export function canPublishToXero(u: User | null | undefined, orgId: string): boolean {
   if (!u) return true; // the sessionless mock/dev context, open like the rest of the app
   if (effectiveRoleFor(u, orgId) !== 'Standard') return true;
-  return Boolean((u.privileges as { canPublish?: unknown } | undefined)?.canPublish);
+  return Boolean(settingsIn(u, orgId).privileges.canPublish);
 }
 
 // One spelling for an address, so that both sides of every comparison agree. A
@@ -1459,6 +1553,7 @@ export function ensure(ws: string): User[] {
   if (normalizeRoster(items, ws)) changed = true;
   if (normalizeIdentities(items, ws)) changed = true;
   if (normalizeRoles(items, ws)) changed = true;
+  if (materialiseMemberships(items, ws)) changed = true;
   if (reconcileSeedAdmins(items, ws)) changed = true;
   if (assignPractice(items, ws)) changed = true;
   if (ensureEmailHandles(items, ws)) changed = true;
@@ -1643,13 +1738,18 @@ const PRACTICE_EDITABLE: (keyof User)[] = ['practice', 'practiceRole', 'clientAc
 // The direct manager to route a claim to, given the claimant's display name.
 // Resolves the claimant's row, then their managerId to a roster member. Returns
 // the approver's { name, email } or null when no manager is set / found.
-export function directManagerFor(ws: string, claimantName: string): { name: string; email: string } | null {
+//
+// The manager is the one set in the claim's OWN entity: the same person can
+// report to somebody different in each entity they work in.
+export function directManagerFor(ws: string, claimantName: string, org: string): { name: string; email: string } | null {
   const key = norm(claimantName);
   if (!key) return null;
   const items = ensure(ws);
-  const claimant = items.find((u) => u.workspaceId === ws && !u.removed && norm(u.name) === key);
-  if (!claimant?.managerId) return null;
-  const manager = items.find((u) => u.workspaceId === ws && !u.removed && u.id === claimant.managerId);
+  const named = items.filter((u) => u.workspaceId === ws && !u.removed && norm(u.name) === key);
+  const claimant = named.find((u) => !org || inOrg(u, org) || (u.practice && canAccessOrg(u, org))) ?? named[0];
+  const managerId = claimant ? settingsIn(claimant, org).managerId : '';
+  if (!managerId) return null;
+  const manager = items.find((u) => u.workspaceId === ws && !u.removed && u.id === managerId);
   if (!manager) return null;
   return { name: manager.name, email: manager.email };
 }
@@ -1824,6 +1924,10 @@ usersRouter.get('/', (req, res) => {
       // must not read as though they were.
       .map((u) => ({
         ...publicUser(u),
+        // Everything an entity gives a person is read for THIS entity — never
+        // the row's own, which belong to whichever entity the row was first
+        // added in.
+        ...settingsIn(u, org),
         role: rosterRoleFor(u, org),
         // Their address HERE: somebody who works in this entity as well as their
         // own answers to the handle under this entity's short form too.
@@ -2072,7 +2176,13 @@ usersRouter.post('/', async (req, res) => {
         if (elsewhere) {
           dup.extraAccess = [
             ...(Array.isArray(dup.extraAccess) ? dup.extraAccess : []).filter((e) => e.orgId !== org),
-            { orgId: org, role: currentRole(String(u.role ?? '')) },
+            {
+              orgId: org,
+              role: currentRole(String(u.role ?? '')),
+              managerId: String(u.managerId ?? ''),
+              project: String(u.project ?? ''),
+              privileges: (u.privileges as Record<string, unknown>) || {},
+            },
           ];
           linked.push({ email: dup.email, name: dup.name, role: rosterRoleFor(dup, org) });
           continue;
@@ -2623,17 +2733,24 @@ usersRouter.patch('/:id', (req, res) => {
       me?.id || ''
     );
     if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
-    // A role set on somebody whose row lives in ANOTHER entity applies here and
-    // only here. Writing it to `role` would promote them in their own company
-    // from a page that is not their company's.
+    // Role, direct manager, project and privileges are the OPEN entity's to
+    // set, and apply there and only there — setting somebody's manager in one
+    // client must not change who approves their claims in another.
     const org = orgScope(req);
-    const visiting = Boolean(org) && (user.organisationId || '') !== org && Boolean(extraAccessFor(user, org));
-    if (visiting && typeof filtered.role === 'string') {
-      const role = currentRole(filtered.role);
-      user.extraAccess = (Array.isArray(user.extraAccess) ? user.extraAccess : []).map((e) =>
-        e.orgId === org ? { ...e, role } : e
-      );
+    if (!user.practice && canAccessOrg(user, org)) {
+      const scoped: Partial<MemberSettings> = {};
+      if (typeof filtered.role === 'string') scoped.role = filtered.role;
+      if ('managerId' in filtered) scoped.managerId = String(filtered.managerId ?? '');
+      if ('project' in filtered) scoped.project = String(filtered.project ?? '');
+      if ('privileges' in filtered) {
+        const p = filtered.privileges as unknown;
+        scoped.privileges = p && typeof p === 'object' ? (p as Record<string, unknown>) : {};
+      }
+      writeSettingsIn(user, org, scoped);
       delete filtered.role;
+      delete filtered.managerId;
+      delete filtered.project;
+      delete filtered.privileges;
     }
     const from = user.organisationId;
     const identity = user.email;
@@ -2673,7 +2790,19 @@ usersRouter.post('/:id/active', (req, res) => {
 usersRouter.delete('/:id', (req, res) => {
   if (!requireAdmin(req, res)) return;
   const me = memberForSession(req);
-  return mutate(req, res, (user) => {
+  const org = orgScope(req);
+  return mutate(req, res, (user, items) => {
+    // Removing somebody from THIS entity takes away this entity's access and
+    // nothing else: they may still work in others, and their row (their login,
+    // their documents there) is not this entity's to delete.
+    if (!user.practice && org && (user.organisationId || '') !== org && extraAccessFor(user, org)) {
+      user.extraAccess = (user.extraAccess || []).filter((e) => e.orgId !== org);
+      for (const u of items) {
+        if (u.workspaceId !== user.workspaceId || u.removed || u.practice || !canAccessOrg(u, org)) continue;
+        if (settingsIn(u, org).managerId === user.id) writeSettingsIn(u, org, { managerId: '' });
+      }
+      return;
+    }
     const risk = lockoutRisk(workspaceId(req), user, { removed: true }, me?.id || '');
     if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
     user.removed = true;

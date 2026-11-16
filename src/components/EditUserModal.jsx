@@ -347,7 +347,6 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
   // The role is the one they hold in the entity OPEN, so that is the entity
   // whose kind decides whether Reporting Officer is on offer.
   const bridge = useBridgeEntity();
-  const [organisationId, setOrganisationId] = useState(user?.organisationId || '');
   // The short form this person's entity puts in their address. Read from the
   // entity list the dialog already has, so nothing extra is fetched to print an
   // address.
@@ -371,8 +370,6 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
   const [saving, setSaving] = useState(false);
 
   if (!open || !user) return null;
-
-  const movingOut = organisationId && organisationId !== user.organisationId;
 
   const input = 'h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
   const isDetails = mode === 'details';
@@ -407,7 +404,6 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
           // Never for the general account: its address is the entity's short
           // form, not a handle, and the route refuses one anyway.
           ...(!user.general && wanted && wanted !== user.emailHandle ? { emailHandle: wanted } : {}),
-          ...(movingOut ? { organisationId } : {}),
         });
       } else {
         await updateUser(user.id, practice ? { practiceRole: role, privileges: priv } : { role, privileges: priv });
@@ -454,27 +450,6 @@ export default function EditUserModal({ open, mode, user, practice = false, onCl
                 <span>Last name <span className="text-destructive">*</span></span>
                 <input value={lastName} onChange={(e) => setLastName(e.target.value)} className={input} />
               </label>
-              {!practice && organisations.length > 1 && (
-                <label className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
-                  <span>Organisation</span>
-                  <div className="relative">
-                    <select
-                      value={organisationId}
-                      onChange={(e) => setOrganisationId(e.target.value)}
-                      className="h-10 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {organisations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  </div>
-                </label>
-              )}
-              {movingOut && (
-                <p className="rounded-md border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
-                  Moving {user.name} to another organisation removes them from this
-                  one&apos;s user list, and clears their direct-manager links.
-                </p>
-              )}
               <div className="grid grid-cols-[140px_1fr] items-center gap-4 text-sm">
                 <span className="flex items-center gap-1">Login access <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" /></span>
                 <Toggle on={login} onToggle={() => setLogin((v) => !v)} />

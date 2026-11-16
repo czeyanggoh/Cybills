@@ -1465,7 +1465,7 @@ claimsRouter.post('/:id/submit', (req, res) =>
     }
     const refused = refuseUndecidable(req, claim, res, 'before asking somebody to approve the claim');
     if (refused) return refused;
-    const manager = directManagerFor(workspaceId(req), claim.claimFor);
+    const manager = directManagerFor(workspaceId(req), claim.claimFor, claim.orgId);
     if (!manager) {
       return res.status(400).json({ error: 'no_manager', claimant: claim.claimFor });
     }
@@ -1528,7 +1528,7 @@ function mayApproveOwn(req: Request, claim: Claim, me: { email: string; name: st
   const member = memberForSession(req);
   if (!member || member.deactivated || member.practice) return false;
   if (!isClaimantOf(claim, me)) return false;
-  if (directManagerFor(workspaceId(req), claim.claimFor)) return false;
+  if (directManagerFor(workspaceId(req), claim.claimFor, claim.orgId)) return false;
   return canPublishToXero(member, orgScope(req));
 }
 

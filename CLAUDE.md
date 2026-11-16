@@ -3678,6 +3678,22 @@ to their own company's `role`. Deliberately NOT `clientAccess`, which belongs to
 the practice team and is wiped from every non-practice row on load. Covered by
 `npm test` in `server/`.
 
+**And there is no "home" company on the roster** (Cze, 16 Nov 2026). A person
+simply has access to the entities that invited them, and EVERYTHING an entity
+gives them is set there and applies there only: role, direct manager, default
+project and the three privileges. Each `extraAccess` entry carries its own
+(`OrgMembership`), and the row's own fields are the settings for the entity the
+row was first added in — a detail of storage, never shown. `settingsIn(u, org)`
+is the one reader (roster, directory, `seesEveryDocument`, `visibleOwnersFor`,
+`canCreateClaims`, `canPublishToXero`, `directManagerFor`, which now takes the
+claim's `orgId`) and `writeSettingsIn` the one writer: PATCH writes the four for
+the OPEN entity. `materialiseMemberships` copied the row's privileges, project
+and (where they work there too) manager onto older entries once, so nothing in
+effect changed. The Users page lost its Company column, the "Also in …" badge
+and Edit details' Organisation picker; DELETE in an entity somebody is in by
+extra access removes that access only. Covered by
+`test/multi-entity-user.test.mts`.
+
 **A bridge entity's approvers are Reporting Officers.** ST Engineering's staff
 and the managers who sign their claims off work for the same outside company, so
 on the roster they looked identical, and CYWS's recharge tool — which addresses

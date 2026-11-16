@@ -355,7 +355,6 @@ export default function Users() {
             <tr className="text-muted-foreground">
               <th className="px-3 py-2.5 font-medium">Name</th>
               <th className="px-3 py-2.5 font-medium">Email</th>
-              <th className="px-3 py-2.5 font-medium">Company</th>
               <th className="px-3 py-2.5 font-medium">Login access</th>
               <th className="px-3 py-2.5 font-medium">Role</th>
               <th className="px-3 py-2.5 font-medium">Direct manager</th>
@@ -385,17 +384,6 @@ export default function Users() {
                       Without saying so, a person who has never been through the
                       invitation reads as an active user, and the admin is left
                       wondering how they got here. */}
-                  {/* Their row lives in another entity — they work here too.
-                      One person, one login; the role shown is the one they hold
-                      HERE, which is often not the one they hold at home. */}
-                  {u.homeOrgName && (
-                    <span
-                      className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
-                      title={`Belongs to ${u.homeOrgName} and also works here. Their role here is set on this page; their role there is not.`}
-                    >
-                      Also in {u.homeOrgName}
-                    </span>
-                  )}
                   {!u.general && u.login === 'Yes' && u.lastLogin === '—' && (
                     <span
                       className="ml-2 rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
@@ -417,7 +405,6 @@ export default function Users() {
                 <td className="px-3 py-3 text-muted-foreground">
                   {u.email || (u.general && entityAddress(activeOrg?.emailSuffix)) || '—'}
                 </td>
-                <td className="px-3 py-3 text-muted-foreground">{u.companyName || workspaceCompany || '—'}</td>
                 <td className="px-3 py-3">{u.login}</td>
                 <td className="whitespace-nowrap px-3 py-3">{u.role}</td>
                 <td className="px-3 py-3">
@@ -468,7 +455,7 @@ export default function Users() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <td colSpan={8} className="px-4 py-16 text-center text-sm text-muted-foreground">
                   {tab === 'deactivated'
                     ? 'No deactivated users.'
                     : tab === 'pending'

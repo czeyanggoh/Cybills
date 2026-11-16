@@ -102,7 +102,9 @@ export function rosterWorkbook({ users, roles, projects = [], company = '' }) {
     const values = {
       name: u.name || '',
       email: u.email || '',
-      company: u.companyName || company || '',
+      // The entity the sheet is FOR: a person has no company of their own —
+      // they are in whichever entities have given them access.
+      company: company || u.companyName || '',
       status: statusOf(u),
       login: u.login === 'Yes' ? YES : NO,
       role: u.role || 'Standard',
