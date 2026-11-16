@@ -158,6 +158,11 @@ export type User = {
   // entity the row was first added to; which entity that was is a detail of
   // storage, not something the roster shows.
   extraAccess?: OrgMembership[];
+  // Entities this person was REMOVED from while they went on working in
+  // others. Their documents there are still theirs, so the entity's directory
+  // keeps naming them (as somebody who has left), and nothing new is handed to
+  // them there. Cleared when they are added back.
+  formerOrgs?: string[];
   // The user's direct manager (another user's id) — the approver a claim is
   // auto-routed to when this person submits it for approval.
   managerId?: string;
@@ -831,6 +836,9 @@ const isGeneralRow = (u: User, ws: string, org: string) =>
 // practice's own entity is a client like any other, and the colleagues who
 // belong to it are its own people there, so their own company's paperwork keeps
 // their name on it.
+const formerIn = (u: User, org: string) =>
+  Boolean(org) && !u.practice && !inOrg(u, org) && Array.isArray(u.formerOrgs) && u.formerOrgs.includes(org);
+
 const isOutsider = (u: User | undefined, org: string) => Boolean(u?.practice) && !inOrg(u as User, org);
 
 // The general account for one entity, or null before any organisation is linked.
@@ -903,6 +911,7 @@ export function peopleForOrg(
   email: string;
   name: string;
   address: string;
+  former: boolean;
   external: boolean;
   general: boolean;
   deactivated: boolean;
@@ -916,10 +925,13 @@ export function peopleForOrg(
   const homes = homeLocals(memo);
   const byId = new Map(rows.filter((u) => u.workspaceId === ws && !u.removed).map((u) => [u.id, u]));
   return rows
-    .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org))))
+    .filter((u) => u.workspaceId === ws && !u.removed && (inOrg(u, org) || (u.practice && canAccessOrg(u, org)) || formerIn(u, org)))
     .filter((u) => Boolean(u.email))
     .map((u) => ({
       email: u.email,
+      // Removed from this entity but still working in another: their documents
+      // here go on naming them, and nothing new is offered to them here.
+      former: formerIn(u, org),
       name: u.name || u.email,
       // Where a bill EMAILED in lands as this person's, so a page offering them
       // as a document's owner can offer the address that does the same thing
@@ -936,7 +948,7 @@ export function peopleForOrg(
       // Same split again, for someone who has left: their old documents must go
       // on reading as a person, but nothing new should be handed to an account
       // that can no longer sign in.
-      deactivated: Boolean(u.deactivated),
+      deactivated: Boolean(u.deactivated) || formerIn(u, org),
       // The role they hold HERE, by name — Reporting Officer included, which is
       // what the recharge tool picks a report's recipient by.
       role: rosterRoleFor(u, org),
@@ -948,7 +960,7 @@ export function peopleForOrg(
       // nothing on it names one. A project is a name in ONE entity's tracking
       // list, so a colleague working here from outside carries none: theirs is
       // a name in the practice's own list and means nothing in this one.
-      project: isOutsider(u, org) ? '' : settingsIn(u, org).project.trim(),
+      project: isOutsider(u, org) || formerIn(u, org) ? '' : settingsIn(u, org).project.trim(),
     }));
 }
 
@@ -2174,6 +2186,7 @@ usersRouter.post('/', async (req, res) => {
         // claims and their manager would split between the two.
         const elsewhere = !dup.practice && !inOrg(dup, org) && org;
         if (elsewhere) {
+          dup.formerOrgs = (dup.formerOrgs || []).filter((o) => o !== org);
           dup.extraAccess = [
             ...(Array.isArray(dup.extraAccess) ? dup.extraAccess : []).filter((e) => e.orgId !== org),
             {
@@ -2803,6 +2816,7 @@ usersRouter.delete('/:id', (req, res) => {
     };
     if (!user.practice && org && (user.organisationId || '') !== org && extraAccessFor(user, org)) {
       user.extraAccess = (user.extraAccess || []).filter((e) => e.orgId !== org);
+      user.formerOrgs = [...new Set([...(user.formerOrgs || []), org])];
       clearReportsHere();
       return;
     }
@@ -2821,6 +2835,7 @@ usersRouter.delete('/:id', (req, res) => {
       user.managerId = next.managerId || '';
       user.project = next.project || '';
       user.privileges = (next.privileges || {}) as User['privileges'];
+      user.formerOrgs = [...new Set([...(user.formerOrgs || []), org])].filter((o) => o !== next.orgId);
       clearReportsHere();
       // Their address is named after the entity the row lives in, and so is
       // their WhatsApp group — the group follows the address, as on any move.

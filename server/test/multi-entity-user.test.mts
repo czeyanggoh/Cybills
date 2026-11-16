@@ -139,5 +139,15 @@ check('…keeping that entity’s role, manager, project and privileges', [effec
 r = await call('GET', '/api/users', 'org-red');
 check('…and off the first entity’s roster', r.body.users.some((u: any) => u.id === martinId), false);
 
+
+// His documents in the first entity go on naming him: the directory there still
+// resolves his address, as somebody who has left, and offers him for nothing new.
+const there = peopleForOrg('cybm', 'org-red').find((p) => p.email === 'martin@redalphacyber.com');
+check('the first entity still names him on his documents', there?.name, 'Martin Lim');
+check('…as a former member, never offered as an owner', [there?.former, there?.deactivated, there?.project], [true, true, '']);
+check('…while in the entity he works in he is current', peopleForOrg('cybm', 'org-ste').find((p) => p.email === 'martin@redalphacyber.com')?.former, false);
+r = await call('POST', '/api/users', 'org-red', { firstName: 'Martin', lastName: 'Lim', email: 'martin@redalphacyber.com', login: 'Yes', role: 'Standard', notify: false });
+check('added back, he is current there again', peopleForOrg('cybm', 'org-red').find((p) => p.email === 'martin@redalphacyber.com')?.former, false);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, server);

@@ -661,7 +661,7 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
           // here, never for a colleague working on a client from outside.
           const ownerUser =
             users.find((u) => u.name === ownerName || u.email === ownerName) ||
-            getDirectory().find((d) => !d.external && (d.name === ownerName || d.email === ownerName));
+            getDirectory().find((d) => !d.external && !d.former && (d.name === ownerName || d.email === ownerName));
           if (ownerUser?.project) {
             p.project = ownerUser.project;
             p.projectReason = `Nothing on the document pointed to a project, so it follows ${ownerName}'s default project.`;

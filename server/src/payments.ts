@@ -393,7 +393,7 @@ paymentsRouter.get('/people', (req, res) => {
     const bridge = !isLinkedItself(organisation);
     for (const p of peopleForOrg(WORKSPACE_ID, organisation.id)) {
       const key = p.email.trim().toLowerCase();
-      if (!key || p.general || seen.has(key)) continue;
+      if (!key || p.general || p.former || seen.has(key)) continue;
       seen.add(key);
       people.push({
         email: p.email,

@@ -306,7 +306,7 @@ function validUrl(raw: string): boolean {
 function resolveOwner(ws: string, orgId: string, requested: string): { ok: true; owner: string } | { ok: false } {
   const raw = clean(requested);
   if (!raw) return { ok: true, owner: '' };
-  const known = peopleForOrg(ws, orgId).some((p) => p.email.toLowerCase() === raw.toLowerCase());
+  const known = peopleForOrg(ws, orgId).some((p) => !p.former && p.email.toLowerCase() === raw.toLowerCase());
   if (!known) return { ok: false };
   const owner = ownerForOrg(ws, orgId, raw, '');
   const general = generalUserFor(ws, orgId)?.email || '';

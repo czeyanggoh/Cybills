@@ -3695,8 +3695,12 @@ extra access removes that access only — and so does DELETE in the row's FIRST
 entity when they work anywhere else (a company sold, or left): the row moves to
 their next entity, taking that entity's own role, manager, project and
 privileges, and their WhatsApp group is renamed to follow the address. Only
-somebody in no other entity is removed outright. Covered by
-`test/multi-entity-user.test.mts`.
+somebody in no other entity is removed outright. The entity they left records
+it (`formerOrgs`), and its directory (`peopleForOrg`) goes on naming them —
+`former: true`, read as deactivated, no project — so their documents there still
+show their name and nothing new is offered to them (the owner pickers, CYWS's
+people list and Retrieve's owner skip them). Adding them back clears it. Covered
+by `test/multi-entity-user.test.mts`.
 
 **A bridge entity's approvers are Reporting Officers.** ST Engineering's staff
 and the managers who sign their claims off work for the same outside company, so
