@@ -172,6 +172,29 @@ export function looksLikeInvoiceMail(subject: string, text: string, html: string
   return word.test(body) && total.test(body);
 }
 
+/**
+ * Whether a mail with nothing attached is ABOUT a bill: an invoice, a receipt,
+ * a statement, or somebody asking to be paid. Only such a mail is worth a
+ * document in the Costs inbox asking whether its links may be fetched.
+ *
+ * Cze's rule (16 Nov 2026), after a Lazada "your order is confirmed!" email —
+ * no attachment, links to a storefront and a tracking pixel — stood in Red
+ * Alpha's inbox as a cost waiting on "Trust this sender?". A newsletter, an
+ * order acknowledgement or a meeting thread is still mirrored on the Email tab,
+ * links and all; it just does not pose as a cost.
+ *
+ * Deliberately words, not figures: a Xero subscription mail ("View your bill
+ * online: INV-7822201") carries no amount at all, and a payment link mail
+ * ("Please find payment link below") rarely does.
+ */
+export function looksLikeBillMail(subject: string, text: string, html: string): boolean {
+  const body = `${subject}\n${html ? htmlToText(html) : text}`;
+  // Hebrew "receipt" / "invoice" (smartbee's receipt mails): \b means nothing
+  // between Hebrew letters, so they are matched on their own.
+  if (/קבלה|חשבונית/.test(body)) return true;
+  return /\b(?:tax invoices?|e-?invoices?|invoices?|receipts?|statements? of accounts?|debit notes?|credit notes?|quotations?|pro-?forma|(?:your|view|new|monthly|latest|e-?)\s?bills?|bills? (?:is|are|for|no\.?|number|dated|amount)|billing statement|payment (?:links?|requests?|reminders?|due|advice|instructions?)|pay(?:ment)? now|please (?:make (?:the |a )?)?pay(?:ment)?|amounts? (?:due|payable|owing|outstanding)|balance (?:due|payable|outstanding)|outstanding (?:amount|balance|invoices?|payment)|due for payment|pay\s?now|paylah|payable to|remittance|remit to|in your payment|(?:bank )?transfer (?:the (?:amount|payment) )?to|deposit (?:of|is|required))\b/i.test(body);
+}
+
 /** A file name for it: what the sender called the mail, made safe to store. */
 export function emailPdfName(subject: string): string {
   const base = String(subject ?? '')

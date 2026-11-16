@@ -12,7 +12,7 @@ import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } 
 import { withRememberedGstRegNo } from './supplierGst.js';
 import { keepPracticeNoTax } from './practiceNoTax.js';
 import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile, markFileIsTextEmail, setPendingReply, type Bill } from './store.js';
-import { emailAsPdf, emailPdfName, htmlToText, looksLikeInvoiceMail } from './emailPdf.js';
+import { emailAsPdf, emailPdfName, htmlToText, looksLikeBillMail, looksLikeInvoiceMail } from './emailPdf.js';
 import { storeMailBody } from './mailBody.js';
 import { readerMediaType, unreadableTypeNote } from './mediaType.js';
 import { keepMileageInStep } from './mileage.js';
@@ -28,7 +28,7 @@ import { recordUsage } from './usage.js';
 import { readSetting } from './settings.js';
 import { workspaceId } from './workspace.js';
 import { env, visionEnabled, claudeEnabled, openaiEnabled, googleEnabled } from './env.js';
-import { fetchDocumentsForLinks, linksIn, n8nEnabled } from './n8n.js';
+import { fetchDocumentsForLinks, linksIn, looksLikeDocumentLink, n8nEnabled } from './n8n.js';
 import { recordMail, recordLinkFetch, mailById, trustAddressOf, type MailAttachment, type MailDocument, type MailMessage } from './mailThread.js';
 import { isTrustedSender, normaliseSender } from './trustedSenders.js';
 import { publishByRule } from './autoPublishRule.js';
@@ -196,6 +196,25 @@ export function overlaySupplierRule(
 // note it came with, and running two copies of that would be running two sets
 // of coding rules.
 type ReadEnd = 'read' | 'blank' | 'failed';
+
+/**
+ * Whether a document the reader has just read is not a bill at all: neither an
+ * invoice, a receipt nor a request for money, and with no amount to pay on it.
+ *
+ * Cze's rule (16 Nov 2026), after a hotel's promotional banner, embedded in the
+ * signature of a payment-link email, was filed into Red Alpha's Costs inbox as
+ * a cost. The reader already says what a document IS, and "Other" is its answer
+ * for everything that is not one of the kinds a ledger takes; with no total on
+ * it there is nothing anybody could publish or pay. A document typed Other that
+ * DOES state an amount is left in the inbox, because a letter asking for a fee
+ * is still a request for money and the type alone is a weak call to throw it on.
+ */
+export function readAsNotABill(bill: Pick<Bill, 'documentType' | 'total' | 'lineItems'> | null | undefined): boolean {
+  if (!bill) return false;
+  if (String(bill.documentType || '').trim().toLowerCase() !== 'other') return false;
+  if (Math.abs(Number(bill.total) || 0) > 0) return false;
+  return !(Array.isArray(bill.lineItems) && bill.lineItems.length);
+}
 
 // Between the two attempts a thrown read gets. Short: the document is marked
 // Processing for the whole of it.
@@ -500,9 +519,13 @@ export async function autoRead(
   billId: string,
   fileBase64: string,
   mediaType: string,
-  envelope: CoveringNote | null = null
-): Promise<void> {
+  envelope: CoveringNote | null = null,
+  // False where a PERSON asked for this file to be the document (Save email as
+  // PDF): what they chose is theirs to set aside, not the reader's.
+  opts: { setAsideNonBills?: boolean } = {}
+): Promise<ReadEnd | 'set_aside'> {
   let end: ReadEnd = 'failed';
+  let setAside = false;
   // Say so while it runs, the way the uploading browser does. A read of ten to
   // thirty seconds, a retry after a thrown one, and a provider having a slow
   // minute add up past the sweep's grace, and it would then file the document
@@ -522,8 +545,25 @@ export async function autoRead(
     // without a tick, which is how the sender is asked for a better photo.
     // `end` is still reported, so the reaction and the caller can tell a blank
     // read from a failed one.
-    settleProcessing(scope, billId, 'new');
+    //
+    // Except a document the reader READ and found is not a bill (see
+    // readAsNotABill): a banner, a photo, a page of terms. That is not a
+    // judgement nobody made — the reader made it, and says so on the row — and
+    // it goes to Archived, where it can be pulled back out, rather than into the
+    // list of things to publish. Unread and blank reads still land in the inbox.
+    if (end === 'read' && opts.setAsideNonBills !== false && readAsNotABill(getBillById(scope, billId))) {
+      const was = getBillById(scope, billId);
+      const what = String(was?.description || '').replace(/^\*\s*/, '').trim();
+      updateBill(scope, billId, {
+        categoryReason: `Set aside: not an invoice, receipt or request for payment${what ? ` (${what.slice(0, 160)})` : ''}. Move it back to Costs if it is one.`,
+      });
+      settleProcessing(scope, billId, 'archived');
+      setAside = true;
+    } else {
+      settleProcessing(scope, billId, 'new');
+    }
   }
+  if (setAside) return 'set_aside';
   // The supplier's rule may ask for it to go straight to Xero. After the
   // settle, so the document is no longer "Processing" when it is posted (and
   // the settle cannot undo the archive publishing writes), and only for a read
@@ -534,6 +574,7 @@ export async function autoRead(
       console.warn(`[inbound] supplier rule asked to publish ${billId}, declined: ${out.reason}`);
     }
   }
+  return end;
 }
 
 // The covering message as it is stored on a document and given to the reader —
@@ -855,7 +896,7 @@ export async function saveEmailAsPdf(
     void autoRead(req, o.scope, o.orgId, o.provider, id, bytes.toString('base64'), 'application/pdf', {
       ...o.envelope,
       fileName,
-    });
+    }, { setAsideNonBills: false });
   }
   return { ok: true, note, document, reading };
 }
@@ -1309,7 +1350,14 @@ async function deliverMail(
   // filing nothing. Its sender asked nothing of a portal, so no trust question.
   const bodyIsInvoice =
     !madeBills.length && !children.length && !settledAlready && looksLikeInvoiceMail(mail.subject, mail.text, mail.html);
-  const followable = !madeBills.length && !children.length && links.length > 0 && !settledAlready && n8nEnabled() && !bodyIsInvoice;
+  // And only a mail ABOUT a bill (looksLikeBillMail): an order acknowledgement,
+  // a newsletter or a meeting thread with nothing attached is mirrored on the
+  // Email tab, links and all, and is not stood in the Costs inbox as a cost.
+  // A link that is plainly a file (a download path, a PDF, "invoice" in the
+  // address) counts as well: the mail may say nothing in words a rule can read.
+  const billMail = looksLikeBillMail(mail.subject, mail.text, mail.html) || links.some(looksLikeDocumentLink);
+  const followable =
+    !madeBills.length && !children.length && links.length > 0 && !settledAlready && n8nEnabled() && !bodyIsInvoice && billMail;
   const trusted = followable && isTrustedSender(workspaceId(req), realOrgId, scope, trustFrom);
   const pending =
     followable && !trusted
@@ -1365,12 +1413,46 @@ async function deliverMail(
   // attachment — one forward can carry three invoices, and reading all three
   // under the name of the first would tell the reader something untrue about
   // two of them.
-  for (const b of madeBills) {
-    d.later.push(() => {
-      void autoRead(req, scope, realOrgId, d.provider, b.id, b.base64, b.mediaType, {
+  //
+  // And when EVERY file the mail carried turns out not to be a bill (a hotel's
+  // promotional banner in the signature, sent with a payment link in the body),
+  // the mail has in effect filed nothing, so its links take the road a mail
+  // with no attachment takes — but only where the mail is about a bill.
+  const reads = madeBills.map(
+    (b) => () =>
+      autoRead(req, scope, realOrgId, d.provider, b.id, b.base64, b.mediaType, {
         ...envelope,
         fileName: b.fileName,
-      });
+      })
+  );
+  if (reads.length) {
+    d.later.push(() => {
+      void Promise.all(reads.map((r) => r().catch(() => 'failed' as const)))
+        .then(async (ends) => {
+          if (!ends.every((e) => e === 'set_aside')) return;
+          if (children.length || !links.length || !billMail || !n8nEnabled()) return;
+          const now = mailById(messageId);
+          if (!now || now.pendingBillId || now.linkFetchedAt) return;
+          if (isTrustedSender(workspaceId(req), realOrgId, scope, trustFrom)) {
+            await followMessageLinks(req, now, user, d.provider);
+            return;
+          }
+          const p = placeholderForLinks(
+            scope,
+            user,
+            envelope,
+            { id: messageId, links },
+            `Not fetched yet — ${normaliseSender(trustFrom) || 'this sender'} has not been trusted here. What was attached was not a bill.`,
+            trustFrom
+          );
+          recordMail({
+            ...now,
+            pendingBillId: p.id,
+            pendingDisplayId: p.displayId,
+            linkNote: `Waiting — is ${normaliseSender(trustFrom)} trusted?`,
+          });
+        })
+        .catch((err) => console.error('[inbound] after-read link road failed', err));
     });
   }
   // Nothing came as a file, but something was written: a Xero subscription

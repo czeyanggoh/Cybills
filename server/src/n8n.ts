@@ -109,6 +109,20 @@ function linkScore(raw: string): number {
   if (TRACKER_HINT.test(u.pathname + u.search)) s -= 4;
   return s;
 }
+// Whether a link itself looks like it leads to a FILE: a download or file path,
+// a PDF, or a bill / invoice / receipt in the address. Narrower than DOC_HINT
+// (no `/view`, no `/public/` alone), because it is used to decide whether a mail
+// is about a bill at all, and a shop's "view your order" link is not one.
+const FILE_LINK = /\/files?\/|\/download|\/attachments?\/|\/documents?\/|invoice|receipt|\bbill\b|\/bills?\/|statement|\.pdf\b|kabala|heshbonit/i;
+export function looksLikeDocumentLink(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return FILE_LINK.test(u.pathname + u.search) && !TRACKER_HINT.test(u.pathname + u.search);
+  } catch {
+    return false;
+  }
+}
+
 export function rankLinks(links: string[]): string[] {
   return links
     .map((url, i) => ({ url, i, s: linkScore(url) }))

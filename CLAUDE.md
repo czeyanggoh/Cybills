@@ -2546,6 +2546,24 @@ image whose file name appears as `cid:<name>` in the HTML (Outlook's
 `cid:image001.png@01DB…`) counts as embedded even with no content id. Covered by
 `npm test` in `server/` (`test/inline-image.test.mts`).
 
+**What is not a bill does not pose as one** (Cze, 16 Nov 2026: a Pan Pacific
+promotional banner and a Lazada order confirmation sat in Red Alpha's Costs
+inbox). Two rules. A document a background read (email, WhatsApp, Drive,
+Retrieve, a fetched link) READ as `Other` with no total and no rows
+(`readAsNotABill`, `inbound.ts`) is set aside to Archived by `autoRead`, its
+Reason saying "Set aside: not an invoice, receipt or request for payment"; a
+BLANK or failed read still lands in the inbox (a person decides), an `Other`
+that states an amount stays, and Save email as PDF opts out
+(`setAsideNonBills: false`). The reader is told what `Other` means and that it
+is set aside. And a mail with nothing attached stands a "Trust sender?"
+document only where it is ABOUT a bill — `looksLikeBillMail` (`emailPdf.ts`:
+invoice / receipt / bill / statement / payment link or request / PayNow /
+amount due …, Hebrew קבלה / חשבונית) or a link that is plainly a file
+(`looksLikeDocumentLink`, `n8n.ts`); anything else is only mirrored on the
+Email tab. Where EVERY attachment of a mail was set aside, the mail falls
+through to that same link road (a payment link under a banner still asks).
+Covered by `npm test` in `server/` (`test/not-a-bill.test.mts`).
+
 **Only where the attachments produced nothing.** A mail carrying both the
 invoice and a link to the same invoice must not file the cost twice, and the
 attachment is the document when there is one. Every http(s) link goes over,
