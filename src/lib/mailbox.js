@@ -313,3 +313,16 @@ export async function fetchMailBody({ billId, messageId }) {
   const data = await json(path, { headers: orgHeaders() });
   return String(data.html || '');
 }
+
+/**
+ * "Ignore future mail like this": an ignore rule on the CYWS AP Mailbox that
+ * forwarded this document's mail. `{ scope: 'person'|'entity', address | domain,
+ * subject }`. Answers `{ added, description, mailboxes }`.
+ */
+export async function ignoreFutureMail(billId, rule) {
+  return json(`/api/email/documents/${encodeURIComponent(billId)}/ignore-sender`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify(rule),
+  });
+}

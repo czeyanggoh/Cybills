@@ -2716,6 +2716,22 @@ that the sender was told something. Business Admin like the rest of the router
 (the document page draws nothing for anybody else), an internal
 `@cybills.local` identity is never a recipient, a recipient that is not an
 address is refused rather than dropped, and another entity's message is a 404.
+**And mail that should never have come can be stopped at the AP Mailbox.**
+Cze, 17 Nov 2026: Airwallex's monthly "billing statement is ready" (nothing to
+pay) was forwarded by the CYWS AP Mailbox into CYBM's Costs inbox every month.
+The rule lives in CYWS, which is the only place it saves the read: **Ignore
+future mail like this** on the document's Email tab (`IgnoreFutureMail.jsx`,
+shown only for a mail carrying the AP Mailbox's "Forwarded automatically from"
+line) posts to `POST /api/email/documents/:billId/ignore-sender`, which asks
+CYWS (`apMailboxIgnore.ts`, `/api/webhooks/cybills/ap-mailbox/ignore`) with the
+entity's `tenantId`, the address the mail was delivered to, and the scope:
+**only mail forwarded to that address** (a person) or **everything that mailbox
+forwards to this entity**. The sender is the ORIGINAL one, read off CYWS's
+"Original sender:" line (`src/lib/apIgnore.js`, pure, `npm test`), since the
+From here is the forwarding mailbox; the subject starts from the words left
+once Fwd:, numbers and dates are gone. This document is untouched; Archive is
+offered after as its own click. Covered by `test/ap-mailbox-ignore.test.mts`.
+
 **The Files tab chooses what proves a document** (Cze, 5 Nov 2026: a booking's terms and conditions
 were attached instead of the confirmation). `DocumentFiles.jsx`, on documents that arrived by email
 (`GET/POST /api/email/documents/:billId/files`, `docFiles.ts`): it lists the file attached now, the

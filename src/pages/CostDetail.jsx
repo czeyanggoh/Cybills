@@ -29,6 +29,7 @@ import { claimRef } from '@/lib/exportFormat';
 import { useAuth } from '@/lib/auth';
 import { trustSender, fetchDocumentLink, useDocumentReplies, saveEmailAsPdf, drawEmailPdf, markReplyReceived } from '@/lib/mailbox';
 import EmailReply from '@/components/EmailReply';
+import IgnoreFutureMail from '@/components/IgnoreFutureMail';
 import DocumentFiles from '@/components/DocumentFiles';
 import MailBody from '@/components/MailBody';
 import { getDoc } from '@/data/docs';
@@ -3224,6 +3225,14 @@ Publish anyway?`
                         onSent={reloadMailReplies}
                       />
                     </div>
+                  )}
+                  {mailReplies.available && doc.email && (
+                    <IgnoreFutureMail
+                      billId={doc.id}
+                      envelope={doc.email}
+                      archived={doc.status === 'archived'}
+                      onArchive={doc.xeroInvoiceId ? undefined : archiveDoc}
+                    />
                   )}
                 </>
               ) : (

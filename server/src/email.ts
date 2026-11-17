@@ -47,6 +47,7 @@ import { isInternalAddress } from './users.js';
 import { isMailConnected } from './mailAccount.js';
 import { replyEmail, sendMail } from './mailer.js';
 import { recordReply, repliesFor } from './mailReplies.js';
+import { askCywsToIgnore } from './apMailboxIgnore.js';
 
 export const emailRouter = Router();
 
@@ -584,6 +585,48 @@ emailRouter.post('/reply', async (req, res) => {
     }
   }
   res.json({ ok: true, reply });
+});
+
+/**
+ * POST /api/email/documents/:billId/ignore-sender — "Ignore future mail like
+ * this". `{ scope: 'person'|'entity', address?, domain?, subject? }`.
+ *
+ * Writes an ignore rule on the CYWS AP Mailbox that forwarded this mail
+ * (apMailboxIgnore.ts), so the next one is never forwarded. Which mailbox is
+ * CYWS's to find, from this entity's Xero org and the CYBills address the mail
+ * was delivered to; `person` keeps the rule to that address alone, `entity`
+ * to everything that mailbox forwards here. This document is left alone: the
+ * page archives it as a separate, visible step.
+ */
+emailRouter.post('/documents/:billId/ignore-sender', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayRead(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const about = answering(ws, orgId, { billId: String(req.params.billId ?? '') });
+  if (!about) return res.status(404).json({ error: 'unknown_document' });
+
+  const tenantId = getOrganisation(ws, orgId)?.tenantId || '';
+  if (!tenantId) {
+    return res.status(422).json({ error: 'no_xero_org', message: 'This entity has no Xero org of its own, so no AP Mailbox forwards to it.' });
+  }
+  const deliveredTo = normaliseSender(about.envelope.to);
+  if (!deliveredTo) return res.status(422).json({ error: 'no_address', message: 'This mail does not say which address it was delivered to.' });
+  const address = String(req.body?.address ?? '').trim();
+  const domain = String(req.body?.domain ?? '').trim();
+  if (!address && !domain) return res.status(422).json({ error: 'no_sender', message: 'Say which sender to ignore.' });
+
+  const me = memberForSession(req);
+  const out = await askCywsToIgnore({
+    tenantId,
+    deliveredTo,
+    address,
+    domain,
+    subject: String(req.body?.subject ?? '').trim().slice(0, 300),
+    scope: req.body?.scope === 'entity' ? 'entity' : 'person',
+    addedBy: me?.email || 'CYBills',
+  });
+  if (!out.ok) return res.status(out.status).json({ error: out.error, message: out.message });
+  res.json(out);
 });
 
 // --- The email itself, as the document ---------------------------------------
