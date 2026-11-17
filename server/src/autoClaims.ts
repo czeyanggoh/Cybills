@@ -395,3 +395,22 @@ autoClaimsRouter.post('/run', (req, res) => {
   if (!requireAdmin(req, res)) return;
   res.json({ run: runAutoClaims(workspaceId(req), autoScope(req)) });
 });
+
+// The schedule half of copying an entity's setup (copyEntitySettings in
+// settings.ts): the period, how it rolls and whether the inbox is swept in.
+// Never WHO is on it — the people are the target entity's own, and enrolling
+// somebody is a decision about that person, not about how the entity works.
+export function copySchedule(ws: string, fromOrg: string, toOrg: string): boolean {
+  const from = getSettings(ws, dataScopeForOrg(fromOrg));
+  const to = dataScopeForOrg(toOrg);
+  if (!from || getSettings(ws, to)) return false;
+  putSettings(ws, to, {
+    endDate: from.endDate,
+    endOfMonth: from.endOfMonth,
+    frequency: from.frequency,
+    includeInbox: from.includeInbox,
+    userIds: [],
+    enrolledAt: {},
+  });
+  return true;
+}

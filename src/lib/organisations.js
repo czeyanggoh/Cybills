@@ -242,11 +242,11 @@ export function fetchXeroTenants() {
 
 // `kind: 'standalone'` creates an entity with no Xero of its own — a bridge
 // whose claims post into `parentOrgId`'s ledger instead.
-export async function createOrganisation({ name, tenantId, tenantName, kind, parentOrgId }) {
+export async function createOrganisation({ name, tenantId, tenantName, kind, parentOrgId, copySettingsFrom }) {
   const res = await fetch('/api/organisations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, tenantId, tenantName, kind, parentOrgId }),
+    body: JSON.stringify({ name, tenantId, tenantName, kind, parentOrgId, copySettingsFrom }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -255,6 +255,7 @@ export async function createOrganisation({ name, tenantId, tenantName, kind, par
       name_required: 'Give the entity a name.',
       parent_required: 'Choose the entity whose Xero its claims should post into.',
       parent_not_found: 'That entity no longer exists — pick another.',
+      copy_source_not_found: 'The entity to copy the setup from no longer exists — pick another.',
     }[body.error];
     const err = /** @type {any} */ (new Error(
       said || body.message || 'Could not add the organisation.'
@@ -262,7 +263,8 @@ export async function createOrganisation({ name, tenantId, tenantName, kind, par
     err.code = body.error;
     throw err;
   }
-  return body.organisation;
+  // The entity exists even if copying its setup failed; the caller says so.
+  return body.copyError ? { ...body.organisation, copyError: body.copyError } : body.organisation;
 }
 
 // The short form this entity's inbound addresses carry

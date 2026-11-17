@@ -3666,6 +3666,19 @@ happened on or before that. Only a claim with nothing dated at all falls back to
 today, which is what every claim used to do: August's expenses landing in
 whichever month somebody pressed the button.
 
+**A bridge can be set up like another one.** "Red Alpha - SMRT" works exactly
+as "Red Alpha - ST Engineering" does, and that working is nothing but per-entity
+settings blobs: the category list, Posts to, extraction settings and review
+instructions, supplier and customer rules, export layout. So Add entity (No
+accounting connection) offers **Copy setup from** another bridge
+(`copySettingsFrom` on `POST /api/organisations`): `copyEntitySettings`
+(`settings.ts`) copies every `<key>::<source>` blob the new entity lacks, and
+`copySchedule` (`autoClaims.ts`) copies the auto-claims period, frequency and
+inbox sweep with NOBODY enrolled. Not copied: the Business profile and bank
+accounts (one company's identity), the people, the WhatsApp groups, and the
+email short form. A copy is independent afterwards. Covered by
+`test/copy-entity-setup.test.mts`.
+
 **One person can work in two entities.** Sign-in is by email, so a second roster
 row for the same address would be a second identity — their documents, their
 claims and their manager would split between the two, and only one could ever

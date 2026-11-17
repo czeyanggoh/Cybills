@@ -125,3 +125,40 @@ export function adoptLegacySettings(): number {
   if (adopted) saveCollection(COLLECTION, items);
   return adopted;
 }
+
+// A new entity set up the way an existing one already is: "Red Alpha - SMRT"
+// works exactly as "Red Alpha - ST Engineering" does, and that working is
+// nothing but these per-entity blobs — the category list and what each one
+// posts to, the extraction settings and review instructions, supplier and
+// customer rules, export layout. Retyping thirty rows of a claim policy and
+// its account map by hand is how two bridges that are meant to agree quietly
+// stop agreeing.
+//
+// What is NOT copied is what identifies the COMPANY rather than how it works:
+// its Business profile (a name, a CRN and a GST number are one company's, and
+// the entity check reads them as the addressee of its paperwork) and its bank
+// accounts. Never overwrites a blob the target already has. Returns the keys
+// copied.
+const NOT_COPIED = new Set([
+  'cybills.business-profile.v1',
+  'cybills.bank.accounts.v1',
+  'cybills.bank.requested.v1',
+]);
+
+export function copyEntitySettings(ws: string, fromOrg: string, toOrg: string): string[] {
+  if (!fromOrg || !toOrg || fromOrg === toOrg) return [];
+  const items = loadCollection<Setting>(COLLECTION);
+  const suffix = `::${fromOrg}`;
+  const copied: string[] = [];
+  for (const s of [...items]) {
+    if (s.workspaceId !== ws || !s.key.endsWith(suffix) || s.value == null) continue;
+    const base = s.key.slice(0, -suffix.length);
+    if (NOT_COPIED.has(base)) continue;
+    const key = `${base}::${toOrg}`;
+    if (items.some((t) => t.workspaceId === ws && t.key === key)) continue;
+    items.push({ workspaceId: ws, key, value: structuredClone(s.value) });
+    copied.push(base);
+  }
+  if (copied.length) saveCollection(COLLECTION, items);
+  return copied;
+}

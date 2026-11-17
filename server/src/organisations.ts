@@ -27,6 +27,8 @@ import {
 } from './users.js';
 import { renameChannelsForUsers } from './waRename.js';
 import type { Plan } from './planRules.js';
+import { copyEntitySettings } from './settings.js';
+import { copySchedule } from './autoClaims.js';
 
 // Organisations = the client entities bills are published for. Each one is
 // linked to a Xero organisation (tenant) that cyworkspace holds a connection
@@ -326,8 +328,13 @@ organisationsRouter.post('/', (req, res) => {
   const tenantName = String(b.tenantName ?? '').trim();
   const standalone = String(b.kind ?? '') === 'standalone';
   const parentOrgId = String(b.parentOrgId ?? '').trim();
+  // Set the new entity up the way an existing one already is (copyEntitySettings).
+  const copyFrom = String(b.copySettingsFrom ?? '').trim();
   const orgId = workspaceId(req);
   const organisations = load();
+  if (copyFrom && !organisations.some((o) => o.orgId === orgId && o.id === copyFrom)) {
+    return res.status(400).json({ error: 'copy_source_not_found' });
+  }
 
   // A standalone entity has no Xero of its own, so it needs a name of its own
   // (there is no tenant name to fall back on) and somewhere for its claims to
@@ -396,7 +403,21 @@ organisationsRouter.post('/', (req, res) => {
   } catch (err) {
     console.error('[organisations] could not create the general user', err);
   }
-  res.json({ ok: true, organisation });
+  // Copied after the row exists and before the reply, so the entity is never
+  // seen half set up. A failure here leaves a working, unconfigured entity and
+  // says so rather than failing the create.
+  let copied: string[] = [];
+  let copyError = '';
+  if (copyFrom) {
+    try {
+      copied = copyEntitySettings(orgId, copyFrom, organisation.id);
+      if (copySchedule(orgId, copyFrom, organisation.id)) copied.push('auto-claims schedule');
+    } catch (err) {
+      console.error('[organisations] could not copy settings', err);
+      copyError = String((err as Error)?.message || err);
+    }
+  }
+  res.json({ ok: true, organisation, ...(copyFrom ? { copied, copyError } : {}) });
 });
 
 // DELETE /api/organisations/:id — unlink. Does not touch cyworkspace or Xero;

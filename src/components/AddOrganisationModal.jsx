@@ -20,6 +20,10 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
   const [parentOrgId, setParentOrgId] = useState('');
   const { data: organisations = [] } = useOrganisations();
   const parents = organisations.filter((o) => o.tenantId);
+  // Another bridge to set this one up like: its categories and what each posts
+  // to, extraction settings, rules and auto-claims schedule. Never its people.
+  const bridges = organisations.filter((o) => o.kind === 'standalone');
+  const [copyFrom, setCopyFrom] = useState('');
   const [tenants, setTenants] = useState(null); // null = loading
   const [loadError, setLoadError] = useState('');
   const [tenantId, setTenantId] = useState('');
@@ -39,6 +43,7 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
     setSaveError('');
     setKind('xero');
     setParentOrgId('');
+    setCopyFrom('');
     fetchXeroTenants()
       .then(setTenants)
       .catch((err) => {
@@ -72,13 +77,16 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
     try {
       const organisation = await createOrganisation(
         standalone
-          ? { name: name.trim(), kind: 'standalone', parentOrgId }
+          ? { name: name.trim(), kind: 'standalone', parentOrgId, copySettingsFrom: copyFrom || undefined }
           : {
               name: name.trim() || selected.tenant_name,
               tenantId: selected.tenant_id,
               tenantName: selected.tenant_name,
             }
       );
+      if (organisation.copyError) {
+        window.alert(`${organisation.name} was added, but its setup could not be copied: ${organisation.copyError}`);
+      }
       invalidate();
       setActiveOrganisationId(organisation.id);
       onAdded?.(organisation);
@@ -185,6 +193,37 @@ export default function AddOrganisationModal({ open, onClose, onAdded }) {
               className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
+
+          {standalone && bridges.length > 0 && (
+            <>
+              <label className="flex items-center gap-3 text-sm">
+                <span className="w-32 shrink-0 text-muted-foreground">Copy setup from</span>
+                <div className="relative flex-1">
+                  <select
+                    value={copyFrom}
+                    onChange={(e) => {
+                      setCopyFrom(e.target.value);
+                      const src = bridges.find((o) => o.id === e.target.value);
+                      if (src?.parentOrgId && !parentOrgId) setParentOrgId(src.parentOrgId);
+                    }}
+                    className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <option value="">Start empty</option>
+                    {bridges.map((o) => (
+                      <option key={o.id} value={o.id}>{o.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                </div>
+              </label>
+              {copyFrom && (
+                <p className="text-xs text-muted-foreground">
+                  Copies its categories and what each posts to, extraction settings, review instructions,
+                  supplier rules and auto-claims schedule. Not its people, Business profile or bank accounts.
+                </p>
+              )}
+            </>
+          )}
 
           {!standalone && loadError && <p className="text-sm text-destructive">{loadError}</p>}
           {saveError && <p className="text-sm text-destructive">{saveError}</p>}
