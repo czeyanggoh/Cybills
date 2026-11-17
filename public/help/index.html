@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CYBills Help Centre</title>
+<meta name="description" content="How to use CYBills: sending in receipts and invoices, expense claims, approvals, and publishing to Xero.">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#ffffff; --bg-soft:#f6f8fc; --card:#ffffff; --text:#0f172a; --muted:#5b6478;
+  --border:#e3e8f0; --primary:#2563eb; --primary-deep:#1e3a8a; --primary-soft:#eaf1ff;
+  --ok:#0f7a4b; --ok-soft:#e6f6ee; --warn:#9a5b00; --warn-soft:#fff4e0; --bad:#b42318; --bad-soft:#fdecea;
+  --hero-from:#2563eb; --hero-to:#0b1224; --shadow:0 1px 2px rgba(15,23,42,.05),0 4px 16px rgba(15,23,42,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0b1020; --bg-soft:#111830; --card:#121a33; --text:#e6eaf3; --muted:#9aa4bd;
+    --border:#243052; --primary:#6c9bff; --primary-deep:#9bbcff; --primary-soft:#1a2a55;
+    --ok:#5fd39c; --ok-soft:#10301f; --warn:#ffbe5c; --warn-soft:#3a2a10; --bad:#ff8a80; --bad-soft:#3d1515;
+    --hero-from:#1e3a8a; --hero-to:#070b17; --shadow:0 1px 2px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0b1020; --bg-soft:#111830; --card:#121a33; --text:#e6eaf3; --muted:#9aa4bd;
+  --border:#243052; --primary:#6c9bff; --primary-deep:#9bbcff; --primary-soft:#1a2a55;
+  --ok:#5fd39c; --ok-soft:#10301f; --warn:#ffbe5c; --warn-soft:#3a2a10; --bad:#ff8a80; --bad-soft:#3d1515;
+  --hero-from:#1e3a8a; --hero-to:#070b17; --shadow:0 1px 2px rgba(0,0,0,.3);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.6 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--primary);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1080px;margin:0 auto;padding:0 16px}
+header.top{border-bottom:1px solid var(--border);background:var(--bg)}
+header.top .wrap{display:flex;align-items:center;justify-content:space-between;height:60px;gap:12px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--text)}
+.brand img{width:28px;height:28px;border-radius:7px}
+.brand small{font-weight:500;color:var(--muted)}
+.top-links{display:flex;gap:16px;font-size:14px;align-items:center}
+.top-links a{color:var(--muted)}
+.btn{display:inline-block;background:var(--primary);color:#fff !important;padding:7px 14px;border-radius:8px;font-weight:600;font-size:14px}
+.btn:hover{text-decoration:none;filter:brightness(1.05)}
+.hero{background:linear-gradient(135deg,var(--hero-from),var(--hero-to));color:#fff;padding:48px 0 56px}
+.hero h1{margin:0 0 6px;font-size:30px;line-height:1.2}
+.hero p{margin:0 0 20px;opacity:.85}
+.search{position:relative;max-width:620px}
+.search input{width:100%;padding:14px 16px 14px 44px;border-radius:10px;border:0;font:inherit;font-size:16px;color:#0f172a;background:#fff;box-shadow:0 6px 24px rgba(0,0,0,.18)}
+.search svg{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#64748b}
+.results{position:absolute;left:0;right:0;top:calc(100% + 6px);background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);max-height:360px;overflow:auto;z-index:5;display:none}
+.results a{display:block;padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text)}
+.results a:last-child{border-bottom:0}
+.results a:hover,.results a.sel{background:var(--primary-soft);text-decoration:none}
+.results small{display:block;color:var(--muted)}
+.results .none{padding:12px 14px;color:var(--muted)}
+main{padding:32px 0 56px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.card{display:block;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;color:var(--text);box-shadow:var(--shadow);transition:border-color .15s}
+.card:hover{border-color:var(--primary);text-decoration:none}
+.card .ic{width:40px;height:40px;border-radius:10px;background:var(--primary-soft);color:var(--primary);display:grid;place-items:center;margin-bottom:12px;font-size:20px}
+.card h3{margin:0 0 4px;font-size:17px}
+.card p{margin:0 0 10px;color:var(--muted);font-size:14px}
+.card .meta{font-size:12px;color:var(--muted)}
+.section-title{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:36px 0 12px;font-weight:600}
+.quick{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.quick a{background:var(--bg-soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;color:var(--text);font-weight:500;font-size:14px}
+.quick a:hover{border-color:var(--primary);text-decoration:none}
+.crumbs{font-size:14px;color:var(--muted);margin-bottom:16px}
+.crumbs a{color:var(--muted)}
+.coll-head{display:flex;gap:14px;align-items:flex-start;margin-bottom:20px}
+.coll-head h1{margin:0;font-size:26px}
+.coll-head p{margin:2px 0 0;color:var(--muted)}
+.list{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.list a{display:flex;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border);color:var(--text)}
+.list a:last-child{border-bottom:0}
+.list a:hover{background:var(--bg-soft);text-decoration:none}
+.list small{color:var(--muted)}
+.aud{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--bg-soft);border:1px solid var(--border);color:var(--muted);white-space:nowrap;align-self:center}
+.layout{display:grid;grid-template-columns:240px 1fr;gap:36px}
+.side{font-size:14px;position:sticky;top:16px;align-self:start}
+.side h4{margin:0 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.side a{display:block;padding:6px 10px;border-radius:7px;color:var(--text)}
+.side a.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.side a:hover{text-decoration:none;background:var(--bg-soft)}
+article{max-width:720px;min-width:0}
+article h1{font-size:28px;line-height:1.25;margin:0 0 8px}
+article .lede{color:var(--muted);font-size:16px;margin:0 0 24px}
+article h2{font-size:19px;margin:28px 0 8px}
+article ul,article ol{padding-left:22px}
+article li{margin:4px 0}
+article code,kbd{background:var(--bg-soft);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:13px}
+.ui{font-weight:600;background:var(--bg-soft);border:1px solid var(--border);border-radius:5px;padding:0 6px;white-space:nowrap}
+.note{border-radius:10px;padding:12px 16px;margin:16px 0;border:1px solid}
+.note b{display:block;margin-bottom:2px}
+.note.tip{background:var(--primary-soft);border-color:transparent}
+.note.ok{background:var(--ok-soft);border-color:transparent}
+.note.warn{background:var(--warn-soft);border-color:transparent}
+.note.bad{background:var(--bad-soft);border-color:transparent}
+table.t{width:100%;border-collapse:collapse;font-size:14px;margin:12px 0}
+table.t th,table.t td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:600;font-size:13px}
+.steps{counter-reset:s;list-style:none;padding:0}
+.steps li{counter-increment:s;position:relative;padding-left:40px;margin:12px 0}
+.steps li::before{content:counter(s);position:absolute;left:0;top:0;width:26px;height:26px;border-radius:50%;background:var(--primary);color:#fff;font-weight:700;font-size:13px;display:grid;place-items:center}
+.pn{display:flex;justify-content:space-between;gap:12px;margin-top:40px;border-top:1px solid var(--border);padding-top:16px;font-size:14px}
+.helpful{margin-top:28px;padding:14px 16px;background:var(--bg-soft);border-radius:10px;font-size:14px;color:var(--muted)}
+footer{border-top:1px solid var(--border);padding:24px 0;color:var(--muted);font-size:13px}
+footer .wrap{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.theme-btn{background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:5px 9px;cursor:pointer;font:inherit;font-size:13px}
+@media (max-width:760px){
+  .layout{grid-template-columns:1fr}
+  .side{position:static;display:none}
+  .hero{padding:32px 0 40px}
+  .hero h1{font-size:24px}
+  .top-links .hide-sm,.brand small{display:none}
+  .btn{white-space:nowrap}
+  .list a{flex-direction:column;gap:4px}
+  .aud{align-self:flex-start}
+  table.t{display:block;overflow-x:auto}
+}
+@media print{header.top,.hero .search,.side,.pn,.helpful,footer{display:none}.layout{display:block}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#/"><img src="/logo-120.png" alt=""> CYBills <small>Help Centre</small></a>
+    <nav class="top-links">
+      <a class="hide-sm" href="#/c/start">Get started</a>
+      <a class="hide-sm" href="#/a/dos-and-donts">Do's &amp; don'ts</a>
+      <button class="theme-btn" id="themeBtn" type="button" aria-label="Toggle dark mode">◐</button>
+      <a class="btn" href="/">Open CYBills</a>
+    </nav>
+  </div>
+</header>
+<div id="app"></div>
+<footer>
+  <div class="wrap">
+    <span>CYBills is run by CY Business Management for its clients.</span>
+    <span>Still stuck? Raise a ticket in <a href="/support">Support Desk</a> inside CYBills.</span>
+  </div>
+</footer>
+
+<script>
+/* ---------- Content ----------
+   Each article: id, collection, title, audience, summary, body (HTML).
+   Audience: "Everyone", "Claimants", "Approvers / ROs", "Admins".
+*/
+const COLLECTIONS = [
+  {id:'start',  icon:'🚀', title:'Get started', desc:'What CYBills is, signing in, and finding your way around.'},
+  {id:'submit', icon:'📤', title:'Send in receipts & invoices', desc:'Every way to get a document into CYBills: upload, email, WhatsApp, Google Drive.'},
+  {id:'review', icon:'🧾', title:'Review your costs', desc:'The Costs list, what the badges mean, and fixing a document the reader got wrong.'},
+  {id:'claims', icon:'💳', title:'Expense claims', desc:'Raising a claim, adding receipts, mileage, and submitting it for approval.'},
+  {id:'approve',icon:'✅', title:'Approving claims (Reporting Officers)', desc:'Deciding the claims routed to you, and what to check before you approve.'},
+  {id:'xero',   icon:'📒', title:'Publishing to Xero', desc:'For admins: sending costs and claims into the ledger, and correcting them afterwards.'},
+  {id:'account',icon:'👤', title:'Your account & security', desc:'Passwords, two-step sign-in, your profile, and switching between entities.'},
+  {id:'trouble',icon:'🛟', title:'Help & troubleshooting', desc:'Common questions, things that look wrong, and how to get support.'}
+];
+
+const ARTICLES = [
+/* ===== Get started ===== */
+{id:'what-is-cybills', c:'start', aud:'Everyone', title:'What is CYBills, and who is it for?',
+ sum:'CYBills reads your receipts and invoices, so nobody types them in.',
+ body:`
+<p>CYBills is the bill-collection and expense-claims system run by <b>CY Business Management (CYBM)</b> for its clients. You send in a photo or PDF of a receipt or invoice; CYBills reads it (supplier, date, amount, GST) and suggests how it should be coded. Your accounts team checks it and publishes it to Xero.</p>
+<h2>Who uses it</h2>
+<table class="t">
+<tr><th>You are…</th><th>You will mostly…</th></tr>
+<tr><td><b>Staff / trainees</b> (Standard users)</td><td>Send in receipts, raise expense claims and submit them for approval.</td></tr>
+<tr><td><b>Reporting Officers / managers</b></td><td>Approve or reject the claims of the people who report to you.</td></tr>
+<tr><td><b>Business Admins</b></td><td>Review everybody's documents, set up rules, and publish to Xero.</td></tr>
+<tr><td><b>CYBM colleagues</b></td><td>Run the books for the clients they look after.</td></tr>
+</table>
+<div class="note tip"><b>The short version</b>Send the paper in → check what CYBills read → put it on a claim (if you paid for it yourself) → submit. Everything else is your accounts team's job.</div>
+<h2>What you see depends on your role</h2>
+<p>A Standard user sees <b>their own</b> documents and claims only. You will not see colleagues' receipts, and they will not see yours. If a menu item in this guide is missing for you, that is usually why — it is for admins.</p>`},
+
+{id:'first-login', c:'start', aud:'Everyone', title:'Signing in for the first time',
+ sum:'Accept your invitation, set a password, and set up two-step sign-in.',
+ body:`
+<ol class="steps">
+<li>Open the invitation email from CYBills and click the link. (Invitations expire — if yours has, ask your admin to send it again.)</li>
+<li>Choose a password. If your company uses Google accounts you may be offered <span class="ui">Sign in with Google</span> instead.</li>
+<li><b>Set up two-step sign-in.</b> If you sign in with a password, CYBills asks you to scan a QR code with an authenticator app (Google Authenticator, Microsoft Authenticator, Authy…) and type the 6-digit code.</li>
+<li><b>Save your 10 recovery codes</b> somewhere safe. They are shown once. Each one gets you in a single time if you lose your phone.</li>
+<li>Tick <span class="ui">Trust this browser</span> on your own computer so you are not asked for a code every day.</li>
+</ol>
+<div class="note warn"><b>Don't tick "Trust this browser" on a shared or public computer.</b>Anyone using that browser afterwards could get past the second step.</div>
+<p>Sign in at <a href="/">cybills.cy-bm.sg</a>.</p>`},
+
+{id:'find-your-way', c:'start', aud:'Everyone', title:'Finding your way around',
+ sum:'The left rail, the Costs tabs, and the Add documents button.',
+ body:`
+<h2>The left rail</h2>
+<table class="t">
+<tr><th>Menu</th><th>What it is for</th></tr>
+<tr><td><span class="ui">Costs</span></td><td>Your receipts and supplier invoices. Under it: <b>Costs inbox</b>, <b>Expense claims</b>, <b>Supplier statements</b> and <b>Exports</b>.</td></tr>
+<tr><td><span class="ui">Submission history</span></td><td>Everything you have ever sent in, newest first — the place to check "did my receipt arrive?"</td></tr>
+<tr><td><span class="ui">Exports</span></td><td>Download a CSV, PDF or ZIP of documents.</td></tr>
+<tr><td><span class="ui">Support Desk</span> (top right)</td><td>Raise a ticket with the CYBM team. Only you and the admins can see your tickets.</td></tr>
+</table>
+<p>Admins also see <b>WhatsApp</b>, <b>Email</b>, <b>Bank</b>, <b>Users</b> and <b>Business settings</b>.</p>
+<h2>The entity switcher</h2>
+<p>The company name at the top left is the <b>entity</b> (company book) you are working in. If you work for more than one, click it to switch. Always check it before uploading — a receipt uploaded under the wrong entity lands in the wrong company's books.</p>
+<h2>Add documents</h2>
+<p>The <span class="ui">+ Add documents</span> button opens the upload drawer. See <a href="#/a/upload">Uploading documents</a>.</p>`},
+
+{id:'roles', c:'start', aud:'Everyone', title:'Roles: Standard, Reporting Officer and Business Admin',
+ sum:'What each role can see and do.',
+ body:`
+<table class="t">
+<tr><th>Role</th><th>Sees</th><th>Can</th></tr>
+<tr><td><b>Standard</b></td><td>Their own documents and claims</td><td>Upload, edit their own documents, raise and submit claims (if allowed).</td></tr>
+<tr><td><b>Reporting Officer</b></td><td>Their own, plus the <b>claims</b> of their direct reports</td><td>Approve or reject those claims, and open the receipts on them. A Reporting Officer is <b>not</b> an admin of the company's books.</td></tr>
+<tr><td><b>User Admin</b></td><td>Everything in the entity</td><td>Manage users and documents.</td></tr>
+<tr><td><b>Business Admin</b></td><td>Everything in the entity</td><td>Everything above, plus settings, rules, WhatsApp/Email/Bank, and publishing to Xero.</td></tr>
+</table>
+<h2>Privileges</h2>
+<p>An admin can switch three things on or off for each Standard user: <b>Access all documents</b>, <b>Publish to accounting software</b>, and <b>Create expense claims</b>. If a button in this guide is missing for you, ask your admin whether it has been switched off.</p>
+<h2>Your direct manager</h2>
+<p>Your claims go to your <b>direct manager</b> for approval. If the wrong person is set, ask your admin to change it on the Users page before you submit.</p>`},
+
+/* ===== Submit ===== */
+{id:'ways-to-submit', c:'submit', aud:'Everyone', title:'Ways to send documents into CYBills',
+ sum:'Upload, email, WhatsApp or a Google Drive folder — they all end up in the same place.',
+ body:`
+<table class="t">
+<tr><th>Method</th><th>Best for</th></tr>
+<tr><td><a href="#/a/upload">Upload</a></td><td>Files already on your computer or phone.</td></tr>
+<tr><td><a href="#/a/email-in">Email</a></td><td>Invoices that arrive by email — just forward them.</td></tr>
+<tr><td><a href="#/a/whatsapp">WhatsApp</a></td><td>Snapping a receipt on the spot.</td></tr>
+<tr><td><a href="#/a/drive">Google Drive folder</a></td><td>Scanners and shared folders.</td></tr>
+</table>
+<p>Whichever road it takes, a document is filed under <b>you</b>, read in 10–30 seconds, and appears in your <b>Costs</b> list. Send each document <b>once</b>, by one road only.</p>`},
+
+{id:'upload', c:'submit', aud:'Everyone', title:'Uploading documents',
+ sum:'Use + Add documents to upload one file or many at once.',
+ body:`
+<ol class="steps">
+<li>Check the entity at the top left is the right company.</li>
+<li>Click <span class="ui">+ Add documents</span>.</li>
+<li>Choose the <b>Costs</b> tab, and check the <b>Document owner</b> is you (or the person the cost belongs to).</li>
+<li>Drag files in or click to choose. PDF, JPG, PNG and iPhone HEIC photos all work.</li>
+<li>Wait for <b>Reading…</b> to finish. You can carry on working; the read continues in the background.</li>
+</ol>
+<div class="note tip"><b>One receipt per file is best.</b>A PDF with several receipts can be split afterwards, but it is quicker to upload them separately.</div>
+<h2>Good photos read better</h2>
+<ul>
+<li>Flat, in good light, whole receipt in the frame — including the total and the GST line.</li>
+<li>No thumb over the amount. No blur.</li>
+<li>If the merchant wrote a discount by hand, or you paid part with points, include the card slip in the same photo.</li>
+</ul>`},
+
+{id:'email-in', c:'submit', aud:'Everyone', title:'Emailing documents in',
+ sum:'You have your own CYBills email address. Forward invoices to it.',
+ body:`
+<p>Everyone has a personal address like <code>yourname.company@cybills.sg</code>. Anything attached to an email sent there is filed under you.</p>
+<h2>Where to find your address</h2>
+<p>Open <span class="ui">+ Add documents</span>. Under the uploader, the <b>Extract by Email</b> box shows the address for the selected owner.</p>
+<h2>Tips</h2>
+<ul>
+<li><b>Write a note in the email</b> if it helps: e.g. "recharge this to client X" or "team lunch with Dean and Mei". CYBills reads it and uses it when coding.</li>
+<li>Name your files sensibly ("Singtel Sep paid.pdf") — the file name is read too.</li>
+<li>Invoices that are only a <b>link</b> ("View your bill online") show up as a document asking <b>Trust sender?</b> — an admin decides whether CYBills may fetch it.</li>
+<li>Logos and signature images in the email are ignored automatically.</li>
+</ul>`},
+
+{id:'whatsapp', c:'submit', aud:'Everyone', title:'Sending receipts by WhatsApp',
+ sum:'Send a photo into your CYBills WhatsApp group; a tick tells you it was read.',
+ body:`
+<ol class="steps">
+<li>Your admin connects you to WhatsApp and you receive an <b>invite link by email</b>. Tap it to join your group (it is named after your CYBills address).</li>
+<li>Send photos or PDFs of receipts into the group. Add a caption if useful ("client lunch, 4 pax").</li>
+<li>CYBills reacts on your message: <b>☑️</b> when it has read the document, <b>✅</b> when Xero says the bill is paid.</li>
+</ol>
+<div class="note warn"><b>No tick after a few minutes?</b>The photo may be unreadable. Check <span class="ui">Submission history</span>; if it says <i>Nothing read</i>, send a clearer photo.</div>
+<p>Don't share the invite link — anyone who joins can send bills into your book.</p>`},
+
+{id:'drive', c:'submit', aud:'Everyone', title:'Collecting bills from a Google Drive folder',
+ sum:'Share a folder with CYBills and anything saved into it is filed.',
+ body:`
+<ol class="steps">
+<li>Ask your admin to connect your Google Drive folder (Users → Edit details → <b>Connect a Google Drive folder</b>).</li>
+<li>Save PDFs or photos into that folder.</li>
+<li>Every couple of minutes CYBills picks them up, files them under you, and moves them into a <b>Filed</b> subfolder.</li>
+</ol>
+<p>Files it cannot read (Word documents, Google Docs, very large files) are moved into <b>Not filed</b> with the reason. Save a PDF instead.</p>`},
+
+/* ===== Review ===== */
+{id:'costs-tabs', c:'review', aud:'Everyone', title:'The Costs list: Processing, To review, Ready, Archived',
+ sum:'What each tab means, and why a document moves by itself.',
+ body:`
+<table class="t">
+<tr><th>Tab</th><th>Means</th></tr>
+<tr><td><b>Processing</b></td><td>Still being read. Wait 10–30 seconds.</td></tr>
+<tr><td><b>To review</b></td><td>Something is missing — usually the <b>Category</b>. The badge says what.</td></tr>
+<tr><td><b>Ready</b></td><td>Has a date, a category and a total. Ready to claim or publish.</td></tr>
+<tr><td><b>Archived</b></td><td>Done (published) or set aside.</td></tr>
+</table>
+<p>You never move a document to Ready yourself — fill in what's missing and it moves on its own.</p>
+<h2>Unpublished / All costs</h2>
+<p>The toggle above the list switches between what still needs doing and everything, including what is already in Xero.</p>`},
+
+{id:'badges', c:'review', aud:'Everyone', title:'What the badges mean',
+ sum:'Needs, Nothing read, Pending reply, Match found and more.',
+ body:`
+<table class="t">
+<tr><th>Badge</th><th>What to do</th></tr>
+<tr><td><b>Needs: Category, Total…</b></td><td>Open the document and fill in the named fields.</td></tr>
+<tr><td><b>Nothing read</b></td><td>The reader couldn't read the file. Re-read it, type it in, or send a clearer copy.</td></tr>
+<tr><td><b>Pending reply</b></td><td>Someone emailed the sender a question. Wait for the answer.</td></tr>
+<tr><td><b>Reply received</b></td><td>The answer has arrived — read it and mark it reviewed.</td></tr>
+<tr><td><b>Trust sender?</b></td><td>An emailed invoice that is only a link. Admin decision.</td></tr>
+<tr><td><b>Match found</b></td><td>A bank payment matches this document. Admin action.</td></tr>
+<tr><td><b>Already in Xero</b></td><td>Xero already has this cost. <b>Do not publish it again.</b></td></tr>
+<tr><td><b>Merge suggestion / Duplicate</b></td><td>Two uploads look like one document, or the same one twice. Review before doing anything else.</td></tr>
+<tr><td><b>In expense claim</b></td><td>It is on a claim. Edit it from the claim.</td></tr>
+<tr><td>Date in <i>italics with *</i></td><td>No date was printed, so the upload date is used. Type the real date if you know it.</td></tr>
+</table>`},
+
+{id:'document-page', c:'review', aud:'Everyone', title:'Checking and correcting a document',
+ sum:'Open a row to see the image beside the fields CYBills read.',
+ body:`
+<p>Click any row to open the document page: the image on one side, the fields on the other. Changes save as you go.</p>
+<h2>Check these four things</h2>
+<ol>
+<li><b>Supplier</b> — who you paid.</li>
+<li><b>Date</b> — the date on the receipt, not the date you uploaded it.</li>
+<li><b>Total</b> — what you actually paid (after any discount or points).</li>
+<li><b>Category</b> — what it was for. Pick from the list; if unsure, leave it for your admin and add a note.</li>
+</ol>
+<h2>Descriptions starting with *</h2>
+<p>A <code>*</code> at the start means CYBills wrote the description. Edit it and the star goes away.</p>
+<h2>Meals and entertainment</h2>
+<p>For a meal, say <b>who was there</b> in the description ("lunch with client ABC, 4 pax"). This is what IRAS asks for later.</p>
+<h2>Zooming the image</h2>
+<p>Hold <kbd>Ctrl</kbd> and scroll over the image to zoom; drag to move; double-click to reset.</p>
+<h2>Re-read</h2>
+<p>If the read was poor, <span class="ui">Re-read</span> reads it again. It replaces what was read, so do it <b>before</b> you start correcting fields by hand.</p>`},
+
+{id:'gst', c:'review', aud:'Everyone', title:'GST and tax codes, in plain words',
+ sum:'Why some receipts are No Tax even though GST is printed.',
+ body:`
+<p>CYBills only claims GST when the receipt shows a <b>Singapore GST registration number</b> and calls the tax GST. Otherwise it is coded <b>No Tax</b> and the tax stays inside the cost.</p>
+<ul>
+<li><b>Foreign receipts</b> (VAT, SST) — No Tax.</li>
+<li><b>Motor vehicle costs</b> (petrol, parking, ERP, servicing) — always No Tax.</li>
+<li><b>Hospital and clinic bills</b> — always No Tax.</li>
+<li><b>Mileage</b> and <b>payment proofs</b> — No Tax.</li>
+</ul>
+<p>The <b>Reason</b> under the tax code explains every decision. If it looks wrong, leave a note for your admin rather than guessing.</p>`},
+
+{id:'archive-merge', c:'review', aud:'Everyone', title:'Archive, merge and duplicates',
+ sum:'Setting a document aside, and combining two uploads that are one document.',
+ body:`
+<h2>Archive</h2>
+<p>Archive a document that is not a cost but is worth keeping (a duplicate, a bank screenshot). It stays under Archived and can be unarchived.</p>
+<h2>Merge</h2>
+<p>When page 1 and page 2 of one invoice were uploaded separately, or a receipt and its card slip, CYBills suggests a <b>merge</b>. Check the preview, then <span class="ui">Merge</span> or <span class="ui">Keep separate</span>. A merge can be undone with Unmerge.</p>
+<h2>Duplicates</h2>
+<p>If the same receipt was sent twice, archive the extra copy. <b>Don't merge two copies of the same receipt</b> — that's a duplicate, not two pages.</p>`},
+
+{id:'payment-proof', c:'review', aud:'Everyone', title:'Bank transfer screenshots (payment proofs)',
+ sum:'A PayNow or transfer screenshot is proof of payment, not a bill.',
+ body:`
+<p>A PayNow, PayLah, GIRO or internet-banking "transfer successful" screenshot is typed <b>Payment proof</b>. It is marked paid, set aside, and used to mark the matching invoice as paid. It is never published as a cost on its own — that would count the spending twice.</p>
+<p>If you paid a supplier by transfer, send <b>both</b> the invoice and the transfer screenshot.</p>`},
+
+/* ===== Claims ===== */
+{id:'what-are-claims', c:'claims', aud:'Claimants', title:'What is an expense claim?',
+ sum:'A claim bundles the receipts you paid for yourself so you can be reimbursed.',
+ body:`
+<p>If you paid with your own money, the receipts go onto an <b>expense claim</b>. Your direct manager / Reporting Officer approves it, and the company reimburses you.</p>
+<h2>The life of a claim</h2>
+<table class="t">
+<tr><th>Status</th><th>Means</th></tr>
+<tr><td><b>Draft</b></td><td>You are still adding receipts.</td></tr>
+<tr><td><b>Awaiting approval</b></td><td>Submitted to your approver.</td></tr>
+<tr><td><b>Rejected</b></td><td>Sent back. Read the reason, fix it, submit again.</td></tr>
+<tr><td><b>Approved</b></td><td>Locked. Waiting to be published and paid.</td></tr>
+<tr><td><b>Published / Reimbursed</b></td><td>In the accounts; "Reimbursed" once the money has left.</td></tr>
+</table>
+<p>A claim covers <b>one month</b>. Its end date is set for you automatically.</p>`},
+
+{id:'create-claim', c:'claims', aud:'Claimants', title:'Creating a claim and adding receipts',
+ sum:'Two ways: upload straight onto a claim, or add from your Costs list.',
+ body:`
+<h2>Way 1 — upload straight onto the claim</h2>
+<ol class="steps">
+<li>Go to <span class="ui">Costs</span> → <span class="ui">Expense claims</span> → <span class="ui">Create expense claim</span>.</li>
+<li>Open the claim and click <span class="ui">Add items</span>.</li>
+<li>Upload your receipts. Each one appears on the claim as soon as it is read.</li>
+</ol>
+<h2>Way 2 — from the Costs list</h2>
+<ol class="steps">
+<li>Tick the receipts in your Costs list.</li>
+<li>Click <span class="ui">Add to expense claim</span> and choose the claim (or create a new one).</li>
+</ol>
+<div class="note tip"><b>Auto expense claims</b>If your admin has switched them on for you, every receipt you send in goes onto this month's draft claim automatically — you only need to check it and submit.</div>
+<h2>Each line needs</h2>
+<p>A <b>Category</b> and a <b>Total</b>. A missing supplier is fine ("Unknown supplier"); a missing date uses the day you submitted it.</p>`},
+
+{id:'submit-claim', c:'claims', aud:'Claimants', title:'Submitting a claim for approval',
+ sum:'Check every line, then Submit for approval.',
+ body:`
+<ol class="steps">
+<li>Open the claim. Check every line: amount, category, and a description that says what it was for.</li>
+<li>Attach any <b>supporting documents</b> (an approval email, a quote) under the description — PDF, PNG or JPG.</li>
+<li>Click <span class="ui">Submit for approval</span>. Your direct manager gets an email.</li>
+</ol>
+<div class="note warn"><b>After approval the claim is locked.</b>You can't change, delete or replace its receipts. If something is wrong, ask your approver or admin to <b>Unapprove</b> it.</div>
+<p>No direct manager set? You'll see an error. Ask your admin to set one — or, if you are allowed to publish, you can approve your own.</p>`},
+
+{id:'edit-claim', c:'claims', aud:'Claimants', title:'Removing or moving a receipt on a claim',
+ sum:'Taking a receipt off a claim sends it back to your Costs list.',
+ body:`
+<ul>
+<li><b>Remove</b> (×) takes a receipt off the claim and returns it to your Costs list. Nothing is lost.</li>
+<li><b>Move</b> puts it on a different claim — for example, the right month.</li>
+<li>A receipt can only be on <b>one</b> claim at a time.</li>
+<li>Deleting a whole claim returns its receipts to Costs; it does not delete them.</li>
+</ul>
+<p>You can't remove items from an <b>approved</b> claim — it must be unapproved first.</p>`},
+
+{id:'mileage', c:'claims', aud:'Claimants', title:'Claiming mileage',
+ sum:'Upload the route, CYBills works out the amount.',
+ body:`
+<ol class="steps">
+<li>Upload a screenshot of the route (e.g. Google Maps showing "13 km") or an odometer photo.</li>
+<li>Open it and set <b>Type</b> to <span class="ui">Mileage</span> if it wasn't detected.</li>
+<li>Check the <b>Distance</b>. The total is distance × your company's rate per km — you can't type the total directly.</li>
+<li>Add it to your claim as usual.</li>
+</ol>
+<p>Taxi and Grab rides are <b>receipts</b>, not mileage.</p>`},
+
+{id:'foreign', c:'claims', aud:'Claimants', title:'Foreign currency receipts',
+ sum:'Overseas receipts are converted to SGD automatically.',
+ body:`
+<p>Upload the receipt as it is. CYBills converts it at the day's rate for the receipt date and shows the working on the claim (e.g. "USD 25.00 @ 1.3144"). If your card statement shows a different SGD figure, attach it — it can be used instead.</p>`},
+
+/* ===== Approve ===== */
+{id:'ro-overview', c:'approve', aud:'Approvers / ROs', title:'Reporting Officers: your role in CYBills',
+ sum:'You decide the claims of the people who report to you. That is all.',
+ body:`
+<p>As a Reporting Officer (RO) or direct manager you:</p>
+<ul>
+<li><b>Can</b> see and decide the claims routed to you, and open the receipts on them.</li>
+<li><b>Can't</b> edit your reports' receipts — those are theirs to correct.</li>
+<li><b>Can't</b> see your reports' other documents, or anyone else's.</li>
+<li><b>Can't</b> approve your own claims.</li>
+</ul>
+<div class="note tip"><b>You'll be emailed</b>whenever a claim is submitted to you. The <span class="ui">Expense claims</span> tab also shows a count of claims waiting for you.</div>`},
+
+{id:'approve-claim', c:'approve', aud:'Approvers / ROs', title:'How to approve or reject a claim',
+ sum:'Open the claim, check the receipts, then Approve or Reject.',
+ body:`
+<ol class="steps">
+<li>Click the link in the approval email, or go to <span class="ui">Costs</span> → <span class="ui">Expense claims</span> and open a claim marked <b>Awaiting approval</b>.</li>
+<li>Check the lines (see the checklist below). Click a line to open its receipt.</li>
+<li>Click <span class="ui">Approve</span>, or <span class="ui">Reject</span> and give a reason the claimant can act on.</li>
+</ol>
+<h2>Checklist before you approve</h2>
+<ul>
+<li>Does every line have a receipt, and does the amount match it?</li>
+<li>Is it a business expense, within policy?</li>
+<li>Is the category sensible (taxi as transport, meals as meals)?</li>
+<li>For meals and entertainment: does it say who attended?</li>
+<li>Is anything claimed twice, or from a different month?</li>
+</ul>
+<div class="note warn"><b>Approve means "the company owes this money".</b>The claim is locked once approved. If you approve by mistake, contact your admin to unapprove it.</div>`},
+
+{id:'reject', c:'approve', aud:'Approvers / ROs', title:'Rejecting well',
+ sum:'Say exactly what needs fixing so the claim comes back right.',
+ body:`
+<p>A rejected claim goes back to the claimant, who fixes it and submits it again. Be specific:</p>
+<ul>
+<li>✅ "Line 3: receipt is for Oct, please move to October's claim."</li>
+<li>✅ "Dinner on 12 Nov: add who attended."</li>
+<li>❌ "Wrong, please check."</li>
+</ul>`},
+
+/* ===== Xero ===== */
+{id:'publish', c:'xero', aud:'Admins', title:'Publishing a cost to Xero',
+ sum:'Publish sends the document into the live Xero ledger as a bill.',
+ body:`
+<div class="note bad"><b>Publishing writes to the live accounts.</b>Only publish when the supplier, date, total, category and tax code are right.</div>
+<ol class="steps">
+<li>Open a <b>Ready</b> document and click <span class="ui">Publish to Xero</span>.</li>
+<li>Check the dialog: account, tax code, status, and any warning (wrong entity, duplicate, already in Xero).</li>
+<li>Confirm. If it was marked Paid from a named account, the payment is recorded too.</li>
+</ol>
+<p>Bulk publish skips anything incomplete, on a claim, or already in Xero, and tells you how many it skipped.</p>
+<h2>Correcting afterwards</h2>
+<p>Fix the document, then <span class="ui">Update in Xero</span>. Don't publish it a second time.</p>`},
+
+{id:'publish-claim', c:'xero', aud:'Admins', title:'Publishing an approved claim',
+ sum:'An approved claim goes to Xero as one bill to the claimant.',
+ body:`
+<p>Open the approved claim and click <span class="ui">Publish to Xero</span>. The claim PDF (approval history, supporting documents and receipts) is attached to the bill. Each receipt posts under its own tax code.</p>
+<p>To correct a published claim: <span class="ui">Unapprove</span>, fix the items, approve again, then <span class="ui">Update in Xero</span>.</p>`},
+
+/* ===== Account ===== */
+{id:'password', c:'account', aud:'Everyone', title:'Forgot password or lost phone',
+ sum:'Reset your password, or use a recovery code.',
+ body:`
+<ul>
+<li><b>Forgot password:</b> click <span class="ui">Forgot password</span> on the sign-in page; a reset link is emailed to you.</li>
+<li><b>Lost phone:</b> use one of your recovery codes at the code prompt. Then set up two-step sign-in again on your new phone.</li>
+<li><b>No recovery codes either:</b> ask your admin to reset your two-step sign-in.</li>
+</ul>`},
+
+{id:'switch-entity', c:'account', aud:'Everyone', title:'Working in more than one company',
+ sum:'Use the switcher at the top left. Your role can differ in each.',
+ body:`
+<p>If you have access to more than one entity, click the company name at the top left to switch. Your role, manager and privileges are set separately in each, so you may be an approver in one and a Standard user in another.</p>
+<p>Each entity has its own email address for you — use the one shown in that entity's Add documents drawer.</p>`},
+
+/* ===== Do's and don'ts + trouble ===== */
+{id:'dos-and-donts', c:'trouble', aud:'Everyone', title:"Do's and don'ts: what to click, and what not to",
+ sum:'The buttons that are safe, and the ones to leave alone unless you are sure.',
+ body:`
+<h2>✅ Safe to click any time</h2>
+<ul>
+<li><span class="ui">+ Add documents</span>, opening any document, zooming the image.</li>
+<li>Correcting a field on your own document.</li>
+<li><span class="ui">Add to expense claim</span>, <span class="ui">Remove</span> from a draft claim (it goes back to Costs).</li>
+<li><span class="ui">Archive</span> / <span class="ui">Unarchive</span>.</li>
+<li><span class="ui">Submission history</span>, <span class="ui">Exports</span>, <span class="ui">Support Desk</span>.</li>
+</ul>
+<h2>⚠️ Think first</h2>
+<table class="t">
+<tr><th>Button</th><th>Why</th></tr>
+<tr><td><span class="ui">Re-read</span> / <span class="ui">Rerun processing</span></td><td>Replaces fields already read, including corrections. Each read is a paid AI call.</td></tr>
+<tr><td><span class="ui">Submit for approval</span></td><td>Emails your approver. Check the claim first.</td></tr>
+<tr><td><span class="ui">Approve</span> (ROs)</td><td>Locks the claim and commits the company to pay.</td></tr>
+<tr><td><span class="ui">Merge</span></td><td>Only for pages of one document, or a receipt + its card slip. Not for two copies of the same receipt.</td></tr>
+<tr><td><span class="ui">Bulk edit</span></td><td>A ticked field left empty <b>clears</b> it on every selected document.</td></tr>
+<tr><td><span class="ui">Move to</span> another entity</td><td>Moves the document into another company's books and clears its coding.</td></tr>
+</table>
+<h2>⛔ Don't, unless you are an admin and sure</h2>
+<table class="t">
+<tr><th>Button</th><th>Why</th></tr>
+<tr><td><span class="ui">Delete</span></td><td>Permanent — the stored file goes too. Archive instead.</td></tr>
+<tr><td><span class="ui">Publish to Xero</span></td><td>Writes to the live accounts.</td></tr>
+<tr><td><span class="ui">Clear Xero link</span></td><td>Makes CYBills forget the bill in Xero; publishing again creates a duplicate.</td></tr>
+<tr><td><span class="ui">Trust this sender &amp; fetch</span></td><td>Lets CYBills follow that sender's links automatically from now on.</td></tr>
+<tr><td>WhatsApp <span class="ui">Delete the group</span></td><td>Removes everyone from the group. Can't be undone.</td></tr>
+</table>
+<h2>General do's</h2>
+<ul>
+<li>✅ Send each receipt once, by one road.</li>
+<li>✅ Check the entity before uploading.</li>
+<li>✅ Write who attended on meal receipts.</li>
+<li>✅ Keep claims to one month.</li>
+<li>❌ Don't share your WhatsApp invite link or your password.</li>
+<li>❌ Don't upload personal (non-business) expenses.</li>
+</ul>`},
+
+{id:'faq', c:'trouble', aud:'Everyone', title:'Common questions',
+ sum:'"Where did my receipt go?" and other things that look wrong.',
+ body:`
+<h2>I sent a receipt but can't find it</h2>
+<p>Check <span class="ui">Submission history</span>. Check the entity switcher — it may be under another company. Check <b>Archived</b>, and whether it's already on a claim.</p>
+<h2>The amount / date read is wrong</h2>
+<p>Correct it on the document page. If everything is wrong, <span class="ui">Re-read</span> first, then correct.</p>
+<h2>It says "Nothing read"</h2>
+<p>The image was too dark or blurry. Send a clearer photo, or type the fields in.</p>
+<h2>I can't edit a receipt</h2>
+<p>It is probably on an <b>approved</b> claim (locked) or already published to Xero. Ask your admin.</p>
+<h2>I don't see the Create expense claim button</h2>
+<p>Your admin may have switched off "Create expense claims" for you.</p>
+<h2>My claim went to the wrong approver</h2>
+<p>Your direct manager is set on the Users page. Ask your admin to change it.</p>
+<h2>A date has a * and is in italics</h2>
+<p>No date was printed, so the day you sent it in is used. Type the real date if you know it.</p>`},
+
+{id:'support', c:'trouble', aud:'Everyone', title:'Getting help',
+ sum:'Raise a ticket in the Support Desk.',
+ body:`
+<p>Click <span class="ui">Support Desk</span> (top right in CYBills) to raise a ticket or request a feature. Your tickets are private to you and the admins.</p>
+<p>Helpful things to include: the document's <b>Item ID</b> (shown on the document page), what you expected, and what happened instead. A screenshot helps.</p>`}
+];
+
+/* ---------- Rendering ---------- */
+const $app = document.getElementById('app');
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const strip = h => h.replace(/<[^>]+>/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ');
+const byColl = id => ARTICLES.filter(a => a.c === id);
+const coll = id => COLLECTIONS.find(c => c.id === id);
+const SEARCH = ARTICLES.map(a => ({a, hay:(a.title+' '+a.sum+' '+strip(a.body)).toLowerCase()}));
+
+function searchBox(){
+  return `<div class="search">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Search for articles…" autocomplete="off" aria-label="Search help articles">
+    <div class="results" id="res"></div></div>`;
+}
+function hero(title, sub){
+  return `<section class="hero"><div class="wrap"><h1>${title}</h1><p>${sub}</p>${searchBox()}</div></section>`;
+}
+function home(){
+  const quick = ['upload','create-claim','submit-claim','approve-claim','dos-and-donts','faq'];
+  $app.innerHTML = hero('How can we help?','Guides for using CYBills — sending in receipts, expense claims and approvals.') +
+  `<main><div class="wrap">
+    <div class="grid">${COLLECTIONS.map(c => `
+      <a class="card" href="#/c/${c.id}"><div class="ic">${c.icon}</div><h3>${c.title}</h3><p>${c.desc}</p>
+      <div class="meta">${byColl(c.id).length} articles</div></a>`).join('')}</div>
+    <div class="section-title">Popular articles</div>
+    <div class="quick">${quick.map(id => { const a = ARTICLES.find(x=>x.id===id); return `<a href="#/a/${a.id}">${a.title}</a>`;}).join('')}</div>
+  </div></main>`;
+  wireSearch();
+}
+function collection(id){
+  const c = coll(id); if(!c) return home();
+  $app.innerHTML = hero('How can we help?','Search all articles, or browse below.') +
+  `<main><div class="wrap">
+    <div class="crumbs"><a href="#/">All collections</a> › ${c.title}</div>
+    <div class="coll-head"><div class="card" style="padding:10px;box-shadow:none"><div class="ic" style="margin:0">${c.icon}</div></div>
+      <div><h1>${c.title}</h1><p>${c.desc}</p></div></div>
+    <div class="list">${byColl(id).map(a => `<a href="#/a/${a.id}"><span><b>${a.title}</b><br><small>${a.sum}</small></span><span class="aud">${a.aud}</span></a>`).join('')}</div>
+  </div></main>`;
+  wireSearch();
+}
+function article(id){
+  const a = ARTICLES.find(x => x.id === id); if(!a) return home();
+  const c = coll(a.c), sibs = byColl(a.c), i = sibs.indexOf(a);
+  const prev = sibs[i-1], next = sibs[i+1];
+  $app.innerHTML = `<section class="hero" style="padding:20px 0 24px"><div class="wrap">${searchBox()}</div></section>
+  <main><div class="wrap">
+    <div class="crumbs"><a href="#/">All collections</a> › <a href="#/c/${c.id}">${c.title}</a></div>
+    <div class="layout">
+      <aside class="side"><h4>${c.title}</h4>${sibs.map(s => `<a href="#/a/${s.id}" class="${s.id===id?'on':''}">${s.title}</a>`).join('')}</aside>
+      <article>
+        <span class="aud">For: ${a.aud}</span>
+        <h1 style="margin-top:10px">${a.title}</h1>
+        <p class="lede">${a.sum}</p>
+        ${a.body}
+        <div class="pn"><span>${prev?`← <a href="#/a/${prev.id}">${prev.title}</a>`:''}</span><span>${next?`<a href="#/a/${next.id}">${next.title}</a> →`:''}</span></div>
+        <div class="helpful">Didn't answer your question? Raise a ticket in <a href="/support">Support Desk</a>.</div>
+      </article>
+    </div>
+  </div></main>`;
+  wireSearch();
+  window.scrollTo(0,0);
+}
+function wireSearch(){
+  const q = document.getElementById('q'), res = document.getElementById('res');
+  if(!q) return;
+  let sel = -1;
+  const run = () => {
+    const terms = q.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    if(!terms.length){ res.style.display='none'; return; }
+    const hits = SEARCH.map(({a,hay}) => {
+      if(!terms.every(t => hay.includes(t))) return null;
+      let score = 0; terms.forEach(t => { if(a.title.toLowerCase().includes(t)) score += 5; if(a.sum.toLowerCase().includes(t)) score += 2; });
+      return {a, score};
+    }).filter(Boolean).sort((x,y)=>y.score-x.score).slice(0,8);
+    sel = -1;
+    res.innerHTML = hits.length ? hits.map(h => `<a href="#/a/${h.a.id}">${esc(h.a.title)}<small>${coll(h.a.c).title}</small></a>`).join('')
+                                : `<div class="none">No articles found. Try another word, or ask in Support Desk.</div>`;
+    res.style.display='block';
+  };
+  q.addEventListener('input', run);
+  q.addEventListener('keydown', e => {
+    const links = [...res.querySelectorAll('a')];
+    if(e.key==='ArrowDown'){ sel = Math.min(sel+1, links.length-1); e.preventDefault(); }
+    else if(e.key==='ArrowUp'){ sel = Math.max(sel-1, 0); e.preventDefault(); }
+    else if(e.key==='Enter' && links.length){ location.hash = links[Math.max(sel,0)].getAttribute('href'); return; }
+    else if(e.key==='Escape'){ res.style.display='none'; return; }
+    links.forEach((l,i)=>l.classList.toggle('sel', i===sel));
+  });
+  document.addEventListener('click', e => { if(!e.target.closest('.search')) res.style.display='none'; });
+}
+function route(){
+  const h = location.hash.replace(/^#\/?/,'');
+  const [kind, id] = h.split('/');
+  if(kind==='c') collection(id); else if(kind==='a') article(id); else home();
+  document.title = (kind==='a' && ARTICLES.find(a=>a.id===id)?.title || 'CYBills Help Centre') + (kind==='a'?' · CYBills Help':'');
+}
+window.addEventListener('hashchange', route);
+route();
+
+/* theme toggle */
+(function(){
+  const root = document.documentElement, btn = document.getElementById('themeBtn');
+  try { const t = localStorage.getItem('cybills-help-theme'); if(t) root.dataset.theme = t; } catch(e){}
+  btn.addEventListener('click', () => {
+    const dark = root.dataset.theme ? root.dataset.theme==='dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('cybills-help-theme', root.dataset.theme); } catch(e){}
+  });
+})();
+</script>
+</body>
+</html>

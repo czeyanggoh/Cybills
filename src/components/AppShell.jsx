@@ -621,6 +621,16 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                     {label}
                   </NavLink>
                 ))}
+                {/* The Help Centre is a static page (public/help/), readable
+                    without signing in, so it opens in its own tab. */}
+                <a
+                  href="/help/"
+                  target="_blank"
+                  rel="noopener"
+                  className="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  Help
+                </a>
               </nav>
               <div className="relative">
                 <button
@@ -740,6 +750,15 @@ export default function AppShell({ subnav = null, hideSidebar = false, children 
                     <HelpCircle className="h-4 w-4" strokeWidth={1.75} /> {label}
                   </NavLink>
                 ))}
+                <a
+                  href="/help/"
+                  target="_blank"
+                  rel="noopener"
+                  onClick={() => setMobileNav(false)}
+                  className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <HelpCircle className="h-4 w-4" strokeWidth={1.75} /> Help
+                </a>
                 {bottomNav.map((item) => {
                   const Row = item.href ? 'a' : 'button';
                   const rowProps = item.href
