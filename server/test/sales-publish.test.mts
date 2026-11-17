@@ -140,6 +140,7 @@ const publish = async (billId: string, over: Record<string, unknown> = {}) => {
   check('…to the Invoices endpoint', [Boolean(r.posted), r.creditPosted], [true, null]);
   check('…against the CUSTOMER as the contact', r.posted?.Contact, { Name: 'ARC3 Nobel Pte Ltd' });
   check('…carrying its own invoice number', r.posted?.InvoiceNumber, 'SI-1001');
+  check('…and the same number as its Reference', r.posted?.Reference, 'SI-1001');
   check('…and the money as read', [r.posted?.LineItems?.[0]?.UnitAmount, r.posted?.LineItems?.[0]?.TaxAmount], [1000, 90]);
   check('…coded to the revenue account at the output rate',
     [r.posted?.LineItems?.[0]?.AccountCode, r.posted?.LineItems?.[0]?.TaxType], ['200', 'OUTPUT2']);
@@ -167,6 +168,7 @@ const publish = async (billId: string, over: Record<string, unknown> = {}) => {
   // total typed the way the paper shows a credit is flipped positive.
   check('…with positive amounts', [r.creditPosted?.LineItems?.[0]?.UnitAmount, r.creditPosted?.LineItems?.[0]?.TaxAmount], [100, 9]);
   check('…and the number as CreditNoteNumber', r.creditPosted?.CreditNoteNumber, 'SCN-7');
+  check('…and as its Reference', r.creditPosted?.Reference, 'SCN-7');
 }
 
 // 3) A cost is untouched by any of it — same route, same builder, still ACCPAY.

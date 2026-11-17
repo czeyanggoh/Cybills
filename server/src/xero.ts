@@ -1752,6 +1752,14 @@ async function buildBillInvoice(
     const backLink = xeroInvoiceUrl(`${appOrigin(req)}/${page}/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`);
     if (backLink) payload.Url = backLink;
   }
+  // A SALES document also carries its number as the Reference. On a sales
+  // invoice Xero shows Reference as a column of its own beside Number, and the
+  // client's own invoices (raised elsewhere) have always had the number there;
+  // published from here it stood blank, so the receivables list read as two
+  // kinds of invoice. A bill has no such field (its "Reference" box IS the
+  // InvoiceNumber, and Xero drops `Reference` on an ACCPAY), so cost
+  // documents are left as they are.
+  if (sale && bill.invoiceNumber) payload.Reference = String(bill.invoiceNumber).slice(0, 255);
   if (bill.currency) payload.CurrencyCode = bill.currency;
   // At the rate the document itself printed, so the ledger's GST report shows
   // the SGD tax the invoice states rather than Xero's day-rate conversion of it.
