@@ -5,6 +5,7 @@ import { visionEnabled } from './env.js';
 import { apportion, notFiller, derivedDescription, withPeriod } from './store.js';
 import { recordUsage } from './usage.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
+import { withKnownSupplierName } from './supplierName.js';
 import { workspaceId } from './workspace.js';
 import { orgScope } from './users.js';
 import { readDocument, resolveProvider, type Provider } from './llm.js';
@@ -1121,7 +1122,11 @@ extractRouter.post('/extract', async (req, res) => {
   // the read itself stays a pure function of the file and its inputs.
   // The entity the read is for, so its own supplier rule can name the number.
   const ctx = { ws: workspaceId(req), orgId: orgScope(req) };
-  return res.json({ ok: true, data: await withRememberedGstRegNo(result.data, ctx) });
+  // First filed under the supplier this entity already has (supplierName.ts),
+  // so the GST memory and the supplier rule find it under that name too.
+  const kind = req.body?.kind === 'sales' ? 'sales' : 'cost';
+  const named = await withKnownSupplierName(result.data, { ...ctx, kind });
+  return res.json({ ok: true, data: await withRememberedGstRegNo(named, ctx) });
 });
 
 // --- Line items -------------------------------------------------------------

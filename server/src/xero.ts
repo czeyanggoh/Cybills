@@ -556,6 +556,25 @@ export async function customerOptionsForOrg(ws: string, orgId: string): Promise<
   }
 }
 
+// The org's active supplier contacts, by name — what a freshly read supplier
+// name is matched against (supplierName.ts). The same query as the Suppliers
+// list's route, so the two share one cached answer. Empty when there is no Xero
+// to ask, which only means the read is matched against the book alone.
+export async function supplierNamesForOrg(ws: string, orgId: string): Promise<string[]> {
+  if (!xeroEnabled || !orgId) return [];
+  const organisation = getOrganisation(ws, orgId);
+  if (!organisation?.tenantId) return [];
+  try {
+    const result = await referenceRead('Contacts', organisation.tenantId, { where: 'IsSupplier==true AND ContactStatus=="ACTIVE"' });
+    if (!result.ok) return [];
+    return (result.data?.Contacts ?? [])
+      .map((c: { Name?: unknown }) => String(c?.Name ?? '').trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 export const xeroRouter = Router();
 
 // GET /api/xero/status — capability probe for the frontend.

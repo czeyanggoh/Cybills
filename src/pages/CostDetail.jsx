@@ -33,7 +33,7 @@ import IgnoreFutureMail from '@/components/IgnoreFutureMail';
 import DocumentFiles from '@/components/DocumentFiles';
 import MailBody from '@/components/MailBody';
 import { getDoc } from '@/data/docs';
-import { mergeSupplierNames, addedSuppliers } from '@/lib/supplierList';
+import { mergeSupplierNames, addedSuppliers, withoutRemovedSuppliers, useSupplierList } from '@/lib/supplierList';
 import { attachBillFileToXero, getActiveOrganisationId, switchOrganisationTo, useOrganisations, resolveCategorisationOrgId, getExtractionAccounts, useCategoryOptions, useXeroPaymentMethods, useXeroCustomers, useVisibleTaxRates, useManagedTaxRates, useXeroProjectOptions, useXeroSuppliers, useBridgeEntity } from '@/lib/organisations';
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectOptions } from '@/lib/listsStore';
@@ -328,10 +328,13 @@ export default function CostDetail() {
   // it was actually posted to rather than in whichever organisation the
   // browser last had open there.
   const xeroShortCode = useXeroShortCode();
-  const supplierOptions = mergeSupplierNames(useXeroSuppliers(), [
+  // Less what the Suppliers page removed or merged away: those spellings are
+  // gone from that list, and offered here they came straight back.
+  useSupplierList();
+  const supplierOptions = withoutRemovedSuppliers(mergeSupplierNames(useXeroSuppliers(), [
     ...useDocumentSuppliers(),
     ...addedSuppliers(),
-  ]);
+  ]));
   const xeroProjects = useXeroProjectOptions();
   const seedProjects = useProjectOptions();
   // What this entity calls its project lists — a bridge entity's are PO numbers.

@@ -12,6 +12,7 @@ import {
 import { useCategoryDisplayMode, formatCategory } from '@/lib/categoryDisplay';
 import { useProjectLabels, withProjectLabels } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
+import { withoutRemovedSuppliers, useSupplierList } from '@/lib/supplierList';
 
 // "Bulk edit" — set one value across every selected document (Dext's bulk edit).
 //
@@ -55,7 +56,8 @@ export default function BulkEditModal({
   const [busy, setBusy] = useState(false);
   const mode = useCategoryDisplayMode();
 
-  const suppliers = useXeroSuppliers();
+  useSupplierList();
+  const suppliers = withoutRemovedSuppliers(useXeroSuppliers());
   const customers = useXeroCustomers();
   const paymentMethods = useXeroPaymentMethods().map((m) => m.label);
   const projects = useXeroProjectOptions();

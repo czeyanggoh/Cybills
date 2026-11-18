@@ -10,6 +10,7 @@ import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './x
 import { loadAccountSides } from './accountSides.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
+import { withKnownSupplierName } from './supplierName.js';
 import { keepPracticeNoTax } from './practiceNoTax.js';
 import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile, markFileIsTextEmail, setPendingReply, type Bill } from './store.js';
 import { emailAsPdf, emailPdfName, htmlToText, looksLikeBillMail, looksLikeInvoiceMail, statesBillAmount } from './emailPdf.js';
@@ -285,7 +286,10 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     }
     // With the supplier's GST number filled in where this read missed it and an
     // earlier one didn't — the same as an upload gets (supplierGst.ts).
-    const d = await withRememberedGstRegNo(result.data, { ws, orgId: realOrgId });
+    // Filed under the supplier this entity already has first (supplierName.ts),
+    // so the GST memory and the supplier rule below find it under that name.
+    const named = await withKnownSupplierName(result.data, { ws, orgId: realOrgId });
+    const d = await withRememberedGstRegNo(named, { ws, orgId: realOrgId });
     // The supplier's standing rule, looked up once: it decides below whether the
     // reader's rows are kept at all, and is laid over the read at the end.
     const vendorRule = supplierRuleFor(ws, realOrgId, d.supplier);

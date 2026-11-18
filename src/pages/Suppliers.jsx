@@ -14,7 +14,7 @@ import { noTaxRateName, taxForCode } from '@/lib/extractionSettings';
 import { useCostsDocs } from '@/lib/costsData';
 import { updateBill } from '@/lib/bills';
 import { CURRENCIES, clearSupplierRule, getSupplierRule, setSupplierRule, supplierRulePatch, supplierRuleCount, useSupplierRules } from '@/lib/supplierRules';
-import { removedSupplierSet, removedSuppliers, removeSuppliers, restoreSuppliers, useSupplierList, mergeSupplierNames, supplierNamesFromDocs, addedSuppliers } from '@/lib/supplierList';
+import { removedSupplierSet, removedSuppliers, removeSuppliers, restoreSuppliers, recordSupplierMerge, useSupplierList, mergeSupplierNames, supplierNamesFromDocs, addedSuppliers } from '@/lib/supplierList';
 import { namesMergedAway, planSupplierMerge } from '@/lib/supplierMerge';
 import { cn } from '@/lib/utils';
 
@@ -155,6 +155,9 @@ export default function Suppliers() {
     await Promise.all(moves.map((m) => updateBill(m.id, m.patch).catch(() => null)));
     gone.forEach(clearSupplierRule);
     removeSuppliers(gone);
+    // Remembered, so the next document read under a merged-away spelling is
+    // filed under the kept name rather than bringing that spelling back.
+    recordSupplierMerge(gone, keep);
     setSelected(new Set());
     setMergeOpen(false);
     await reload();

@@ -1043,6 +1043,26 @@ itself (a foreign one is evidence AGAINST), and two numbers read equally often
 remember neither. The tax reason says the number was remembered rather than
 read (`gstRegNoRemembered` on `taxRateOutcome`).
 
+**A supplier read under a new spelling is filed under the one already here.**
+Cze, 18 Nov 2026: the picker held "Xero (NZ) Limited", "Xero (NZ) Ltd", "Xero
+Global" and five more. The reader copies the name as each invoice prints it,
+and every spelling became a supplier, a rule miss and, once published, a Xero
+contact of its own (Xero matches a contact by exact name and creates one for a
+new name). `withKnownSupplierName` (`server/src/supplierName.ts`) runs on both
+roads a read returns by (`/extract` and `readIntoBill`), BEFORE the remembered
+GST number and the supplier rule are looked up, costs only.
+`src/lib/supplierCanonical.js` (pure, `npm test`) is the rule: a spelling MERGED
+AWAY on the Suppliers page goes where it was merged (`merged` in
+`cybills.supplier-list.v1`, written by `recordSupplierMerge`, followed through
+chains); a live name stays itself; otherwise a match by `normaliseSupplier`
+(case, punctuation, Pte Ltd / Limited), and among several live matches the one
+with a supplier rule, then most documents, then a Xero contact, and a TIE is left
+as read. Never a near-miss ("OCBC Loan 2" vs "3"), and never a name not already
+in use. And the document page's and Bulk edit's supplier pickers now leave out
+what the Suppliers page removed or merged away (`withoutRemovedSuppliers`); they
+went on offering them. Covered by `test/supplier-canonical.test.mjs` and
+`server/test/supplier-name.test.mts`.
+
 **And a person can simply type it, on the supplier's rule** (Supplier rules ->
 **GST registration no.**, `gstRegNo` on the rule), for the supplier whose number
 the reader keeps missing. The dialog refuses a number `isSingaporeGstRegNo`

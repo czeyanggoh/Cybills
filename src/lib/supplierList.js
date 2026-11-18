@@ -32,6 +32,7 @@ function read() {
     removed: Array.isArray(v.removed) ? v.removed.map(String) : [],
     added: Array.isArray(v.added) ? v.added.map(String) : [],
     notDuplicates: Array.isArray(v.notDuplicates) ? v.notDuplicates.map(String) : [],
+    merged: v.merged && typeof v.merged === 'object' && !Array.isArray(v.merged) ? { ...v.merged } : {},
   };
 }
 
@@ -118,16 +119,54 @@ export function restoreDuplicateSuggestions() {
   emit();
 }
 
+// --- Where a merged name went ------------------------------------------------
+// A merge removes the spellings it folded away, and also remembers which name
+// they were folded INTO, keyed by the lower-cased spelling: { "xero (nz) ltd":
+// "Xero (NZ) Limited" }. That is what lets the next document read as "Xero
+// (NZ) Ltd" be filed under the kept name instead of bringing the merged-away
+// spelling back (supplierCanonical.js, applied server-side to every read).
+// A name merged into one that is itself merged later follows it there.
+export function mergedSuppliers() {
+  return read().merged;
+}
+
+export function recordSupplierMerge(names, keep) {
+  const target = String(keep || '').trim();
+  const gone = (Array.isArray(names) ? names : [names]).map(String).filter((n) => n.trim());
+  if (!target || !gone.length) return;
+  const state = read();
+  const goneKeys = new Set(gone.map(norm));
+  const merged = {};
+  // Anything already pointing at a name merged away now points at the keeper.
+  for (const [from, to] of Object.entries(state.merged)) {
+    if (norm(from) === norm(target)) continue; // the keeper is live again
+    merged[from] = goneKeys.has(norm(to)) ? target : to;
+  }
+  for (const k of goneKeys) if (k !== norm(target)) merged[k] = target;
+  store.set({ ...state, merged });
+  emit();
+}
+
+// The names a supplier PICKER offers: everything but what was removed or merged
+// away on the Suppliers page. The page hides them; without this every other
+// picker went on offering the spellings somebody had just merged.
+export function withoutRemovedSuppliers(names) {
+  const removed = removedSupplierSet();
+  return (names || []).filter((n) => !removed.has(norm(n)));
+}
+
 // Put names back on the list. No argument restores every removed supplier.
+// A restored name is no longer merged into anything either.
 export function restoreSuppliers(names) {
   const state = read();
   if (names === undefined) {
-    store.set({ ...state, removed: [] });
+    store.set({ ...state, removed: [], merged: {} });
     emit();
     return;
   }
   const drop = new Set((Array.isArray(names) ? names : [names]).map(norm));
-  store.set({ ...state, removed: state.removed.filter((n) => !drop.has(norm(n))) });
+  const merged = Object.fromEntries(Object.entries(state.merged).filter(([from]) => !drop.has(norm(from))));
+  store.set({ ...state, removed: state.removed.filter((n) => !drop.has(norm(n))), merged });
   emit();
 }
 
