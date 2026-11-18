@@ -45,6 +45,7 @@ import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
 import { canPublishToXero, canCreateClaims } from '@/lib/userStore';
 import { updateBill, deleteBill, notifyBillsChanged, itemNumber, costPath, markNotMerge } from '@/lib/bills';
+import { matchesQuickSearch } from '@/lib/docSearch';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { buildMergePreview, commitMerge } from '@/lib/mergeDocs';
@@ -1064,24 +1065,10 @@ export default function Costs() {
   const toNum = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
   const toTime = (v) => { const t = new Date(v).getTime(); return Number.isNaN(t) ? 0 : t; };
 
-  // The quick search reads the document owner as well — by the name the User
-  // column shows AND by the email behind it, so "yoav" and "yoav@…" both land.
-  // And by what is printed on the paper: its invoice number (the Ref column),
-  // the Item ID, the description and the total — a number somebody types into
-  // a search box is most often one of those. A total is matched with its
-  // thousands commas taken out, so "1,200" and "1200" both find 1200.00.
-  const qNum = q.replace(/,/g, '');
-  let rows = q
-    ? allRows.filter((d) =>
-        [d.supplier, d.user, d.ownerEmail, d.createdByEmail, d.category, d.date, d.invoiceNumber, itemNumber(d), d.description].some((v) =>
-          String(v || '').toLowerCase().includes(q)
-        ) || (qNum !== '' && [d.total, d.baseTotal].some((v) => {
-          if (v === undefined || v === null || v === '') return false;
-          const n = Number(String(v).replace(/,/g, ''));
-          return [String(v).replace(/,/g, ''), Number.isFinite(n) ? n.toFixed(2) : ''].some((s) => s.includes(qNum));
-        }))
-      )
-    : allRows;
+  // The quick search (docSearch.js, shared with Sales): the owner by name and
+  // email, the uploader, and what is printed on the paper — supplier, category,
+  // date, invoice number, Item ID, description and total.
+  let rows = q ? allRows.filter((d) => matchesQuickSearch(d, q, itemNumber(d))) : allRows;
   // Filter popover (flag, tax, category, publishing, …) + Advanced search
   // (amount / date / supplier). The popover's rules live in one list so a chip
   // can't be offered without being applied.

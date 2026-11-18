@@ -50,6 +50,7 @@ import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
 import { canPublishToXero } from '@/lib/userStore';
 import { updateBill, deleteBill, notifyBillsChanged, itemNumber, salesPath } from '@/lib/bills';
+import { matchesQuickSearch } from '@/lib/docSearch';
 import { useSalesDocs, rowsFor, isArchived, needsReview, missingFields } from '@/lib/costsData';
 import { isComplete, isPublished, isSetAside } from '@/lib/readiness';
 import { docFacts, statesNothing } from '@/lib/mergeDetect';
@@ -178,13 +179,9 @@ export default function Sales() {
 
   const q = query.trim().toLowerCase();
   const rows = useMemo(() => {
-    const base = (rowsByTab[tab] ?? []).filter(
-      (d) =>
-        !q ||
-        [d.user, d.supplier, d.category, d.invoiceNumber, itemNumber(d), d.date, d.total].some((v) =>
-          String(v ?? '').toLowerCase().includes(q)
-        )
-    );
+    // The same quick search as Costs (docSearch.js), so a number that finds a
+    // document there finds one here.
+    const base = (rowsByTab[tab] ?? []).filter((d) => matchesQuickSearch(d, q, itemNumber(d)));
     return sortRows(base, sort);
   }, [rowsByTab, tab, q, sort]);
 
