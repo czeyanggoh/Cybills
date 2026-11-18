@@ -1528,7 +1528,7 @@ export default function CostDetail() {
       }
       notifyBillsChanged();
     }
-    goToNextInbox();
+    goToNextInbox({ fromList: true });
   };
 
   // Archiving finishes with this document too, so it moves on to the next one in
@@ -1540,7 +1540,8 @@ export default function CostDetail() {
   const setAside = doc?.persisted && doc.status === 'archived' && !doc.xeroInvoiceId && !doc.paperworkMatch;
   const archiveDoc = async () => {
     await persistStatus('archived');
-    goToNextInbox();
+    // The Costs list, even for a document on a claim: archiving is Costs work.
+    goToNextInbox({ fromList: true });
   };
   // Back into the inbox. 'new' rather than 'ready': readiness is derived, so the
   // server moves a complete document straight on to Ready by itself.
