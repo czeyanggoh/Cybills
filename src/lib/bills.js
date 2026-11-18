@@ -716,10 +716,27 @@ const READ_AFTER_MOVE = 'cybills.read-after-move.v1';
 
 // Does this document owe itself a read? Answers once — taking the note is what
 // stops a refresh from re-reading, and paying for, the same document again.
+// A LIST of ids: the page stays in the entity a document was moved FROM and
+// walks on, so several may be moved before any is opened at its destination.
+function readAfterMoveIds() {
+  try {
+    const raw = sessionStorage.getItem(READ_AFTER_MOVE);
+    if (!raw) return [];
+    if (!raw.startsWith('[')) return [raw]; // a note written before it was a list
+    const ids = JSON.parse(raw);
+    return Array.isArray(ids) ? ids.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function takeReadAfterMove(id) {
   try {
-    if (sessionStorage.getItem(READ_AFTER_MOVE) !== String(id)) return false;
-    sessionStorage.removeItem(READ_AFTER_MOVE);
+    const ids = readAfterMoveIds();
+    if (!ids.includes(String(id))) return false;
+    const rest = ids.filter((x) => x !== String(id));
+    if (rest.length) sessionStorage.setItem(READ_AFTER_MOVE, JSON.stringify(rest));
+    else sessionStorage.removeItem(READ_AFTER_MOVE);
     return true;
   } catch {
     return false;
@@ -735,7 +752,8 @@ export async function moveBillToEntity(id, orgId) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, message: body.message || 'This document could not be moved.' };
   try {
-    sessionStorage.setItem(READ_AFTER_MOVE, String(id));
+    const ids = readAfterMoveIds().filter((x) => x !== String(id));
+    sessionStorage.setItem(READ_AFTER_MOVE, JSON.stringify([...ids, String(id)].slice(-50)));
   } catch {
     // No sessionStorage (a locked-down browser): the move still stands, and the
     // reviewer codes it by hand or presses Re-read. Never a reason to refuse.

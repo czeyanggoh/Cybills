@@ -744,11 +744,13 @@ somebody we simply don't know here, which is the existing rule and not a mistake
 chart — that is the whole reason the coding was dropped — so leaving it there
 hands somebody three empty fields to type in on a document CYBills has already
 read once. The read runs against the entity it has arrived in: its accounts, its
-categories, its tax rules, its projects and its own supplier rules. Started AFTER
-the switch rather than at the moment of the move, because moving reloads the app
-into the new entity (every store and request in flight is scoped to the old one)
-and a reload aborts a read in progress — so the move leaves a note in
-sessionStorage and the document page picks it up, taking it once so a refresh
+categories, its tax rules, its projects and its own supplier rules. **The
+page stays in the entity it was moved FROM** and walks on to that list's next
+document (`goToNextInbox`) — the reviewer is part-way through this client's
+work, not the destination's. Every request from the page is scoped to the
+entity it is in, so the read waits for the document to be opened at its
+destination: the move leaves its id in a sessionStorage LIST (several may be
+moved before any is opened) and the document page takes it once, so a refresh
 cannot pay for the same read twice. Not for a document with no file: there is
 nothing to read, and the attempt would only report an error on a page nobody
 asked to read anything on.

@@ -1319,10 +1319,13 @@ export default function CostDetail() {
       setMoveError(r?.message || 'This document could not be moved.');
       return;
     }
-    // Follow the document. A re-render would leave the header, the subnav counts
-    // and every request in flight scoped to the entity it has just left — the
-    // same reason opening a document that lives elsewhere reloads.
-    switchOrganisationTo(target.id, docPath(doc));
+    // Stay in THIS entity and walk on to its next document: moving a misfiled
+    // document is the end of the work on it here, and the reviewer is part-way
+    // through this client's list, not the destination's. The re-read against
+    // the destination's chart waits for the document to be opened there
+    // (takeReadAfterMove), since every request from this page is scoped to here.
+    setMoving(false);
+    goToNextInbox();
   };
 
   // billToDoc shows an empty date as the placeholder '—'; never persist that
@@ -1482,7 +1485,7 @@ export default function CostDetail() {
   const moveToOrg = (org) => {
     setMoveOpen(false);
     if (entityMoveBlocked) return;
-    if (!window.confirm(`Move this document to ${org.name}? Its category, tax rate, customer and project are names in this entity’s chart, so they are cleared and the document is read again against ${org.name}’s own.`)) return;
+    if (!window.confirm(`Move this document to ${org.name}? Its category, tax rate, customer and project are names in this entity’s chart, so they are cleared and the document is read again against ${org.name}’s own when it is opened there. You stay here, on the next document.`)) return;
     moveToEntity(org);
   };
 
