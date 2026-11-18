@@ -1066,11 +1066,20 @@ export default function Costs() {
 
   // The quick search reads the document owner as well — by the name the User
   // column shows AND by the email behind it, so "yoav" and "yoav@…" both land.
+  // And by what is printed on the paper: its invoice number (the Ref column),
+  // the Item ID, the description and the total — a number somebody types into
+  // a search box is most often one of those. A total is matched with its
+  // thousands commas taken out, so "1,200" and "1200" both find 1200.00.
+  const qNum = q.replace(/,/g, '');
   let rows = q
     ? allRows.filter((d) =>
-        [d.supplier, d.user, d.ownerEmail, d.createdByEmail, d.category, d.date].some((v) =>
+        [d.supplier, d.user, d.ownerEmail, d.createdByEmail, d.category, d.date, d.invoiceNumber, itemNumber(d), d.description].some((v) =>
           String(v || '').toLowerCase().includes(q)
-        )
+        ) || (qNum !== '' && [d.total, d.baseTotal].some((v) => {
+          if (v === undefined || v === null || v === '') return false;
+          const n = Number(String(v).replace(/,/g, ''));
+          return [String(v).replace(/,/g, ''), Number.isFinite(n) ? n.toFixed(2) : ''].some((s) => s.includes(qNum));
+        }))
       )
     : allRows;
   // Filter popover (flag, tax, category, publishing, …) + Advanced search
