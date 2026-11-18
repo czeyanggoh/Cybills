@@ -597,18 +597,25 @@ export default function CostDetail() {
         return (shown.length === items.length ? shown : items).join('|');
       })()
     : '';
+  // The Costs (or Sales) list this document was opened from, whether or not it
+  // is on a claim. Adding it to a claim makes claimForItem appear, which turns
+  // `walk` into the claim's own list — but the reviewer was working through
+  // Costs, so "next" after adding must keep walking Costs.
+  const listWalk = useMemo(() => {
+    const inBook = new Set(inboxAllDocs.map((d) => String(d.id)));
+    const remembered = readWalk(salesRoute ? 'sales' : 'costs').filter((v) => inBook.has(v));
+    const fromList = walkPosition(remembered, id);
+    if (fromList.index !== -1) return fromList;
+    return walkPosition(rowsFor(inboxAllDocs, 'inbox').map((d) => d.id), id);
+  }, [inboxAllDocs, id, salesRoute]);
   const walk = useMemo(() => {
     if (claimWalkIds) {
       const ids = claimWalkIds.split('|');
       const here = ids.find((v) => isItemKey(v, id)) ?? id;
       return walkPosition(ids, here);
     }
-    const inBook = new Set(inboxAllDocs.map((d) => String(d.id)));
-    const remembered = readWalk(salesRoute ? 'sales' : 'costs').filter((v) => inBook.has(v));
-    const fromList = walkPosition(remembered, id);
-    if (fromList.index !== -1) return fromList;
-    return walkPosition(rowsFor(inboxAllDocs, 'inbox').map((d) => d.id), id);
-  }, [inboxAllDocs, id, claimWalkIds, salesRoute]);
+    return listWalk;
+  }, [listWalk, id, claimWalkIds]);
   const index = walk.index;
 
   // Left / Right arrow keys press Previous / Next. Not while typing in a field
@@ -1187,10 +1194,11 @@ export default function CostDetail() {
   const closeClaimAdded = () => {
     const moved = claimAdded?.moved;
     setClaimAdded(null);
-    if (!moved) goToNextInbox();
+    if (!moved) goToNextInbox({ fromList: true });
   };
-  const goToNextInbox = () => {
-    const walkedId = walk.next ?? walk.prev;
+  const goToNextInbox = ({ fromList = false } = {}) => {
+    const from = fromList ? listWalk : walk;
+    const walkedId = from.next ?? from.prev;
     if (walkedId !== null && walkedId !== undefined && String(walkedId) !== String(id)) {
       const target = inboxAllDocs.find((d) => String(d.id) === String(walkedId));
       navigate(pathOf(target ?? walkedId));
