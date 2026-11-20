@@ -3716,6 +3716,12 @@ Name, Posts to (a dropdown over the parent's accounts) and Visible, and the file
 IS the list: a row added is added, a row taken out is deleted, a row with an
 error is skipped and kept, and an empty file changes nothing. A preview lists
 every change before one write (`applyListPlan`, `setCategoryAccounts`).
+**A category in use is ARCHIVED, never deleted** (Cze, 20 Nov 2026): one that a
+document or a claim line already carries (`usedCategoryNames` /
+`splitRemovals`) is switched to Visible: No by Delete and by an import that
+leaves it out — gone from the pickers and the reader, kept with its Posts to for
+what was coded to it. Delete and Import wait until the documents and claims have
+loaded.
 
 **A bridge can be set up like another one.** "Red Alpha - SMRT" works exactly
 as "Red Alpha - ST Engineering" does, and that working is nothing but per-entity

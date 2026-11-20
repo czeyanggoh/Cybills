@@ -1,6 +1,6 @@
 // A bridge entity's category list round-trips through Excel, and Delete deletes.
 import { categoryRowsFrom, visibleCategoryNamesFrom, SEED_CATEGORY_NAMES } from '../src/lib/categoryList.js';
-import { categoryWorkbook, pickCategorySheet, planCategoryImport } from '../src/lib/categorySheet.js';
+import { categoryWorkbook, pickCategorySheet, planCategoryImport, usedCategoryNames, splitRemovals } from '../src/lib/categorySheet.js';
 import { writeXlsx, readXlsx } from '../src/lib/xlsx.js';
 
 let failures = 0;
@@ -61,6 +61,16 @@ const sheet = pickCategorySheet(await readXlsx(bytes));
 const again = planCategoryImport({ sheetRows: sheet.rows, rows, map, accounts });
 check('an exported file imported unchanged changes nothing', [again.diffs.length, again.errors.length], [0, 0]);
 check('…and says Posts to as the account label', sheet.rows.find((r) => r[0] === 'Transport - Taxi')?.[1], '493 - Travel - National');
+
+// --- A category already used is archived, never deleted --------------------
+const used = usedCategoryNames([{ category: 'Parking' }, { category: '' }], [{ transactions: [{ category: 'transport - taxi' }] }]);
+check('used names come from documents and claim lines', [...used].sort(), ['parking', 'transport - taxi']);
+const split = splitRemovals(rows.filter((r) => ['Parking', 'Transport - Bus', 'Transport - Taxi'].includes(r.name)), used);
+check('Delete deletes only what nothing uses', split.remove.map((r) => r.name), ['Transport - Bus']);
+check('…and archives the rest', split.archive.map((r) => r.name).sort(), ['Parking', 'Transport - Taxi']);
+const usedPlan = planCategoryImport({ sheetRows, rows, map, accounts, used });
+check('an import leaving out a used category archives it', [usedPlan.remove.some((r) => r.name === 'Parking'), usedPlan.visibility['categories:Parking']], [false, false]);
+check('…and still deletes the unused ones', usedPlan.remove.length, SEED_CATEGORY_NAMES.length - 3);
 
 if (failures) { console.log(`\n${failures} failed`); process.exit(1); }
 console.log('\ncategory-sheet: all passed');

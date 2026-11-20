@@ -22,6 +22,33 @@ export const CATEGORY_COLUMNS = [
 ];
 
 const norm = (v) => String(v ?? '').trim().toLowerCase();
+
+// --- In use: archive, never delete -------------------------------------------
+// A category a document or a claim line already carries is part of that
+// record, so it is never deleted: it is ARCHIVED (Visible off) — gone from the
+// pickers and the reader, still on the list with its Posts to, so what was
+// coded to it can still be read and published. Only a category nothing has
+// used is deleted outright.
+
+// The category names used anywhere in `docs` and `claims` (their lines), as a
+// set of normalised names.
+export function usedCategoryNames(docs = [], claims = []) {
+  const out = new Set();
+  for (const d of docs || []) if (d?.category) out.add(norm(d.category));
+  for (const c of claims || []) {
+    for (const t of c?.transactions || []) if (t?.category) out.add(norm(t.category));
+  }
+  return out;
+}
+
+// Split rows being taken off the list: { remove: unused rows, archive: used ones }.
+export function splitRemovals(rows = [], used = new Set()) {
+  const remove = [];
+  const archive = [];
+  for (const r of rows) (used.has(norm(r.name)) ? archive : remove).push(r);
+  return { remove, archive };
+}
+
 const clean = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
 
 // `rows`: the list as the page shows it ([{ id, name, visible }]); `map`:
@@ -78,9 +105,10 @@ function readYesNo(v) {
 // Returns { add: [{ name, visible }], remove: [row], visibility: { id: bool },
 //   accounts: { name: code }, diffs: [{ name, field, from, to }], errors:
 //   [{ row, name, message }], unchanged }.
-// The file is the WHOLE list: a category not in it is deleted. A file with no
+// The file is the WHOLE list: a category not in it is deleted — or, where a
+// document or claim already uses it (`used`), archived instead. A file with no
 // category in it at all is refused rather than read as "delete everything".
-export function planCategoryImport({ sheetRows = [], rows = [], map = {}, accounts = [] }) {
+export function planCategoryImport({ sheetRows = [], rows = [], map = {}, accounts = [], used = new Set() }) {
   const out = { add: [], remove: [], visibility: {}, accounts: {}, diffs: [], errors: [], unchanged: 0 };
   const [header = [], ...body] = sheetRows;
   const col = (label) => header.findIndex((h) => norm(h) === label);
@@ -155,11 +183,15 @@ export function planCategoryImport({ sheetRows = [], rows = [], map = {}, accoun
     out.errors.push({ row: 2, name: '', message: 'The file lists no categories — nothing was changed.' });
     return { ...out, add: [], remove: [], visibility: {}, accounts: {}, diffs: [] };
   }
-  for (const r of rows) {
-    if (!seen.has(norm(r.name))) {
-      out.remove.push(r);
-      out.diffs.push({ name: r.name, field: 'Category', from: 'In the list', to: 'Deleted' });
-    }
+  const { remove, archive } = splitRemovals(rows.filter((r) => !seen.has(norm(r.name))), used);
+  for (const r of remove) {
+    out.remove.push(r);
+    out.diffs.push({ name: r.name, field: 'Category', from: 'In the list', to: 'Deleted' });
+  }
+  for (const r of archive) {
+    if (!r.visible) continue; // archived already
+    out.visibility[r.id] = false;
+    out.diffs.push({ name: r.name, field: 'Category', from: 'In the list', to: 'Archived — used on documents, so not deleted' });
   }
   return out;
 }

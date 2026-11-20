@@ -6,7 +6,9 @@ import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, useTargetAccounts, updateXeroCategoryDescription, getActiveOrganisationId, isStandaloneOrg, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
 import { useCategoryAccounts, setCategoryAccount, setCategoryAccounts } from '@/lib/categoryAccounts';
 import { writeXlsx, readXlsx } from '@/lib/xlsx';
-import { categoryWorkbook, pickCategorySheet, planCategoryImport, categoryFileName } from '@/lib/categorySheet';
+import { categoryWorkbook, pickCategorySheet, planCategoryImport, categoryFileName, usedCategoryNames, splitRemovals } from '@/lib/categorySheet';
+import { fetchBills, BILLS_CHANGED_EVENT } from '@/lib/bills';
+import { useClaimsState } from '@/lib/claimStore';
 import { useProjectLabels, useProjectLabelDefaults, setProjectLabels, singular } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import { useAutoSave } from '@/lib/useAutoSave';
@@ -303,7 +305,7 @@ function CategoryImportPreview({ plan, onClose, onApply }) {
           </p>
           {plan.remove.length > 0 && (
             <p className="rounded-md border border-amber-500/40 bg-amber-50 px-3 py-2 text-amber-800">
-              Categories missing from the file are deleted from this entity’s list. Documents already coded to one keep it.
+              Categories missing from the file are deleted from this entity’s list — except one already used on a document or claim, which is archived instead.
             </p>
           )}
           {!nothing && (
@@ -350,8 +352,26 @@ function CategoryImportPreview({ plan, onClose, onApply }) {
 // code — so each plain name is mapped once, here, by whoever knows both sides.
 // A category with no mapping is not silently dropped at publish time: the claim
 // is refused and the category named.
+// The category names this entity's documents and claim lines already carry,
+// or null until both have loaded — Delete waits for it, since deleting a
+// category in use is the one thing it must not do.
+function useUsedCategories() {
+  const [docs, setDocs] = useState(null);
+  const { claims, loaded } = useClaimsState();
+  useEffect(() => {
+    let live = true;
+    const load = () => fetchBills().then((b) => { if (live) setDocs(Array.isArray(b) ? b : []); }).catch(() => { if (live) setDocs([]); });
+    load();
+    window.addEventListener(BILLS_CHANGED_EVENT, load);
+    return () => { live = false; window.removeEventListener(BILLS_CHANGED_EVENT, load); };
+  }, []);
+  return docs && loaded ? usedCategoryNames(docs, claims) : null;
+}
+
 function CategoriesFromList({ organisation }) {
   const rows = useList('categories');
+  const used = useUsedCategories();
+  const [notice, setNotice] = useState('');
   const map = useCategoryAccounts();
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
@@ -441,7 +461,7 @@ function CategoriesFromList({ organisation }) {
     setImportError('');
     try {
       const sheet = pickCategorySheet(await readXlsx(await file.arrayBuffer()));
-      setPlan(planCategoryImport({ sheetRows: sheet?.rows || [], rows, map, accounts: postable }));
+      setPlan(planCategoryImport({ sheetRows: sheet?.rows || [], rows, map, accounts: postable, used: used || new Set() }));
     } catch {
       setImportError('That file could not be read as an Excel workbook (.xlsx).');
     }
@@ -465,15 +485,30 @@ function CategoriesFromList({ organisation }) {
         published — the claim is refused and says which ones need mapping, rather than posting for
         less than it’s worth.
       </p>
+      <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
+        To retire a category, switch <span className="font-medium text-foreground">Visible</span> off: it is
+        archived — no longer offered or read into — but kept, with its account, for the documents already
+        coded to it. Delete removes a category only if nothing has used it; one in use is archived instead.
+      </p>
       <Toolbar
-        hasSelection={selected.size > 0}
-        onDelete={() => { removeFromList('categories', [...selected]); clear(); }}
+        hasSelection={selected.size > 0 && used !== null}
+        onDelete={() => {
+          const { remove, archive } = splitRemovals(rows.filter((r) => selected.has(r.id)), used);
+          applyListPlan('categories', {
+            removeIds: remove.map((r) => r.id),
+            visibility: Object.fromEntries(archive.map((r) => [r.id, false])),
+          });
+          setNotice(archive.length
+            ? `${archive.map((r) => r.name).join(', ')} ${archive.length === 1 ? 'is' : 'are'} used on documents or claims, so ${archive.length === 1 ? 'it was' : 'they were'} archived (Visible: No) rather than deleted.${remove.length ? ` ${remove.length} deleted.` : ''}`
+            : '');
+          clear();
+        }}
         query={query}
         setQuery={setQuery}
       >
         <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Add category</button>
         <button type="button" onClick={exportExcel} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Export to Excel</button>
-        <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Import from Excel</button>
+        <button type="button" onClick={() => fileRef.current?.click()} disabled={used === null} title={used === null ? 'Checking which categories are in use…' : undefined} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted disabled:opacity-50">Import from Excel</button>
         <input
           ref={fileRef}
           type="file"
@@ -555,6 +590,7 @@ function CategoriesFromList({ organisation }) {
       <p className="mt-3 text-xs text-muted-foreground">
         Showing {filtered.length} of {rows.length} categories · {rows.filter((r) => r.visible && !map[r.name]).length} not mapped to an account
       </p>
+      {notice && <p className="mt-3 text-sm text-muted-foreground">{notice}</p>}
       {importError && <p className="mt-3 text-sm text-destructive">{importError}</p>}
       {plan && <CategoryImportPreview plan={plan} onClose={() => setPlan(null)} onApply={applyPlan} />}
       <AddDialog
