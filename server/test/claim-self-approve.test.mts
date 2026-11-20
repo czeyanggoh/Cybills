@@ -37,7 +37,10 @@ items.unshift(
   employee('nopub', 'No Publish', 'nopub@red.example', { canPublish: false }),
   employee('admfree', 'Admin Free', 'admfree@red.example', {}, { role: 'Business Admin' }),
   employee('admmanaged', 'Admin Managed', 'admmanaged@red.example', {}, { role: 'Business Admin', managerId: 'boss' }),
-  employee('managed', 'Managed Person', 'managed@red.example', { canPublish: true }, { managerId: 'boss' })
+  employee('managed', 'Managed Person', 'managed@red.example', { canPublish: true }, { managerId: 'boss' }),
+  // Practice colleagues: their home is the practice's own entity.
+  employee('hq', 'Hui Qin', 'hq@cybm.example', {}, { practice: true, practiceRole: 'Standard', organisationId: 'org-cybm', clientAccess: ['org-red'] }),
+  employee('pm', 'Practice Managed', 'pm@cybm.example', {}, { practice: true, practiceRole: 'Standard', organisationId: 'org-cybm', managerId: 'boss' })
 );
 save(items);
 
@@ -51,7 +54,7 @@ const claimRow = (id: string, claimFor: string, extra: Record<string, unknown> =
 });
 writeFileSync(
   join(DATA_DIR, 'claims.json'),
-  JSON.stringify({ items: [claimRow('free-1', 'Free Agent'), claimRow('nopub-1', 'No Publish'), claimRow('managed-1', 'Managed Person'), claimRow('admfree-1', 'Admin Free'), claimRow('admmanaged-1', 'Admin Managed')] })
+  JSON.stringify({ items: [claimRow('free-1', 'Free Agent'), claimRow('nopub-1', 'No Publish'), claimRow('managed-1', 'Managed Person'), claimRow('admfree-1', 'Admin Free'), claimRow('admmanaged-1', 'Admin Managed'), claimRow('hq-cybm', 'Hui Qin', { orgId: 'cybm' }), claimRow('hq-red', 'Hui Qin'), claimRow('pm-cybm', 'Practice Managed', { orgId: 'cybm' })] })
 );
 
 const app = express();
@@ -69,10 +72,10 @@ const check = (name: string, got: unknown, want: unknown) => {
 };
 const as = (email: string, name: string) =>
   `cyb_session=${jwt.sign({ sub: email, email, name }, 'test-session-secret', { expiresIn: '1h' })}`;
-const post = async (path: string, cookie: string) => {
+const post = async (path: string, cookie: string, org = 'org-red') => {
   const res = await fetch(`http://127.0.0.1:4642/api/claims${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Org-Id': 'org-red', Cookie: cookie },
+    headers: { 'Content-Type': 'application/json', 'X-Org-Id': org, Cookie: cookie },
     body: '{}',
   });
   return { status: res.status, body: (await res.json().catch(() => ({}))) as any };
@@ -94,6 +97,14 @@ r = await post('/admfree-1/approve', as('admfree@red.example', 'Admin Free'));
 check('a Business Admin with no manager approves their own claim', r.status, 200);
 r = await post('/admmanaged-1/approve', as('admmanaged@red.example', 'Admin Managed'));
 check('a Business Admin WITH a manager still cannot', r.status, 403);
+
+r = await post('/hq-cybm/approve', as('hq@cybm.example', 'Hui Qin'), 'org-cybm');
+check('a practice colleague with no manager approves their own claim in the practice entity', r.status, 200);
+check('and the trail says why', /no direct manager/.test(r.body.claim?.history?.[0]?.text ?? ''), true);
+r = await post('/hq-red/approve', as('hq@cybm.example', 'Hui Qin'));
+check("…but not their own claim in a client's book", r.status, 403);
+r = await post('/pm-cybm/approve', as('pm@cybm.example', 'Practice Managed'), 'org-cybm');
+check('a practice colleague WITH a manager still cannot', r.status, 403);
 
 server.close();
 if (failures) {

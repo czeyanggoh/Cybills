@@ -1522,11 +1522,14 @@ function mayOverride(req: Request, claim: Claim, me: { email: string; name: stri
 // person to route it to, and the alternative was a claim that could be neither
 // submitted nor published by the one person responsible for it. The privilege
 // is what says they may put money into the ledger, so it is the gate, not a new
-// one. Never a practice colleague, who sits on no client's roster and so would
-// always look managerless: the practice's own claims keep the old rule.
+// one. A practice colleague too (Cze, 20 Nov 2026: Hui Qin's own claim in CYBM
+// could be neither submitted nor approved), but only in the practice's OWN
+// entity, where Colleagues sets their Direct manager: in a client's book they
+// are on no roster, so they would always look managerless there.
 function mayApproveOwn(req: Request, claim: Claim, me: { email: string; name: string }): boolean {
   const member = memberForSession(req);
-  if (!member || member.deactivated || member.practice) return false;
+  if (!member || member.deactivated) return false;
+  if (member.practice && entityIdForClaim(claim) !== primaryOrgId()) return false;
   if (!isClaimantOf(claim, me)) return false;
   if (directManagerFor(workspaceId(req), claim.claimFor, claim.orgId)) return false;
   return canPublishToXero(member, orgScope(req));

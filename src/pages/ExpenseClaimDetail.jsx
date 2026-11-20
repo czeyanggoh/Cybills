@@ -53,7 +53,7 @@ import {
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { useUsers, canManageUsers, canManageBusiness, isAdminAccess, canPublishToXero, canCreateClaims } from '@/lib/userStore';
 import { useAuth } from '@/lib/auth';
-import { isPracticeTeam } from '@/lib/practiceStore';
+import { isPracticeTeam, useColleagues } from '@/lib/practiceStore';
 import {
   useOrganisations,
   getActiveOrganisationId,
@@ -61,6 +61,7 @@ import {
   publishClaimToXero,
   updateClaimInXero,
   useXeroShortCode,
+  useIsPrimaryOrganisation,
 } from '@/lib/organisations';
 import { useExtractionSettings, publishStatusLabel } from '@/lib/extractionSettings';
 import { xeroBillUrl } from '@/lib/autoPublish';
@@ -314,6 +315,8 @@ export default function ExpenseClaimDetail() {
   const [reopenOpen, setReopenOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
   const users = useUsers();
+  const { data: colleagues } = useColleagues();
+  const inPrimary = useIsPrimaryOrganisation();
   const { data: organisations = [] } = useOrganisations();
   // The same people the New-claim dialog offers: an entity's own staff, plus the
   // practice's own team when this IS the practice's entity.
@@ -489,13 +492,20 @@ export default function ExpenseClaimDetail() {
     !iAmClaimant && (isPracticeTeam(membership, googleEnabled) || canManageBusiness(membership, googleEnabled));
   // A claimant with no direct manager has nobody to submit to, so — where they
   // hold the publishing privilege — they approve their own claim (mirrors the
-  // server's mayApproveOwn). Never a practice colleague.
+  // server's mayApproveOwn). A practice colleague only in the practice's own
+  // entity, and their manager is read off Colleagues, since they are on no
+  // roster; until that list has loaded they keep Submit.
+  const iAmPractice = isPracticeTeam(membership, googleEnabled);
+  const meAsColleague = iAmPractice
+    ? (colleagues || []).find((c) => (c.name || '').toLowerCase() === (claim.claimFor || '').toLowerCase())
+    : null;
   const iMayApproveOwn =
     iAmClaimant &&
     mayPublish &&
-    !isPracticeTeam(membership, googleEnabled) &&
     !claim.approver &&
-    !directManagerFor(users, claim.claimFor);
+    (iAmPractice
+      ? inPrimary && Boolean(meAsColleague) && !meAsColleague.managerId
+      : !directManagerFor(users, claim.claimFor));
   const iAmNamedApprover =
     (claim.approverEmail && meEmail && claim.approverEmail.toLowerCase() === meEmail) ||
     (claim.approver && meName && claim.approver.toLowerCase() === meName);
