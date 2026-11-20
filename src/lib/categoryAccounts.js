@@ -48,3 +48,17 @@ export function useCategoryAccounts() {
   }, []);
   return map;
 }
+
+// Several at once, in one save: { name: code }, '' removing that mapping.
+export function setCategoryAccounts(changes) {
+  const next = { ...getCategoryAccounts() };
+  for (const [category, code] of Object.entries(changes || {})) {
+    const name = String(category ?? '').trim();
+    if (!name) continue;
+    const value = String(code ?? '').trim();
+    if (value) next[name] = value;
+    else delete next[name];
+  }
+  store.set(next);
+  emit();
+}

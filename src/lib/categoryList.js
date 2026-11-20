@@ -35,9 +35,16 @@ const asArray = (v) => (Array.isArray(v) ? v : []);
 // added, minus nothing — each row carrying whether it is switched on. `blob` is
 // the stored `cybills.lists.v1` value (shape: { added, hidden, meta }), which is
 // what the client holds in localStorage and the server reads as a setting.
+//
+// DELETED is not hidden. A seed row cannot be spliced out of the seed, so a
+// deleted one is recorded in `removed` and leaves the list altogether — before
+// that, Delete only switched it off and it stayed on the page saying "No",
+// which reads as Delete not working. A deleted row is hidden as well, so a
+// reader that predates `removed` still never offers it.
 export function categoryRowsFrom(blob) {
   const state = asObject(blob);
   const hidden = new Set(asArray(asObject(state.hidden).categories).map(String));
+  const removed = new Set(asArray(asObject(state.removed).categories).map(String));
   const seed = SEED_CATEGORIES.map((row) => ({ ...row, id: seedCategoryId(row.name), seed: true }));
   const added = asArray(asObject(state.added).categories).map((row) => ({
     name: String(row?.name ?? ''),
@@ -46,7 +53,7 @@ export function categoryRowsFrom(blob) {
     seed: false,
   }));
   return [...seed, ...added]
-    .filter((row) => row.name)
+    .filter((row) => row.name && !removed.has(row.id))
     .map((row) => ({ ...row, visible: !hidden.has(row.id) }));
 }
 

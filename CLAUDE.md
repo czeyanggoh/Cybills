@@ -3704,6 +3704,19 @@ happened on or before that. Only a claim with nothing dated at all falls back to
 today, which is what every claim used to do: August's expenses landing in
 whichever month somebody pressed the button.
 
+**A bridge's category list is its own, and round-trips through Excel.** Every
+bridge starts from the seed (ST Engineering's claim form), and Red Alpha - SMRT
+wanted five categories, not twenty-three (19 Nov 2026). Delete only HID a seed
+row, which stayed on the page reading Visible: No, so it read as Delete not
+working. A deleted seed row is now recorded in `removed` on the lists blob
+(`removeFromList`, `categoryRowsFrom`) and leaves the list, and is hidden as
+well so older readers never offer it. Lists -> Categories carries **Export to
+Excel** / **Import from Excel** (`src/lib/categorySheet.js`, pure, `npm test`):
+Name, Posts to (a dropdown over the parent's accounts) and Visible, and the file
+IS the list: a row added is added, a row taken out is deleted, a row with an
+error is skipped and kept, and an empty file changes nothing. A preview lists
+every change before one write (`applyListPlan`, `setCategoryAccounts`).
+
 **A bridge can be set up like another one.** "Red Alpha - SMRT" works exactly
 as "Red Alpha - ST Engineering" does, and that working is nothing but per-entity
 settings blobs: the category list, Posts to, extraction settings and review

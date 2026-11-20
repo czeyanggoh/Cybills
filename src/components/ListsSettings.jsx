@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, Search, Trash2, Flag } from 'lucide-react';
-import { addToList, removeFromList, renameInList, setListVisible, setMetaField, setAssetShown, useHiddenSet, useShownAssetSet, useList, useMeta } from '@/lib/listsStore';
+import { addToList, applyListPlan, removeFromList, renameInList, setListVisible, setMetaField, setAssetShown, useHiddenSet, useShownAssetSet, useList, useMeta } from '@/lib/listsStore';
 import { useFlags, updateFlag } from '@/lib/flagsStore';
 import { useOrganisations, useXeroTracking, useXeroCategories, useTargetAccounts, updateXeroCategoryDescription, getActiveOrganisationId, isStandaloneOrg, useXeroPaymentMethods, useManagedTaxRates } from '@/lib/organisations';
-import { useCategoryAccounts, setCategoryAccount } from '@/lib/categoryAccounts';
+import { useCategoryAccounts, setCategoryAccount, setCategoryAccounts } from '@/lib/categoryAccounts';
+import { writeXlsx, readXlsx } from '@/lib/xlsx';
+import { categoryWorkbook, pickCategorySheet, planCategoryImport, categoryFileName } from '@/lib/categorySheet';
 import { useProjectLabels, useProjectLabelDefaults, setProjectLabels, singular } from '@/lib/projectLabels';
 import { cn } from '@/lib/utils';
 import { useAutoSave } from '@/lib/useAutoSave';
@@ -282,6 +284,63 @@ function CategoriesFromXero({ side = 'cost' }) {
   );
 }
 
+// What an imported category file would change, before anything is saved.
+function CategoryImportPreview({ plan, onClose, onApply }) {
+  const nothing = plan.diffs.length === 0;
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-foreground/20" onClick={onClose} aria-hidden="true" />
+      <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-background shadow-xl">
+        <div className="flex h-14 shrink-0 items-center justify-between border-b px-6">
+          <h2 className="text-base font-semibold tracking-tight">Import categories</h2>
+          <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground" aria-label="Close"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="space-y-4 overflow-y-auto p-6 text-sm">
+          <p className="text-muted-foreground">
+            {nothing
+              ? 'The file matches the list as it is — nothing to change.'
+              : `${plan.add.length} to add, ${plan.remove.length} to delete, ${plan.diffs.length - plan.add.length - plan.remove.length} other change${plan.diffs.length - plan.add.length - plan.remove.length === 1 ? '' : 's'}. Nothing is saved until you confirm.`}
+          </p>
+          {plan.remove.length > 0 && (
+            <p className="rounded-md border border-amber-500/40 bg-amber-50 px-3 py-2 text-amber-800">
+              Categories missing from the file are deleted from this entity’s list. Documents already coded to one keep it.
+            </p>
+          )}
+          {!nothing && (
+            <table className="w-full text-sm">
+              <thead className="border-b text-left text-muted-foreground">
+                <tr><th className="py-1.5 pr-3 font-medium">Category</th><th className="py-1.5 pr-3 font-medium">Change</th><th className="py-1.5 pr-3 font-medium">From</th><th className="py-1.5 font-medium">To</th></tr>
+              </thead>
+              <tbody>
+                {plan.diffs.map((d, i) => (
+                  <tr key={i} className="border-b last:border-0">
+                    <td className="py-1.5 pr-3 font-medium">{d.name}</td>
+                    <td className="py-1.5 pr-3">{d.field}</td>
+                    <td className="py-1.5 pr-3 text-muted-foreground">{d.from}</td>
+                    <td className="py-1.5">{d.to}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {plan.errors.length > 0 && (
+            <div>
+              <p className="mb-1 font-medium">Skipped</p>
+              <ul className="list-disc space-y-0.5 pl-5 text-muted-foreground">
+                {plan.errors.map((e, i) => <li key={i}>Row {e.row}{e.name ? ` (${e.name})` : ''}: {e.message}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t px-6 py-4">
+          <button type="button" onClick={onClose} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-muted">Cancel</button>
+          <button type="button" onClick={onApply} disabled={nothing} className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">Apply changes</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Categories for a BRIDGE entity — one with no Xero of its own, so there is no
 // chart to read. The list is CYBills' own: the seed from the client's claim
 // form plus whatever this entity adds, each row switchable off.
@@ -362,6 +421,38 @@ function CategoriesFromList({ organisation }) {
   };
   const allShown = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
 
+  // The list as a workbook, and back. The file is the whole list: rows added
+  // are added, rows taken out are deleted, Posts to and Visible are set.
+  const fileRef = useRef(null);
+  const [plan, setPlan] = useState(null);
+  const [importError, setImportError] = useState('');
+  const exportExcel = () => {
+    const bytes = writeXlsx(categoryWorkbook({ rows, map, accounts: postable }));
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = categoryFileName(organisation.name);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+  const importExcel = async (file) => {
+    setImportError('');
+    try {
+      const sheet = pickCategorySheet(await readXlsx(await file.arrayBuffer()));
+      setPlan(planCategoryImport({ sheetRows: sheet?.rows || [], rows, map, accounts: postable }));
+    } catch {
+      setImportError('That file could not be read as an Excel workbook (.xlsx).');
+    }
+  };
+  const applyPlan = () => {
+    applyListPlan('categories', { removeIds: plan.remove.map((r) => r.id), add: plan.add, visibility: plan.visibility });
+    if (Object.keys(plan.accounts).length) setCategoryAccounts(plan.accounts);
+    setPlan(null);
+    clear();
+  };
+
   return (
     <div>
       <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
@@ -381,6 +472,15 @@ function CategoriesFromList({ organisation }) {
         setQuery={setQuery}
       >
         <button type="button" onClick={() => setAddOpen(true)} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Add category</button>
+        <button type="button" onClick={exportExcel} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Export to Excel</button>
+        <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">Import from Excel</button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importExcel(f); }}
+        />
         {options.length > 0 && (
           <label className="flex items-center gap-2 text-sm">
             <span className="text-muted-foreground">
@@ -455,6 +555,8 @@ function CategoriesFromList({ organisation }) {
       <p className="mt-3 text-xs text-muted-foreground">
         Showing {filtered.length} of {rows.length} categories · {rows.filter((r) => r.visible && !map[r.name]).length} not mapped to an account
       </p>
+      {importError && <p className="mt-3 text-sm text-destructive">{importError}</p>}
+      {plan && <CategoryImportPreview plan={plan} onClose={() => setPlan(null)} onApply={applyPlan} />}
       <AddDialog
         open={addOpen}
         title="Add category"

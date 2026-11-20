@@ -11,7 +11,7 @@ import { shownAssetKeys } from '@/lib/accountSides';
 const KEY = 'cybills.lists.v1';
 export const LISTS_EVENT = 'cybills:lists-changed';
 const emit = () => window.dispatchEvent(new Event(LISTS_EVENT));
-const store = blobStore(KEY, { added: {}, hidden: {}, meta: {}, shown: {} }, emit, { perOrg: true });
+const store = blobStore(KEY, { added: {}, hidden: {}, meta: {}, shown: {}, removed: {} }, emit, { perOrg: true });
 
 // --- Seeds (from the client's ST Eng workspace) -----------------------------
 // The categories themselves live in a pure module, because the SERVER reads
@@ -66,6 +66,7 @@ function read() {
     hidden: asObject(saved.hidden),
     meta: asObject(saved.meta),
     shown: asObject(saved.shown),
+    removed: asObject(saved.removed),
   };
 }
 
@@ -84,11 +85,14 @@ const SEEDS = { categories: SEED_CATEGORIES, taxRates: SEED_TAX_RATES, projects:
 const seedId = (kind, row) => `${kind}:${row.name}`;
 
 export function getList(kind) {
-  const { added, hidden } = read();
+  const { added, hidden, removed } = read();
   const hiddenSet = new Set(hiddenIds(hidden, kind));
+  const removedSet = new Set(hiddenIds(removed, kind));
   const seed = (SEEDS[kind] || []).map((row) => ({ ...row, id: row.id || seedId(kind, row), seed: true }));
   const userAdded = (Array.isArray(added[kind]) ? added[kind] : []).map((row) => ({ ...row, seed: false }));
-  return [...seed, ...userAdded].map((row) => ({ ...row, visible: !hiddenSet.has(row.id) }));
+  return [...seed, ...userAdded]
+    .filter((row) => !removedSet.has(row.id))
+    .map((row) => ({ ...row, visible: !hiddenSet.has(row.id) }));
 }
 
 export function addToList(kind, row) {
@@ -127,10 +131,44 @@ export function removeFromList(kind, ids) {
   const set = new Set(ids);
   const added = { ...(state.added || {}) };
   added[kind] = (Array.isArray(added[kind]) ? added[kind] : []).filter((r) => !set.has(r.id));
-  // Seed rows can't be deleted outright — hide them instead.
+  // A seed row can't be spliced out of the seed, so it is recorded as REMOVED
+  // (getList drops it) and hidden as well, so anything reading only `hidden`
+  // never offers it either. Only seed ids go into `removed`: an added row is
+  // gone already.
+  const seedIds = new Set((SEEDS[kind] || []).map((row) => row.id || seedId(kind, row)));
   const hidden = { ...(state.hidden || {}) };
   hidden[kind] = [...new Set([...hiddenIds(hidden, kind), ...ids])];
-  write({ ...state, added, hidden });
+  const removed = { ...(state.removed || {}) };
+  removed[kind] = [...new Set([...hiddenIds(removed, kind), ...ids.filter((id) => seedIds.has(id))])];
+  write({ ...state, added, hidden, removed });
+}
+
+// Apply a whole-list plan in ONE write: delete `removeIds`, append `add`
+// ([{ name, visible }]), and set Visible on existing rows (`visibility`:
+// { id: boolean }). The Excel import is the caller — one write, so a list of
+// thirty changes is one save rather than thirty racing each other.
+export function applyListPlan(kind, { removeIds = [], add = [], visibility = {} }) {
+  const state = read();
+  const seedIds = new Set((SEEDS[kind] || []).map((row) => row.id || seedId(kind, row)));
+  const drop = new Set(removeIds);
+  const added = { ...(state.added || {}) };
+  const newRows = add.map((r) => ({ name: r.name, code: '', id: genId(kind), _visible: r.visible !== false }));
+  added[kind] = [
+    ...(Array.isArray(added[kind]) ? added[kind] : []).filter((r) => !drop.has(r.id)),
+    ...newRows.map(({ _visible, ...r }) => r),
+  ];
+  const hiddenSet = new Set([...hiddenIds(state.hidden, kind), ...removeIds]);
+  for (const [id, on] of Object.entries(visibility)) {
+    if (on) hiddenSet.delete(id);
+    else hiddenSet.add(id);
+  }
+  for (const r of newRows) if (!r._visible) hiddenSet.add(r.id);
+  const hidden = { ...(state.hidden || {}), [kind]: [...hiddenSet] };
+  const removed = {
+    ...(state.removed || {}),
+    [kind]: [...new Set([...hiddenIds(state.removed, kind), ...removeIds.filter((id) => seedIds.has(id))])],
+  };
+  write({ ...state, added, hidden, removed });
 }
 
 // The hidden-id set for a list kind (ids the user switched off). Used by the
