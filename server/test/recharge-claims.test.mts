@@ -102,9 +102,11 @@ writeFileSync(
       }),
       // Not yet a cost anybody has agreed to — recharging it would invoice a
       // client for money the practice has not accepted it owes.
-      claim('c-open', { id: 'c-open', approvalStatus: '' }),
-      claim('c-waiting', { id: 'c-waiting', approvalStatus: 'awaiting_approval' }),
-      claim('c-rejected', { id: 'c-rejected', approvalStatus: 'rejected' }),
+      // Each on receipts of its own: a document sits on one live claim only, and
+      // the store takes a shared one off all but the claim that holds it.
+      claim('c-open', { id: 'c-open', approvalStatus: '', transactions: [{ itemId: '260811120000', date: '2026-08-11', supplier: 'Grab', category: 'Transport - Taxi', net: '9', tax: '0', total: '9' }] }),
+      claim('c-waiting', { id: 'c-waiting', approvalStatus: 'awaiting_approval', transactions: [{ itemId: '260812120000', date: '2026-08-12', supplier: 'Grab', category: 'Transport - Taxi', net: '18.20', tax: '0', total: '18.20' }] }),
+      claim('c-rejected', { id: 'c-rejected', approvalStatus: 'rejected', transactions: [{ itemId: '260813120000', date: '2026-08-13', supplier: 'Grab', category: 'Transport - Taxi', net: '7', tax: '0', total: '7' }] }),
       // Deleted claims are gone from every road.
       claim('c-deleted', { id: 'c-deleted', deleted: true }),
       // Already published — still listed, because whether its BILL reached Xero
@@ -168,6 +170,22 @@ check(
   'only approved, undeleted claims are offered',
   red.body.claims.map((c: any) => c.id).sort(),
   ['c-approved', 'c-own', 'c-published']
+);
+
+// The claims NOT approved yet travel as their own list, for hr.cy's "in
+// progress" view. Never mixed into `claims`: everything reading that treats a
+// row as an agreed cost.
+check(
+  'the unapproved claims are listed apart, each with where it stands',
+  red.body.open.map((c: any) => [c.id, c.status]).sort(),
+  [['c-open', 'draft'], ['c-rejected', 'rejected'], ['c-waiting', 'awaiting_approval']]
+);
+check('an open claim carries its total', red.body.open.find((c: any) => c.id === 'c-waiting')?.total, '18.20');
+check('a deleted claim is in neither list', red.body.open.some((c: any) => c.id === 'c-deleted'), false);
+check(
+  'an open claim opens in its own entity',
+  red.body.open.find((c: any) => c.id === 'c-waiting')?.url,
+  'https://cybills.example.com/expense-claims/c-waiting?org=org-ste'
 );
 
 // --- whose cost is it -------------------------------------------------------

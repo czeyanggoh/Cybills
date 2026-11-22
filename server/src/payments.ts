@@ -9,7 +9,7 @@ import {
   setOrganisationPlan,
   type Organisation,
 } from './organisations.js';
-import { rechargeClaims } from './claims.js';
+import { openClaims, rechargeClaims } from './claims.js';
 import {
   costComplete,
   displayIdOf,
@@ -327,11 +327,15 @@ paymentsRouter.get('/claims', async (req, res) => {
   if (!organisations.length) {
     // Not an error, for the same reason the payables listing says so: CYWS asks
     // about every tenant its user can see, and most are not CYBills clients.
-    return res.json({ ok: true, tenant_id: tenantId, organisations: [], claims: [] });
+    return res.json({ ok: true, tenant_id: tenantId, organisations: [], claims: [], open: [] });
   }
 
   const origin = appOrigin(req);
   const claims: Array<Record<string, unknown>> = [];
+  // The same entities' claims that are NOT approved yet, as their own list (see
+  // openClaims): hr.cy shows them as in progress. `claims` stays approved-only,
+  // so a caller that recharges or pays from it never meets one of these.
+  const open: Array<Record<string, unknown>> = [];
   for (const organisation of organisations) {
     // Two quite different things reach one tenant, and a caller that cannot
     // tell them apart will act on the wrong one. A BRIDGE entity holds the
@@ -355,6 +359,15 @@ paymentsRouter.get('/claims', async (req, res) => {
         url: `${origin}/expense-claims/${row.id}?org=${encodeURIComponent(organisation.id)}`,
       });
     }
+    for (const row of await openClaims(dataScopeForOrg(organisation.id))) {
+      open.push({
+        ...row,
+        org_id: organisation.id,
+        org_name: organisation.name,
+        bridge,
+        url: `${origin}/expense-claims/${row.id}?org=${encodeURIComponent(organisation.id)}`,
+      });
+    }
   }
 
   res.json({
@@ -362,6 +375,7 @@ paymentsRouter.get('/claims', async (req, res) => {
     tenant_id: tenantId,
     organisations: organisations.map((o) => ({ id: o.id, name: o.name, bridge: !isLinkedItself(o) })),
     claims,
+    open,
   });
 });
 

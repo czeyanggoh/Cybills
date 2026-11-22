@@ -71,6 +71,31 @@ past the session guard. Contract for the payment half: `PAYABLES.md`.
 }
 ```
 
+### `open`: the claims not approved yet
+
+Beside `claims`, the same answer carries `open`: the claims of those entities
+that are **not approved yet** (a draft with something on it, one waiting for its
+approver, one sent back). hr.cy lists them as "in progress" so whoever runs
+payroll can see what is still to come and open it here to approve and publish.
+
+```json
+"open": [
+  {
+    "id": "9a2e…", "reference": "…", "claim_no": "260901093000",
+    "claimant": "Wei Ming Tan", "claimant_email": "weiming.tan@stengg.com",
+    "period_end": "2026-09-30", "currency": "SGD", "total": "18.20", "items": 1,
+    "status": "awaiting_approval", "approver": "Martin Lim",
+    "org_id": "org_mt9qew30_…", "org_name": "Red Alpha - ST Engineering", "bridge": true,
+    "url": "https://cybills.cy-bm.sg/expense-claims/9a2e…?org=org_mt9qew30_…"
+  }
+]
+```
+
+`status` is `draft`, `awaiting_approval` or `rejected`. `claims` stays
+approved-only: an unapproved claim is not a cost anybody has agreed to, so
+nothing that recharges or pays may read it from `open`. The rows carry no lines
+and no PDF link for the same reason.
+
 ## Three things that are easy to get wrong
 
 **Scope is by PUBLISH TARGET, not by the entity's own Xero link.** This is the

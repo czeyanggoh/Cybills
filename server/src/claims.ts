@@ -320,6 +320,52 @@ export async function rechargeClaims(org: string, origin = ''): Promise<Recharge
   return rows;
 }
 
+// The claims of one entity's book that are NOT approved yet: drafted, waiting for
+// the approver, or sent back. hr.cy lists these as "in progress" beside the
+// approved ones it pays in payroll, so whoever runs payroll can see what is
+// still to come and go and approve it here. Deliberately a SEPARATE list from
+// rechargeClaims and not a wider filter on it: everything that reads that list
+// treats a row as a cost somebody has agreed to, and an unapproved claim is not
+// one. So these carry only what a list shows — no lines, no PDF link, no
+// approval — and nothing about them should be acted on except by opening them.
+// A draft with nothing on it yet is left out; it is not a claim anybody is
+// waiting on.
+export type OpenClaim = {
+  id: string;
+  reference: string;
+  claim_no: string;
+  claimant: string;
+  claimant_email: string;
+  period_end: string;
+  currency: string;
+  total: string;
+  items: number;
+  /** draft: not submitted. awaiting_approval: with the approver. rejected: sent back. */
+  status: 'draft' | 'awaiting_approval' | 'rejected';
+  approver: string;
+};
+export async function openClaims(org: string): Promise<OpenClaim[]> {
+  const rows: OpenClaim[] = [];
+  for (const c of load()) {
+    if (c.deleted || c.orgId !== org || c.approvalStatus === 'approved') continue;
+    if (!c.transactions.length) continue;
+    rows.push({
+      id: c.id,
+      reference: await referenceFor(c),
+      claim_no: await numberFor(c),
+      claimant: c.claimFor,
+      claimant_email: emailForName(WORKSPACE_ID, c.claimFor),
+      period_end: c.endDate || c.claimDate || '',
+      currency: c.currency || 'SGD',
+      total: claimTotal(c),
+      items: c.transactions.length,
+      status: c.approvalStatus === '' ? 'draft' : c.approvalStatus,
+      approver: c.approver || '',
+    });
+  }
+  return rows;
+}
+
 const COLLECTION = 'claims';
 // ONE claim per document. A claim's items are the only record of membership
 // that the claim, its PDF and its Xero bill read, and a document on two live
