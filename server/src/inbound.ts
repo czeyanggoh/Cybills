@@ -378,6 +378,18 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       // Only when the supplier's rule asks for them (see above); otherwise the
       // key is absent, so whatever the document already holds is left alone.
       ...(readerLines ? { lineItems: readerLines } : {}),
+      // What the read saw of the table, as EVIDENCE only (Bill.readLines): the
+      // amounts a supporting document sent in with this invoice is tied to.
+      // Never the document's line items, and nothing posts from them.
+      ...(Array.isArray(d.lineItems) && d.lineItems.length
+        ? {
+            readLines: d.lineItems.slice(0, 60).map((li) => ({
+              description: String(li.description ?? '').slice(0, 200),
+              total: Math.abs(Number(li.amount) || 0),
+              net: Math.abs(Number(li.net) || 0),
+            })),
+          }
+        : {}),
     };
     // The tax code, decided by the same rules an upload runs — the reader only
     // names one when a written "when to use" rule plainly matched, and every

@@ -80,6 +80,9 @@ export function payableByProof(doc, proof, { anyDate = false } = {}) {
   if ((doc.kind || 'cost') !== 'cost') return false;
   if (isPaymentProof(typeOf(doc)) || !payableKind(typeOf(doc))) return false;
   if (['merged', 'deleted', 'processing', 'expenseclaim'].includes(String(doc.status || ''))) return false;
+  // The paperwork behind an invoice (supportingDocs.js): the invoice is what a
+  // payment settles.
+  if (doc.supportingFor) return false;
   const xero = upper(doc.xeroStatus);
   if (xero === 'PAID' || xero === 'VOIDED') return false;
   const payer = doc.paidByProof?.proofId || '';

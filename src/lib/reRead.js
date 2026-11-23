@@ -203,6 +203,12 @@ export function readDecisions(
     patch.billedTo = ex.billedTo || '';
     patch.billedToRegNo = ex.billedToRegNo || '';
   }
+  // What the read saw of the table, as evidence only (the server keeps it as
+  // `readLines`): the amounts a supporting document sent in with this invoice
+  // is tied to (supportingDocs.js). Never the document's line items.
+  if (Array.isArray(ex.lineItems) && ex.lineItems.length) {
+    patch.readLines = ex.lineItems.map((li) => ({ description: li.description || '', total: li.amount ?? li.total ?? 0, net: li.net ?? 0 }));
+  }
   // What the tax code above was decided on, saved beside it — the only way to
   // answer "why didn't it take the GST?" later without reading the paper again
   // and guessing what the reader saw. Written whenever the code is, so the two

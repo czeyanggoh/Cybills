@@ -1096,6 +1096,34 @@ async function attachBillFile(
   return attachBillFileTo(tenantId, xeroEndpointFor(docType), invoiceId, bill);
 }
 
+// The supporting documents of a bill (supportingDocs.js) go up beside its own
+// file, each under a name that says what it is and whose — two receipts called
+// "scan.pdf" would otherwise replace one another, since Xero keys an attachment
+// by its name. Null when the bill has none.
+export async function attachSupportingFiles(
+  tenantId: string,
+  invoiceId: string,
+  bill: Bill,
+  docType: XeroDocType = xeroDocTypeOf(bill)
+): Promise<{ attached: number; failed: Array<{ displayId: string; error: string }> } | null> {
+  const ids = bill.supportingDocs ?? [];
+  if (!ids.length || !invoiceId) return null;
+  const out = { attached: 0, failed: [] as Array<{ displayId: string; error: string }> };
+  for (const id of ids) {
+    const doc = getBillById(bill.orgId, id);
+    if (!doc || doc.supportingFor?.billId !== bill.id) continue;
+    if (!doc.storageKey) {
+      out.failed.push({ displayId: doc.displayId, error: 'It has no stored file.' });
+      continue;
+    }
+    const named = { ...doc, fileName: `Supporting ${doc.displayId} ${doc.fileName || doc.supplier || 'document'}` };
+    const att = await attachBillFileTo(tenantId, xeroEndpointFor(docType), invoiceId, named);
+    if (att?.ok) out.attached += 1;
+    else out.failed.push({ displayId: doc.displayId, error: att?.error || 'The stored file could not be read.' });
+  }
+  return out;
+}
+
 // The same upload onto any Xero record that takes attachments — a quotation's
 // prepayment goes on the SPEND-OVERPAYMENT bank transaction that holds it
 // (prepayment.ts), which is the only place in Xero that paper can live until
@@ -2061,6 +2089,15 @@ export async function postBillToXero(
       message: `This document was sent to ${m.kind === 'bill' ? 'a bill' : 'a Spend Money transaction'} already in Xero (${m.contact || 'no contact'}, ${m.currency} ${Number(m.total).toFixed(2)} on ${m.date}), so it is not published again. Unlink it on the document page first if that was wrong.`,
     } };
   }
+  // A supporting document is the paperwork BEHIND an invoice that recharges it
+  // (supportingDocs.js): the invoice carries the money, and this beside it
+  // would post the same spending twice.
+  if (!bill.xeroInvoiceId && bill.supportingFor) {
+    return { status: 409, body: {
+      error: 'supporting_document',
+      message: `This is a supporting document for item #${bill.supportingFor.displayId || bill.supportingFor.billId}, which carries its money, so it is not published on its own. Undo that on the document page first if it is a cost of its own.`,
+    } };
+  }
   if (bill.xeroInvoiceId && opts.force !== true) {
     return { status: 409, body: {
       error: 'already_posted',
@@ -2213,6 +2250,9 @@ export async function postBillToXero(
   // bill in Xero rather than only here. Best-effort: the bill stays posted even
   // if the upload fails, and /attach-file can retry it.
   const attachment = await attachBillFile(organisation.tenantId, xeroId, updated ?? bill, docType);
+  // And the paperwork behind it: each supporting document's file, beside the
+  // invoice's own. Best-effort like the attachment above, and reported.
+  const supporting = await attachSupportingFiles(organisation.tenantId, xeroId, updated ?? bill, docType);
 
   // The payment the inbox already agreed to (Autofill payment): recorded from
   // the bank account on the statement date now that the bill exists, so the
@@ -2313,6 +2353,7 @@ export async function postBillToXero(
     // Posted in the org's base currency because it has no multi-currency.
     converted: prepared.converted,
     attachment,
+    supporting,
     rebilled,
     // The bank payment recorded from the inbox's autofill, or why it was not.
     // Null when the document carried none.
@@ -3074,6 +3115,23 @@ xeroRouter.post('/organisations/:id/attach-file', async (req, res) => {
     });
   }
   res.json({ ok: true, attachment });
+});
+
+// POST /api/xero/organisations/:id/attach-supporting — { billId }. The bill was
+// already in Xero when its supporting documents were named, so their files go
+// up now, beside the bill's own.
+xeroRouter.post('/organisations/:id/attach-supporting', async (req, res) => {
+  if (notConfigured(res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const bill = getBillById(bookFor(req), String(req.body?.billId ?? ''));
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  if (!bill.xeroInvoiceId) {
+    return res.status(400).json({ error: 'not_published', message: 'This document has not been published to Xero yet. Its supporting documents go up with it when it is.' });
+  }
+  const supporting = await attachSupportingFiles(organisation.tenantId, bill.xeroInvoiceId, bill);
+  if (!supporting) return res.status(400).json({ error: 'no_supporting', message: 'This document has no supporting documents.' });
+  res.json({ ok: true, supporting });
 });
 
 // GET /api/xero/organisations/:id/target-accounts — the expense accounts this

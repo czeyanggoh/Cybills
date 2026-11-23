@@ -27,6 +27,10 @@ import {
   applyPaymentProof,
   unapplyPaymentProof,
   archiveStandingProofs,
+  linkSupporting,
+  unlinkSupporting,
+  declineSupporting,
+  releaseSupportingOn,
   type Bill,
   type Candidate,
 } from './store.js';
@@ -47,6 +51,7 @@ import { keepMileageInStep } from './mileage.js';
 import { isPaymentProofDoc, keepPaymentProofInStep } from './paymentProof.js';
 import { isAdvanceDoc, keepAdvanceInStep } from './prepayment.js';
 import { autoApplyPaymentProofs, proofMatchRules, unappliedProof } from './proofMatch.js';
+import { autoLinkSupporting, supportingRules } from './supportingDocs.js';
 import { channelById } from './waChannels.js';
 import { senderIdentity } from './waSender.js';
 import { learnLid, lidFor } from './waLids.js';
@@ -399,12 +404,18 @@ billsRouter.get('/bills', async (req, res) => {
   } catch (err) {
     console.error('[claims] status sync failed', err);
   }
-  const onClaim = claimMembership(orgId);
   // Is each document in the right client's book? Computed here rather than
   // stored (see entityCheck.ts), and attached to the row rather than left to the
   // document page — a document nobody opens is exactly the one that gets
   // published into the wrong ledger, so the list has to be able to say so.
   const check = await entityCheckFor(req);
+  // The receipts sent in WITH the invoice that recharges them are set aside as
+  // its supporting documents (supportingDocs.ts) — only where one email, the
+  // bill-to party and the money all say so; anything weaker is only offered.
+  await autoLinkSupporting(orgId, (b) => check(b, entityIdForBill(b))?.status || 'unknown').catch((err) =>
+    console.error('[bills] supporting documents sweep failed', err)
+  );
+  const onClaim = claimMembership(orgId);
   // The one place every surface reads its documents from — Costs, Submission
   // history, the exports, merge detection — so this is where a Standard user's
   // view narrows to their OWN work. Not their reports': an approver decides a
@@ -539,6 +550,22 @@ function cellNumber(value: unknown): number | null {
   if (!text) return null;
   const n = Number(text);
   return Number.isFinite(n) ? n : null;
+}
+
+// The rows a read saw on the document, kept as evidence (Bill.readLines):
+// description and amounts only, capped, and never the document's line items.
+export function normaliseReadLines(rows: unknown[]): Array<{ description: string; total: number; net: number }> {
+  return rows
+    .slice(0, 60)
+    .map((r) => {
+      const o = (r ?? {}) as Record<string, unknown>;
+      return {
+        description: String(o.description ?? '').slice(0, 200),
+        total: Math.abs(parseAmount(o.total ?? o.amount)),
+        net: Math.abs(parseAmount(o.net)),
+      };
+    })
+    .filter((r) => r.total > 0 || r.net > 0);
 }
 
 function normaliseLineItems(rows: unknown[]): LineItem[] {
@@ -847,6 +874,7 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   // duplicate" does.
   if (b.entityCheckDismissed === true) patch.entityCheckDismissed = true;
   if (Array.isArray(b.lineItems)) patch.lineItems = normaliseLineItems(b.lineItems);
+  if (Array.isArray(b.readLines)) patch.readLines = normaliseReadLines(b.readLines);
   // Recharged to a client: Xero's billable expense. Only meaningful alongside a
   // customer, and cleared with one — a rebillable cost with nobody to bill is a
   // flag that can never be acted on.
@@ -1051,6 +1079,134 @@ billsRouter.post('/bills/:id/unapply-proof', (req, res) => {
   res.json({ ok: true, bill: out?.proof ?? proof, invoices: out?.invoices ?? [] });
 });
 
+// Supporting documents: the receipts or expense reports sent in WITH the
+// invoice that recharges them (src/lib/supportingDocs.js, supportingDocs.ts).
+// A supporting document is set aside and never published; these routes are how
+// a person sees the link from either side, makes it by hand, undoes it, or says
+// a suggestion is wrong.
+const supportRow = (b: Bill) => ({ ...proofRow(b), hasFile: Boolean(b.storageKey), fileName: b.fileName || '' });
+
+// GET /api/costs/bills/:id/supporting — seen from either side. For a document
+// that IS backup: the invoice it backs up. For anything else: the documents
+// behind it, and the ones that arrived with it that the rules would offer.
+billsRouter.get('/bills/:id/supporting', async (req, res) => {
+  const orgId = orgIdFor(req);
+  const bill = getBillById(orgId, String(req.params.id));
+  if (!bill || !canReadBill(req, bill)) return res.status(404).json({ error: 'not_found' });
+  if (bill.supportingFor) {
+    const main = getBillById(orgId, bill.supportingFor.billId);
+    return res.json({
+      ok: true,
+      kind: 'support',
+      link: { reasons: bill.supportingFor.reasons, line: bill.supportingFor.line, auto: bill.supportingFor.auto, at: bill.supportingFor.at },
+      main: main && canReadBill(req, main) ? supportRow(main) : null,
+    });
+  }
+  const docs = listBills(orgId).filter((d) => canReadBill(req, d));
+  const linked = docs
+    .filter((d) => d.supportingFor?.billId === bill.id)
+    .map((d) => ({ ...supportRow(d), reasons: d.supportingFor!.reasons, line: d.supportingFor!.line, auto: d.supportingFor!.auto }));
+  const r = await supportingRules();
+  let suggestions: Array<ReturnType<typeof supportRow> & { reasons: string[]; line: string }> = [];
+  if (r && r.canBeMain(bill)) {
+    const check = await entityCheckFor(req);
+    const statusOf = (d: Bill) => check(d, entityIdForBill(d))?.status || 'unknown';
+    const group = r.findSupportingGroups(docs, { statusOf }).find((g) => g.mainId === bill.id);
+    suggestions = (group?.supports ?? []).flatMap((t) => {
+      const d = docs.find((x) => x.id === t.id);
+      return d ? [{ ...supportRow(d), reasons: t.reasons, line: t.line }] : [];
+    });
+  }
+  res.json({ ok: true, kind: 'main', supports: linked, suggestions, inXero: Boolean(bill.xeroInvoiceId) });
+});
+
+// POST /api/costs/bills/:id/supporting — { billIds }. Those documents are the
+// paperwork behind THIS invoice: each is set aside and will travel with it. A
+// person's own judgement, so nothing about the money is asked — an invoice
+// showing one lump sum has no line to tie its backup to.
+billsRouter.post('/bills/:id/supporting', (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  const orgId = orgIdFor(req);
+  const main = getBillById(orgId, String(req.params.id));
+  if (!main) return res.status(404).json({ error: 'not_found' });
+  if ((main.kind || 'cost') !== 'cost') {
+    return res.status(422).json({ error: 'not_a_cost', message: 'Only a cost document can have supporting documents.' });
+  }
+  if (main.supportingFor) {
+    return res.status(409).json({ error: 'is_supporting', message: 'This document is itself a supporting document for another one. Undo that first.' });
+  }
+  if (['deleted', 'merged'].includes(String(main.status))) {
+    return res.status(409).json({ error: 'unavailable', message: 'This document has been merged away or deleted.' });
+  }
+  const raw: unknown[] = Array.isArray(req.body?.billIds) ? req.body.billIds : [];
+  const ids = [...new Set(raw.map(String))].filter((id) => id && id !== main.id);
+  if (!ids.length) return res.status(400).json({ error: 'no_documents', message: 'Pick the documents that support this one.' });
+  const docs: Bill[] = [];
+  for (const id of ids) {
+    const d = getBillById(orgId, id);
+    if (!d || !canReadBill(req, d)) return res.status(404).json({ error: 'not_found' });
+    docs.push(d);
+  }
+  const refusal = (d: Bill): string => {
+    if (d.xeroInvoiceId) return 'is already published to Xero';
+    if (d.paperworkMatch) return 'was sent to a transaction already in Xero';
+    if (d.prepayment) return 'is recorded as a prepayment';
+    if (d.status === 'expenseclaim') return 'is on an expense claim';
+    if (d.status === 'processing') return 'is still being read';
+    if (['deleted', 'merged'].includes(String(d.status))) return 'has been merged away or deleted';
+    if (d.supportingFor && d.supportingFor.billId !== main.id) return 'already supports another document';
+    if (d.supportingDocs?.length) return 'has supporting documents of its own';
+    if ((d.kind || 'cost') !== 'cost') return 'is not a cost document';
+    return '';
+  };
+  const refused = docs.filter((d) => refusal(d));
+  if (refused.length) {
+    return res.status(409).json({
+      error: 'cannot_support',
+      message: refused.slice(0, 3).map((d) => `${d.supplier || 'Item'} #${d.displayId} ${refusal(d)}`).join('; ') + '. Nothing was changed.',
+    });
+  }
+  const out = linkSupporting(orgId, main.id, ids.map((id) => ({ id, reasons: ['manual'] })), readSession(req)?.email ?? '', false);
+  if (!out) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, bill: out.main, supports: out.supports.map(supportRow), inXero: Boolean(main.xeroInvoiceId) });
+});
+
+// POST /api/costs/bills/:id/supporting/remove — { billIds? }. Undo. On a
+// supporting document: it is a cost of its own after all. On the invoice: the
+// documents named (or all of them) are. Each goes back to where it was, and is
+// not linked to that invoice again by itself.
+billsRouter.post('/bills/:id/supporting/remove', (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  const orgId = orgIdFor(req);
+  const bill = getBillById(orgId, String(req.params.id));
+  if (!bill) return res.status(404).json({ error: 'not_found' });
+  let ids: string[];
+  if (bill.supportingFor) ids = [bill.id];
+  else {
+    const mine = new Set(bill.supportingDocs ?? []);
+    const named: string[] = Array.isArray(req.body?.billIds) ? req.body.billIds.map(String) : [...mine];
+    ids = named.filter((id) => mine.has(id));
+  }
+  const released = unlinkSupporting(orgId, ids, true);
+  res.json({ ok: true, released: released.map(supportRow) });
+});
+
+// POST /api/costs/bills/:id/supporting/decline — { billIds }. "Keep separate":
+// those documents are not backup for this invoice, said to a suggestion.
+billsRouter.post('/bills/:id/supporting/decline', (req, res) => {
+  if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
+  const orgId = orgIdFor(req);
+  const main = getBillById(orgId, String(req.params.id));
+  if (!main) return res.status(404).json({ error: 'not_found' });
+  const raw: unknown[] = Array.isArray(req.body?.billIds) ? req.body.billIds : [];
+  const mine = raw.map(String).filter((id) => {
+    const d = getBillById(orgId, id);
+    return Boolean(d && canReadBill(req, d));
+  });
+  res.json({ ok: true, declined: declineSupporting(orgId, mine, main.id) });
+});
+
+
 // DELETE /api/costs/bills/:id — PERMANENT delete. Drops the record for good AND
 // reclaims its stored file from R2 (or local disk). This is the destructive
 // counterpart to the soft delete/archive (status change, file kept) — the client
@@ -1060,6 +1216,9 @@ billsRouter.delete('/bills/:id', async (req, res) => {
   if (!mayWriteBill(req)) return res.status(404).json({ error: 'not_found' });
   if (await lockedOnApprovedClaim(req, res)) return;
   const orgId = orgIdFor(req);
+  // An invoice's backup becomes ordinary documents again; a backup document
+  // comes off its invoice's list.
+  releaseSupportingOn(orgId, req.params.id);
   const removed = deleteBillHard(orgId, req.params.id);
   if (!removed) return res.status(404).json({ error: 'not_found' });
   // Only reclaim the stored file if no other bill still shares it (identical
@@ -1166,6 +1325,8 @@ billsRouter.post('/bills/:id/move-entity', async (req, res) => {
   }
   if (bill.status === 'deleted') return res.status(404).json({ error: 'not_found' });
 
+  // The link to an invoice (or to its backup) is between documents of one book.
+  releaseSupportingOn(bill.orgId, bill.id);
   const fromId = entityIdForBill(bill);
   const fromName = listOrganisations(ws).find((o) => o.id === fromId)?.name || '';
   const moved = moveBillToScope(bill.orgId, bill.id, toScope, {
@@ -1271,6 +1432,10 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   patch.medicalProvider = b.medicalProvider === true;
   if (b.total != null) patch.total = parseAmount(b.total);
   if (b.tax != null) patch.tax = parseAmount(b.tax);
+  // What the read saw of the table, as evidence only (Bill.readLines). The
+  // drawer sends the read's answer whole, so its own rows are taken as that.
+  const seen = Array.isArray(b.readLines) ? b.readLines : Array.isArray(b.lineItems) ? b.lineItems : null;
+  if (seen) patch.readLines = normaliseReadLines(seen);
   restatementPatch(b, patch);
   // The distance the reader took off a mileage record. The rate is the
   // entity's own (Business settings → Extraction → Mileage), and the total

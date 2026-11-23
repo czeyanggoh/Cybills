@@ -445,6 +445,13 @@ export function billToDoc(b) {
     prepayment: b.prepayment || null,
     // The Xero transaction this document was sent to (src/lib/paperworkMatch.js).
     paperworkMatch: b.paperworkMatch || null,
+    // Supporting documents (src/lib/supportingDocs.js): the invoice this one is
+    // backup for, or the documents behind this one; a person's "not this one";
+    // and the rows the read saw, which the tie is made against.
+    supportingFor: b.supportingFor || null,
+    supportingDocs: Array.isArray(b.supportingDocs) ? b.supportingDocs : [],
+    notSupportingFor: Array.isArray(b.notSupportingFor) ? b.notSupportingFor : [],
+    readLines: Array.isArray(b.readLines) ? b.readLines : [],
     prepaymentsApplied: Array.isArray(b.prepaymentsApplied) ? b.prepaymentsApplied : [],
     customer: b.customer || '',
     project: b.project || '',
@@ -842,3 +849,21 @@ export async function fetchDextImage(url) {
     return null;
   }
 }
+
+// Supporting documents — the receipts or expense reports sent in WITH the
+// invoice that recharges them (src/lib/supportingDocs.js). Seen from either
+// side, linked by hand, undone, or a suggestion answered No.
+async function supportingCall(id, path, body) {
+  const res = await fetch(`/api/costs/bills/${id}/supporting${path}`, {
+    method: body ? 'POST' : 'GET',
+    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...orgHeaders() },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) return { ok: false, message: data?.message || 'That could not be done.' };
+  return data || { ok: false, message: 'That could not be done.' };
+}
+export const fetchSupporting = (id) => supportingCall(id, '');
+export const linkSupportingDocs = (mainId, billIds) => supportingCall(mainId, '', { billIds });
+export const unlinkSupportingDocs = (id, billIds) => supportingCall(id, '/remove', billIds ? { billIds } : {});
+export const declineSupportingDocs = (mainId, billIds) => supportingCall(mainId, '/decline', { billIds });

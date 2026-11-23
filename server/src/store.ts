@@ -396,6 +396,33 @@ export type Bill = {
   // and what it answered, so its own writer (setBillPaperworkMatch), never
   // EDITABLE. Counts as published everywhere a list asks (readiness.js).
   paperworkMatch?: PaperworkMatch;
+  // SUPPORTING DOCUMENTS (src/lib/supportingDocs.js): the receipts or expense
+  // reports sent in WITH an invoice that recharges them. Published beside the
+  // invoice they would post the same spending twice, so a supporting document
+  // is set aside and travels with its invoice instead. On the supporting one:
+  // the invoice it backs up, why, and the status to go back to. On the invoice:
+  // the documents behind it. `notSupportingFor` is a person saying "not this
+  // one" (Keep separate, or undoing a link), which the sweep must not simply
+  // make again. Their own writers (linkSupporting / unlinkSupporting), never
+  // EDITABLE.
+  supportingFor?: {
+    billId: string;
+    displayId: string;
+    at: string;
+    by: string;
+    auto: boolean;
+    reasons: string[];
+    line: string;
+    before: { status: string };
+  };
+  supportingDocs?: string[];
+  notSupportingFor?: string[];
+  // The rows the general read saw on the document — description and amounts
+  // only. EVIDENCE, kept on every road a read arrives by, and never the
+  // document's line items: nothing posts from them. They are what a supporting
+  // document's total is tied to on an invoice whose supplier never opted in to
+  // line items.
+  readLines?: Array<{ description: string; total: number; net: number }>;
 };
 
 export type PaperworkLine = {
@@ -1262,6 +1289,8 @@ const EDITABLE: (keyof Bill)[] = [
   // Written by keepPaymentProofInStep beside the status it archives, never taken
   // from a request body (the PATCH route copies named fields only).
   'proofSetAside',
+  // The read's own rows, as evidence (see Bill.readLines) — written by the read.
+  'readLines',
 ];
 
 // Attach (or replace) the stored file on an existing bill. Returns null if not
@@ -1752,6 +1781,148 @@ export function unapplyPaymentProof(orgId: string, proofId: string, by: string):
   proof.proofAutoDeclined = true;
   persist(bills);
   return { proof, invoices };
+}
+
+// --- Supporting documents ----------------------------------------------------
+// May this document be set aside as backup for an invoice? A live cost that is
+// not in Xero, not on a claim, not already somebody's backup and not an invoice
+// with backup of its own.
+function maySupport(b: Bill, mainId: string): boolean {
+  if ((b.kind || 'cost') !== 'cost' || b.id === mainId) return false;
+  if (b.xeroInvoiceId || b.paperworkMatch || b.prepayment) return false;
+  if (['deleted', 'merged', 'processing', 'expenseclaim'].includes(String(b.status || ''))) return false;
+  if (b.supportingFor && b.supportingFor.billId !== mainId) return false;
+  return !(b.supportingDocs?.length);
+}
+
+// These documents are the paperwork behind this invoice: each is set aside
+// (archived, remembering where it was) and named on the invoice. A document
+// that may not be one is skipped and left exactly as it is; the answer says
+// which were linked. Null when the invoice is missing or is itself backup.
+export function linkSupporting(
+  orgId: string,
+  mainId: string,
+  supports: Array<{ id: string; reasons?: string[]; line?: string }>,
+  by: string,
+  auto: boolean
+): { main: Bill; supports: Bill[] } | null {
+  const bills = load();
+  const main = bills.find((b) => b.orgId === orgId && b.id === mainId);
+  if (!main || main.supportingFor || (main.kind || 'cost') !== 'cost') return null;
+  if (['deleted', 'merged'].includes(String(main.status || ''))) return null;
+  const now = new Date().toISOString();
+  const linked: Bill[] = [];
+  for (const want of supports) {
+    const b = bills.find((x) => x.orgId === orgId && x.id === want.id);
+    if (!b || !maySupport(b, mainId)) continue;
+    const before = b.supportingFor?.before ?? { status: String(b.status || 'new') };
+    b.supportingFor = {
+      billId: mainId,
+      displayId: main.displayId || '',
+      at: now,
+      by,
+      auto,
+      reasons: (want.reasons ?? []).map(String).slice(0, 6),
+      line: String(want.line ?? '').slice(0, 200),
+      before,
+    };
+    b.status = 'archived';
+    linked.push(b);
+  }
+  if (!linked.length) return { main, supports: [] };
+  main.supportingDocs = [...new Set([...(main.supportingDocs ?? []), ...linked.map((b) => b.id)])];
+  persist(bills);
+  return { main, supports: linked };
+}
+
+function releaseSupport(bills: Bill[], b: Bill, decline: boolean): void {
+  const link = b.supportingFor;
+  if (!link) return;
+  const main = bills.find((x) => x.orgId === b.orgId && x.id === link.billId);
+  if (main?.supportingDocs) {
+    main.supportingDocs = main.supportingDocs.filter((id) => id !== b.id);
+    if (!main.supportingDocs.length) delete main.supportingDocs;
+  }
+  if (decline) b.notSupportingFor = [...new Set([...(b.notSupportingFor ?? []), link.billId])].slice(-50);
+  delete b.supportingFor;
+  // Back to work — but only where the setting-aside is still what holds it: a
+  // document somebody has since pulled out, or deleted, stays where they put it.
+  if (b.status === 'archived') {
+    b.status = ['new', 'viewed', 'review', 'ready'].includes(link.before?.status) ? link.before.status : 'new';
+    applyAutoReady(b);
+  }
+}
+
+// Undo: these documents are costs of their own after all. Each goes back to the
+// status it had, and (with `decline`) remembers that this invoice is not what
+// it backs up, so the next listing does not link it again.
+export function unlinkSupporting(orgId: string, ids: string[], decline = true): Bill[] {
+  const bills = load();
+  const out: Bill[] = [];
+  for (const id of new Set(ids.map(String))) {
+    const b = bills.find((x) => x.orgId === orgId && x.id === id);
+    if (!b?.supportingFor) continue;
+    releaseSupport(bills, b, decline);
+    out.push(b);
+  }
+  if (out.length) persist(bills);
+  return out;
+}
+
+// "Keep separate": these are not backup for that invoice, said before anything
+// was linked.
+export function declineSupporting(orgId: string, ids: string[], mainId: string): number {
+  const bills = load();
+  let n = 0;
+  for (const id of new Set(ids.map(String))) {
+    const b = bills.find((x) => x.orgId === orgId && x.id === id);
+    if (!b || b.id === mainId) continue;
+    b.notSupportingFor = [...new Set([...(b.notSupportingFor ?? []), mainId])].slice(-50);
+    n += 1;
+  }
+  if (n) persist(bills);
+  return n;
+}
+
+// A document about to be deleted, merged away or moved lets go of the link
+// first: an invoice's backup becomes ordinary documents again, and a backup
+// document comes off its invoice's list.
+export function releaseSupportingOn(orgId: string, id: string): void {
+  const bills = load();
+  const b = bills.find((x) => x.orgId === orgId && x.id === id);
+  if (!b) return;
+  let changed = false;
+  if (b.supportingFor) {
+    releaseSupport(bills, b, false);
+    changed = true;
+  }
+  for (const s of bills) {
+    if (s.orgId === orgId && s.supportingFor?.billId === id) {
+      releaseSupport(bills, s, false);
+      changed = true;
+    }
+  }
+  if (changed) persist(bills);
+}
+
+// Links that no longer hold, put right off the listing: backup whose invoice
+// was deleted or merged away is a document of its own again, and backup
+// somebody pulled back out of Archived (Unarchive, a status typed on its page)
+// has been un-set-aside by hand, which is an Undo. Returns how many it released.
+export function repairSupporting(orgId: string): number {
+  const bills = load();
+  let n = 0;
+  for (const b of bills) {
+    if (b.orgId !== orgId || !b.supportingFor) continue;
+    const main = bills.find((x) => x.orgId === orgId && x.id === b.supportingFor!.billId);
+    const mainGone = !main || ['deleted', 'merged'].includes(String(main.status || ''));
+    const pulledOut = b.status !== 'archived';
+    if (!mainGone && !pulledOut) continue;
+    releaseSupport(bills, b, pulledOut && !mainGone);
+    n += 1;
+  }
+  if (n) persist(bills);
+  return n;
 }
 
 // Record (or, with null, forget) the Xero transaction a document was sent to.

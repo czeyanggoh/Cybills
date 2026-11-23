@@ -12,6 +12,7 @@ import {
   Layers,
   Link2 as LinkIcon,
   Banknote,
+  Paperclip,
 } from 'lucide-react';
 import AppShell, { AddDocumentsButton } from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
@@ -44,13 +45,15 @@ import { formatKm } from '@/lib/mileage';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
 import { useAuth } from '@/lib/auth';
 import { canPublishToXero, canCreateClaims } from '@/lib/userStore';
-import { updateBill, deleteBill, notifyBillsChanged, itemNumber, costPath, markNotMerge } from '@/lib/bills';
+import { updateBill, deleteBill, notifyBillsChanged, itemNumber, costPath, markNotMerge, linkSupportingDocs, declineSupportingDocs } from '@/lib/bills';
 import { matchesQuickSearch } from '@/lib/docSearch';
 import { setDocOverride } from '@/lib/docOverrides';
 import { addItemToClaim, createClaim, docToClaimTxn } from '@/lib/claimStore';
 import { buildMergePreview, commitMerge } from '@/lib/mergeDocs';
 import { findMergeCandidates, docFacts, statesNothing } from '@/lib/mergeDetect';
 import MergeModal from '@/components/MergeModal';
+import SupportingDocsModal from '@/components/SupportingDocsModal';
+import { findSupportingGroups } from '@/lib/supportingDocs';
 import BulkEditModal from '@/components/BulkEditModal';
 import DocCardList from '@/components/DocCardList';
 import DuplicateReviewModal from '@/components/DuplicateReviewModal';
@@ -260,6 +263,14 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       Merge
     </ToolbarButton>
   );
+  // "These came in together and all but one are the paperwork behind it": the
+  // ticked documents, one of which is the invoice. Sets the rest aside as its
+  // supporting documents (src/lib/supportingDocs.js).
+  const supportBtn = (
+    <ToolbarButton disabled={!a.canSupport} onClick={a.supporting}>
+      Supporting documents
+    </ToolbarButton>
+  );
   // Detection runs on its own over the whole inbox, so this button reports what
   // has already been found rather than starting a search: it opens the review
   // modal on the first suggestion. Detection runs by itself over the inbox, so
@@ -342,6 +353,7 @@ function ToolbarActions({ tab, hasSelection, canMerge, a }) {
       {claimBtn}
       {publishBtn}
       {mergeBtn}
+      {supportBtn}
       {scanBtn}
       {reviewDupBtn}
       {archiveBtn}
@@ -715,6 +727,45 @@ export default function Costs() {
               {d.paysBills.length ? `Pays ${d.paysBills.length} invoice${d.paysBills.length === 1 ? '' : 's'}` : 'No invoice matched'}
             </span>
           )}
+          {/* Supporting documents (src/lib/supportingDocs.js): the paperwork
+              sent in with the invoice that recharges it. Set aside, it says
+              which invoice carries its money; the invoice says how many are
+              behind it; and a group the rules only SUSPECT asks. */}
+          {d.supportingFor && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(costPath(d.supportingFor.billId));
+              }}
+              title={`Set aside as a supporting document for item #${d.supportingFor.displayId}, which carries its money${d.supportingFor.auto ? ' (linked automatically)' : ''}. Not published on its own. Open the invoice.`}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-500/20"
+            >
+              <Paperclip className="h-3 w-3" strokeWidth={2} /> Supporting for #{d.supportingFor.displayId}
+            </button>
+          )}
+          {(d.supportingDocs || []).length > 0 && (
+            <span
+              title={`${d.supportingDocs.length} supporting document${d.supportingDocs.length === 1 ? ' is' : 's are'} set aside behind this invoice and go to Xero with it. Open it to see which.`}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700"
+            >
+              <Paperclip className="h-3 w-3" strokeWidth={2} /> {d.supportingDocs.length} supporting
+            </span>
+          )}
+          {supportGroupFor.has(d.id) && !d.supportingFor && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                openSupportGroup(supportGroupFor.get(d.id));
+              }}
+              title="This arrived with an invoice that looks like it recharges it. Published as well, the same spending would be posted twice. Open to confirm or keep separate."
+              className="inline-flex items-start gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-left text-[11px] font-medium leading-tight text-amber-700 transition-colors hover:bg-amber-500/20"
+            >
+              <Paperclip className="mt-px h-3 w-3 shrink-0" strokeWidth={2} />{' '}
+              {supportGroupFor.get(d.id).mainId === d.id ? 'Has supporting documents?' : 'Supporting document?'}
+            </button>
+          )}
           {mergeGroupFor.has(d.id) && (
             <button
               type="button"
@@ -902,6 +953,9 @@ export default function Costs() {
   const [adv, setAdv] = useListView('costs', 'adv', emptyAdv); // Advanced search: amount / date / supplier / user
   const [mergeModalDocs, setMergeModalDocs] = useState(null); // docs under review in the merge modal
   const [mergeNote, setMergeNote] = useState('');
+  const [supportModal, setSupportModal] = useState(null); // { docs, group } under review as invoice + supporting documents
+  const [supportBusy, setSupportBusy] = useState(false);
+  const [supportError, setSupportError] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
   // Export all vs Actions → Export selected: the same dialog over a different
   // set of rows, so the button that opened it decides what goes in the file.
@@ -1052,6 +1106,19 @@ export default function Costs() {
     mergeGroups.forEach((g) => g.docs.forEach((d) => m.set(d.id, g)));
     return m;
   }, [mergeGroups]);
+  // The documents that arrived WITH an invoice and look like the paperwork it
+  // recharges (src/lib/supportingDocs.js). The server links the firm ones by
+  // itself on the listing; what is left here is what it only suspects, shown as
+  // a badge on each row of the group.
+  const supportGroups = useMemo(() => findSupportingGroups(allDocs), [allDocs]);
+  const supportGroupFor = useMemo(() => {
+    const m = new Map();
+    supportGroups.forEach((g) => {
+      m.set(g.mainId, g);
+      g.supports.forEach((t) => m.set(t.id, g));
+    });
+    return m;
+  }, [supportGroups]);
   // Ids → { duplicate, original } for the review panes; a pair whose other half
   // has since been deleted or cleared simply drops out.
   const dupPairs = (dupIds || [])
@@ -1307,6 +1374,61 @@ export default function Costs() {
     } catch {
       setMergeNote('Merge failed. Please try again.');
     }
+  };
+
+  // Supporting documents: open the review on a group the rules found, or on
+  // the ticked rows; confirm sets all but the invoice aside; Keep separate
+  // records that the suggestion was wrong, so its badge does not come back.
+  const openSupportGroup = (g) => {
+    const byId = new Map(allDocs.map((x) => [x.id, x]));
+    const docs = [g.mainId, ...g.supports.map((t) => t.id)].map((id) => byId.get(id)).filter(Boolean);
+    setSelected(new Set(docs.map((x) => x.id)));
+    setSupportError('');
+    setSupportModal({ docs, group: g });
+  };
+  const openSupportSelection = () => {
+    const docs = selectedDocs();
+    if (docs.length < 2) return;
+    const ids = new Set(docs.map((x) => x.id));
+    // The rules' own group, where the selection is exactly one.
+    const group = supportGroups.find((g) => ids.has(g.mainId) && g.supports.length === docs.length - 1 && g.supports.every((t) => ids.has(t.id))) || null;
+    setSupportError('');
+    setSupportModal({ docs, group });
+  };
+  const confirmSupporting = async (mainId, ids) => {
+    setSupportBusy(true);
+    setSupportError('');
+    const out = await linkSupportingDocs(mainId, ids).catch(() => null);
+    setSupportBusy(false);
+    if (!out?.ok) {
+      setSupportError(out?.message || 'Could not save that. Please try again.');
+      return;
+    }
+    setSupportModal(null);
+    setSelected(new Set());
+    notifyBillsChanged();
+    await reload();
+    const n = out.supports?.length ?? ids.length;
+    setMergeNote(
+      `${n} document${n === 1 ? '' : 's'} set aside as supporting paperwork — in Archived, not published on ${n === 1 ? 'its' : 'their'} own. ` +
+        (out.inXero
+          ? 'The invoice is already in Xero: open it and press Send their files to Xero.'
+          : 'The files go to Xero with the invoice when it is published. Open the invoice to undo.')
+    );
+  };
+  const keepSupportSeparate = async (mainId, ids) => {
+    setSupportBusy(true);
+    const out = await declineSupportingDocs(mainId, ids).catch(() => null);
+    setSupportBusy(false);
+    if (!out?.ok) {
+      setSupportError(out?.message || 'Could not save that. Please try again.');
+      return;
+    }
+    setSupportModal(null);
+    setSelected(new Set());
+    notifyBillsChanged();
+    await reload();
+    setMergeNote('Kept as separate costs — they won’t be suggested as supporting documents for that invoice again.');
   };
 
   // The modal's other answer: these are different documents. Recorded on the
@@ -1622,6 +1744,8 @@ export default function Costs() {
     readerName,
     busy: Boolean(running),
     merge: mergeSelected,
+    supporting: openSupportSelection,
+    canSupport: selected.size >= 2,
     scanMerges: openNextMergeSuggestion,
     mergeCount: mergeGroups.length,
     reviewDuplicates: () => setDupIds(flaggedDocs.map((d) => d.id)),
@@ -1927,6 +2051,17 @@ export default function Costs() {
         onClose={() => setMergeModalDocs(null)}
         onConfirm={confirmMerge}
         onKeepSeparate={keepSeparate}
+      />
+
+      <SupportingDocsModal
+        open={Boolean(supportModal)}
+        docs={supportModal?.docs || []}
+        group={supportModal?.group || null}
+        busy={supportBusy}
+        error={supportError}
+        onClose={() => setSupportModal(null)}
+        onConfirm={confirmSupporting}
+        onKeepSeparate={keepSupportSeparate}
       />
     </AppShell>
   );

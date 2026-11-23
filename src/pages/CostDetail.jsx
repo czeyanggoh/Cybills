@@ -72,6 +72,7 @@ import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { formatDate } from '@/lib/date';
 import BankMatchPanel from '@/components/BankMatchPanel';
 import PaymentProofPanel from '@/components/PaymentProofPanel';
+import SupportingDocsPanel from '@/components/SupportingDocsPanel';
 import PrepaymentPanel from '@/components/PrepaymentPanel';
 import PaperworkMatchPanel from '@/components/PaperworkMatchPanel';
 import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
@@ -3012,6 +3013,25 @@ Publish anyway?`
                       const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
                       setPersisted(pd);
                       setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+                    }}
+                  />
+                </div>
+              )}
+              {/* Supporting documents: the paperwork sent in with the invoice
+                  that recharges it. On the invoice, what is behind it and what
+                  looks like it; on a supporting document, the invoice that
+                  carries its money. Linking or undoing moves a document in or
+                  out of Archived, so the page takes it back from the server. */}
+              {persisted && !isSales && (
+                <div className="col-span-full">
+                  <SupportingDocsPanel
+                    doc={persisted}
+                    onChanged={async () => {
+                      const bill = await fetchBillById(persisted.id);
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, status: pd.status }));
                     }}
                   />
                 </div>

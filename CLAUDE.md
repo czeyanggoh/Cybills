@@ -1310,6 +1310,48 @@ field on every document it touched to do that one thing. Covered by `npm test`
 in `server/` (`test/payment-proof.test.mts`, over real HTTP with a stubbed
 reader).
 
+**The paperwork sent in WITH an invoice is its supporting documents, not costs
+of its own.** Cze, 23 Nov 2026: Red Alpha emailed Dart one invoice (11,590.36)
+and the three expense reports it recharges (80.78, 746.60, 9,687.35), and all
+four sat in Ready; published, the same spending goes in twice. They are not
+pages of one document nor a receipt with its slip, so merge detection says
+nothing. `src/lib/supportingDocs.js` (pure, `npm test`, loaded by
+`server/src/supportingDocs.ts`) is the rule, three signals:
+- **Arrived together**: one email (`mailKey`, the envelope every emailed
+  document carries) is the firm case; one uploader within ten minutes the weak
+  one.
+- **One of the set is the bill to this entity** (the entity check's `ok`), and
+  a supporting one is not.
+- **The money ties, per line**: its total is a line amount of the invoice
+  (total or net), each document its own line; or together they are the
+  invoice's total or net. Never a rough sum: the invoice carries a fee on top.
+
+The lines are the invoice's `lineItems`, else `readLines`: the general read's
+own rows, now kept on every road (`readIntoBill`, finalize, re-read) as
+EVIDENCE only. Nothing posts from them, and a supplier need not opt in to line
+items. A document read before this has none until it is re-read.
+
+`firm` (one email, invoice billed to us, EVERY other document of that mail
+tied by the money, two or more of them or one also made out to the invoice's
+supplier) is linked by itself off the listing (`autoLinkSupporting`, guarded by
+the book revision). Everything else is `possible`: a badge on the rows and a
+panel on the invoice, with **Keep separate** (`notSupportingFor`). By hand:
+tick the rows, **Supporting documents**, pick which is the invoice
+(`SupportingDocsModal`); no money rule is asked of a person.
+
+A supporting document is archived with `supportingFor` (its own writers,
+`linkSupporting` / `unlinkSupporting`, never EDITABLE), the invoice lists
+`supportingDocs`, and `postBillToXero` refuses one (409 `supporting_document`).
+Its FILE goes to Xero as a further attachment of the invoice's bill on publish
+(`attachSupportingFiles`, named "Supporting <item> ..." since Xero keys an
+attachment by name), or by `attach-supporting` where the bill was already
+there. The invoice's own file is not rewritten. Undo puts each back at the
+status it had and is remembered; Unarchive on one is an Undo, and deleting,
+merging away or moving the invoice releases its documents (`repairSupporting`,
+`releaseSupportingOn`). Routes: `GET|POST /api/costs/bills/:id/supporting`,
+`/supporting/remove`, `/supporting/decline`. Covered by
+`test/supporting-docs.test.mjs` and `server/test/supporting-docs.test.mts`.
+
 **A quotation paid in advance is a PREPAYMENT, and the invoice after it uses
 it up.** A supplier asks for the money before the tax invoice exists ("Windee
 quotation QUO-2609239, S$999, please pay to confirm"); published as a bill, the
