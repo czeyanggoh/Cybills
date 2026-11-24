@@ -111,6 +111,27 @@ were left on the portal — so a recipe that ignores it costs a slower run, not 
 book full of last year's bills. That check needs the item's `invoice_date`; an
 item without one is filed.
 
+### What the SP Group recipe does with the dates (24 Nov 2026)
+
+n8n's `portal-retrieve-v1` forwards `last_invoice_date` and `retrieve_from` to
+the SP Group robot (`spgroup-cyws`, on the n8n host), together with
+`last_retrieved_at` and `known_references`. Until then it dropped both dates and
+the robot went by the month of the last run alone. The robot reads each bill's
+date off the portal's own list and, before downloading anything:
+
+- skips a bill whose reference is in `known_references`;
+- skips a bill dated **before** `retrieve_from`;
+- skips a bill dated **on or before** `last_invoice_date`, and takes every later
+  one;
+- for a row whose date it cannot read, or when no `last_invoice_date` was sent,
+  falls back to the old rule: nothing billed earlier than one month before
+  `last_retrieved_at`.
+
+So `last_invoice_date` must be right: a bill the portal publishes late with a
+date earlier than the newest one filed is not fetched. Each item answered
+carries its `invoice_date`. A run that signs in but can read no bill row at all
+answers a refusal, not an empty list.
+
 - **Nothing new** → `200 []`, or `200 { "message": "No new invoices" }`. Shown
   as "Nothing new".
 - **Refused** (wrong password, portal down, a recipe missing for an `other`
