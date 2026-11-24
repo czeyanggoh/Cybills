@@ -122,6 +122,12 @@ item without one is filed.
 ## Behaviour in CYBills
 
 - Business Admin only, on the page and on every `/api/retrieve` route.
+- **A failed run is emailed** to the person who set the login up, and to whoever
+  pressed Retrieve if that is somebody else: the reason, the entity and a link
+  to the page. Once per run. A run that never reported back is written down as
+  failed by the five-minute clock and emailed the same way. "Nothing new" is
+  not emailed, so **a recipe that could not read the portal's bills must answer
+  a refusal, never an empty list**.
 - The password is sealed at rest (AES-GCM), never returned to the browser,
   never logged, and deleted with the login.
 - A run is a background job; the page polls, and nobody has to stay on it.

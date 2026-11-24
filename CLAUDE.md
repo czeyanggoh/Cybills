@@ -2996,6 +2996,21 @@ handed `robotRequest` (`robotRequest.ts`, shared with the Drive poller). Covered
 by `npm test` in `server/` (`test/retrieve-schedule.test.mts`: the rule at fixed
 dates, and `runDueRetrievals(now)` over real HTTP to a stub n8n).
 
+**A failed retrieval is emailed** (Cze, 24 Nov 2026: "it fails without
+informing"). A run is a background job, so its failure only showed on the
+Retrieve page. `tellOfFailure` (`retrieve.ts`) emails the login's set-up user
+(`createdBy`), and whoever pressed Retrieve when that is somebody else
+(`failureRecipients`), the reason, the entity and a link
+(`retrievalFailedEmail`, `mailer.ts`). Once per run: `failedMailedRunId` is
+written BEFORE the send. Called where a run settles as failed, from `failRun`,
+and from `settleDeadRuns` — the clock's sweep that writes down a run which died
+without settling (a restart, n8n never calling back), since `runOf` only CALLS
+such a run failed when somebody reads it. "Nothing new" is not a failure and
+is not emailed, so the recipe must answer a refusal when it could not read the
+bills: SP Group's did not until that day (a "Scam Alert" pop-up blocked every
+click and the run read "Nothing new"; its sidecar now answers
+`retrieve_failed`). `test/retrieve-failure-email.test.mts`.
+
 ## Subscription plans: a monthly document limit, and what happens past it
 
 Cze, Nov 2026: external subscribers take CYBills at four levels (SGD a month ->
