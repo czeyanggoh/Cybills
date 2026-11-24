@@ -1685,6 +1685,52 @@ CYWorkspace's connector:
 
 `test/agent-api.test.mts`.
 
+## Claims sent to a WhatsApp group for approval
+
+Cze, 24 Nov 2026. A client's manager approves in the WhatsApp group they
+already talk to the practice in ("Accts - Nucleo"), where the claim PDF used to
+be posted by hand and answered "approved". Now CYBills posts it: tick claims on
+Expense claims -> **Send to WhatsApp** (also on a claim's own page), and each
+claim's PDF goes to the group, then ONE message listing them with a link. The
+link opens `/approvals/<id>` (`ClaimApprovals.jsx`), which holds exactly those
+claims: **Approve all**, or tick some, or Reject one with a reason.
+
+- **Nothing is decided in WhatsApp, and the link is not a capability.** The
+  page is behind sign-in, and every decision goes through the claim's own
+  approve / reject route, so who may decide is who always could (`mayDecide`,
+  the yes/no behind `ensureApprover`). The page draws the buttons only for
+  them (`canDecide` per claim). "approved" typed in a chat names no claim and
+  no sum.
+- **Which group is the ENTITY's setting**, chosen in the dialog by a Business
+  Admin or the practice (`GET|PUT /api/claims/approval-group`, collection
+  `claim-approval-groups`) from the groups CYWorkspace has LINKED to the
+  entity's Xero organisation (a bridge entity: its parent's) with CYBot in
+  them. Never a chat id from whoever is sending. CYWS holds the same line
+  (`waGroupSend.ts`, contract in `deploy/WHATSAPP.md`).
+- **`POST /api/claims/approval-requests`** `{ claimIds, note? }`, 10 claims at
+  most. Approved claims are left out; anything Submit would refuse
+  (`undecidableProblem`) refuses the WHOLE request before anything is sent. The
+  message is sent FIRST and the claims marked after, so a failed send changes
+  nothing. Each claim becomes awaiting approval, routed to the claimant's
+  direct manager where there is one; with none it is an OPEN claim, which the
+  entity's admins and the practice may decide (it is not refused as Submit
+  refuses it). No approval email is sent: the message is the request. A claim
+  already awaiting is simply asked about again.
+- The PDFs are the server's own (`claimPdfBytes`, as `/pdf` serves). One that
+  cannot be made is left out and the claim is still listed and linked.
+- **The group hears the outcome**: approve / reject of a claim on a request
+  posts "✅ Approved: … by X, in CYBills" to that request's group
+  (`tellGroupOfDecision`), held a few seconds so Approve all is one message.
+  Best-effort, in memory.
+- **The link survives sign-in.** Every road out of sign-in lands on /costs, so
+  `RequireAuth` remembers an `/approvals/…` path (only that) in sessionStorage
+  and `ReturnAfterSignIn` (`App.jsx`) takes it up on landing. The link carries
+  `?org=`, and the page switches entity itself if opened another way.
+
+Covered by `npm test` in `server/` (`test/claim-whatsapp-approval.test.mts`,
+over real HTTP against a stand-in CYWorkspace). **Not yet run against live
+WhatsApp.**
+
 ## The Costs inbox's bulk actions
 
 Every bulk action is a **button**. The "Move to" and "Actions" dropdowns this

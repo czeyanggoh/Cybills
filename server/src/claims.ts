@@ -17,7 +17,7 @@ import {
   parseAmount,
   costDate,
 } from './store.js';
-import { listOrganisations, primaryOrgId } from './organisations.js';
+import { listOrganisations, primaryOrgId, getOrganisation, publishTargetFor } from './organisations.js';
 import { endOfThisMonth, isoClaimDate } from './claimDates.js';
 import { referenceFor, numberFor } from './claimRef.js';
 import { claimPdfBytes } from './claimPdfDoc.js';
@@ -25,6 +25,7 @@ import { shareToken, verifyShareToken } from './shareLinks.js';
 import { readSetting } from './settings.js';
 import { peekDayRate, warmDayRates } from './fx.js';
 import { readSession } from './auth.js';
+import { groupsForTenant, sendToGroup, GroupSendError, type GroupFile } from './waGroupSend.js';
 
 // Server-backed expense claims, scoped per CLIENT ENTITY (same JSON-store and
 // X-Org-Id scoping as bills). Replaces the old per-browser localStorage claim
@@ -1450,7 +1451,7 @@ function missingOnItem(orgId: string, t: Txn): string[] {
 // that is incomplete, or a claim made out to nobody. Shared by Submit and by a
 // Business Admin approving a draft DIRECTLY — skipping the request for
 // approval must not also skip what the request would have checked.
-function refuseUndecidable(req: Request, claim: Claim, res: Response, when: string): Response | void {
+function undecidableProblem(ws: string, claim: Claim, when: string): { status: number; body: Record<string, unknown> } | null {
   // Submitting asks a person to approve a specific sum, and they approve what
   // the claim SAYS. An item with no date gave them nothing to check it
   // against — was it this period, was it already claimed — while the row wore
@@ -1461,7 +1462,7 @@ function refuseUndecidable(req: Request, claim: Claim, res: Response, when: stri
     .map((t) => ({ t, missing: missingOnItem(claim.orgId, t) }))
     .filter((x) => x.missing.length);
   if (incomplete.length) {
-    return res.status(422).json({
+    return { status: 422, body: {
       error: 'incomplete_items',
       count: incomplete.length,
       items: incomplete.slice(0, 10).map((x) => ({
@@ -1473,21 +1474,326 @@ function refuseUndecidable(req: Request, claim: Claim, res: Response, when: stri
         `${incomplete.length} item${incomplete.length === 1 ? '' : 's'} on this claim ${incomplete.length === 1 ? 'is' : 'are'} incomplete — ` +
         `${incomplete[0].t.supplier || 'one'} needs ${incomplete[0].missing.join(', ')}. ` +
         `Fill those in ${when}.`,
-    });
+    } };
   }
   // A claim is money paid back to a PERSON. The general account is what owns
   // the documents nobody claimed — the company's own paperwork — so a claim
   // made out to it has nobody to reimburse and nobody whose manager could
   // approve it. Most often it means the documents were uploaded by a
   // colleague from outside the entity and never attributed to anyone.
-  if (isGeneralPerson(workspaceId(req), claim.orgId, claim.claimFor)) {
-    return res.status(422).json({
+  if (isGeneralPerson(ws, claim.orgId, claim.claimFor)) {
+    return { status: 422, body: {
       error: 'claim_for_general',
       message:
         'This claim is made out to the general account, which is not a person — there is nobody to pay it back to. ' +
         'Set "Claim for" to whoever paid, adding them under Users first if they are not on the roster yet.',
+    } };
+  }
+  return null;
+}
+
+function refuseUndecidable(req: Request, claim: Claim, res: Response, when: string): Response | void {
+  const problem = undecidableProblem(workspaceId(req), claim, when);
+  if (problem) return res.status(problem.status).json(problem.body);
+}
+
+// ---------------------------------------------------------------------------
+// Approval by WhatsApp (Cze, 24 Nov 2026).
+//
+// A client's manager approves in the WhatsApp group they already talk to the
+// practice in, so that is where the request goes: the ticked claims' PDFs, then
+// ONE message listing them with a link. The link opens CYBills (signed in, as
+// ever) on a page holding exactly those claims, where they are approved in one
+// go or one by one. Nothing is decided in WhatsApp: "approved" typed into a
+// chat names no claim and no sum, and the people who may decide are the ones
+// the approve route has always allowed (mayDecide).
+//
+// WHICH group is the entity's own setting, chosen by its Business Admin from
+// the groups CYWorkspace has linked to that entity's Xero organisation. Never a
+// chat id from whoever is sending: a Standard user raising a claim must not be
+// able to post it into any group the number is in. CYWS holds the same line at
+// its end (group linked to the tenant, CYBot in it).
+//
+// The message is sent FIRST and the claims marked after: a send that failed
+// leaves every claim exactly as it was, rather than "awaiting approval" from
+// somebody who was never asked.
+// ---------------------------------------------------------------------------
+type ApprovalGroup = { entityId: string; chatId: string; name: string; setBy: string; setAt: string };
+type ApprovalRequest = {
+  id: string;
+  workspaceId: string;
+  orgId: string; // the claims' data scope
+  entityId: string; // the entity, as the link names it (?org=)
+  claimIds: string[];
+  chatId: string;
+  groupName: string;
+  note: string;
+  requestedBy: string;
+  requestedByEmail: string;
+  at: string;
+  files: number;
+};
+const GROUPS = 'claim-approval-groups';
+const REQUESTS = 'claim-approval-requests';
+const MAX_REQUEST_CLAIMS = 10;
+
+const approvalGroupFor = (entityId: string): ApprovalGroup | null =>
+  loadCollection<ApprovalGroup>(GROUPS).find((g) => g.entityId === entityId) ?? null;
+
+// The Xero organisation whose WhatsApp groups an entity may use: its own, or
+// (a bridge entity) the parent's it posts into.
+function tenantForEntity(ws: string, entityId: string): string {
+  return publishTargetFor(ws, getOrganisation(ws, entityId))?.tenantId || '';
+}
+
+// Who chooses the group: the entity's Business Admin, or the practice.
+function mayManageApprovalGroup(req: Request): boolean {
+  const member = memberForSession(req);
+  if (!member || member.deactivated) return false;
+  return Boolean(member.practice) || effectiveRoleFor(member, orgScope(req)) === 'Business Admin';
+}
+
+const money = (currency: string, total: string) => `${currency || 'SGD'} ${Number(total || 0).toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// The one message that follows the PDFs. Exported for the test.
+export function approvalRequestText(args: {
+  claims: Array<{ claimFor: string; name: string; currency: string; total: string }>;
+  requestedBy: string;
+  entityName: string;
+  note: string;
+  url: string;
+}): string {
+  const n = args.claims.length;
+  const lines = [n === 1 ? '*Expense claim for approval*' : `*${n} expense claims for approval*`];
+  lines.push([args.entityName, args.requestedBy ? `requested by ${args.requestedBy}` : ''].filter(Boolean).join(' · '));
+  lines.push('');
+  args.claims.forEach((c, i) => {
+    lines.push(`${n === 1 ? '' : `${i + 1}. `}${c.claimFor || 'Unnamed'} · ${c.name} · ${money(c.currency, c.total)}`);
+  });
+  const currencies = new Set(args.claims.map((c) => c.currency || 'SGD'));
+  if (n > 1 && currencies.size === 1) {
+    const sum = args.claims.reduce((t, c) => t + Number(c.total || 0), 0).toFixed(2);
+    lines.push(`Total ${money([...currencies][0], sum)}`);
+  }
+  if (args.note) lines.push('', args.note);
+  lines.push('', `Review and approve${n === 1 ? '' : ' all'} here:`, args.url);
+  return lines.join('\n');
+}
+
+const pdfFileName = (c: Claim, i: number, all: Claim[]): string => {
+  const base = `${String(c.name || 'Expense claim').replace(/[^\x20-\x7e]/g, ' ').replace(/\//g, '.').replace(/[\\:*?"<>|&]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Expense claim'}`;
+  // Two claims of one name would arrive as two files nobody could tell apart.
+  const twin = all.some((o, j) => j !== i && o.name === c.name);
+  return `${twin ? `${base} - ${c.claimFor || i + 1}` : base}.pdf`.slice(0, 120);
+};
+
+// GET /api/claims/approval-group — the group this entity's approvals go to.
+// With ?candidates=1, for whoever may choose it, the groups on offer.
+claimsRouter.get('/approval-group', async (req, res) => {
+  const ws = workspaceId(req);
+  const entityId = orgScope(req);
+  const group = approvalGroupFor(entityId);
+  const canManage = mayManageApprovalGroup(req);
+  const out: Record<string, unknown> = {
+    group: group ? { chatId: group.chatId, name: group.name } : null,
+    canManage,
+    linked: Boolean(tenantForEntity(ws, entityId)),
+  };
+  if (canManage && req.query.candidates) {
+    const tenantId = tenantForEntity(ws, entityId);
+    try {
+      out.candidates = tenantId ? await groupsForTenant(tenantId) : [];
+    } catch (err) {
+      out.candidates = [];
+      out.candidatesError = err instanceof GroupSendError ? err.message : 'The groups could not be read.';
+    }
+  }
+  res.json(out);
+});
+
+// PUT /api/claims/approval-group — { chatId } ('' clears it). Only a group
+// CYWorkspace offers for this entity is taken, so the name stored is its own.
+claimsRouter.put('/approval-group', async (req, res) => {
+  if (!mayManageApprovalGroup(req)) return res.status(403).json({ error: 'forbidden', message: 'Only a Business Admin can choose the approval group.' });
+  const ws = workspaceId(req);
+  const entityId = orgScope(req);
+  const chatId = String(req.body?.chatId ?? '').trim();
+  const rest = loadCollection<ApprovalGroup>(GROUPS).filter((g) => g.entityId !== entityId);
+  if (!chatId) {
+    saveCollection(GROUPS, rest);
+    return res.json({ group: null });
+  }
+  const tenantId = tenantForEntity(ws, entityId);
+  if (!tenantId) return res.status(409).json({ error: 'no_tenant', message: 'This entity is not linked to a Xero organisation, so it has no WhatsApp groups to choose from.' });
+  let offered;
+  try {
+    offered = await groupsForTenant(tenantId);
+  } catch (err) {
+    return res.status(502).json({ error: err instanceof GroupSendError ? err.code : 'cyws_unreachable', message: (err as Error).message });
+  }
+  const picked = offered.find((g) => g.chatId === chatId);
+  if (!picked) return res.status(404).json({ error: 'group_not_linked', message: 'That group is not linked to this organisation in CYWorkspace.' });
+  const row: ApprovalGroup = { entityId, chatId: picked.chatId, name: picked.name, setBy: actor(req).email, setAt: nowIso() };
+  saveCollection(GROUPS, [...rest, row]);
+  res.json({ group: { chatId: row.chatId, name: row.name } });
+});
+
+// POST /api/claims/approval-requests — { claimIds, note? }. Send the claims to
+// the entity's approval group, and mark each as awaiting approval.
+claimsRouter.post('/approval-requests', async (req, res) => {
+  const ws = workspaceId(req);
+  const org = orgIdFor(req);
+  const entityId = orgScope(req);
+  const me = actor(req);
+  const ids = [...new Set((Array.isArray(req.body?.claimIds) ? req.body.claimIds : []).map((x: unknown) => String(x ?? '').trim()).filter(Boolean))] as string[];
+  const note = String(req.body?.note ?? '').trim().slice(0, 500);
+  if (!ids.length) return res.status(400).json({ error: 'no_claims' });
+  if (ids.length > MAX_REQUEST_CLAIMS) {
+    return res.status(400).json({ error: 'too_many_claims', message: `At most ${MAX_REQUEST_CLAIMS} claims in one request. Send the rest as a second one.` });
+  }
+  const group = approvalGroupFor(entityId);
+  if (!group) return res.status(409).json({ error: 'no_group', message: 'No WhatsApp group has been chosen for approvals yet. A Business Admin chooses it in this dialog.' });
+  const tenantId = tenantForEntity(ws, entityId);
+  if (!tenantId) return res.status(409).json({ error: 'no_tenant', message: 'This entity is not linked to a Xero organisation.' });
+
+  const items = load();
+  const owners = visibleOwnersFor(req, entityId, true);
+  const meAddr = normaliseAddress(memberForSession(req)?.email);
+  const picked: Claim[] = [];
+  for (const id of ids) {
+    const c = items.find((x) => x.id === id && x.orgId === org && !x.deleted);
+    if (!c || !claimVisibleTo(ws, owners, meAddr, c)) return res.status(404).json({ error: 'not_found', claimId: id });
+    picked.push(c);
+  }
+  const skipped = picked.filter((c) => c.approvalStatus === 'approved').map((c) => ({ claimId: c.id, name: c.name, reason: 'already_approved' }));
+  const toSend = picked.filter((c) => c.approvalStatus !== 'approved');
+  if (!toSend.length) return res.status(409).json({ error: 'already_approved', message: 'Every claim ticked is already approved.' });
+  // Whatever Submit would have refused is refused here, for every claim, before
+  // anything reaches the group.
+  const problems = toSend
+    .map((c) => ({ c, p: c.approvalStatus === 'awaiting_approval' ? null : undecidableProblem(ws, c, 'before asking somebody to approve the claim') }))
+    .filter((x) => x.p)
+    .map((x) => ({ claimId: x.c.id, name: x.c.name, claimFor: x.c.claimFor, message: String(x.p!.body.message || '') }));
+  if (problems.length) {
+    return res.status(422).json({
+      error: 'claims_not_ready',
+      problems,
+      message: `${problems.length === 1 ? 'One claim is' : `${problems.length} claims are`} not ready to be sent: ${problems[0].claimFor || problems[0].name} — ${problems[0].message}`,
     });
   }
+
+  await warmClaimRates(toSend);
+  const live = toSend.map(withLiveItems);
+  const exportSettings = readSetting<{ imageSharing?: boolean; claimSignatureBoxes?: boolean }>(WORKSPACE_ID, 'cybills.export-settings.v1', entityId);
+  const files: GroupFile[] = [];
+  for (let i = 0; i < live.length; i++) {
+    const bytes = await claimPdfBytes(live[i] as never, appOrigin(req), {
+      imageSharing: exportSettings?.imageSharing !== false,
+      signatures: exportSettings?.claimSignatureBoxes === true,
+    }).catch(() => null);
+    // A claim whose PDF could not be made is still listed and still linked.
+    if (bytes) files.push({ filename: pdfFileName(live[i], i, live), base64: Buffer.from(bytes).toString('base64'), mimetype: 'application/pdf' });
+  }
+
+  const rid = `apr_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+  const entityName = getOrganisation(ws, entityId)?.name || '';
+  const text = approvalRequestText({
+    claims: live.map((c) => ({ claimFor: c.claimFor, name: c.name, currency: c.currency || 'SGD', total: claimTotal(c) })),
+    requestedBy: me.name,
+    entityName,
+    note,
+    url: `${appOrigin(req)}/approvals/${rid}?org=${encodeURIComponent(entityId)}`,
+  });
+  let sentFiles = 0;
+  try {
+    sentFiles = (await sendToGroup({ tenantId, chatId: group.chatId, text, files })).files.length;
+  } catch (err) {
+    const e = err instanceof GroupSendError ? err : new GroupSendError('send_failed', (err as Error)?.message || 'The message could not be sent.');
+    return res.status(502).json({ error: e.code, message: `Nothing was sent to "${group.name}": ${e.message}` });
+  }
+
+  for (const claim of toSend) {
+    if (claim.approvalStatus === 'awaiting_approval') {
+      claim.history.unshift({ text: `Approval was requested again in the WhatsApp group "${group.name}"`, by: me.name, at: nowIso() });
+      continue;
+    }
+    // Routed to the direct manager where the roster names one. Where it names
+    // none the claim is OPEN: anybody who may decide a claim in this entity
+    // (its admins, the practice) decides it from the link.
+    const manager = directManagerFor(ws, claim.claimFor, claim.orgId);
+    claim.approvalStatus = 'awaiting_approval';
+    claim.approver = manager?.name || '';
+    claim.approverEmail = manager?.email || '';
+    claim.decidedBy = '';
+    claim.decidedAt = '';
+    claim.decidedFor = '';
+    claim.history.unshift({
+      text: `This claim was submitted for approval${manager ? ` to ${manager.name}` : ''} in the WhatsApp group "${group.name}"`,
+      by: me.name,
+      at: nowIso(),
+    });
+  }
+  save(items);
+  const request: ApprovalRequest = {
+    id: rid, workspaceId: ws, orgId: org, entityId, claimIds: toSend.map((c) => c.id), chatId: group.chatId, groupName: group.name,
+    note, requestedBy: me.name, requestedByEmail: me.email, at: nowIso(), files: sentFiles,
+  };
+  saveCollection(REQUESTS, [...loadCollection<ApprovalRequest>(REQUESTS), request].slice(-2000));
+  res.json({ request: { id: rid, groupName: group.name, claims: toSend.length, files: sentFiles }, skipped, claims: toSend.map(withLiveItems) });
+});
+
+// GET /api/claims/approval-requests/:rid — what the link opens: the request and
+// its claims, each saying whether THIS caller may decide it. 404 for anybody
+// who cannot open the entity; a claim they may not see is simply not listed.
+claimsRouter.get('/approval-requests/:rid', async (req, res) => {
+  const request = loadCollection<ApprovalRequest>(REQUESTS).find((r) => r.id === req.params.rid);
+  const member = memberForSession(req);
+  if (!request || !canAccessOrg(member, request.entityId)) return res.status(404).json({ error: 'not_found' });
+  const ws = workspaceId(req);
+  const me = actor(req);
+  const owners = visibleOwnersFor(req, request.entityId, true);
+  const meAddr = normaliseAddress(member?.email);
+  const here = orgIdFor(req) === request.orgId;
+  const all = load().filter((c) => request.claimIds.includes(c.id) && c.orgId === request.orgId && !c.deleted);
+  const mine = all.filter((c) => claimVisibleTo(ws, owners, meAddr, c));
+  await warmClaimRates(mine);
+  res.json({
+    request: {
+      id: request.id, entityId: request.entityId, entityName: getOrganisation(ws, request.entityId)?.name || '',
+      groupName: request.groupName, note: request.note, requestedBy: request.requestedBy, at: request.at,
+      total: request.claimIds.length, hidden: request.claimIds.length - mine.length,
+    },
+    claims: request.claimIds
+      .map((id) => mine.find((c) => c.id === id))
+      .filter((c): c is Claim => Boolean(c))
+      .map((c) => ({ ...withLiveItems(c), canDecide: here && c.approvalStatus === 'awaiting_approval' && mayDecide(req, c, me) })),
+  });
+});
+
+// The group is told what became of what it was asked: one message a few
+// seconds after the last decision, so "Approve all" on five claims is one
+// message and not five. Best-effort; held in memory only.
+const pendingDecisions = new Map<string, { timer: ReturnType<typeof setTimeout>; lines: string[] }>();
+const DECISION_DELAY_MS = Number(process.env.CLAIM_DECISION_NOTICE_MS ?? 4000);
+function tellGroupOfDecision(claim: Claim, decision: 'approved' | 'rejected', by: string): void {
+  const request = [...loadCollection<ApprovalRequest>(REQUESTS)].reverse().find((r) => r.orgId === claim.orgId && r.claimIds.includes(claim.id));
+  if (!request) return;
+  const tenantId = tenantForEntity(request.workspaceId, request.entityId);
+  if (!tenantId) return;
+  const key = `${request.chatId}|${tenantId}|${by}`;
+  const line =
+    `${decision === 'approved' ? '✅ Approved' : '❌ Rejected'}: ${claim.claimFor || 'Unnamed'} · ${claim.name} · ${money(claim.currency, claimTotal(claim))}` +
+    (decision === 'rejected' && claim.decisionReason ? ` (${claim.decisionReason})` : '');
+  const entry = pendingDecisions.get(key) ?? { timer: setTimeout(() => {}, 0), lines: [] };
+  clearTimeout(entry.timer);
+  entry.lines.push(line);
+  entry.timer = setTimeout(() => {
+    pendingDecisions.delete(key);
+    const text = [...entry.lines, `by ${by}, in CYBills`].join('\n');
+    void sendToGroup({ tenantId, chatId: request.chatId, text }).catch((err) => console.warn('[claims] decision not posted to WhatsApp:', (err as Error)?.message ?? err));
+  }, DECISION_DELAY_MS);
+  entry.timer.unref?.();
+  pendingDecisions.set(key, entry);
 }
 
 claimsRouter.post('/:id/submit', (req, res) =>
@@ -1591,15 +1897,19 @@ function ensureApprover(
   // no direct manager). Only a non-claimant ADMIN may decide it: never the
   // claimant on their own claim, never a random Standard user. A session-less
   // mock/dev context (no resolvable member) stays permissive so the demo works.
+  if (mayDecide(req, claim, me)) return;
+  return res.status(403).json({ error: 'not_approver', approver: claim.approver });
+}
+
+// The same answer as a yes or no, for a page that shows the buttons only to
+// somebody who may press them (the WhatsApp approval page).
+function mayDecide(req: Request, claim: Claim, me: { email: string; name: string }): boolean {
   if (!claim.approverEmail && !claim.approver) {
     const member = memberForSession(req);
-    if (!member) return; // mock/dev — no real auth to gate on
-    if (isAdminRole(effectiveRoleFor(member, orgScope(req))) && !isClaimantOf(claim, me)) return;
-    return res.status(403).json({ error: 'not_approver', approver: claim.approver });
+    if (!member) return true; // mock/dev — no real auth to gate on
+    return isAdminRole(effectiveRoleFor(member, orgScope(req))) && !isClaimantOf(claim, me);
   }
-  if (isNamedApprover(claim, me)) return;
-  if (mayOverride(req, claim, me)) return;
-  return res.status(403).json({ error: 'not_approver', approver: claim.approver });
+  return isNamedApprover(claim, me) || mayOverride(req, claim, me);
 }
 
 // Who the decision was made for, when the person deciding is not the approver
@@ -1653,6 +1963,7 @@ claimsRouter.post('/:id/approve', async (req, res) => {
       at: nowIso(),
     });
     notifyClaimant(req, claim, 'approved');
+    tellGroupOfDecision(claim, 'approved', byLine(claim, me));
   });
 });
 
@@ -1672,6 +1983,7 @@ claimsRouter.post('/:id/reject', (req, res) =>
       at: nowIso(),
     });
     notifyClaimant(req, claim, 'rejected');
+    tellGroupOfDecision(claim, 'rejected', byLine(claim, me));
   })
 );
 

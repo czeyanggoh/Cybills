@@ -1,4 +1,5 @@
-import { Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, canManageUsers } from '@/lib/userStore';
 import { isPracticeTeam, canManagePractice } from '@/lib/practiceStore';
@@ -17,9 +18,13 @@ function Loading() {
 // configured yet (mock mode), access is allowed so the demo keeps working.
 export default function RequireAuth({ children }) {
   const { loading, googleEnabled, user, membership } = useAuth();
+  const location = useLocation();
 
   if (loading) return <Loading />;
-  if (googleEnabled && !user) return <Navigate to="/login" replace />;
+  if (googleEnabled && !user) {
+    rememberReturnTo(`${location.pathname}${location.search}`);
+    return <Navigate to="/login" replace />;
+  }
 
   // Membership gating only applies with real auth on — mock mode stays open.
   if (googleEnabled && user && (membership.status === 'none' || membership.status === 'pending')) {
@@ -27,6 +32,38 @@ export default function RequireAuth({ children }) {
   }
 
   return children;
+}
+
+// An approval link opened from WhatsApp by somebody not signed in.
+//
+// Every road out of sign-in lands on /costs (the password form, the code step,
+// Google's callback), so the link was lost exactly where it matters: the
+// approver taps it on a phone that has no session, signs in, and is shown the
+// Costs list. So the page they were after is remembered across the sign-in and
+// taken up once they arrive. Only an approval link: remembering every page
+// would also remember the one somebody SIGNED OUT on, and hand it to whoever
+// signs in next on that browser.
+const RETURN_KEY = 'cybills.return-to';
+const mayReturnTo = (path) => /^\/approvals\/[\w-]+(\?.*)?$/.test(String(path || ''));
+function rememberReturnTo(path) {
+  if (!mayReturnTo(path)) return;
+  try { window.sessionStorage.setItem(RETURN_KEY, path); } catch { /* private mode: the link is simply not remembered */ }
+}
+export function ReturnAfterSignIn() {
+  const { loading, googleEnabled, user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (loading || !googleEnabled || !user) return;
+    let path = '';
+    try { path = window.sessionStorage.getItem(RETURN_KEY) || ''; } catch { return; }
+    if (!path) return;
+    // Still mid sign-in (the code step, the join form): wait for the landing.
+    if (!['/', '/costs'].includes(location.pathname)) return;
+    try { window.sessionStorage.removeItem(RETURN_KEY); } catch { /* nothing to clear */ }
+    if (mayReturnTo(path)) navigate(path, { replace: true });
+  }, [loading, googleEnabled, user, location.pathname, navigate]);
+  return null;
 }
 
 // Where a bare URL lands.

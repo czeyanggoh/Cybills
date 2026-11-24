@@ -394,3 +394,35 @@ export async function whereIsClaim(id) {
     return null;
   }
 }
+
+// --- Approval by WhatsApp ---------------------------------------------------
+// The ticked claims go to the entity's approval group as PDFs and one message
+// with a link; the link opens /approvals/:id, where they are decided. The
+// server chooses the group (the entity's own setting) and does the sending.
+async function call(method, path, body) {
+  const res = await fetch(`/api/claims${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const b = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = /** @type {any} */ (new Error(b.message || b.error || `Request failed (${res.status})`));
+    err.code = b.error;
+    err.status = res.status;
+    err.problems = b.problems;
+    throw err;
+  }
+  return b;
+}
+export const getApprovalGroup = (withCandidates = false) => call('GET', `/approval-group${withCandidates ? '?candidates=1' : ''}`);
+export const setApprovalGroup = (chatId) => call('PUT', '/approval-group', { chatId });
+export async function requestApprovalByWhatsapp(claimIds, note = '') {
+  const r = await call('POST', '/approval-requests', { claimIds, note });
+  notifyClaimsChanged();
+  return r;
+}
+export async function getApprovalRequest(id) {
+  const r = await call('GET', `/approval-requests/${encodeURIComponent(id)}`);
+  return { request: r.request, claims: (r.claims || []).map((c) => ({ ...shape(c), canDecide: Boolean(c.canDecide) })) };
+}

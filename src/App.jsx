@@ -2,7 +2,7 @@ import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth';
 import { useSalesWorkspace } from '@/lib/workspaceSettings';
-import RequireAuth, { RequireSignedIn, RequireAdmin, RequireBusinessAdmin, RequirePracticeTeam, RequirePracticeAdmin, HomeRedirect, RedirectIfSignedIn } from '@/components/RequireAuth';
+import RequireAuth, { RequireSignedIn, RequireAdmin, RequireBusinessAdmin, RequirePracticeTeam, RequirePracticeAdmin, HomeRedirect, RedirectIfSignedIn, ReturnAfterSignIn } from '@/components/RequireAuth';
 import Login from './pages/Login';
 import SetPassword from './pages/SetPassword';
 import Join from './pages/Join';
@@ -10,6 +10,7 @@ import Costs from './pages/Costs';
 import CostDetail from './pages/CostDetail';
 import ExpenseClaims from './pages/ExpenseClaims';
 import ExpenseClaimDetail from './pages/ExpenseClaimDetail';
+import ClaimApprovals from './pages/ClaimApprovals';
 import Suppliers from './pages/Suppliers';
 import SupplierStatements from './pages/SupplierStatements';
 import Sales from './pages/Sales';
@@ -56,6 +57,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <Router>
+          <ReturnAfterSignIn />
           <Routes>
             <Route path="/" element={<HomeRedirect />} />
             <Route path="/login" element={<RedirectIfSignedIn><Login /></RedirectIfSignedIn>} />
@@ -94,6 +96,7 @@ function App() {
             <Route path="/vault/:id" element={<Protected><VaultDetail /></Protected>} />
             <Route path="/expense-claims" element={<Protected><ExpenseClaims /></Protected>} />
             <Route path="/expense-claims/:id" element={<Protected><ExpenseClaimDetail /></Protected>} />
+            <Route path="/approvals/:id" element={<Protected><ClaimApprovals /></Protected>} />
             <Route path="/supplier-statements" element={<Protected><SupplierStatements /></Protected>} />
             <Route path="/suppliers" element={<Protected><Suppliers /></Protected>} />
             <Route path="/exports" element={<Protected><Exports workspace="all" /></Protected>} />

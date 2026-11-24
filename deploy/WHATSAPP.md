@@ -506,6 +506,29 @@ POST https://cyworkspace.cy-bm.sg/api/webhooks/cybills/set-disappearing   (X-API
   accounting app is the same species of act as taking it apart. A **closed or
   replaced** collection is over.
 
+## Posting into an entity's own group (claims for approval)
+
+A collection group is CYBills' own and is named by submission id. An expense
+claim goes for approval into a group the client already talks in ("Accts -
+Nucleo"), which CYBills never opened, so these two routes name a group by chat
+id AND the entity's Xero tenant. CYWS answers only for a group linked to that
+tenant in its WhatsApp inbox, in scope, with CYBot in it.
+
+```
+GET  /api/webhooks/cybills/groups?tenant_id=<xero tenant>
+     -> { groups: [{ chat_id, name }] }
+
+POST /api/webhooks/cybills/send-to-group
+     { tenant_id, chat_id, text?, files?: [{ filename, base64, mimetype? }] }
+     -> { data: { chat_id, name, files: [filename], text_sent } }
+```
+
+Up to 10 files (PDF, PNG, JPEG, 10 MB each), each sent as its own document,
+then the text, so the message with the link is last. Every file is prepared
+before anything is sent. Refusals: `group_not_linked` (404),
+`group_not_on_cybot` (409), `file_not_prepared` / `send_failed` (502). A bare
+404 with no JSON is an older CYWS without the routes.
+
 ## Closing a group down
 
 Two acts, offered side by side on every group (Connections → the group's row,

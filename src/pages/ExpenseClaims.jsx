@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { useListView } from '@/lib/listView';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock, Download, CheckCircle2, UploadCloud } from 'lucide-react';
+import { Plus, ChevronDown, Search, Filter, X, Send, CalendarClock, Download, CheckCircle2, UploadCloud, MessageCircle } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
+import ClaimWhatsappModal from '@/components/ClaimWhatsappModal';
 import AutoClaimsModal from '@/components/AutoClaimsModal';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import FlagMenu from '@/components/FlagMenu';
@@ -253,6 +254,7 @@ export default function ExpenseClaims() {
   // newest first, until somebody clicks a heading.
   const [sort, setSort] = useListView('claims', 'sort', { key: '', dir: 'asc' });
   const [approveOpen, setApproveOpen] = useState(false);
+  const [whatsappOpen, setWhatsappOpen] = useState(false);
   const [approving, setApproving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [notice, setNotice] = useState('');
@@ -634,6 +636,20 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
           >
             <Send className="h-3.5 w-3.5" /> Submit for approval
           </button>
+        {/* The same claims, asked for in the client's WhatsApp group: their
+            PDFs and one link, where the approver decides them all at once. */}
+        <button
+          type="button"
+          disabled={!canSubmit}
+          onClick={() => setWhatsappOpen(true)}
+          title={hasSelection && !canSubmit ? 'Already approved.' : 'Post the ticked claims to the WhatsApp group, with a link to approve them'}
+          className={cn(
+            'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-sm transition-colors',
+            canSubmit ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/50'
+          )}
+        >
+          <MessageCircle className="h-3.5 w-3.5" /> Send to WhatsApp
+        </button>
         {mayOverride && (
           <button
             type="button"
@@ -1007,6 +1023,21 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
           // Each routes to the claimant's direct manager, resolved server-side.
           await Promise.all(ids.map((id) => submitForApproval(id).catch(() => {})));
           clear();
+        }}
+      />
+      <ClaimWhatsappModal
+        open={whatsappOpen}
+        onClose={() => setWhatsappOpen(false)}
+        claims={submittable}
+        onSent={(r) => {
+          setWhatsappOpen(false);
+          clear();
+          const n = r?.request?.claims || 0;
+          setNotice(
+            `${n} claim${n === 1 ? '' : 's'} sent to "${r?.request?.groupName || 'the WhatsApp group'}" for approval` +
+              (r?.request && r.request.files < n ? ` (${n - r.request.files} without a PDF, which could not be made)` : '') +
+              (r?.skipped?.length ? `. ${r.skipped.length} already approved and left out.` : '.')
+          );
         }}
       />
     </AppShell>

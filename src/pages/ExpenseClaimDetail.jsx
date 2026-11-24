@@ -20,6 +20,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
+import ClaimWhatsappModal from '@/components/ClaimWhatsappModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import AddDocumentsDrawer from '@/components/AddDocumentsDrawer';
@@ -310,6 +311,7 @@ export default function ExpenseClaimDetail() {
   const [exportOpen, setExportOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
+  const [whatsappOpen, setWhatsappOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [reopenOpen, setReopenOpen] = useState(false);
@@ -821,6 +823,7 @@ export default function ExpenseClaimDetail() {
             ) : (
               <span className="text-sm text-muted-foreground">Only {claim.approver || 'the approver'} can approve</span>
             )}
+            <TopButton onClick={() => setWhatsappOpen(true)} title="Post this claim to the WhatsApp group again, with a link to approve it">Send to WhatsApp</TopButton>
           </>
         ) : claim.approvalStatus === 'approved' ? (
           <>
@@ -848,11 +851,13 @@ export default function ExpenseClaimDetail() {
               Rejected{claim.decidedBy ? ` by ${claim.decidedBy}` : ''}{claim.decidedFor ? ` for ${claim.decidedFor}` : ''}
             </span>
             {!iMayApproveOwn && <TopButton onClick={() => setApprovalOpen(true)}>Re-submit for approval</TopButton>}
+            <TopButton onClick={() => setWhatsappOpen(true)} title="Post this claim to the WhatsApp group, with a link to approve it">Send to WhatsApp</TopButton>
             {(iMayOverride || iMayApproveOwn) && <TopButton onClick={() => decide(approveClaim)}>Approve</TopButton>}
           </>
         ) : (
           <>
             {!iMayApproveOwn && <TopButton onClick={() => setApprovalOpen(true)}>Submit for approval</TopButton>}
+            <TopButton onClick={() => setWhatsappOpen(true)} title="Post this claim to the WhatsApp group, with a link to approve it">Send to WhatsApp</TopButton>
             {/* A Business Admin need not ask anybody: the claim is approved
                 directly, and the history says it was never submitted. So does a
                 claimant with no manager and the publishing privilege. */}
@@ -1336,6 +1341,16 @@ export default function ExpenseClaimDetail() {
         onClose={() => setEmailOpen(false)}
         defaultName={user?.name || user?.email || ''}
         claim={{ ...claim, transactions: rows }}
+      />
+      <ClaimWhatsappModal
+        open={whatsappOpen}
+        onClose={() => setWhatsappOpen(false)}
+        claims={[{ ...claim, transactions: rows }]}
+        onSent={(r) => {
+          setWhatsappOpen(false);
+          setPayNote(`Sent to "${r?.request?.groupName || 'the WhatsApp group'}" for approval.`);
+          setTab('history');
+        }}
       />
       <ClaimApprovalModal
         open={approvalOpen}
