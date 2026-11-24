@@ -603,3 +603,40 @@ export function dailyDigestEmail(o: {
 </body></html>`,
   };
 }
+
+// Costs -> Retrieve: a retrieval that failed, told to the person who set the
+// login up. A run is a background job (a button nobody waits on, or the
+// schedule at 7am), so until this the reason sat on the Retrieve page for
+// whoever next opened it, and a month's bill stayed on the portal.
+export function retrievalFailedEmail(o: {
+  name: string;
+  portalName: string;
+  label: string;
+  username: string;
+  entity: string;
+  reason: string;
+  when: string; // "24 Nov 2026, 10:34 am"
+  scheduled: boolean;
+  url: string;
+}) {
+  const what = o.label && o.label !== o.portalName ? `${o.portalName} (${o.label})` : o.portalName;
+  const row = (k: string, v: string) =>
+    `<tr><td style="padding:4px 14px 4px 0;color:#6b7280;white-space:nowrap;vertical-align:top">${k}</td><td style="padding:4px 0;color:#111">${esc(v)}</td></tr>`;
+  return {
+    subject: `CYBills: ${what} retrieval failed${o.entity ? ` — ${o.entity}` : ''}`,
+    html: layout({
+      heading: `${what}: the invoices were not retrieved`,
+      body: `<p style="margin:0 0 14px">Hi ${esc(o.name.split(' ')[0] || 'there')}, CYBills could not retrieve the invoices from this portal${o.scheduled ? ' on its scheduled run' : ''}. Nothing was filed.</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:14px;line-height:1.5">
+          ${o.entity ? row('Entity', o.entity) : ''}
+          ${row('Portal', what)}
+          ${row('Login', o.username)}
+          ${row('When', o.when)}
+          ${row('Reason', o.reason || 'No reason was given.')}
+        </table>
+        <p style="margin:14px 0 0">${o.scheduled ? 'It will try again at its next scheduled time. ' : ''}To try again now, open the Retrieve page and press Retrieve now.</p>`,
+      cta: { label: 'Open Retrieve', url: o.url },
+      footnote: 'Sent because you set this login up in CYBills (Costs &rarr; Retrieve).',
+    }),
+  };
+}

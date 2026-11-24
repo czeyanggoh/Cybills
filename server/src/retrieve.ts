@@ -65,6 +65,7 @@ import { practiceDayKey } from './usage.js';
 import { practiceHour } from './digest.js';
 import { robotRequest } from './robotRequest.js';
 import { isoClaimDate } from './claimDates.js';
+import { sendMail, retrievalFailedEmail } from './mailer.js';
 
 export const retrieveRouter = Router();
 
@@ -189,6 +190,8 @@ export type PortalLogin = {
   scheduleFrom?: string;
   /** The practice day the schedule last STARTED a run, written before it runs. */
   lastScheduledDay?: string;
+  /** The failed run its set-up user was last emailed about: one email a run. */
+  failedMailedRunId?: string;
 };
 
 const COLLECTION = 'portal-logins';
@@ -567,6 +570,71 @@ const writeRun = (id: string, patch: Partial<PortalLogin>) => {
   return row;
 };
 
+// --- A failed run is TOLD ---------------------------------------------------------
+//
+// Cze, 24 Nov 2026: "it fails without informing. at least an email to the set
+// up user". A retrieval is a background job, so its failure only ever showed on
+// the Retrieve page. Now the person who set the login up is emailed the reason,
+// and so is whoever pressed Retrieve when that is somebody else. Once per run:
+// the run is marked BEFORE the send, so a second pass never sends a second.
+
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/** Who is told a login's run failed: its set-up user, then whoever started it. */
+export function failureRecipients(login: Pick<PortalLogin, 'createdBy'>, run: Pick<RunRecord, 'by'>): string[] {
+  const out: string[] = [];
+  for (const raw of [login.createdBy, run.by]) {
+    const email = String(raw || '').trim();
+    if (EMAIL_RE.test(email) && !out.some((e) => e.toLowerCase() === email.toLowerCase())) out.push(email);
+  }
+  return out;
+}
+
+const whenLabel = (iso: string) =>
+  new Date(iso).toLocaleString('en-SG', {
+    timeZone: env.PRACTICE_TIMEZONE || 'Asia/Singapore',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+
+/** Exported for the test. Never throws: a failed email must not fail the run's record. */
+export async function tellOfFailure(loginId: string): Promise<string[]> {
+  try {
+    const login = load().find((l) => l.id === loginId);
+    const run = login?.run;
+    if (!login || !run || run.status !== 'failed' || login.failedMailedRunId === run.id) return [];
+    writeRun(loginId, { failedMailedRunId: run.id });
+    const to = failureRecipients(login, run);
+    const people = to.length ? peopleForOrg(login.workspaceId, login.orgId) : [];
+    const origin = (env.APP_ORIGIN || '').replace(/\/+$/, '');
+    const base = origin && !origin.includes('localhost') ? origin : PUBLIC_ORIGIN;
+    for (const email of to) {
+      const name = people.find((p) => p.email.toLowerCase() === email.toLowerCase())?.name || '';
+      const mail = retrievalFailedEmail({
+        name,
+        portalName: portalById(login.portal)?.name || login.portal,
+        label: login.label,
+        username: login.username,
+        entity: getOrganisation(login.workspaceId, login.orgId)?.name || '',
+        reason: run.note,
+        when: whenLabel(run.endedAt || run.startedAt),
+        scheduled: Boolean(run.scheduled),
+        url: `${base}/costs/retrieve`,
+      });
+      const sent = await sendMail({ to: { email, ...(name ? { name } : {}) }, ...mail });
+      if (!sent.sent) console.error('[retrieve] failure email not sent to', email, sent.error);
+    }
+    return to;
+  } catch (err) {
+    console.error('[retrieve] failure email failed', err);
+    return [];
+  }
+}
+
 /**
  * One retrieval, start to finish. Exported for the test; the route runs it in
  * the background and answers at once.
@@ -723,6 +791,7 @@ async function fileDocuments(req: Request, login: PortalLogin, run: RunRecord, a
     filed: ledger.slice(-MAX_LEDGER),
     ...(asked.failed ? {} : { lastRetrievedAt: run.startedAt }),
   });
+  if (asked.failed) void tellOfFailure(loginId);
 
   // Read each the way an upload is read, under the name the portal gave it.
   const settings = readSetting<{ readerProvider?: string }>(ws, 'cybills.extraction-settings.v1', login.orgId);
@@ -771,6 +840,23 @@ function failRun(id: string, by: string, err: unknown, scheduled = false) {
       skipped: 0,
     },
   });
+  void tellOfFailure(id);
+}
+
+// A run that died without settling (a restart, or n8n never calling back) is
+// only CALLED failed when somebody reads the login (runOf). The clock writes
+// that down, so it is told like any other failure. Exported for the test.
+export function settleDeadRuns(): number {
+  let n = 0;
+  for (const l of load()) {
+    const stored = l.run;
+    const seen = runOf(l);
+    if (!stored || !seen || stored.status === seen.status || seen.status !== 'failed') continue;
+    writeRun(l.id, { run: { ...seen, awaiting: undefined, endedAt: new Date().toISOString() } });
+    void tellOfFailure(l.id);
+    n += 1;
+  }
+  return n;
 }
 
 // --- One at a time --------------------------------------------------------------
@@ -957,7 +1043,14 @@ export async function runDueRetrievals(now = new Date()): Promise<number> {
 }
 
 export function startRetrieveClock(): void {
-  const tick = () => void runDueRetrievals().catch((err) => console.error('[retrieve] schedule failed', err));
+  const tick = () => {
+    try {
+      settleDeadRuns();
+    } catch (err) {
+      console.error('[retrieve] dead-run sweep failed', err);
+    }
+    void runDueRetrievals().catch((err) => console.error('[retrieve] schedule failed', err));
+  };
   setTimeout(tick, 60_000).unref();
   setInterval(tick, 5 * 60_000).unref();
 }
