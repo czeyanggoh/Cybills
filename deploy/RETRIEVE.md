@@ -109,6 +109,15 @@ a log. Such a portal's request is allowed 12 minutes rather than
 `N8N_RETRIEVE_TIMEOUT_MS`, so the workflow and the robot must wait that long
 too. The robot should give up, with a refusal in words, when no code comes.
 
+The Singtel robot reads the "My Bill" page, which lists the last six bills of
+every account under the login. Each bill's reference is
+`singtel:<account>:<YYYY-MM>` of its bill date and its file
+`Singtel_<account>_<Mon>_<YYYY>.pdf`; `account_ref` narrows a run to one
+account. Because one login holds several accounts whose bills need not share a
+date, `last_invoice_date` is applied with ten days' grace and
+`known_references` is what stops a second copy. The robot's browser stays
+signed in between runs, so the code is not asked for every time.
+
 **Its schedule does not run it.** An SMS code lapses in minutes, so on the
 scheduled day CYBills emails the login's set-up user to open the page and press
 Retrieve now, and starts nothing.
