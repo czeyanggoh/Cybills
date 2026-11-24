@@ -14,6 +14,11 @@ It makes no decisions of its own.
   either the entity linked to that tenant, or a bridge entity that publishes into
   it. When a tenant has several entities, pass `org_id` to say which (a 409
   `which_entity` lists them).
+- **The person** may instead be named by `acting_whatsapp`: the WhatsApp number
+  on their CYBills profile, digits with the country code. CYWorkspace's CYBot
+  sends it when somebody approves a claim in a WhatsApp group. It must be exactly
+  one active user's number (`not_a_member` when nobody's, `which_person` when two
+  share it). The answer says who it was (`acting_as`, `acting_name`).
 - **The person** is named by `acting_email`. It must be an active CYBills user
   who can open that entity. CYWS always sends its own signed-in user here, never
   an address the agent typed.

@@ -26,6 +26,9 @@ import { accountsForOrg, gstRegisteredFor, postingCodesFrom, taxRatesForOrg } fr
 //
 // Never here: permanent delete of anything. Archive is offered.
 
+import { ensure as ensureUsers } from './users.js';
+import { normaliseMobile } from './waSender.js';
+
 export const agentRouter = Router();
 
 type Ctx = { org: Organisation; member: User; cookie: string };
@@ -69,8 +72,25 @@ function contextFor(req: Request): Ctx {
   } else if (entities.length > 1) {
     throw new AgentError(409, 'which_entity', 'This tenant has several CYBills entities; name one with org_id.', { entities: entities.map((o) => ({ id: o.id, name: o.name })) });
   }
-  const email = norm(b.acting_email);
-  if (!email) throw new AgentError(400, 'acting_email_required', 'Name the person (acting_email) the action is done as.');
+  // The person: by address, or by the WhatsApp number on their CYBills profile
+  // (`acting_whatsapp`), which is how somebody who says "approved" in a WhatsApp
+  // group is known. A number is taken only when it is exactly ONE person's:
+  // nobody, or two people sharing it, is refused, never guessed. Either way
+  // what that person may do is decided below and by the routes, as for a click.
+  let email = norm(b.acting_email);
+  if (!email && b.acting_whatsapp != null) {
+    const number = normaliseMobile(String(b.acting_whatsapp));
+    if (!number) throw new AgentError(400, 'bad_number', 'acting_whatsapp is not a phone number with its country code.');
+    const holders = new Set(
+      ensureUsers(WORKSPACE_ID)
+        .filter((u) => u.workspaceId === WORKSPACE_ID && !u.removed && !u.deactivated && !u.pending && u.email && normaliseMobile(u.mobile || '') === number)
+        .map((u) => norm(u.email)),
+    );
+    if (!holders.size) throw new AgentError(403, 'not_a_member', 'No active CYBills user has that WhatsApp number on their profile.');
+    if (holders.size > 1) throw new AgentError(409, 'which_person', 'More than one CYBills user has that WhatsApp number on their profile.');
+    email = [...holders][0];
+  }
+  if (!email) throw new AgentError(400, 'acting_email_required', 'Name the person (acting_email, or acting_whatsapp) the action is done as.');
   const member = memberByEmail(WORKSPACE_ID, email);
   if (!member || member.deactivated || member.removed || member.pending) {
     throw new AgentError(403, 'not_a_member', 'That address is not an active CYBills user.');
@@ -581,7 +601,7 @@ agentRouter.post('/:action', async (req: Request, res: Response) => {
   try {
     const ctx = contextFor(req);
     const out = await handler(ctx, req.body ?? {});
-    return res.json({ ok: true, action: req.params.action, org: { id: ctx.org.id, name: ctx.org.name }, acting_as: ctx.member.email, ...(out as object) });
+    return res.json({ ok: true, action: req.params.action, org: { id: ctx.org.id, name: ctx.org.name }, acting_as: ctx.member.email, acting_name: ctx.member.name || '', ...(out as object) });
   } catch (err) {
     if (err instanceof AgentError) return res.status(err.status).json({ error: err.code, message: err.message, ...err.extra });
     console.error('[agent]', req.params.action, err);
