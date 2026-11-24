@@ -87,3 +87,5 @@ export const updatePortalLogin = (id, fields) => send(`/api/retrieve/logins/${en
 export const deletePortalLogin = (id) => send(`/api/retrieve/logins/${encodeURIComponent(id)}`, 'DELETE');
 export const runPortalLogin = (id) => send(`/api/retrieve/logins/${encodeURIComponent(id)}/run`, 'POST', {});
 export const runAllPortalLogins = () => send('/api/retrieve/run-all', 'POST', {});
+/** The SMS code a portal asked for, typed on the card while its run waits. */
+export const sendPortalCode = (id, code) => send(`/api/retrieve/logins/${encodeURIComponent(id)}/otp`, 'POST', { code });

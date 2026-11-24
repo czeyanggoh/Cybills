@@ -12,6 +12,7 @@ import {
   deletePortalLogin,
   runPortalLogin,
   runAllPortalLogins,
+  sendPortalCode,
 } from '@/lib/retrieve';
 import {
   DEFAULT_SCHEDULE,
@@ -55,7 +56,57 @@ function useOwnerChoices() {
   return people;
 }
 
-function RunStatus({ login }) {
+// The portal sent a code to somebody's phone and the robot is waiting on its
+// code screen: the box it is typed into.
+function CodeBox({ login, onSent }) {
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const otp = login.run.otp;
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      await sendPortalCode(login.id, code);
+      setCode('');
+      onSent?.();
+    } catch (err) {
+      setError(err.message);
+    }
+    setBusy(false);
+  };
+  return (
+    <form onSubmit={submit} className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+      <div className="font-medium">
+        {otp.rejected ? 'That code was not accepted. ' : ''}
+        {login.portalName} sent a code by SMS{otp.hint ? ` (${otp.hint})` : ''}. Type it here to carry on.
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className={cn(inputCls, 'h-9 w-40 tracking-widest')}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          autoFocus
+          placeholder="Code"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 8))}
+        />
+        <button
+          type="submit"
+          disabled={busy || code.length < 4}
+          className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-50"
+        >
+          {busy ? 'Sending…' : 'Send code'}
+        </button>
+        <span className="text-amber-900/80">The code lasts a few minutes. It is passed to the sign-in and not kept.</span>
+      </div>
+      {error && <div className="text-destructive">{error}</div>}
+    </form>
+  );
+}
+
+function RunStatus({ login, onChanged }) {
   const run = login.run;
   if (!run) return <span className="text-xs text-muted-foreground">Not retrieved yet</span>;
   if (run.status === 'queued') {
@@ -65,10 +116,11 @@ function RunStatus({ login }) {
       </span>
     );
   }
+  if (run.status === 'running' && run.otp && !run.otp.enteredAt) return <CodeBox login={login} onSent={onChanged} />;
   if (run.status === 'running') {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Signing in and retrieving… (started {when(run.startedAt)}). You can
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> {run.otp ? 'Code sent — signing in and retrieving…' : 'Signing in and retrieving…'} (started {when(run.startedAt)}). You can
         leave this page — the invoices land in Costs when it finishes.
       </span>
     );
@@ -98,6 +150,15 @@ function ScheduleLine({ login, timezone }) {
   const s = normaliseSchedule(login.schedule);
   if (s.frequency === 'off') {
     return <span>Retrieves only when somebody presses Retrieve now</span>;
+  }
+  if (login.otp) {
+    return (
+      <span>
+        Emails a reminder to press Retrieve now {scheduleLabel(s).replace(/^\w/, (c) => c.toLowerCase())}
+        {timezone ? ` (${timezone})` : ''} — it needs the SMS code, so it cannot run by itself
+        {login.nextScheduledDay ? ` · next ${dayKeyLabel(login.nextScheduledDay)}` : ''}
+      </span>
+    );
   }
   return (
     <span>
@@ -513,7 +574,7 @@ export default function Retrieve() {
                   </div>
                 </div>
                 <div className="mt-3 border-t pt-3">
-                  <RunStatus login={l} />
+                  <RunStatus login={l} onChanged={reload} />
                 </div>
               </div>
             );

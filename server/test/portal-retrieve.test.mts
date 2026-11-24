@@ -112,7 +112,7 @@ check('the password is sealed at rest, not written as typed', [stored.includes(S
 
 r = await api('/logins');
 check('the listing never carries it either', [r.status, r.text.includes(SECRET), r.body.logins.length], [200, false, 1]);
-check('…and says which portals are offered', r.body.portals.map((p: any) => p.id), ['spgroup', 'other']);
+check('…and says which portals are offered', r.body.portals.map((p: any) => p.id), ['spgroup', 'singtel', 'other']);
 check('…and that retrieval is configured', r.body.enabled, true);
 
 // --- Retrieving --------------------------------------------------------------

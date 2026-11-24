@@ -3057,6 +3057,13 @@ bills: SP Group's did not until that day (a "Scam Alert" pop-up blocked every
 click and the run read "Nothing new"; its sidecar now answers
 `retrieve_failed`). `test/retrieve-failure-email.test.mts`.
 
+**A portal that signs in with an SMS code (Singtel personal, 24 Nov 2026).** `otp: 'sms'` on its
+`PORTALS` entry. The robot POSTs the run's `otp_url` (the callback token) when it reaches the code
+screen; the card shows a box (`CodeBox`, `Retrieve.jsx`); what is typed (`POST /logins/:id/otp`) is
+held in memory and given to the robot once. Such a login's schedule emails a reminder to press
+Retrieve now (`tellCodeNeeded`) and starts nothing. A run left running across a restart is failed
+and emailed at start (`failOrphanedRuns`). Contract: `deploy/RETRIEVE.md`. `test/retrieve-otp.test.mts`.
+
 ## Subscription plans: a monthly document limit, and what happens past it
 
 Cze, Nov 2026: external subscribers take CYBills at four levels (SGD a month ->

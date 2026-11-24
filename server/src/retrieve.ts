@@ -65,7 +65,7 @@ import { practiceDayKey } from './usage.js';
 import { practiceHour } from './digest.js';
 import { robotRequest } from './robotRequest.js';
 import { isoClaimDate } from './claimDates.js';
-import { sendMail, retrievalFailedEmail } from './mailer.js';
+import { sendMail, retrievalFailedEmail, retrievalNeedsCodeEmail } from './mailer.js';
 
 export const retrieveRouter = Router();
 
@@ -84,6 +84,17 @@ export const PORTALS = [
     description: 'Electricity, water and gas bills from the SP Utilities portal.',
     usernameLabel: 'Email',
     loginUrl: '',
+    otp: '',
+  },
+  {
+    // The personal My Singtel account (OnePass). It signs in with a code sent
+    // by SMS only, so a person types the code on the card while the run waits.
+    id: 'singtel',
+    name: 'Singtel (personal)',
+    description: 'Mobile, broadband and TV bills from a personal My Singtel account. Asks for the SMS code each time.',
+    usernameLabel: 'OnePass ID (email or mobile number)',
+    loginUrl: '',
+    otp: 'sms',
   },
   {
     id: 'other',
@@ -91,6 +102,7 @@ export const PORTALS = [
     description: 'Any other supplier portal. n8n needs a recipe for it before it can sign in.',
     usernameLabel: 'Username or email',
     loginUrl: '',
+    otp: '',
   },
 ] as const;
 const portalById = (id: string) => PORTALS.find((p) => p.id === id);
@@ -152,6 +164,13 @@ type RunRecord = {
   awaiting?: boolean;
   /** sha256 of the one-time token the callback must carry. Never shown. */
   callbackHash?: string;
+  /**
+   * The robot is on the portal's code screen. `wantedAt` alone = the card asks
+   * for the code; `enteredAt` = somebody typed one and the robot has it or is
+   * about to; `rejected` = how many the portal refused. The code itself is
+   * never written here: it is held in memory until the robot takes it.
+   */
+  otp?: { wantedAt: string; hint?: string; enteredAt?: string; rejected?: number };
 };
 
 export type PortalLogin = {
@@ -231,7 +250,10 @@ function latestInvoiceDate(login: PortalLogin, today = practiceDayKey(new Date()
 // A run that has said "running" for longer than the workflow is allowed to take
 // died with the process that started it — a restart, a deploy. Reported as
 // what it is rather than spinning on the page for ever.
-const STALE_MS = () => (Number(env.N8N_RETRIEVE_TIMEOUT_MS) || 300000) + 120000;
+// A portal that waits for a person to type an SMS code is given longer.
+const OTP_WAIT_MS = 12 * 60_000;
+const askMs = (portal: string) => (portalById(portal)?.otp ? OTP_WAIT_MS : Number(env.N8N_RETRIEVE_TIMEOUT_MS) || 300000);
+const STALE_MS = (portal: string) => askMs(portal) + 120000;
 // A run n8n ACCEPTED is waiting on n8n, not on us, and gets as long as the
 // workflow is allowed to call back in.
 const CALLBACK_MS = () => (Number(env.N8N_RETRIEVE_CALLBACK_MS) || 30 * 60_000) + 120000;
@@ -239,7 +261,7 @@ function runOf(l: PortalLogin): RunRecord | undefined {
   const r = l.run;
   // A queued login waits on every one ahead of it, so it gets that grace
   // several times over before it is called dead.
-  const grace = r?.status === 'queued' ? CALLBACK_MS() * 3 : r?.awaiting ? CALLBACK_MS() : STALE_MS();
+  const grace = r?.status === 'queued' ? CALLBACK_MS() * 3 : r?.awaiting ? CALLBACK_MS() : STALE_MS(l.portal);
   if ((r?.status === 'running' || r?.status === 'queued') && Date.now() - Date.parse(r.startedAt) > grace) {
     const note = r.awaiting
       ? 'n8n accepted the retrieval and never posted the invoices back. Check the run in n8n, then try again.'
@@ -268,6 +290,8 @@ function view(ws: string, l: PortalLogin, r: ScheduleRules, now = new Date()) {
     id: l.id,
     portal: l.portal,
     portalName: portal?.name || l.portal,
+    // 'sms': the portal signs in with a code a person must type on the card.
+    otp: portal?.otp || '',
     label: l.label,
     loginUrl: l.loginUrl,
     username: l.username,
@@ -523,6 +547,8 @@ async function askN8n(
     // for the whole sign-in, and the token that proves the post is its own.
     callback_url: callback.url,
     callback_token: callback.token,
+    // Where the robot asks for the code a person types (same token).
+    otp_url: callback.url.replace('/callback/', '/otp/'),
     xero_name: org?.tenantName || org?.name || '',
     tenant_id: org?.tenantId || '',
   };
@@ -538,7 +564,7 @@ async function askN8n(
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(Number(env.N8N_RETRIEVE_TIMEOUT_MS) || 300000),
+      signal: AbortSignal.timeout(askMs(login.portal)),
     });
   } catch (err) {
     return { documents: [], note: `n8n could not be reached (${err instanceof Error ? err.message : String(err)})`, failed: true };
@@ -964,6 +990,108 @@ retrieveRouter.post('/callback/:runId', (req, res) => {
   })().catch((err) => failRun(login.id, login.run?.by || '', err, Boolean(login.run?.scheduled)));
 });
 
+// --- A code somebody has to type ------------------------------------------------
+//
+// Cze, 24 Nov 2026: Singtel signs in with a code sent by SMS only (no email, no
+// authenticator), so the robot cannot answer it alone. When it reaches the code
+// screen it asks here; the card then shows a box; what is typed is handed to
+// the robot the next time it asks. The code is kept in memory only, given out
+// once, and never written to disk or a log.
+const otpCodes = new Map<string, string>();
+
+function loginForRobot(req: Request): PortalLogin | null {
+  const runId = String(req.params.runId || '');
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const token = String(req.header('X-Callback-Token') || (body && !Array.isArray(body) ? body.callback_token || body.callbackToken || '' : ''));
+  const login = load().find((l) => l.run?.id === runId);
+  const expected = login?.run?.callbackHash || '';
+  const given = token ? hashToken(token) : '';
+  if (!login || !expected || !given || !timingSafeEqual(Buffer.from(given), Buffer.from(expected))) return null;
+  return login;
+}
+
+// POST /api/retrieve/otp/:runId — the robot, on the portal's code screen. The
+// first call makes the card ask; every call answers `{ code }`, '' until
+// somebody has typed one, and a code is given out once. `rejected: true` says
+// the portal refused the last one, and the card asks again.
+retrieveRouter.post('/otp/:runId', (req, res) => {
+  const login = loginForRobot(req);
+  if (!login?.run) return res.status(404).json({ error: 'not_found' });
+  const run = login.run;
+  if (run.status !== 'running') return res.status(409).json({ error: 'already_settled' });
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const rejected = body.rejected === true || body.rejected === 'true';
+  if (!run.otp || rejected) {
+    otpCodes.delete(run.id);
+    const hint = clean(body.hint, 120) || run.otp?.hint || '';
+    writeRun(login.id, {
+      run: {
+        ...run,
+        otp: {
+          wantedAt: run.otp?.wantedAt || new Date().toISOString(),
+          ...(hint ? { hint } : {}),
+          ...(rejected ? { rejected: (run.otp?.rejected || 0) + 1 } : {}),
+        },
+      },
+    });
+    return res.json({ code: '' });
+  }
+  const code = otpCodes.get(run.id) || '';
+  if (code) otpCodes.delete(run.id);
+  res.json({ code });
+});
+
+// POST /api/retrieve/logins/:id/otp — the code, typed on the card.
+retrieveRouter.post('/logins/:id/otp', async (req, res) => {
+  const ws = workspaceId(req);
+  const orgId = orgIdFor(req);
+  if (!mayManage(req, orgId)) return res.status(403).json({ error: 'no_client_access' });
+  const login = loginsHere(ws, orgId).find((l) => l.id === req.params.id);
+  if (!login) return res.status(404).json({ error: 'not_found' });
+  const run = runOf(login);
+  if (!run || run.status !== 'running' || !run.otp) {
+    return res.status(409).json({ error: 'no_code_wanted', message: 'This retrieval is not waiting for a code.' });
+  }
+  const code = String((req.body ?? {}).code ?? '').replace(/[\s-]+/g, '');
+  if (!/^\d{4,8}$/.test(code)) {
+    return res.status(422).json({ error: 'bad_code', message: 'Type the code from the SMS: 4 to 8 digits.' });
+  }
+  otpCodes.set(run.id, code);
+  const row = writeRun(login.id, { run: { ...run, otp: { ...run.otp, enteredAt: new Date().toISOString() } } });
+  res.json({ login: view(ws, row || login, await loadRules()) });
+});
+
+// On its scheduled day, a login whose portal needs a typed code is not run:
+// the SMS would lapse long before anybody saw it. Its set-up user is asked to
+// press Retrieve now instead. Exported for the test; answers who was asked.
+export async function tellCodeNeeded(loginId: string): Promise<string[]> {
+  try {
+    const login = load().find((l) => l.id === loginId);
+    if (!login) return [];
+    const to = failureRecipients(login, { by: '' });
+    const people = to.length ? peopleForOrg(login.workspaceId, login.orgId) : [];
+    const origin = (env.APP_ORIGIN || '').replace(/\/+$/, '');
+    const base = origin && !origin.includes('localhost') ? origin : PUBLIC_ORIGIN;
+    for (const email of to) {
+      const name = people.find((p) => p.email.toLowerCase() === email.toLowerCase())?.name || '';
+      const mail = retrievalNeedsCodeEmail({
+        name,
+        portalName: portalById(login.portal)?.name || login.portal,
+        label: login.label,
+        username: login.username,
+        entity: getOrganisation(login.workspaceId, login.orgId)?.name || '',
+        url: `${base}/costs/retrieve`,
+      });
+      const sent = await sendMail({ to: { email, ...(name ? { name } : {}) }, ...mail });
+      if (!sent.sent) console.error('[retrieve] code-needed email not sent to', email, sent.error);
+    }
+    return to;
+  } catch (err) {
+    console.error('[retrieve] code-needed email failed', err);
+    return [];
+  }
+}
+
 // POST /api/retrieve/logins/:id/run — retrieve now. Answers at once; the page
 // polls the login until its run settles.
 retrieveRouter.post('/logins/:id/run', async (req, res) => {
@@ -1031,6 +1159,11 @@ export async function runDueRetrievals(now = new Date()): Promise<number> {
       // before it ran.
       if (!r.scheduleDue(login.schedule, { lastDay: login.lastScheduledDay, from: login.scheduleFrom }, today, hour)) continue;
       writeRun(id, { lastScheduledDay: today });
+      if (portalById(login.portal)?.otp) {
+        // Needs a person and their phone: ask them, once for the day.
+        void tellCodeNeeded(id);
+        continue;
+      }
       ran += 1;
       // Through the one queue, and waited for until it SETTLES — a run n8n
       // took on with a 202 is still n8n's browser until it calls back.
@@ -1042,7 +1175,36 @@ export async function runDueRetrievals(now = new Date()): Promise<number> {
   return ran;
 }
 
+// A run this process did not start cannot finish: its job lived in the memory
+// of the process before (a deploy restarted the server mid-run, 24 Nov 2026,
+// and the card sat on "retrieving" for eight minutes). A run n8n ACCEPTED is
+// n8n's and can still call back, so it is left. Exported for the test.
+export function failOrphanedRuns(): number {
+  let n = 0;
+  for (const l of load()) {
+    const r = l.run;
+    if (!r || (r.status !== 'running' && r.status !== 'queued') || r.awaiting) continue;
+    writeRun(l.id, {
+      run: {
+        ...r,
+        status: 'failed',
+        otp: undefined,
+        endedAt: new Date().toISOString(),
+        note: 'The server restarted while this retrieval ran, so its answer was lost. Try again.',
+      },
+    });
+    void tellOfFailure(l.id);
+    n += 1;
+  }
+  return n;
+}
+
 export function startRetrieveClock(): void {
+  try {
+    failOrphanedRuns();
+  } catch (err) {
+    console.error('[retrieve] orphaned-run sweep failed', err);
+  }
   const tick = () => {
     try {
       settleDeadRuns();

@@ -640,3 +640,20 @@ export function retrievalFailedEmail(o: {
     }),
   };
 }
+
+// Costs -> Retrieve: a portal that signs in with a code sent to somebody's
+// phone cannot be retrieved by the schedule alone. On its day the person who
+// set the login up is asked to press Retrieve now, phone in hand.
+export function retrievalNeedsCodeEmail(o: { name: string; portalName: string; label: string; username: string; entity: string; url: string }) {
+  const what = o.label && o.label !== o.portalName ? `${o.portalName} (${o.label})` : o.portalName;
+  return {
+    subject: `CYBills: ${what} bills are due to be retrieved${o.entity ? ` — ${o.entity}` : ''}`,
+    html: layout({
+      heading: `${what}: press Retrieve now`,
+      body: `<p style="margin:0 0 14px">Hi ${esc(o.name.split(' ')[0] || 'there')}, today is the day CYBills retrieves the bills for <strong>${esc(o.username)}</strong>${o.entity ? ` (${esc(o.entity)})` : ''}.</p>
+        <p style="margin:0 0 14px">${esc(o.portalName)} signs in with a code sent by SMS, so CYBills cannot do it alone. Open the Retrieve page, press <strong>Retrieve now</strong>, and type the code into the box when it asks. Have the phone at hand: the code lasts a few minutes.</p>`,
+      cta: { label: 'Open Retrieve', url: o.url },
+      footnote: 'Sent because you set this login up in CYBills (Costs &rarr; Retrieve).',
+    }),
+  };
+}

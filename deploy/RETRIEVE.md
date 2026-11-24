@@ -55,6 +55,8 @@ portal password unreadable** — the page then asks for each to be entered again
 | `callback_url` | where to POST the invoices instead of answering with them (see below) |
 | `callback_token` | the one-time token that callback must carry, as `X-Callback-Token` |
 
+| `otp_url` | where the robot asks for a code a person must type (see "A code somebody types") |
+
 **Never log the request body** — it carries the password. The workflow should
 not keep it either: it is sent fresh on every run.
 
@@ -84,6 +86,32 @@ that host.
 now, Retrieve all and the schedule all wait in one queue until the run before
 them has settled — answered, failed, or called back — so n8n is never asked for
 a second run while its browser is busy ("a run is already in progress").
+
+## A code somebody types (Singtel, 24 Nov 2026)
+
+Singtel's personal portal signs in with a code sent by **SMS only**: no email,
+no authenticator. A portal marked `otp: 'sms'` in `PORTALS` (`singtel`) is
+handed over like this, while the retrieval request is held open:
+
+1. The robot reaches the portal's code screen and POSTs `otp_url` with the
+   header `X-Callback-Token: <callback_token>`, optionally
+   `{ "hint": "sent to ****4567" }`. CYBills answers `{ "code": "" }` and the
+   login's card shows a box asking for the code.
+2. The robot keeps POSTing `otp_url` every few seconds. Once somebody has typed
+   the code on the card the answer is `{ "code": "480215" }`, **once**; after
+   that it is `""` again.
+3. If the portal refuses the code the robot POSTs `{ "rejected": true }`, the
+   card says so and asks again.
+
+A wrong token or unknown run is `404`; a run already settled is `409`. The code
+is held in the server's memory until the robot takes it: never on disk, never in
+a log. Such a portal's request is allowed 12 minutes rather than
+`N8N_RETRIEVE_TIMEOUT_MS`, so the workflow and the robot must wait that long
+too. The robot should give up, with a refusal in words, when no code comes.
+
+**Its schedule does not run it.** An SMS code lapses in minutes, so on the
+scheduled day CYBills emails the login's set-up user to open the page and press
+Retrieve now, and starts nothing.
 
 ## What the workflow answers
 
@@ -146,7 +174,9 @@ answers a refusal, not an empty list.
 - **A failed run is emailed** to the person who set the login up, and to whoever
   pressed Retrieve if that is somebody else: the reason, the entity and a link
   to the page. Once per run. A run that never reported back is written down as
-  failed by the five-minute clock and emailed the same way. "Nothing new" is
+  failed by the five-minute clock and emailed the same way. A run left running
+  by a server restart (its job lived in the old process) is failed and emailed
+  as the server starts, unless n8n had accepted it with a 202. "Nothing new" is
   not emailed, so **a recipe that could not read the portal's bills must answer
   a refusal, never an empty list**.
 - The password is sealed at rest (AES-GCM), never returned to the browser,
