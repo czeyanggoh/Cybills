@@ -74,6 +74,10 @@ import BankMatchPanel from '@/components/BankMatchPanel';
 import PaymentProofPanel from '@/components/PaymentProofPanel';
 import SupportingDocsPanel from '@/components/SupportingDocsPanel';
 import PrepaymentPanel from '@/components/PrepaymentPanel';
+import BillingPlanPanel from '@/components/BillingPlanPanel';
+import BillingPlanModal from '@/components/BillingPlanModal';
+import { useBillingPlans } from '@/lib/billingPlans';
+import { plansForSupplier } from '@/lib/billingPlan';
 import PaperworkMatchPanel from '@/components/PaperworkMatchPanel';
 import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
 import { paperworkSuggestion } from '@/lib/paperworkMatch';
@@ -300,6 +304,9 @@ export default function CostDetail() {
   // the setting; both admin tiers publish by role. Refused server-side too, on
   // all four Xero routes — this is what stops the button being offered at all.
   const mayPublish = canPublishToXero(membership, googleEnabled);
+  // A billing plan decides how future bills are coded, so writing one is an
+  // admin's, as every coding setting is (the settings route holds it too).
+  const mayEditPlans = !googleEnabled || Boolean(membership?.admin);
   // "Create expense claims" in Edit privileges. Only a Standard user carries
   // the setting; both admin tiers do this by role. Refused server-side on both
   // halves of the act — opening a claim and putting items on it.
@@ -373,6 +380,10 @@ export default function CostDetail() {
   const baseCurrency = useBaseCurrency();
   const extractionSettings = useExtractionSettings();
   useSupplierRules(); // the Supplier field's rules link tracks whether a rule exists
+  // What each supplier's quotation says its invoices will be made of.
+  const billingPlans = useBillingPlans();
+  // The billing plan dialog: null = closed, else { plan } (null plan = a new one).
+  const [billingEdit, setBillingEdit] = useState(null);
   const [pmModalOpen, setPmModalOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [customerRulesOpen, setCustomerRulesOpen] = useState(false);
@@ -1824,7 +1835,7 @@ Publish anyway?`
       // read, or what the document already carried — is decided in one place
       // (readDecisions), so this page and the inbox's bulk re-read agree.
       const {
-        patch, rule, descr, supplierName, categoryReason, projectReason, ruleLines,
+        patch, rule, descr, supplierName, categoryReason, projectReason, ruleLines, planned,
       } = readDecisions({ ...data, kind: doc.kind }, ex, {
         gstRegistered,
         taxRates: taxRateSource,
@@ -1892,6 +1903,16 @@ Publish anyway?`
         // extracted lines over an empty grid, or the two-line split an off-base
         // document gets. Rows already on the document that add up are kept.
         lineItems: 'lineItems' in patch ? patch.lineItems : d.lineItems,
+        // A billing plan codes over the supplier rule: its accounts and
+        // projects are what was saved.
+        ...(planned
+          ? {
+              category: planned.category,
+              categoryReason: planned.categoryReason,
+              ...(planned.project ? { project: planned.project, projectReason: planned.projectReason } : {}),
+              ...(planned.project2 ? { project2: planned.project2 } : {}),
+            }
+          : {}),
       }));
       if (doc?.persisted) {
         const r = await updateBill(doc.id, patch).catch(() => null);
@@ -2752,6 +2773,20 @@ Publish anyway?`
                 >
                   {isSales ? 'Set customer rules' : supplierRuleN > 0 ? `Edit supplier rules (${supplierRuleN})` : 'Set supplier rules'}
                 </button>
+                {!isSales && persisted && mayEditPlans && (
+                  <button
+                    type="button"
+                    onClick={() => setBillingEdit({ plan: plansForSupplier(data.supplier, billingPlans)[0] ?? null })}
+                    disabled={!supplierNamed}
+                    title={supplierNamed ? 'What this supplier’s quotation says its invoices will be made of' : 'Fill in the supplier first'}
+                    className={cn(
+                      'ml-4 mt-1 text-xs font-medium',
+                      supplierNamed ? 'text-emerald-600 hover:underline' : 'cursor-not-allowed text-muted-foreground/60'
+                    )}
+                  >
+                    {plansForSupplier(data.supplier, billingPlans).length ? 'Edit billing plan' : 'Set billing plan'}
+                  </button>
+                )}
                 {ruleApplied?.length > 0 && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     Standing rule applied — it set{' '}
@@ -3151,6 +3186,32 @@ Publish anyway?`
               )}
 
               <SectionHeading>Line items</SectionHeading>
+              {/* The supplier's billing plan: recorded from its quotation, and
+                  what an invoice is split by — or how it differs. */}
+              {persisted && !isSales && (
+                <div className="col-span-full mb-3 empty:hidden">
+                  <BillingPlanPanel
+                    doc={{
+                      ...persisted,
+                      type: data.type || persisted.type,
+                      supplier: data.supplier,
+                      total: data.total,
+                      tax: data.tax,
+                      taxRate: data.taxRate,
+                      date: data.date,
+                      currency: data.currency || persisted.currency,
+                      description: data.description,
+                      lineItems: data.lineItems,
+                    }}
+                    plans={billingPlans}
+                    rates={taxRateSource}
+                    published={Boolean(doc.xeroInvoiceId)}
+                    mayEdit={mayEditPlans}
+                    onEdit={(plan) => setBillingEdit({ plan })}
+                    onApply={setMany}
+                  />
+                </div>
+              )}
               <LineItemsGrid {...lineGrid} />
               <LineItemsActions
                 onExtract={extractLineItems}
@@ -3639,6 +3700,28 @@ Publish anyway?`
         gstRegistered={gstRegistered}
         onClose={() => setRulesOpen(false)}
         onApply={applySupplierRuleToForm}
+      />
+
+      <BillingPlanModal
+        open={Boolean(billingEdit)}
+        plan={
+          billingEdit?.plan ?? {
+            supplier: data.supplier || '',
+            // Recorded from the quotation itself, its number names the plan.
+            reference: isAdvanceDocument(data.type) || data.type === 'Other' ? data.ref || '' : '',
+            currency: data.currency || baseCurrency,
+            sourceBillId: persisted?.id || '',
+          }
+        }
+        doc={persisted}
+        categoryOptions={categoryOptions.filter((c) => c !== 'Uncategorised')}
+        projectOptions={projectOptions}
+        project2Options={project2Options}
+        projectLabel={singular(projectLabels.project)}
+        project2Label={singular(projectLabels.project2)}
+        taxRateOptions={gstRegistered ? taxRateOptions : []}
+        visionEnabled={visionEnabled}
+        onClose={() => setBillingEdit(null)}
       />
 
       <CustomerRulesModal

@@ -69,6 +69,8 @@ import { xeroBillUrl } from '@/lib/autoPublish';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import BankMatchCell from '@/components/BankMatchCell';
 import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
+import { billingPlanStatus } from '@/lib/billingPlan';
+import { useBillingPlans } from '@/lib/billingPlans';
 import { paperworkSuggestion } from '@/lib/paperworkMatch';
 import { useBankLines, invalidateBankLines } from '@/lib/bankStore';
 import { matchesByDoc, lineKey as bankLineKey } from '@/lib/bankMatch';
@@ -593,6 +595,14 @@ export default function Costs() {
   const tablePrefs = useTablePrefs('costs');
   const projectLabels = useProjectLabels();
   const bridge = useBridgeEntity(); // decides whether the Tax rate column exists
+  // What each supplier's quotation says its invoices will be made of.
+  const billingPlans = useBillingPlans();
+  // Why a waiting bill disagrees with its supplier's plan, or ''.
+  const planDiffers = (d) => {
+    if (!billingPlans.length || !isInInbox(d) || d.xeroInvoiceId) return '';
+    const s = billingPlanStatus({ ...d, documentType: d.type }, billingPlans);
+    return s && s.status !== 'applied' && s.status !== 'match' ? s.reason : '';
+  };
   const densityClass = DENSITY_CLASS[tablePrefs.density] || DENSITY_CLASS.Medium;
   // Documents under side-by-side duplicate review — held as ids and paired with
   // what they matched at render time, so the panes follow the live rows. Up here
@@ -637,6 +647,16 @@ export default function Costs() {
             >
               <AlertTriangle className="h-3 w-3" strokeWidth={2} /> Possible duplicate
             </button>
+          )}
+          {/* An amount the supplier's quotation does not explain: said on the
+              row, because it is worth knowing before the bill is paid. */}
+          {planDiffers(d) && (
+            <span
+              title={planDiffers(d)}
+              className="inline-flex items-start gap-1 rounded border border-amber-600/50 bg-amber-500/15 px-1.5 py-0.5 text-left text-[11px] font-medium leading-tight text-amber-800"
+            >
+              <AlertTriangle className="mt-px h-3 w-3 shrink-0" strokeWidth={2} /> Differs from billing plan
+            </span>
           )}
           {/* What the reader could not decide, on the row that is waiting for
               it — a document sitting in To review with no reason shown is just

@@ -34,6 +34,7 @@ import { recordMail, recordLinkFetch, mailById, trustAddressOf, type MailAttachm
 import { isTrustedSender, normaliseSender } from './trustedSenders.js';
 import { publishByRule } from './autoPublishRule.js';
 import { applyRuleInvoiceDate } from './ruleDate.js';
+import { billingPlanPatchFor } from './billingPlan.js';
 
 const norm = (s: string) => String(s ?? '').trim().toLowerCase();
 
@@ -397,6 +398,7 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     // emailed ones) is settled here. Without this an emailed document reached
     // the inbox with its Tax rate cell simply blank.
     const outcome = await decideTaxRate(inputs.taxCtx, d);
+    let splitNote = '';
     if (outcome) {
       // Only ever a REAL code. An empty string is indistinguishable from a
       // person choosing "no code", and would freeze the document blank for
@@ -428,6 +430,7 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       });
       if (split) {
         patch.lineItems = split.rows;
+        splitNote = split.note;
         patch.taxRateReason = `${String(patch.taxRateReason ?? '')}${split.note}`;
       }
     }
@@ -451,6 +454,29 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
       noteFollowed: d.noteFollowed,
       via: envelope?.via,
     });
+    // A supplier that invoices after the period it bills for: the rule moves the
+    // date to the end of the previous month (src/lib/ruleDate.js), the same as an
+    // upload or a re-read gets. The printed due date is left alone.
+    await applyRuleInvoiceDate(vendorRule, patch);
+    // The supplier's billing plan (billingPlan.ts): an invoice that agrees with
+    // what its quotation said is split into those lines, over the rule's single
+    // account. Not where the sender's note decided something — that is one
+    // person's instruction about this document — and never over rows already on
+    // it that add up.
+    if (!String(d.noteFollowed || '').trim()) {
+      const before = getBillById(scope, billId);
+      const planned = await billingPlanPatchFor(
+        ws,
+        realOrgId,
+        { ...(before || {}), ...patch },
+        { existingLines: before?.lineItems, printedTax: d.tax }
+      );
+      if (planned) {
+        Object.assign(patch, planned);
+        // The two-line split's note describes rows the plan has just replaced.
+        if (splitNote) patch.taxRateReason = String(patch.taxRateReason ?? '').replace(splitNote, '');
+      }
+    }
     // A rule's category or customer can be the half that makes it a recharge:
     // coded to a recharge account with a customer to bill, it is Rebillable
     // (src/lib/recharge.js), the same as the read and the re-read decide.
@@ -465,10 +491,6 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     ) {
       patch.rebillable = true;
     }
-    // A supplier that invoices after the period it bills for: the rule moves the
-    // date to the end of the previous month (src/lib/ruleDate.js), the same as an
-    // upload or a re-read gets. The printed due date is left alone.
-    await applyRuleInvoiceDate(vendorRule, patch);
     // Nothing named a project — not the supplier's rule, not the reader, not the
     // covering note — so the document follows its OWNER's default, which is what
     // an upload has always done and what the reader is told will happen. A bill

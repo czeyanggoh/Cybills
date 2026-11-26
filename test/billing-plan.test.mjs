@@ -1,0 +1,136 @@
+// What a quotation says future invoices are made of (src/lib/billingPlan.js),
+// against the case it was written for: The Bridgers' quotation to Yakson, whose
+// 2,400.00 monthly invoice is a development instalment and a subscription.
+import {
+  cleanPlan,
+  planProblems,
+  takesBillingPlan,
+  matchBillingPlan,
+  billingPlanPatch,
+  billingPlanStatus,
+  planMayWriteLines,
+  stageTotalCents,
+} from '../src/lib/billingPlan.js';
+
+let failures = 0;
+const check = (name, got, want) => {
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  if (!ok) failures++;
+  console.log(`${ok ? 'PASS' : `FAIL got=${JSON.stringify(got)} want=${JSON.stringify(want)}`}  ${name}`);
+};
+
+const DEV = '710 - Software Development';
+const SUB = '485 - Subscriptions';
+const plan = {
+  id: 'p1',
+  supplier: 'The Bridgers Pte Ltd',
+  reference: 'TB_QU_YAKSON_0001',
+  currency: 'SGD',
+  stages: [
+    {
+      id: 'dev', name: 'Development', from: '2026-04-01', to: '2026-08-31',
+      lines: [{ description: 'Development phase', amount: 2500, category: DEV }],
+    },
+    {
+      id: 'sub', name: 'Subscription', from: '2026-09-01', to: '',
+      lines: [
+        { description: 'Development cost instalment', amount: 900, category: DEV },
+        { description: 'Subscription', amount: 1500, category: SUB },
+      ],
+    },
+  ],
+};
+const invoice = {
+  kind: 'cost', documentType: 'Invoice', supplier: 'THE BRIDGERS PTE. LTD.', date: '2026-09-16',
+  currency: 'SGD', total: 2400, tax: 0, taxRate: 'No Tax', description: 'Subscription Sep 2026', lineItems: [],
+};
+
+check('a good plan has no problems', planProblems(plan), []);
+check('a line needs a category', planProblems({ ...plan, stages: [{ name: 'S', lines: [{ amount: 5 }] }] }), ['S: every line needs a category.']);
+check('a supplier and a line are needed', planProblems({ stages: [] }), ['Name the supplier.', 'Add at least one line with an amount.']);
+check('empty lines and stages are dropped', cleanPlan({ stages: [{ lines: [{}] }] }).stages, []);
+check('what an invoice comes to', stageTotalCents(plan.stages[1]), 240000);
+
+check('a bill is spoken about', takesBillingPlan(invoice), true);
+check('the quotation itself is not', takesBillingPlan({ ...invoice, documentType: 'Quotation' }), false);
+check('nor a payment proof', takesBillingPlan({ ...invoice, documentType: 'Payment proof' }), false);
+check('nor a sale', takesBillingPlan({ ...invoice, kind: 'sales' }), false);
+
+const hit = matchBillingPlan(invoice, [plan]);
+check('the invoice matches the subscription', [hit.status, hit.stage.name, hit.basis], ['match', 'Subscription', 'total']);
+check('split as agreed', hit.rows.map((r) => [r.category, r.net, r.tax, r.total]), [
+  [DEV, '900.00', '0.00', '900.00'],
+  [SUB, '1500.00', '0.00', '1500.00'],
+]);
+const patch = billingPlanPatch(hit);
+check('the document takes the largest line’s account', patch.category, SUB);
+check('and says why', patch.categoryReason, 'Billing plan TB_QU_YAKSON_0001: Subscription, 2 lines as agreed.');
+check('no project where the lines name none', 'project' in patch, false);
+
+check('a development month', matchBillingPlan({ ...invoice, date: '2026-05-01', total: 2500 }, [plan]).stage.name, 'Development');
+const off = matchBillingPlan({ ...invoice, total: 3600 }, [plan]);
+check('a third outlet is said, not fitted', [off.status, off.reason], [
+  'mismatch',
+  'Billing plan TB_QU_YAKSON_0001 expects SGD 2,400.00 (Subscription); this document is SGD 3,600.00.',
+]);
+check('the development fee after development', matchBillingPlan({ ...invoice, total: 2500 }, [plan]).status, 'mismatch');
+check('dated before the agreement', matchBillingPlan({ ...invoice, date: '2026-01-05' }, [plan]).status, 'outside');
+check('billed in another currency', matchBillingPlan({ ...invoice, currency: 'USD' }, [plan]).status, 'mismatch');
+check('another supplier: nothing', matchBillingPlan({ ...invoice, supplier: 'Windee' }, [plan]), null);
+check('unread: nothing', matchBillingPlan({ ...invoice, total: 0 }, [plan]), null);
+check('the browser’s date spelling', matchBillingPlan({ ...invoice, date: '16/09/2026' }, [plan]).status, 'match');
+check(
+  'two stages that could both be meant',
+  matchBillingPlan(invoice, [{ ...plan, stages: [plan.stages[1], { ...plan.stages[1], id: 'x', name: 'Renewal' }] }]).status,
+  'ambiguous'
+);
+
+// GST added on top of the quoted figures.
+const taxed = matchBillingPlan({ ...invoice, total: 2616, tax: 216, taxRate: 'Standard-Rated Purchases' }, [plan]);
+check('matched before GST', [taxed.status, taxed.basis], ['match', 'net']);
+check('GST shared by amount', taxed.rows.map((r) => [r.net, r.tax, r.total]), [
+  ['900.00', '81.00', '981.00'],
+  ['1500.00', '135.00', '1635.00'],
+]);
+const unclaimed = matchBillingPlan({ ...invoice, total: 2616, tax: 0 }, [plan], { printedTax: 216 });
+check('GST nobody may claim stays in the cost', unclaimed.rows.map((r) => [r.net, r.tax, r.total]), [
+  ['981.00', '0.00', '981.00'],
+  ['1635.00', '0.00', '1635.00'],
+]);
+// Quoted GST-inclusive, one line outside GST.
+const mixed = { ...plan, stages: [{ ...plan.stages[1], lines: [{ ...plan.stages[1].lines[0], taxRate: 'No Tax' }, plan.stages[1].lines[1]] }] };
+check(
+  'a No Tax line takes no GST',
+  matchBillingPlan({ ...invoice, tax: 123.85, taxRate: 'Standard-Rated Purchases' }, [mixed]).rows.map((r) => r.tax),
+  ['0.00', '123.85']
+);
+check(
+  'GST on a plan with no taxable line is said',
+  matchBillingPlan({ ...invoice, tax: 100, taxRate: 'No Tax' }, [plan]).status,
+  'mismatch'
+);
+
+const outlets = {
+  ...plan,
+  stages: [{ id: 'o', name: 'Subscription', lines: [
+    { amount: 1200, category: SUB, project: 'Wheelock' },
+    { amount: 1200, category: SUB, project: 'Wheelock' },
+  ] }],
+};
+check('a project every line shares goes on the document', billingPlanPatch(matchBillingPlan(invoice, [outlets])).project, 'Wheelock');
+
+const coded = { ...invoice, ...patch };
+check('coded from the plan', billingPlanStatus(coded, [plan]).status, 'applied');
+check('coded, with GST', billingPlanStatus({ ...invoice, total: 2616, tax: 216, lineItems: taxed.rows }, [plan]).status, 'applied');
+check('not yet coded', billingPlanStatus(invoice, [plan]).status, 'match');
+check(
+  'recoded by hand: offered again, not claimed as applied',
+  billingPlanStatus({ ...coded, lineItems: [{ ...coded.lineItems[0], category: SUB }, coded.lineItems[1]] }, [plan]).status,
+  'match'
+);
+
+check('no rows: a read may write them', planMayWriteLines([], 2400), true);
+check('rows that do not add up: replaced', planMayWriteLines([{ total: '100' }], 2400), true);
+check('rows that add up are somebody’s', planMayWriteLines([{ total: '2400.00' }], 2400), false);
+
+process.exit(failures ? 1 : 0);

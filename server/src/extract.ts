@@ -1607,6 +1607,132 @@ extractRouter.post('/classify-type', async (req, res) => {
   }
 });
 
+// --- Billing plan -------------------------------------------------------------
+// POST /api/costs/extract-billing-plan — body: { imageBase64, mediaType,
+// accounts?, categories?, projects?, provider? }. Reads a quotation or agreement
+// for what the supplier's FUTURE invoices will be made of, as a DRAFT of the
+// billing plan a person then confirms (src/lib/billingPlan.js). Nothing is
+// stored here: what a plan codes is a person's decision, and this only saves
+// them typing the stages and amounts.
+const PlanSchema = z.object({
+  supplier: z.string(),
+  reference: z.string(),
+  currency: z.string(),
+  stages: z.array(
+    z.object({
+      name: z.string(),
+      from: z.string(),
+      to: z.string(),
+      lines: z.array(
+        z.object({ description: z.string(), amount: z.number(), category: z.string(), project: z.string() })
+      ),
+    })
+  ),
+  notes: z.array(z.string()),
+});
+
+const PLAN_PROMPT =
+  'You read a supplier\'s quotation, agreement or order form and set out what the supplier\'s FUTURE INVOICES under it will be made of, so each can be checked and coded when it arrives.\n' +
+  '- A STAGE is a period of the agreement in which every invoice comes to the same amount, e.g. "Development phase" and then "Subscription". One stage per distinct recurring invoice.\n' +
+  '- A stage\'s lines are the parts of ONE invoice (one month, one instalment), never the contract total. Where the document says four phases are billed monthly, the invoice is one phase.\n' +
+  '- Where the document says what a charge is made of ("$450 development cost instalment + $750 subscription"), give each part its own line, multiplied by the quantity quoted (2 outlets: 900 and 1500). Give one line per site only where the document names the sites.\n' +
+  '- Amounts are as quoted. Where tax is quoted separately, give the amounts before tax and say so in `notes`. Never invent, estimate or pro-rate an amount.\n' +
+  '- `from` and `to` are the invoice dates a stage covers, as YYYY-MM-DD, ONLY where the document fixes them ("wef April 2026" is from 2026-04-01). A start that depends on an event ("after development completion") is an empty string, and is said in `notes`.\n' +
+  '- `category` is the account each line most plainly belongs to, from the list given, or empty where none plainly does. `project` is one of the listed projects only where the document names it for that line, else empty.\n' +
+  '- `notes`: short sentences naming what a person must confirm before relying on the plan — a start date that is not fixed, a contract term, a rate that changes with volume, a figure that does not add up, an unsigned copy. At most six.';
+
+extractRouter.post('/extract-billing-plan', async (req, res) => {
+  if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
+  if (refuseIfOverPlan(req, res)) return;
+  const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
+  const mediaType = typeof req.body?.mediaType === 'string' ? req.body.mediaType : '';
+  if (!imageBase64 || !ALLOWED_MEDIA.includes(mediaType)) {
+    return res.status(400).json({ error: 'invalid_image' });
+  }
+  const accounts = parseAccounts(req.body?.accounts);
+  const rawCats: unknown = req.body?.categories;
+  const plain = Array.isArray(rawCats)
+    ? rawCats.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+    : [];
+  const categories = accounts.length ? accounts.map((a) => `${a.code} - ${a.name}`) : plain;
+  const guide = accounts.length
+    ? accounts.map((a) => `${a.code} - ${a.name}${a.description ? `: ${a.description}` : ''}`).join('\n')
+    : plain.join('\n');
+  const projects = parseNamedRules(req.body?.projects).map((p) => p.name);
+  const str = (description: string) => ({ type: 'string', description });
+  const pick = (values: string[], description: string) => ({ type: 'string', enum: ['', ...values], description });
+  try {
+    const outcome = await readDocument({
+      provider: resolveProvider(req.body?.provider),
+      fileBase64: imageBase64,
+      mediaType,
+      maxTokens: 2000,
+      schemaName: 'billing_plan',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          supplier: str('The company that issued the document and will send the invoices.'),
+          reference: str('The quotation or agreement number, or empty.'),
+          currency: str('3-letter ISO currency code of the amounts.'),
+          stages: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                name: str('A short name for the stage, e.g. "Subscription".'),
+                from: str('YYYY-MM-DD, or empty.'),
+                to: str('YYYY-MM-DD, or empty.'),
+                lines: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      description: str('What this part of the invoice is for.'),
+                      amount: { type: 'number', description: 'Its amount on ONE invoice.' },
+                      category: pick(categories, 'The account, or empty.'),
+                      project: pick(projects, 'The project, or empty.'),
+                    },
+                    required: ['description', 'amount', 'category', 'project'],
+                  },
+                },
+              },
+              required: ['name', 'from', 'to', 'lines'],
+            },
+          },
+          notes: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['supplier', 'reference', 'currency', 'stages', 'notes'],
+      },
+      systemPrompt:
+        PLAN_PROMPT +
+        (guide ? `\n\nAccounts:\n${guide}` : '') +
+        (projects.length ? `\n\nProjects:\n${projects.join('\n')}` : ''),
+      prompt: `Today is ${new Date().toISOString().slice(0, 10)}. Set out the billing plan in this ${mediaType === PDF_MEDIA ? 'PDF' : 'image'}.`,
+    });
+    recordUsage(req, { feature: 'extract-billing-plan', provider: outcome.provider, model: outcome.model, usage: outcome.usage });
+    if (!outcome.ok) return res.status(502).json({ error: 'no_data' });
+    const parsed = PlanSchema.safeParse(outcome.json);
+    if (!parsed.success) return res.status(502).json({ error: 'no_data' });
+    const d = parsed.data;
+    res.json({
+      ok: true,
+      plan: {
+        supplier: notFiller(d.supplier),
+        reference: notFiller(d.reference),
+        currency: d.currency,
+        stages: d.stages,
+      },
+      notes: d.notes.map((n) => n.trim()).filter(Boolean).slice(0, 6),
+    });
+  } catch (err) {
+    console.error('[extract-billing-plan]', err);
+    res.status(502).json({ error: 'read_failed', message: (err as Error).message });
+  }
+});
+
 vaultRouter.post('/summarize', async (req, res) => {
   if (!visionEnabled) return res.status(503).json({ error: 'vision_not_configured' });
 

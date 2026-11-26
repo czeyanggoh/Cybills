@@ -1406,6 +1406,29 @@ is POSTED to Xero, not when it is committed. It is idempotent on the recorded
 overpayment. Contract: `deploy/PAYABLES.md` § A quotation paid in advance.
 Covered by `test/payables-prepay.test.mts`.
 
+**A quotation that sets future charges is a BILLING PLAN.** Cze, 26 Nov 2026:
+The Bridgers' quotation says each outlet pays $450 development instalment plus
+$750 subscription, and the invoices months later print one line of 2,400.00 —
+which a supplier rule can only code to one account. So the plan is recorded from
+the quotation (blob `cybills.billing-plans.v1`, per entity, admin-written):
+supplier, reference, currency, and STAGES, each with invoice-date bounds and the
+lines of ONE invoice (amount, category, projects, tax code).
+`src/lib/billingPlan.js` (pure, `npm test`, loaded by
+`server/src/billingPlan.ts`) is the rule: a bill from that supplier dated within
+a stage and equal to its lines' sum TO THE CENT — or equal before GST, where the
+supplier adds it on top — is written as those lines, the document's tax shared
+over the ones that carry it. Money never moves. Anything else is SAID, never
+fitted ("expects SGD 2,400.00; this document is SGD 3,600.00"), on the page and
+as a **Differs from billing plan** row badge; two stages that both fit apply
+neither. Applied on upload, re-read and the background read, over a supplier
+rule's category, never where a covering note decided something, and never over
+rows that already add up (the page offers **Apply billing plan**). An unattended
+publish is held for a supplier with a plan unless the bill is coded from it
+(`billingPlanHold`); a person's publish is not blocked.
+`POST /api/costs/extract-billing-plan` only DRAFTS a plan off the file for a
+person to confirm. Covered by `test/billing-plan.test.mjs` and
+`server/test/billing-plan.test.mts`.
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

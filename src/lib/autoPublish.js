@@ -5,6 +5,8 @@ import { getExtractionSettings } from '@/lib/extractionSettings';
 import { isPaymentProof } from '@/lib/paymentProof';
 import { isAdvanceDocument } from '@/lib/prepayment';
 import { matchSupplierRule } from '@/lib/supplierRules';
+import { billingPlanStatus } from '@/lib/billingPlan';
+import { getBillingPlans } from '@/lib/billingPlans';
 import {
   fetchXeroAccounts,
   fetchXeroTaxRates,
@@ -99,6 +101,10 @@ export async function autoPublishAfterRead(bill) {
     // Publishing it separately would post it twice.
     if (String(bill.status || '') === 'expenseclaim') return null;
     if (!isComplete(bill)) return null;
+    // The supplier has a billing plan and this bill is not coded from it — an
+    // amount the quotation does not explain is for a person to look at.
+    const planned = billingPlanStatus(bill, getBillingPlans());
+    if (planned && planned.status !== 'applied') return null;
 
     const accountCode = accountCodeFromCategory(bill.category);
     if (!accountCode) return null;

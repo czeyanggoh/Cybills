@@ -23,6 +23,8 @@ import { prepareUpload, isHeic } from '@/lib/image';
 import { getExtractionAccounts, useVisibleTaxRates, useManagedTaxRates, useXeroShortCode } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { autoPublishAfterRead, xeroBillUrl } from '@/lib/autoPublish';
+import { matchBillingPlan, billingPlanPatch, planMayWriteLines } from '@/lib/billingPlan';
+import { getBillingPlans } from '@/lib/billingPlans';
 import { getCustomerRule } from '@/lib/customerRules';
 import {
   matchSupplierRule,
@@ -667,6 +669,18 @@ export default function AddDocumentsDrawer({ open, onClose, claim = null, onAdde
             p.projectReason = `Nothing on the document pointed to a project, so it follows ${ownerName}'s default project.`;
           }
         }
+      }
+      // The supplier's billing plan (src/lib/billingPlan.js): an invoice that
+      // agrees with what its quotation said is split into those lines, over the
+      // rule's single account — decided last, from the document as it will
+      // stand. Not where the sender's note decided something, and never over
+      // rows already on it that add up.
+      if (kind === 'cost' && !noteDecided && planMayWriteLines(cur?.lineItems, cur?.total)) {
+        const match = matchBillingPlan({ ...cur, ...p, kind }, getBillingPlans(), {
+          printedTax: extracted?.tax,
+          rates: visibleTaxRates,
+        });
+        if (match?.status === 'match') Object.assign(p, billingPlanPatch(match));
       }
       const r = await updateBill(billId, p).then((res) => res?.bill).catch(() => null);
       return r ?? cur;

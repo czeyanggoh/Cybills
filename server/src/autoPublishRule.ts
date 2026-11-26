@@ -20,6 +20,7 @@ import { readSetting } from './settings.js';
 import { getOrganisation } from './organisations.js';
 import { getBillById, findDuplicate, type Candidate } from './store.js';
 import { postingCodesFor, postBillToXero } from './xero.js';
+import { billingPlanHold } from './billingPlan.js';
 
 export const RULE_PUBLISH_STATUSES = ['AUTHORISED', 'SUBMITTED'] as const;
 
@@ -66,6 +67,10 @@ export async function publishByRule(
       kind: bill.kind,
     };
     if (findDuplicate(scope, candidate, bill.id)) return { published: false, reason: 'possible_duplicate' };
+    // The supplier has a billing plan and this bill is not coded from it — an
+    // amount the quotation does not explain is for a person to look at.
+    const held = await billingPlanHold(ws, orgId, bill);
+    if (held) return { published: false, reason: held };
 
     const posting = await postingCodesFor(ws, orgId, bill);
     if (!posting.ok) return { published: false, reason: posting.error };

@@ -23,6 +23,8 @@ import { mileagePatch } from '@/lib/mileage';
 import { withAttendees } from '@/lib/attendees';
 import { starDescription } from '@/lib/description';
 import { rebillableFor } from '@/lib/recharge';
+import { matchBillingPlan, billingPlanPatch, planMayWriteLines } from '@/lib/billingPlan';
+import { getBillingPlans } from '@/lib/billingPlans';
 
 // What a re-read decided, given the document as it stands (`current`) and what
 // the reader returned (`ex`). `patch` is what to save; the rest is the working
@@ -280,6 +282,34 @@ export function readDecisions(
   // off the paper — so a second re-read lands on the same day, not a month back.
   if (rule.date) patch.date = rule.date;
   if (ruleLines.length && !current.lineItems?.length && !patch.lineItems) patch.lineItems = ruleLines;
+  // The supplier's billing plan (src/lib/billingPlan.js): an invoice that agrees
+  // with what its quotation said is split into those lines, over the rule's
+  // single account. Not where the sender's note decided something, and never over
+  // rows already on the document that add up — the same as the emailed read.
+  let planned = null;
+  if (!sale && !noteDecided && planMayWriteLines(current.lineItems, patch.total ?? current.total)) {
+    const match = matchBillingPlan(
+      {
+        kind: current.kind,
+        documentType: patch.documentType || current.documentType || current.type,
+        supplier: patch.supplier || current.supplier,
+        date: patch.date || current.date,
+        currency: patch.currency || current.currency,
+        total: patch.total ?? current.total,
+        tax: patch.tax ?? current.tax,
+        taxRate: patch.taxRate,
+        description: patch.description || current.description,
+      },
+      getBillingPlans(),
+      { printedTax: exTax, rates: taxRates }
+    );
+    if (match?.status === 'match') {
+      planned = billingPlanPatch(match);
+      // The two-line split's note describes rows the plan is replacing.
+      if (split && patch.lineItems === split.rows) patch.taxRateReason = patch.taxRateReason.replace(split.note, '');
+      Object.assign(patch, planned);
+    }
+  }
   // A mileage record's distance, and the total that follows from it at the
   // entity's rate per km. Decided last, because it overrules the money above:
   // the reader is told never to invent an amount for a journey, so `ex.total`
@@ -315,7 +345,7 @@ export function readDecisions(
 
   return {
     patch, rule, descr, inferredRate, rateReason: rate.reason, exTaxOut,
-    supplierName, categoryReason, projectReason, ruleLines,
+    supplierName, categoryReason, projectReason, ruleLines, planned,
   };
 }
 

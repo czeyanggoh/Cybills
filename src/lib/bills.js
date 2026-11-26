@@ -235,6 +235,23 @@ export async function fetchClassifyType(imageBase64, mediaType, fileName = '') {
   return data?.ok ? { documentType: String(data.documentType || ''), reason: String(data.reason || '') } : null;
 }
 
+// Draft a billing plan off a quotation or agreement: what the supplier's future
+// invoices will be made of. Returns { plan, notes }, for a person to confirm;
+// throws with the server's words when the read did not come back.
+export async function fetchBillingPlanDraft(imageBase64, mediaType, accounts) {
+  ({ base64: imageBase64, mediaType } = await readableForReader(imageBase64, mediaType));
+  const projects = await getExtractionProjects().catch(() => []);
+  const categories = await getExtractionCategories().catch(() => []);
+  const res = await fetch('/api/costs/extract-billing-plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...orgHeaders() },
+    body: JSON.stringify({ imageBase64, mediaType, accounts, categories, projects, provider: requestedProvider() }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body?.ok) throw new Error(body?.message || 'Could not read a billing plan off this document.');
+  return { plan: body.plan, notes: body.notes ?? [] };
+}
+
 export async function fetchExtractLines(imageBase64, mediaType, accounts) {
   ({ base64: imageBase64, mediaType } = await readableForReader(imageBase64, mediaType));
   const instructions = await fetchReviewInstructions(getActiveOrganisationId());
