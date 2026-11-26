@@ -10,6 +10,8 @@ import {
   billingPlanStatus,
   planMayWriteLines,
   stageTotalCents,
+  stageProgress,
+  progressText,
 } from '../src/lib/billingPlan.js';
 
 let failures = 0;
@@ -127,6 +129,35 @@ check(
   'recoded by hand: offered again, not claimed as applied',
   billingPlanStatus({ ...coded, lineItems: [{ ...coded.lineItems[0], category: SUB }, coded.lineItems[1]] }, [plan]).status,
   'match'
+);
+
+// --- how much is left to bill ----------------------------------------------------
+const run = { ...plan.stages[1], quantity: 24, billedBefore: 1 };
+const counted = { ...plan, stages: [plan.stages[0], run] };
+const book = [
+  { ...invoice, id: 'b', invoiceNumber: 'INV-0014', date: '2026-10-16' },
+  { ...coded, id: 'a', invoiceNumber: 'INV-0013' },
+  { ...invoice, id: 'c', invoiceNumber: 'inv 0013' },
+  { ...invoice, id: 'd', invoiceNumber: 'INV-0015', status: 'deleted' },
+  { ...invoice, id: 'e', invoiceNumber: 'INV-0016', duplicateOfId: 'a' },
+  { ...invoice, id: 'f', invoiceNumber: 'INV-0017', total: 3600 },
+  { ...invoice, id: 'g', documentType: 'Quotation' },
+  { ...invoice, id: 'h', supplier: 'Windee' },
+];
+const sofar = stageProgress(counted, run, book);
+check('oldest first, each invoice number once', sofar.invoices.map((d) => d.id), ['a', 'b']);
+check('with what was billed elsewhere', [sofar.billed, sofar.left, sofar.over], [3, 21, 0]);
+check('said in words', progressText(sofar, run, 'SGD'), '3 of 24 billed · 21 left (SGD 50,400.00)');
+check('all billed', progressText(stageProgress(counted, { ...run, quantity: 3 }, book), run, 'SGD'), 'All 3 billed');
+check('one more than agreed', progressText(stageProgress(counted, { ...run, quantity: 2 }, book), run, 'SGD'), '3 billed, 1 more than the 2 agreed');
+const open = stageProgress(counted, plan.stages[1], book);
+check('no quantity: counted, nothing said to be left', [open.billed, open.left, progressText(open, plan.stages[1], 'SGD')], [2, null, '']);
+check('a stage keeps its own dates', stageProgress(counted, plan.stages[0], book).invoices.length, 0);
+check('quantities are whole numbers', cleanPlan({ stages: [{ quantity: '24', billedBefore: -2, lines: [{ amount: 1 }] }] }).stages.map((s) => [s.quantity, s.billedBefore]), [[24, 0]]);
+check(
+  'more billed than agreed is refused',
+  planProblems({ ...plan, stages: [{ ...run, quantity: 2, billedBefore: 3 }] }),
+  ['Subscription: more invoices already billed than the stage runs to.']
 );
 
 check('no rows: a read may write them', planMayWriteLines([], 2400), true);

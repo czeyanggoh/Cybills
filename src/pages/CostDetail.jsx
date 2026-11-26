@@ -3202,8 +3202,10 @@ Publish anyway?`
                       currency: data.currency || persisted.currency,
                       description: data.description,
                       lineItems: data.lineItems,
+                      invoiceNumber: data.ref,
                     }}
                     plans={billingPlans}
+                    docs={inboxAllDocs}
                     rates={taxRateSource}
                     published={Boolean(doc.xeroInvoiceId)}
                     mayEdit={mayEditPlans}
@@ -3714,6 +3716,7 @@ Publish anyway?`
           }
         }
         doc={persisted}
+        docs={inboxAllDocs}
         categoryOptions={categoryOptions.filter((c) => c !== 'Uncategorised')}
         projectOptions={projectOptions}
         project2Options={project2Options}

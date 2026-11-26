@@ -1,5 +1,5 @@
 import { CalendarClock, Check, TriangleAlert } from 'lucide-react';
-import { billingPlanPatch, billingPlanStatus, planLabel, plansForSupplier, stageTotalCents, takesBillingPlan } from '@/lib/billingPlan';
+import { billingPlanPatch, billingPlanStatus, planLabel, plansForSupplier, progressText, stageProgress, stageTotalCents, takesBillingPlan } from '@/lib/billingPlan';
 import { isAdvanceDocument } from '@/lib/prepayment';
 import { cn } from '@/lib/utils';
 
@@ -15,11 +15,14 @@ const actionCls =
   'inline-flex h-9 items-center rounded-md border-2 border-foreground px-4 text-sm font-semibold transition-colors hover:bg-muted';
 const linkCls = 'text-sm text-muted-foreground underline-offset-2 hover:underline';
 
-export default function BillingPlanPanel({ doc, plans, rates, published, mayEdit, onEdit, onApply }) {
+export default function BillingPlanPanel({ doc, plans, docs = [], rates, published, mayEdit, onEdit, onApply }) {
   if (!doc?.persisted || (doc.kind && doc.kind !== 'cost')) return null;
   const mine = plansForSupplier(doc.supplier, plans);
   const type = String(doc.type || '').toLowerCase();
   const source = isAdvanceDocument(doc.type) || type === 'other';
+  // The book with this document as it stands on screen. Counted for an admin
+  // only: somebody who sees just their own documents would count short.
+  const book = mayEdit ? [...docs.filter((d) => d.id !== doc.id), doc] : [];
 
   if (source) {
     if (!mine.length && !mayEdit) return null;
@@ -30,16 +33,21 @@ export default function BillingPlanPanel({ doc, plans, rates, published, mayEdit
           Billing plan
         </div>
         {mine.length ? (
-          <div className="space-y-2 text-sm">
+          <div className="space-y-3 text-sm">
             {mine.map((p) => (
-              <div key={p.id} className="flex flex-wrap items-center justify-between gap-2">
-                <span>
+              <div key={p.id} className="space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium">{planLabel(p)}</span>
-                  <span className="text-muted-foreground">
-                    {' '}· {p.stages.map((s) => `${s.name} ${(stageTotalCents(s) / 100).toFixed(2)}`).join(' · ')}
-                  </span>
-                </span>
-                {mayEdit && <button type="button" className={linkCls} onClick={() => onEdit(p)}>Edit</button>}
+                  {mayEdit && <button type="button" className={linkCls} onClick={() => onEdit(p)}>Edit</button>}
+                </div>
+                {p.stages.map((s) => {
+                  const run = mayEdit ? progressText(stageProgress(p, s, book), s, p.currency) : '';
+                  return (
+                    <p key={s.id} className="text-muted-foreground">
+                      {s.name} · {(stageTotalCents(s) / 100).toFixed(2)} an invoice{run ? ` · ${run}` : ''}
+                    </p>
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -64,6 +72,12 @@ export default function BillingPlanPanel({ doc, plans, rates, published, mayEdit
   // A published bill is in the ledger; what is left to say is only that it
   // followed the plan.
   if (published && !applied) return null;
+  // Where this invoice sits in its stage's run, and what is still to come.
+  const progress = mayEdit && (applied || match) ? stageProgress(status.plan, status.stage, book) : null;
+  const nth = progress ? progress.invoices.findIndex((d) => d.id === doc.id) + 1 : 0;
+  const run = progress ? progressText(progress, status.stage, status.plan.currency) : '';
+  const place = nth ? progress.billedBefore + nth : 0;
+  const beyond = Boolean(progress?.quantity && place > progress.quantity);
 
   return (
     <div className="rounded-lg border bg-background p-4">
@@ -83,6 +97,12 @@ export default function BillingPlanPanel({ doc, plans, rates, published, mayEdit
             ? `This invoice agrees with ${planLabel(status.plan)}, ${status.stage.name}: ${status.rows.map((r) => `${r.total} to ${r.category}`).join('; ')}.`
             : status.reason}
       </p>
+      {run && (
+        <p className={cn('mt-1 text-sm', beyond ? 'font-medium text-amber-700' : 'text-muted-foreground')}>
+          {place ? `This is invoice ${place}${beyond ? ', more than the plan agrees to' : ''}. ` : ''}
+          {run}.
+        </p>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-3 empty:hidden">
         {match && (
           <button

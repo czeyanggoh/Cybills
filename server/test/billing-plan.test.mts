@@ -175,7 +175,7 @@ app.use('/api/costs', extractRouter);
 const server = app.listen(4695, '127.0.0.1');
 answer = {
   supplier: 'THE BRIDGERS PTE LTD', reference: 'TB_QU_YAKSON_0001', currency: 'SGD',
-  stages: [{ name: 'Subscription', from: '', to: '', lines: [{ description: 'Subscription', amount: 1500, category: SUB, project: '' }] }],
+  stages: [{ name: 'Subscription', from: '', to: '', quantity: 24, lines: [{ description: 'Subscription', amount: 1500, category: SUB, project: '' }] }],
   notes: ['The start date depends on development completion.'],
 };
 const res = await fetch('http://127.0.0.1:4695/api/costs/extract-billing-plan', {
@@ -185,6 +185,7 @@ const res = await fetch('http://127.0.0.1:4695/api/costs/extract-billing-plan', 
 });
 const draft = (await res.json()) as any;
 check('a draft comes back', [res.status, draft.plan?.stages?.[0]?.lines?.[0]?.amount, draft.notes?.length], [200, 1500, 1]);
+check('…with how many invoices the stage runs to', draft.plan?.stages?.[0]?.quantity, 24);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, reader, relay, server);

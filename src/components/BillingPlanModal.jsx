@@ -4,8 +4,9 @@ import SearchSelect from '@/components/SearchSelect';
 import { fetchBillingPlanDraft } from '@/lib/bills';
 import { fileForDoc } from '@/lib/reRead';
 import { getExtractionAccounts } from '@/lib/organisations';
-import { planProblems, stageTotalCents } from '@/lib/billingPlan';
+import { planProblems, progressText, stageProgress, stageTotalCents } from '@/lib/billingPlan';
 import { deleteBillingPlan, saveBillingPlan } from '@/lib/billingPlans';
+import { cn } from '@/lib/utils';
 
 // The billing plan dialog: what a supplier's quotation says its invoices will be
 // made of (src/lib/billingPlan.js). Stages, each with the lines of ONE invoice;
@@ -17,7 +18,7 @@ const inputCls =
 let seq = 0;
 const key = () => `k${Date.now().toString(36)}${(seq += 1)}`;
 const emptyLine = () => ({ key: key(), description: '', amount: '', category: '', project: '', project2: '', taxRate: '' });
-const emptyStage = (name) => ({ id: key(), name, from: '', to: '', lines: [emptyLine()] });
+const emptyStage = (name) => ({ id: key(), name, from: '', to: '', quantity: '', billedBefore: '', lines: [emptyLine()] });
 const toForm = (plan) => ({
   id: plan?.id || '',
   supplier: plan?.supplier || '',
@@ -29,6 +30,9 @@ const toForm = (plan) => ({
         ...emptyStage(''),
         ...s,
         id: s.id || key(),
+        // A 0 is "not said": an empty box, not a figure.
+        quantity: s.quantity ? String(s.quantity) : '',
+        billedBefore: s.billedBefore ? String(s.billedBefore) : '',
         lines: (s.lines || []).map((l) => ({ ...emptyLine(), ...l, amount: l.amount ? String(l.amount) : '' })),
       }))
     : [emptyStage('Subscription')],
@@ -48,6 +52,8 @@ export default function BillingPlanModal({
   plan,
   // The document it is opened from, whose file the draft is read off.
   doc,
+  // The cost book, which what has been billed is counted off.
+  docs = [],
   categoryOptions = [],
   projectOptions = [],
   project2Options = [],
@@ -180,7 +186,9 @@ export default function BillingPlanModal({
             </Labelled>
           </div>
 
-          {form.stages.map((s) => (
+          {form.stages.map((s) => {
+            const progress = stageProgress(form, s, docs);
+            return (
             <div key={s.id} className="space-y-3 rounded-lg border p-4">
               <div className="grid grid-cols-1 items-end gap-3 md:grid-cols-[1fr_11rem_11rem_auto]">
                 <Labelled label="Stage">
@@ -243,6 +251,19 @@ export default function BillingPlanModal({
                 </div>
               ))}
 
+              <div className="grid grid-cols-1 items-end gap-3 md:grid-cols-[9rem_13rem_1fr]">
+                <Labelled label="Number of invoices">
+                  <input value={s.quantity} onChange={(e) => setStage(s.id, { quantity: e.target.value.replace(/\D/g, '') })} inputMode="numeric" placeholder="e.g. 24" className={inputCls} />
+                </Labelled>
+                <Labelled label="Already billed, not in CYBills">
+                  <input value={s.billedBefore} onChange={(e) => setStage(s.id, { billedBefore: e.target.value.replace(/\D/g, '') })} inputMode="numeric" placeholder="0" className={inputCls} />
+                </Labelled>
+                <p className={cn('pb-2 text-sm', progress.over ? 'text-amber-700' : 'text-muted-foreground')}>
+                  {progressText(progress, s, form.currency) ||
+                    `${progress.billed} billed so far. Enter the number of invoices to see how many are left.`}
+                </p>
+              </div>
+
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <button
                   type="button"
@@ -261,7 +282,8 @@ export default function BillingPlanModal({
                 </p>
               </div>
             </div>
-          ))}
+            );
+          })}
 
           <button
             type="button"

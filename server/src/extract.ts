@@ -1623,6 +1623,7 @@ const PlanSchema = z.object({
       name: z.string(),
       from: z.string(),
       to: z.string(),
+      quantity: z.number().optional().default(0),
       lines: z.array(
         z.object({ description: z.string(), amount: z.number(), category: z.string(), project: z.string() })
       ),
@@ -1636,6 +1637,7 @@ const PLAN_PROMPT =
   '- A STAGE is a period of the agreement in which every invoice comes to the same amount, e.g. "Development phase" and then "Subscription". One stage per distinct recurring invoice.\n' +
   '- A stage\'s lines are the parts of ONE invoice (one month, one instalment), never the contract total. Where the document says four phases are billed monthly, the invoice is one phase.\n' +
   '- Where the document says what a charge is made of ("$450 development cost instalment + $750 subscription"), give each part its own line, multiplied by the quantity quoted (2 outlets: 900 and 1500). Give one line per site only where the document names the sites.\n' +
+  '- `quantity` is how many invoices the stage runs to, where the document says or plainly implies it ("Total 4 phases" billed one phase at a time is 4; a 24-month contract billed monthly is 24). 0 where it does not.\n' +
   '- Amounts are as quoted. Where tax is quoted separately, give the amounts before tax and say so in `notes`. Never invent, estimate or pro-rate an amount.\n' +
   '- `from` and `to` are the invoice dates a stage covers, as YYYY-MM-DD, ONLY where the document fixes them ("wef April 2026" is from 2026-04-01). A start that depends on an event ("after development completion") is an empty string, and is said in `notes`.\n' +
   '- `category` is the account each line most plainly belongs to, from the list given, or empty where none plainly does. `project` is one of the listed projects only where the document names it for that line, else empty.\n' +
@@ -1684,6 +1686,7 @@ extractRouter.post('/extract-billing-plan', async (req, res) => {
                 name: str('A short name for the stage, e.g. "Subscription".'),
                 from: str('YYYY-MM-DD, or empty.'),
                 to: str('YYYY-MM-DD, or empty.'),
+                quantity: { type: 'number', description: 'How many invoices the stage runs to; 0 if not stated.' },
                 lines: {
                   type: 'array',
                   items: {
@@ -1699,7 +1702,7 @@ extractRouter.post('/extract-billing-plan', async (req, res) => {
                   },
                 },
               },
-              required: ['name', 'from', 'to', 'lines'],
+              required: ['name', 'from', 'to', 'quantity', 'lines'],
             },
           },
           notes: { type: 'array', items: { type: 'string' } },

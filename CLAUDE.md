@@ -1429,6 +1429,14 @@ publish is held for a supplier with a plan unless the bill is coded from it
 person to confirm. Covered by `test/billing-plan.test.mjs` and
 `server/test/billing-plan.test.mts`.
 
+**And a stage counts down.** `quantity` is how many invoices it runs to (drafted
+off the file where it says), `billedBefore` those billed outside the book.
+`stageProgress` counts the supplier's bills coded from the stage or agreeing to
+the cent, one per invoice number, never a deleted, merged or flagged duplicate,
+and the plan dialog and panel say "3 of 24 billed · 21 left (SGD 50,400.00)",
+for an admin alone (anyone else's book is partial). An invoice beyond the
+quantity is warned on its page; matching and publishing are unchanged.
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

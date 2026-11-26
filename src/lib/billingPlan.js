@@ -9,9 +9,12 @@
 // agrees with it to the cent is written as those lines.
 //
 // A plan: { id, supplier, reference, currency, sourceBillId, stages }, and a
-// stage: { id, name, from, to, lines: [{ description, amount, category, project,
-// project2, taxRate }] }. A stage's amounts are those of ONE invoice, and `from`
-// / `to` bound the invoice dates it covers (blank = open).
+// stage: { id, name, from, to, quantity, billedBefore, lines: [{ description,
+// amount, category, project, project2, taxRate }] }. A stage's amounts are those
+// of ONE invoice, and `from` / `to` bound the invoice dates it covers (blank =
+// open). `quantity` is how many invoices the stage runs to (0 = not said) and
+// `billedBefore` how many of them were billed outside this book, so what is
+// still to be billed can be counted (stageProgress).
 //
 // Three rules hold it:
 //   - it never changes a document's money: the rows add up to its total and its
@@ -49,6 +52,9 @@ const sayDay = (iso) => {
   return y ? `${d} ${MONTHS[m - 1]} ${y}` : '';
 };
 
+// A count of invoices: a whole number, never below zero.
+const whole = (v) => Math.max(0, Math.floor(num(v)));
+
 export const planLabel = (plan) => text(plan?.reference) || text(plan?.supplier) || 'billing plan';
 
 export const stageTotalCents = (stage) => (stage?.lines || []).reduce((s, l) => s + cents(l?.amount), 0);
@@ -61,6 +67,8 @@ export function cleanPlan(raw) {
       name: text(s?.name) || `Stage ${i + 1}`,
       from: isoDay(s?.from),
       to: isoDay(s?.to),
+      quantity: whole(s?.quantity),
+      billedBefore: whole(s?.billedBefore),
       lines: (Array.isArray(s?.lines) ? s.lines : [])
         .filter((l) => cents(l?.amount) !== 0 || text(l?.category) || text(l?.description))
         .map((l) => ({
@@ -94,6 +102,7 @@ export function planProblems(raw) {
     if (s.lines.some((l) => !l.category || l.category === 'Uncategorised')) out.push(`${s.name}: every line needs a category.`);
     if (stageTotalCents(s) <= 0) out.push(`${s.name}: the invoice amount must be above zero.`);
     if (s.from && s.to && s.from > s.to) out.push(`${s.name}: the end date is before the start date.`);
+    if (s.quantity && s.billedBefore > s.quantity) out.push(`${s.name}: more invoices already billed than the stage runs to.`);
   }
   return out;
 }
@@ -276,11 +285,68 @@ function followsStage(doc, stage) {
  */
 export function billingPlanStatus(doc, plans, opts) {
   if (!doc || !takesBillingPlan(doc)) return null;
+  const date = isoDay(doc.date);
   for (const plan of plansForSupplier(doc.supplier, plans)) {
-    const stage = cleanPlan(plan).stages.find((s) => followsStage(doc, s));
+    // Two stages can carry the same lines (a renewal): the one covering the
+    // invoice's date is the one it is billed under.
+    const same = cleanPlan(plan).stages.filter((s) => followsStage(doc, s));
+    const stage = same.find((s) => !date || ((!s.from || date >= s.from) && (!s.to || date <= s.to))) || same[0];
     if (stage) return { status: 'applied', plan, stage };
   }
   return matchBillingPlan(doc, plans, opts);
+}
+
+/**
+ * How far one stage of a plan has been billed, counted off the book:
+ *   { quantity, billedBefore, invoices, billed, left, over }
+ * `invoices` are the supplier's bills coded from the stage, or agreeing with it
+ * to the cent, oldest first. One invoice number counts once, and a deleted,
+ * merged-away or flagged duplicate document not at all. `left` is null where the
+ * stage states no quantity.
+ */
+export function stageProgress(plan, stage, docs) {
+  const one = { ...plan, stages: [stage] };
+  const wanted = cleanPlan(one).stages[0];
+  const seen = new Set();
+  const invoices = [];
+  const dated = (d) => isoDay(d?.date) || '9999-99-99';
+  const book = (Array.isArray(docs) ? docs : [])
+    .filter(Boolean)
+    .sort((a, b) => dated(a).localeCompare(dated(b)) || String(a.id).localeCompare(String(b.id)));
+  for (const d of wanted ? book : []) {
+    if (['deleted', 'merged'].includes(text(d.status)) || (d.duplicateOfId && !d.duplicateDismissed)) continue;
+    if (plan.sourceBillId && d.id === plan.sourceBillId) continue;
+    // The browser's list calls an untyped document 'Document'.
+    const doc = { ...d, documentType: d.documentType ?? d.type };
+    const status = billingPlanStatus(doc, [one]);
+    if (status?.status !== 'applied' && status?.status !== 'match') continue;
+    const number = text(d.invoiceNumber).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (number) {
+      if (seen.has(number)) continue;
+      seen.add(number);
+    }
+    invoices.push(d);
+  }
+  const quantity = whole(stage?.quantity);
+  const billedBefore = whole(stage?.billedBefore);
+  const billed = billedBefore + invoices.length;
+  return {
+    quantity,
+    billedBefore,
+    invoices,
+    billed,
+    left: quantity ? Math.max(0, quantity - billed) : null,
+    over: quantity ? Math.max(0, billed - quantity) : 0,
+  };
+}
+
+/** "3 of 24 billed · 21 left (SGD 50,400.00)", or '' where no quantity is set. */
+export function progressText(progress, stage, currency) {
+  if (!progress?.quantity) return '';
+  const { billed, quantity, left, over } = progress;
+  if (over) return `${billed} billed, ${over} more than the ${quantity} agreed`;
+  if (!left) return `All ${quantity} billed`;
+  return `${billed} of ${quantity} billed · ${left} left (${money(currency, left * stageTotalCents(stage))})`;
 }
 
 /**
