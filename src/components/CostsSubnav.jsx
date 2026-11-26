@@ -29,6 +29,7 @@ export default function CostsSubnav() {
         (pathname.startsWith('/costs/') &&
           pathname !== '/costs/exports' &&
           pathname !== '/costs/retrieve' &&
+          pathname !== '/costs/billing-plans' &&
           !itemInClaim)
       );
     }
@@ -45,9 +46,12 @@ export default function CostsSubnav() {
     { label: 'Costs inbox', count: counts.costs, to: '/costs' },
     { label: 'Expense claims', count: counts.expenseClaims, pending: pendingApprovals, to: '/expense-claims' },
     { label: 'Supplier statements', to: '/supplier-statements' },
-    // Supplier-portal logins — the entity's own credentials, so offered to the
-    // Business Admin the route is guarded for.
-    ...(canManageBusiness(membership, googleEnabled) ? [{ label: 'Retrieve', to: '/costs/retrieve' }] : []),
+    // Supplier-portal logins (the entity's own credentials) and billing plans
+    // (counted off the whole book) — offered to the Business Admin their routes
+    // are guarded for.
+    ...(canManageBusiness(membership, googleEnabled)
+      ? [{ label: 'Billing plans', to: '/costs/billing-plans' }, { label: 'Retrieve', to: '/costs/retrieve' }]
+      : []),
     { label: 'Exports', to: '/costs/exports' },
   ];
 

@@ -12,6 +12,7 @@ import {
   stageTotalCents,
   stageProgress,
   progressText,
+  planOverview,
 } from '../src/lib/billingPlan.js';
 
 let failures = 0;
@@ -159,6 +160,18 @@ check(
   planProblems({ ...plan, stages: [{ ...run, quantity: 2, billedBefore: 3 }] }),
   ['Subscription: more invoices already billed than the stage runs to.']
 );
+
+const seenAs = planOverview(counted, book);
+check('the page: each stage with its invoices', seenAs.stages.map((s) => [s.stage.name, s.invoices.map((i) => [i.doc.id, i.place, i.coded])]), [
+  ['Development', []],
+  ['Subscription', [['a', 2, true], ['b', 3, false]]],
+]);
+check('…invoiced and still to come', [seenAs.stages[1].invoicedCents, seenAs.stages[1].leftCents, seenAs.leftCents], [480000, 5040000, 5040000]);
+check('…and what the plan does not explain', seenAs.differing.map((x) => x.doc.id), ['f']);
+const other = { ...counted, id: 'p2', stages: [{ id: 'z', name: 'Extra', lines: [{ amount: 3600, category: SUB }] }] };
+check('a second agreement claims its own invoices', planOverview(counted, book, [counted, other]).differing, []);
+const twice = { ...counted, stages: [run, { ...run, id: 'again', name: 'Renewal' }] };
+check('two stages that could both mean it: neither counts it', stageProgress(twice, run, [book[0]]).invoices.length, 0);
 
 check('no rows: a read may write them', planMayWriteLines([], 2400), true);
 check('rows that do not add up: replaced', planMayWriteLines([{ total: '100' }], 2400), true);

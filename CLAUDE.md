@@ -1436,6 +1436,9 @@ the cent, one per invoice number, never a deleted, merged or flagged duplicate,
 and the plan dialog and panel say "3 of 24 billed · 21 left (SGD 50,400.00)",
 for an admin alone (anyone else's book is partial). An invoice beyond the
 quantity is warned on its page; matching and publishing are unchanged.
+**Costs -> Billing plans** (`BillingPlans.jsx`, Business Admin, `planOverview`)
+shows every plan with a bar per stage, the invoices counted, what is still to
+come, and the supplier's bills the plan does not explain.
 
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:

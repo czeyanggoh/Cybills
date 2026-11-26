@@ -10,6 +10,9 @@ const emit = () => window.dispatchEvent(new Event(BILLING_PLANS_EVENT));
 // This entity's own agreements: never inherited from another's.
 const store = blobStore(KEY, { plans: [] }, emit, { perOrg: true, inheritLegacy: false });
 
+// Whether the server has said what this entity's plans are yet.
+export const billingPlansReady = () => store.ready();
+
 export const getBillingPlans = () => {
   const plans = store.get()?.plans;
   return Array.isArray(plans) ? plans : [];

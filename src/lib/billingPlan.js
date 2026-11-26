@@ -296,6 +296,30 @@ export function billingPlanStatus(doc, plans, opts) {
   return matchBillingPlan(doc, plans, opts);
 }
 
+// The documents of a book that can count against a plan, oldest first: never a
+// deleted, merged-away or flagged duplicate one, nor the quotation the plan was
+// recorded from, and one invoice number once.
+function countable(plan, docs) {
+  const seen = new Set();
+  const dated = (d) => isoDay(d?.date) || '9999-99-99';
+  return (Array.isArray(docs) ? docs : [])
+    .filter(Boolean)
+    .sort((a, b) => dated(a).localeCompare(dated(b)) || String(a.id).localeCompare(String(b.id)))
+    .filter((d) => {
+      if (['deleted', 'merged'].includes(text(d.status)) || (d.duplicateOfId && !d.duplicateDismissed)) return false;
+      if (plan.sourceBillId && d.id === plan.sourceBillId) return false;
+      if (!sameSupplier(d.supplier, plan.supplier)) return false;
+      const number = text(d.invoiceNumber).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!number || !takesBillingPlan(asBill(d))) return true;
+      if (seen.has(number)) return false;
+      seen.add(number);
+      return true;
+    });
+}
+
+// The browser's list calls a document's type `type`; the rules read either.
+const asBill = (d) => ({ ...d, documentType: d.documentType ?? d.type });
+
 /**
  * How far one stage of a plan has been billed, counted off the book:
  *   { quantity, billedBefore, invoices, billed, left, over }
@@ -305,28 +329,15 @@ export function billingPlanStatus(doc, plans, opts) {
  * stage states no quantity.
  */
 export function stageProgress(plan, stage, docs) {
-  const one = { ...plan, stages: [stage] };
-  const wanted = cleanPlan(one).stages[0];
-  const seen = new Set();
-  const invoices = [];
-  const dated = (d) => isoDay(d?.date) || '9999-99-99';
-  const book = (Array.isArray(docs) ? docs : [])
-    .filter(Boolean)
-    .sort((a, b) => dated(a).localeCompare(dated(b)) || String(a.id).localeCompare(String(b.id)));
-  for (const d of wanted ? book : []) {
-    if (['deleted', 'merged'].includes(text(d.status)) || (d.duplicateOfId && !d.duplicateDismissed)) continue;
-    if (plan.sourceBillId && d.id === plan.sourceBillId) continue;
-    // The browser's list calls an untyped document 'Document'.
-    const doc = { ...d, documentType: d.documentType ?? d.type };
-    const status = billingPlanStatus(doc, [one]);
-    if (status?.status !== 'applied' && status?.status !== 'match') continue;
-    const number = text(d.invoiceNumber).toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (number) {
-      if (seen.has(number)) continue;
-      seen.add(number);
-    }
-    invoices.push(d);
-  }
+  // Judged against the whole plan, so an invoice two stages could both mean is
+  // counted for neither rather than for both.
+  const known = (plan?.stages || []).some((s) => s.id === stage?.id);
+  const within = known ? plan : { ...plan, stages: [stage] };
+  const wanted = known ? stage.id : cleanPlan(within).stages[0]?.id;
+  const invoices = countable(plan, docs).filter((d) => {
+    const status = billingPlanStatus(asBill(d), [within]);
+    return (status?.status === 'applied' || status?.status === 'match') && status.stage.id === wanted;
+  });
   const quantity = whole(stage?.quantity);
   const billedBefore = whole(stage?.billedBefore);
   const billed = billedBefore + invoices.length;
@@ -347,6 +358,48 @@ export function progressText(progress, stage, currency) {
   if (over) return `${billed} billed, ${over} more than the ${quantity} agreed`;
   if (!left) return `All ${quantity} billed`;
   return `${billed} of ${quantity} billed · ${left} left (${money(currency, left * stageTotalCents(stage))})`;
+}
+
+/**
+ * One plan as the progress page shows it:
+ *   { stages: [{ stage, progress, eachCents, invoicedCents, leftCents,
+ *       invoices: [{ doc, place, coded }] }],
+ *     differing: [{ doc, reason }], leftCents }
+ * `place` is the invoice's number in the stage's run and `coded` whether its
+ * lines are already the stage's. `differing` are the supplier's bills this plan
+ * does not explain. `leftCents` is what stages with a stated quantity have still
+ * to bill, or null where none states one. `allPlans` lets a second agreement with
+ * the same supplier claim its own invoices.
+ */
+export function planOverview(plan, docs, allPlans = [plan]) {
+  const stages = cleanPlan(plan).stages.map((stage) => {
+    const progress = stageProgress(plan, stage, docs);
+    const eachCents = stageTotalCents(stage);
+    return {
+      stage,
+      progress,
+      eachCents,
+      invoicedCents: progress.invoices.reduce((s, d) => s + cents(d.total), 0),
+      leftCents: progress.left == null ? null : progress.left * eachCents,
+      invoices: progress.invoices.map((doc, i) => ({
+        doc,
+        place: progress.billedBefore + i + 1,
+        coded: billingPlanStatus(asBill(doc), [plan])?.status === 'applied',
+      })),
+    };
+  });
+  const differing = [];
+  for (const doc of countable(plan, docs)) {
+    const status = billingPlanStatus(asBill(doc), allPlans);
+    if (!status || status.status === 'applied' || status.status === 'match') continue;
+    if (status.plan.id === plan.id) differing.push({ doc, reason: status.reason });
+  }
+  const stated = stages.filter((s) => s.leftCents != null);
+  return {
+    stages,
+    differing,
+    leftCents: stated.length ? stated.reduce((s, x) => s + x.leftCents, 0) : null,
+  };
 }
 
 /**

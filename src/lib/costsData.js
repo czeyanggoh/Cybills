@@ -78,6 +78,9 @@ function listFor(docs, key) {
 // invisible: a Sales inbox that quietly stopped noticing a finished read.
 export function useDocsOfKind(kind) {
   const [uploaded, setUploaded] = useState([]);
+  // Whether the book has come back at all: a page that counts it must not show
+  // zeroes while it is still on its way.
+  const [loaded, setLoaded] = useState(false);
   // Only the latest fetch may write. An entity switch, a roster load and the
   // poll can all have one in flight, and an older answer landing last would put
   // the entity just left back on screen — or rows mapped before the names had
@@ -91,6 +94,7 @@ export function useDocsOfKind(kind) {
     // Each workspace shows only its own: a bill you received is not an invoice
     // you issued, and a supplier statement is neither.
     setUploaded(bills.map(billToDoc).filter((d) => d.kind === kind));
+    setLoaded(true);
   }, [kind]);
 
   useEffect(() => {
@@ -142,7 +146,7 @@ export function useDocsOfKind(kind) {
     };
   }, [reload]);
 
-  return { allDocs: uploaded, sampleDocs: [], uploaded, reload };
+  return { allDocs: uploaded, sampleDocs: [], uploaded, loaded, reload };
 }
 
 export function useCostsDocs() {

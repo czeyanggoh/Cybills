@@ -17,6 +17,7 @@ import Sales from './pages/Sales';
 import Whatsapp from './pages/Whatsapp';
 import Email from './pages/Email';
 import Retrieve from './pages/Retrieve';
+import BillingPlans from './pages/BillingPlans';
 import Customers from './pages/Customers';
 import Exports from './pages/Exports';
 import Bank from './pages/Bank';
@@ -69,6 +70,9 @@ function App() {
             {/* Supplier-portal logins CYBills signs into for their invoices. The
                 entity's credentials, so Business Admin, as on the server. */}
             <Route path="/costs/retrieve" element={<RequireBusinessAdmin><Retrieve /></RequireBusinessAdmin>} />
+            {/* How far each supplier's billing plan has got. Counted off the
+                whole book, so Business Admin, who sees all of it. */}
+            <Route path="/costs/billing-plans" element={<RequireBusinessAdmin><BillingPlans /></RequireBusinessAdmin>} />
             <Route path="/costs/:id" element={<Protected><CostDetail /></Protected>} />
             <Route path="/sales" element={<SalesRoute><Sales /></SalesRoute>} />
             <Route path="/sales/exports" element={<SalesRoute><Exports workspace="sales" /></SalesRoute>} />
