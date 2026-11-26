@@ -66,6 +66,9 @@ export const DEFAULT_EXTRACTION_SETTINGS = {
   // purpose: nobody looked at that document, so it goes into an approval queue
   // rather than straight into the payable ledger.
   publishStatus: 'AUTHORISED',
+  // A bill in a currency this entity's Xero does not hold: add the currency to Xero (PUT /Currencies) so
+  // the bill posts in its own currency, instead of converting it to the base currency. On for every entity.
+  autoAddCurrency: true,
   extractTax: true,
   // Post a document to Xero as Awaiting Approval as soon as it's been read —
   // see autoPublish.js for the conditions it insists on first. OFF by default:

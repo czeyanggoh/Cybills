@@ -1174,6 +1174,8 @@ stated one):
   stated one) and never the bare number — 1.2930 and 0.7734 are twins, and the
   value alone will never tell you they have been swapped.
 
+**A missing currency is ADDED to the entity's Xero first** (Cze, 26 Nov 2026: a TWD invoice for Nucleo was posted as SGD 27,045.66 because TWD was not in Xero's list, and could then not be paid through Wise in TWD). `inPostableCurrency` (and the claim path) now tries `PUT /Currencies` (`addCurrency`, `autoAddCurrencyOn`; needs Xero's multi-currency plan and the app's accounting.settings scope, which the relay holds) and, when Xero takes it, posts in the bill's own currency, caching the currency as held. A refusal falls back to the old conversion at the day's rate and SAYS so on the bill's first line ("; TWD could not be added to this Xero: <Xero's reason>") and in `converted.addFailed`. **Per entity, ON by default**: Business settings -> Extraction -> Publishing -> **Add a missing currency to Xero** (`autoAddCurrency`, only an explicit `false` turns it off). Xero's API cannot remove a currency. Covered by `publish-bill` (5e) and `claim-foreign-currency`.
+
 **An org without multi-currency is posted in its base currency.** Xero refuses
 a bill in a currency the org doesn't hold, so a MYR Grab receipt in a SGD-only
 Xero could not be published at all. `inPostableCurrency` (`xero.ts`, inside

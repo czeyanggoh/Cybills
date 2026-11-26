@@ -10,6 +10,7 @@ import {
 } from './organisations.js';
 import { workspaceId } from './workspace.js';
 import { readSetting } from './settings.js';
+import { WORKSPACE_ID } from './workspace.js';
 import { loadAccountSides } from './accountSides.js';
 import { referenceFor, dateFor } from './claimRef.js';
 import { apportion, costComplete, costDate, displayIdOf, getBillById, getBillByIdAny, isCreditNote, listBills, markBillPosted, markBillXeroPayment, parseAmount, totalComplete, type Bill } from './store.js';
@@ -1259,6 +1260,32 @@ async function currenciesFor(tenantId: string): Promise<Set<string> | null> {
   return codes;
 }
 
+
+// Add a currency to an organisation's Xero (PUT /Currencies) so a bill in it can
+// be posted in its own currency instead of being converted to the base one. On
+// by default for every entity; Business settings -> Extraction -> Publishing
+// turns it off per entity (`autoAddCurrency: false`). Xero refuses when the
+// organisation's plan has no multi-currency; that is a "no", said on the bill,
+// never an error — the document is then converted as before.
+export function autoAddCurrencyOn(orgId: string): boolean {
+  if (!orgId) return false;
+  const s = readSetting<{ autoAddCurrency?: unknown }>(WORKSPACE_ID, 'cybills.extraction-settings.v1', orgId);
+  return s?.autoAddCurrency !== false;
+}
+
+async function addCurrency(tenantId: string, code: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!/^[A-Z]{3}$/.test(code)) return { ok: false, reason: 'not a currency code' };
+  const result = await relay('Currencies', { method: 'PUT', tenantId, body: { Code: code } });
+  const text = result.ok ? '' : String(result.message || result.error || result.status);
+  // Already held (another path added it, or the cached list was old) counts as added.
+  if (!result.ok && !/already|exists|in use/i.test(text)) {
+    return { ok: false, reason: text.replace(/^xero_api_failed:\s*\d{3}\s*/, '').replace(/\s+/g, ' ').slice(0, 160) || `Xero answered ${result.status}` };
+  }
+  const hit = orgCurrencies.get(tenantId);
+  if (hit) hit.codes.add(code); else orgCurrencies.delete(tenantId);
+  return { ok: true };
+}
+
 // A foreign-currency document headed for an org that cannot hold its currency
 // is posted in the org's BASE currency instead, converted at the rate of the
 // day. The document's own SGD restatement wins where it printed one (the
@@ -1272,7 +1299,7 @@ async function currenciesFor(tenantId: string): Promise<Set<string> | null> {
 // currency list could not be read (post as before and let Xero answer), or the
 // document is already in the base currency. Only the POSTED copy is converted;
 // the document keeps the paper's own currency and figures.
-type Converted = { from: string; to: string; rate: number; total: number; source: 'document' | 'bank' | 'day' };
+type Converted = { from: string; to: string; rate: number; total: number; source: 'document' | 'bank' | 'day'; addFailed?: string };
 // The bank statement line a document is being paid against, where there is one
 // — a card line for a foreign purchase states what it cost in the bank's
 // currency, which is the truest rate there is.
@@ -1292,7 +1319,8 @@ async function paysForeignAmount(doc: unknown, line: unknown): Promise<boolean> 
 async function inPostableCurrency(
   bill: Bill,
   tenantId: string,
-  payingLine?: PayingLine | null
+  payingLine?: PayingLine | null,
+  orgId = ''
 ): Promise<{ ok: true; bill: Bill; converted: Converted | null } | { ok: false; status: number; body: any }> {
   const from = String(bill.currency ?? '').trim().toUpperCase();
   if (!from) return { ok: true, bill, converted: null };
@@ -1300,6 +1328,13 @@ async function inPostableCurrency(
   if (!base || base === from) return { ok: true, bill, converted: null };
   const codes = await currenciesFor(tenantId);
   if (!codes || codes.has(from)) return { ok: true, bill, converted: null };
+  // Not held: add it (when the entity allows), so the bill goes up in its own currency.
+  let addFailed = '';
+  if (autoAddCurrencyOn(orgId)) {
+    const added = await addCurrency(tenantId, from);
+    if (added.ok) return { ok: true, bill, converted: null };
+    addFailed = added.reason;
+  }
 
   const cents = (n: number) => Math.round(n * 100);
   const total = parseAmount(bill.total);
@@ -1374,7 +1409,7 @@ async function inPostableCurrency(
       baseTax: 0,
       exchangeRate: 0,
     } as Bill,
-    converted: { from, to: base, rate, total, source },
+    converted: { from, to: base, rate, total, source, ...(addFailed ? { addFailed } : {}) },
   };
 }
 
@@ -1680,7 +1715,7 @@ async function buildBillInvoice(
   const docType: XeroDocType = docTypeForBill(source);
   const facing = isCreditDoc(docType) ? creditNoteFacingUp(source) : source;
   // An org without multi-currency posts everything in its base currency.
-  const postable = await inPostableCurrency(facing, organisation.tenantId, opts.payingLine);
+  const postable = await inPostableCurrency(facing, organisation.tenantId, opts.payingLine, organisation.id);
   if (!postable.ok) return postable;
   const bill = postable.bill;
   const converted = postable.converted;
@@ -1755,7 +1790,7 @@ async function buildBillInvoice(
   // Said on the bill itself, so whoever reads the ledger can see the paper was
   // in another currency and at what rate it came across.
   if (converted && lineItems[0]) {
-    const note = `(${converted.from} ${converted.total.toFixed(2)} @ ${Number(converted.rate.toFixed(6))} ${converted.to}/${converted.from})`;
+    const note = `(${converted.from} ${converted.total.toFixed(2)} @ ${Number(converted.rate.toFixed(6))} ${converted.to}/${converted.from}${converted.addFailed ? `; ${converted.from} could not be added to this Xero: ${converted.addFailed}` : ''})`;
     lineItems[0] = { ...lineItems[0], Description: `${String(lineItems[0].Description ?? '').trim()} ${note}`.trim() };
   }
 
@@ -3461,7 +3496,10 @@ async function buildClaimInvoice(
   const claimCcy = String(claim.currency ?? '').trim().toUpperCase();
   const base = claimCcy ? await baseCurrencyFor(target.tenantId) : '';
   if (claimCcy && base && base !== claimCcy) {
-    const held = await currenciesFor(target.tenantId);
+    let held = await currenciesFor(target.tenantId);
+    if (held && !held.has(claimCcy) && autoAddCurrencyOn((target as any).id || '')) {
+      if ((await addCurrency(target.tenantId, claimCcy)).ok) held = new Set([...held, claimCcy]);
+    }
     if (held && !held.has(claimCcy)) {
       const rate = await dayRate(claimCcy, base, date);
       if (!(rate > 0)) {

@@ -885,6 +885,15 @@ function Extraction() {
             options={PUBLISH_STATUSES.map((o) => o.label)}
           />
         </Row>
+        <Row
+          label="Add a missing currency to Xero"
+          hint="A bill in a currency this entity's Xero does not hold (a TWD invoice in an SGD-only Xero) cannot be posted in that currency, and used to be converted to the base currency at the day's rate — which is wrong for a bill that will be paid in its own currency. With this on, CYBills first adds the currency to the Xero organisation (Xero allows it only on a multi-currency plan; the currency stays in the list afterwards) and posts the bill in its own currency. If Xero refuses, the bill is converted as before and says so on its first line. Off leaves your Xero settings alone and always converts."
+        >
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={form.autoAddCurrency !== false} onChange={(e) => set('autoAddCurrency', e.target.checked)} />
+            Add the currency to Xero when it is missing
+          </label>
+        </Row>
       </Card>
 
       {/* A mileage claim is a cost with no receipt behind it: a map route, an

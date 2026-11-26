@@ -48,7 +48,10 @@ const stub = http.createServer((req, res) => {
     return;
   }
   if (path.endsWith('/Organisation')) { res.end(JSON.stringify({ Organisations: [{ BaseCurrency: 'SGD' }] })); return; }
-  if (path.endsWith('/Currencies')) { res.end(JSON.stringify({ Currencies: [{ Code: 'SGD' }] })); return; }
+  if (path.endsWith('/Currencies')) {
+    if (req.method === 'PUT') { res.statusCode = 400; res.end(JSON.stringify({ error: 'xero_api_failed', message: 'xero_api_failed: 400 Multi-currency is not available on this plan' })); return; }
+    res.end(JSON.stringify({ Currencies: [{ Code: 'SGD' }] })); return;
+  }
   if (path.endsWith('/TrackingCategories')) { res.end(JSON.stringify({ TrackingCategories: [] })); return; }
   if (path.endsWith('/Invoices')) {
     let body = '';

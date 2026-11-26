@@ -30,6 +30,10 @@ writeFileSync(
 // --- stub relay --------------------------------------------------------------
 let posted: any = null;
 const linked: any[] = [];
+// PUT /Currencies: refused unless a test allows it (an org on a plan without multi-currency).
+let allowCurrencyPut = false;
+const currencyPuts: string[] = [];
+const heldExtra = new Set<string>();
 const stub = http.createServer((req, res) => {
   const path = decodeURIComponent(String(req.url)).split('?')[0];
   res.setHeader('content-type', 'application/json');
@@ -48,7 +52,19 @@ const stub = http.createServer((req, res) => {
   // The org holds SGD and USD, and nothing else: no MYR, so a MYR document
   // has to come across in SGD.
   if (path.endsWith('/Currencies')) {
-    res.end(JSON.stringify({ Currencies: [{ Code: 'SGD' }, { Code: 'USD' }] }));
+    if (req.method === 'PUT') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        const code = String(JSON.parse(body || '{}').Code || '');
+        currencyPuts.push(code);
+        if (!allowCurrencyPut) { res.statusCode = 400; res.end(JSON.stringify({ error: 'xero_api_failed', message: 'xero_api_failed: 400 Multi-currency is not available on this plan' })); return; }
+        heldExtra.add(code);
+        res.end(JSON.stringify({ Currencies: [{ Code: code }] }));
+      });
+      return;
+    }
+    res.end(JSON.stringify({ Currencies: [{ Code: 'SGD' }, { Code: 'USD' }, ...[...heldExtra].map((Code) => ({ Code }))] }));
     return;
   }
   // The day's exchange rate, standing in for Frankfurter.
@@ -344,7 +360,7 @@ check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 
   check('no multi-currency: no CurrencyRate sent', out.posted.CurrencyRate, undefined);
   const sum = out.posted.LineItems.reduce((a: number, l: any) => a + Math.round((l.UnitAmount + l.TaxAmount) * 100), 0);
   check('no multi-currency: lines add up to 309 x 0.305', sum / 100, 94.25);
-  check('no multi-currency: the rate is said on the bill', /\(MYR 309\.00 @ 0\.305 SGD\/MYR\)/.test(out.posted.LineItems[0].Description), true);
+  check('no multi-currency: the rate is said on the bill', /\(MYR 309\.00 @ 0\.305 SGD\/MYR[;)]/.test(out.posted.LineItems[0].Description), true);
   check('no multi-currency: the reply says so', [out.body.converted?.from, out.body.converted?.to], ['MYR', 'SGD']);
 
   // Being paid against a card line that states the USD amount, the bill takes
@@ -500,6 +516,37 @@ check('no rows: the document project', r.posted.LineItems[0].Tracking, [{ Name: 
   ]);
   const ok = await publish(bill({ total: '50', tax: '0', taxRate: '' }).id);
   check('not GST-registered: a blank code still publishes', ok.status, 200);
+}
+
+// 5e) A currency the org does not hold is ADDED to Xero (on by default) and the
+//     bill posts in its own currency; a refusal falls back to conversion and says
+//     so; the entity can turn it off.
+{
+  const mk = () => bill({ supplier: 'Freedom Systems', currency: 'JPY', date: '2026-09-20', total: '9000', tax: '0' }).id;
+  allowCurrencyPut = true;
+  const added = await publish(mk());
+  check('auto-add: published', added.status, 200);
+  check('auto-add: the currency was added to Xero', currencyPuts.filter((c) => c === 'JPY').length, 1);
+  check('auto-add: posted in the bill\'s own currency', added.posted.CurrencyCode, 'JPY');
+  check('auto-add: not converted', added.body.converted ?? null, null);
+  const again = await publish(mk());
+  check('auto-add: a currency now held is not added twice', [currencyPuts.filter((c) => c === 'JPY').length, again.posted.CurrencyCode], [1, 'JPY']);
+
+  allowCurrencyPut = false;
+  const refused = await publish(bill({ supplier: 'Freedom Systems', currency: 'CAD', date: '2026-09-20', total: '100', tax: '0' }).id);
+  check('auto-add refused: posted in SGD as before', refused.posted.CurrencyCode, 'SGD');
+  check('auto-add refused: the bill says why', /CAD could not be added to this Xero: Multi-currency is not available on this plan/.test(refused.posted.LineItems[0].Description), true);
+
+  const { loadCollection, saveCollection } = await import('../src/jsonStore.ts');
+  saveCollection('settings', [
+    ...loadCollection<any>('settings'),
+    { workspaceId: 'cybm', key: 'cybills.extraction-settings.v1::org-1', value: { autoAddCurrency: false } },
+  ]);
+  allowCurrencyPut = true;
+  const before = currencyPuts.length;
+  const off = await publish(bill({ supplier: 'Freedom Systems', currency: 'NOK', date: '2026-09-20', total: '100', tax: '0' }).id);
+  check('auto-add off: no request to Xero', currencyPuts.length, before);
+  check('auto-add off: converted as before', off.posted.CurrencyCode, 'SGD');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
