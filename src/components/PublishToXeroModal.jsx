@@ -9,7 +9,9 @@ import {
   publishBillToXero,
   updateBillInXero,
   useXeroShortCode,
+  fetchCashAccounts,
 } from '@/lib/organisations';
+import { useCashMode } from '@/lib/cashMode';
 import { lineItemsPostable } from '@/lib/bills';
 import { isCreditNote, totalOk, effectiveDate, dateFromSubmission, counterpartyUnnamed, unknownCounterparty } from '@/lib/readiness';
 import { useGstRegistered } from '@/lib/businessProfile';
@@ -71,6 +73,21 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   // opens the right organisation rather than whichever one the browser last had.
   const xeroShortCode = useXeroShortCode();
 
+  // Cash mode (server/src/cashMode.ts): the document posts as money that has
+  // moved, so what is asked is the account and the day, not a status. An update
+  // follows what the document was PUBLISHED as, whatever the setting says now.
+  const activeCash = useCashMode();
+  const chosen = organisations.find((o) => o.id === organisationId);
+  const cash = updating
+    ? ['SPEND', 'RECEIVE'].includes(bill?.xeroDocType)
+    : organisationId && organisationId !== getActiveOrganisationId()
+      ? Boolean(chosen?.cashMode)
+      : activeCash;
+  const [cashAccounts, setCashAccounts] = useState(null); // null = loading
+  const [paidFrom, setPaidFrom] = useState('');
+  const [paidDate, setPaidDate] = useState('');
+  const [cashPayment, setCashPayment] = useState(null);
+
   // A company that isn't GST-registered publishes everything as No Tax, whatever
   // the bill still carries — the last gate before a stale code reaches Xero.
   const gstRegistered = useGstRegistered();
@@ -96,7 +113,34 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
     setNotApplied([]);
     setRepay(false);
     setRepayResult(null);
+    setCashPayment(null);
+    setPaidDate(/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate(bill)) ? effectiveDate(bill) : '');
   }, [open]);
+
+  // The bank and card accounts to pay from, preselecting the document's own
+  // Payment method where it names one of them.
+  useEffect(() => {
+    if (!open || !organisationId || !cash || updating) return undefined;
+    let alive = true;
+    setCashAccounts(null);
+    setPaidFrom('');
+    fetchCashAccounts(organisationId)
+      .then((list) => {
+        if (!alive) return;
+        setCashAccounts(list);
+        const method = String(bill?.paymentMethod ?? '').trim().toLowerCase();
+        const own = method ? list.find((a) => a.label.toLowerCase() === method) : null;
+        if (own) setPaidFrom(own.accountId);
+      })
+      .catch((err) => {
+        if (!alive) return;
+        setCashAccounts([]);
+        setError(`Could not load the bank accounts from Xero: ${err.message}`);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, organisationId, cash, updating]);
 
   // Load the chosen organisation's chart of accounts + tax rates.
   useEffect(() => {
@@ -212,7 +256,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   // — once it is in Xero — by what it was posted as, since an update has to go
   // to the record that exists.
   const credit = updating ? String(bill?.xeroDocType ?? '').endsWith('CREDIT') : isCreditNote(bill);
-  const paidInXero = updating && !credit && String(bill?.xeroStatus ?? '').toUpperCase() === 'PAID';
+  const paidInXero = !cash && updating && !credit && String(bill?.xeroStatus ?? '').toUpperCase() === 'PAID';
   // One dialog for both workspaces, because it is one act: pick the account,
   // pick the tax code, post it. What differs is which side of the ledger the
   // document lands on — and that is the server's answer, read from the
@@ -220,12 +264,14 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   // "Publish this bill" over a page showing a sales invoice names a document
   // that is not on the screen.
   const sale = String(bill?.kind ?? 'cost') === 'sales';
-  const noun = credit ? 'credit note' : sale ? 'sales invoice' : 'bill';
+  // Money in for a sale, out for a cost; a credit note runs the other way.
+  const moneyName = sale === credit ? 'Spend Money' : 'Receive Money';
+  const noun = cash ? 'transaction' : credit ? 'credit note' : sale ? 'sales invoice' : 'bill';
   // Marked Paid with the account it was paid from: the publish posts it
   // Approved and records the payment from that account (paidOnPublish on the
   // server). Not where a bank line or a prepayment already pays it.
   const paidFromMethod =
-    !updating && !credit && bill?.paid === true && !bill?.bankMatch && !bill?.prepaymentMatch
+    !cash && !updating && !credit && bill?.paid === true && !bill?.bankMatch && !bill?.prepaymentMatch
       ? String(bill?.paymentMethod ?? '').trim()
       : '';
   const missing = (() => {
@@ -247,6 +293,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
   const hasDate = missing.length === 0;
   const canPublish = Boolean(
     organisationId && accountCode && taxType && hasDate && !publishing && !done && (lines.rows === 0 || lines.postable)
+      && (!cash || updating || bill?.bankMatch || (paidFrom && paidDate))
   );
   const organisation = organisations.find((o) => o.id === organisationId);
 
@@ -262,9 +309,13 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
         // Updating: only send a status when the reviewer picked one, so
         // correcting an approved bill's coding can't knock it back to draft.
         status: updating && !status ? undefined : status,
-        dueDate: dueDate || undefined,
+        dueDate: cash ? undefined : dueDate || undefined,
         repay: paidInXero && repay ? true : undefined,
+        // A matched bank line names its own account and day.
+        paidFrom: cash && !updating && !bill?.bankMatch ? paidFrom : undefined,
+        paidDate: cash && !updating && !bill?.bankMatch ? paidDate : undefined,
       });
+      setCashPayment(result.cashPayment ?? null);
       setDone(result.invoice);
       setPostedLines(Number(result.lines) || 0);
       setAttachment(result.attachment ?? null);
@@ -308,12 +359,22 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
             <p className="text-sm">
               {updating ? 'Updated in ' : 'Posted to '}
               <span className="font-medium">{organisation?.tenantName || 'Xero'}</span>
-              {updating ? '' : ` as a ${done.status === 'DRAFT' ? 'draft ' : ''}${done.docType === 'ACCPAYCREDIT' ? 'credit note' : 'bill'}`}
+              {updating
+                ? ''
+                : done.docType === 'SPEND' || done.docType === 'RECEIVE'
+                  ? ` as ${done.docType === 'SPEND' ? 'Spend Money' : 'Receive Money'}`
+                  : ` as a ${done.status === 'DRAFT' ? 'draft ' : ''}${done.docType === 'ACCPAYCREDIT' ? 'credit note' : 'bill'}`}
               {done.invoiceNumber ? ` (${done.invoiceNumber})` : ''}
               {postedLines > 1 ? `, as ${postedLines} line items` : ''}.
             </p>
             {attachment?.ok && (
               <p className="text-xs text-muted-foreground">The document is attached to it under Related Files.</p>
+            )}
+            {cashPayment && (
+              <p className="max-w-sm text-xs text-muted-foreground">
+                {cashPayment.currency} {Number(cashPayment.amount || 0).toFixed(2)} {done.docType === 'RECEIVE' ? 'into' : 'from'}{' '}
+                {cashPayment.account} on {cashPayment.date}.
+              </p>
             )}
             {bankPayment?.ok && !bankPayment.skipped && (
               <p className="max-w-sm text-xs text-muted-foreground">
@@ -403,13 +464,13 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
             )}
             {rebilled && !rebilled.ok && (
               <p className="max-w-sm text-xs text-amber-700">
-                The bill posted, but it could not be marked billable to the customer: {rebilled.error} Assign it by
-                hand in Xero with “Assign expenses to a customer”.
+                The {noun} posted, but it could not be marked billable to the customer: {rebilled.error}
+                {cash ? '' : ' Assign it by hand in Xero with “Assign expenses to a customer”.'}
               </p>
             )}
             {attachment && !attachment.ok && (
               <p className="max-w-sm text-xs text-amber-700">
-                The bill posted, but its file could not be attached: {attachment.error} You can retry with
+                The {noun} posted, but its file could not be attached: {attachment.error} You can retry with
                 “Send file to Xero” on the document, or attach it by hand in Xero.
               </p>
             )}
@@ -464,9 +525,11 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                 {bill?.total ? ` · ${bill.currency || ''} ${bill.total}` : ''}
                 {updating
                   ? ` to the ${noun} it already created in Xero, replacing what is there.`
-                  : credit
-                    ? ' as a supplier credit note — the amount is credited, not owed.'
-                    : ' as a supplier bill.'}
+                  : cash
+                    ? ` as ${moneyName}.`
+                    : credit
+                      ? ' as a supplier credit note — the amount is credited, not owed.'
+                      : ' as a supplier bill.'}
               </p>
               {/* What stands in for what the paper did not say, said before the
                   click rather than found in the ledger afterwards. */}
@@ -486,14 +549,21 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               {/* A quotation paid in advance that this invoice uses up: applied
                   straight after the bill is posted, which is why it posts
                   Approved (Xero applies an overpayment to nothing less). */}
-              {!updating && bill?.prepaymentMatch && (
+              {!cash && !updating && bill?.prepaymentMatch && (
                 <p className="rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900">
                   <span className="font-medium">Prepayment will be applied.</span> {bill.prepaymentMatch.currency}{' '}
                   {Number(bill.prepaymentMatch.amount || 0).toFixed(2)} paid in advance on {bill.prepaymentMatch.reference || 'the quotation'} is
                   applied to the bill straight after it is posted.
                 </p>
               )}
-              {!updating && bill?.bankMatch && (
+              {cash && !updating && bill?.bankMatch && (
+                <p className="rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900">
+                  <span className="font-medium">Matched to the bank line.</span> Posts as {moneyName} of {bill.bankMatch.currency}{' '}
+                  {Math.abs(Number(bill.bankMatch.amount) || 0).toFixed(2)} from {bill.bankMatch.bankAccountName || 'the bank account'} on{' '}
+                  {bill.bankMatch.date}, so the statement line reconciles.
+                </p>
+              )}
+              {!cash && !updating && bill?.bankMatch && (
                 <p className="rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900">
                   <span className="font-medium">Payment will be applied.</span> {bill.bankMatch.currency}{' '}
                   {Math.abs(Number(bill.bankMatch.amount) || 0).toFixed(2)} from {bill.bankMatch.bankAccountName || 'the bank account'} on{' '}
@@ -529,8 +599,9 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
               )}
               {updating && !paidInXero && (
                 <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                  Xero decides what may still change: a bill that has been paid or voided refuses an
-                  update, and says so.
+                  {cash
+                    ? 'A transaction reconciled against a bank statement line can’t be changed from here — change it in Xero.'
+                    : 'Xero decides what may still change: a bill that has been paid or voided refuses an update, and says so.'}
                 </p>
               )}
               {paidInXero && (
@@ -646,7 +717,37 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                   {/* Nothing falls due on a credit note — it is allocated
                       against a bill or refunded — and Xero's credit notes have
                       no due date field, so the row is not offered. */}
-                  {!credit && (
+                  {cash && !updating && !bill?.bankMatch && (
+                    <>
+                      <label className="flex items-center gap-3 text-sm">
+                        <span className="w-28 shrink-0 text-muted-foreground">{moneyName === 'Spend Money' ? 'Paid from' : 'Paid into'}</span>
+                        <div className="relative flex-1">
+                          <select value={paidFrom} onChange={(e) => setPaidFrom(e.target.value)} disabled={!cashAccounts} className={selectClass}>
+                            <option value="">{cashAccounts ? 'Select a bank or card account' : 'Loading accounts…'}</option>
+                            {(cashAccounts ?? []).map((a) => (
+                              <option key={a.accountId} value={a.accountId}>
+                                {a.label}
+                                {a.currency ? ` · ${a.currency}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        </div>
+                      </label>
+                      <label className="flex items-center gap-3 text-sm">
+                        <span className="w-28 shrink-0 text-muted-foreground">Date paid</span>
+                        <input
+                          type="date"
+                          value={paidDate}
+                          onChange={(e) => setPaidDate(e.target.value)}
+                          title="The day the money moved — the date the transaction is posted on"
+                          className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        />
+                      </label>
+                    </>
+                  )}
+
+                  {!cash && !credit && (
                     <label className="flex items-center gap-3 text-sm">
                       <span className="w-28 shrink-0 text-muted-foreground">Due date</span>
                       <input
@@ -659,6 +760,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                     </label>
                   )}
 
+                  {!cash && (
                   <label className="flex items-center gap-3 text-sm">
                     <span className="w-28 shrink-0 text-muted-foreground">{updating ? 'Status' : 'Post as'}</span>
                     {/* A bank-matched bill is posted Approved whatever is picked
@@ -688,6 +790,7 @@ export default function PublishToXeroModal({ open, onClose, bill, onPublished, o
                       </div>
                     )}
                   </label>
+                  )}
                 </>
               )}
 

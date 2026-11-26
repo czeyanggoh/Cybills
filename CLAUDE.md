@@ -4375,6 +4375,45 @@ every page (`StorageBanner.jsx`) and the Clients page details
 endpoint, path-style — what lets `test/storage-care.test.mts` drive all of it
 against a stub.
 
+## Cash mode: an entity that posts only Spend and Receive Money
+
+Cze, 26 Nov 2026: some clients don't subscribe to full Xero, so there are no
+bills or invoices, only Spend / Receive Money. Business settings -> Extraction ->
+Publishing -> **Cash mode** (`cashMode` in the extraction-settings blob, off by
+default). `server/src/cashMode.ts` holds the setting and the record's shape;
+`cashModeFor` is asked of the entity whose Xero RECEIVES the posting, so a bridge
+follows its parent (`cashMode` on the organisations listing says so to the
+browser; `useCashMode`).
+
+- **One road still.** `postBillToXero` keeps every refusal and then hands over to
+  `postCashToXero`: one `BankTransactions` record, never an invoice, credit note
+  or payment. Cost = SPEND, sale = RECEIVE, a credit note the other way
+  (positive figures). `xeroDocType` records `SPEND` / `RECEIVE`, `xeroInvoiceId`
+  the BankTransactionID, and the document is Paid on that date at once.
+- **Money must have moved through a BANK account** (credit cards are BANK in
+  Xero): the matched bank line's, else the dialog's pick (`paidFrom`), else the
+  Payment method of a document marked Paid (`cashAccountFor`). Otherwise 422
+  `no_bank_account`, never a guess. So a bulk or unattended publish takes only
+  documents that say it themselves.
+- **Date**: the bank line's, else `paidDate`, else the document's. **Currency**:
+  the account's — a foreign document is converted (`convertBill`: bank figure,
+  else the paper's restatement, else the day's rate).
+- **Bank match** posts the line as the transaction itself, card fee as a second
+  line, and records the match with `cash: true`. **Undo deletes the transaction
+  and unpublishes the document.**
+- **Update in Xero** restates the transaction (same account, date, reference). A
+  reconciled one is refused here. What was published as a bill stays a bill, and
+  a document published as a transaction is updated as one whatever the setting
+  says now.
+- **Claims**: publish asks `paidFrom` + `paidDate` (`CashClaimModal`) and posts
+  ONE Spend Money to the claimant; `claim.xeroDocType = 'SPEND'`.
+- **Off**: quotation prepayments, billable-expense links (said in the reply),
+  and CYWS payment runs (not listed; publish answers 409 `cash_mode`). CYWS's
+  bank-recon settle works; its reply has no `paymentId`.
+
+Not yet run against a real cash-only Xero subscription. Covered by `npm test` in
+`server/` (`test/cash-mode.test.mts`).
+
 ## Xero via the cyworkspace relay
 
 CYBills never holds Xero credentials. All Xero traffic goes through

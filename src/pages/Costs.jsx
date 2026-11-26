@@ -35,6 +35,7 @@ import {
 } from '@/lib/organisations';
 import { useGstRegistered, useBusinessProfile } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName, publishStatusLabel, taxForCode } from '@/lib/extractionSettings';
+import { useCashMode, hasCashPayment } from '@/lib/cashMode';
 import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument, retypeIfPaymentProof } from '@/lib/reRead';
 import { isPaymentProof } from '@/lib/paymentProof';
@@ -1010,6 +1011,7 @@ export default function Costs() {
   // even for a document coded before the profile said so (opening the document
   // rewrites the stored value).
   const gstRegistered = useGstRegistered();
+  const cashMode = useCashMode();
   // The org's own currency, so "Foreign currency" means foreign to THIS entity.
   const baseCurrency = useBusinessProfile().baseCurrency;
   const readerName = useReaderName();
@@ -1611,14 +1613,20 @@ export default function Costs() {
     // skipped and counted here instead of failing one by one.
     const hasTaxCode = (d) => !gstRegistered || String(d.taxRate ?? '').trim();
     skipped.noTaxCode = publishable.filter((d) => !hasTaxCode(d)).length;
-    const targets = publishable.filter(hasTaxCode);
+    // Cash mode posts money that has moved: each document has to say from where.
+    const hasAccount = (d) => !cashMode || hasCashPayment(d);
+    skipped.noAccount = publishable.filter(hasTaxCode).filter((d) => !hasAccount(d)).length;
+    const targets = publishable.filter(hasTaxCode).filter(hasAccount);
+    // What the ledger will call them.
+    const asWhat = cashMode ? 'Spend Money (a credit note as Receive Money)' : `${publishStatusLabel(publishStatus).toLowerCase()} bills`;
     const incomplete = picked.length - publishable.length - skipped.published - skipped.claimed - skipped.proofs;
     if (!targets.length) {
       setMergeNote(
         inXeroCount && inXeroCount === selectedDocs().length
           ? 'Nothing to publish — Xero already has the payment for ' + (inXeroCount === 1 ? 'that document' : 'those documents') + '. Open each one to send the receipt to its Xero transaction instead.'
           : 'Nothing to publish — a document must have a supplier, a date, a real category, a tax code and a total above 0, ' +
-              'and not already be published, on an expense claim, a payment proof or a quotation.'
+              'and not already be published, on an expense claim, a payment proof or a quotation.' +
+              (skipped.noAccount ? ` ${skipped.noAccount} need Paid turned on with a bank or card account as Payment method (cash mode).` : '')
       );
       return;
     }
@@ -1635,9 +1643,9 @@ export default function Costs() {
     const bankMatched = targets.filter((d) => d.bankMatch && !isCreditNote(d));
     if (
       !window.confirm(
-        `Publish ${targets.length} document(s) to Xero as ${publishStatusLabel(publishStatus).toLowerCase()} bills?\n\n` +
+        `Publish ${targets.length} document(s) to Xero as ${asWhat}?\n\n` +
           'This writes to the live ledger and finishes each document — it archives, and can no longer go on an expense claim.' +
-          (bankMatched.length
+          (!cashMode && bankMatched.length
             ? `\n\nPayment will be applied to ${bankMatched.length} of them` +
               ` (${bankMatched.slice(0, 3).map((d) => `${d.supplier || 'Unknown supplier'} ${d.bankMatch.currency} ${Math.abs(Number(d.bankMatch.amount) || 0).toFixed(2)} from ${d.bankMatch.bankAccountName || 'the bank account'} on ${d.bankMatch.date}`).join('; ')}` +
               `${bankMatched.length > 3 ? '; …' : ''}).` +
@@ -1688,7 +1696,8 @@ export default function Costs() {
     setRunning('');
     setSelected(new Set());
     setMergeNote(
-      `Published ${done} document${done === 1 ? '' : 's'} to Xero as ${publishStatusLabel(publishStatus).toLowerCase()} bills.` +
+      `Published ${done} document${done === 1 ? '' : 's'} to Xero as ${asWhat}.` +
+        (skipped.noAccount ? ` ${skipped.noAccount} skipped — not marked Paid with a Payment method.` : '') +
         (failed.length ? ` ${failed.length} could not be published (${failed.slice(0, 3).join(', ')}).` : '') +
         (skipped.published ? ` ${skipped.published} already published.` : '') +
         (inXeroCount ? ` ${inXeroCount} skipped — Xero already has the payment (send the receipt there from the document page).` : '') +

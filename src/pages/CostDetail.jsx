@@ -59,6 +59,7 @@ import { useDocsOfKind, rowsFor, isInInbox } from '@/lib/costsData';
 import { readWalk, walkPosition } from '@/lib/listView';
 import { totalOk, counterpartyLabel, effectiveDate, dateFromSubmission } from '@/lib/readiness';
 import { useExtractionSettings, noTaxRateName, taxForCode } from '@/lib/extractionSettings';
+import { useCashMode } from '@/lib/cashMode';
 import { readDecisions, ruleLineRows } from '@/lib/reRead';
 import { useGstRegistered, useBaseCurrency } from '@/lib/businessProfile';
 import { useSalesEnabled } from '@/lib/workspaceSettings';
@@ -379,6 +380,7 @@ export default function CostDetail() {
   // The entity's own currency, and whether this document was billed in another.
   const baseCurrency = useBaseCurrency();
   const extractionSettings = useExtractionSettings();
+  const cashMode = useCashMode();
   useSupplierRules(); // the Supplier field's rules link tracks whether a rule exists
   // What each supplier's quotation says its invoices will be made of.
   const billingPlans = useBillingPlans();
@@ -456,6 +458,14 @@ export default function CostDetail() {
   // about money going out (claims, bank match, payment proofs, prepayments,
   // paperwork match, supplier rules) is offered.
   const isSales = doc ? doc.kind === 'sales' : salesRoute;
+  // What the record this document made in Xero is called.
+  const xeroNoun = ['SPEND', 'RECEIVE'].includes(doc?.xeroDocType)
+    ? 'transaction'
+    : /CREDIT$/.test(doc?.xeroDocType || '')
+      ? 'credit note'
+      : isSales
+        ? 'invoice'
+        : 'bill';
   const taxRateSource = isSales ? salesTaxRates : costTaxRates;
   const allTaxRates = isSales ? allSalesTaxRates : allCostTaxRates;
   const noTaxName = noTaxRateName(taxRateSource);
@@ -1670,7 +1680,13 @@ Publish anyway?`
   })();
 
   const onPublished = ({ bill }) => {
-    if (bill) setPersisted(billToDoc({ ...bill, hasFile: Boolean(bill.storageKey) }));
+    if (bill) {
+      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey) });
+      setPersisted(pd);
+      // A publish can record the payment (and, in cash mode, the account it was
+      // paid from), so the form takes those back rather than save over them.
+      setData((d) => ({ ...d, paid: pd.paid, paymentMethod: pd.paymentMethod }));
+    }
     notifyBillsChanged();
   };
 
@@ -2433,7 +2449,7 @@ Publish anyway?`
               href={xeroBillUrl(doc.xeroInvoiceId, xeroShortCode, doc.xeroDocType)}
               target="_blank"
               rel="noreferrer"
-              title={`Open this ${/CREDIT$/.test(doc.xeroDocType || '') ? 'credit note' : isSales ? 'invoice' : 'bill'} in ${doc.xeroTenantName || 'Xero'}`}
+              title={`Open this ${xeroNoun} in ${doc.xeroTenantName || 'Xero'}`}
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600/30 bg-green-600/10 px-3 text-sm text-green-700 transition-colors hover:bg-green-600/20"
             >
               {/* Not "View in <entity>": a name like "CY Business Management
@@ -2482,12 +2498,12 @@ Publish anyway?`
             Only offered where there is a bill to update, and never for a cost
             sitting on an expense claim, which reaches Xero as the claim's line. */}
         {doc.persisted && doc.xeroInvoiceId && mayPublish && (
-          <TopButton onClick={openXeroUpdate} disabled={xeroBusy} title={`Send this document's current figures to the ${/CREDIT$/.test(doc.xeroDocType || '') ? 'credit note' : isSales ? 'invoice' : 'bill'} it created in Xero`}>
+          <TopButton onClick={openXeroUpdate} disabled={xeroBusy} title={`Send this document's current figures to the ${xeroNoun} it created in Xero`}>
             Update in Xero
           </TopButton>
         )}
         {doc.persisted && doc.xeroInvoiceId && doc.hasFile && (
-          <TopButton onClick={sendFileToXero} disabled={xeroBusy} title={`Upload this document's file to the Xero ${isSales ? 'invoice' : 'bill'} as an attachment`}>
+          <TopButton onClick={sendFileToXero} disabled={xeroBusy} title={`Upload this document's file to the Xero ${xeroNoun} as an attachment`}>
             {xeroBusy === 'attach' ? 'Sending…' : 'Send file to Xero'}
           </TopButton>
         )}
@@ -3099,7 +3115,7 @@ Publish anyway?`
               )}
               {/* A quotation paid in advance (record it as a prepayment in
                   Xero), or the invoice that uses one up. */}
-              {persisted && !isSales && (
+              {persisted && !isSales && !cashMode && (
                 <div className="col-span-full">
                   <PrepaymentPanel
                     doc={{ ...persisted, type: data.type || persisted.type, supplier: data.supplier, total: data.total, date: data.date, invoiceNumber: data.invoiceNumber, currency: data.currency || persisted.currency }}

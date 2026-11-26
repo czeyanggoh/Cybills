@@ -1,3 +1,4 @@
+import { cashModeFor } from './cashMode.js';
 import type { Bill } from './store.js';
 import {
   getBillById,
@@ -125,6 +126,10 @@ export async function recordPrepayment(
     by: string;
   }
 ): Promise<Out> {
+  // An overpayment is applied to a bill, and a cash-only Xero has none.
+  if (cashModeFor(organisation.id)) {
+    return { status: 409, body: { error: 'cash_mode', message: 'This entity is in cash mode, so quotations are not recorded as prepayments. Publish the tax invoice once it is paid.' } };
+  }
   if (!(await isAdvanceDoc(bill))) {
     return { status: 422, body: { error: 'not_advance', message: 'Only a quotation or a pro-forma invoice is recorded as a prepayment. Set the document’s Type first.' } };
   }

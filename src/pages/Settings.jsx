@@ -876,6 +876,21 @@ function Extraction() {
 
       <Card title="Publishing">
         <Row
+          label="Cash mode"
+          hint="For a Xero subscription with no bills or invoices, only Spend Money and Receive Money. Everything published goes up as money that has moved, from a bank or credit card account: a cost as Spend Money, a sale as Receive Money (credit notes the other way). Each document needs that account: a matched bank line, or Paid on with a Payment method, or your pick in the Publish dialog. Expense claims ask for the account and date when published. Quotation prepayments, billable-to-customer marking and CYWorkspace payment runs are off. Documents already published as bills stay bills."
+        >
+          {bridge ? (
+            <p className="text-sm text-muted-foreground">Follows the entity whose Xero this one posts into.</p>
+          ) : (
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input type="checkbox" checked={form.cashMode === true} onChange={(e) => set('cashMode', e.target.checked)} />
+              Post as Spend Money and Receive Money only
+            </label>
+          )}
+        </Row>
+        {form.cashMode !== true && (
+        <>
+        <Row
           label="Post bills to Xero as"
           hint="What Publish to Xero posts a bill as, wherever somebody presses it — the dialog opens on it, and the inbox's bulk publish and a claim's use it too. Only an Approved bill can take a payment in Xero, so that is what a bill has to reach before the money can leave. Publishing automatically after reading is separate: set per supplier on its rule (Approved or Awaiting approval), or for every supplier with the switch under Tax, which posts as Awaiting approval."
         >
@@ -894,6 +909,8 @@ function Extraction() {
             Add the currency to Xero when it is missing
           </label>
         </Row>
+        </>
+        )}
       </Card>
 
       {/* A mileage claim is a cost with no receipt behind it: a map route, an

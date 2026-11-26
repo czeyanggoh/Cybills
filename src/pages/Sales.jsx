@@ -44,6 +44,7 @@ import {
 } from '@/lib/organisations';
 import { useGstRegistered } from '@/lib/businessProfile';
 import { useExtractionSettings, noTaxRateName, publishStatusLabel } from '@/lib/extractionSettings';
+import { useCashMode, hasCashPayment } from '@/lib/cashMode';
 import { useReaderName } from '@/lib/readerProvider';
 import { reReadDocument } from '@/lib/reRead';
 import { accountCodeFromCategory } from '@/data/xeroAccounts';
@@ -130,6 +131,7 @@ export default function Sales() {
   // The SUPPLY side's codes — a sales invoice is coded with an output code.
   const taxRates = useVisibleTaxRates('sales');
   const gstRegistered = useGstRegistered();
+  const cashMode = useCashMode();
   const readerName = useReaderName();
   const shortCode = useXeroShortCode();
   const categoryMode = useCategoryDisplayMode();
@@ -324,19 +326,23 @@ export default function Sales() {
   const publishSelected = async () => {
     const picked = selectedDocs();
     const already = picked.filter(isPublished).length;
-    const targets = picked.filter((d) => !isPublished(d) && isComplete(d));
-    const incomplete = picked.length - targets.length - already;
+    const complete = picked.filter((d) => !isPublished(d) && isComplete(d));
+    // Cash mode posts money received: each document has to say into which account.
+    const targets = complete.filter((d) => !cashMode || hasCashPayment(d));
+    const noAccount = complete.length - targets.length;
+    const incomplete = picked.length - complete.length - already;
+    const asWhat = cashMode ? 'Receive Money (a credit note as Spend Money)' : `${publishStatusLabel(publishStatus).toLowerCase()} sales invoices`;
     if (!targets.length) {
       setNote(
         'Nothing to publish — a sales document needs a customer, a date, a revenue category and a total above 0, ' +
-          'and must not already be in Xero.'
+          'and must not already be in Xero.' +
+          (noAccount ? ` ${noAccount} need Paid turned on with a bank or card account as Payment method (cash mode), or publish from the document.` : '')
       );
       return;
     }
     if (
       !window.confirm(
-        `Publish ${targets.length} document${targets.length === 1 ? '' : 's'} to Xero as ` +
-          `${publishStatusLabel(publishStatus).toLowerCase()} sales invoices?\n\n` +
+        `Publish ${targets.length} document${targets.length === 1 ? '' : 's'} to Xero as ${asWhat}?\n\n` +
           'This writes to the live ledger and finishes each document.'
       )
     )
@@ -371,8 +377,8 @@ export default function Sales() {
       }
     }
     await after(
-      `Published ${done} document${done === 1 ? '' : 's'} to Xero as ` +
-        `${publishStatusLabel(publishStatus).toLowerCase()} sales invoices.` +
+      `Published ${done} document${done === 1 ? '' : 's'} to Xero as ${asWhat}.` +
+        (noAccount ? ` ${noAccount} skipped — not marked Paid with a Payment method.` : '') +
         (failed.length ? ` ${failed.length} could not be published (${failed.slice(0, 3).join(', ')}).` : '') +
         (already ? ` ${already} already published.` : '') +
         (incomplete ? ` ${incomplete} still incomplete.` : '')

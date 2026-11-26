@@ -312,7 +312,8 @@ export type Bill = {
   // Which of Xero's four records this document went up as — payable or
   // receivable, invoice or credit note. Absent means ACCPAY: every row
   // published before there was more than one kind was a supplier bill.
-  xeroDocType?: 'ACCPAY' | 'ACCPAYCREDIT' | 'ACCREC' | 'ACCRECCREDIT';
+  // SPEND / RECEIVE: published by a cash-mode entity as a bank transaction.
+  xeroDocType?: 'ACCPAY' | 'ACCPAYCREDIT' | 'ACCREC' | 'ACCRECCREDIT' | 'SPEND' | 'RECEIVE';
   xeroTenantId?: string;
   xeroTenantName?: string;
   xeroPostedAt?: string; // ISO timestamp

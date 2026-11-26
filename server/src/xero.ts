@@ -13,7 +13,7 @@ import { readSetting } from './settings.js';
 import { WORKSPACE_ID } from './workspace.js';
 import { loadAccountSides } from './accountSides.js';
 import { referenceFor, dateFor } from './claimRef.js';
-import { apportion, costComplete, costDate, displayIdOf, getBillById, getBillByIdAny, isCreditNote, listBills, markBillPosted, markBillXeroPayment, parseAmount, totalComplete, type Bill } from './store.js';
+import { apportion, costComplete, costDate, displayIdOf, getBillById, getBillByIdAny, isCreditNote, listBills, markBillPosted, markBillXeroPayment, parseAmount, totalComplete, updateBill, type Bill } from './store.js';
 import { extFor, getBillFile } from './storage.js';
 import { claimForBill, getClaimForXero, markClaimXeroPayment, publishedClaims, saveClaimXero } from './claims.js';
 import { addressIn, appOrigin, canPublishToXero, memberForSession, visibleOwnersFor } from './users.js';
@@ -21,6 +21,8 @@ import { syncWhatsappReaction } from './waReactions.js';
 import { isPaymentProofDoc } from './paymentProof.js';
 import { isAdvanceDoc } from './prepayment.js';
 import { dayRate } from './fx.js';
+import { bankTransactionFrom, cashDocTypeFor, cashModeFor, isCashDocType, linesTotalCents, NO_CASH_ACCOUNT_MESSAGE } from './cashMode.js';
+import type { BankLine } from './bankMatch.js';
 
 // Xero, via the cyworkspace relay. CYBills holds no Xero credentials — every
 // call below is a plain HTTPS request to cyworkspace's authenticated forwarder
@@ -206,8 +208,10 @@ export async function fetchXeroInvoice(
 // in separate endpoints with separate ids — asking Invoices for a credit note's
 // id finds nothing. Absent means ACCPAY: every row published before any of this
 // was a supplier bill.
-export type XeroDocType = 'ACCPAY' | 'ACCPAYCREDIT' | 'ACCREC' | 'ACCRECCREDIT';
-const DOC_TYPES: XeroDocType[] = ['ACCPAY', 'ACCPAYCREDIT', 'ACCREC', 'ACCRECCREDIT'];
+// SPEND / RECEIVE are a cash-mode entity's two (cashMode.ts): bank
+// transactions rather than invoices.
+export type XeroDocType = 'ACCPAY' | 'ACCPAYCREDIT' | 'ACCREC' | 'ACCRECCREDIT' | 'SPEND' | 'RECEIVE';
+const DOC_TYPES: XeroDocType[] = ['ACCPAY', 'ACCPAYCREDIT', 'ACCREC', 'ACCRECCREDIT', 'SPEND', 'RECEIVE'];
 export function xeroDocTypeOf(bill: { xeroDocType?: unknown }): XeroDocType {
   const stored = String(bill?.xeroDocType ?? '') as XeroDocType;
   return DOC_TYPES.includes(stored) ? stored : 'ACCPAY';
@@ -231,9 +235,12 @@ const DOC_TYPE_NAMES: Record<XeroDocType, string> = {
   ACCPAYCREDIT: 'supplier credit note',
   ACCREC: 'sales invoice',
   ACCRECCREDIT: 'customer credit note',
+  SPEND: 'Spend Money transaction',
+  RECEIVE: 'Receive Money transaction',
 };
 const nameOfDocType = (docType: XeroDocType): string => DOC_TYPE_NAMES[docType] ?? 'document';
-function xeroEndpointFor(docType: XeroDocType): 'Invoices' | 'CreditNotes' {
+function xeroEndpointFor(docType: XeroDocType): 'Invoices' | 'CreditNotes' | 'BankTransactions' {
+  if (isCashDocType(docType)) return 'BankTransactions';
   return isCreditDoc(docType) ? 'CreditNotes' : 'Invoices';
 }
 // The record inside Xero's reply, whichever endpoint answered. A CreditNotes
@@ -242,6 +249,10 @@ function xeroEndpointFor(docType: XeroDocType): 'Invoices' | 'CreditNotes' {
 // Payments, ValidationErrors — is the same shape, which is what lets one
 // publish path serve all four.
 function xeroRecordFrom(docType: XeroDocType, data: any): { record: Record<string, any> | null; id: string; number: string } {
+  if (isCashDocType(docType)) {
+    const record = Array.isArray(data?.BankTransactions) ? data.BankTransactions[0] ?? null : null;
+    return { record, id: String(record?.BankTransactionID ?? ''), number: String(record?.Reference ?? '') };
+  }
   const credit = isCreditDoc(docType);
   const list = credit ? data?.CreditNotes : data?.Invoices;
   const record = Array.isArray(list) ? list[0] ?? null : null;
@@ -688,6 +699,52 @@ xeroRouter.get('/organisations/:id/payment-methods', async (req, res) => {
   }));
   res.json({ paymentMethods: methods });
 });
+
+// The bank and credit card accounts money can move through, in the Xero that
+// RECEIVES this entity's postings (its parent's, for a bridge) — what a
+// cash-mode publish asks "paid from?" over.
+xeroRouter.get('/organisations/:id/cash-accounts', async (req, res) => {
+  if (notConfigured(res)) return;
+  const resolved = requirePublishTarget(req, res);
+  if (!resolved) return;
+  const result = await referenceRead('Accounts', resolved.target.tenantId, { where: 'Status=="ACTIVE"' });
+  if (!result.ok) return res.status(result.status).json(result.data ?? { error: result.error });
+  const accounts = paymentMethodsFrom(result.data?.Accounts ?? [])
+    .filter((a) => a.type.toUpperCase() === 'BANK')
+    .map(({ accountId, label, currency }) => ({ accountId, label, currency }));
+  res.json({ accounts });
+});
+
+// The ONE bank or credit card account a cash-mode posting moves money through:
+// named by the bank line it is matched to, by the pick made in the dialog, or by
+// the document's own Payment method. Only a BANK account — Xero takes no bank
+// transaction on any other — and never a guess between two.
+async function cashAccountFor(
+  tenantId: string,
+  want: { accountId?: string; code?: string; method?: string }
+): Promise<{ ok: true; account: PaymentAccount } | { ok: false; status: number; body: any }> {
+  const named = String(want.accountId || want.code || want.method || '').trim();
+  if (!named) return { ok: false, status: 422, body: { error: 'no_bank_account', message: NO_CASH_ACCOUNT_MESSAGE } };
+  const result = await referenceRead('Accounts', tenantId, { where: 'Status=="ACTIVE"' }, { allowStale: false });
+  if (!result.ok) {
+    return { ok: false, status: 502, body: { error: 'accounts_unreadable', message: `Xero’s accounts could not be read, so nothing was posted: ${result.message}` } };
+  }
+  const banks = paymentMethodsFrom(result.data?.Accounts ?? []).filter((a) => a.type.toUpperCase() === 'BANK');
+  const id = String(want.accountId ?? '').trim().toLowerCase();
+  const text = String(want.method || want.code || '').trim().toLowerCase();
+  const hits = banks.filter((a) =>
+    id
+      ? a.accountId.toLowerCase() === id
+      : [a.accountId, a.label, a.name, a.code, a.code ? `${a.code} - ${a.name}` : ''].filter(Boolean).some((x) => x.toLowerCase() === text)
+  );
+  if (hits.length !== 1) {
+    return { ok: false, status: 422, body: {
+      error: 'no_bank_account',
+      message: `“${want.method || want.code || 'That account'}” isn’t a bank or credit card account in this Xero organisation. In cash mode only money that moved through one can be posted: choose it in Payment method or in the Publish dialog.`,
+    } };
+  }
+  return { ok: true, account: hits[0] };
+}
 
 // A document marked Paid, with the account it was paid from, is PAID in Xero
 // the moment it is published: a payment from that account, on the document's
@@ -1310,7 +1367,11 @@ type Converted = { from: string; to: string; rate: number; total: number; source
 // The bank statement line a document is being paid against, where there is one
 // — a card line for a foreign purchase states what it cost in the bank's
 // currency, which is the truest rate there is.
-export type PayingLine = { amount: number; currency: string; description?: string; reference?: string };
+export type PayingLine = {
+  amount: number; currency: string; description?: string; reference?: string;
+  // Carried by a full statement line; cash mode posts on its date and account.
+  date?: string; bank_account_id?: string; bank_account_code?: string; bank_account_name?: string;
+};
 let paysForeignAmountFn: ((doc: unknown, line: unknown) => boolean) | null | undefined;
 async function paysForeignAmount(doc: unknown, line: unknown): Promise<boolean> {
   if (paysForeignAmountFn === undefined) {
@@ -1342,7 +1403,19 @@ async function inPostableCurrency(
     if (added.ok) return { ok: true, bill, converted: null };
     addFailed = added.reason;
   }
+  return convertBill(bill, base, payingLine, addFailed);
+}
 
+// The conversion itself: the posted copy of a document restated into `base` —
+// the org's base currency for one without multi-currency, or a cash-mode
+// posting's bank account currency.
+async function convertBill(
+  bill: Bill,
+  base: string,
+  payingLine?: PayingLine | null,
+  addFailed = ''
+): Promise<{ ok: true; bill: Bill; converted: Converted } | { ok: false; status: number; body: any }> {
+  const from = String(bill.currency ?? '').trim().toUpperCase();
   const cents = (n: number) => Math.round(n * 100);
   const total = parseAmount(bill.total);
   const tax = parseAmount(bill.tax);
@@ -1373,7 +1446,7 @@ async function inPostableCurrency(
     if (!(rate > 0)) {
       return { ok: false, status: 422, body: {
         error: 'no_exchange_rate',
-        message: `This Xero organisation has no multi-currency, so this ${from} document has to be posted in ${base} — and no ${from}→${base} rate could be found for ${costDate(bill) || 'its date'}. Try again shortly, or enter the ${base} total on the document.`,
+        message: `This ${from} document has to be posted in ${base} — and no ${from}→${base} rate could be found for ${costDate(bill) || 'its date'}. Try again shortly, or enter the ${base} total on the document.`,
       } };
     }
     newTotal = cents(total * rate);
@@ -1760,15 +1833,23 @@ async function buildBillInvoice(
   req: any,
   organisation: { id: string; tenantId: string },
   source: Bill,
-  opts: { accountCode: string; taxType: string; dueDate?: unknown; description?: unknown; contactId?: string; payingLine?: PayingLine | null }
+  // `cash`: built as a bank transaction (cashMode.ts) in that account currency.
+  opts: { accountCode: string; taxType: string; dueDate?: unknown; description?: unknown; contactId?: string; payingLine?: PayingLine | null; cash?: { currency: string } }
 ): Promise<
   | { ok: true; payload: Record<string, unknown>; lines: number; perLine: boolean; docType: XeroDocType; converted: Converted | null }
   | { ok: false; status: number; body: any }
 > {
-  const docType: XeroDocType = docTypeForBill(source);
-  const facing = isCreditDoc(docType) ? creditNoteFacingUp(source) : source;
-  // An org without multi-currency posts everything in its base currency.
-  const postable = await inPostableCurrency(facing, organisation.tenantId, opts.payingLine, organisation.id);
+  const paper: XeroDocType = docTypeForBill(source);
+  const docType: XeroDocType = opts.cash ? cashDocTypeFor(isReceivable(paper), isCreditDoc(paper)) : paper;
+  const facing = isCreditDoc(paper) ? creditNoteFacingUp(source) : source;
+  // An org without multi-currency posts everything in its base currency; a bank
+  // transaction is in its bank account's, whatever the paper was in.
+  const paperCurrency = String(facing.currency ?? '').trim().toUpperCase();
+  const postable = !opts.cash
+    ? await inPostableCurrency(facing, organisation.tenantId, opts.payingLine, organisation.id)
+    : paperCurrency && opts.cash.currency && paperCurrency !== opts.cash.currency
+      ? await convertBill(facing, opts.cash.currency, opts.payingLine)
+      : { ok: true as const, bill: facing, converted: null };
   if (!postable.ok) return postable;
   const bill = postable.bill;
   const converted = postable.converted;
@@ -1863,7 +1944,7 @@ async function buildBillInvoice(
   // the SUPPLIER a bill was received from, the CUSTOMER a sales invoice was
   // issued to — and it is the Contact either way, which is precisely why it is
   // one field: the contact Xero needs is the other party to the transaction.
-  const sale = isReceivable(docType);
+  const sale = isReceivable(paper);
   // A document nobody could name posts to the placeholder contact of ITS side —
   // either reader placeholder is read as no name, since a sales document that
   // came through a cost-shaped road carries "Unknown supplier".
@@ -1880,6 +1961,11 @@ async function buildBillInvoice(
   };
   if (isCreditDoc(docType)) {
     if (bill.invoiceNumber) payload.CreditNoteNumber = bill.invoiceNumber;
+  } else if (opts.cash) {
+    // A bank transaction has no due date or invoice number, and links back
+    // whichever way the money ran.
+    const backLink = xeroInvoiceUrl(`${appOrigin(req)}/${sale ? 'sales' : 'costs'}/${encodeURIComponent(displayIdOf(bill.id) || bill.id)}?org=${encodeURIComponent(organisation.id)}`);
+    if (backLink) payload.Url = backLink;
   } else {
     payload.DueDate = dueDate;
     if (bill.invoiceNumber) payload.InvoiceNumber = bill.invoiceNumber;
@@ -1898,7 +1984,7 @@ async function buildBillInvoice(
   // kinds of invoice. A bill has no such field (its "Reference" box IS the
   // InvoiceNumber, and Xero drops `Reference` on an ACCPAY), so cost
   // documents are left as they are.
-  if (sale && bill.invoiceNumber) payload.Reference = String(bill.invoiceNumber).slice(0, 255);
+  if (!opts.cash && sale && bill.invoiceNumber) payload.Reference = String(bill.invoiceNumber).slice(0, 255);
   if (bill.currency) payload.CurrencyCode = bill.currency;
   // At the rate the document itself printed, so the ledger's GST report shows
   // the SGD tax the invoice states rather than Xero's day-rate conversion of it.
@@ -2142,6 +2228,12 @@ export async function postBillToXero(
     // first whether it already holds this money (Paperwork match), and decline
     // rather than post it twice.
     unattended?: boolean;
+    // Cash mode: the bank account picked in the dialog and the day it was paid.
+    paidFrom?: unknown;
+    paidDate?: unknown;
+    // Who settled a bank line, where the publish is that settlement.
+    via?: 'browser' | 'cyws';
+    by?: string;
   }
 ): Promise<{ status: number; body: any }> {
   // Three refusals below are about COSTS, and only costs: a payment proof, a
@@ -2169,7 +2261,9 @@ export async function postBillToXero(
   if (!receivable && !bill.xeroInvoiceId && (await isAdvanceDoc(bill))) {
     return { status: 422, body: {
       error: 'advance_document',
-      message: 'This is a quotation / pro-forma invoice, not a tax invoice, so it is not published as a bill. Once it is paid, record it as a prepayment to the supplier; the tax invoice that follows is published and the prepayment applied to it.',
+      message: cashModeFor(organisation.id)
+        ? 'This is a quotation / pro-forma invoice, not a tax invoice, so it is not published. This entity is in cash mode: publish the tax invoice that follows, dated the day it was paid.'
+        : 'This is a quotation / pro-forma invoice, not a tax invoice, so it is not published as a bill. Once it is paid, record it as a prepayment to the supplier; the tax invoice that follows is published and the prepayment applied to it.',
     } };
   }
   // Sent to a transaction Xero already had (Paperwork match): the money is in
@@ -2241,6 +2335,9 @@ export async function postBillToXero(
       } };
     }
   }
+  // Cash mode: money that has moved goes up as a bank transaction, and nothing
+  // below — bills, approval statuses, payments, allocations — applies.
+  if (cashModeFor(organisation.id)) return postCashToXero(req, organisation, workspace, bill, opts);
   const prepared = await buildBillInvoice(req, organisation, bill, {
     accountCode: opts.accountCode,
     taxType: opts.taxType,
@@ -2461,6 +2558,278 @@ export async function postBillToXero(
   } };
 }
 
+// --- Cash mode: Spend Money / Receive Money (cashMode.ts) ----------------------
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const isoDay = (v: unknown) => (ISO_DAY.test(String(v ?? '')) ? String(v) : '');
+const cashErrors = (record: any): string[] => (record?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+const cashRefused = (record: any) =>
+  !record || record.HasValidationErrors || String(record.StatusAttributeString ?? '').toUpperCase() === 'ERROR' || cashErrors(record).length > 0;
+
+export async function fetchXeroBankTransaction(tenantId: string, id: string): Promise<Record<string, any> | null> {
+  if (!tenantId || !id) return null;
+  const res = await relay(`BankTransactions/${encodeURIComponent(id)}`, { tenantId });
+  if (!res.ok) {
+    console.error('[xero] could not read bank transaction', id, res.status, res.message);
+    return null;
+  }
+  return res.data?.BankTransactions?.[0] ?? null;
+}
+
+// The bank line a document is being paid against in cash mode: the settle road
+// names it, else the inbox's pending Autofill on the document.
+async function cashLineFor(bill: Bill, payingLine?: PayingLine | null): Promise<BankLine | null> {
+  const p = bill.bankMatch;
+  const raw: unknown = payingLine ?? (p ? {
+    date: p.date, amount: p.amount, currency: p.currency, reference: p.reference, description: p.description,
+    bank_account_id: p.bankAccountId, bank_account_name: p.bankAccountName, bank_account_code: p.bankAccountCode,
+  } : null);
+  if (!raw) return null;
+  const { readLine } = await import('./bankMatch.js');
+  return readLine(raw);
+}
+
+// Publish a document as the bank transaction it is. Reached only through
+// postBillToXero, so every refusal above it holds here too.
+async function postCashToXero(
+  req: any,
+  organisation: { id: string; tenantId: string; tenantName?: string; name?: string },
+  workspace: string,
+  bill: Bill,
+  opts: Parameters<typeof postBillToXero>[4]
+): Promise<{ status: number; body: any }> {
+  const bank = await import('./bankMatch.js');
+  const line = await cashLineFor(bill, opts.payingLine);
+  if (line && bank.recordsFor(workspace).some((r) => r.kind === 'match' && r.key === line.key)) {
+    return { status: 409, body: { error: 'line_already_matched', message: 'The bank line this document is matched to has already been settled. Clear the bank match on the document first.' } };
+  }
+  // Money must have moved, and through a named account: the line's, the one
+  // picked in the dialog, or the Payment method of a document marked Paid.
+  const picked = String(opts.paidFrom ?? '').trim();
+  const found = await cashAccountFor(
+    organisation.tenantId,
+    line
+      ? { accountId: line.bank_account_id, code: line.bank_account_code }
+      : { method: picked || (bill.paid === true ? String(bill.paymentMethod ?? '').trim() : '') }
+  );
+  if (!found.ok) return { status: found.status, body: found.body };
+  const account = found.account;
+  const currency = account.currency || (await baseCurrencyFor(organisation.tenantId));
+  const prepared = await buildBillInvoice(req, organisation, bill, {
+    accountCode: opts.accountCode,
+    taxType: opts.taxType,
+    description: opts.description,
+    contactId: opts.contactId,
+    payingLine: line,
+    cash: { currency },
+  });
+  if (!prepared.ok) return { status: prepared.status, body: prepared.body };
+  const docType = prepared.docType as 'SPEND' | 'RECEIVE';
+  const lineItems = [...(prepared.payload.LineItems as any[])];
+  // The bank's card fee inside the line goes on the same transaction, so one
+  // record equals the statement line.
+  let fee: any = null;
+  if (line) {
+    const rules = await bank.bankRules();
+    fee = rules ? rules.feeFor(bill, line, bank.cardFeeRules(organisation)) : null;
+    if (fee) {
+      const tracking = bank.feeLineTracking(lineItems);
+      lineItems.push({
+        Description: `${fee.percent}% ${CARD_FEE_LINE_MARK} ${fee.bankAccount}`,
+        Quantity: 1,
+        UnitAmount: fee.fee,
+        AccountCode: fee.accountCode,
+        TaxType: 'NONE',
+        TaxAmount: 0,
+        ...(tracking ? { Tracking: tracking } : {}),
+      });
+    }
+    const posting = linesTotalCents(lineItems);
+    if (posting !== Math.abs(Math.round(line.amount * 100))) {
+      return { status: 422, body: {
+        error: 'amount_mismatch',
+        message: `This would post ${currency} ${(posting / 100).toFixed(2)}, and the bank line it is matched to is ${Math.abs(line.amount).toFixed(2)}. Clear the bank match, or correct the document.`,
+      } };
+    }
+  }
+  const date = line?.date || isoDay(opts.paidDate) || costDate(bill);
+  const payload = bankTransactionFrom(
+    { ...prepared.payload, LineItems: lineItems },
+    {
+      type: docType,
+      accountId: account.accountId,
+      date,
+      reference: line?.reference || String(bill.invoiceNumber ?? '') || line?.description || '',
+      url: String(prepared.payload.Url ?? ''),
+    }
+  );
+  const result = await relay('BankTransactions', {
+    method: 'PUT',
+    tenantId: organisation.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { BankTransactions: [payload] },
+  });
+  if (!result.ok) {
+    console.error('[xero] cash publish failed', result.status, result.message);
+    return { status: result.status >= 500 ? 502 : result.status, body: { error: result.error, message: result.message } };
+  }
+  const { record, id: xeroId } = xeroRecordFrom(docType, result.data);
+  if (cashRefused(record) || !xeroId) {
+    const errors = cashErrors(record);
+    return { status: 422, body: { error: 'xero_validation_failed', messages: errors.length ? errors : [`Xero rejected the ${nameOfDocType(docType)}.`] } };
+  }
+  let updated = markBillPosted(workspace, bill.id, {
+    xeroInvoiceId: xeroId,
+    xeroDocType: docType,
+    xeroTenantId: organisation.tenantId,
+    xeroTenantName: organisation.tenantName || organisation.name || '',
+  });
+  // A bank transaction IS the payment: it is paid the moment it exists.
+  const reference = String(payload.Reference ?? '');
+  markBillXeroPayment(workspace, bill.id, { xeroStatus: 'PAID', xeroPaidDate: date, xeroPaymentRef: reference });
+  const attachment = await attachBillFile(organisation.tenantId, xeroId, updated ?? bill, docType);
+  const supporting = await attachSupportingFiles(organisation.tenantId, xeroId, updated ?? bill, docType);
+  const total = linesTotalCents(lineItems) / 100;
+  let match: unknown = null;
+  if (line) {
+    match = bank.recordCashMatch(organisation, workspace, bill, line, xeroId, {
+      fee,
+      via: opts.via ?? 'browser',
+      by: opts.by ?? String(memberForSession(req)?.email ?? ''),
+    });
+  } else {
+    // The document says what the ledger now says: paid, from this account.
+    updateBill(workspace, bill.id, { paid: true, paymentMethod: account.label });
+    void syncWhatsappReaction(workspace, bill.id);
+  }
+  updated = getBillById(workspace, bill.id) ?? updated;
+  return { status: 200, body: {
+    ok: true,
+    cash: true,
+    invoice: {
+      invoiceId: xeroId,
+      invoiceNumber: String(record?.Reference ?? reference),
+      docType,
+      status: 'PAID',
+      amountDue: 0,
+      total: Number(record?.Total ?? total),
+      currency,
+      contactId: String(record?.Contact?.ContactID ?? ''),
+    },
+    cashPayment: { account: account.label, date, amount: total, currency, reference },
+    fee: fee ? { ok: true, amount: fee.fee, percent: fee.percent, accountCode: fee.accountCode } : null,
+    match,
+    lines: lineItems.length,
+    perLine: prepared.perLine,
+    converted: prepared.converted,
+    attachment,
+    supporting,
+    // Xero's billable expenses end in a sales invoice, which a cash-only
+    // subscription has not got — said, never silently skipped.
+    rebilled: bill.rebillable && bill.customer && docType === 'SPEND'
+      ? { ok: false, linked: 0, error: 'cash mode does not mark billable expenses in Xero.' }
+      : null,
+    bankPayment: null,
+    prepayment: null,
+    paidOnPublish: null,
+    statusForced: false,
+    bill: updated,
+  } };
+}
+
+// Update in Xero for a document published as a bank transaction. The account it
+// moved through, its date and its reference stay; the lines are rebuilt from the
+// document. Xero refuses a reconciled one, so it is not asked.
+async function updateCashInXero(
+  req: any,
+  organisation: { id: string; tenantId: string },
+  workspace: string,
+  bill: Bill,
+  opts: { accountCode: string; taxType: string; description?: unknown; paidDate?: unknown }
+): Promise<{ status: number; body: any }> {
+  const postedAs = xeroDocTypeOf(bill) as 'SPEND' | 'RECEIVE';
+  const tenantId = bill.xeroTenantId || organisation.tenantId;
+  const id = String(bill.xeroInvoiceId);
+  const current = await fetchXeroBankTransaction(tenantId, id);
+  if (!current) {
+    return { status: 502, body: { error: 'bill_unreadable', message: 'The transaction could not be read back from Xero, so nothing was changed. Try again in a moment.' } };
+  }
+  const refused = cashUpdateRefusal(current);
+  if (refused) return refused;
+  const currency = String(current.CurrencyCode ?? '').toUpperCase() || (await baseCurrencyFor(tenantId));
+  const bank = await import('./bankMatch.js');
+  const match = bank.recordsFor(workspace).find((r) => r.kind === 'match' && r.billId === bill.id && r.invoiceId === id);
+  const prepared = await buildBillInvoice(req, { id: organisation.id, tenantId }, bill, {
+    accountCode: opts.accountCode,
+    taxType: opts.taxType,
+    description: opts.description,
+    payingLine: match?.line ?? null,
+    cash: { currency },
+  });
+  if (!prepared.ok) return { status: prepared.status, body: prepared.body };
+  if (prepared.docType !== postedAs) {
+    return { status: 409, body: {
+      error: 'type_changed',
+      message: `This document is in Xero as a ${nameOfDocType(postedAs)}, but it is now a ${nameOfDocType(prepared.docType)} here. Delete the transaction in Xero, clear the Xero link and publish it again.`,
+    } };
+  }
+  const lineItems = withExistingLineIds(prepared.payload.LineItems as any[], Array.isArray(current.LineItems) ? current.LineItems : []);
+  if (match && linesTotalCents(lineItems) !== Math.abs(Math.round(match.line.amount * 100))) {
+    return { status: 422, body: {
+      error: 'amount_mismatch',
+      message: `This update would make the transaction ${(linesTotalCents(lineItems) / 100).toFixed(2)}, and the bank line it is matched to is ${Math.abs(match.line.amount).toFixed(2)}. Undo the bank match, correct the document and match it again.`,
+    } };
+  }
+  const date = match?.line.date || isoDay(opts.paidDate) || xeroDay(current.Date);
+  const reference = String(current.Reference ?? '') || String(bill.invoiceNumber ?? '');
+  const payload = {
+    ...bankTransactionFrom(
+      { ...prepared.payload, LineItems: lineItems },
+      { type: postedAs, accountId: String(current.BankAccount?.AccountID ?? ''), date, reference, url: String(prepared.payload.Url ?? '') }
+    ),
+    BankTransactionID: id,
+  };
+  const result = await relay('BankTransactions', {
+    method: 'POST',
+    tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { BankTransactions: [payload] },
+  });
+  if (!result.ok) {
+    console.error('[xero] cash update failed', result.status, result.message);
+    return { status: result.status >= 500 ? 502 : result.status, body: { error: result.error, message: result.message } };
+  }
+  const { record } = xeroRecordFrom(postedAs, result.data);
+  if (cashRefused(record)) {
+    const errors = cashErrors(record);
+    return { status: 422, body: { error: 'xero_validation_failed', messages: errors.length ? errors : ['Xero rejected the update.'] } };
+  }
+  const notApplied = linesNotApplied(lineItems, record?.LineItems);
+  markBillXeroPayment(bill.orgId, bill.id, { xeroStatus: 'PAID', xeroPaidDate: date, xeroPaymentRef: reference });
+  return { status: 200, body: {
+    ok: true,
+    cash: true,
+    invoice: { invoiceId: id, invoiceNumber: String(record?.Reference ?? reference), docType: postedAs, status: 'PAID' },
+    lines: prepared.lines,
+    perLine: prepared.perLine,
+    ...(notApplied.length ? { notApplied } : {}),
+    bill: getBillById(workspace, bill.id),
+  } };
+}
+
+// Why a bank transaction cannot be changed from here, or null.
+function cashUpdateRefusal(current: Record<string, any>): { status: number; body: any } | null {
+  if (String(current.Status ?? '').toUpperCase() === 'DELETED') {
+    return { status: 409, body: { error: 'deleted_in_xero', message: 'This transaction has been deleted in Xero. Clear the Xero link and publish again.' } };
+  }
+  if (current.IsReconciled) {
+    return { status: 409, body: {
+      error: 'reconciled',
+      message: 'This transaction is reconciled against a bank statement line, and Xero will not let it be edited from here. Change it in Xero (Options → Edit), or unreconcile it first.',
+    } };
+  }
+  return null;
+}
+
 // Paperwork match (paperworkMatch.ts): the receipt for a transaction Xero
 // ALREADY holds. GET lists, for every document the caller can see, the Spend
 // Money and bills in Xero it could be the paper for; POST sends one to its
@@ -2631,6 +3000,8 @@ xeroRouter.post('/organisations/:id/publish-bill', async (req, res) => {
     force: b.force === true,
     // The browser's publish-after-reading says so: nobody is looking.
     unattended: b.unattended === true,
+    paidFrom: b.paidFrom,
+    paidDate: b.paidDate,
   });
   return res.status(out.status).json(out.body);
 });
@@ -2656,11 +3027,12 @@ xeroRouter.post('/organisations/:id/sync-payments', async (req, res) => {
   if (!organisation) return res.status(404).json({ error: 'organisation_not_found' });
 
   const scope = dataScopeForOrg(organisation.id);
-  const published = listBills(scope).filter((b) => b.xeroInvoiceId);
+  // A bank transaction (cash mode) is paid by being one: nothing to ask.
+  const published = listBills(scope).filter((b) => b.xeroInvoiceId && !isCashDocType(b.xeroDocType));
   // A published CLAIM is a bill in Xero too — one bill carrying many people's
   // receipts — and its claimant is waiting on the same answer. Same read, same
   // three fields; only the paperwork behind the invoice differs.
-  const claims = publishedClaims(scope);
+  const claims = publishedClaims(scope).filter((c) => !isCashDocType(c.xeroDocType));
   // A bound on one run, not a limit on the book: whatever is left is reported
   // and picked up by running it again. A silent cap would read as "all done".
   const MAX_PER_RUN = 1000;
@@ -3041,6 +3413,12 @@ xeroRouter.post('/organisations/:id/update-bill', async (req, res) => {
   if (taxRateMissing(organisation.id, bill)) {
     return res.status(422).json({ error: 'no_tax_rate', message: NO_TAX_RATE_MESSAGE });
   }
+  // Published as a bank transaction (cash mode): corrected as one, whatever the
+  // entity's setting says now.
+  if (isCashDocType(bill.xeroDocType)) {
+    const out = await updateCashInXero(req, organisation, workspace, bill, { accountCode, taxType, description: b.description, paidDate: b.paidDate });
+    return res.status(out.status).json(out.body);
+  }
 
   const prepared = await buildBillInvoice(req, organisation, bill, {
     accountCode,
@@ -3251,7 +3629,10 @@ async function buildClaimInvoice(
   req: any,
   organisation: any,
   target: any,
-  claim: NonNullable<ReturnType<typeof getClaimForXero>>
+  claim: NonNullable<ReturnType<typeof getClaimForXero>>,
+  // Cash mode: built for a bank transaction in that account's currency, at the
+  // rate of the day it was paid.
+  cash?: { currency: string; date: string }
 ): Promise<
   | { ok: true; payload: Record<string, unknown>; lines: number; rebillTo: string[] }
   | { ok: false; status: number; body: any }
@@ -3552,7 +3933,19 @@ async function buildClaimInvoice(
   // the same rule a bill follows (inPostableCurrency).
   const claimCcy = String(claim.currency ?? '').trim().toUpperCase();
   const base = claimCcy ? await baseCurrencyFor(target.tenantId) : '';
-  if (claimCcy && base && base !== claimCcy) {
+  if (cash) {
+    if (claimCcy && cash.currency && claimCcy !== cash.currency) {
+      const rate = await dayRate(claimCcy, cash.currency, cash.date);
+      if (!(rate > 0)) {
+        return { ok: false as const, status: 422, body: {
+          error: 'no_exchange_rate',
+          message: `This ${claimCcy} claim is paid from a ${cash.currency} account, and no ${claimCcy}→${cash.currency} rate could be found for ${cash.date}. Try again shortly.`,
+        } };
+      }
+      payload.LineItems = restate(postable, rate, `${claimCcy} claim @ ${Number(rate.toFixed(6))} ${cash.currency}/${claimCcy}`);
+      payload.CurrencyCode = cash.currency;
+    }
+  } else if (claimCcy && base && base !== claimCcy) {
     let held = await currenciesFor(target.tenantId);
     if (held && !held.has(claimCcy) && autoAddCurrencyOn((target as any).id || '')) {
       if ((await addCurrency(target.tenantId, claimCcy)).ok) held = new Set([...held, claimCcy]);
@@ -3565,18 +3958,100 @@ async function buildClaimInvoice(
           message: `${target.name || 'This Xero organisation'} has no multi-currency, so this ${claimCcy} claim has to be posted in ${base} — and no ${claimCcy}→${base} rate could be found for ${date}. Try again shortly.`,
         } };
       }
-      const r2 = (n: number) => Math.round(n * rate * 100) / 100;
-      payload.LineItems = postable.map((l: any) => ({
-        ...l,
-        UnitAmount: r2(Number(l.UnitAmount) || 0),
-        TaxAmount: r2(Number(l.TaxAmount) || 0),
-      }));
-      const first: any = (payload.LineItems as any[])[0];
-      if (first) first.Description = `${first.Description} (${claimCcy} claim @ ${Number(rate.toFixed(6))} ${base}/${claimCcy})`;
+      payload.LineItems = restate(postable, rate, `${claimCcy} claim @ ${Number(rate.toFixed(6))} ${base}/${claimCcy}`);
       payload.CurrencyCode = base;
     }
   }
   return { ok: true, payload, lines: postable.length, rebillTo };
+}
+
+// A claim's lines restated at one rate, the working noted on the first.
+function restate(lines: Array<Record<string, unknown>>, rate: number, note: string): Array<Record<string, unknown>> {
+  const r2 = (n: number) => Math.round(n * rate * 100) / 100;
+  const out: any[] = lines.map((l: any) => ({
+    ...l,
+    UnitAmount: r2(Number(l.UnitAmount) || 0),
+    TaxAmount: r2(Number(l.TaxAmount) || 0),
+  }));
+  if (out[0]) out[0].Description = `${out[0].Description} (${note})`;
+  return out;
+}
+
+// A claim in cash mode is the reimbursement itself: ONE Spend Money to the
+// claimant, from the account it was paid out of, on the day it was paid, with
+// the claim's lines. With `current` it restates that transaction instead.
+async function sendCashClaim(
+  req: any,
+  res: any,
+  ctx: { organisation: any; target: any; org: string; claim: NonNullable<ReturnType<typeof getClaimForXero>>; current?: Record<string, any> }
+) {
+  const { organisation, target, org, claim, current } = ctx;
+  const b = req.body ?? {};
+  const date = isoDay(b.paidDate) || (current ? xeroDay(current.Date) : '');
+  if (!date) {
+    return res.status(400).json({ error: 'missing_field', message: 'This entity is in cash mode: say the date the claim was paid.' });
+  }
+  let accountId = String(current?.BankAccount?.AccountID ?? '');
+  let currency = String(current?.CurrencyCode ?? '').toUpperCase();
+  let accountLabel = String(current?.BankAccount?.Name ?? '');
+  if (!current) {
+    const found = await cashAccountFor(target.tenantId, { method: String(b.paidFrom ?? '').trim() });
+    if (!found.ok) return res.status(found.status).json(found.body);
+    ({ accountId, label: accountLabel, currency } = found.account);
+  }
+  if (!currency) currency = await baseCurrencyFor(target.tenantId);
+  const prepared = await buildClaimInvoice(req, organisation, target, claim, { currency, date });
+  if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
+  const lineItems = current
+    ? withExistingLineIds(prepared.payload.LineItems as any[], Array.isArray(current.LineItems) ? current.LineItems : [])
+    : (prepared.payload.LineItems as any[]);
+  const reference = String(prepared.payload.InvoiceNumber ?? '').slice(0, 255);
+  const payload: Record<string, unknown> = {
+    ...bankTransactionFrom(
+      { ...prepared.payload, LineItems: lineItems },
+      { type: 'SPEND', accountId, date, reference, url: String(prepared.payload.Url ?? '') }
+    ),
+    ...(current ? { BankTransactionID: claim.xeroInvoiceId } : {}),
+  };
+  const result = await relay('BankTransactions', {
+    method: current ? 'POST' : 'PUT',
+    tenantId: target.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { BankTransactions: [payload] },
+  });
+  if (!result.ok) {
+    console.error('[xero] cash claim failed', result.status, result.message);
+    return res.status(result.status >= 500 ? 502 : result.status).json({ error: result.error, message: result.message });
+  }
+  const { record, id } = xeroRecordFrom('SPEND', result.data);
+  const invoiceId = id || String(claim.xeroInvoiceId ?? '');
+  if (cashRefused(record) || !invoiceId) {
+    const errors = cashErrors(record);
+    return res.status(422).json({ error: 'xero_validation_failed', messages: errors.length ? errors : ['Xero rejected the claim.'] });
+  }
+  if (!current) {
+    saveClaimXero(org, claim.id, {
+      xeroInvoiceId: invoiceId,
+      xeroDocType: 'SPEND',
+      xeroTenantName: target.tenantName || target.name,
+      xeroPostedAt: new Date().toISOString().slice(0, 10),
+      archived: true,
+    });
+  }
+  markClaimXeroPayment(claim.id, { xeroStatus: 'PAID', xeroPaidDate: date, xeroPaymentRef: reference });
+  const attachment = await attachClaimPdf(invoiceId, target.tenantId, b, reference, 'BankTransactions');
+  return res.json({
+    ok: true,
+    cash: true,
+    invoice: { invoiceId, invoiceNumber: reference, status: 'PAID', docType: 'SPEND' },
+    cashPayment: { account: accountLabel, date, currency, amount: linesTotalCents(lineItems) / 100 },
+    lines: prepared.lines,
+    attachment,
+    rebilled: prepared.rebillTo.some(Boolean)
+      ? { ok: false, linked: 0, asked: prepared.rebillTo.filter(Boolean).length, error: 'cash mode does not mark billable expenses in Xero.' }
+      : null,
+    claim: getClaimForXero(org, claim.id),
+  });
 }
 
 // Best-effort: attach the expense-claim PDF (rendered client-side and passed as
@@ -3587,7 +4062,8 @@ async function attachClaimPdf(
   invoiceId: string,
   tenantId: string,
   b: any,
-  invoiceNumber: string
+  invoiceNumber: string,
+  endpoint: 'Invoices' | 'BankTransactions' = 'Invoices'
 ): Promise<{ ok: boolean; error?: string } | null> {
   const pdfBase64 = typeof b?.pdfBase64 === 'string' ? b.pdfBase64 : '';
   if (!invoiceId || !pdfBase64) return null;
@@ -3595,7 +4071,7 @@ async function attachClaimPdf(
     const bytes = Buffer.from(pdfBase64, 'base64');
     const rawName = String(b.pdfName || `expense-claim-${invoiceNumber || invoiceId}.pdf`);
     const fileName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/(\.pdf)?$/i, '.pdf');
-    const att = await relay(`Invoices/${invoiceId}/Attachments/${encodeURIComponent(fileName)}`, {
+    const att = await relay(`${endpoint}/${invoiceId}/Attachments/${encodeURIComponent(fileName)}`, {
       method: 'POST',
       tenantId,
       rawBody: bytes,
@@ -3649,6 +4125,8 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       xeroInvoiceId: claim.xeroInvoiceId,
     });
   }
+
+  if (cashModeFor(target.id)) return sendCashClaim(req, res, { organisation, target, org, claim });
 
   const prepared = await buildClaimInvoice(req, organisation, target, claim);
   if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
@@ -3756,6 +4234,16 @@ xeroRouter.post('/organisations/:id/update-claim', async (req, res) => {
       error: 'not_approved',
       message: 'Only an approved claim can be sent to Xero. Approve the corrected claim first, then update the bill.',
     });
+  }
+
+  if (isCashDocType(claim.xeroDocType)) {
+    const current = await fetchXeroBankTransaction(target.tenantId, claim.xeroInvoiceId);
+    if (!current) {
+      return res.status(502).json({ error: 'bill_unreadable', message: 'The transaction could not be read back from Xero, so nothing was changed. Try again in a moment.' });
+    }
+    const refused = cashUpdateRefusal(current);
+    if (refused) return res.status(refused.status).json(refused.body);
+    return sendCashClaim(req, res, { organisation, target, org, claim, current });
   }
 
   const prepared = await buildClaimInvoice(req, organisation, target, claim);

@@ -226,6 +226,12 @@ the publish step (`blocked_reason` says why — usually a category that is not i
 the org's chart), so it is not worth proposing. A published one is always
 settleable.
 
+### An entity in cash mode
+
+Settling a line posts ONE Spend Money for it (no bill, no payment). The reply
+carries `cash: true`, `invoice.invoiceId` is the **BankTransactionID** with
+`docType: "SPEND"`, and `payment.paymentId` is empty.
+
 ### `POST /api/payments/bills/<id>/settle`
 
 ```json

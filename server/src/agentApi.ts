@@ -522,7 +522,7 @@ const XERO: Record<string, Handler> = {
     const status = String(b.xero_status ?? 'DRAFT').toUpperCase();
     if (b.confirm !== true) return dryRun(`approve, then publish to Xero as ${status}`, c, ctx);
     if (c.approvalStatus !== 'approved') await must(ctx, 'POST', `/api/claims/${encodeURIComponent(c.id)}/approve`, {});
-    const published = await must(ctx, 'POST', `/api/xero/organisations/${encodeURIComponent(ctx.org.id)}/publish-claim`, { claimId: c.id, status });
+    const published = await must(ctx, 'POST', `/api/xero/organisations/${encodeURIComponent(ctx.org.id)}/publish-claim`, { claimId: c.id, status, paidFrom: b.paid_from, paidDate: b.paid_date });
     return { done: 'approved_and_published', xero: published, claims: await afterClaims(ctx, [c.id]) };
   },
 
@@ -563,6 +563,8 @@ const XERO: Record<string, Handler> = {
         accountCode: p.posting.accountCode,
         taxType: p.posting.taxType,
         status,
+        paidFrom: b.paid_from,
+        paidDate: b.paid_date,
       });
       results.push({ id: p.bill.id, item_id: p.row.item_id, ok: r.status < 400, xero: r.body });
     }

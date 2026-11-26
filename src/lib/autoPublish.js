@@ -49,9 +49,12 @@ export function xeroBillUrl(invoiceId, shortCode = '', docType = '') {
   const id = String(invoiceId || '').trim();
   if (!id) return '';
   const section = String(docType).startsWith('ACCREC') ? 'AccountsReceivable' : 'AccountsPayable';
-  const target = String(docType).endsWith('CREDIT')
-    ? `/${section}/ViewCreditNote.aspx?creditNoteID=${encodeURIComponent(id)}`
-    : `/${section}/Edit.aspx?InvoiceID=${encodeURIComponent(id)}`;
+  // SPEND / RECEIVE: a cash-mode posting is a bank transaction, with its own page.
+  const target = docType === 'SPEND' || docType === 'RECEIVE'
+    ? `/Bank/ViewTransaction.aspx?bankTransactionID=${encodeURIComponent(id)}`
+    : String(docType).endsWith('CREDIT')
+      ? `/${section}/ViewCreditNote.aspx?creditNoteID=${encodeURIComponent(id)}`
+      : `/${section}/Edit.aspx?InvoiceID=${encodeURIComponent(id)}`;
   const code = String(shortCode || '').trim();
   return code
     ? `https://go.xero.com/organisationlogin/default.aspx?shortcode=${encodeURIComponent(code)}&redirecturl=${target}`

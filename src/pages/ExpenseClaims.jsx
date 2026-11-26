@@ -17,6 +17,8 @@ import { useAuth } from '@/lib/auth';
 import { canManageBusiness, isAdminAccess, canCreateClaims, canPublishToXero, useUsers } from '@/lib/userStore';
 import { publishClaimToXero } from '@/lib/organisations';
 import { useExtractionSettings, publishStatusLabel } from '@/lib/extractionSettings';
+import { useCashMode } from '@/lib/cashMode';
+import CashClaimModal from '@/components/CashClaimModal';
 import { buildClaimPdfBase64 } from '@/lib/claimPdf';
 import { claimExportName } from '@/lib/exportFormat';
 import { isPracticeTeam } from '@/lib/practiceStore';
@@ -465,10 +467,15 @@ A claim not yet submitted is recorded as approved directly by you; one waiting o
   const mayPublish = canPublishToXero(membership, googleEnabled);
   const publishStatus = useExtractionSettings().publishStatus || 'AUTHORISED';
   const approvableIds = new Set(approvable.map((c) => c.id));
+  // Cash mode: each claim posts as Spend Money, so the account and day are asked
+  // once before the run.
+  const cashMode = useCashMode();
+  const [cashAsk, setCashAsk] = useState(false);
   const publishable = mayPublish
     ? picked.filter((c) => !c.xeroInvoiceId && (c.approvalStatus === 'approved' || approvableIds.has(c.id)))
     : [];
-  const doPublish = async () => {
+  const doPublish = async (paid) => {
+    const cash = paid?.paidFrom ? paid : null;
     const n = publishable.length;
     const toApprove = publishable.filter((c) => c.approvalStatus !== 'approved').length;
     const orgId = activeOrg?.id || '';
@@ -477,9 +484,13 @@ A claim not yet submitted is recorded as approved directly by you; one waiting o
       setNotice('No Xero organisation is linked. Connect one in the organisation switcher first.');
       return;
     }
+    if (cashMode && !cash) {
+      setCashAsk(true);
+      return;
+    }
     if (
       !window.confirm(
-        `Publish ${n} claim${n === 1 ? '' : 's'} to Xero as ${publishStatusLabel(publishStatus).toLowerCase()} bill${n === 1 ? '' : 's'}?` +
+        `Publish ${n} claim${n === 1 ? '' : 's'} to Xero as ${cashMode ? 'Spend Money' : `${publishStatusLabel(publishStatus).toLowerCase()} bill${n === 1 ? '' : 's'}`}?` +
           (toApprove ? `
 
 ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be approved by you first.` : '')
@@ -500,7 +511,7 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
       }
       try {
         const pdfBase64 = await buildClaimPdfBase64(claim);
-        await publishClaimToXero(orgId, { claimId: claim.id, status: publishStatus, pdfBase64, pdfName: claimExportName(claim, 'pdf') });
+        await publishClaimToXero(orgId, { claimId: claim.id, status: publishStatus, pdfBase64, pdfName: claimExportName(claim, 'pdf'), ...(cash || {}) });
         done++;
       } catch (e) {
         failed.push(`${c.claimFor || c.name}: ${e.message || 'could not be published'}`);
@@ -1003,6 +1014,16 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
         </div>
       )}
 
+      <CashClaimModal
+        open={cashAsk}
+        organisationId={activeOrg?.id || ''}
+        count={publishable.length}
+        onClose={() => setCashAsk(false)}
+        onConfirm={(paid) => {
+          setCashAsk(false);
+          doPublish(paid);
+        }}
+      />
       <AutoClaimsModal open={autoOpen} onClose={() => setAutoOpen(false)} />
       {/* The same dialog the claim page opens, so CSV and PDF are offered in
           both places and mean the same thing in each. */}

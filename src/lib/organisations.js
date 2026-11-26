@@ -337,6 +337,12 @@ export function fetchXeroPaymentMethods(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/payment-methods`).then((b) => b.paymentMethods ?? []);
 }
 
+// The bank and card accounts a cash-mode posting can be paid from, in the Xero
+// that receives this entity's postings (its parent's, for a bridge).
+export function fetchCashAccounts(organisationId) {
+  return getJson(`/api/xero/organisations/${organisationId}/cash-accounts`).then((b) => b.accounts ?? []);
+}
+
 export function fetchXeroCustomers(organisationId) {
   return getJson(`/api/xero/organisations/${organisationId}/customers`).then((b) => b.customers ?? []);
 }

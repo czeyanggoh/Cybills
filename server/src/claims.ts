@@ -118,7 +118,9 @@ type Claim = {
   auto?: boolean;
   autoPeriodEnd?: string;
   // Xero handoff: set once the approved claim is posted as an ACCPAY bill.
+  // In cash mode it is a Spend Money instead, said by xeroDocType.
   xeroInvoiceId?: string;
+  xeroDocType?: 'SPEND';
   xeroTenantName?: string;
   xeroPostedAt?: string;
   // What Xero says has happened to that bill since — the same three fields a
@@ -135,7 +137,7 @@ type Claim = {
 export function getClaimForXero(org: string, id: string): Claim | null {
   return load().find((c) => c.id === id && c.orgId === org && !c.deleted) ?? null;
 }
-export function saveClaimXero(org: string, id: string, patch: Partial<Pick<Claim, 'xeroInvoiceId' | 'xeroTenantName' | 'xeroPostedAt' | 'archived'>>): Claim | null {
+export function saveClaimXero(org: string, id: string, patch: Partial<Pick<Claim, 'xeroInvoiceId' | 'xeroDocType' | 'xeroTenantName' | 'xeroPostedAt' | 'archived'>>): Claim | null {
   const items = load();
   const claim = items.find((c) => c.id === id && c.orgId === org && !c.deleted);
   if (!claim) return null;

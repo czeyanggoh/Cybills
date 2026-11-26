@@ -1,3 +1,4 @@
+import { cashModeFor } from './cashMode.js';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -314,6 +315,9 @@ organisationsRouter.get('/', (req, res) => {
       // browser because a bridge entity's parent is very often one the caller
       // cannot open, so its row is not in the list they were served.
       xeroShortCode: publishTargetFor(ws, o)?.shortCode || '',
+      // Whether what this entity posts goes up as Spend / Receive Money, read
+      // off the entity that receives it (cashMode.ts).
+      cashMode: cashModeFor(publishTargetFor(ws, o)?.id || o.id),
     }));
   res.json({ organisations });
 });

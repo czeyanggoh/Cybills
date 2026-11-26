@@ -235,6 +235,13 @@ Answers `{ok, entity_id, entity_name, entity_created, status, error?}` with
 person, or a practice colleague, gained access), `already_member`, or
 `not_sent` (no usable address, or the email could not be sent). Idempotent.
 
+## An entity in cash mode
+
+An entity whose Xero has only Spend / Receive Money (Business settings →
+Extraction → Publishing → Cash mode) is left out of `GET /api/payments/bills`,
+and `publish` answers `409 cash_mode`: it posts once the money has moved, through
+bank match.
+
 ## POST /api/payments/suspend: stop reading an entity's documents (trial or subscription ended)
 
 CYWorkspace calls this (same `X-API-Key`) when an organisation's free trial or

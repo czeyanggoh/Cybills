@@ -66,6 +66,10 @@ export const DEFAULT_EXTRACTION_SETTINGS = {
   // purpose: nobody looked at that document, so it goes into an approval queue
   // rather than straight into the payable ledger.
   publishStatus: 'AUTHORISED',
+  // The entity's Xero has no bills or invoices (a cash-only subscription): what
+  // it publishes goes up as Spend Money and Receive Money, from a bank or card
+  // account (server/src/cashMode.ts). Off unless switched on.
+  cashMode: false,
   // A bill in a currency this entity's Xero does not hold: add the currency to Xero (PUT /Currencies) so
   // the bill posts in its own currency, instead of converting it to the base currency. On for every entity.
   autoAddCurrency: true,

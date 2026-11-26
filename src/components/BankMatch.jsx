@@ -486,7 +486,7 @@ export default function BankMatch() {
                             <ExternalLink className="h-3.5 w-3.5" />
                           </a>
                         ) : null}
-                        <button type="button" onClick={() => undo(record)} disabled={isBusy} title="Undo — delete the payment in Xero" className="text-muted-foreground hover:text-foreground disabled:opacity-50">
+                        <button type="button" onClick={() => undo(record)} disabled={isBusy} title={record.cash ? 'Undo — delete the Spend Money in Xero and unpublish the document' : 'Undo — delete the payment in Xero'} className="text-muted-foreground hover:text-foreground disabled:opacity-50">
                           <RotateCcw className="h-3.5 w-3.5" />
                         </button>
                       </span>

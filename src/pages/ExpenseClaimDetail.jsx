@@ -65,6 +65,8 @@ import {
   useIsPrimaryOrganisation,
 } from '@/lib/organisations';
 import { useExtractionSettings, publishStatusLabel } from '@/lib/extractionSettings';
+import { useCashMode } from '@/lib/cashMode';
+import CashClaimModal from '@/components/CashClaimModal';
 import { xeroBillUrl } from '@/lib/autoPublish';
 import { CATEGORIES } from '@/data/categories';
 import { generateClaimPdf, buildClaimPdfBase64 } from '@/lib/claimPdf';
@@ -356,12 +358,21 @@ export default function ExpenseClaimDetail() {
   // A bridge entity's claim becomes a bill in the PARENT's ledger, so the code
   // that opens it is resolved server-side rather than read off this entity.
   const xeroShortCode = useXeroShortCode();
-  const publishXero = async () => {
+  // Cash mode: a claim posts as Spend Money, so the account and day are asked
+  // first (cashAsk holds the organisation while the dialog is open).
+  const cashMode = useCashMode();
+  const [cashAsk, setCashAsk] = useState('');
+  const publishXero = async (paid) => {
+    const cash = paid?.paidFrom ? paid : null;
     setPayNote('');
     const active = getActiveOrganisationId();
     const orgId = organisations.find((o) => o.id === active)?.id || organisations[0]?.id || '';
     if (!orgId) {
       setPayNote('No Xero organisation is linked. Connect one in the organisation switcher first.');
+      return;
+    }
+    if (cashMode && !cash) {
+      setCashAsk(orgId);
       return;
     }
     setPublishing(true);
@@ -373,10 +384,12 @@ export default function ExpenseClaimDetail() {
         status: publishStatus,
         pdfBase64,
         pdfName: claimExportName(claim, 'pdf'),
+        ...(cash || {}),
       });
       notifyClaimsChanged(); // refresh so the button flips to "Published to Xero"
       const attachNote = r.attachment && r.attachment.ok === false ? ' (PDF attachment couldn’t be sent — see Xero)' : '';
-      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as a ${publishStatusLabel(publishStatus).toLowerCase()} bill${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''}.${attachNote}${rebillNote(r.rebilled)}`);
+      const postedAs = r.cash ? 'Spend Money' : `a ${publishStatusLabel(publishStatus).toLowerCase()} bill`;
+      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as ${postedAs}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''}.${attachNote}${rebillNote(r.rebilled)}`);
     } catch (err) {
       setPayNote(err?.message || 'Could not publish the claim to Xero.');
     } finally {
@@ -390,6 +403,7 @@ export default function ExpenseClaimDetail() {
   const rebillNote = (rb) => {
     if (!rb || !rb.asked) return '';
     if (rb.ok) return ` ${rb.linked} line${rb.linked === 1 ? '' : 's'} marked billable to the customer.`;
+    if (cashMode) return ` ${rb.asked} rebillable line${rb.asked === 1 ? ' was' : 's were'} not marked billable: ${rb.error}`;
     return ` Only ${rb.linked} of ${rb.asked} rebillable line${rb.asked === 1 ? '' : 's'} could be marked billable: ${rb.error || 'Xero refused.'} Use “Assign expenses to a customer” on the bill in Xero for the rest.`;
   };
 
@@ -407,7 +421,7 @@ export default function ExpenseClaimDetail() {
       const r = await updateClaimInXero(orgId, { claimId: claim.id, pdfBase64, pdfName: claimExportName(claim, 'pdf') });
       notifyClaimsChanged();
       const attachNote = r.attachment && r.attachment.ok === false ? ' (PDF attachment couldn’t be sent — see Xero)' : '';
-      setPayNote(`Updated the bill in ${claim.xeroTenantName || 'Xero'}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} with this claim’s current items.${attachNote}${rebillNote(r.rebilled)}`);
+      setPayNote(`Updated the ${claim.xeroDocType === 'SPEND' ? 'Spend Money' : 'bill'} in ${claim.xeroTenantName || 'Xero'}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} with this claim’s current items.${attachNote}${rebillNote(r.rebilled)}`);
     } catch (err) {
       setPayNote(err?.message || 'Could not update the bill in Xero.');
     } finally {
@@ -567,7 +581,7 @@ export default function ExpenseClaimDetail() {
   // waiting to read, and the arrow says it opens elsewhere.
   const publishBtn = claim.xeroInvoiceId ? (
     <a
-      href={xeroBillUrl(claim.xeroInvoiceId, xeroShortCode)}
+      href={xeroBillUrl(claim.xeroInvoiceId, xeroShortCode, claim.xeroDocType)}
       target="_blank"
       rel="noreferrer"
       className={cn(
@@ -579,7 +593,7 @@ export default function ExpenseClaimDetail() {
       title={
         claimPaid?.tone === 'paid'
           ? `Paid in ${claim.xeroTenantName || 'Xero'}${claim.xeroPaidDate ? ` on ${formatClaimDate(claim.xeroPaidDate)}` : ''}${claim.xeroPaymentRef ? ` · ${claim.xeroPaymentRef}` : ''} — open the bill`
-          : `Open this claim's bill in ${claim.xeroTenantName || 'Xero'}`
+          : `Open this claim's ${claim.xeroDocType === 'SPEND' ? 'Spend Money' : 'bill'} in ${claim.xeroTenantName || 'Xero'}`
       }
     >
       <CheckCircle2 className="h-4 w-4" />
@@ -1495,6 +1509,15 @@ export default function ExpenseClaimDetail() {
       {/* The Costs drawer, pointed at this claim: same uploader, same reader,
           but every document it finishes lands on the claim instead of in the
           inbox. */}
+      <CashClaimModal
+        open={Boolean(cashAsk)}
+        organisationId={cashAsk}
+        onClose={() => setCashAsk('')}
+        onConfirm={(paid) => {
+          setCashAsk('');
+          publishXero(paid);
+        }}
+      />
       <AddDocumentsDrawer
         open={addOpen}
         onClose={() => setAddOpen(false)}

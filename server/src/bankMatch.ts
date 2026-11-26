@@ -10,9 +10,11 @@ import {
   type Organisation,
 } from './organisations.js';
 import {
+  clearBillPosted,
   getBillById,
   markBillXeroPayment,
   parseAmount,
+  reconcileReadiness,
   setBillBankMatch,
   updateBill,
   type Bill,
@@ -186,6 +188,9 @@ export type BankLineRecord = {
   // line back off after deleting the payment.
   feeLineItemId?: string;
   fee?: CardFee;
+  // Cash mode: the settlement IS the published bank transaction (invoiceId),
+  // with no payment of its own. Undo deletes it and unpublishes the document.
+  cash?: boolean;
   via: 'browser' | 'cyws';
   at: string;
   by: string;
@@ -463,8 +468,24 @@ export async function settleBillAgainstLine(
       status: 'AUTHORISED',
       contactId: opts.contactId,
       payingLine: line,
+      via: opts.via,
+      by: opts.by,
     });
     if (out.status !== 200) return out;
+    // Cash mode: publishing made the Spend Money from this line and recorded
+    // the match, so there is no payment to follow.
+    if (out.body?.cash) {
+      return { status: 200, body: {
+        ok: true,
+        cash: true,
+        invoice: out.body.invoice,
+        published: { lines: out.body.lines, perLine: out.body.perLine, attachment: out.body.attachment },
+        payment: { paymentId: '', ...out.body.cashPayment },
+        fee: out.body.fee,
+        match: out.body.match,
+        bill: out.body.bill,
+      } };
+    }
     published = out.body;
     invoiceId = String(out.body?.invoice?.invoiceId ?? '');
     publishedHere = true;
@@ -766,6 +787,80 @@ export async function recordPaymentForLine(
 }
 
 /**
+ * Cash mode: remember that this statement line is what a document was published
+ * from. The bank transaction is already in Xero; this is the document's Paid
+ * toggle, the record, and CYWS being told the line is spent.
+ */
+export function recordCashMatch(
+  organisation: { id: string; tenantId: string },
+  ws: string,
+  bill: Bill,
+  line: BankLine,
+  transactionId: string,
+  opts: { fee: CardFee | null; via: 'browser' | 'cyws'; by: string }
+): BankLineRecord {
+  const paidBefore = bill.bankMatch ? Boolean(bill.bankMatch.paidBefore) : Boolean(bill.paid);
+  const paymentMethodBefore = bill.bankMatch ? String(bill.bankMatch.paymentMethodBefore ?? '') : String(bill.paymentMethod ?? '');
+  const patch: Partial<Bill> = { paid: true };
+  if (line.bank_account_name && !String(bill.paymentMethod ?? '')) patch.paymentMethod = line.bank_account_name;
+  updateBill(ws, bill.id, patch);
+  if (bill.bankMatch) setBillBankMatch(ws, bill.id, null);
+  void syncWhatsappReaction(ws, bill.id);
+  const match: BankLineRecord = {
+    id: newId(),
+    orgId: ws,
+    tenantId: organisation.tenantId,
+    kind: 'match',
+    key: line.key,
+    line,
+    billId: bill.id,
+    invoiceId: transactionId,
+    cash: true,
+    paidBefore,
+    paymentMethodBefore,
+    publishedHere: true,
+    ...(opts.fee ? { fee: opts.fee } : {}),
+    via: opts.via,
+    at: new Date().toISOString(),
+    by: opts.by,
+  };
+  saveRecords([...loadRecords(), match]);
+  queueLineNotice(match, 'used');
+  return match;
+}
+
+// Undo in cash mode: the Spend Money is the publish, so it is deleted and the
+// document goes back to unpublished. Xero refuses a reconciled one.
+async function undoCashSettlement(record: BankLineRecord, organisation: Organisation): Promise<SettleResult> {
+  const ws = record.orgId;
+  const id = String(record.invoiceId ?? '');
+  const gone = await relay(`BankTransactions/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    tenantId: organisation.tenantId,
+    query: { summarizeErrors: 'false' },
+    body: { BankTransactions: [{ BankTransactionID: id, Status: 'DELETED' }] },
+  });
+  const rec = gone.ok ? gone.data?.BankTransactions?.[0] : null;
+  const errs: string[] = (rec?.ValidationErrors ?? []).map((e: any) => String(e.Message ?? e));
+  if (!gone.ok || errs.length) {
+    return { status: !gone.ok && gone.status >= 500 ? 502 : 409, body: {
+      error: 'payment_not_deleted',
+      message: `Xero would not delete the transaction: ${errs.length ? errs.join(' ') : (gone as any).message}`,
+    } };
+  }
+  const bill = record.billId ? getBillById(ws, record.billId) : null;
+  if (bill && bill.xeroInvoiceId === id) {
+    clearBillPosted(ws, bill.id);
+    markBillXeroPayment(ws, bill.id, { xeroStatus: '', xeroPaidDate: '', xeroPaymentRef: '' });
+    updateBill(ws, bill.id, { paid: Boolean(record.paidBefore), paymentMethod: record.paymentMethodBefore ?? '' });
+    reconcileReadiness(ws, bill.id);
+  }
+  saveRecords(loadRecords().filter((r) => r.id !== record.id));
+  queueLineNotice(record, 'released');
+  return { status: 200, body: { ok: true, cash: true, bill: bill ? getBillById(ws, bill.id) : null } };
+}
+
+/**
  * Apply a document's pending autofill (Bill.bankMatch) to the bill that has
  * just been published for it. Called by postBillToXero once the bill exists:
  * Dext's "Autofill payment" fills the payment fields in the inbox, and it is
@@ -878,6 +973,7 @@ export function repairStaleMatches(ws: string): number {
  * back to being outstanding for somebody to settle against the right document.
  */
 export async function undoSettlement(record: BankLineRecord, organisation: Organisation): Promise<SettleResult> {
+  if (record.cash) return undoCashSettlement(record, organisation);
   const ws = record.orgId;
   if (record.paymentId) {
     const gone = await relay(`Payments/${encodeURIComponent(record.paymentId)}`, {

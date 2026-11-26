@@ -55,6 +55,11 @@ It makes no decisions of its own.
 | xero | `approve_and_publish_claim` | `claim_id`, `xero_status` (DRAFT by default), `confirm` |
 | xero | `publish_costs` | `item_ids[]`, `xero_status`, `confirm` |
 
+An entity in cash mode posts Spend Money: `publish_costs` and
+`approve_and_publish_claim` also take `paid_from` (a bank account's name or
+AccountID) and `paid_date`. A claim needs both; a cost needs them unless it is
+already marked Paid from a bank account. `xero_status` is ignored.
+
 **Xero actions are a dry run unless `confirm: true`.** The dry run returns what
 would happen, and the claim or documents it would act on, and changes nothing.
 

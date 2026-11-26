@@ -1,3 +1,4 @@
+import { cashModeFor } from './cashMode.js';
 import { Router } from 'express';
 import { keyMatches } from './inboundKey.js';
 import { WORKSPACE_ID } from './workspace.js';
@@ -279,6 +280,9 @@ paymentsRouter.get('/bills', async (req, res) => {
   const bills: ReturnType<typeof payableRow>[] = [];
   const isAdvance = await advanceTest();
   for (const organisation of organisations) {
+    // A cash-mode entity has no bills in Xero, so nothing for a run to publish
+    // or pay against: its documents post once the money has moved (bank match).
+    if (cashModeFor(organisation.id)) continue;
     const candidates = listBills(dataScopeForOrg(organisation.id)).filter((b) => payable(b, isAdvance(b)));
     if (!candidates.length) continue;
     const [accounts, rates] = await Promise.all([
@@ -466,6 +470,8 @@ paymentsRouter.get('/bills/:id/file', async (req, res) => {
 });
 
 const PUBLISH_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'AUTHORISED']);
+const CASH_MODE_RUN_MESSAGE =
+  'This entity is in cash mode: it posts Spend Money once the money has moved, not bills for a payment run. Match the bank line instead.';
 
 // POST /api/payments/bills/:id/publish
 // Body: { tenant_id, contact_id, status?, due_date? }
@@ -524,6 +530,8 @@ paymentsRouter.post('/bills/:id/publish', async (req, res) => {
       bill_id: bill.id,
     });
   }
+
+  if (cashModeFor(organisation.id)) return res.status(409).json({ error: 'cash_mode', message: CASH_MODE_RUN_MESSAGE });
 
   // A quotation is paid, not published: § prepay. Said before the payable
   // check so a caller working from an older listing learns which route it
