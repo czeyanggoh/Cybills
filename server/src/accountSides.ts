@@ -12,6 +12,7 @@ type AccountSides = {
   isExpenseAccount: (a: Account) => boolean;
   isRevenueAccount: (a: Account) => boolean;
   isAssetAccount: (a: Account) => boolean;
+  isLiabilityAccount: (a: Account) => boolean;
   isImportGstAccount: (a: Account) => boolean;
   readerDescription: (a: Account & { description?: string }) => string;
   shownAssetKeys: (blob: unknown) => Set<string>;

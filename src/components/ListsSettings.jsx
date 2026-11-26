@@ -216,11 +216,12 @@ function CategoriesFromXero({ side = 'cost' }) {
   const q = query.trim().toLowerCase();
   const rows = (categories || []).filter((c) => !q || c.name.toLowerCase().includes(q) || (c.code || '').toLowerCase().includes(q));
   const visKey = (c) => c.code || c.name;
-  // Assets and the GST account are off until switched on; expense and revenue
-  // accounts are on until switched off.
-  const optIn = (c) => c.asset || c.importGst;
+  // Assets, liabilities and the GST account are off until switched on; expense
+  // and revenue accounts are on until switched off.
+  const optIn = (c) => c.asset || c.liability || c.importGst;
   const expenseRows = rows.filter((c) => !optIn(c));
   const assetRows = rows.filter((c) => c.asset);
+  const liabilityRows = rows.filter((c) => c.liability);
   const gstRows = rows.filter((c) => c.importGst);
   const isOn = (c) => (optIn(c) ? assetsOn.has(visKey(c)) : !hidden.has(visKey(c)));
   const toggle = (c) => (optIn(c) ? setAssetShown(visKey(c), !isOn(c)) : setListVisible('categories', visKey(c), !isOn(c)));
@@ -251,7 +252,7 @@ function CategoriesFromXero({ side = 'cost' }) {
       <p className="mb-3 max-w-2xl text-sm text-muted-foreground">
         {sales
           ? 'Sales categories are your connected Xero organisation’s revenue accounts — the accounts a sales invoice is coded to.'
-          : 'Categories are your connected Xero organisation’s expense accounts, and the asset accounts a cost can be capitalised to (switched off until you turn them on).'}{' '}
+          : 'Categories are your connected Xero organisation’s expense accounts, plus the asset and liability accounts a cost can be posted to (switched off until you turn them on).'}{' '}
         Edit a <span className="font-medium text-foreground">Description</span> and it writes straight back to Xero on its own. Switch{' '}
         <span className="font-medium text-foreground">Visible</span> off to drop a category from the {sales ? 'Sales' : 'Costs'} document pickers and stop CYBills coding anything to it — the account stays untouched in Xero.
       </p>
@@ -286,6 +287,14 @@ function CategoriesFromXero({ side = 'cost' }) {
               </tr>
             )}
             {assetRows.map(row)}
+            {liabilityRows.length > 0 && (
+              <tr className="border-b bg-muted/40">
+                <td colSpan={4} className="px-3 py-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Liabilities</span> — for a bill that settles an amount already on the balance sheet, such as an accrued expense. Off until switched on.
+                </td>
+              </tr>
+            )}
+            {liabilityRows.map(row)}
             {gstRows.length > 0 && (
               <tr className="border-b bg-muted/40">
                 <td colSpan={4} className="px-3 py-2 text-xs text-muted-foreground">

@@ -870,7 +870,8 @@ xeroRouter.get('/organisations/:id/tracking', async (req, res) => {
 // GET /api/xero/organisations/:id/categories — the org's Xero expense accounts
 // with their AccountID + editable Description, for Business settings → Lists →
 // Categories (where the Description can be edited and pushed back to Xero).
-// The cost side also lists the ASSET accounts a bill may be capitalised to,
+// The cost side also lists the LIABILITY accounts a bill may settle (marked
+// `liability`) and the ASSET accounts it may be capitalised to,
 // each marked `asset` — offered in the pickers only once switched on there
 // (src/lib/accountSides.js). `?kind=sales` is the other half of the chart —
 // the revenue accounts a sales invoice is coded from — for the same list's
@@ -892,12 +893,13 @@ xeroRouter.get('/organisations/:id/categories', async (req, res) => {
       type: String(a.Type ?? ''),
       systemAccount: String(a.SystemAccount ?? ''),
     }))
-    .filter((a: any) => a.id && (sales ? sides.isRevenueAccount(a) : sides.isExpenseAccount(a) || sides.isAssetAccount(a) || sides.isImportGstAccount(a)))
+    .filter((a: any) => a.id && (sales ? sides.isRevenueAccount(a) : sides.isExpenseAccount(a) || sides.isAssetAccount(a) || sides.isLiabilityAccount(a) || sides.isImportGstAccount(a)))
     .map(({ systemAccount, ...a }: any) => {
       // The GST account is offered for import GST only (importGst.js), under its
       // own heading, and is switched on the way an asset is.
       const importGst = !sales && sides.isImportGstAccount({ systemAccount });
-      return { ...a, importGst, asset: !sales && !importGst && !sides.isExpenseAccount(a) };
+      const liability = !sales && sides.isLiabilityAccount({ ...a, systemAccount });
+      return { ...a, importGst, liability, asset: !sales && !importGst && !liability && !sides.isExpenseAccount(a) };
     });
   res.json({ categories });
 });

@@ -1453,6 +1453,14 @@ the emailed / WhatsApp'd read (`extractionInputsFor`), so all three offer the
 same accounts. Publishing needed nothing: `postingCodesFrom` already takes any
 active account in the chart.
 
+**And a cost already accrued is posted to the liability it sits in.** Liability
+accounts (CURRLIAB, LIABILITY, TERMLIAB, never a system account) are listed in
+Lists -> Categories under **Liabilities**, OFF until switched on, so a bill for an
+accrued expense can be coded to "802 - Accrued Expenses" instead of expensing it
+twice. The reader is told to use one only where the document or its covering
+message says the amount was accrued (`LIABILITY_READER_NOTE`). Tax is decided as
+for any bill.
+
 **Import GST goes to the GST account, which is offered for nothing else.** GST a
 freight forwarder paid Singapore Customs and bills on is input tax already paid:
 the line goes to Xero's GST system account (820) under **GST on Imports** with no

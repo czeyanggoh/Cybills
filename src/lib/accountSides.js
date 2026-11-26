@@ -11,8 +11,11 @@
 // expense list is a judgement the practice made long ago while an asset list
 // is one nobody has made yet.
 //
-// The one liability account offered is Xero's GST account, for import GST
-// (src/lib/importGst.js) — off until switched on, the same way.
+// So are the LIABILITY accounts, for a bill that settles something already on the
+// balance sheet — an expense accrued at month end is posted to Accrued Expenses,
+// or it is expensed twice. Off until switched on too, and Xero's system accounts
+// are never among them, bar one: the GST account, for import GST alone
+// (src/lib/importGst.js).
 //
 // Pure, with no dependency outside src/lib: the browser reads it for the pickers
 // and the upload read, the server loads it by path (server/src/accountSides.ts)
@@ -29,6 +32,8 @@ export const REVENUE_TYPES = ['REVENUE', 'SALES', 'OTHERINCOME'];
 // bank account is a payment, never a bill line.
 export const ASSET_TYPES = ['FIXED', 'CURRENT', 'NONCURRENT', 'PREPAYMENT', 'INVENTORY'];
 
+export const LIABILITY_TYPES = ['CURRLIAB', 'LIABILITY', 'TERMLIAB'];
+
 const typeOf = (a) => String(a?.type ?? '').toUpperCase();
 
 export const isExpenseAccount = (a) => EXPENSE_TYPES.includes(typeOf(a));
@@ -37,15 +42,27 @@ export const isRevenueAccount = (a) => REVENUE_TYPES.includes(typeOf(a));
 // a bill line, so it is never offered.
 export const isAssetAccount = (a) => ASSET_TYPES.includes(typeOf(a)) && !String(a?.systemAccount ?? '').trim();
 
+export const isLiabilityAccount = (a) => LIABILITY_TYPES.includes(typeOf(a)) && !String(a?.systemAccount ?? '').trim();
+
 // The key an account is switched on or off by — its code, the field every
 // accounts listing shares.
 export const accountKey = (a) => String(a?.code || a?.name || '');
 
-// What the reader is told an account is for: the account's own description,
-// except on the GST account.
-export const readerDescription = (a) => (isImportGstAccount(a) ? IMPORT_GST_READER_DESCRIPTION : a?.description || '');
+// Said in front of a liability account's own description: nothing on a supplier's
+// paper shows that a cost was accrued, so the reader may not infer it.
+export const LIABILITY_READER_NOTE =
+  'Balance sheet liability: use ONLY where the document or the message sent with it says this amount was already ' +
+  'accrued or settles this balance. Otherwise code the expense account.';
 
-// The accounts switched ON (assets, and the GST account), out of the Lists blob.
+// What the reader is told an account is for: the account's own description,
+// except on the GST account and the liabilities.
+export const readerDescription = (a) => {
+  if (isImportGstAccount(a)) return IMPORT_GST_READER_DESCRIPTION;
+  const own = a?.description || '';
+  return isLiabilityAccount(a) ? `${LIABILITY_READER_NOTE} ${own}`.trim() : own;
+};
+
+// The accounts switched ON (assets, liabilities, the GST account), out of the Lists blob.
 // Junk reads as none.
 export function shownAssetKeys(blob) {
   const shown = blob && typeof blob === 'object' && !Array.isArray(blob) ? blob.shown : null;
@@ -54,12 +71,14 @@ export function shownAssetKeys(blob) {
 }
 
 // The accounts a document of this kind may be coded to: revenue for a sale;
-// for a cost, the expense accounts plus the asset accounts (and the GST
-// account) switched on.
+// for a cost, the expense accounts plus whichever asset and liability accounts
+// (and the GST account) are switched on.
 export function accountsForSide(accounts, kind = 'cost', shownAssets = new Set()) {
   const list = Array.isArray(accounts) ? accounts : [];
   if (kind === 'sales') return list.filter(isRevenueAccount);
   return list.filter(
-    (a) => isExpenseAccount(a) || ((isAssetAccount(a) || isImportGstAccount(a)) && shownAssets.has(accountKey(a)))
+    (a) =>
+      isExpenseAccount(a) ||
+      ((isAssetAccount(a) || isLiabilityAccount(a) || isImportGstAccount(a)) && shownAssets.has(accountKey(a)))
   );
 }
