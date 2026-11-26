@@ -6,6 +6,7 @@
 // it for those callers. Its one import is another pure rule of the same kind.
 import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from './motorVehicle.js';
 import { isMedicalProviderExpense, medicalProviderReason, MEDICAL_TAX_RATE } from './medicalProvider.js';
+import { isImportGstCategory, importGstRateName, importGstReason } from './importGst.js';
 
 // --- Auto-pickable tax codes ------------------------------------------------
 // The ONLY codes CYBills is allowed to choose from arithmetic alone:
@@ -315,6 +316,13 @@ export function taxRateOutcome({
   // no amount of GST on a petrol receipt makes it claimable. A company that is
   // not GST-registered is left to its own (silent) answer, which is No Tax too.
   const label = String(category || accountLabel || '');
+  // The GST account takes import GST and one code with it (src/lib/importGst.js),
+  // ahead of every other rule. Looked for in the whole list, so a code switched
+  // off in Lists is still named as the org names it.
+  if (gstRegistered && kind !== 'sales' && isImportGstCategory(label)) {
+    const name = importGstRateName(Array.isArray(allRates) && allRates.length ? allRates : rates);
+    return { name, reason: importGstReason(name), claimsTax: false, importGst: true };
+  }
   if (gstRegistered && isMotorVehicleExpense({ category: label, motorVehicle: motorVehicle === true, kind })) {
     const noTax = (Array.isArray(rates) ? rates : []).find((r) => Number(r.rate) === 0 && autoMatches(AUTO_NO_TAX, r));
     return {

@@ -1,5 +1,6 @@
 import { bookRevision, listBills, parseAmount, updateBill, type Bill } from './store.js';
 import { foldLineTaxIntoCost } from './taxRules.js';
+import { keepImportGst } from './importGst.js';
 
 // The practice's No Tax rules, server-side: a motor vehicle expense
 // (src/lib/motorVehicle.js) and a bill from a hospital or clinic
@@ -91,6 +92,10 @@ const lineTax = (rows: unknown) =>
  * an earlier read wrote is not rewritten for the sake of it.
  */
 export async function keepPracticeNoTax(current: Partial<Bill> | null, patch: Record<string, unknown>): Promise<boolean> {
+  // Import GST first: a document on the GST account has its own one code, which
+  // none of the No Tax rules below may take off it (importGst.ts).
+  const importGst = await keepImportGst(current, patch);
+  if (importGst !== null) return importGst;
   const doc = { ...(current || {}), ...patch } as Partial<Bill> & Record<string, unknown>;
   if (doc.xeroInvoiceId) return false;
   if (['deleted', 'merged', 'expenseclaim'].includes(String(doc.status || ''))) return false;

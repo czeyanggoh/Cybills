@@ -1453,6 +1453,23 @@ the emailed / WhatsApp'd read (`extractionInputsFor`), so all three offer the
 same accounts. Publishing needed nothing: `postingCodesFrom` already takes any
 active account in the chart.
 
+**Import GST goes to the GST account, which is offered for nothing else.** GST a
+freight forwarder paid Singapore Customs and bills on is input tax already paid:
+the line goes to Xero's GST system account (820) under **GST on Imports** with no
+tax amount. Neither was reachable (a system account of the liability type), so
+Yakson's forwarder bills were coded to freight and the GST not claimed. Lists ->
+Categories lists it under **Import GST**, OFF until switched on (the assets'
+`shown.categories` set), and the reader is given its own description of what
+belongs there (`readerDescription`). `src/lib/importGst.js` (pure) is the rule:
+`taxRateOutcome` applies it first; `keepImportGst` (`server/src/importGst.ts`,
+called by `keepPracticeNoTax`) holds it on every write, over a hand pick too, and
+takes the code off when the document moves to another category; a published
+document is touched only by a write that codes it, which is the road to Update in
+Xero. A mixed bill codes only its GST row. At publish `holdImportGst`
+(`xero.ts`) forces the code and refuses a GST line carrying a tax amount.
+Covered by `npm test` at the root and in `server/` (`import-gst`,
+`publish-lines`).
+
 ## A workspace an entity doesn't use is not a tab
 
 Most CYBM clients raise their own invoices in Xero and never file a sales

@@ -19,13 +19,17 @@ const stub = http.createServer((req, res) => {
   const path = decodeURIComponent(String(req.url)).split('?')[0];
   res.setHeader('content-type', 'application/json');
   if (path.endsWith('/Accounts')) {
-    res.end(JSON.stringify({ Accounts: ACCOUNTS.map((code) => ({ Code: code, Name: `Account ${code}`, Status: 'ACTIVE' })) }));
+    res.end(JSON.stringify({ Accounts: [
+      ...ACCOUNTS.map((code) => ({ Code: code, Name: `Account ${code}`, Status: 'ACTIVE' })),
+      { Code: '820', Name: 'GST', Status: 'ACTIVE', SystemAccount: 'GST' },
+    ] }));
   } else if (path.endsWith('/TrackingCategories')) {
     res.end(JSON.stringify({ TrackingCategories: TRACKING }));
   } else if (path.endsWith('/TaxRates')) {
     res.end(JSON.stringify({ TaxRates: [
       { Name: 'Standard-Rated Purchases', TaxType: 'INPUTY24', EffectiveRate: 9, Status: 'ACTIVE' },
       { Name: 'Zero-Rated Purchases', TaxType: 'ZERORATEDINPUT', EffectiveRate: 0, Status: 'ACTIVE' },
+      { Name: 'GST on Imports', TaxType: 'TAX002', EffectiveRate: 0, Status: 'ACTIVE' },
       { Name: 'Old Rate', TaxType: 'INPUT', EffectiveRate: 7, Status: 'DELETED' },
     ] }));
   } else {
@@ -166,6 +170,12 @@ check('a No Tax row takes no share of the stated GST', [lines[0].TaxAmount, line
 check('...and still sums to the bill', sum(lines, 'TaxAmount'), 9);
 const allNone = await built(bill({ total: '109', tax: '9', lineItems: [row({ total: '109', taxRate: 'No Tax' })] }));
 check('every row No Tax with GST stated -> mismatch', [allNone.kind, (allNone as any).reason], ['mismatch', 'tax']);
+
+// 12) Import GST beside the freight it came with: the GST-account row goes up
+//     under GST on Imports and takes no share of the freight's stated GST.
+lines = await linesOf(bill({ total: '2406.85', tax: '9', lineItems: [row({ total: '109' }), row({ total: '2297.85', category: '820 - GST' })] }));
+check('the GST row takes the import code', [lines[1].AccountCode, lines[1].TaxType, lines[1].TaxAmount, lines[1].UnitAmount], ['820', 'TAX002', 0, 2297.85]);
+check('and the freight row keeps all the stated GST', [lines[0].TaxType, lines[0].TaxAmount], ['INPUT', 9]);
 
 // 9) Descriptions never go up blank.
 lines = await linesOf(bill({ total: '100', lineItems: [row({ total: '100', description: '' })] }));

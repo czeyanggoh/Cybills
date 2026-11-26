@@ -88,6 +88,7 @@ import ComboSelect from '@/components/ComboSelect';
 import ZoomableImage from '@/components/ZoomableImage';
 import { isMotorVehicleExpense, motorVehicleReason, MOTOR_VEHICLE_TAX_RATE } from '@/lib/motorVehicle';
 import { isMedicalProviderExpense, medicalProviderReason } from '@/lib/medicalProvider';
+import { isImportGstCategory, isImportGstDocument, importGstRateName, importGstReason } from '@/lib/importGst';
 
 function TopButton({ children, onClick = () => {}, subtle = false, disabled = false, title = '' }) {
   return (
@@ -962,16 +963,33 @@ export default function CostDetail() {
   const set = (key, value) => {
     // Overruling the reader on an allocation is the one moment both halves of a
     // rule are known — what it got wrong and what's right. Offer to keep it.
-    if (!isSales && (key === 'category' || key === 'project') && doc?.persisted && value && value !== data[key]) {
+    // Not for the GST account: its guide to the reader is fixed (importGst.js).
+    if (!isSales && (key === 'category' || key === 'project') && doc?.persisted && value && value !== data[key] && !(key === 'category' && isImportGstCategory(value))) {
       setTeach({ field: key, value });
     }
     setData((d) => ({ ...d, [key]: value }));
+    // Moved onto the GST account: GST on Imports and no tax amount, shown at
+    // once; moved off it, that code goes too (server/src/importGst.ts).
+    if (!isSales && key === 'category' && gstRegistered) {
+      if (isImportGstCategory(value)) {
+        const name = importGstRateName(taxRateSource);
+        setData((d) => ({
+          ...d,
+          taxRate: name,
+          taxRateReason: importGstReason(name),
+          tax: '0.00',
+          lineItems: Array.isArray(d.lineItems) && d.lineItems.length ? foldTaxIntoCost(d.lineItems) : d.lineItems,
+        }));
+      } else if (isImportGstCategory(data.category)) {
+        setData((d) => (d.taxRate === importGstRateName(taxRateSource) ? { ...d, taxRate: '', taxRateReason: '' } : d));
+      }
+    }
     // Moved onto a motor vehicle account: No Tax, the same as the server holds it
     // (server/src/practiceNoTax.ts) — shown here at once, so the form does not
     // keep claiming GST the stored document has already given up. Not where a
     // person picked the code themselves.
     // Renamed to a hospital or clinic: No Tax the same way (medicalProvider.js).
-    const noTaxBecause = isSales || data.taxRateEdited || data.taxRateCleared
+    const noTaxBecause = isSales || data.taxRateEdited || data.taxRateCleared || (key === 'category' && isImportGstCategory(value))
       ? ''
       : key === 'category' && isMotorVehicleExpense({ category: value, motorVehicle: doc?.motorVehicle === true })
         ? motorVehicleReason({ category: value })
@@ -1706,6 +1724,14 @@ Publish anyway?`
   // Pick a specific GST/tax rate (replaces the "Extracted amount" placeholder).
   // A rate with a % also fills the tax amount from the GST-inclusive total.
   const setTaxRate = (name) => {
+    // Import GST has one code: another pick is not taken, and the reason says so.
+    if (!isSales && gstRegistered && isImportGstDocument({ category: data.category, lineItems: data.lineItems })) {
+      const only = importGstRateName(taxRateSource);
+      if (name !== only) {
+        set('taxRateReason', `${importGstReason(only)} Choose another category to use another code.`);
+        return;
+      }
+    }
     set('taxRate', name);
     // Both halves of the decision are recorded, because both have to outlast
     // anything that runs by itself: leaving it blank on purpose is not a reader

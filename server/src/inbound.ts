@@ -99,7 +99,7 @@ async function extractionInputsFor(ws: string, realOrgId: string) {
     ? sides.accountsForSide(shown, 'cost', sides.shownAssetKeys(lists))
     : [];
   const usable = expense.length ? expense : shown;
-  const accounts = usable.map((a) => ({ code: a.code, name: a.name, description: a.description || '' }));
+  const accounts = usable.map((a) => ({ code: a.code, name: a.name, description: sides.readerDescription(a) }));
 
   // A bridge entity has no chart at all, so the reader is given the plain names
   // its people actually claim against instead ("Transport - Taxi"). Empty for a

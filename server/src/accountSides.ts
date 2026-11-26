@@ -12,6 +12,8 @@ type AccountSides = {
   isExpenseAccount: (a: Account) => boolean;
   isRevenueAccount: (a: Account) => boolean;
   isAssetAccount: (a: Account) => boolean;
+  isImportGstAccount: (a: Account) => boolean;
+  readerDescription: (a: Account & { description?: string }) => string;
   shownAssetKeys: (blob: unknown) => Set<string>;
   accountsForSide: <T extends Account>(accounts: T[], kind?: string, shownAssets?: Set<string>) => T[];
 };

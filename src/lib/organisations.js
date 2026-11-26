@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { XERO_ACCOUNTS, accountLabel } from '@/data/xeroAccounts';
 import { taxRatesForSide } from '@/lib/taxRateRules';
 import { getHiddenSet, getAddedRows, getMeta, useHiddenSet, useCategoryListOptions, getVisibleCategoryNames, getShownAssetSet, useShownAssetSet, LISTS_EVENT, SEED_TAX_RATES } from '@/lib/listsStore';
-import { accountsForSide } from '@/lib/accountSides';
+import { accountsForSide, readerDescription } from '@/lib/accountSides';
 import { useCustomCategories } from '@/lib/customCategories';
 import { useCategorySortMode, sortCategories } from '@/lib/categoryDisplay';
 import { useBankAccounts } from '@/lib/bankAccounts';
@@ -578,7 +578,7 @@ export async function getExtractionAccounts(kind = 'cost') {
     const list = side.map((a) => ({
       code: a.code,
       name: a.name,
-      description: a.description || '',
+      description: readerDescription(a),
       // The account's own default tax code in Xero. Not sent to the reader (the
       // server ignores it) — it's for the tax-rate decision afterwards, which
       // follows the account the same way Xero's own UI does.

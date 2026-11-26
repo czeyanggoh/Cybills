@@ -892,8 +892,13 @@ xeroRouter.get('/organisations/:id/categories', async (req, res) => {
       type: String(a.Type ?? ''),
       systemAccount: String(a.SystemAccount ?? ''),
     }))
-    .filter((a: any) => a.id && (sales ? sides.isRevenueAccount(a) : sides.isExpenseAccount(a) || sides.isAssetAccount(a)))
-    .map(({ systemAccount: _system, ...a }: any) => ({ ...a, asset: !sales && !sides.isExpenseAccount(a) }));
+    .filter((a: any) => a.id && (sales ? sides.isRevenueAccount(a) : sides.isExpenseAccount(a) || sides.isAssetAccount(a) || sides.isImportGstAccount(a)))
+    .map(({ systemAccount, ...a }: any) => {
+      // The GST account is offered for import GST only (importGst.js), under its
+      // own heading, and is switched on the way an asset is.
+      const importGst = !sales && sides.isImportGstAccount({ systemAccount });
+      return { ...a, importGst, asset: !sales && !importGst && !sides.isExpenseAccount(a) };
+    });
   res.json({ categories });
 });
 
@@ -1487,6 +1492,41 @@ async function activeAccountCodes(tenantId: string): Promise<Set<string>> {
   return new Set<string>((result.data?.Accounts ?? []).map((a: any) => String(a.Code ?? '')).filter(Boolean));
 }
 
+// The org's GST system account, which takes import GST and nothing else
+// (src/lib/importGst.js). '' when the chart can't be read.
+async function gstAccountCode(tenantId: string): Promise<string> {
+  const result = await referenceRead('Accounts', tenantId, { where: 'Status=="ACTIVE"' }, { allowStale: false });
+  if (!result.ok) return '';
+  const found = (result.data?.Accounts ?? []).find((a: any) => String(a.SystemAccount ?? '').toUpperCase() === 'GST');
+  return String(found?.Code ?? '');
+}
+
+// The org's "GST on Imports" code, by name or by Xero's system tax type.
+function importTaxType(rates: Map<string, { code: string; rate: number }>): { code: string; rate: number } | null {
+  for (const [name, rate] of rates) {
+    if (name.toLowerCase() === 'gst on imports' || /^(IMINPUT2|GSTONIMPORTS)$/i.test(rate.code)) return rate;
+  }
+  return null;
+}
+
+// A line on the GST account is import GST: it goes up under GST on Imports,
+// whatever code reached this far, and carries no tax amount of its own — the
+// line IS the tax. Mutates the lines; the message says why they can't be posted.
+async function holdImportGst(lines: Array<Record<string, any>>, tenantId: string): Promise<string> {
+  const account = await gstAccountCode(tenantId);
+  const mine = account ? lines.filter((l) => String(l.AccountCode ?? '') === account) : [];
+  if (!mine.length) return '';
+  if (mine.some((l) => Number(l.TaxAmount ?? 0) !== 0)) {
+    return `Account ${account} (GST) takes import GST only: the whole line is the GST, so it can't carry a tax amount as well. Set the tax to 0 and the tax rate to GST on Imports, or choose another category.`;
+  }
+  const rate = importTaxType(await taxTypesByName(tenantId));
+  if (!rate) {
+    return `Account ${account} (GST) takes import GST, which posts under the tax rate “GST on Imports”, and this Xero organisation has no active rate of that name.`;
+  }
+  for (const line of mine) line.TaxType = rate.code;
+  return '';
+}
+
 // "315 - Outlet Laundry" -> "315". The label the app stores is built from the
 // Xero account as `<code> - <name>`, so the code is simply its head.
 // The same rule as accountCodeFromCategory in src/data/xeroAccounts.js, which is
@@ -1566,11 +1606,17 @@ export async function perLineItems(
   // up to the document's total exactly.
   if (totalOff !== 0) totals[largestAt(totals)] += totalOff;
 
-  const [codes, cats, rateTypes] = await Promise.all([
+  const [codes, cats, rateTypes, gstAccount] = await Promise.all([
     activeAccountCodes(opts.tenantId),
     trackingCategories(opts.tenantId),
     taxTypesByName(opts.tenantId),
+    gstAccountCode(opts.tenantId),
   ]);
+  // The account a row posts to: its own where live, else the document's.
+  const accountOf = (category: unknown) => {
+    const own = codeFromCategory(category);
+    return own && codes.has(own) ? own : opts.accountCode;
+  };
   // A line's own tax code, when it names one the org has: a discount taken off
   // after tax or a fee outside GST posts under No Tax beside the 9% supply,
   // rather than as a 9% line with its tax overridden to nothing. A name the
@@ -1585,6 +1631,12 @@ export async function perLineItems(
   // Update in Xero restated Standard-Rated Purchases as No Tax again with the
   // 88.14 as an "adjustment to tax" (23 Oct 2026).
   const ownType = rows.map((row, i) => {
+    // An import GST row beside the freight it came with: its own code, and so
+    // no share of a stated GST figure.
+    if (gstAccount && accountOf(row.category) === gstAccount && rowTax[i] === 0) {
+      const imports = importTaxType(rateTypes);
+      if (imports) return imports;
+    }
     const name = String(row.taxRate ?? '').trim();
     if (!name) return null;
     const known = rateTypes.get(name) ?? (/^no tax$/i.test(name) ? { code: 'NONE', rate: 0 } : null);
@@ -1615,7 +1667,6 @@ export async function perLineItems(
     if (sum(taxes) !== billTax) return mismatch('tax');
   }
   const lines = rows.map((row, i) => {
-    const own = codeFromCategory(row.category);
     const line: Record<string, unknown> = {
       Description: String(row.description ?? '').trim() || opts.fallbackDescription,
       Quantity: 1,
@@ -1624,7 +1675,7 @@ export async function perLineItems(
       UnitAmount: (totals[i] - taxes[i]) / 100,
       // A line whose own category isn't a live Xero account follows the account
       // chosen for the document rather than being dropped.
-      AccountCode: own && codes.has(own) ? own : opts.accountCode,
+      AccountCode: accountOf(row.category),
       TaxType: ownType[i]?.code || opts.taxType,
       TaxAmount: taxes[i] / 100,
     };
@@ -1787,6 +1838,10 @@ async function buildBillInvoice(
     } };
   }
   const lineItems = built.kind === 'lines' ? built.lines : [line];
+  const importRefusal = await holdImportGst(lineItems as Array<Record<string, any>>, organisation.tenantId);
+  if (importRefusal) {
+    return { ok: false as const, status: 422, body: { error: 'import_gst_coding', message: importRefusal } };
+  }
   // Said on the bill itself, so whoever reads the ledger can see the paper was
   // in another currency and at what rate it came across.
   if (converted && lineItems[0]) {

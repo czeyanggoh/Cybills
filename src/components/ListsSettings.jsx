@@ -216,17 +216,28 @@ function CategoriesFromXero({ side = 'cost' }) {
   const q = query.trim().toLowerCase();
   const rows = (categories || []).filter((c) => !q || c.name.toLowerCase().includes(q) || (c.code || '').toLowerCase().includes(q));
   const visKey = (c) => c.code || c.name;
-  const expenseRows = rows.filter((c) => !c.asset);
+  // Assets and the GST account are off until switched on; expense and revenue
+  // accounts are on until switched off.
+  const optIn = (c) => c.asset || c.importGst;
+  const expenseRows = rows.filter((c) => !optIn(c));
   const assetRows = rows.filter((c) => c.asset);
-  const isOn = (c) => (c.asset ? assetsOn.has(visKey(c)) : !hidden.has(visKey(c)));
-  const toggle = (c) => (c.asset ? setAssetShown(visKey(c), !isOn(c)) : setListVisible('categories', visKey(c), !isOn(c)));
+  const gstRows = rows.filter((c) => c.importGst);
+  const isOn = (c) => (optIn(c) ? assetsOn.has(visKey(c)) : !hidden.has(visKey(c)));
+  const toggle = (c) => (optIn(c) ? setAssetShown(visKey(c), !isOn(c)) : setListVisible('categories', visKey(c), !isOn(c)));
   const row = (c) => (
     <tr key={c.id} className="border-b align-top last:border-0 hover:bg-muted/40">
       {/* Paddings centre each cell's first line on the 32px input. */}
       <td className="px-3 py-3.5 font-mono text-xs leading-4 text-muted-foreground">{c.code || '—'}</td>
       <td className="break-words px-3 py-3 font-medium leading-5">{c.name}</td>
       <td className="px-3 py-1.5">
-        <CategoryDescriptionCell category={c} orgId={orgId} onSaved={adopt} />
+        {c.importGst ? (
+          // Xero's own system account: its description is not ours to rewrite.
+          <p className="py-1.5 text-xs text-muted-foreground">
+            Import GST paid on your behalf by a freight forwarder or courier. Always coded GST on Imports.
+          </p>
+        ) : (
+          <CategoryDescriptionCell category={c} orgId={orgId} onSaved={adopt} />
+        )}
       </td>
       <td className="px-3 py-3">
         <VisibleToggle on={isOn(c)} onToggle={() => toggle(c)} />
@@ -275,6 +286,14 @@ function CategoriesFromXero({ side = 'cost' }) {
               </tr>
             )}
             {assetRows.map(row)}
+            {gstRows.length > 0 && (
+              <tr className="border-b bg-muted/40">
+                <td colSpan={4} className="px-3 py-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Import GST</span> — the GST account, only for GST paid to Customs on your behalf. Off until switched on.
+                </td>
+              </tr>
+            )}
+            {gstRows.map(row)}
             {rows.length === 0 && (
               <tr><td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">No {sales ? 'revenue accounts' : 'categories'}{q ? ' match your search' : ''}.</td></tr>
             )}
