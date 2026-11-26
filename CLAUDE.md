@@ -1438,7 +1438,10 @@ for an admin alone (anyone else's book is partial). An invoice beyond the
 quantity is warned on its page; matching and publishing are unchanged.
 **Costs -> Billing plans** (`BillingPlans.jsx`, Business Admin, `planOverview`)
 shows every plan with a bar per stage, the invoices counted, what is still to
-come, and the supplier's bills the plan does not explain.
+come, and the supplier's bills the plan does not explain, and **New billing
+plan** types one for a supplier with no paper. `sourceBillId` is only ever a
+quotation, pro-forma or Other document (`isPlanSource`): a plan typed while
+looking at an invoice must still count that invoice.
 
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:

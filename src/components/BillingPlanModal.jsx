@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Info, Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import SearchSelect from '@/components/SearchSelect';
+import ComboSelect from '@/components/ComboSelect';
 import { fetchBillingPlanDraft } from '@/lib/bills';
 import { fileForDoc } from '@/lib/reRead';
 import { getExtractionAccounts } from '@/lib/organisations';
-import { planProblems, progressText, stageProgress, stageTotalCents } from '@/lib/billingPlan';
+import { isPlanSource, planProblems, progressText, stageProgress, stageTotalCents } from '@/lib/billingPlan';
 import { deleteBillingPlan, saveBillingPlan } from '@/lib/billingPlans';
 import { cn } from '@/lib/utils';
 
@@ -54,6 +55,8 @@ export default function BillingPlanModal({
   doc,
   // The cost book, which what has been billed is counted off.
   docs = [],
+  // The entity's suppliers, offered where there is no document to name one.
+  supplierOptions = [],
   categoryOptions = [],
   projectOptions = [],
   project2Options = [],
@@ -105,7 +108,7 @@ export default function BillingPlanModal({
         toForm({
           ...read,
           id: f.id,
-          sourceBillId: doc.id,
+          sourceBillId: isPlanSource(doc) ? doc.id : f.sourceBillId,
           // The supplier as this book spells it, which is what invoices are filed under.
           supplier: f.supplier || read.supplier,
         })
@@ -175,8 +178,21 @@ export default function BillingPlanModal({
           )}
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_14rem_6rem]">
+            {/* Picked from the entity's suppliers where it can be, so the plan
+                is spelt the way their invoices are filed; typed where new. */}
             <Labelled label="Supplier">
-              <input value={form.supplier} onChange={(e) => set({ supplier: e.target.value })} className={inputCls} />
+              {supplierOptions.length ? (
+                <ComboSelect
+                  aria-label="Supplier"
+                  value={form.supplier}
+                  options={supplierOptions.filter((o) => o !== form.supplier)}
+                  onChange={(v) => set({ supplier: v })}
+                  allowCustom
+                  placeholder="Search or type a supplier…"
+                />
+              ) : (
+                <input aria-label="Supplier" value={form.supplier} onChange={(e) => set({ supplier: e.target.value })} className={inputCls} />
+              )}
             </Labelled>
             <Labelled label="Quotation / agreement no.">
               <input value={form.reference} onChange={(e) => set({ reference: e.target.value })} className={inputCls} />

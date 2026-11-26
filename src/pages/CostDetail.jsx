@@ -78,7 +78,7 @@ import PrepaymentPanel from '@/components/PrepaymentPanel';
 import BillingPlanPanel from '@/components/BillingPlanPanel';
 import BillingPlanModal from '@/components/BillingPlanModal';
 import { useBillingPlans } from '@/lib/billingPlans';
-import { plansForSupplier } from '@/lib/billingPlan';
+import { plansForSupplier, isPlanSource } from '@/lib/billingPlan';
 import PaperworkMatchPanel from '@/components/PaperworkMatchPanel';
 import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
 import { paperworkSuggestion } from '@/lib/paperworkMatch';
@@ -3726,9 +3726,11 @@ Publish anyway?`
           billingEdit?.plan ?? {
             supplier: data.supplier || '',
             // Recorded from the quotation itself, its number names the plan.
-            reference: isAdvanceDocument(data.type) || data.type === 'Other' ? data.ref || '' : '',
+            reference: isPlanSource({ type: data.type }) ? data.ref || '' : '',
             currency: data.currency || baseCurrency,
-            sourceBillId: persisted?.id || '',
+            // Only a quotation or agreement is the plan's source; a plan
+            // typed while looking at an invoice has none.
+            sourceBillId: isPlanSource({ type: data.type }) ? persisted?.id || '' : '',
           }
         }
         doc={persisted}

@@ -26,7 +26,7 @@
 // Pure, loaded server-side by path (server/src/billingPlan.ts) so an emailed
 // invoice is split exactly as an uploaded one is. Tested by
 // test/billing-plan.test.mjs.
-import { sameSupplier } from './prepayment.js';
+import { sameSupplier, isAdvanceDocument } from './prepayment.js';
 import { zeroTaxRate, linesAgreeWithTotal } from './taxRateRules.js';
 
 const text = (v) => String(v ?? '').trim();
@@ -115,6 +115,18 @@ export function takesBillingPlan(doc) {
   const kind = text(doc?.kind);
   if (kind && kind !== 'cost') return false;
   return PLANNED_TYPES.has(text(doc?.documentType ?? doc?.type).toLowerCase());
+}
+
+/**
+ * Whether a document is what a plan is recorded FROM — a quotation, a pro-forma
+ * or an agreement read as Other — rather than one of the bills it speaks about.
+ * A plan may be typed while looking at an invoice, and that invoice is billed
+ * like any other.
+ */
+export function isPlanSource(doc) {
+  if (!doc) return false;
+  const type = doc.documentType ?? doc.type;
+  return isAdvanceDocument(type) || text(type).toLowerCase() === 'other';
 }
 
 /** The plans recorded for a supplier name (legal forms ignored). */
@@ -297,8 +309,8 @@ export function billingPlanStatus(doc, plans, opts) {
 }
 
 // The documents of a book that can count against a plan, oldest first: never a
-// deleted, merged-away or flagged duplicate one, nor the quotation the plan was
-// recorded from, and one invoice number once.
+// deleted, merged-away or flagged duplicate one, nor the quotation or agreement
+// the plan was recorded from, and one invoice number once.
 function countable(plan, docs) {
   const seen = new Set();
   const dated = (d) => isoDay(d?.date) || '9999-99-99';
@@ -307,7 +319,7 @@ function countable(plan, docs) {
     .sort((a, b) => dated(a).localeCompare(dated(b)) || String(a.id).localeCompare(String(b.id)))
     .filter((d) => {
       if (['deleted', 'merged'].includes(text(d.status)) || (d.duplicateOfId && !d.duplicateDismissed)) return false;
-      if (plan.sourceBillId && d.id === plan.sourceBillId) return false;
+      if (plan.sourceBillId && d.id === plan.sourceBillId && isPlanSource(d)) return false;
       if (!sameSupplier(d.supplier, plan.supplier)) return false;
       const number = text(d.invoiceNumber).toUpperCase().replace(/[^A-Z0-9]/g, '');
       if (!number || !takesBillingPlan(asBill(d))) return true;

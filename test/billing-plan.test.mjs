@@ -13,6 +13,7 @@ import {
   stageProgress,
   progressText,
   planOverview,
+  isPlanSource,
 } from '../src/lib/billingPlan.js';
 
 let failures = 0;
@@ -172,6 +173,15 @@ const other = { ...counted, id: 'p2', stages: [{ id: 'z', name: 'Extra', lines: 
 check('a second agreement claims its own invoices', planOverview(counted, book, [counted, other]).differing, []);
 const twice = { ...counted, stages: [run, { ...run, id: 'again', name: 'Renewal' }] };
 check('two stages that could both mean it: neither counts it', stageProgress(twice, run, [book[0]]).invoices.length, 0);
+
+// --- a plan typed by hand --------------------------------------------------------
+check('a quotation is what a plan is recorded from', [isPlanSource({ type: 'Quotation' }), isPlanSource({ documentType: 'Other' }), isPlanSource({ type: 'Invoice' }), isPlanSource(null)], [true, true, false, false]);
+check('typed while looking at an invoice: that invoice still counts', stageProgress({ ...counted, sourceBillId: 'a' }, run, book).invoices.map((d) => d.id), ['a', 'b']);
+check(
+  'the agreement it was read from does not',
+  stageProgress({ ...counted, sourceBillId: 'z' }, run, [{ ...invoice, id: 'z', documentType: 'Other', invoiceNumber: 'AGR-1' }, ...book]).invoices.map((d) => d.id),
+  ['a', 'b']
+);
 
 check('no rows: a read may write them', planMayWriteLines([], 2400), true);
 check('rows that do not add up: replaced', planMayWriteLines([{ total: '100' }], 2400), true);

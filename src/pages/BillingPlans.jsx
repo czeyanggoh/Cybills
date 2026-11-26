@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, Pencil, TriangleAlert } from 'lucide-react';
+import { ExternalLink, Pencil, Plus, TriangleAlert } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import BillingPlanModal from '@/components/BillingPlanModal';
-import { planLabel, planOverview, progressText } from '@/lib/billingPlan';
+import { isPlanSource, planOverview, progressText } from '@/lib/billingPlan';
 import { billingPlansReady, useBillingPlans } from '@/lib/billingPlans';
-import { costPath } from '@/lib/bills';
+import { costPath, useDocumentSuppliers } from '@/lib/bills';
+import { mergeSupplierNames, addedSuppliers, withoutRemovedSuppliers, useSupplierList } from '@/lib/supplierList';
 import { useCostsDocs } from '@/lib/costsData';
-import { useGstRegistered } from '@/lib/businessProfile';
-import { useCategoryOptions, useVisibleTaxRates, useXeroProjectOptions } from '@/lib/organisations';
+import { useBaseCurrency, useGstRegistered } from '@/lib/businessProfile';
+import { useCategoryOptions, useVisibleTaxRates, useXeroProjectOptions, useXeroSuppliers } from '@/lib/organisations';
 import { useProjectLabels } from '@/lib/projectLabels';
 import { xeroPaidStatus } from '@/lib/xeroPaidStatus';
 import { useAuth } from '@/lib/auth';
@@ -18,8 +19,9 @@ import { cn } from '@/lib/utils';
 
 // Costs -> Billing plans: every supplier's quoted future charges and how far each
 // has got — what has been invoiced, what is still to come, and the bills a plan
-// does not explain. The counting is src/lib/billingPlan.js (planOverview); a plan
-// is recorded from its quotation on the document page.
+// does not explain. The counting is src/lib/billingPlan.js (planOverview). A plan
+// is recorded from its quotation on the document page, or typed here where there
+// is no paper for it.
 
 const money = (currency, c) =>
   `${currency ? `${currency} ` : ''}${(c / 100).toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -124,6 +126,11 @@ export default function BillingPlans() {
   const projectLabels = useProjectLabels();
   const taxRates = useVisibleTaxRates('cost');
   const gstRegistered = useGstRegistered();
+  const baseCurrency = useBaseCurrency();
+  useSupplierList();
+  const supplierOptions = withoutRemovedSuppliers(
+    mergeSupplierNames(useXeroSuppliers(), [...useDocumentSuppliers(), ...addedSuppliers()])
+  );
 
   const ready = loaded && (plans.length > 0 || billingPlansReady());
   const sorted = [...plans].sort((a, b) => String(a.supplier).localeCompare(String(b.supplier)));
@@ -131,11 +138,23 @@ export default function BillingPlans() {
   return (
     <AppShell subnav={<CostsSubnav />}>
       <div className="mx-auto max-w-4xl space-y-5">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Billing plans</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            What each supplier’s quotation or agreement says it will invoice, and how far that has got.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">Billing plans</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              What each supplier’s quotation or agreement says it will invoice, and how far that has got.
+            </p>
+          </div>
+          {mayEdit && (
+            <button
+              type="button"
+              onClick={() => setEditing({ currency: baseCurrency })}
+              disabled={!ready}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              <Plus className="h-4 w-4" /> New billing plan
+            </button>
+          )}
         </div>
 
         {!ready ? (
@@ -143,19 +162,20 @@ export default function BillingPlans() {
         ) : !sorted.length ? (
           <div className="rounded-lg border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">
             No billing plans yet. Open a supplier’s quotation in <Link to="/costs" className="font-medium text-emerald-700 hover:underline">Costs</Link> and
-            click <span className="font-medium text-foreground">Record billing plan</span>.
+            click <span className="font-medium text-foreground">Record billing plan</span>, or, with no document for it, click{' '}
+            <span className="font-medium text-foreground">New billing plan</span>.
           </div>
         ) : (
           sorted.map((plan) => {
             const view = planOverview(plan, allDocs, plans);
-            const source = allDocs.find((d) => d.id === plan.sourceBillId);
+            const source = allDocs.find((d) => d.id === plan.sourceBillId && isPlanSource(d));
             return (
               <section key={plan.id} className="overflow-hidden rounded-lg border bg-background">
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
                   <div>
                     <h2 className="font-semibold">{plan.supplier}</h2>
                     <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
-                      <span>{planLabel(plan)}</span>
+                      {plan.reference && <span>{plan.reference}</span>}
                       {source && (
                         <Link to={costPath(source)} className="inline-flex items-center gap-1 text-emerald-700 hover:underline">
                           Open quotation <ExternalLink className="h-3.5 w-3.5" />
@@ -203,8 +223,9 @@ export default function BillingPlans() {
       <BillingPlanModal
         open={Boolean(editing)}
         plan={editing}
-        doc={allDocs.find((d) => d.id === editing?.sourceBillId) ?? null}
+        doc={allDocs.find((d) => d.id === editing?.sourceBillId && isPlanSource(d)) ?? null}
         docs={allDocs}
+        supplierOptions={supplierOptions}
         categoryOptions={categoryOptions.filter((c) => c !== 'Uncategorised')}
         projectOptions={projectOptions}
         project2Options={project2Options}
