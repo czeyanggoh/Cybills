@@ -14,6 +14,8 @@ import {
   progressText,
   planOverview,
   isPlanSource,
+  isFiledOnPlan,
+  planFilingBlock,
 } from '../src/lib/billingPlan.js';
 
 let failures = 0;
@@ -181,6 +183,21 @@ check(
   'the agreement it was read from does not',
   stageProgress({ ...counted, sourceBillId: 'z' }, run, [{ ...invoice, id: 'z', documentType: 'Other', invoiceNumber: 'AGR-1' }, ...book]).invoices.map((d) => d.id),
   ['a', 'b']
+);
+
+// --- saved to Billing plans -------------------------------------------------------
+const paper = { id: 'q', type: 'Quotation', status: 'archived', billingPlanId: 'p1' };
+check('a saved quotation is filed', isFiledOnPlan(paper), true);
+check('not once it is back in Costs', isFiledOnPlan({ ...paper, status: 'new' }), false);
+check('not once retyped as a bill', isFiledOnPlan({ ...paper, type: 'Invoice' }), false);
+check('merely archived is not filed', isFiledOnPlan({ ...paper, billingPlanId: '' }), false);
+check('a quotation may be saved', planFilingBlock({ type: 'Quotation', status: 'ready' }), '');
+check('an invoice may not: its money would vanish from Costs', Boolean(planFilingBlock({ type: 'Invoice', status: 'ready' })), true);
+check('nor anything already in Xero', planFilingBlock({ type: 'Other', status: 'archived', xeroInvoiceId: 'x' }), 'It is already in Xero.');
+check(
+  'a saved agreement is never counted as billed',
+  stageProgress(counted, run, [{ ...invoice, id: 'q', documentType: 'Other', status: 'archived', billingPlanId: 'p1', invoiceNumber: 'AGR-2' }]).invoices.length,
+  0
 );
 
 check('no rows: a read may write them', planMayWriteLines([], 2400), true);

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { blobStore } from '@/lib/blobStore';
 import { cleanPlan } from '@/lib/billingPlan';
+import { notifyBillsChanged, updateBill } from '@/lib/bills';
 
 const KEY = 'cybills.billing-plans.v1';
 export const BILLING_PLANS_EVENT = 'cybills:billing-plans-changed';
@@ -31,6 +32,23 @@ export function saveBillingPlan(raw) {
 export function deleteBillingPlan(id) {
   store.set({ plans: getBillingPlans().filter((p) => p.id !== id) });
   emit();
+}
+
+/**
+ * Save a quotation or agreement to a plan: out of the Costs lists and shown
+ * under the plan on Billing plans. A plan with no paper of its own takes this one
+ * as its source.
+ */
+export async function saveDocumentToPlan(docId, plan) {
+  await updateBill(docId, { status: 'archived', billingPlanId: plan.id });
+  if (!plan.sourceBillId) saveBillingPlan({ ...plan, sourceBillId: docId });
+  notifyBillsChanged();
+}
+
+/** Put a saved document back in the Costs inbox. The plan itself stays. */
+export async function moveDocumentBackToCosts(docId) {
+  await updateBill(docId, { status: 'new', billingPlanId: '' });
+  notifyBillsChanged();
 }
 
 /** The plans, re-read when they change or arrive from the server. */

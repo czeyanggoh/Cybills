@@ -820,9 +820,12 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   if (await lockedOnApprovedClaim(req, res)) return;
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel', 'billingPlanId']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
+  // A document is saved to a billing plan only while it is archived: whatever
+  // puts it back to work (Unarchive, Move back to Costs) takes it off the plan.
+  if (typeof patch.status === 'string' && patch.status !== 'archived') patch.billingPlanId = '';
   if (typeof b.supplierGstRegNoRemembered === 'boolean') {
     patch.supplierGstRegNoRemembered = b.supplierGstRegNoRemembered;
     patch.supplierGstRegNoFrom = b.supplierGstRegNoRemembered ? gstSource(b.supplierGstRegNoFrom) : '';

@@ -1,5 +1,7 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CalendarClock, Check, TriangleAlert } from 'lucide-react';
-import { billingPlanPatch, billingPlanStatus, planLabel, plansForSupplier, progressText, stageProgress, stageTotalCents, takesBillingPlan } from '@/lib/billingPlan';
+import { billingPlanPatch, billingPlanStatus, isFiledOnPlan, planFilingBlock, planLabel, plansForSupplier, progressText, stageProgress, stageTotalCents, takesBillingPlan } from '@/lib/billingPlan';
 import { isAdvanceDocument } from '@/lib/prepayment';
 import { cn } from '@/lib/utils';
 
@@ -15,7 +17,20 @@ const actionCls =
   'inline-flex h-9 items-center rounded-md border-2 border-foreground px-4 text-sm font-semibold transition-colors hover:bg-muted';
 const linkCls = 'text-sm text-muted-foreground underline-offset-2 hover:underline';
 
-export default function BillingPlanPanel({ doc, plans, docs = [], rates, published, mayEdit, onEdit, onApply }) {
+export default function BillingPlanPanel({ doc, plans, docs = [], rates, published, mayEdit, onEdit, onApply, onSaveToPlan, onMoveBack }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const attempt = async (fn) => {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+    } catch {
+      setError('That did not save — please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
   if (!doc?.persisted || (doc.kind && doc.kind !== 'cost')) return null;
   const mine = plansForSupplier(doc.supplier, plans);
   const type = String(doc.type || '').toLowerCase();
@@ -25,6 +40,10 @@ export default function BillingPlanPanel({ doc, plans, docs = [], rates, publish
   const book = mayEdit ? [...docs.filter((d) => d.id !== doc.id), doc] : [];
 
   if (source) {
+    const filed = isFiledOnPlan(doc);
+    // The plan this paper goes under: the one recorded from it, else the
+    // supplier's first.
+    const target = mine.find((p) => p.id === doc.billingPlanId) || mine.find((p) => p.sourceBillId === doc.id) || mine[0];
     if (!mine.length && !mayEdit) return null;
     return (
       <div className="rounded-lg border bg-background p-4">
@@ -50,6 +69,29 @@ export default function BillingPlanPanel({ doc, plans, docs = [], rates, publish
                 })}
               </div>
             ))}
+            {filed ? (
+              <div className="flex flex-wrap items-center gap-3 border-t pt-3">
+                <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
+                  <Check className="h-4 w-4" /> Saved in Billing plans
+                </span>
+                {mayEdit && <Link to="/costs/billing-plans" className={linkCls}>Open Billing plans</Link>}
+                {mayEdit && (
+                  <button type="button" className={linkCls} disabled={busy} onClick={() => attempt(onMoveBack)}>
+                    Move back to Costs
+                  </button>
+                )}
+              </div>
+            ) : mayEdit && !planFilingBlock({ ...doc, documentType: doc.type }) ? (
+              <div className="space-y-2 border-t pt-3">
+                <button type="button" className={actionCls} disabled={busy} onClick={() => attempt(() => onSaveToPlan(target))}>
+                  {busy ? 'Saving…' : 'Save to Billing plans'}
+                </button>
+                <p className="text-muted-foreground">
+                  Takes this document out of Costs and keeps it under {planLabel(target)} on Billing plans.
+                </p>
+              </div>
+            ) : null}
+            {error && <p className="text-destructive">{error}</p>}
           </div>
         ) : (
           <div className="space-y-3">

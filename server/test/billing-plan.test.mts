@@ -187,5 +187,26 @@ const draft = (await res.json()) as any;
 check('a draft comes back', [res.status, draft.plan?.stages?.[0]?.lines?.[0]?.amount, draft.notes?.length], [200, 1500, 1]);
 check('…with how many invoices the stage runs to', draft.plan?.stages?.[0]?.quantity, 24);
 
+// --- 5) Saved to Billing plans, and back again ----------------------------------------
+const { billsRouter } = await import('../src/bills.ts');
+app.use('/api/costs', billsRouter);
+const paper = insertBill({
+  orgId: 'cybm', fileHash: 'hash-quote', fileName: 'quote.png', supplier: 'The Bridgers Pte Ltd', invoiceNumber: 'TB_QU_YAKSON_0001',
+  documentType: 'Quotation', currency: 'SGD', total: 2400, tax: 0, date: '2026-03-24', category: '', createdBy: 'dean@acme.sg',
+  owner: 'dean@acme.sg', status: 'new', kind: 'cost',
+} as never);
+const patch = async (body: Record<string, unknown>) => {
+  const r = await fetch(`http://127.0.0.1:4695/api/costs/bills/${paper.id}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json', 'X-Org-Id': 'org_one0001' }, body: JSON.stringify(body),
+  });
+  return ((await r.json()) as any).bill;
+};
+let filed = await patch({ status: 'archived', billingPlanId: 'p1' });
+check('saved to the plan', [filed?.status, filed?.billingPlanId], ['archived', 'p1']);
+filed = await patch({ note: 'signed copy to follow' });
+check('an ordinary edit keeps it there', filed?.billingPlanId, 'p1');
+filed = await patch({ status: 'new' });
+check('Unarchive takes it off the plan', filed?.billingPlanId, '');
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, reader, relay, server);

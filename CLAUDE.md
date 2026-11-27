@@ -1443,6 +1443,14 @@ plan** types one for a supplier with no paper. `sourceBillId` is only ever a
 quotation, pro-forma or Other document (`isPlanSource`): a plan typed while
 looking at an invoice must still count that invoice.
 
+**Save to Billing plans** (the quotation's page, Cze 27 Nov 2026) takes the paper
+out of Costs: it is archived with `billingPlanId`, and `rowsFor` leaves it out of
+EVERY list, Archived included (`isFiledOnPlan`), so it is reached from the plan's
+**Saved documents**. Only a quotation, pro-forma or Other document may be saved,
+never one in Xero or on a claim (`planFilingBlock`). **Move back to Costs**,
+Unarchive, or any write of another status clears it, and so do a move to another
+entity or workspace; deleting a plan hands its documents back first.
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

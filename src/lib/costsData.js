@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { fetchBills, billToDoc, BILLS_CHANGED_EVENT } from '@/lib/bills';
 import { USERS_EVENT, canManageBusiness } from '@/lib/userStore';
 import { isInInbox, isComplete, isReady, needsReview, inCostsTab, inCostsList, inCostsAll, isMergedAway, isUnpublished } from '@/lib/readiness';
+import { isFiledOnPlan } from '@/lib/billingPlan';
 
 // Readiness and its opposite live in one pure module, so `npm test` can hold
 // them to account and the pages can't drift from the server's own rule.
@@ -32,7 +33,8 @@ export {
 // still in the book: it is what the combined document points at and what
 // Unmerge restores, which is why this hides rather than deletes.
 export function rowsFor(docs, key) {
-  return listFor(docs, key).filter((d) => !isMergedAway(d));
+  // …nor one saved to a billing plan, which is shown under its plan instead.
+  return listFor(docs, key).filter((d) => !isMergedAway(d) && !isFiledOnPlan(d));
 }
 
 function listFor(docs, key) {

@@ -77,8 +77,8 @@ import SupportingDocsPanel from '@/components/SupportingDocsPanel';
 import PrepaymentPanel from '@/components/PrepaymentPanel';
 import BillingPlanPanel from '@/components/BillingPlanPanel';
 import BillingPlanModal from '@/components/BillingPlanModal';
-import { useBillingPlans } from '@/lib/billingPlans';
-import { plansForSupplier, isPlanSource } from '@/lib/billingPlan';
+import { useBillingPlans, saveDocumentToPlan, moveDocumentBackToCosts } from '@/lib/billingPlans';
+import { plansForSupplier, isPlanSource, isFiledOnPlan } from '@/lib/billingPlan';
 import PaperworkMatchPanel from '@/components/PaperworkMatchPanel';
 import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
 import { paperworkSuggestion } from '@/lib/paperworkMatch';
@@ -2397,10 +2397,14 @@ Publish anyway?`
           // wore "Missing: Category" and an Archive button, which reads exactly
           // like a document nobody had touched.
           <span
-            title="Set aside in Archived — not in the Costs inbox. Unarchive puts it back."
+            title={
+              isFiledOnPlan(doc)
+                ? 'Saved in Billing plans — not in any Costs list. Unarchive puts it back.'
+                : 'Set aside in Archived — not in the Costs inbox. Unarchive puts it back.'
+            }
             className="inline-flex h-8 items-center gap-1 rounded-md border border-amber-600/40 bg-amber-50 px-3 text-sm text-amber-900"
           >
-            <ArchiveIcon className="h-4 w-4" /> Archived
+            <ArchiveIcon className="h-4 w-4" /> {isFiledOnPlan(doc) ? 'In Billing plans' : 'Archived'}
           </span>
         ) : doc.status === 'ready' ? (
           <span className="inline-flex h-8 items-center gap-1 rounded-md border border-foreground/40 px-3 text-sm text-foreground">
@@ -3227,6 +3231,21 @@ Publish anyway?`
                     mayEdit={mayEditPlans}
                     onEdit={(plan) => setBillingEdit({ plan })}
                     onApply={setMany}
+                    onSaveToPlan={async (plan) => {
+                      // Flush what is on screen first, then file it and show
+                      // where it went.
+                      await persistStatus(persisted?.status ?? 'new');
+                      await saveDocumentToPlan(persisted.id, plan);
+                      navigate('/costs/billing-plans');
+                    }}
+                    onMoveBack={async () => {
+                      await moveDocumentBackToCosts(persisted.id);
+                      const bill = await fetchBillById(persisted.id);
+                      if (!bill) return;
+                      const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+                      setPersisted(pd);
+                      setData((d) => ({ ...d, status: pd.status }));
+                    }}
                   />
                 </div>
               )}

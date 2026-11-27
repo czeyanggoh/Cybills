@@ -5,8 +5,8 @@ import ComboSelect from '@/components/ComboSelect';
 import { fetchBillingPlanDraft } from '@/lib/bills';
 import { fileForDoc } from '@/lib/reRead';
 import { getExtractionAccounts } from '@/lib/organisations';
-import { isPlanSource, planProblems, progressText, stageProgress, stageTotalCents } from '@/lib/billingPlan';
-import { deleteBillingPlan, saveBillingPlan } from '@/lib/billingPlans';
+import { isFiledOnPlan, isPlanSource, planProblems, progressText, stageProgress, stageTotalCents } from '@/lib/billingPlan';
+import { deleteBillingPlan, moveDocumentBackToCosts, saveBillingPlan } from '@/lib/billingPlans';
 import { cn } from '@/lib/utils';
 
 // The billing plan dialog: what a supplier's quotation says its invoices will be
@@ -129,8 +129,18 @@ export default function BillingPlanModal({
     onSaved?.(saved);
     onClose();
   };
-  const remove = () => {
-    if (!window.confirm('Delete this billing plan? Invoices already coded from it keep their lines.')) return;
+  const remove = async () => {
+    const saved = docs.filter((d) => d.billingPlanId === form.id && isFiledOnPlan(d));
+    const back = saved.length ? ` Its ${saved.length === 1 ? 'saved document goes' : `${saved.length} saved documents go`} back to Costs.` : '';
+    if (!window.confirm(`Delete this billing plan? Invoices already coded from it keep their lines.${back}`)) return;
+    try {
+      // The paper first: a plan gone with its documents still filed under it
+      // would leave them in no list at all.
+      for (const d of saved) await moveDocumentBackToCosts(d.id);
+    } catch {
+      setError('Could not move the saved documents back to Costs, so the plan was not deleted.');
+      return;
+    }
     deleteBillingPlan(form.id);
     onClose();
   };

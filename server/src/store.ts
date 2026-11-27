@@ -298,6 +298,10 @@ export type Bill = {
   // field rather than a log: it exists so the History tab can say the move
   // happened and who did it, which is the whole record a move needs.
   movedFrom?: { orgId: string; orgName: string; at: string; by: string };
+  // The billing plan this quotation or agreement was saved to
+  // (src/lib/billingPlan.js): archived, and shown under the plan rather than in
+  // any Costs list. Cleared by whatever takes it out of Archived.
+  billingPlanId?: string;
   // Set on a merged document: the ids of the originals it combined. Their own
   // status becomes 'merged' (out of the active inbox); Unmerge restores them.
   mergedFrom?: string[];
@@ -1292,6 +1296,8 @@ const EDITABLE: (keyof Bill)[] = [
   'proofSetAside',
   // The read's own rows, as evidence (see Bill.readLines) — written by the read.
   'readLines',
+  // Saved to Billing plans (see Bill.billingPlanId).
+  'billingPlanId',
 ];
 
 // Attach (or replace) the stored file on an existing bill. Returns null if not
@@ -1655,6 +1661,8 @@ export function moveBillToScope(
   // about the past, and it does not stop being true because the document moved.
   bill.owner = from.owner;
   bill.movedFrom = { orgId: from.orgId, orgName: from.orgName, at: new Date().toISOString(), by: from.by };
+  // A billing plan is one entity's own agreement; it does not travel.
+  bill.billingPlanId = '';
   bill.category = '';
   bill.categoryReason = '';
   bill.taxRate = '';
@@ -1998,6 +2006,7 @@ export function moveBillToKind(orgId: string, id: string, kind: 'cost' | 'sales'
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
   if (!bill) return null;
   bill.kind = kind;
+  bill.billingPlanId = '';
   bill.category = '';
   bill.categoryReason = `Moved to ${kind === 'sales' ? 'Sales' : 'Costs'}: an account code and a tax code mean the opposite side of the ledger here, so both were cleared.`;
   bill.taxRate = '';

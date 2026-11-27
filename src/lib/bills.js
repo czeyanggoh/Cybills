@@ -368,6 +368,8 @@ export function billToDoc(b) {
   return {
     id: b.id,
     persisted: true,
+    // The billing plan a quotation or agreement was saved to (billingPlan.js).
+    billingPlanId: b.billingPlanId || '',
     // Billed back to the customer named above — Xero's billable expense.
     rebillable: Boolean(b.rebillable),
     // Cut from a multi-page PDF on upload: which file, and which page of it.

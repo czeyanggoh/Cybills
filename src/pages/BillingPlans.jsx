@@ -4,8 +4,8 @@ import { ExternalLink, Pencil, Plus, TriangleAlert } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import BillingPlanModal from '@/components/BillingPlanModal';
-import { isPlanSource, planOverview, progressText } from '@/lib/billingPlan';
-import { billingPlansReady, useBillingPlans } from '@/lib/billingPlans';
+import { isFiledOnPlan, isPlanSource, planOverview, progressText } from '@/lib/billingPlan';
+import { billingPlansReady, moveDocumentBackToCosts, useBillingPlans } from '@/lib/billingPlans';
 import { costPath, useDocumentSuppliers } from '@/lib/bills';
 import { mergeSupplierNames, addedSuppliers, withoutRemovedSuppliers, useSupplierList } from '@/lib/supplierList';
 import { useCostsDocs } from '@/lib/costsData';
@@ -51,6 +51,52 @@ function Bar({ billed, quantity, over }) {
       aria-label="Invoices billed"
     >
       <div className={cn('h-full rounded-full', over ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: `${width}%` }} />
+    </div>
+  );
+}
+
+// The quotations and agreements saved to a plan, which are in no Costs list.
+function SavedDocuments({ docs, mayEdit }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  if (!docs.length) return null;
+  const moveBack = async (id) => {
+    setBusy(id);
+    setError('');
+    try {
+      await moveDocumentBackToCosts(id);
+    } catch {
+      setError('Could not move it back — please try again.');
+    } finally {
+      setBusy('');
+    }
+  };
+  return (
+    <div className="border-b px-5 py-3 text-sm">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Saved documents</h3>
+      <ul className="mt-1.5 space-y-1">
+        {docs.map((d) => (
+          <li key={d.id} className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              <Link to={costPath(d)} className="inline-flex items-center gap-1 font-medium text-emerald-700 hover:underline">
+                {d.type} {d.invoiceNumber || d.displayId} <ExternalLink className="h-3.5 w-3.5" />
+              </Link>
+              <span className="text-muted-foreground"> · {formatDate(d.date) || 'undated'}</span>
+            </span>
+            {mayEdit && (
+              <button
+                type="button"
+                onClick={() => moveBack(d.id)}
+                disabled={Boolean(busy)}
+                className="text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+              >
+                {busy === d.id ? 'Moving…' : 'Move back to Costs'}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {error && <p className="mt-1 text-destructive">{error}</p>}
     </div>
   );
 }
@@ -168,7 +214,10 @@ export default function BillingPlans() {
         ) : (
           sorted.map((plan) => {
             const view = planOverview(plan, allDocs, plans);
-            const source = allDocs.find((d) => d.id === plan.sourceBillId && isPlanSource(d));
+            const saved = allDocs.filter((d) => d.billingPlanId === plan.id && isFiledOnPlan(d));
+            // Listed under Saved documents where it has been saved; linked in
+            // the heading while it is still in Costs.
+            const source = allDocs.find((d) => d.id === plan.sourceBillId && isPlanSource(d) && !isFiledOnPlan(d));
             return (
               <section key={plan.id} className="overflow-hidden rounded-lg border bg-background">
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
@@ -194,6 +243,7 @@ export default function BillingPlans() {
                     </button>
                   )}
                 </div>
+                <SavedDocuments docs={saved} mayEdit={mayEdit} />
                 <div className="divide-y">
                   {view.stages.map((row) => <Stage key={row.stage.id} row={row} currency={plan.currency} />)}
                 </div>
@@ -223,7 +273,12 @@ export default function BillingPlans() {
       <BillingPlanModal
         open={Boolean(editing)}
         plan={editing}
-        doc={allDocs.find((d) => d.id === editing?.sourceBillId && isPlanSource(d)) ?? null}
+        // The paper a draft is read off: its source, else one saved to it.
+        doc={
+          allDocs.find((d) => d.id === editing?.sourceBillId && isPlanSource(d)) ??
+          allDocs.find((d) => d.billingPlanId === editing?.id && isFiledOnPlan(d)) ??
+          null
+        }
         docs={allDocs}
         supplierOptions={supplierOptions}
         categoryOptions={categoryOptions.filter((c) => c !== 'Uncategorised')}

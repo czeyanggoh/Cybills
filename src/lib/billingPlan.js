@@ -129,6 +129,29 @@ export function isPlanSource(doc) {
   return isAdvanceDocument(type) || text(type).toLowerCase() === 'other';
 }
 
+/**
+ * Whether a document has been SAVED to a billing plan: the paper a plan is
+ * recorded from, archived under it and left out of every Costs list. Asked with
+ * the type as well, so one retyped as a bill shows up again.
+ */
+export function isFiledOnPlan(doc) {
+  return Boolean(text(doc?.billingPlanId)) && text(doc?.status) === 'archived' && isPlanSource(doc);
+}
+
+/**
+ * Why a document cannot be saved to a billing plan, or '' when it can: only the
+ * paper a plan is recorded from, never one whose money is somewhere else.
+ */
+export function planFilingBlock(doc) {
+  if (!isPlanSource(doc)) return 'Only a quotation, pro-forma or agreement is saved to a billing plan.';
+  if (doc.xeroInvoiceId || doc.paperworkMatch) return 'It is already in Xero.';
+  const status = text(doc.status);
+  if (status === 'processing') return 'It is still being read.';
+  if (status === 'expenseclaim') return 'It is on an expense claim.';
+  if (status === 'merged' || status === 'deleted') return 'It is no longer a document of its own.';
+  return '';
+}
+
 /** The plans recorded for a supplier name (legal forms ignored). */
 export function plansForSupplier(supplier, plans) {
   if (!text(supplier)) return [];
@@ -320,6 +343,7 @@ function countable(plan, docs) {
     .filter((d) => {
       if (['deleted', 'merged'].includes(text(d.status)) || (d.duplicateOfId && !d.duplicateDismissed)) return false;
       if (plan.sourceBillId && d.id === plan.sourceBillId && isPlanSource(d)) return false;
+      if (isFiledOnPlan(d)) return false;
       if (!sameSupplier(d.supplier, plan.supplier)) return false;
       const number = text(d.invoiceNumber).toUpperCase().replace(/[^A-Z0-9]/g, '');
       if (!number || !takesBillingPlan(asBill(d))) return true;
