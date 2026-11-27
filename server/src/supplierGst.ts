@@ -74,9 +74,10 @@ const compact = (v: string) => v.toUpperCase().replace(/[\s.-]/g, '');
 // Where a number that was not read off the document came from — stored as
 // `supplierGstRegNoFrom`, and what the tax reason names:
 //   'rule'      this entity's supplier rule — somebody typed it, for this book;
+//   'checked'   a person confirmed it on a GST register check, for this entity;
 //   'ruleOther' another entity's supplier rule for the same supplier;
 //   'document'  an earlier document of the supplier's that was READ with it.
-export type GstRegNoSource = 'rule' | 'ruleOther' | 'document';
+export type GstRegNoSource = 'rule' | 'checked' | 'ruleOther' | 'document';
 
 type Vote = { n: number; at: string; printed: string };
 // The one number a set of sightings agrees on; '' when there is none, or two
@@ -132,6 +133,10 @@ export async function knownGstRegNo(
     // This entity's rule: a person's instruction for this book, so it decides.
     const own = ruleNumber(rules, readSetting<RuleMap>(ctx.ws, 'cybills.supplier.rules.v1', ctx.orgId), key);
     if (own) return { reg: own, from: 'rule' };
+    // A number somebody here confirmed against the register (gstCheck.ts).
+    const { confirmedGstRegNo } = await import('./gstCheck.js');
+    const checked = confirmedGstRegNo(ctx.orgId, (name) => rules.normaliseSupplier(name) === key);
+    if (checked && rules.isSingaporeGstRegNo(checked)) return { reg: checked, from: 'checked' };
     // Another entity's: the same supplier's registration, typed deliberately by
     // somebody who looked it up — better evidence than any read, as long as the
     // rules that name one agree.

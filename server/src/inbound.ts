@@ -10,6 +10,7 @@ import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './x
 import { loadAccountSides } from './accountSides.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
+import { runGstCheck } from './gstCheck.js';
 import { withKnownSupplierName } from './supplierName.js';
 import { keepPracticeNoTax } from './practiceNoTax.js';
 import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile, markFileIsTextEmail, setPendingReply, type Bill } from './store.js';
@@ -523,7 +524,11 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     // code over the read, since any can be the half that makes it one, and a
     // rule's code must not claim its GST.
     await keepPracticeNoTax(getBillById(scope, billId), patch);
-    const saved = updateBill(scope, billId, patch);
+    let saved = updateBill(scope, billId, patch);
+    // The GST register check, before anything can publish this document by
+    // itself: a supplier not registered on the date is held at No Tax
+    // (gstCheck.ts). Never fails the read.
+    if ((await runGstCheck(ws, realOrgId, scope, billId)).changed) saved = getBillById(scope, billId) ?? saved;
     // The read ran. Whether it came back with anything is what decides where
     // the document lands, and it is asked of the SAVED document rather than of
     // the patch — a supplier rule laid over the read a moment ago is part of

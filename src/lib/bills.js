@@ -699,6 +699,29 @@ export async function updateBill(id, patch) {
   return res.json();
 }
 
+// The GST register check on a cost (server/src/gstCheck.ts). Answered to the
+// practice's own team only: `{ visible: false }` for anybody else. Null when it
+// cannot be asked.
+export async function fetchGstCheck(id) {
+  try {
+    const res = await fetch(`/api/costs/bills/${id}/gst-check`, { headers: orgHeaders() });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+// action: '' to check again now, 'save' to write the numbers to the Xero contact.
+export async function postGstCheck(id, action = '') {
+  const res = await fetch(`/api/costs/bills/${id}/gst-check${action ? `/${action}` : ''}`, {
+    method: 'POST',
+    headers: orgHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || 'That did not go through.');
+  return data;
+}
+
 // A payment proof and the invoices it pays, seen from either side. For a proof:
 // `{ kind: 'proof', applied, auto, matches, candidates }`; for anything else:
 // `{ kind: 'invoice', paidBy, offers }`. Null when it cannot be asked.

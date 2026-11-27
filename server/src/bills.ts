@@ -36,9 +36,10 @@ import {
 } from './store.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { isHeicFile, heicToJpeg } from './heic.js';
-import { dataScopeForOrg, listOrganisations, primaryOrgId } from './organisations.js';
+import { dataScopeForOrg, getOrganisation, listOrganisations, primaryOrgId } from './organisations.js';
+import { gstCheckFor, runGstCheck, saveGstToContact, sweepGstChecks } from './gstCheck.js';
 import { actor, workspaceId, WORKSPACE_ID } from './workspace.js';
-import { addressIn, canAccessOrg, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg, visibleOwnersFor } from './users.js';
+import { addressIn, canAccessOrg, canPublishToXero, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg, visibleOwnersFor } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
 import { claimMembership, syncClaimStatuses } from './claims.js';
 import { readSetting } from './settings.js';
@@ -388,6 +389,11 @@ billsRouter.get('/bills', async (req, res) => {
   // (practiceNoTax.ts).
   void enforcePracticeNoTax(orgId).catch((err) =>
     console.error('[bills] practice No Tax sweep failed', err)
+  );
+  // The GST register check on inbox documents that have not had it, whichever
+  // road they arrived or were edited by (gstCheck.ts). A few at a time.
+  void sweepGstChecks(workspaceId(req), orgScope(req), orgId).catch((err) =>
+    console.error('[bills] GST register check sweep failed', err)
   );
   // File any Auto Expense claim whose period has ended. Rides on the fetch every
   // list already makes rather than a background worker, so a period that ended
@@ -802,12 +808,52 @@ function restatementPatch(b: Record<string, unknown>, into: Record<string, unkno
   }
 }
 
-// Where a remembered GST number came from, as one of the three words the page
-// and the tax reason know (supplierGst.ts). An older client that sends only the
-// flag meant an earlier document — the only source there was.
+// Where a remembered GST number came from, as one of the words the page and the
+// tax reason know (supplierGst.ts). An older client that sends only the flag
+// meant an earlier document — the only source there was.
 function gstSource(v: unknown): string {
-  return v === 'rule' || v === 'ruleOther' ? v : 'document';
+  return v === 'rule' || v === 'ruleOther' || v === 'checked' ? v : 'document';
 }
+
+// The GST register check is the practice's own to read: IRAS's terms restrict
+// passing its answers on. A session-less caller is mock/dev, as elsewhere.
+function isPracticeCaller(req: Request): boolean {
+  const me = memberForSession(req);
+  return !me || me.practice === true;
+}
+
+billsRouter.get('/bills/:id/gst-check', (req, res) => {
+  const bill = getBillById(orgIdFor(req), req.params.id);
+  if (!bill || !canReadBill(req, bill)) return res.status(404).json({ error: 'not_found' });
+  if (!isPracticeCaller(req)) return res.json({ visible: false });
+  return res.json({ visible: true, check: gstCheckFor(bill.id) });
+});
+
+// "Check now": asked again whatever was answered before.
+billsRouter.post('/bills/:id/gst-check', async (req, res) => {
+  const scope = orgIdFor(req);
+  const bill = getBillById(scope, req.params.id);
+  if (!bill || !mayWriteBill(req) || !isPracticeCaller(req)) return res.status(404).json({ error: 'not_found' });
+  if (await lockedOnApprovedClaim(req, res)) return;
+  const run = await runGstCheck(workspaceId(req), orgScope(req), scope, bill.id, { force: true });
+  return res.json({ ok: true, visible: true, check: run.check, changed: run.changed });
+});
+
+// "Save to Xero contact": a person's word that the number found is this
+// supplier's, for the cases that are not saved by themselves at publish.
+billsRouter.post('/bills/:id/gst-check/save', async (req, res) => {
+  const scope = orgIdFor(req);
+  const bill = getBillById(scope, req.params.id);
+  if (!bill || !mayWriteBill(req) || !isPracticeCaller(req)) return res.status(404).json({ error: 'not_found' });
+  if (!canPublishToXero(memberForSession(req), orgScope(req))) {
+    return res.status(403).json({ error: 'publish_not_allowed', message: 'Your account can’t change anything in Xero.' });
+  }
+  const organisation = getOrganisation(workspaceId(req), orgScope(req));
+  if (!organisation?.tenantId) return res.status(400).json({ error: 'no_xero', message: 'This entity is not linked to Xero.' });
+  const by = String(memberForSession(req)?.email ?? '');
+  const out = await saveGstToContact(bill.id, organisation.tenantId, { by, confirmed: true });
+  return res.status(out.ok ? 200 : 422).json({ ...out, visible: true, check: gstCheckFor(bill.id) });
+});
 
 // PATCH /api/costs/bills/:id — update editable fields (e.g. category) or the
 // workflow status ('ready' moves it out of the inbox).
@@ -1508,6 +1554,9 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
   } else {
     bill = reconcileReadiness(orgId, req.params.id) || bill;
   }
+  // The GST register check, behind the answer: the upload does not wait on IRAS,
+  // and a publish runs it itself if it has not landed.
+  void runGstCheck(workspaceId(req), orgScope(req), orgId, bill.id);
   res.json({ ok: true, bill: { ...bill, hasFile: Boolean(bill.storageKey) }, duplicate: dup ?? null });
 });
 

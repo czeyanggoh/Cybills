@@ -298,7 +298,8 @@ export function taxRateOutcome({
   // fact about the supplier, not about the page — but the reason says so, since
   // it is the one piece of evidence nobody can check against the paper in hand.
   // true / 'document' for an earlier document, 'rule' for this entity's
-  // supplier rule, 'ruleOther' for another entity's.
+  // supplier rule, 'ruleOther' for another entity's, 'checked' for one
+  // confirmed on a GST register check.
   gstRegNoRemembered = false,
   // The document's category label ("449 - Motor Vehicle Expenses"), and the
   // reader's own judgement that the paper is the cost of owning or running a
@@ -352,6 +353,7 @@ export function taxRateOutcome({
     const where = {
       rule: "it is the one on this supplier's rule",
       ruleOther: "it is the one another client's supplier rule records for them",
+      checked: 'it is the one confirmed on a GST register check for them',
     }[gstRegNoRemembered] || 'it is the one read from an earlier document of theirs';
     out.reason =
       `${out.reason ? `${out.reason} ` : ''}The supplier's GST registration number (${String(gstRegNo).trim()}) ` +

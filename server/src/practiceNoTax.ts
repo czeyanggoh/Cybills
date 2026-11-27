@@ -39,6 +39,8 @@ type MedicalRules = {
   medicalProviderReason: (args: { supplier?: unknown }) => string;
 };
 
+type GstRules = { gstCheckKey: (doc: unknown) => string; GST_HOLD_REASON: string };
+
 // From server/dist (or server/src under tsx) up to the repo root. Null when the
 // module can't be loaded, so a missing rule degrades to nothing rather than
 // failing the write.
@@ -61,6 +63,8 @@ const loadMotorRules = () =>
   loadRules<MotorRules>('motorVehicle.js', (m) => typeof m?.isMotorVehicleExpense === 'function');
 const loadMedicalRules = () =>
   loadRules<MedicalRules>('medicalProvider.js', (m) => typeof m?.isMedicalProviderExpense === 'function');
+const loadGstRules = () =>
+  loadRules<GstRules>('gstRegisterCheck.js', (m) => typeof m?.gstCheckKey === 'function');
 
 // Which rule, if any, holds this document at No Tax — and the sentence saying so.
 async function noTaxReason(doc: Partial<Bill> & Record<string, unknown>): Promise<string> {
@@ -72,6 +76,12 @@ async function noTaxReason(doc: Partial<Bill> & Record<string, unknown>): Promis
   const medical = await loadMedicalRules();
   if (medical?.isMedicalProviderExpense({ supplier: doc.supplier, medicalProvider: doc.medicalProvider === true, kind })) {
     return medical.medicalProviderReason({ supplier: doc.supplier });
+  }
+  // The GST register check found the supplier not registered on the invoice
+  // date (gstCheck.ts), and the document still asks the same question.
+  if (doc.gstHold && kind === 'cost') {
+    const gst = await loadGstRules();
+    if (gst && gst.gstCheckKey(doc) === doc.gstHold) return gst.GST_HOLD_REASON;
   }
   return '';
 }

@@ -1043,6 +1043,37 @@ itself (a foreign one is evidence AGAINST), and two numbers read equally often
 remember neither. The tax reason says the number was remembered rather than
 read (`gstRegNoRemembered` on `taxRateOutcome`).
 
+**And the supplier is checked on IRAS's GST register when its Xero contact holds
+no GST number** (Cze, 27 Nov 2026). Rules pure in `src/lib/gstRegisterCheck.js`,
+the doing in `server/src/gstCheck.ts`; IRAS is asked THROUGH cyworkspace
+(`POST /api/webhooks/cybills/gst-check`, `CYWORKSPACE_API_KEY`), which holds the
+one API key and its hourly limit. Only a Singapore, GST-registered entity with a
+Xero of its own; only an unpublished cost showing Singapore GST (a Singapore
+number, or GST printed). With a number (paper, rule, remembered) that number is
+asked about; without one the NAME is looked up in ACRA, confident matches only.
+Run after a background read (before auto-publish), after an upload's finalize, by
+a sweep on the listing (documents created from 27 Nov 2026, three a pass, so the
+backlog does not spend the limit), at publish, and from the page.
+- **Not registered on the invoice date** on a KNOWN number holds the cost at No
+  Tax (`gstHold` on the bill, applied by `keepPracticeNoTax`; a code a person
+  picks wins, and a changed supplier, number or date releases it). A publish that
+  finds this out is declined once (`gst_not_supported`). Found by NAME and not
+  registered changes nothing: the match may be the wrong business.
+- **Registered**: the GST number (Xero "Tax Identification Number") and UEN
+  ("Business registration number") go on the contact BEFORE the bill at publish
+  (InvoiceNow sends what the contact holds), by themselves only when the number
+  was printed on this document and IRAS's name agrees; otherwise on the page's
+  Save button, which also makes the number this entity's evidence for later reads
+  (`checked` in `supplierGst.ts`). Nothing Xero holds is ever replaced.
+- **A contact that already holds a number is not checked again**, even if the
+  supplier has since deregistered.
+- **IRAS's answer is the practice's only**: kept in the `gst-checks` collection,
+  never on the bill, served only to colleagues, with the source notice IRAS's API
+  terms ask for (they restrict passing results to third parties without written
+  consent). The held bill's reason names no IRAS data.
+- No answer (cyworkspace or IRAS down, the limit, sandbox) changes nothing.
+- Covered by `test/gst-register-check.test.mjs` and `server/test/gst-register-check.test.mts`.
+
 **A supplier read under a new spelling is filed under the one already here.**
 Cze, 18 Nov 2026: the picker held "Xero (NZ) Limited", "Xero (NZ) Ltd", "Xero
 Global" and five more. The reader copies the name as each invoice prints it,

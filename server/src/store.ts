@@ -279,8 +279,13 @@ export type Bill = {
   supplierGstRegNo?: string;
   supplierGstRegNoRemembered?: boolean;
   // Where a remembered number came from: this entity's supplier rule, another
-  // entity's, or an earlier document ('rule' | 'ruleOther' | 'document').
+  // entity's, a number confirmed on a register check, or an earlier document
+  // ('rule' | 'ruleOther' | 'checked' | 'document').
   supplierGstRegNoFrom?: string;
+  // Held at No Tax by the GST register check: the key of the question it was
+  // asked (src/lib/gstRegisterCheck.js), so a changed supplier, number or date
+  // releases it. IRAS's answer itself is in the gst-checks collection.
+  gstHold?: string;
   // The reader's judgement that the paper is the cost of owning or running a
   // motor vehicle — fuel, parking, servicing. With a motor vehicle account it is
   // what makes the document No Tax in every client's book (practiceNoTax.ts).
@@ -1302,6 +1307,8 @@ const EDITABLE: (keyof Bill)[] = [
   'supplierGstRegNo',
   'supplierGstRegNoRemembered',
   'supplierGstRegNoFrom',
+  // Set by the GST register check (gstCheck.ts), never from a request body.
+  'gstHold',
   'motorVehicle',
   'medicalProvider',
   'taxLabel',

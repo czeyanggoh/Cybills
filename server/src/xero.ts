@@ -2343,9 +2343,39 @@ export async function postBillToXero(
       } };
     }
   }
+  // The GST register check (gstCheck.ts), run here if it has not been, since a
+  // publish is the last moment before the claim reaches the ledger (and, under
+  // InvoiceNow, IRAS). Found just now to be unsupported, the document has been
+  // put to No Tax and the codes this publish carries are stale: it is declined
+  // once, to be looked at and published again.
+  const gst = receivable || bill.xeroInvoiceId ? null : await import('./gstCheck.js');
+  if (gst) {
+    const run = await gst.runGstCheck(workspaceId(req), organisation.id, workspace, bill.id);
+    if (run.changed) {
+      return { status: 422, body: {
+        error: 'gst_not_supported',
+        message: 'This document has just been put to No Tax: its GST could not be supported by the supplier’s GST registration on its date. Open it, check the tax code, and publish again.',
+      } };
+    }
+  }
+  // The checked GST number and UEN go onto the supplier's contact BEFORE the
+  // bill does: an approved bill is sent on from Xero with what the contact then
+  // holds. Only where the number was printed on this document and the register
+  // names this supplier; anything else waits for somebody to press Save.
+  const saveGstContact = async () => {
+    if (!gst) return;
+    const kept = gst.gstCheckFor(bill.id);
+    if (!kept?.autoSave || kept.saved) return;
+    await gst
+      .saveGstToContact(bill.id, organisation.tenantId, { by: String(memberForSession(req)?.email ?? 'publish'), contactId: opts.contactId })
+      .catch((err) => console.error('[xero] GST number not saved to the contact', err));
+  };
   // Cash mode: money that has moved goes up as a bank transaction, and nothing
   // below — bills, approval statuses, payments, allocations — applies.
-  if (cashModeFor(organisation.id)) return postCashToXero(req, organisation, workspace, bill, opts);
+  if (cashModeFor(organisation.id)) {
+    await saveGstContact();
+    return postCashToXero(req, organisation, workspace, bill, opts);
+  }
   const prepared = await buildBillInvoice(req, organisation, bill, {
     accountCode: opts.accountCode,
     taxType: opts.taxType,
@@ -2395,6 +2425,8 @@ export async function postBillToXero(
     : receivable
       ? 'sales invoice'
       : 'bill';
+
+  await saveGstContact();
 
   // PUT = create-only (POST would upsert); summarizeErrors=false makes Xero
   // return per-record ValidationErrors with a 200 instead of a bare 400.

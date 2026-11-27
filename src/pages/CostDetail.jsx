@@ -42,6 +42,7 @@ import { useUsers, useOwnerNames, canPublishToXero, canCreateClaims, canManageBu
 import { isPracticeTeam } from '@/lib/practiceStore';
 import { setWhatsappSender } from '@/lib/whatsapp';
 import AddPaymentMethodModal from '@/components/AddPaymentMethodModal';
+import GstRegisterPanel from '@/components/GstRegisterPanel';
 import { fetchBills, fetchBillById, whereIsBill, useDocumentSuppliers, billToDoc, billFileUrl, updateBill, deleteBill, uploadBillFile, notifyBillsChanged, addBill, fetchExtract, fetchExtractLines, itemNumber, costPath, salesPath, docPath, isItemKey, findByItemKey, lineItemRows, markNotDuplicate, clearXeroPublish, moveBillToEntity, moveBillToWorkspace, takeReadAfterMove, DUPLICATE_REASON } from '@/lib/bills';
 import { unmergeCost } from '@/lib/mergeDocs';
 import SupplierRulesModal from '@/components/SupplierRulesModal';
@@ -2981,10 +2982,19 @@ Publish anyway?`
                           ? ' (not read off this document — from this supplier’s rule)'
                           : doc.supplierGstRegNoFrom === 'ruleOther'
                             ? ' (not read off this document — from another client’s rule for this supplier)'
-                            : ' (not on this document — remembered from an earlier one of this supplier’s)'
+                            : doc.supplierGstRegNoFrom === 'checked'
+                              ? ' (not read off this document — confirmed on a GST register check)'
+                              : ' (not on this document — remembered from an earlier one of this supplier’s)'
                         : ''}
                       {doc.taxLabel ? <> · tax printed as “{doc.taxLabel}”</> : ''}
                     </p>
+                  )}
+                  {gstRegistered && !isSales && doc?.persisted && (
+                    <GstRegisterPanel
+                      key={doc.id}
+                      billId={doc.id}
+                      revision={`${doc.supplier}|${doc.date}|${doc.taxRate}|${doc.xeroInvoiceId || ''}`}
+                    />
                   )}
                 </Field>
               )}
