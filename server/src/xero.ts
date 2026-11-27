@@ -1126,6 +1126,35 @@ async function customerContactId(tenantId: string, name: string): Promise<string
   return String(contact?.ContactID ?? '');
 }
 
+// An expense claim reaches IRAS (GST InvoiceNow) as a PETTY CASH purchase
+// (Cze, 28 Nov 2026). Xero knows one by its contact: Business registration
+// number "PCP", where a supplier's UEN would go. Xero sends a bill the moment it
+// is approved, so the claimant's contact is marked BEFORE the claim is posted.
+// A number the contact already holds is never replaced. Best-effort and
+// reported: it never stops the claim being published.
+const PETTY_CASH = 'PCP';
+type PettyCashMark = { ok: boolean; set: boolean; error?: string };
+async function markPettyCashContact(tenantId: string, name: string): Promise<PettyCashMark> {
+  const not = (why: string): PettyCashMark => ({ ok: false, set: false, error: why });
+  try {
+    // Imported here, as publish-bill does: gstCheck.ts imports this file.
+    const { findContact } = await import('./gstCheck.js');
+    const contact = await findContact(tenantId, name);
+    if (contact === undefined) return not(`Xero could not be asked for the contact “${name}”.`);
+    const held = String(contact?.CompanyNumber ?? '').trim();
+    if (held.toUpperCase() === PETTY_CASH) return { ok: true, set: false };
+    if (held) return not(`“${name}” already holds ${held} there, so it was left as it is.`);
+    const patch = { CompanyNumber: PETTY_CASH };
+    const result = contact?.ContactID
+      ? await relay('Contacts', { method: 'POST', tenantId, body: { Contacts: [{ ContactID: contact.ContactID, ...patch }] } })
+      : await relay('Contacts', { method: 'PUT', tenantId, body: { Contacts: [{ Name: name, ...patch }] } });
+    return result.ok ? { ok: true, set: true } : not(result.message || result.error || 'Xero did not accept the contact change.');
+  } catch (err) {
+    console.error('[xero] petty cash mark failed', err);
+    return not('Xero could not be asked.');
+  }
+}
+
 // Why Xero refused an attachment, where its own words would send somebody to the
 // wrong place. There is one such refusal and it is the whole of this function:
 // a 401 whose Detail is AuthorizationUnsuccessful.
@@ -4082,6 +4111,7 @@ async function sendCashClaim(
     ? withExistingLineIds(prepared.payload.LineItems as any[], Array.isArray(current.LineItems) ? current.LineItems : [])
     : (prepared.payload.LineItems as any[]);
   const reference = String(prepared.payload.InvoiceNumber ?? '').slice(0, 255);
+  const pettyCash = await markPettyCashContact(target.tenantId, String((prepared.payload.Contact as { Name?: string }).Name ?? ''));
   const payload: Record<string, unknown> = {
     ...bankTransactionFrom(
       { ...prepared.payload, LineItems: lineItems },
@@ -4123,6 +4153,7 @@ async function sendCashClaim(
     cashPayment: { account: accountLabel, date, currency, amount: linesTotalCents(lineItems) / 100 },
     lines: prepared.lines,
     attachment,
+    pettyCash,
     rebilled: prepared.rebillTo.some(Boolean)
       ? { ok: false, linked: 0, asked: prepared.rebillTo.filter(Boolean).length, error: 'cash mode does not mark billable expenses in Xero.' }
       : null,
@@ -4208,6 +4239,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
   if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
   const today = new Date().toISOString().slice(0, 10);
   const payload: Record<string, unknown> = { ...prepared.payload, Status: status };
+  const pettyCash = await markPettyCashContact(target.tenantId, String((prepared.payload.Contact as { Name?: string }).Name ?? ''));
 
   const result = await relay('Invoices', {
     method: 'PUT',
@@ -4260,6 +4292,7 @@ xeroRouter.post('/organisations/:id/publish-claim', async (req, res) => {
       status: String(invoice.Status ?? status),
     },
     attachment,
+    pettyCash,
     rebilled,
     claim: updated,
   });
@@ -4327,6 +4360,7 @@ xeroRouter.post('/organisations/:id/update-claim', async (req, res) => {
 
   const payload: Record<string, unknown> = { ...prepared.payload, InvoiceID: claim.xeroInvoiceId };
   if (status) payload.Status = status;
+  const pettyCash = await markPettyCashContact(target.tenantId, String((prepared.payload.Contact as { Name?: string }).Name ?? ''));
 
   // POST (not PUT) is Xero's update.
   const result = await relay('Invoices', {
@@ -4369,6 +4403,7 @@ xeroRouter.post('/organisations/:id/update-claim', async (req, res) => {
     },
     lines: prepared.lines,
     attachment,
+    pettyCash,
     rebilled,
     claim: getClaimForXero(org, claim.id),
   });

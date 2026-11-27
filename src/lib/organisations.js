@@ -746,6 +746,11 @@ export function useXeroBankAccounts() {
   return merged.length ? merged : BANK_ACCOUNTS;
 }
 
+// A claim's publish also marks the claimant's Xero contact PCP (petty cash, for
+// GST InvoiceNow). Said only when that could not be done.
+export const pettyCashProblem = (mark) =>
+  mark && !mark.ok ? ` Business registration number “PCP” was not set on the claimant’s Xero contact: ${mark.error}` : '';
+
 // Publish a stored bill to Xero as an ACCPAY supplier bill. Resolves with
 // { invoice, bill }; rejects with a message (422 carries Xero's validation
 // messages, joined for display).

@@ -542,6 +542,18 @@ sent). An update re-links, since Xero gives the lines new ids, which is also how
 a claim published before this gets its lines marked. Best-effort and REPORTED
 on the claim page. Covered by `test/claim-rebillable.test.mts`.
 
+**Every claim marks its claimant's Xero contact PCP** (Cze, 28 Nov 2026: GST
+InvoiceNow). Xero reports a bill to IRAS as a petty cash purchase when its
+contact's Business registration number reads `PCP`, and sends it the moment it is
+approved; a claim's bill under a person's name with no UEN would be rejected. So
+publish-claim, update-claim and the cash-mode Spend Money call
+`markPettyCashContact` BEFORE the transaction goes: the contact is created if
+Xero has none, a blank field is set, and **a number already there is never
+replaced**. All entities. Best-effort and said on the claim page and the bulk
+publish when it could not be set (`pettyCash` on the answer). The Tax
+Identification Number is left alone. Whether Xero then sends "PCP" as the
+supplier NAME too is not yet seen. Covered by `test/claim-petty-cash.test.mts`.
+
 **And a claimed receipt posts under its OWN tax code, as its own lines.** A
 claim's bill sent each receipt as one line with no `TaxType`, so Xero applied
 the ACCOUNT's default — and a chart whose ENTERTAINMENT defaults to No Tax

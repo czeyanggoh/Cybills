@@ -70,6 +70,9 @@ const stub = http.createServer((req, res) => {
   req.on('end', () => {
     if (path.endsWith('/TrackingCategories')) return res.end(JSON.stringify({ TrackingCategories: [] }));
     if (path.endsWith('/Contacts')) {
+      // The claimant's own contact is read and marked PCP too (claim-petty-cash):
+      // only CUSTOMER lookups are counted here.
+      if (req.method !== 'GET' || String(url.searchParams.get('where') ?? '').includes('Jenny')) return res.end(JSON.stringify({ Contacts: [] }));
       contactLookups += 1;
       return res.end(JSON.stringify({ Contacts: missingCustomer ? [] : [{ ContactID: 'contact-mgh', Name: MGH }] }));
     }

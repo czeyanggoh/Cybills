@@ -95,7 +95,7 @@ function entityTenant(ws: string, orgId: string): string {
 type Contact = { ContactID?: string; Name?: string; TaxNumber?: string; CompanyNumber?: string };
 
 /** The Xero contact of that name; null when there is none; undefined when Xero could not say. */
-async function findContact(tenantId: string, name: string, contactId = ''): Promise<Contact | null | undefined> {
+export async function findContact(tenantId: string, name: string, contactId = ''): Promise<Contact | null | undefined> {
   if (contactId) {
     const r = await relay(`Contacts/${encodeURIComponent(contactId)}`, { tenantId });
     return r.ok ? ((r.data?.Contacts ?? [])[0] ?? null) : undefined;

@@ -61,6 +61,7 @@ import {
   switchOrganisationTo,
   publishClaimToXero,
   updateClaimInXero,
+  pettyCashProblem,
   useXeroShortCode,
   useIsPrimaryOrganisation,
 } from '@/lib/organisations';
@@ -389,7 +390,7 @@ export default function ExpenseClaimDetail() {
       notifyClaimsChanged(); // refresh so the button flips to "Published to Xero"
       const attachNote = r.attachment && r.attachment.ok === false ? ' (PDF attachment couldn’t be sent — see Xero)' : '';
       const postedAs = r.cash ? 'Spend Money' : `a ${publishStatusLabel(publishStatus).toLowerCase()} bill`;
-      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as ${postedAs}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''}.${attachNote}${rebillNote(r.rebilled)}`);
+      setPayNote(`Posted to ${r.claim?.xeroTenantName || 'Xero'} as ${postedAs}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''}.${attachNote}${rebillNote(r.rebilled)}${pettyCashProblem(r.pettyCash)}`);
     } catch (err) {
       setPayNote(err?.message || 'Could not publish the claim to Xero.');
     } finally {
@@ -421,7 +422,7 @@ export default function ExpenseClaimDetail() {
       const r = await updateClaimInXero(orgId, { claimId: claim.id, pdfBase64, pdfName: claimExportName(claim, 'pdf') });
       notifyClaimsChanged();
       const attachNote = r.attachment && r.attachment.ok === false ? ' (PDF attachment couldn’t be sent — see Xero)' : '';
-      setPayNote(`Updated the ${claim.xeroDocType === 'SPEND' ? 'Spend Money' : 'bill'} in ${claim.xeroTenantName || 'Xero'}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} with this claim’s current items.${attachNote}${rebillNote(r.rebilled)}`);
+      setPayNote(`Updated the ${claim.xeroDocType === 'SPEND' ? 'Spend Money' : 'bill'} in ${claim.xeroTenantName || 'Xero'}${r.invoice?.invoiceNumber ? ` (${r.invoice.invoiceNumber})` : ''} with this claim’s current items.${attachNote}${rebillNote(r.rebilled)}${pettyCashProblem(r.pettyCash)}`);
     } catch (err) {
       setPayNote(err?.message || 'Could not update the bill in Xero.');
     } finally {

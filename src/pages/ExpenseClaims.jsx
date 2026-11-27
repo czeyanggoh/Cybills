@@ -15,7 +15,7 @@ import { useClaims, notifyClaimsChanged, archiveClaims, isClaimUnpublished,delet
 import SortTh from '@/components/SortTh';
 import { useAuth } from '@/lib/auth';
 import { canManageBusiness, isAdminAccess, canCreateClaims, canPublishToXero, useUsers } from '@/lib/userStore';
-import { publishClaimToXero } from '@/lib/organisations';
+import { publishClaimToXero, pettyCashProblem } from '@/lib/organisations';
 import { useExtractionSettings, publishStatusLabel } from '@/lib/extractionSettings';
 import { useCashMode } from '@/lib/cashMode';
 import CashClaimModal from '@/components/CashClaimModal';
@@ -511,8 +511,10 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
       }
       try {
         const pdfBase64 = await buildClaimPdfBase64(claim);
-        await publishClaimToXero(orgId, { claimId: claim.id, status: publishStatus, pdfBase64, pdfName: claimExportName(claim, 'pdf'), ...(cash || {}) });
+        const r = await publishClaimToXero(orgId, { claimId: claim.id, status: publishStatus, pdfBase64, pdfName: claimExportName(claim, 'pdf'), ...(cash || {}) });
         done++;
+        const unmarked = pettyCashProblem(r?.pettyCash);
+        if (unmarked) failed.push(`${c.claimFor || c.name}: published.${unmarked}`);
       } catch (e) {
         failed.push(`${c.claimFor || c.name}: ${e.message || 'could not be published'}`);
       }
