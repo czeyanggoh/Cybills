@@ -216,4 +216,30 @@ check('a remembered number renames nobody', await name(read('Newco Cafe', { supp
 answer = null;
 check('no answer: as printed', await name(read('Newco Cafe')), ['Newco Cafe', '']);
 
+// 8) "Use registered name": the Xero contact and this entity's own copies move.
+const { renameToRegistered } = await import('../src/supplierRename.ts');
+const { writeSetting, readSetting } = await import('../src/settings.ts');
+answer = { ...found('yes'), registered_name: 'ACME HOLDINGS PTE. LTD.' };
+await xeroNowHolds([{ ContactID: 'c-1', Name: 'Acme Shop', TaxNumber: '201512345M', IsSupplier: true }]);
+writeSetting('cybm', 'cybills.supplier.rules.v1', 'org-1', { 'Acme Shop': { category: '429 - General Expenses' } });
+writeSetting('cybm', 'cybills.billing-plans.v1', 'org-1', { plans: [{ id: 'p1', supplier: 'Acme Shop' }] });
+b = bill({ supplier: 'Acme Shop' });
+const other = bill({ supplier: 'Acme Shop', xeroInvoiceId: 'inv-old', status: 'archived' });
+await run(b.id);
+check('not asked by itself: the contact holds a number', gstCheckFor(b.id)!.skipped, 'contact_has_number');
+await run(b.id, true);
+check('a hand check asks, and names the registered business', gstCheckFor(b.id)!.registeredName, 'ACME HOLDINGS PTE. LTD.');
+await xeroNowHolds([...contacts, { ContactID: 'c-2', Name: 'Acme Holdings Pte Ltd', IsSupplier: true }]);
+let moved = await renameToRegistered('cybm', 'org-1', b.id, 'tenant-1');
+check('two contacts in Xero: refused, nothing moved', [moved.status, getBillById('cybm', b.id)!.supplier], [409, 'Acme Shop']);
+await xeroNowHolds([{ ContactID: 'c-1', Name: 'Acme Shop', TaxNumber: '201512345M', IsSupplier: true }]);
+contactWrites.length = 0;
+moved = await renameToRegistered('cybm', 'org-1', b.id, 'tenant-1');
+check('renamed', [moved.ok, moved.xero, moved.documents! >= 2], [true, 'renamed', true]);
+check('the same Xero contact, renamed', contactWrites[0], { method: 'POST', body: { Contacts: [{ ContactID: 'c-1', Name: 'ACME HOLDINGS PTE. LTD.' }] } });
+check('the documents follow, published ones too', [getBillById('cybm', b.id)!.supplier, getBillById('cybm', other.id)!.supplier], ['ACME HOLDINGS PTE. LTD.', 'ACME HOLDINGS PTE. LTD.']);
+check('the rule moves', readSetting('cybm', 'cybills.supplier.rules.v1', 'org-1'), { 'ACME HOLDINGS PTE. LTD.': { category: '429 - General Expenses' } });
+check('the billing plan moves', (readSetting('cybm', 'cybills.billing-plans.v1', 'org-1') as any).plans[0].supplier, 'ACME HOLDINGS PTE. LTD.');
+check('a read under the old name is filed under the new', (readSetting('cybm', 'cybills.supplier-list.v1', 'org-1') as any).merged['acme shop'], 'ACME HOLDINGS PTE. LTD.');
+
 await finish(failures, server, stub);

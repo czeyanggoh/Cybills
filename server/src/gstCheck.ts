@@ -18,7 +18,7 @@ import { referenceRead, relay } from './xero.js';
 type Rules = {
   gstCheckKey: (doc: unknown) => string;
   gstCheckApplies: (doc: unknown) => boolean;
-  gstCheckAsk: (doc: unknown) => { source: string; body: Record<string, string> };
+  gstCheckAsk: (doc: unknown, contactNumber?: string) => { source: string; body: Record<string, string> };
   judgeGstAnswer: (answer: unknown, ctx: { source: string; supplier: string }) => {
     verdict: string; hold: boolean; autoSave: boolean; confirmable: boolean; nameMatches: boolean;
   };
@@ -60,6 +60,9 @@ export type GstCheck = {
   gstRegNo?: string;
   uen?: string;
   irasName?: string;
+  // The name the number is registered to, where it differs from the supplier's:
+  // what "Use registered name" would rename it to (supplierRename.ts).
+  registeredName?: string;
   registeredFrom?: string;
   registeredTo?: string;
   // Written to the Xero contact.
@@ -75,6 +78,15 @@ export const gstCheckFor = (billId: string): GstCheck | null => all().find((c) =
 function store(check: GstCheck): GstCheck {
   saveCollection(COLLECTION, [...all().filter((c) => c.id !== check.id), check]);
   return check;
+}
+
+/** This entity's checks follow a supplier that was renamed. */
+export function renameChecks(orgId: string, from: string, to: string): void {
+  const same = (v: string) => v.trim().toLowerCase() === from.trim().toLowerCase();
+  saveCollection(
+    COLLECTION,
+    all().map((c) => (c.orgId === orgId && same(c.supplier) ? { ...c, supplier: to, registeredName: '' } : c))
+  );
 }
 
 /** The number a person confirmed for this supplier in this entity, '' when none. */
@@ -96,10 +108,10 @@ function entityTenant(ws: string, orgId: string): string {
   return organisation.tenantId;
 }
 
-type Contact = { ContactID?: string; Name?: string; TaxNumber?: string; CompanyNumber?: string };
+export type Contact = { ContactID?: string; Name?: string; TaxNumber?: string; CompanyNumber?: string };
 
 /** The Xero contact of that name; null when there is none; undefined when Xero could not say. */
-async function findContact(tenantId: string, name: string, contactId = ''): Promise<Contact | null | undefined> {
+export async function findContact(tenantId: string, name: string, contactId = ''): Promise<Contact | null | undefined> {
   if (contactId) {
     const r = await relay(`Contacts/${encodeURIComponent(contactId)}`, { tenantId });
     return r.ok ? ((r.data?.Contacts ?? [])[0] ?? null) : undefined;
@@ -183,12 +195,15 @@ async function check(ws: string, orgId: string, scope: string, billId: string, o
     return none;
   }
   const base = { id: billId, scope, orgId, key, supplier, checkedAt: new Date().toISOString() };
-  if (String(contact?.TaxNumber ?? '').trim()) {
+  // A contact that holds a number is not checked by itself. A person pressing
+  // Check is asking anyway, with that number where the document gives none.
+  const held = String(contact?.TaxNumber ?? '').trim();
+  if (held && !opts.force) {
     const changed = await applyHold(scope, billId, '');
     return { check: store({ ...base, skipped: 'contact_has_number' }), changed };
   }
 
-  const ask = rules.gstCheckAsk(bill);
+  const ask = rules.gstCheckAsk(bill, held);
   const answer = await askCyws(ask.body);
   if (!answer) {
     retryAfter.set(billId, Date.now() + RETRY_MS);
@@ -205,6 +220,7 @@ async function check(ws: string, orgId: string, scope: string, billId: string, o
     gstRegNo: String(r.gst_reg_no ?? ''),
     uen: String(r.registration_id || answer.acra?.uen || ''),
     irasName: String(r.name ?? ''),
+    registeredName: rules.registeredNameFor({ supplier }, answer),
     registeredFrom: String(r.registered_from ?? ''),
     registeredTo: String(r.registered_to ?? ''),
     checkedAt: String(r.checked_at || base.checkedAt),

@@ -89,4 +89,7 @@ check('not registered names nobody', registeredNameFor(doc, { matched: true, reg
 check('a contact holding the number', contactHoldsNumber({ TaxNumber: '2015-12345-M' }, ['201512345M']), true);
 check('a blank contact holds none', contactHoldsNumber({}, ['', '201512345M']), false);
 
+check('a contact’s number, when the document has none', gstCheckAsk({ ...doc, supplierGstRegNo: '' }, '201512345M').source, 'contact');
+check('…holds nothing and saves nothing', judge(answer('no'), 'contact').hold || judge(answer('yes'), 'contact').confirmable, false);
+
 process.exit(failures ? 1 : 0);

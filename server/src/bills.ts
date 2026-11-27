@@ -38,6 +38,7 @@ import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { isHeicFile, heicToJpeg } from './heic.js';
 import { dataScopeForOrg, getOrganisation, listOrganisations, primaryOrgId } from './organisations.js';
 import { gstCheckFor, runGstCheck, saveGstToContact, sweepGstChecks } from './gstCheck.js';
+import { renameToRegistered } from './supplierRename.js';
 import { actor, workspaceId, WORKSPACE_ID } from './workspace.js';
 import { addressIn, canAccessOrg, canPublishToXero, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg, visibleOwnersFor } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
@@ -837,6 +838,22 @@ billsRouter.post('/bills/:id/gst-check', async (req, res) => {
   if (await lockedOnApprovedClaim(req, res)) return;
   const run = await runGstCheck(workspaceId(req), orgScope(req), scope, bill.id, { force: true });
   return res.json({ ok: true, visible: true, check: run.check, changed: run.changed });
+});
+
+// "Use registered name": the supplier renamed to the name its GST number is
+// registered to, in Xero and here (supplierRename.ts). One supplier, on a press.
+billsRouter.post('/bills/:id/gst-check/rename', async (req, res) => {
+  const scope = orgIdFor(req);
+  const bill = getBillById(scope, req.params.id);
+  if (!bill || !mayWriteBill(req) || !isPracticeCaller(req)) return res.status(404).json({ error: 'not_found' });
+  if (!canPublishToXero(memberForSession(req), orgScope(req))) {
+    return res.status(403).json({ error: 'publish_not_allowed', message: 'Your account can’t change anything in Xero.' });
+  }
+  const organisation = getOrganisation(workspaceId(req), orgScope(req));
+  if (!organisation?.tenantId) return res.status(400).json({ error: 'no_xero', message: 'This entity is not linked to Xero.' });
+  const out = await renameToRegistered(workspaceId(req), orgScope(req), bill.id, organisation.tenantId);
+  if (out.ok) console.log(`[supplierRename] ${memberForSession(req)?.email ?? ''} renamed “${out.from}” to “${out.to}” (${out.documents} documents, Xero ${out.xero})`);
+  return res.status(out.status).json({ ...out, visible: true, check: gstCheckFor(bill.id) });
 });
 
 // "Save to Xero contact": a person's word that the number found is this

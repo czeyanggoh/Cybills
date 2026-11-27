@@ -2998,6 +2998,7 @@ Publish anyway?`
                     <GstRegisterPanel
                       key={doc.id}
                       billId={doc.id}
+                      supplier={doc.supplier}
                       revision={`${doc.supplier}|${doc.date}|${doc.taxRate}|${doc.xeroInvoiceId || ''}`}
                     />
                   )}

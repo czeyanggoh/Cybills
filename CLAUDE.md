@@ -1071,7 +1071,14 @@ backlog does not spend the limit), at publish, and from the page.
   rule, supplier-list entry or Xero contact has it by name or number, and only
   when Xero could be asked. The name is ACRA's (`registered_name`), else IRAS's;
   the printed one is kept as `supplierPrintedName` and shown under Supplier.
-  An existing supplier is never renamed.
+  An existing supplier is never renamed by itself.
+- **Use registered name** (the panel's button, `server/src/supplierRename.ts`):
+  one existing supplier, on a press, where a NUMBER gave another name. Renames
+  the Xero contact (bank details and history stay), this entity's documents
+  (published ones too), supplier rule, billing plans, supplier list and checks.
+  Two Xero contacts (old and registered name) refuse it: Xero's API cannot
+  merge them. A hand **Check again** now asks even where the contact holds a
+  number (source `contact`, which holds and saves nothing).
 - **A contact that already holds a number is not checked again**, even if the
   supplier has since deregistered.
 - **IRAS's answer is the practice's only**: kept in the `gst-checks` collection,

@@ -49,13 +49,18 @@ export function gstCheckApplies(doc) {
   return num(doc.tax) > 0 || /\bgst\b/i.test(label);
 }
 
-// What to ask, and where the number came from.
-export function gstCheckAsk(doc) {
-  const reg = String(doc?.supplierGstRegNo ?? '').trim();
-  const known = reg && isSingaporeGstRegNo(reg);
+// What to ask, and where the number came from. `contactNumber` is the one on the
+// Xero contact, used when a person checks a document that carries none.
+export function gstCheckAsk(doc, contactNumber = '') {
+  const printed = String(doc?.supplierGstRegNo ?? '').trim();
+  const fromDoc = Boolean(printed) && isSingaporeGstRegNo(printed);
+  const reg = fromDoc ? printed : String(contactNumber ?? '').trim();
+  const known = Boolean(reg) && isSingaporeGstRegNo(reg);
   const from = String(doc?.supplierGstRegNoFrom || '');
   const source = !known
     ? 'name'
+    : !fromDoc
+      ? 'contact'
     : doc.supplierGstRegNoRemembered !== true
       ? 'paper'
       : from === 'document' || !from
@@ -81,9 +86,10 @@ export function judgeGstAnswer(answer, { source, supplier }) {
   const autoSave = canSave && source === 'paper' && nameMatches;
   return {
     verdict,
-    hold: verdict === 'not_registered' && source !== 'name',
+    // A number not off this document's evidence holds nothing.
+    hold: verdict === 'not_registered' && source !== 'name' && source !== 'contact',
     autoSave,
-    confirmable: canSave && !autoSave,
+    confirmable: canSave && !autoSave && source !== 'contact',
     nameMatches,
   };
 }
