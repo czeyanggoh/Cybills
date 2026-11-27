@@ -219,8 +219,9 @@ const ARTICLES = [
 </table>
 <h2>Privileges</h2>
 <p>An admin can switch three things on or off for each Standard user: <b>Access all documents</b>, <b>Publish to accounting software</b>, and <b>Create expense claims</b>. If a button in this guide is missing for you, ask your admin whether it has been switched off.</p>
-<h2>Your direct manager</h2>
-<p>Your claims go to your <b>direct manager</b> for approval. If the wrong person is set, ask your admin to change it on the Users page before you submit.</p>`},
+<h2>Your direct managers</h2>
+<p>Your claims go to a <b>direct manager</b> for approval. You can have more than one: you then choose which of them approves each claim when you submit it. If the wrong people are set, ask your admin to change them on the Users page before you submit.</p>
+<p><b>Admins:</b> on the <span class="ui">Users</span> page, click the box under <span class="ui">Direct managers</span> beside the person, tick everyone who may approve their claims, then click <span class="ui">Done</span>.</p>`},
 
 /* ===== Submit ===== */
 {id:'ways-to-submit', c:'submit', aud:'Everyone', title:'Ways to send documents into CYBills',
@@ -372,7 +373,7 @@ const ARTICLES = [
 {id:'what-are-claims', c:'claims', aud:'Claimants', title:'What is an expense claim?',
  sum:'A claim bundles the receipts you paid for yourself so you can be reimbursed.',
  body:`
-<p>If you paid with your own money, the receipts go onto an <b>expense claim</b>. Your direct manager / Reporting Officer approves it, and the company reimburses you.</p>
+<p>If you paid with your own money, the receipts go onto an <b>expense claim</b>. One of your direct managers / Reporting Officers approves it, and the company reimburses you.</p>
 <h2>The life of a claim</h2>
 <table class="t">
 <tr><th>Status</th><th>Means</th></tr>
@@ -403,13 +404,20 @@ const ARTICLES = [
 <p>A <b>Category</b> and a <b>Total</b>. A missing supplier is fine ("Unknown supplier"); a missing date uses the day you submitted it.</p>`},
 
 {id:'submit-claim', c:'claims', aud:'Claimants', title:'Submitting a claim for approval',
- sum:'Check every line, then Submit for approval.',
+ sum:'Check every line, Submit for approval, and choose your approver if you have more than one.',
  body:`
 <ol class="steps">
 <li>Open the claim. Check every line: amount, category, and a description that says what it was for.</li>
 <li>Attach any <b>supporting documents</b> (an approval email, a quote) under the description — PDF, PNG or JPG.</li>
-<li>Click <span class="ui">Submit for approval</span>. Your direct manager gets an email.</li>
+<li>Click <span class="ui">Submit for approval</span>.</li>
+<li>If you have more than one direct manager, pick one under <span class="ui">Choose approver…</span>. With only one, their name is already filled in.</li>
+<li>Click <span class="ui">Submit</span>. The claim goes to that one person, and they get an email.</li>
 </ol>
+<h2>Choosing a different approver</h2>
+<ul>
+<li><b>Still awaiting approval:</b> go to <span class="ui">Costs</span> → <span class="ui">Expense claims</span>, tick the claim, click <span class="ui">Submit for approval</span> and choose the other manager. The claim moves to them.</li>
+<li><b>Rejected:</b> open the claim and click <span class="ui">Re-submit for approval</span>. It starts on the last approver, and you can change it.</li>
+</ul>
 <div class="note warn"><b>After approval the claim is locked.</b>You can't change, delete or replace its receipts. If something is wrong, ask your approver or admin to <b>Unapprove</b> it.</div>
 <p>No direct manager set? You'll see an error. Ask your admin to set one — or, if you are allowed to publish, you can approve your own.</p>`},
 
@@ -442,11 +450,12 @@ const ARTICLES = [
 
 /* ===== Approve ===== */
 {id:'ro-overview', c:'approve', aud:'Approvers / ROs', title:'Reporting Officers: your role in CYBills',
- sum:'You decide the claims of the people who report to you. That is all.',
+ sum:'You decide the claims sent to you by the people who report to you. That is all.',
  body:`
 <p>As a Reporting Officer (RO) or direct manager you:</p>
 <ul>
-<li><b>Can</b> see and decide the claims routed to you, and open the receipts on them.</li>
+<li><b>Can</b> see and decide the claims sent to you, and open the receipts on them.</li>
+<li><b>Can</b> also see your reports' other claims. If someone has more than one direct manager, a claim they sent to another manager is that person's to decide.</li>
 <li><b>Can't</b> edit your reports' receipts — those are theirs to correct.</li>
 <li><b>Can't</b> see your reports' other documents, or anyone else's.</li>
 <li><b>Can't</b> approve your own claims.</li>
@@ -514,7 +523,7 @@ const ARTICLES = [
 {id:'switch-entity', c:'account', aud:'Everyone', title:'Working in more than one company',
  sum:'Use the switcher at the top left. Your role can differ in each.',
  body:`
-<p>If you have access to more than one entity, click the company name at the top left to switch. Your role, manager and privileges are set separately in each, so you may be an approver in one and a Standard user in another.</p>
+<p>If you have access to more than one entity, click the company name at the top left to switch. Your role, direct managers and privileges are set separately in each, so you may be an approver in one and a Standard user in another.</p>
 <p>Each entity has its own email address for you — use the one shown in that entity's Add documents drawer.</p>`},
 
 /* ===== Do's and don'ts + trouble ===== */
@@ -571,8 +580,10 @@ const ARTICLES = [
 <p>It is probably on an <b>approved</b> claim (locked) or already published to Xero. Ask your admin.</p>
 <h2>I don't see the Create expense claim button</h2>
 <p>Your admin may have switched off "Create expense claims" for you.</p>
+<h2>Can I have more than one approver?</h2>
+<p>Yes. Your admin can give you several direct managers. Each time you submit a claim you choose <b>one</b> of them, and only that claim's chosen approver is asked. A Business Admin can still approve it if needed.</p>
 <h2>My claim went to the wrong approver</h2>
-<p>Your direct manager is set on the Users page. Ask your admin to change it.</p>
+<p>If it is still awaiting approval and the right person is one of your direct managers, tick the claim in <span class="ui">Expense claims</span>, click <span class="ui">Submit for approval</span> and choose them. If they aren't in the list, ask your admin to add them on the Users page first.</p>
 <h2>A date has a * and is in italics</h2>
 <p>No date was printed, so the day you sent it in is used. Type the real date if you know it.</p>`},
 
