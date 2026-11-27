@@ -1126,7 +1126,11 @@ extractRouter.post('/extract', async (req, res) => {
   // so the GST memory and the supplier rule find it under that name too.
   const kind = req.body?.kind === 'sales' ? 'sales' : 'cost';
   const named = await withKnownSupplierName(result.data, { ...ctx, kind });
-  return res.json({ ok: true, data: await withRememberedGstRegNo(named, ctx) });
+  // A new supplier with its GST number printed is filed under its registered
+  // name (gstCheck.ts).
+  const numbered = await withRememberedGstRegNo(named, ctx);
+  const { withRegisteredName } = await import('./gstCheck.js');
+  return res.json({ ok: true, data: await withRegisteredName(numbered, { ...ctx, kind }) });
 });
 
 // --- Line items -------------------------------------------------------------

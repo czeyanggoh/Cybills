@@ -1065,6 +1065,13 @@ backlog does not spend the limit), at publish, and from the page.
   was printed on this document and IRAS's name agrees; otherwise on the page's
   Save button, which also makes the number this entity's evidence for later reads
   (`checked` in `supplierGst.ts`). Nothing Xero holds is ever replaced.
+- **A NEW supplier is filed under its registered name** (Cze, 28 Nov 2026;
+  `withRegisteredName`, on both read roads before the supplier rule): only with
+  its own Singapore number printed on this document, only when no document,
+  rule, supplier-list entry or Xero contact has it by name or number, and only
+  when Xero could be asked. The name is ACRA's (`registered_name`), else IRAS's;
+  the printed one is kept as `supplierPrintedName` and shown under Supplier.
+  An existing supplier is never renamed.
 - **A contact that already holds a number is not checked again**, even if the
   supplier has since deregistered.
 - **IRAS's answer is the practice's only**: kept in the `gst-checks` collection,

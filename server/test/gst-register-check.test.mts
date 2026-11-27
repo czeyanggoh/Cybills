@@ -76,6 +76,13 @@ const { insertBill, getBillById, updateBill } = await import('../src/store.ts');
 const { runGstCheck, gstCheckFor, saveGstToContact } = await import('../src/gstCheck.ts');
 const { keepPracticeNoTax } = await import('../src/practiceNoTax.ts');
 const { knownGstRegNo } = await import('../src/supplierGst.ts');
+const { withRegisteredName } = await import('../src/gstCheck.ts');
+const { relay } = await import('../src/xero.ts');
+// A write through the relay drops the cached contact list, as it does live.
+const xeroNowHolds = async (rows: any[]) => {
+  contacts = rows;
+  await relay('Contacts', { method: 'POST', tenantId: 'tenant-1', body: { Contacts: [{ ContactID: 'x' }] } });
+};
 
 const app = express();
 app.use(express.json());
@@ -183,5 +190,30 @@ const saved = await saveGstToContact(b.id, 'tenant-1', { by: 'cze', confirmed: t
 check('saved on the button', saved.ok, true);
 check('a missing contact is made with the numbers', contactWrites[0], { method: 'PUT', body: { Contacts: [{ Name: 'Acme Hardware Pte Ltd', TaxNumber: '201512345M', CompanyNumber: '201512345M' }] } });
 check('the confirmed number is this entity’s for the next read', await knownGstRegNo('Acme Hardware Pte Ltd', { ws: 'cybm', orgId: 'org-1' }), { reg: '201512345M', from: 'checked' });
+
+// 7) A new supplier is filed under its registered name; an existing one is not.
+const read = (supplier: string, extra: Record<string, unknown> = {}) => ({
+  supplier, supplierGstRegNo: '201899999Z', taxLabel: 'GST 9%', date: '2026-11-20', ...extra,
+});
+const name = async (data: ReturnType<typeof read>) => {
+  const out = await withRegisteredName(data, { ws: 'cybm', orgId: 'org-1' });
+  return [out.supplier, out.supplierPrintedName];
+};
+answer = { ...found('yes'), registered_name: 'NEWCO HOLDINGS PTE. LTD.' };
+contacts = [];
+check('new: the registered name, the printed one kept', await name(read('Newco Cafe')), ['NEWCO HOLDINGS PTE. LTD.', 'Newco Cafe']);
+const calls = asked.length;
+check('already on a document here: kept', await name(read('Acme Hardware')), ['Acme Hardware', '']);
+check('…without asking', asked.length, calls);
+await xeroNowHolds([{ ContactID: 'c-9', Name: 'Newco Cafe', IsSupplier: true }]);
+check('already a Xero contact: kept', await name(read('Newco Cafe')), ['Newco Cafe', '']);
+await xeroNowHolds([{ ContactID: 'c-9', Name: 'Newco', TaxNumber: '201899999Z', IsSupplier: true }]);
+check('a contact holds the number under another name: kept', await name(read('Newco Cafe')), ['Newco Cafe', '']);
+await xeroNowHolds([{ ContactID: 'c-9', Name: 'Newco Holdings Pte Ltd', IsSupplier: true }]);
+check('the registered name already here: its spelling', await name(read('Newco Cafe')), ['Newco Holdings Pte Ltd', 'Newco Cafe']);
+await xeroNowHolds([]);
+check('a remembered number renames nobody', await name(read('Newco Cafe', { supplierGstRegNoRemembered: true })), ['Newco Cafe', '']);
+answer = null;
+check('no answer: as printed', await name(read('Newco Cafe')), ['Newco Cafe', '']);
 
 await finish(failures, server, stub);

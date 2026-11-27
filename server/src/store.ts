@@ -286,6 +286,9 @@ export type Bill = {
   // asked (src/lib/gstRegisterCheck.js), so a changed supplier, number or date
   // releases it. IRAS's answer itself is in the gst-checks collection.
   gstHold?: string;
+  // The name as the paper prints it, where a new supplier was filed under its
+  // registered name instead (gstCheck.ts, withRegisteredName).
+  supplierPrintedName?: string;
   // The reader's judgement that the paper is the cost of owning or running a
   // motor vehicle — fuel, parking, servicing. With a motor vehicle account it is
   // what makes the document No Tax in every client's book (practiceNoTax.ts).
@@ -1309,6 +1312,7 @@ const EDITABLE: (keyof Bill)[] = [
   'supplierGstRegNoFrom',
   // Set by the GST register check (gstCheck.ts), never from a request body.
   'gstHold',
+  'supplierPrintedName',
   'motorVehicle',
   'medicalProvider',
   'taxLabel',

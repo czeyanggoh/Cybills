@@ -6,6 +6,9 @@ import {
   gstCheckKey,
   judgeGstAnswer,
   contactGstPatch,
+  numberNamesSupplier,
+  registeredNameFor,
+  contactHoldsNumber,
 } from '../src/lib/gstRegisterCheck.js';
 
 let failures = 0;
@@ -70,5 +73,20 @@ const numbers = { gstRegNo: '201512345M', uen: '201512345M' };
 check('a blank contact takes both', contactGstPatch({}, numbers), { TaxNumber: '201512345M', CompanyNumber: '201512345M' });
 check('nothing Xero holds is replaced', contactGstPatch({ TaxNumber: 'X', CompanyNumber: 'Y' }, numbers), {});
 check('an M-number is not a UEN', contactGstPatch({}, { gstRegNo: 'M90370287L', uen: 'M90370287L' }), { TaxNumber: 'M90370287L' });
+
+// --- A new supplier's name ---------------------------------------------------
+check('a printed number may name the supplier', numberNamesSupplier(doc), true);
+check('a remembered one may not', numberNamesSupplier({ ...doc, supplierGstRegNoRemembered: true }), false);
+check('nor the buyer’s own', numberNamesSupplier(doc, ['201512345M']), false);
+check('nor the number printed for the bill-to party', numberNamesSupplier({ ...doc, billedToRegNo: '201512345 M' }), false);
+check('nor no number', numberNamesSupplier({ ...doc, supplierGstRegNo: '' }), false);
+const reg = (name, extra = {}) => ({ matched: true, result: { outcome: 'registered', name }, ...extra });
+check('ACRA’s name first', registeredNameFor(doc, reg('IRAS NAME PTE. LTD.', { registered_name: 'ACRA NAME PTE. LTD.' })), 'ACRA NAME PTE. LTD.');
+check('else IRAS’s', registeredNameFor(doc, reg('IRAS NAME PTE. LTD.')), 'IRAS NAME PTE. LTD.');
+check('the same name in another spelling changes nothing', registeredNameFor(doc, reg('ACME HARDWARE PTE. LTD.')), '');
+check('a hidden name is not a name', registeredNameFor(doc, reg('T** B**')), '');
+check('not registered names nobody', registeredNameFor(doc, { matched: true, registered_name: 'X PTE. LTD.', result: { outcome: 'not_registered' } }), '');
+check('a contact holding the number', contactHoldsNumber({ TaxNumber: '2015-12345-M' }, ['201512345M']), true);
+check('a blank contact holds none', contactHoldsNumber({}, ['', '201512345M']), false);
 
 process.exit(failures ? 1 : 0);

@@ -127,7 +127,10 @@ export function readDecisions(
       : [];
 
   const patch = {};
-  if (ex.supplier) patch.supplier = ex.supplier;
+  if (ex.supplier) {
+    patch.supplier = ex.supplier;
+    patch.supplierPrintedName = ex.supplierPrintedName || '';
+  }
   if (ex.date) patch.date = ex.date;
   if (ex.documentType) patch.documentType = ex.documentType;
   if (ex.invoiceNumber) patch.invoiceNumber = ex.invoiceNumber;

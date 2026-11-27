@@ -10,7 +10,7 @@ import { accountsForOrg, projectOptionsForOrg, customerOptionsForOrg } from './x
 import { loadAccountSides } from './accountSides.js';
 import { decideTaxRate, splitForPrintedRate, taxContextFor, EMPTY_TAX_CONTEXT } from './taxRules.js';
 import { withRememberedGstRegNo } from './supplierGst.js';
-import { runGstCheck } from './gstCheck.js';
+import { runGstCheck, withRegisteredName } from './gstCheck.js';
 import { withKnownSupplierName } from './supplierName.js';
 import { keepPracticeNoTax } from './practiceNoTax.js';
 import { insertBill, updateBill, settleProcessing, noteReading, getBillById, setBillEmailLink, attachFetchedFile, markFileIsTextEmail, setPendingReply, type Bill } from './store.js';
@@ -291,7 +291,10 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     // Filed under the supplier this entity already has first (supplierName.ts),
     // so the GST memory and the supplier rule below find it under that name.
     const named = await withKnownSupplierName(result.data, { ws, orgId: realOrgId });
-    const d = await withRememberedGstRegNo(named, { ws, orgId: realOrgId });
+    const numbered = await withRememberedGstRegNo(named, { ws, orgId: realOrgId });
+    // A new supplier with its GST number printed is filed under its registered
+    // name, BEFORE the supplier rule is looked up (gstCheck.ts).
+    const d = await withRegisteredName(numbered, { ws, orgId: realOrgId });
     // The supplier's standing rule, looked up once: it decides below whether the
     // reader's rows are kept at all, and is laid over the read at the end.
     const vendorRule = supplierRuleFor(ws, realOrgId, d.supplier);
@@ -328,6 +331,7 @@ async function readIntoBill(req: Request, scope: string, realOrgId: string, pref
     }
     const patch: Record<string, unknown> = {
       supplier: d.supplier,
+      supplierPrintedName: d.supplierPrintedName || '',
       date: d.date,
       documentType: d.documentType,
       invoiceNumber: d.invoiceNumber,

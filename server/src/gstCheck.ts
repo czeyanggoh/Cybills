@@ -1,10 +1,10 @@
 import { env } from './env.js';
 import { loadCollection, saveCollection } from './jsonStore.js';
 import { getBillById, listBills, updateBill, reconcileReadiness, type Bill } from './store.js';
-import { getOrganisation } from './organisations.js';
+import { dataScopeForOrg, getOrganisation } from './organisations.js';
 import { readSetting } from './settings.js';
 import { keepPracticeNoTax } from './practiceNoTax.js';
-import { relay } from './xero.js';
+import { referenceRead, relay } from './xero.js';
 
 // The IRAS GST register check on a cost (Cze, 27 Nov 2026). The rules are
 // src/lib/gstRegisterCheck.js (pure, loaded by path, so the browser and the
@@ -23,6 +23,10 @@ type Rules = {
     verdict: string; hold: boolean; autoSave: boolean; confirmable: boolean; nameMatches: boolean;
   };
   contactGstPatch: (contact: unknown, numbers: { gstRegNo: string; uen: string }) => Record<string, string>;
+  numberNamesSupplier: (data: unknown, ownNumbers: string[]) => boolean;
+  sameSupplierName: (a: unknown, b: unknown) => boolean;
+  registeredNameFor: (data: unknown, answer: unknown) => string;
+  contactHoldsNumber: (contact: unknown, numbers: string[]) => boolean;
 };
 
 let rulesPromise: Promise<Rules | null> | null = null;
@@ -262,6 +266,67 @@ export async function saveGstToContact(
   }
   store({ ...kept, saveError: '', confirmed: kept.confirmed || opts.confirmed === true, saved: { at: new Date().toISOString(), by: opts.by, contactId, fields } });
   return { ok: true, fields };
+}
+
+/**
+ * A NEW supplier billing with its own GST number printed on the paper is filed
+ * under the name the number is registered to, with the printed name kept as
+ * `supplierPrintedName`. Applied to a read, on both roads, before the supplier
+ * rule is looked up; never to a document somebody has since edited. A supplier
+ * this entity already has, by any spelling or by the number on a Xero contact,
+ * keeps its name, and so does one that cannot be shown to be new. Never throws.
+ */
+export async function withRegisteredName<
+  T extends { supplier?: unknown; supplierGstRegNo?: unknown; date?: unknown },
+>(data: T, ctx: { ws: string; orgId: string; kind?: string }): Promise<T & { supplierPrintedName?: string }> {
+  const asRead = { ...data, supplierPrintedName: '' };
+  if (ctx.kind === 'sales') return asRead;
+  try {
+    const rules = await gstRules();
+    if (!rules) return asRead;
+    const tenantId = entityTenant(ctx.ws, ctx.orgId);
+    if (!tenantId) return asRead;
+    const profile = readSetting<{ crn?: string; taxNumber?: string }>(ctx.ws, 'cybills.business-profile.v1', ctx.orgId);
+    if (!rules.numberNamesSupplier(data, [String(profile?.crn ?? ''), String(profile?.taxNumber ?? '')])) return asRead;
+    const read = String(data.supplier ?? '').trim();
+
+    // The names this entity files suppliers under already.
+    const held = new Set<string>();
+    for (const b of listBills(dataScopeForOrg(ctx.orgId))) {
+      if (b.kind !== 'sales' && b.status !== 'deleted' && b.supplier) held.add(b.supplier);
+    }
+    const supplierRules = readSetting<Record<string, unknown>>(ctx.ws, 'cybills.supplier.rules.v1', ctx.orgId) || {};
+    Object.keys(supplierRules).forEach((n) => held.add(n));
+    const list = readSetting<{ added?: unknown; merged?: Record<string, string> }>(ctx.ws, 'cybills.supplier-list.v1', ctx.orgId);
+    if (Array.isArray(list?.added)) list.added.forEach((n) => held.add(String(n)));
+    Object.keys(list?.merged ?? {}).forEach((n) => held.add(n));
+    if ([...held].some((n) => rules.sameSupplierName(n, read))) return asRead;
+
+    // New in Xero too, and Xero has to SAY so: a list that cannot be read
+    // renames nobody.
+    const exact = await findContact(tenantId, read);
+    if (exact !== null) return asRead;
+    const listed = await referenceRead('Contacts', tenantId, { where: 'IsSupplier==true AND ContactStatus=="ACTIVE"' }, { allowStale: false });
+    if (!listed.ok) return asRead;
+    const contacts: Contact[] = listed.data?.Contacts ?? [];
+    if (contacts.some((c) => rules.sameSupplierName(c.Name, read))) return asRead;
+
+    const reg = String(data.supplierGstRegNo ?? '').trim();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(data.date ?? '')) ? String(data.date) : '';
+    const answer = await askCyws({ reg_id: reg, supplier_name: read, date });
+    const registered = answer ? rules.registeredNameFor(data, answer) : '';
+    if (!registered) return asRead;
+    const numbers = [reg, String(answer.result?.gst_reg_no ?? ''), String(answer.result?.registration_id || answer.acra?.uen || '')];
+    if (contacts.some((c) => rules.contactHoldsNumber(c, numbers))) return asRead;
+    // The registered name may be one already here: its spelling is the one kept.
+    const existing =
+      contacts.map((c) => String(c.Name ?? '')).find((n) => rules.sameSupplierName(n, registered)) ??
+      [...held].find((n) => rules.sameSupplierName(n, registered));
+    return { ...data, supplier: existing || registered, supplierPrintedName: read };
+  } catch (err) {
+    console.error('[gstCheck] supplier name left as read', err);
+    return asRead;
+  }
 }
 
 // Over the inbox: documents whose read or edit has not been checked. Only ones

@@ -866,8 +866,12 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   if (await lockedOnApprovedClaim(req, res)) return;
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel', 'billingPlanId']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel', 'billingPlanId', 'supplierPrintedName']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
+  }
+  // A supplier changed by anything but a read takes the "printed as" note off.
+  if ('supplier' in patch && !('supplierPrintedName' in patch) && patch.supplier !== getBillById(orgIdFor(req), req.params.id)?.supplier) {
+    patch.supplierPrintedName = '';
   }
   // A document is saved to a billing plan only while it is archived: whatever
   // puts it back to work (Unarchive, Move back to Costs) takes it off the plan.
@@ -1491,6 +1495,7 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   // Never left over from a previous read: a finalize is a whole read's answer.
+  patch.supplierPrintedName = typeof b.supplierPrintedName === 'string' ? b.supplierPrintedName.slice(0, 200) : '';
   patch.supplierGstRegNoRemembered = b.supplierGstRegNoRemembered === true;
   patch.supplierGstRegNoFrom = b.supplierGstRegNoRemembered === true ? gstSource(b.supplierGstRegNoFrom) : '';
   patch.motorVehicle = b.motorVehicle === true;
