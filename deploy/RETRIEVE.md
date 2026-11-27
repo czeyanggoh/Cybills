@@ -122,6 +122,20 @@ signed in between runs, so the code is not asked for every time.
 scheduled day CYBills emails the login's set-up user to open the page and press
 Retrieve now, and starts nothing.
 
+### Spotify: a code that may be asked for (`otp: 'email'`)
+
+Spotify asks for the email address first, then a password or a code it emails to
+that address. The robot (`spotify_flow.py`, in the same `spgroup-cyws`
+container) uses the password where one is offered, keeps its browser signed in
+between runs, and asks for a code by the hand-off above only when nothing else
+will do. The card says the code was emailed, and the request is allowed the same
+12 minutes. **Its schedule does run it**, since a signed-in run needs nobody; a
+scheduled run that is asked for a code fails and is emailed, saying to press
+Retrieve now. It never answers a CAPTCHA.
+
+The robot's first version signs in and saves the payment history page, and
+answers a refusal: its download step is written from that recording.
+
 ## What the workflow answers
 
 The same shapes the link fetch accepts (see EMAIL-INBOUND.md): a JSON array of

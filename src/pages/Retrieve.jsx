@@ -80,7 +80,8 @@ function CodeBox({ login, onSent }) {
     <form onSubmit={submit} className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
       <div className="font-medium">
         {otp.rejected ? 'That code was not accepted. ' : ''}
-        {login.portalName} sent a code by SMS{otp.hint ? ` (${otp.hint})` : ''}. Type it here to carry on.
+        {login.portalName} {login.otp === 'email' ? 'emailed a code' : 'sent a code by SMS'}
+        {otp.hint ? ` (${otp.hint})` : ''}. Type it here to carry on.
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -151,7 +152,7 @@ function ScheduleLine({ login, timezone }) {
   if (s.frequency === 'off') {
     return <span>Retrieves only when somebody presses Retrieve now</span>;
   }
-  if (login.otp) {
+  if (login.otp === 'sms') {
     return (
       <span>
         Emails a reminder to press Retrieve now {scheduleLabel(s).replace(/^\w/, (c) => c.toLowerCase())}

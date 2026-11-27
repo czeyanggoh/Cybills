@@ -85,6 +85,7 @@ const loginOf = async (id: string) => (await api('/logins')).body.logins.find((x
 // --- The portal --------------------------------------------------------------
 check('Singtel is offered, and says it needs an SMS code', PORTALS.find((p) => p.id === 'singtel')?.otp, 'sms');
 check('SP Group does not', PORTALS.find((p) => p.id === 'spgroup')?.otp, '');
+check('Spotify may ask for a code it emails', PORTALS.find((p) => p.id === 'spotify')?.otp, 'email');
 
 let r = await api('/logins', 'POST', { portal: 'singtel', username: '98765432', password: 'pw-One!' });
 check('a Singtel login saves', r.status, 201);

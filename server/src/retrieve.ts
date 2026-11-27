@@ -97,6 +97,17 @@ export const PORTALS = [
     otp: 'sms',
   },
   {
+    // Signs in by email address, then a password or a code Spotify emails. A
+    // person types that code on the card if one is asked for; the robot stays
+    // signed in between runs, so its schedule still runs by itself.
+    id: 'spotify',
+    name: 'Spotify',
+    description: 'Subscription receipts from a Spotify account. May ask for a code Spotify emails you.',
+    usernameLabel: 'Email',
+    loginUrl: '',
+    otp: 'email',
+  },
+  {
     id: 'other',
     name: 'Another portal',
     description: 'Any other supplier portal. n8n needs a recipe for it before it can sign in.',
@@ -250,7 +261,7 @@ function latestInvoiceDate(login: PortalLogin, today = practiceDayKey(new Date()
 // A run that has said "running" for longer than the workflow is allowed to take
 // died with the process that started it — a restart, a deploy. Reported as
 // what it is rather than spinning on the page for ever.
-// A portal that waits for a person to type an SMS code is given longer.
+// A portal that may wait for a person to type a code is given longer.
 const OTP_WAIT_MS = 12 * 60_000;
 const askMs = (portal: string) => (portalById(portal)?.otp ? OTP_WAIT_MS : Number(env.N8N_RETRIEVE_TIMEOUT_MS) || 300000);
 const STALE_MS = (portal: string) => askMs(portal) + 120000;
@@ -290,7 +301,8 @@ function view(ws: string, l: PortalLogin, r: ScheduleRules, now = new Date()) {
     id: l.id,
     portal: l.portal,
     portalName: portal?.name || l.portal,
-    // 'sms': the portal signs in with a code a person must type on the card.
+    // 'sms' / 'email': the portal may sign in with a code a person types on the
+    // card, sent that way. Only 'sms' stops the schedule from running it.
     otp: portal?.otp || '',
     label: l.label,
     loginUrl: l.loginUrl,
@@ -1054,7 +1066,8 @@ retrieveRouter.post('/logins/:id/otp', async (req, res) => {
   }
   const code = String((req.body ?? {}).code ?? '').replace(/[\s-]+/g, '');
   if (!/^\d{4,8}$/.test(code)) {
-    return res.status(422).json({ error: 'bad_code', message: 'Type the code from the SMS: 4 to 8 digits.' });
+    const from = portalById(login.portal)?.otp === 'email' ? 'email' : 'SMS';
+    return res.status(422).json({ error: 'bad_code', message: `Type the code from the ${from}: 4 to 8 digits.` });
   }
   otpCodes.set(run.id, code);
   const row = writeRun(login.id, { run: { ...run, otp: { ...run.otp, enteredAt: new Date().toISOString() } } });
@@ -1159,7 +1172,7 @@ export async function runDueRetrievals(now = new Date()): Promise<number> {
       // before it ran.
       if (!r.scheduleDue(login.schedule, { lastDay: login.lastScheduledDay, from: login.scheduleFrom }, today, hour)) continue;
       writeRun(id, { lastScheduledDay: today });
-      if (portalById(login.portal)?.otp) {
+      if (portalById(login.portal)?.otp === 'sms') {
         // Needs a person and their phone: ask them, once for the day.
         void tellCodeNeeded(id);
         continue;
