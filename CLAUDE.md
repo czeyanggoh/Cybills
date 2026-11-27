@@ -1942,6 +1942,27 @@ may decide it and skipped otherwise, each with its PDF, one at a time
 (`approveClaim` resolves with the approved claim so the PDF prints the
 approval). Covered by `test/claim-approve-practice.test.mts`.
 
+**A person may have several direct managers, and a claim goes to ONE of them**
+(Cze, 27 Nov 2026). Users and Colleagues tick them (**Direct managers**,
+`ManagerPicker.jsx`, saved once when the list closes), per entity like the rest
+of a membership. `managerIds` is the list and `managerId` is always its first,
+written together (`setManagers`); read them through `managerIdsOf` /
+`settingsIn`, never the single field. A row saved before carries only
+`managerId`, and a PATCH sending only that means that one person. Every one of
+them IS a manager: each sees the claimant's claims (and the receipts behind
+them), whoever the claim went to. Who decides is only the one it was sent to
+(or an admin / the practice, as always). **Whoever submits picks**: with several,
+`POST /:id/submit` needs `approverId` or `approverEmail` (400 `choose_approver`
+/ `not_a_manager`, never a guess); the submit dialog asks, starting on whoever
+it was last sent to. Send to WhatsApp asks the same (`approvers` by claim id,
+refusing the whole request without it), and the agent API's `submit_claim` takes
+`approver_email`. A deactivated manager is offered only where there is no other.
+`directManagersFor` (`users.ts`, mirrored in `src/lib/managers.js`) is the one
+answer to who may be picked. The payables people list carries `managers`, with
+`manager_email` the first. In the roster workbook they are a column each
+("Direct manager", "Direct manager 2", …); a column the sheet no longer has
+keeps whoever it held. Covered by `test/claim-multi-manager.test.mts`.
+
 **A claimant with no direct manager approves their own claim, if they may publish.** Submit refused them ("has no direct manager set") and nobody else was obliged to pick the claim up, so the one person responsible for it could neither submit nor publish it. `mayApproveOwn` (`claims.ts`, mirrored by `iMayApproveOwn` on the claim page) lets a claimant (Standard or Business Admin) with no `managerId` and the Publishing privilege (`canPublishToXero`) approve a draft or rejected claim directly; the page then shows **Approve** / **Approve & publish** in place of Submit. A practice colleague may too, but only in the practice's OWN entity, where Colleagues sets their Direct manager (Cze, 20 Nov 2026: Hui Qin's own claim in CYBM could be neither submitted nor approved); in a client's book they are on no roster and would always look managerless, so there they keep the old rule. The page reads a colleague's manager off Colleagues, not the roster. A claimant who has a manager is refused as before, admin or not. The history says they approved it themselves and why. Covered by `test/claim-self-approve.test.mts`.
 
 **An approved claim can be UNAPPROVED, back to awaiting approval.** Approval

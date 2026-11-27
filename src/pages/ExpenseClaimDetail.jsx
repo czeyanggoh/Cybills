@@ -20,6 +20,7 @@ import CostsSubnav from '@/components/CostsSubnav';
 import ClaimExportModal from '@/components/ClaimExportModal';
 import ClaimEmailModal from '@/components/ClaimEmailModal';
 import ClaimApprovalModal from '@/components/ClaimApprovalModal';
+import { directManagersFor, managerIdsOf } from '@/lib/managers';
 import ClaimWhatsappModal from '@/components/ClaimWhatsappModal';
 import FlagMenu from '@/components/FlagMenu';
 import ReceiptViewer from '@/components/ReceiptViewer';
@@ -49,7 +50,6 @@ import {
   removeClaimAttachment,
   claimAttachmentUrl,
   CLAIM_ATTACHMENT_ACCEPT,
-  directManagerFor,
 } from '@/lib/claimStore';
 import { costPath, billToDoc, updateBill, notifyBillsChanged } from '@/lib/bills';
 import { useUsers, canManageUsers, canManageBusiness, isAdminAccess, canPublishToXero, canCreateClaims } from '@/lib/userStore';
@@ -520,8 +520,8 @@ export default function ExpenseClaimDetail() {
     mayPublish &&
     !claim.approver &&
     (iAmPractice
-      ? inPrimary && Boolean(meAsColleague) && !meAsColleague.managerId
-      : !directManagerFor(users, claim.claimFor));
+      ? inPrimary && Boolean(meAsColleague) && !managerIdsOf(meAsColleague).length
+      : !directManagersFor(users, claim.claimFor).length);
   const iAmNamedApprover =
     (claim.approverEmail && meEmail && claim.approverEmail.toLowerCase() === meEmail) ||
     (claim.approver && meName && claim.approver.toLowerCase() === meName);
@@ -1370,21 +1370,21 @@ export default function ExpenseClaimDetail() {
         open={approvalOpen}
         onClose={() => setApprovalOpen(false)}
         claims={[claim]}
-        onSubmit={async (ids) => {
+        onSubmit={async ([choice]) => {
           setApprovalOpen(false);
-          if (!ids.length) return;
-          // Routes to the claimant's direct manager, resolved server-side. If the
-          // claimant has no direct manager set, there's no one to approve — surface
+          if (!choice) return;
+          // Goes to the direct manager picked in the dialog, checked server-side.
+          // If the claimant has none set, there's no one to approve — surface
           // that instead of silently doing nothing.
           setPayNote('');
           try {
-            await submitForApproval(claim.id);
+            await submitForApproval(claim.id, choice.approverId);
             setTab('history');
           } catch (e) {
             setPayNote(
               e.code === 'no_manager'
                 ? `No direct manager set for ${e.claimant || claim.claimFor || 'this claimant'}. Assign one in Users before submitting for approval.`
-                : 'Could not submit this claim for approval.'
+                : e.serverMessage || 'Could not submit this claim for approval.'
             );
           }
         }}

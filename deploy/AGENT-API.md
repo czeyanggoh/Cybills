@@ -51,7 +51,8 @@ It makes no decisions of its own.
 | records | `update_item` | `item_id`, plus any of `category`, `date`, `supplier`, `tax_rate`, `description` |
 | records | `set_item_owner` | `item_id`, `owner` |
 | records | `archive_cost` | `item_id`. Refused while the document is on a claim. |
-| xero | `submit_claim` / `approve_claim` | `claim_id`, `confirm` |
+| xero | `submit_claim` | `claim_id`, `approver_email` (which direct manager, needed where the claimant has several; the dry run lists them as `approvers`), `confirm` |
+| xero | `approve_claim` | `claim_id`, `confirm` |
 | xero | `approve_and_publish_claim` | `claim_id`, `xero_status` (DRAFT by default), `confirm` |
 | xero | `publish_costs` | `item_ids[]`, `xero_status`, `confirm` |
 

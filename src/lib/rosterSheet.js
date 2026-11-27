@@ -20,7 +20,12 @@
 // login, manager and project are named in `deferred`, and importing the same
 // file again once they are added sets them, since by then the address matches.
 //
+// Somebody may have several direct managers, and a dropdown cell holds one, so
+// they are one column each: "Direct manager", "Direct manager 2", and so on.
+//
 // Pure: no React, no fetch. `npm test` at the root (`roster-sheet`).
+
+import { managerIdsOf } from './managers.js';
 
 export const YES = 'Yes';
 export const NO = 'No';
@@ -36,6 +41,8 @@ export const ROSTER_COLUMNS = [
   { key: 'login', header: 'Login access', width: 13 },
   { key: 'role', header: 'Role', width: 18 },
   { key: 'manager', header: 'Direct manager', width: 30 },
+  { key: 'manager2', header: 'Direct manager 2', width: 30 },
+  { key: 'manager3', header: 'Direct manager 3', width: 30 },
   { key: 'project', header: 'Project (PIC)', width: 22 },
   { key: 'accessAll', header: 'Access all documents', width: 20 },
   { key: 'createClaims', header: 'Create expense claims', width: 21 },
@@ -44,6 +51,22 @@ export const ROSTER_COLUMNS = [
 ];
 
 const PRIVILEGES = ['accessAll', 'createClaims', 'canPublish'];
+
+// The manager columns a sheet always has; a roster where somebody has more
+// gets as many as it needs.
+const MANAGER_SLOTS = ROSTER_COLUMNS.filter((c) => c.key.startsWith('manager')).length;
+const managerKey = (i) => (i ? `manager${i + 1}` : 'manager');
+
+export function rosterColumns(users) {
+  const slots = Math.max(MANAGER_SLOTS, ...(users || []).map((u) => managerIdsOf(u).length));
+  const extra = Array.from({ length: slots - MANAGER_SLOTS }, (_, i) => ({
+    key: managerKey(MANAGER_SLOTS + i),
+    header: `Direct manager ${MANAGER_SLOTS + i + 1}`,
+    width: 30,
+  }));
+  const at = ROSTER_COLUMNS.findIndex((c) => c.key === managerKey(MANAGER_SLOTS - 1)) + 1;
+  return [...ROSTER_COLUMNS.slice(0, at), ...extra, ...ROSTER_COLUMNS.slice(at)];
+}
 
 const LABEL = Object.fromEntries(ROSTER_COLUMNS.map((c) => [c.key, c.header]));
 export const fieldLabel = (key) => LABEL[key] || key;
@@ -93,10 +116,8 @@ function ordered(users) {
 export function rosterWorkbook({ users, roles, projects = [], company = '' }) {
   const labels = managerLabels(users);
   const byId = new Map((users || []).map((u) => [u.id, u]));
-  const managerOf = (u) => {
-    if (!u.managerId) return '';
-    return labels.get(u.managerId) || byId.get(u.managerId)?.name || '';
-  };
+  const columns = rosterColumns(users);
+  const managerName = (id) => labels.get(id) || byId.get(id)?.name || '';
   const rows = ordered(users).map((u) => {
     const p = u.privileges || {};
     const values = {
@@ -108,14 +129,14 @@ export function rosterWorkbook({ users, roles, projects = [], company = '' }) {
       status: statusOf(u),
       login: u.login === 'Yes' ? YES : NO,
       role: u.role || 'Standard',
-      manager: managerOf(u),
+      ...Object.fromEntries(managerIdsOf(u).map((id, i) => [managerKey(i), managerName(id)])),
       project: u.project || '',
       accessAll: yesNo(p.accessAll),
       createClaims: yesNo(p.createClaims),
       canPublish: yesNo(p.canPublish),
       id: u.id,
     };
-    return ROSTER_COLUMNS.map((c) => values[c.key]);
+    return columns.map((c) => values[c.key] ?? '');
   });
 
   const managerList = [...labels.values()].sort((a, b) => a.localeCompare(b));
@@ -130,10 +151,12 @@ export function rosterWorkbook({ users, roles, projects = [], company = '' }) {
     const L = String.fromCharCode(65 + i);
     return n ? `Lists!$${L}$2:$${L}$${n + 1}` : '';
   };
-  const col = (key) => ROSTER_COLUMNS.findIndex((c) => c.key === key);
+  const col = (key) => columns.findIndex((c) => c.key === key);
   const validations = [
     { col: col('role'), source: range(0), error: 'Pick a role from the list.' },
-    { col: col('manager'), source: range(1), error: 'Pick somebody from the list, or leave it blank for none.' },
+    ...columns
+      .filter((c) => c.key.startsWith('manager'))
+      .map((c) => ({ col: col(c.key), source: range(1), error: 'Pick somebody from the list, or leave it blank for none.' })),
     { col: col('project'), source: range(2), error: 'Pick a project from the list, or leave it blank for none.' },
     ...['login', ...PRIVILEGES].map((k) => ({ col: col(k), source: range(3), error: 'Yes or No.' })),
   ];
@@ -141,7 +164,7 @@ export function rosterWorkbook({ users, roles, projects = [], company = '' }) {
   const listRows = Array.from({ length: longest }, (_, r) => lists.map((l) => l.values[r] ?? ''));
 
   return [
-    { name: 'Users', columns: ROSTER_COLUMNS, rows, validations, frozen: true, autoFilter: true },
+    { name: 'Users', columns, rows, validations, frozen: true, autoFilter: true },
     { name: 'Lists', columns: lists.map((l) => ({ header: l.header, width: 30 })), rows: listRows },
   ];
 }
@@ -189,7 +212,8 @@ export function planRosterImport({ rows, users, rolesFor, projects = [], adding 
   Object.assign(keyOf, { userid: 'id', id: 'id', manager: 'manager', project: 'project', login: 'login', canpublish: 'canPublish', publish: 'canPublish' });
   const at = {};
   (all[headerAt] || []).forEach((h, i) => {
-    const k = keyOf[headerKey(h)];
+    const numbered = /^directmanager(\d+)$/.exec(headerKey(h));
+    const k = numbered && Number(numbered[1]) > 1 ? managerKey(Number(numbered[1]) - 1) : keyOf[headerKey(h)];
     if (k && !(k in at)) at[k] = i;
   });
   if (!('id' in at) && !('email' in at)) {
@@ -271,29 +295,36 @@ export function planRosterImport({ rows, users, rolesFor, projects = [], adding 
       }
     }
 
-    // Direct manager — blank is none. Read by the label the sheet offered, then
-    // by a name only one candidate has, then by address.
-    const manager = get('manager');
-    if (manager !== undefined) {
-      const currentLabel = user.managerId ? labels.get(user.managerId) || byId.get(user.managerId)?.name || '' : '';
-      let wantId = '';
-      if (manager && norm(manager) !== norm(currentLabel)) {
-        const byLabel = candidates.filter((m) => norm(labels.get(m.id)) === norm(manager));
-        const byName = candidates.filter((m) => norm(m.name) === norm(manager));
-        const byMail = candidates.filter((m) => m.email && norm(m.email) === norm(manager));
-        const hit = byLabel.length === 1 ? byLabel : byName.length === 1 ? byName : byMail.length === 1 ? byMail : [];
-        if (hit.length === 1) wantId = hit[0].id;
-        else if (byName.length > 1) problems.push(`More than one person is called "${manager}" — pick them from the dropdown, which adds their email.`);
-        else problems.push(`Direct manager "${manager}" isn’t an active person on this roster.`);
-      } else if (manager) {
-        wantId = user.managerId || '';
+    // Direct managers — one column each; blank is nobody in that column, and a
+    // column the sheet no longer has keeps whoever it held. Read by the label
+    // the sheet offered, then by a name only one candidate has, then by address.
+    const held = managerIdsOf(user);
+    const slots = Math.max(held.length, ...Object.keys(at).map(managerSlot).map((i) => i + 1));
+    if (Object.keys(at).some((k) => managerSlot(k) >= 0)) {
+      const labelOf = (hid) => labels.get(hid) || byId.get(hid)?.name || '';
+      const wanted = [];
+      for (let i = 0; i < slots; i++) {
+        const manager = get(managerKey(i));
+        const current = held[i] || '';
+        if (manager === undefined) wanted.push(current);
+        else if (manager && current && norm(manager) === norm(labelOf(current))) wanted.push(current);
+        else if (manager) {
+          const byLabel = candidates.filter((m) => norm(labels.get(m.id)) === norm(manager));
+          const byName = candidates.filter((m) => norm(m.name) === norm(manager));
+          const byMail = candidates.filter((m) => m.email && norm(m.email) === norm(manager));
+          const hit = byLabel.length === 1 ? byLabel : byName.length === 1 ? byName : byMail.length === 1 ? byMail : [];
+          if (hit.length === 1) wanted.push(hit[0].id);
+          else if (byName.length > 1) problems.push(`More than one person is called "${manager}" — pick them from the dropdown, which adds their email.`);
+          else problems.push(`Direct manager "${manager}" isn’t an active person on this roster.`);
+        }
       }
-      if (wantId && wantId === user.id) problems.push('Nobody can be their own direct manager.');
-      else if (!problems.length && wantId !== (user.managerId || '')) {
+      const want = [...new Set(wanted.filter(Boolean))];
+      if (want.includes(user.id)) problems.push('Nobody can be their own direct manager.');
+      else if (!problems.length && want.join('|') !== held.join('|')) {
         if (user.general) problems.push('The general account approves nothing and has no manager.');
         else {
-          patch.managerId = wantId;
-          note('manager', currentLabel || '—', wantId ? labels.get(wantId) : '—');
+          patch.managerIds = want;
+          note('manager', held.map(labelOf).join(', ') || '—', want.map(labelOf).join(', ') || '—');
         }
       }
     }
@@ -339,6 +370,14 @@ export function planRosterImport({ rows, users, rolesFor, projects = [], adding 
   return done();
 }
 
+// Which manager column a key is (0 for the first), -1 for any other.
+function managerSlot(key) {
+  const m = /^manager(\d*)$/.exec(key);
+  return m ? Number(m[1] || 1) - 1 : -1;
+}
+// Far more columns than anybody will add, for reading a new person's row.
+const MANAGER_KEYS = Array.from({ length: 20 }, (_, i) => managerKey(i));
+
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // A row for somebody not on the roster, read into the Add grid's shape. The
@@ -368,7 +407,7 @@ function readAddition({ get, rolesFor, rowNo, seenNew, deferred }) {
   if (problems.length) return { error: problems.join(' ') };
 
   if (readYesNo(get('login')) === false) deferred.add(fieldLabel('login'));
-  if (get('manager')) deferred.add(fieldLabel('manager'));
+  if (MANAGER_KEYS.some((k) => get(k))) deferred.add(fieldLabel('manager'));
   if (get('project')) deferred.add(fieldLabel('project'));
   const space = name.indexOf(' ');
   return {

@@ -4,7 +4,7 @@ import { loadCollection, saveCollection } from './jsonStore.js';
 import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { workspaceId, actor, WORKSPACE_ID } from './workspace.js';
 import { orgIdFor } from './bills.js';
-import { directManagerFor, canPublishToXero, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, addressIn, canAccessOrg, canCreateClaims, canonicalPersonName, effectiveRoleFor, normaliseAddress, orgScope, personNameForEmail, visibleOwnersFor } from './users.js';
+import { directManagersFor, canPublishToXero, appOrigin, emailForName, memberForSession, isAdminRole, isGeneralPerson, addressIn, canAccessOrg, canCreateClaims, canonicalPersonName, effectiveRoleFor, normaliseAddress, orgScope, personNameForEmail, visibleOwnersFor } from './users.js';
 import { sendMail, approvalRequestEmail, claimDecisionEmail, claimShareEmail } from './mailer.js';
 import {
   getBillById,
@@ -1416,9 +1416,6 @@ claimsRouter.post('/:id/update', async (req, res) => {
   });
 });
 
-// POST /api/claims/:id/submit — submit for approval. The approver is derived
-// automatically from the claimant's direct manager (set in Users), so there's no
-// approver to pick. Fails with 'no_manager' when the claimant has none assigned.
 // What an item on a claim is still missing, in the words the inbox uses
 // (readiness.js `missingOnClaim` is the browser's copy). Two of the inbox's four
 // fields are not asked for here. The SUPPLIER: a claim's bill is made out to the
@@ -1640,8 +1637,10 @@ claimsRouter.put('/approval-group', async (req, res) => {
   res.json({ group: { chatId: row.chatId, name: row.name } });
 });
 
-// POST /api/claims/approval-requests — { claimIds, note? }. Send the claims to
-// the entity's approval group, and mark each as awaiting approval.
+// POST /api/claims/approval-requests — { claimIds, note?, approvers? }. Send the
+// claims to the entity's approval group, and mark each as awaiting approval.
+// `approvers` is { claimId: roster id }, needed for a claim whose claimant has
+// more than one direct manager.
 claimsRouter.post('/approval-requests', async (req, res) => {
   const ws = workspaceId(req);
   const org = orgIdFor(req);
@@ -1671,11 +1670,22 @@ claimsRouter.post('/approval-requests', async (req, res) => {
   const toSend = picked.filter((c) => c.approvalStatus !== 'approved');
   if (!toSend.length) return res.status(409).json({ error: 'already_approved', message: 'Every claim ticked is already approved.' });
   // Whatever Submit would have refused is refused here, for every claim, before
-  // anything reaches the group.
-  const problems = toSend
-    .map((c) => ({ c, p: c.approvalStatus === 'awaiting_approval' ? null : undecidableProblem(ws, c, 'before asking somebody to approve the claim') }))
-    .filter((x) => x.p)
-    .map((x) => ({ claimId: x.c.id, name: x.c.name, claimFor: x.c.claimFor, message: String(x.p!.body.message || '') }));
+  // anything reaches the group. A claim already awaiting keeps its approver.
+  const chosen = (req.body?.approvers ?? {}) as Record<string, unknown>;
+  const routedTo = new Map<string, Manager>();
+  const problems: Array<{ claimId: string; name: string; claimFor: string; message: string }> = [];
+  for (const c of toSend) {
+    if (c.approvalStatus === 'awaiting_approval') continue;
+    const problem = undecidableProblem(ws, c, 'before asking somebody to approve the claim');
+    let message = problem ? String(problem.body.message || '') : '';
+    const managers = directManagersFor(ws, c.claimFor, c.orgId);
+    if (!problem && managers.length) {
+      const picked = pickApprover(managers, c.claimFor, { id: chosen[c.id] });
+      if (picked.manager) routedTo.set(c.id, picked.manager);
+      else message = picked.message || '';
+    }
+    if (problem || message) problems.push({ claimId: c.id, name: c.name, claimFor: c.claimFor, message });
+  }
   if (problems.length) {
     return res.status(422).json({
       error: 'claims_not_ready',
@@ -1719,10 +1729,10 @@ claimsRouter.post('/approval-requests', async (req, res) => {
       claim.history.unshift({ text: `Approval was requested again in the WhatsApp group "${group.name}"`, by: me.name, at: nowIso() });
       continue;
     }
-    // Routed to the direct manager where the roster names one. Where it names
-    // none the claim is OPEN: anybody who may decide a claim in this entity
-    // (its admins, the practice) decides it from the link.
-    const manager = directManagerFor(ws, claim.claimFor, claim.orgId);
+    // Routed to the direct manager (the one chosen, where there are several).
+    // Where the roster names none the claim is OPEN: anybody who may decide a
+    // claim in this entity (its admins, the practice) decides it from the link.
+    const manager = routedTo.get(claim.id);
     claim.approvalStatus = 'awaiting_approval';
     claim.approver = manager?.name || '';
     claim.approverEmail = manager?.email || '';
@@ -1798,6 +1808,33 @@ function tellGroupOfDecision(claim: Claim, decision: 'approved' | 'rejected', by
   pendingDecisions.set(key, entry);
 }
 
+// Which ONE of the claimant's direct managers a request goes to. With one there
+// is nothing to ask; with several, whoever is submitting names one (by roster id
+// or address) and a request naming nobody, or somebody who isn't one of them, is
+// refused rather than guessed at.
+type Manager = { id: string; name: string; email: string };
+function pickApprover(
+  managers: Manager[],
+  claimant: string,
+  wanted: { id?: unknown; email?: unknown }
+): { manager?: Manager; error?: 'choose_approver' | 'not_a_manager'; message?: string } {
+  const id = String(wanted.id ?? '').trim();
+  const email = norm(String(wanted.email ?? ''));
+  const names = managers.map((m) => m.name).join(', ');
+  const who = claimant || 'The claimant';
+  if (id || email) {
+    const manager = managers.find((m) => (id ? m.id === id : norm(m.email) === email));
+    if (manager) return { manager };
+    return { error: 'not_a_manager', message: `That person is not one of ${who}’s direct managers. Choose one of: ${names}.` };
+  }
+  if (managers.length === 1) return { manager: managers[0] };
+  return { error: 'choose_approver', message: `${who} has more than one direct manager. Choose who approves this claim: ${names}.` };
+}
+
+// POST /api/claims/:id/submit — submit for approval, to ONE of the claimant's
+// direct managers (set in Users): { approverId } or { approverEmail }, needed
+// only where there are several. Fails with 'no_manager' when the claimant has
+// none assigned.
 claimsRouter.post('/:id/submit', (req, res) =>
   mutate(req, res, (claim, me) => {
     // An APPROVED claim is a decision somebody made about a specific sum, and
@@ -1819,9 +1856,14 @@ claimsRouter.post('/:id/submit', (req, res) =>
     }
     const refused = refuseUndecidable(req, claim, res, 'before asking somebody to approve the claim');
     if (refused) return refused;
-    const manager = directManagerFor(workspaceId(req), claim.claimFor, claim.orgId);
-    if (!manager) {
+    const managers = directManagersFor(workspaceId(req), claim.claimFor, claim.orgId);
+    if (!managers.length) {
       return res.status(400).json({ error: 'no_manager', claimant: claim.claimFor });
+    }
+    const picked = pickApprover(managers, claim.claimFor, { id: req.body?.approverId, email: req.body?.approverEmail });
+    const manager = picked.manager;
+    if (!manager) {
+      return res.status(400).json({ error: picked.error, message: picked.message, claimant: claim.claimFor, approvers: managers });
     }
     claim.approvalStatus = 'awaiting_approval';
     claim.approver = manager.name;
@@ -1885,7 +1927,7 @@ function mayApproveOwn(req: Request, claim: Claim, me: { email: string; name: st
   if (!member || member.deactivated) return false;
   if (member.practice && entityIdForClaim(claim) !== primaryOrgId()) return false;
   if (!isClaimantOf(claim, me)) return false;
-  if (directManagerFor(workspaceId(req), claim.claimFor, claim.orgId)) return false;
+  if (directManagersFor(workspaceId(req), claim.claimFor, claim.orgId).length) return false;
   return canPublishToXero(member, orgScope(req));
 }
 

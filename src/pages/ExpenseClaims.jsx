@@ -1039,10 +1039,10 @@ ${toApprove} ${toApprove === 1 ? 'is' : 'are'} not approved yet and will be appr
         open={approveOpen}
         onClose={() => setApproveOpen(false)}
         claims={rows.filter((c) => selected.has(c.id) && c.approvalStatus !== 'approved')}
-        onSubmit={async (ids) => {
+        onSubmit={async (choices) => {
           setApproveOpen(false);
-          // Each routes to the claimant's direct manager, resolved server-side.
-          await Promise.all(ids.map((id) => submitForApproval(id).catch(() => {})));
+          // Each goes to the direct manager picked in the dialog.
+          await Promise.all(choices.map((c) => submitForApproval(c.id, c.approverId).catch(() => {})));
           clear();
         }}
       />

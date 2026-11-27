@@ -27,7 +27,8 @@ writeFileSync(
 const express = (await import('express')).default;
 const cookieParser = (await import('cookie-parser')).default;
 const jwt = (await import('jsonwebtoken')).default;
-const { usersRouter, canAccessOrg, effectiveRoleFor, peopleForOrg, ensure, canPublishToXero, directManagerFor } = await import('../src/users.ts');
+const { usersRouter, canAccessOrg, effectiveRoleFor, peopleForOrg, ensure, canPublishToXero, directManagersFor } = await import('../src/users.ts');
+const directManagerFor = (ws: string, name: string, org: string) => directManagersFor(ws, name, org)[0];
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));

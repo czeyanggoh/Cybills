@@ -163,9 +163,12 @@ export type User = {
   // keeps naming them (as somebody who has left), and nothing new is handed to
   // them there. Cleared when they are added back.
   formerOrgs?: string[];
-  // The user's direct manager (another user's id) — the approver a claim is
-  // auto-routed to when this person submits it for approval.
+  // The user's direct managers (other users' ids) — who a claim of theirs may be
+  // sent to for approval. Where there are several, whoever submits the claim
+  // picks ONE. `managerId` is always the first of them, kept for the rows (and
+  // the callers) from when there was only one: read them through `managerIdsOf`.
   managerId?: string;
+  managerIds?: string[];
   // The Xero project / PIC tracking option assigned to this user. New documents
   // they upload are auto-allocated to it.
   project?: string;
@@ -206,8 +209,28 @@ export type OrgMembership = {
   orgId: string;
   role: string;
   managerId?: string;
+  managerIds?: string[];
   project?: string;
   privileges?: Record<string, unknown>;
+};
+
+// A list of manager ids as stored: strings, once each, in the order they were
+// picked (the first is the one a single-manager reader is given).
+const cleanIds = (v: unknown): string[] =>
+  Array.isArray(v) ? [...new Set(v.map((x) => String(x ?? '').trim()).filter(Boolean))] : [];
+
+// The direct managers a row or a membership names. One written before there
+// could be several carries only `managerId`.
+export const managerIdsOf = (r: { managerId?: string; managerIds?: string[] } | null | undefined): string[] => {
+  if (Array.isArray(r?.managerIds)) return cleanIds(r!.managerIds);
+  return r?.managerId ? [r.managerId] : [];
+};
+
+// Both spellings, written together so they can never disagree.
+const setManagers = (r: { managerId?: string; managerIds?: string[] }, ids: unknown): void => {
+  const list = cleanIds(ids);
+  r.managerIds = list;
+  r.managerId = list[0] || '';
 };
 
 // Public shape sent to the client — never leak the password hash or the reset
@@ -676,7 +699,8 @@ function normaliseExtraAccess(v: unknown): OrgMembership[] {
     const entry: OrgMembership = { orgId, role: currentRole(String(r.role ?? '')) };
     // Absent stays absent: materialiseMemberships tells an entry written before
     // these were per-entity from one whose manager was deliberately cleared.
-    if ('managerId' in r) entry.managerId = String(r.managerId ?? '');
+    if ('managerIds' in r) setManagers(entry, r.managerIds);
+    else if ('managerId' in r) entry.managerId = String(r.managerId ?? '');
     if ('project' in r) entry.project = String(r.project ?? '');
     if ('privileges' in r) {
       entry.privileges = r.privileges && typeof r.privileges === 'object' ? (r.privileges as Record<string, unknown>) : {};
@@ -690,23 +714,18 @@ function normaliseExtraAccess(v: unknown): OrgMembership[] {
 // project and privileges. Every reader of those four goes through here, so a
 // manager set in one entity is never a manager in another, and "Can publish"
 // ticked for one client does not publish into the next.
-export type MemberSettings = { role: string; managerId: string; project: string; privileges: Record<string, unknown> };
+export type MemberSettings = { role: string; managerId: string; managerIds: string[]; project: string; privileges: Record<string, unknown> };
 export function settingsIn(u: User | null | undefined, org: string): MemberSettings {
-  if (!u) return { role: 'Standard', managerId: '', project: '', privileges: {} };
+  if (!u) return { role: 'Standard', managerId: '', managerIds: [], project: '', privileges: {} };
   const extra = org && (u.organisationId || '') !== org ? extraAccessFor(u, org) : null;
-  if (!extra) {
-    return {
-      role: currentRole(u.role),
-      managerId: u.managerId || '',
-      project: u.project || '',
-      privileges: (u.privileges as Record<string, unknown>) || {},
-    };
-  }
+  const from = extra || u;
+  const managerIds = managerIdsOf(from);
   return {
-    role: currentRole(extra.role),
-    managerId: extra.managerId || '',
-    project: extra.project || '',
-    privileges: extra.privileges || {},
+    role: currentRole(from.role),
+    managerId: managerIds[0] || '',
+    managerIds,
+    project: from.project || '',
+    privileges: (from.privileges as Record<string, unknown>) || {},
   };
 }
 
@@ -730,9 +749,14 @@ function materialiseMemberships(items: User[], ws: string): boolean {
         e.project = u.project || '';
         changed = true;
       }
-      if (!('managerId' in e)) {
-        const m = u.managerId ? byId.get(u.managerId) : undefined;
-        e.managerId = m && (inOrg(m, e.orgId) || (m.practice && canAccessOrg(m, e.orgId))) ? m.id : '';
+      if (!('managerId' in e) && !('managerIds' in e)) {
+        setManagers(
+          e,
+          managerIdsOf(u).filter((id) => {
+            const m = byId.get(id);
+            return Boolean(m && (inOrg(m, e.orgId) || (m.practice && canAccessOrg(m, e.orgId))));
+          })
+        );
         changed = true;
       }
     }
@@ -746,13 +770,13 @@ function writeSettingsIn(u: User, org: string, patch: Partial<MemberSettings>): 
   const extra = org && (u.organisationId || '') !== org ? extraAccessFor(u, org) : null;
   if (!extra) {
     if (patch.role !== undefined) u.role = currentRole(patch.role);
-    if (patch.managerId !== undefined) u.managerId = patch.managerId;
+    if (patch.managerIds !== undefined) setManagers(u, patch.managerIds);
     if (patch.project !== undefined) u.project = patch.project;
     if (patch.privileges !== undefined) u.privileges = patch.privileges as User['privileges'];
     return;
   }
   if (patch.role !== undefined) extra.role = currentRole(patch.role);
-  if (patch.managerId !== undefined) extra.managerId = patch.managerId;
+  if (patch.managerIds !== undefined) setManagers(extra, patch.managerIds);
   if (patch.project !== undefined) extra.project = patch.project;
   if (patch.privileges !== undefined) extra.privileges = patch.privileges;
 }
@@ -918,6 +942,7 @@ export function peopleForOrg(
   role: string;
   managerEmail: string;
   managerName: string;
+  managers: Array<{ email: string; name: string }>;
   project: string;
 }> {
   const memo = new Map<string, string>();
@@ -952,10 +977,10 @@ export function peopleForOrg(
       // The role they hold HERE, by name — Reporting Officer included, which is
       // what the recharge tool picks a report's recipient by.
       role: rosterRoleFor(u, org),
-      // Their Direct manager: who their claims are routed to for a decision.
-      // '' where none is set, or the row it named has since been removed.
-      managerEmail: byId.get(settingsIn(u, org).managerId)?.email || '',
-      managerName: byId.get(settingsIn(u, org).managerId)?.name || '',
+      // Their Direct managers: who their claims may be sent to for a decision.
+      // The two single fields are the first of them, '' where none is set (a
+      // row naming somebody since removed is skipped).
+      ...managersShown(settingsIn(u, org).managerIds.map((id) => byId.get(id)).filter((m): m is User => Boolean(m))),
       // Their default project — what a document of theirs is allocated to when
       // nothing on it names one. A project is a name in ONE entity's tracking
       // list, so a colleague working here from outside carries none: theirs is
@@ -963,6 +988,12 @@ export function peopleForOrg(
       project: isOutsider(u, org) || formerIn(u, org) ? '' : settingsIn(u, org).project.trim(),
     }));
 }
+
+const managersShown = (rows: User[]) => ({
+  managerEmail: rows[0]?.email || '',
+  managerName: rows[0]?.name || '',
+  managers: rows.map((m) => ({ email: m.email, name: m.name })),
+});
 
 // The default project of whoever owns a document in this entity, by their
 // address. '' for nobody, for the general account of an entity that has set
@@ -1162,7 +1193,7 @@ export function effectiveRole(req: Request): string {
 // up (directManagerFor), so this is the org chart the app already holds rather
 // than a second one to keep in step with it.
 //
-// One level, deliberately: `managerId` names a DIRECT manager. Somebody who
+// One level, deliberately: these are DIRECT managers, any of several. Somebody who
 // needs a whole tree — a department head, a finance lead — is given
 // `privileges.accessAll`, which is exactly what that toggle in Edit privileges
 // says and the only thing it has ever meant.
@@ -1200,7 +1231,7 @@ export function visibleOwnersFor(req: Request, orgId: string, withReports = fals
   for (const u of ensure(workspaceId(req))) {
     if (u.workspaceId !== workspaceId(req) || u.removed || !u.email) continue;
     if (!inOrg(u, orgId) && !(u.practice && canAccessOrg(u, orgId))) continue;
-    if (settingsIn(u, orgId).managerId !== mine.id) continue;
+    if (!settingsIn(u, orgId).managerIds.includes(mine.id)) continue;
     add(u.email);
   }
   return seen;
@@ -1740,30 +1771,32 @@ function normalizeRoles(items: User[], ws: string): boolean {
   return changed;
 }
 
-const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'project', 'emailHandle', 'extraAccess'];
+const EDITABLE: (keyof User)[] = ['name', 'firstName', 'lastName', 'email', 'login', 'role', 'mobile', 'privileges', 'deactivated', 'pending', 'organisationId', 'companyId', 'companyName', 'managerId', 'managerIds', 'project', 'emailHandle', 'extraAccess'];
 
 // Who is on the practice team, what they may run, and which clients they may
 // open. Only whoever manages the practice may touch these — a client entity's
 // own admin runs their staff, not the firm's.
 const PRACTICE_EDITABLE: (keyof User)[] = ['practice', 'practiceRole', 'clientAccess', 'allClients'];
 
-// The direct manager to route a claim to, given the claimant's display name.
-// Resolves the claimant's row, then their managerId to a roster member. Returns
-// the approver's { name, email } or null when no manager is set / found.
+// Who a claim may be sent to, given the claimant's display name: the claimant's
+// direct managers, as { id, name, email }. Empty when none is set or found.
+// Somebody deactivated cannot sign in to decide anything, so they are offered
+// only where there is nobody else.
 //
-// The manager is the one set in the claim's OWN entity: the same person can
+// The managers are the ones set in the claim's OWN entity: the same person can
 // report to somebody different in each entity they work in.
-export function directManagerFor(ws: string, claimantName: string, org: string): { name: string; email: string } | null {
+export function directManagersFor(ws: string, claimantName: string, org: string): Array<{ id: string; name: string; email: string }> {
   const key = norm(claimantName);
-  if (!key) return null;
+  if (!key) return [];
   const items = ensure(ws);
   const named = items.filter((u) => u.workspaceId === ws && !u.removed && norm(u.name) === key);
   const claimant = named.find((u) => !org || inOrg(u, org) || (u.practice && canAccessOrg(u, org))) ?? named[0];
-  const managerId = claimant ? settingsIn(claimant, org).managerId : '';
-  if (!managerId) return null;
-  const manager = items.find((u) => u.workspaceId === ws && !u.removed && u.id === managerId);
-  if (!manager) return null;
-  return { name: manager.name, email: manager.email };
+  if (!claimant) return [];
+  const found = settingsIn(claimant, org)
+    .managerIds.map((id) => items.find((u) => u.workspaceId === ws && !u.removed && u.id === id))
+    .filter((u): u is User => Boolean(u));
+  const active = found.filter((u) => !u.deactivated);
+  return (active.length ? active : found).map((u) => ({ id: u.id, name: u.name, email: u.email }));
 }
 
 // The roster email for a display name (e.g. a claim's `claimFor`), so a claimant
@@ -2192,7 +2225,8 @@ usersRouter.post('/', async (req, res) => {
             {
               orgId: org,
               role: currentRole(String(u.role ?? '')),
-              managerId: String(u.managerId ?? ''),
+              managerId: managerIdsOf(u)[0] || '',
+              managerIds: managerIdsOf(u),
               project: String(u.project ?? ''),
               privileges: (u.privileges as Record<string, unknown>) || {},
             },
@@ -2676,9 +2710,10 @@ usersRouter.post('/:id/password', async (req, res) => {
 // their own manager and detaches anyone who reported to them, rather than
 // leaving approvals pointing across a tenant boundary.
 function detachManagerLinks(items: User[], moved: User) {
-  moved.managerId = '';
+  setManagers(moved, []);
   for (const u of items) {
-    if (u.managerId === moved.id && !inOrg(u, moved.organisationId)) u.managerId = '';
+    const ids = managerIdsOf(u);
+    if (ids.includes(moved.id) && !inOrg(u, moved.organisationId)) setManagers(u, ids.filter((id) => id !== moved.id));
   }
 }
 
@@ -2715,6 +2750,13 @@ usersRouter.patch('/:id', (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const filtered: Partial<User> = {};
   for (const k of allowed) if (k in body) (filtered as Record<string, unknown>)[k] = body[k];
+  // The two spellings of "direct manager" are written as one. A caller sending
+  // only the single field means that one person and nobody else. Nobody is
+  // their own manager.
+  if ('managerIds' in filtered || 'managerId' in filtered) {
+    const ids = 'managerIds' in filtered ? cleanIds(filtered.managerIds) : cleanIds([filtered.managerId]);
+    setManagers(filtered, ids.filter((id) => id !== req.params.id));
+  }
   // The inbound address is chosen by hand now, so it has to be checked. Two
   // people on one handle is not a cosmetic clash: every bill forwarded to it
   // would file under whichever row was found first, silently and for good.
@@ -2753,7 +2795,7 @@ usersRouter.patch('/:id', (req, res) => {
     if (!user.practice && canAccessOrg(user, org)) {
       const scoped: Partial<MemberSettings> = {};
       if (typeof filtered.role === 'string') scoped.role = filtered.role;
-      if ('managerId' in filtered) scoped.managerId = String(filtered.managerId ?? '');
+      if ('managerIds' in filtered) scoped.managerIds = filtered.managerIds;
       if ('project' in filtered) scoped.project = String(filtered.project ?? '');
       if ('privileges' in filtered) {
         const p = filtered.privileges as unknown;
@@ -2762,6 +2804,7 @@ usersRouter.patch('/:id', (req, res) => {
       writeSettingsIn(user, org, scoped);
       delete filtered.role;
       delete filtered.managerId;
+      delete filtered.managerIds;
       delete filtered.project;
       delete filtered.privileges;
     }
@@ -2811,7 +2854,8 @@ usersRouter.delete('/:id', (req, res) => {
     const clearReportsHere = () => {
       for (const u of items) {
         if (u.workspaceId !== user.workspaceId || u.removed || u.practice || u.id === user.id || !canAccessOrg(u, org)) continue;
-        if (settingsIn(u, org).managerId === user.id) writeSettingsIn(u, org, { managerId: '' });
+        const ids = settingsIn(u, org).managerIds;
+        if (ids.includes(user.id)) writeSettingsIn(u, org, { managerIds: ids.filter((id) => id !== user.id) });
       }
     };
     if (!user.practice && org && (user.organisationId || '') !== org && extraAccessFor(user, org)) {
@@ -2832,7 +2876,7 @@ usersRouter.delete('/:id', (req, res) => {
       user.companyId = next.orgId;
       user.companyName = getOrganisation(ws, next.orgId)?.name || '';
       user.role = currentRole(next.role);
-      user.managerId = next.managerId || '';
+      setManagers(user, managerIdsOf(next));
       user.project = next.project || '';
       user.privileges = (next.privileges || {}) as User['privileges'];
       user.formerOrgs = [...new Set([...(user.formerOrgs || []), org])].filter((o) => o !== next.orgId);
@@ -2844,6 +2888,8 @@ usersRouter.delete('/:id', (req, res) => {
     }
     const risk = lockoutRisk(workspaceId(req), user, { removed: true }, me?.id || '');
     if (risk) return res.status(409).json({ error: 'would_lock_out', message: risk });
+    // Nobody goes on naming somebody who is gone as a manager.
+    clearReportsHere();
     user.removed = true;
   });
 });

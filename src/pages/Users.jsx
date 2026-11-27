@@ -14,6 +14,8 @@ import { useAuth } from '@/lib/auth';
 import { isPracticeTeam } from '@/lib/practiceStore';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
+import ManagerPicker from '@/components/ManagerPicker';
+import { managerIdsOf } from '@/lib/managers';
 import { resetTotpFor } from '@/lib/totp';
 import { entityAddress } from '@/lib/inboundAddress';
 
@@ -357,7 +359,9 @@ export default function Users() {
               <th className="px-3 py-2.5 font-medium">Email</th>
               <th className="px-3 py-2.5 font-medium">Login access</th>
               <th className="px-3 py-2.5 font-medium">Role</th>
-              <th className="px-3 py-2.5 font-medium">Direct manager</th>
+              <th className="px-3 py-2.5 font-medium" title="Who may approve their expense claims. With several, one is chosen each time a claim is submitted.">
+                Direct managers
+              </th>
               <th className="px-3 py-2.5 font-medium">Project (PIC)</th>
               <th className="px-3 py-2.5 font-medium">Last login</th>
               <th className="px-3 py-2.5 font-medium">Manage</th>
@@ -408,19 +412,15 @@ export default function Users() {
                 <td className="px-3 py-3">{u.login}</td>
                 <td className="whitespace-nowrap px-3 py-3">{u.role}</td>
                 <td className="px-3 py-3">
-                  <select
-                    value={u.managerId || ''}
-                    onChange={async (e) => {
-                      await updateUser(u.id, { managerId: e.target.value });
-                      showToast(e.target.value ? `Direct manager set for ${u.name}.` : `Direct manager cleared for ${u.name}.`);
+                  <ManagerPicker
+                    label={`Direct managers for ${u.name}`}
+                    value={managerIdsOf(u)}
+                    options={managerOptions.filter((m) => m.id !== u.id)}
+                    onSave={async (ids) => {
+                      await updateUser(u.id, { managerIds: ids });
+                      showToast(ids.length ? `Direct manager${ids.length > 1 ? 's' : ''} set for ${u.name}.` : `Direct managers cleared for ${u.name}.`);
                     }}
-                    className="h-8 w-44 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <option value="">— None —</option>
-                    {managerOptions.filter((m) => m.id !== u.id).map((m) => (
-                      <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
-                  </select>
+                  />
                 </td>
                 <td className="px-3 py-3">
                   <ComboSelect

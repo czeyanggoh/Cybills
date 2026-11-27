@@ -74,8 +74,8 @@ assert.deepEqual(none, { changes: [], errors: [], unchanged: USERS.length, addit
   set('u1', 'login', 'maybe');
   const plan = planRosterImport({ rows, users: USERS, rolesFor, projects: PROJECTS });
   const byId = Object.fromEntries(plan.changes.map((c) => [c.user.id, c]));
-  assert.deepEqual(byId.u2.patch, { managerId: '' });
-  assert.deepEqual(byId.u3.patch, { managerId: 'u4', privileges: { accessAll: true, createClaims: true, canPublish: false } });
+  assert.deepEqual(byId.u2.patch, { managerIds: [] });
+  assert.deepEqual(byId.u3.patch, { managerIds: ['u4'], privileges: { accessAll: true, createClaims: true, canPublish: false } });
   assert.deepEqual(byId.u3.diffs.map((d) => d.field), ['manager', 'createClaims']);
   // A row with ANY problem is left out whole — u1's valid role change with it.
   assert.equal(byId.u1, undefined);
@@ -131,7 +131,7 @@ assert.match(planRosterImport({ rows: [['Name', 'Role'], ['X', 'Standard']], use
     [
       ['u3', { role: 'User Admin' }],
       ['u1', { privileges: { accessAll: false, createClaims: true, canPublish: false } }],
-      ['u2', { managerId: 'u3' }],
+      ['u2', { managerIds: ['u3'] }],
     ]
   );
   assert.deepEqual(plan.errors, []);
@@ -208,6 +208,27 @@ assert.match(planRosterImport({ rows: [['Name', 'Role'], ['X', 'Standard']], use
   const update = planRosterImport({ rows: rows.slice(0, 2), users: USERS, rolesFor, projects: PROJECTS });
   assert.equal(update.additions.length, 0);
   assert.match(update.errors[0].message, /Not on this entity/);
+}
+
+// Several direct managers: a column each, as many as anybody needs.
+{
+  const several = USERS.map((u) => (u.id === 'u2' ? { ...u, managerId: 'u1', managerIds: ['u1', 'u3', 'u4', 'u5'] } : u));
+  const [out] = rosterWorkbook({ users: several, roles: ROLES, projects: PROJECTS });
+  const headers = out.columns.map((c) => c.header);
+  assert.deepEqual(headers.filter((h) => h.startsWith('Direct manager')), ['Direct manager', 'Direct manager 2', 'Direct manager 3', 'Direct manager 4']);
+  assert.equal(out.validations.filter((v) => v.source === 'Lists!$B$2:$B$6').length, 4);
+  const [read] = await readXlsx(writeXlsx(rosterWorkbook({ users: several, roles: ROLES, projects: PROJECTS })));
+  const same = planRosterImport({ rows: read.rows, users: several, rolesFor, projects: PROJECTS });
+  assert.deepEqual([same.changes, same.errors], [[], []]);
+  const plan = (rows) => planRosterImport({ rows, users: several, rolesFor, projects: PROJECTS });
+  // Blank takes that one off; a name twice counts once.
+  const header = ['User ID', 'Direct manager', 'Direct manager 2'];
+  assert.deepEqual(plan([header, ['u2', 'Zhen Lin Wong', '']]).changes[0].patch, { managerIds: ['u1', 'u4', 'u5'] });
+  assert.deepEqual(plan([header, ['u3', 'Zhen Lin Wong', 'zhen lin wong']]).changes[0].patch, { managerIds: ['u1'] });
+  assert.deepEqual(plan([header, ['u3', 'Zhen Lin Wong', 'tan.wei@b.com']]).changes[0].patch, { managerIds: ['u1', 'u5'] });
+  // A column the sheet no longer has keeps whoever it held.
+  assert.equal(plan([['User ID', 'Direct manager'], ['u2', 'Zhen Lin Wong']]).changes.length, 0);
+  assert.match(plan([header, ['u1', '', 'Zhen Lin Wong']]).errors[0].message, /own direct manager/);
 }
 
 await assert.rejects(readXlsx(new TextEncoder().encode('Name,Role\nX,Standard')), /not_xlsx/);

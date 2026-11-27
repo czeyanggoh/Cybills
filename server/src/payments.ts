@@ -430,10 +430,12 @@ paymentsRouter.get('/people', (req, res) => {
         // compare role names of its own.
         role: p.role,
         reporting_officer: p.role === REPORTING_OFFICER,
-        // Who their claims are routed to for approval, which is how a report's
-        // recipient is suggested for the people on a PO.
+        // Who their claims may be sent to for approval, which is how a report's
+        // recipient is suggested for the people on a PO. The two single fields
+        // are the first of `managers`.
         manager_email: p.managerEmail,
         manager_name: p.managerName,
+        managers: p.managers,
         org_id: organisation.id,
         org_name: organisation.name,
         bridge,

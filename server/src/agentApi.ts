@@ -4,7 +4,7 @@ import { env } from './env.js';
 import { keyMatches } from './inboundKey.js';
 import { WORKSPACE_ID } from './workspace.js';
 import { listOrganisations, publishTargetFor, type Organisation } from './organisations.js';
-import { memberByEmail, canAccessOrg, type User } from './users.js';
+import { memberByEmail, canAccessOrg, directManagersFor, type User } from './users.js';
 import { costComplete, getBillById, itemIdFor, listBills, type Bill } from './store.js';
 import { claimMembership } from './claims.js';
 import { shareToken } from './shareLinks.js';
@@ -505,8 +505,15 @@ async function writeItem(ctx: Ctx, bill: Bill, patch: Record<string, string>) {
 const XERO: Record<string, Handler> = {
   async submit_claim(ctx, b) {
     const c = await oneClaim(ctx, String(b.claim_id ?? ''));
-    if (b.confirm !== true) return dryRun('submit for approval', c, ctx);
-    await must(ctx, 'POST', `/api/claims/${encodeURIComponent(c.id)}/submit`, {});
+    // A claim goes to ONE approver. Where the claimant has several direct
+    // managers the caller says which, and the dry run lists them.
+    if (b.confirm !== true) {
+      return {
+        ...dryRun('submit for approval', c, ctx),
+        approvers: directManagersFor(WORKSPACE_ID, c.claimFor, c.orgId).map((m) => ({ name: m.name, email: m.email })),
+      };
+    }
+    await must(ctx, 'POST', `/api/claims/${encodeURIComponent(c.id)}/submit`, { approverEmail: b.approver_email });
     return { done: 'submitted', claims: await afterClaims(ctx, [c.id]) };
   },
 

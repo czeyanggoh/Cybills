@@ -193,11 +193,12 @@ export async function moveItemsToClaim(fromClaimId, toClaimId, txns) {
   notifyClaimsChanged();
 }
 
-// Submit a claim for approval. The approver is derived server-side from the
-// claimant's direct manager (set in Users) — nothing to pick. Throws with code
-// 'no_manager' when the claimant has no direct manager assigned.
-export async function submitForApproval(claimId) {
-  await post(`/${claimId}/submit`, {});
+// Submit a claim for approval to ONE of the claimant's direct managers (set in
+// Users). `approverId` is needed only where there are several. Throws with code
+// 'no_manager' when the claimant has none, 'choose_approver' / 'not_a_manager'
+// when the choice is missing or wrong.
+export async function submitForApproval(claimId, approverId = '') {
+  await post(`/${claimId}/submit`, approverId ? { approverId } : {});
   notifyClaimsChanged();
 }
 
@@ -283,14 +284,6 @@ export function docToClaimTxn(doc, data, actor) {
 // rule the approve action uses), so a roster email mismatch can't hide a pending
 // approval from the approver. Powers the reminder banner + the nav badge.
 const norm = (s) => String(s ?? '').trim().toLowerCase();
-
-// The approver a claim routes to = the claimant's direct manager (set in Users).
-// Returns the manager user, or null when none is assigned.
-export function directManagerFor(users, claimantName) {
-  const claimant = (users || []).find((u) => norm(u.name) === norm(claimantName));
-  if (!claimant?.managerId) return null;
-  return (users || []).find((u) => u.id === claimant.managerId) || null;
-}
 
 // Claims a user is allowed to see: their own (they're the claimant or created
 // it) plus ones awaiting/decided by them as approver. Gatekeeps the list so a
@@ -417,8 +410,8 @@ async function call(method, path, body) {
 }
 export const getApprovalGroup = (withCandidates = false) => call('GET', `/approval-group${withCandidates ? '?candidates=1' : ''}`);
 export const setApprovalGroup = (chatId) => call('PUT', '/approval-group', { chatId });
-export async function requestApprovalByWhatsapp(claimIds, note = '') {
-  const r = await call('POST', '/approval-requests', { claimIds, note });
+export async function requestApprovalByWhatsapp(claimIds, note = '', approvers = {}) {
+  const r = await call('POST', '/approval-requests', { claimIds, note, approvers });
   notifyClaimsChanged();
   return r;
 }

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { X, AlertTriangle, MessageCircle } from 'lucide-react';
 import { getApprovalGroup, setApprovalGroup, requestApprovalByWhatsapp } from '@/lib/claimStore';
+import ApproverSelect from '@/components/ApproverSelect';
+import { useApprovers } from '@/lib/useApprovers';
 import { cn } from '@/lib/utils';
 
 const MAX = 10; // the server's limit for one request
@@ -22,6 +24,7 @@ export default function ClaimWhatsappModal({ open, onClose, claims = [], onSent 
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const { rows, pick: pickApprover, reset } = useApprovers(claims);
 
   useEffect(() => {
     if (!open) return;
@@ -29,6 +32,7 @@ export default function ClaimWhatsappModal({ open, onClose, claims = [], onSent 
     setError('');
     setNote('');
     setChoosing(false);
+    reset();
     setLoading(true);
     getApprovalGroup(true)
       .then((r) => { if (alive) setInfo(r); })
@@ -42,7 +46,11 @@ export default function ClaimWhatsappModal({ open, onClose, claims = [], onSent 
   const group = info?.group || null;
   const candidates = info?.candidates || [];
   const tooMany = claims.length > MAX;
-  const canSend = Boolean(group) && claims.length > 0 && !tooMany && !busy;
+  // A claim being asked about for the first time goes to ONE of the claimant's
+  // direct managers; one already awaiting keeps the approver it has.
+  const toChoose = rows.filter((r) => r.claim.approvalStatus !== 'awaiting_approval' && r.managers.length > 1);
+  const unchosen = toChoose.some((r) => !r.approverId);
+  const canSend = Boolean(group) && claims.length > 0 && !tooMany && !unchosen && !busy;
 
   const pick = async (chatId) => {
     setError('');
@@ -59,7 +67,8 @@ export default function ClaimWhatsappModal({ open, onClose, claims = [], onSent 
     setBusy(true);
     setError('');
     try {
-      const r = await requestApprovalByWhatsapp(claims.map((c) => c.id), note.trim());
+      const approvers = Object.fromEntries(toChoose.map((r) => [r.claim.id, r.approverId]));
+      const r = await requestApprovalByWhatsapp(claims.map((c) => c.id), note.trim(), approvers);
       onSent?.(r);
     } catch (e) {
       setError(e.message || 'The claims could not be sent.');
@@ -136,6 +145,20 @@ export default function ClaimWhatsappModal({ open, onClose, claims = [], onSent 
                 </li>
               ))}
             </ul>
+          )}
+
+          {toChoose.length > 0 && (
+            <div className="space-y-1.5 rounded-md border p-3 text-sm">
+              <p className="text-xs text-muted-foreground">More than one direct manager. Choose who approves:</p>
+              <ul className="max-h-44 space-y-1.5 overflow-auto">
+                {toChoose.map(({ claim, managers, approverId }) => (
+                  <li key={claim.id} className="flex items-center justify-between gap-3">
+                    <span className="min-w-0 truncate">{claim.claimFor} <span className="text-muted-foreground">· {claim.name}</span></span>
+                    <ApproverSelect claim={claim} managers={managers} value={approverId} onChange={(v) => pickApprover(claim.id, v)} />
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
 
           <div>

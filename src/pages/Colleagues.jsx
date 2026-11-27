@@ -15,6 +15,8 @@ import {
 import { setUserActive, removeUser, setUserPassword, inviteUser, updateUser } from '@/lib/userStore';
 import { cn } from '@/lib/utils';
 import ComboSelect from '@/components/ComboSelect';
+import ManagerPicker from '@/components/ManagerPicker';
+import { managerIdsOf } from '@/lib/managers';
 import { useOrganisations, useXeroTracking } from '@/lib/organisations';
 import { entityAddress } from '@/lib/inboundAddress';
 
@@ -299,7 +301,9 @@ export default function Colleagues() {
               <th className="px-3 py-2.5 font-medium">Email</th>
               <th className="px-3 py-2.5 font-medium">Role</th>
               <th className="px-3 py-2.5 font-medium">Manage practice&apos;s business</th>
-              <th className="px-3 py-2.5 font-medium">Direct manager</th>
+              <th className="px-3 py-2.5 font-medium" title="Who may approve their expense claims. With several, one is chosen each time a claim is submitted.">
+                Direct managers
+              </th>
               <th
                 className="px-3 py-2.5 font-medium"
                 title={`What a document of theirs in ${practiceOrg?.name || practiceName} is allocated to when nothing on it names a project.`}
@@ -324,21 +328,16 @@ export default function Colleagues() {
                     roster — which is exactly why they could never submit a claim
                     at all: there was nowhere to name their approver. */}
                 <td className="px-3 py-3">
-                  <select
-                    value={c.managerId || ''}
-                    aria-label={`Direct manager for ${c.name}`}
-                    onChange={async (e) => {
-                      await updateUser(c.id, { managerId: e.target.value });
-                      const who = managerOptions.find((m) => m.id === e.target.value);
-                      showToast(who ? `${who.name} approves ${c.name}'s claims.` : `Direct manager cleared for ${c.name}.`);
+                  <ManagerPicker
+                    label={`Direct managers for ${c.name}`}
+                    value={managerIdsOf(c)}
+                    options={managerOptions.filter((m) => m.id !== c.id)}
+                    onSave={async (ids) => {
+                      await updateUser(c.id, { managerIds: ids });
+                      const who = ids.map((id) => managerOptions.find((m) => m.id === id)?.name).filter(Boolean);
+                      showToast(who.length ? `${who.join(' or ')} can approve ${c.name}'s claims.` : `Direct managers cleared for ${c.name}.`);
                     }}
-                    className="h-8 w-44 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <option value="">— None —</option>
-                    {managerOptions.filter((m) => m.id !== c.id).map((m) => (
-                      <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
-                  </select>
+                  />
                 </td>
                 <td className="px-3 py-3">
                   <DefaultProject colleague={c} homeOrgId={c.organisationId || practiceOrg?.id || ''} onToast={showToast} />
