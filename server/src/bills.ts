@@ -38,7 +38,6 @@ import { putBillFile, getBillFile, deleteBillFile } from './storage.js';
 import { isHeicFile, heicToJpeg } from './heic.js';
 import { dataScopeForOrg, getOrganisation, listOrganisations, primaryOrgId } from './organisations.js';
 import { gstCheckFor, runGstCheck, saveGstToContact, sweepGstChecks } from './gstCheck.js';
-import { renameToRegistered } from './supplierRename.js';
 import { actor, workspaceId, WORKSPACE_ID } from './workspace.js';
 import { addressIn, canAccessOrg, canPublishToXero, emailForPerson, generalUserFor, isInternalAddress, memberForSession, orgScope, ownerForOrg, peopleForOrg, visibleOwnersFor } from './users.js';
 import { runAutoClaims } from './autoClaims.js';
@@ -840,22 +839,6 @@ billsRouter.post('/bills/:id/gst-check', async (req, res) => {
   return res.json({ ok: true, visible: true, check: run.check, changed: run.changed });
 });
 
-// "Use registered name": the supplier renamed to the name its GST number is
-// registered to, in Xero and here (supplierRename.ts). One supplier, on a press.
-billsRouter.post('/bills/:id/gst-check/rename', async (req, res) => {
-  const scope = orgIdFor(req);
-  const bill = getBillById(scope, req.params.id);
-  if (!bill || !mayWriteBill(req) || !isPracticeCaller(req)) return res.status(404).json({ error: 'not_found' });
-  if (!canPublishToXero(memberForSession(req), orgScope(req))) {
-    return res.status(403).json({ error: 'publish_not_allowed', message: 'Your account can’t change anything in Xero.' });
-  }
-  const organisation = getOrganisation(workspaceId(req), orgScope(req));
-  if (!organisation?.tenantId) return res.status(400).json({ error: 'no_xero', message: 'This entity is not linked to Xero.' });
-  const out = await renameToRegistered(workspaceId(req), orgScope(req), bill.id, organisation.tenantId);
-  if (out.ok) console.log(`[supplierRename] ${memberForSession(req)?.email ?? ''} renamed “${out.from}” to “${out.to}” (${out.documents} documents, Xero ${out.xero})`);
-  return res.status(out.status).json({ ...out, visible: true, check: gstCheckFor(bill.id) });
-});
-
 // "Save to Xero contact": a person's word that the number found is this
 // supplier's, for the cases that are not saved by themselves at publish.
 billsRouter.post('/bills/:id/gst-check/save', async (req, res) => {
@@ -883,12 +866,8 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   if (await lockedOnApprovedClaim(req, res)) return;
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
-  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel', 'billingPlanId', 'supplierPrintedName']) {
+  for (const k of ['supplier', 'invoiceNumber', 'documentType', 'currency', 'date', 'category', 'categoryReason', 'taxRate', 'taxRateReason', 'description', 'status', 'paymentMethod', 'customer', 'project', 'projectReason', 'cardLast4', 'note', 'dueDate', 'billedTo', 'billedToRegNo', 'supplierGstRegNo', 'taxLabel', 'billingPlanId']) {
     if (typeof b[k] === 'string') patch[k] = b[k];
-  }
-  // A supplier changed by anything but a read takes the "printed as" note off.
-  if ('supplier' in patch && !('supplierPrintedName' in patch) && patch.supplier !== getBillById(orgIdFor(req), req.params.id)?.supplier) {
-    patch.supplierPrintedName = '';
   }
   // A document is saved to a billing plan only while it is archived: whatever
   // puts it back to work (Unarchive, Move back to Costs) takes it off the plan.
@@ -1512,7 +1491,6 @@ billsRouter.post('/bills/:id/finalize', async (req, res) => {
     if (typeof b[k] === 'string') patch[k] = b[k];
   }
   // Never left over from a previous read: a finalize is a whole read's answer.
-  patch.supplierPrintedName = typeof b.supplierPrintedName === 'string' ? b.supplierPrintedName.slice(0, 200) : '';
   patch.supplierGstRegNoRemembered = b.supplierGstRegNoRemembered === true;
   patch.supplierGstRegNoFrom = b.supplierGstRegNoRemembered === true ? gstSource(b.supplierGstRegNoFrom) : '';
   patch.motorVehicle = b.motorVehicle === true;

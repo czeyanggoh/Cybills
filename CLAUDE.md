@@ -1065,22 +1065,12 @@ backlog does not spend the limit), at publish, and from the page.
   was printed on this document and IRAS's name agrees; otherwise on the page's
   Save button, which also makes the number this entity's evidence for later reads
   (`checked` in `supplierGst.ts`). Nothing Xero holds is ever replaced.
-- **A NEW supplier is filed under its registered name** (Cze, 28 Nov 2026;
-  `withRegisteredName`, on both read roads before the supplier rule): only with
-  its own Singapore number printed on this document, only when no document,
-  rule, supplier-list entry or Xero contact has it by name or number, and only
-  when Xero could be asked. The name is ACRA's (`registered_name`), else IRAS's;
-  the printed one is kept as `supplierPrintedName` and shown under Supplier.
-  An existing supplier is never renamed by itself.
-- **Use registered name** (the panel's button, `server/src/supplierRename.ts`):
-  one existing supplier, on a press, where a NUMBER gave another name. Renames
-  the Xero contact (bank details and history stay), this entity's documents
-  (published ones too), supplier rule, billing plans, supplier list and checks.
-  Two Xero contacts (old and registered name) refuse it: Xero's API cannot
-  merge them. A hand **Check again** now asks even where the contact holds a
-  number (source `contact`, which holds and saves nothing).
-- **A contact that already holds a number is not checked again**, even if the
-  supplier has since deregistered.
+- **A contact that already holds a number is not checked by itself**, even if the
+  supplier has since deregistered. A hand **Check again** still asks, with that
+  number where the document gives none (source `contact`, which holds and saves
+  nothing).
+- **The check never names or renames a supplier** (Cze, 28 Nov 2026): the vendor
+  name stays as read on the receipt, whatever name IRAS or ACRA hold.
 - **IRAS's answer is the practice's only**: kept in the `gst-checks` collection,
   never on the bill, served only to colleagues, with the source notice IRAS's API
   terms ask for (they restrict passing results to third parties without written

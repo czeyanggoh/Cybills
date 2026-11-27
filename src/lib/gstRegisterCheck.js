@@ -61,11 +61,11 @@ export function gstCheckAsk(doc, contactNumber = '') {
     ? 'name'
     : !fromDoc
       ? 'contact'
-    : doc.supplierGstRegNoRemembered !== true
-      ? 'paper'
-      : from === 'document' || !from
-        ? 'memory'
-        : 'rule';
+      : doc.supplierGstRegNoRemembered !== true
+        ? 'paper'
+        : from === 'document' || !from
+          ? 'memory'
+          : 'rule';
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(doc?.date ?? '')) ? String(doc.date) : '';
   return {
     source,
@@ -104,43 +104,6 @@ export function contactGstPatch(contact, { gstRegNo, uen }) {
     patch.CompanyNumber = u;
   }
   return patch;
-}
-
-// --- A new supplier's name --------------------------------------------------
-// A supplier the entity has never had, billing with its own Singapore number
-// printed on the paper, is filed under the name that number is registered to
-// (Cze, 28 Nov 2026). An existing supplier keeps its name: Xero matches a
-// contact by exact name, so another spelling would make a second contact with
-// no bank details.
-
-// Whether the number on this read may name the supplier at all: printed on this
-// document (never remembered), Singapore's, and not the buyer's own.
-export function numberNamesSupplier(data, ownNumbers = []) {
-  const reg = compact(data?.supplierGstRegNo);
-  if (!reg || data.supplierGstRegNoRemembered === true || !isSingaporeGstRegNo(reg)) return false;
-  if (!looksLikeGst(data.taxLabel)) return false;
-  const supplier = String(data.supplier ?? '').trim();
-  if (!supplier || /^unknown (supplier|customer)$/i.test(supplier)) return false;
-  return ![...ownNumbers, data.billedToRegNo].some((n) => compact(n) === reg);
-}
-
-export const sameSupplierName = (a, b) => Boolean(normaliseSupplier(a)) && normaliseSupplier(a) === normaliseSupplier(b);
-
-// The registered name the answer gives, or '' to keep the printed one: nothing
-// found, a name IRAS hides (an individual's), or the same name already.
-export function registeredNameFor(data, answer) {
-  const r = answer?.result;
-  if (!answer?.matched || (r?.outcome !== 'registered' && r?.outcome !== 'deregistered')) return '';
-  const name = String(answer.registered_name || r.name || '').replace(/\s+/g, ' ').trim();
-  if (!name || name.includes('*') || /^n\/?a$/i.test(name)) return '';
-  return sameSupplierName(name, data?.supplier) ? '' : name;
-}
-
-// Whether a contact already holds one of these numbers: the same business under
-// another name.
-export function contactHoldsNumber(contact, numbers) {
-  const wanted = numbers.map(compact).filter(Boolean);
-  return [contact?.TaxNumber, contact?.CompanyNumber].some((v) => compact(v) && wanted.includes(compact(v)));
 }
 
 // What a held cost says to whoever reads it. IRAS's answer itself is shown to

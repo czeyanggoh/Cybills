@@ -34,17 +34,6 @@ export function readSetting<T = unknown>(ws: string, key: string, org = ''): T |
   return (value ?? null) as T | null;
 }
 
-// Replace one entity's copy of a per-entity blob, server-side. A browser holding
-// the old copy has to reload to see it.
-export function writeSetting(ws: string, key: string, org: string, value: unknown): void {
-  const items = loadCollection<Setting>(COLLECTION);
-  const at = `${key}::${org || 'default'}`;
-  const rec = items.find((s) => s.workspaceId === ws && s.key === at);
-  if (rec) rec.value = value;
-  else items.push({ workspaceId: ws, key: at, value });
-  saveCollection(COLLECTION, items);
-}
-
 // Every entity's copy of one per-entity blob — for a fact that is not the
 // entity's own, like a supplier's GST registration number typed on one client's
 // supplier rule, which is just as true in every other client's book.

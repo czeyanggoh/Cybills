@@ -428,7 +428,6 @@ export function billToDoc(b) {
     // What the tax code was decided on — the supplier's GST number and what the
     // paper calls its tax — and whether that number was remembered from an
     // earlier document rather than read off this one.
-    supplierPrintedName: b.supplierPrintedName || '',
     supplierGstRegNo: b.supplierGstRegNo || '',
     supplierGstRegNoRemembered: Boolean(b.supplierGstRegNoRemembered),
     supplierGstRegNoFrom: b.supplierGstRegNoRemembered ? b.supplierGstRegNoFrom || 'document' : '',

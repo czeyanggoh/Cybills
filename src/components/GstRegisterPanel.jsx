@@ -31,7 +31,7 @@ function summary(c) {
 
 const TONE = { ok: 'text-emerald-700', bad: 'text-destructive', warn: 'text-amber-700', muted: 'text-muted-foreground' };
 
-export default function GstRegisterPanel({ billId, revision, supplier }) {
+export default function GstRegisterPanel({ billId, revision }) {
   const [state, setState] = useState(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -69,26 +69,6 @@ export default function GstRegisterPanel({ billId, revision, supplier }) {
   };
 
   const s = c ? summary(c) : null;
-  // Offered only where a NUMBER gave a different name, for the supplier still here.
-  const renameTo = c?.registeredName && c.source !== 'name' && c.supplier === supplier ? c.registeredName : '';
-  const rename = async () => {
-    const ok = window.confirm(
-      `Rename “${supplier}” to its registered name, “${renameTo}”?\n\n` +
-        'The contact in Xero is renamed, so past bills there show the new name; its bank details and history stay. ' +
-        'This company’s documents, supplier rule and billing plans in CYBills move with it.'
-    );
-    if (!ok) return;
-    setBusy('rename');
-    setError('');
-    try {
-      await postGstCheck(billId, 'rename');
-      // Supplier rules and lists were changed on the server: read them afresh.
-      window.location.reload();
-    } catch (e) {
-      setError(e.message);
-      setBusy('');
-    }
-  };
   const button = 'rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50';
 
   return (
@@ -128,14 +108,6 @@ export default function GstRegisterPanel({ billId, revision, supplier }) {
             {busy === 'save' ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save to Xero contact'}
           </button>
           {c.source === 'name' && <span className="ml-2 text-muted-foreground">Re-read afterwards to claim the GST.</span>}
-        </div>
-      )}
-      {renameTo && (
-        <div className="mt-2">
-          <p className="text-muted-foreground">Registered name: <span className="font-medium">{renameTo}</span></p>
-          <button type="button" className={`mt-1 ${button}`} disabled={Boolean(busy)} onClick={rename}>
-            {busy === 'rename' ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Use registered name'}
-          </button>
         </div>
       )}
       {(error || c?.saveError) && <p className="mt-1 text-destructive">{error || c.saveError}</p>}

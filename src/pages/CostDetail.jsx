@@ -2802,11 +2802,6 @@ Publish anyway?`
                   emptyLabel="— None —"
                   placeholder={isSales ? 'Search or type a customer…' : 'Search or type a supplier…'}
                 />
-                {!isSales && doc?.supplierPrintedName && doc.supplier === data.supplier && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    New supplier, filed under its registered name. Printed on the document as “{doc.supplierPrintedName}”.
-                  </p>
-                )}
                 <button
                   type="button"
                   onClick={() => (isSales ? setCustomerRulesOpen(true) : setRulesOpen(true))}
@@ -2998,7 +2993,6 @@ Publish anyway?`
                     <GstRegisterPanel
                       key={doc.id}
                       billId={doc.id}
-                      supplier={doc.supplier}
                       revision={`${doc.supplier}|${doc.date}|${doc.taxRate}|${doc.xeroInvoiceId || ''}`}
                     />
                   )}

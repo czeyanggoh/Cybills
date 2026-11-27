@@ -76,13 +76,6 @@ const { insertBill, getBillById, updateBill } = await import('../src/store.ts');
 const { runGstCheck, gstCheckFor, saveGstToContact } = await import('../src/gstCheck.ts');
 const { keepPracticeNoTax } = await import('../src/practiceNoTax.ts');
 const { knownGstRegNo } = await import('../src/supplierGst.ts');
-const { withRegisteredName } = await import('../src/gstCheck.ts');
-const { relay } = await import('../src/xero.ts');
-// A write through the relay drops the cached contact list, as it does live.
-const xeroNowHolds = async (rows: any[]) => {
-  contacts = rows;
-  await relay('Contacts', { method: 'POST', tenantId: 'tenant-1', body: { Contacts: [{ ContactID: 'x' }] } });
-};
 
 const app = express();
 app.use(express.json());
@@ -190,56 +183,5 @@ const saved = await saveGstToContact(b.id, 'tenant-1', { by: 'cze', confirmed: t
 check('saved on the button', saved.ok, true);
 check('a missing contact is made with the numbers', contactWrites[0], { method: 'PUT', body: { Contacts: [{ Name: 'Acme Hardware Pte Ltd', TaxNumber: '201512345M', CompanyNumber: '201512345M' }] } });
 check('the confirmed number is this entity’s for the next read', await knownGstRegNo('Acme Hardware Pte Ltd', { ws: 'cybm', orgId: 'org-1' }), { reg: '201512345M', from: 'checked' });
-
-// 7) A new supplier is filed under its registered name; an existing one is not.
-const read = (supplier: string, extra: Record<string, unknown> = {}) => ({
-  supplier, supplierGstRegNo: '201899999Z', taxLabel: 'GST 9%', date: '2026-11-20', ...extra,
-});
-const name = async (data: ReturnType<typeof read>) => {
-  const out = await withRegisteredName(data, { ws: 'cybm', orgId: 'org-1' });
-  return [out.supplier, out.supplierPrintedName];
-};
-answer = { ...found('yes'), registered_name: 'NEWCO HOLDINGS PTE. LTD.' };
-contacts = [];
-check('new: the registered name, the printed one kept', await name(read('Newco Cafe')), ['NEWCO HOLDINGS PTE. LTD.', 'Newco Cafe']);
-const calls = asked.length;
-check('already on a document here: kept', await name(read('Acme Hardware')), ['Acme Hardware', '']);
-check('…without asking', asked.length, calls);
-await xeroNowHolds([{ ContactID: 'c-9', Name: 'Newco Cafe', IsSupplier: true }]);
-check('already a Xero contact: kept', await name(read('Newco Cafe')), ['Newco Cafe', '']);
-await xeroNowHolds([{ ContactID: 'c-9', Name: 'Newco', TaxNumber: '201899999Z', IsSupplier: true }]);
-check('a contact holds the number under another name: kept', await name(read('Newco Cafe')), ['Newco Cafe', '']);
-await xeroNowHolds([{ ContactID: 'c-9', Name: 'Newco Holdings Pte Ltd', IsSupplier: true }]);
-check('the registered name already here: its spelling', await name(read('Newco Cafe')), ['Newco Holdings Pte Ltd', 'Newco Cafe']);
-await xeroNowHolds([]);
-check('a remembered number renames nobody', await name(read('Newco Cafe', { supplierGstRegNoRemembered: true })), ['Newco Cafe', '']);
-answer = null;
-check('no answer: as printed', await name(read('Newco Cafe')), ['Newco Cafe', '']);
-
-// 8) "Use registered name": the Xero contact and this entity's own copies move.
-const { renameToRegistered } = await import('../src/supplierRename.ts');
-const { writeSetting, readSetting } = await import('../src/settings.ts');
-answer = { ...found('yes'), registered_name: 'ACME HOLDINGS PTE. LTD.' };
-await xeroNowHolds([{ ContactID: 'c-1', Name: 'Acme Shop', TaxNumber: '201512345M', IsSupplier: true }]);
-writeSetting('cybm', 'cybills.supplier.rules.v1', 'org-1', { 'Acme Shop': { category: '429 - General Expenses' } });
-writeSetting('cybm', 'cybills.billing-plans.v1', 'org-1', { plans: [{ id: 'p1', supplier: 'Acme Shop' }] });
-b = bill({ supplier: 'Acme Shop' });
-const other = bill({ supplier: 'Acme Shop', xeroInvoiceId: 'inv-old', status: 'archived' });
-await run(b.id);
-check('not asked by itself: the contact holds a number', gstCheckFor(b.id)!.skipped, 'contact_has_number');
-await run(b.id, true);
-check('a hand check asks, and names the registered business', gstCheckFor(b.id)!.registeredName, 'ACME HOLDINGS PTE. LTD.');
-await xeroNowHolds([...contacts, { ContactID: 'c-2', Name: 'Acme Holdings Pte Ltd', IsSupplier: true }]);
-let moved = await renameToRegistered('cybm', 'org-1', b.id, 'tenant-1');
-check('two contacts in Xero: refused, nothing moved', [moved.status, getBillById('cybm', b.id)!.supplier], [409, 'Acme Shop']);
-await xeroNowHolds([{ ContactID: 'c-1', Name: 'Acme Shop', TaxNumber: '201512345M', IsSupplier: true }]);
-contactWrites.length = 0;
-moved = await renameToRegistered('cybm', 'org-1', b.id, 'tenant-1');
-check('renamed', [moved.ok, moved.xero, moved.documents! >= 2], [true, 'renamed', true]);
-check('the same Xero contact, renamed', contactWrites[0], { method: 'POST', body: { Contacts: [{ ContactID: 'c-1', Name: 'ACME HOLDINGS PTE. LTD.' }] } });
-check('the documents follow, published ones too', [getBillById('cybm', b.id)!.supplier, getBillById('cybm', other.id)!.supplier], ['ACME HOLDINGS PTE. LTD.', 'ACME HOLDINGS PTE. LTD.']);
-check('the rule moves', readSetting('cybm', 'cybills.supplier.rules.v1', 'org-1'), { 'ACME HOLDINGS PTE. LTD.': { category: '429 - General Expenses' } });
-check('the billing plan moves', (readSetting('cybm', 'cybills.billing-plans.v1', 'org-1') as any).plans[0].supplier, 'ACME HOLDINGS PTE. LTD.');
-check('a read under the old name is filed under the new', (readSetting('cybm', 'cybills.supplier-list.v1', 'org-1') as any).merged['acme shop'], 'ACME HOLDINGS PTE. LTD.');
 
 await finish(failures, server, stub);
