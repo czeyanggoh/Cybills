@@ -62,9 +62,16 @@ site_code=$(curl -fsSL -k -o /dev/null -w '%{http_code}' \
   --resolve "$PUBLIC_HOST:80:127.0.0.1" --resolve "$PUBLIC_HOST:443:127.0.0.1" \
   --max-time 20 "http://$PUBLIC_HOST/" 2>/dev/null || echo 000)
 # Any HTTP status from the backend port (even 404) proves it's listening;
-# 000 = connection refused = the service didn't come back up.
-backend_code=$(curl -sS -o /dev/null -w '%{http_code}' \
-  --max-time 10 "http://127.0.0.1:${BACKEND_PORT}/api/health" 2>/dev/null || echo 000)
+# 000 = no answer. The service takes a few seconds to listen after the restart,
+# so keep asking for up to 30s. curl prints the 000 itself on failure: adding an
+# `|| echo 000` made it "000000", which the check below never matched.
+backend_code=000
+for _ in $(seq 1 30); do
+  backend_code=$(curl -s -o /dev/null -w '%{http_code}' \
+    --max-time 5 "http://127.0.0.1:${BACKEND_PORT}/api/health" 2>/dev/null) || backend_code=000
+  [ "$backend_code" != "000" ] && break
+  sleep 1
+done
 echo "[deploy] health: site=$site_code backend=$backend_code"
 
 if [ "$site_code" != "200" ]; then
