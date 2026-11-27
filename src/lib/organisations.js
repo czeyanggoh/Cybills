@@ -861,6 +861,10 @@ async function postPrepayment(organisationId, route, payload, fallback) {
   }
   return body;
 }
+export const recordAccrual = (organisationId, payload) =>
+  postPrepayment(organisationId, 'record-accrual', payload, 'Could not post the asset and accrual to Xero.');
+export const undoAccrual = (organisationId, billId) =>
+  postPrepayment(organisationId, 'undo-accrual', { billId }, 'Could not undo it in Xero.');
 export const recordPrepayment = (organisationId, payload) =>
   postPrepayment(organisationId, 'record-prepayment', payload, 'Could not record the prepayment in Xero.');
 export const undoPrepayment = (organisationId, billId) =>

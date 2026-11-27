@@ -1318,6 +1318,12 @@ billsRouter.post('/bills/:id/move-entity', async (req, res) => {
       message: 'This document is already published to Xero. Undo the publish (and void the bill in Xero) before moving it.',
     });
   }
+  if (bill.accrual) {
+    return res.status(409).json({
+      error: 'accrual_recorded',
+      message: 'An asset and accrual were recorded in Xero from this document. Undo that on the document page before moving it.',
+    });
+  }
   if (bill.status === 'expenseclaim') {
     return res.status(409).json({
       error: 'on_claim',
@@ -1386,6 +1392,12 @@ billsRouter.post('/bills/:id/move-workspace', (req, res) => {
     return res.status(409).json({
       error: 'published',
       message: 'This document is already published to Xero, where it is one side of the ledger or the other. Clear the Xero link (and void it in Xero) before moving it.',
+    });
+  }
+  if (bill.accrual) {
+    return res.status(409).json({
+      error: 'accrual_recorded',
+      message: 'An asset and accrual were recorded in Xero from this document. Undo that on the document page before moving it.',
     });
   }
   if (bill.status === 'expenseclaim') {

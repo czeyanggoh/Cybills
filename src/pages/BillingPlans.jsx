@@ -5,7 +5,7 @@ import AppShell from '@/components/AppShell';
 import CostsSubnav from '@/components/CostsSubnav';
 import BillingPlanModal from '@/components/BillingPlanModal';
 import { isFiledOnPlan, isPlanSource, planOverview, progressText } from '@/lib/billingPlan';
-import { billingPlansReady, moveDocumentBackToCosts, useBillingPlans } from '@/lib/billingPlans';
+import { billingPlansReady, moveDocumentBackToCosts, removeDocumentFromPlan, saveBillingPlan, useBillingPlans } from '@/lib/billingPlans';
 import { costPath, useDocumentSuppliers } from '@/lib/bills';
 import { mergeSupplierNames, addedSuppliers, withoutRemovedSuppliers, useSupplierList } from '@/lib/supplierList';
 import { useCostsDocs } from '@/lib/costsData';
@@ -97,6 +97,59 @@ function SavedDocuments({ docs, mayEdit }) {
         ))}
       </ul>
       {error && <p className="mt-1 text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+// The supplier's bills a plan does not explain, each with the two answers: it is
+// not this plan's, or none of their other bills are.
+function Differing({ plan, rows, mayEdit }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  if (!rows.length) return null;
+  const notThis = async (doc) => {
+    setBusy(doc.id);
+    setError('');
+    try {
+      await removeDocumentFromPlan(doc, plan);
+    } catch {
+      setError('That did not save — please try again.');
+    } finally {
+      setBusy('');
+    }
+  };
+  return (
+    <div className="border-t bg-amber-50 px-5 py-4">
+      <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-800">
+        <TriangleAlert className="h-4 w-4" /> Differs from the plan
+      </h3>
+      <ul className="mt-2 space-y-1 text-sm text-amber-900">
+        {rows.map(({ doc, reason }) => (
+          <li key={doc.id} className="flex flex-wrap items-baseline justify-between gap-x-3">
+            <span>
+              <Link to={costPath(doc)} className="font-medium underline-offset-2 hover:underline">
+                {doc.invoiceNumber || `Item ${doc.displayId}`}
+              </Link>
+              {' '}({formatDate(doc.date) || 'undated'}): {reason}
+            </span>
+            {mayEdit && (
+              <button type="button" onClick={() => notThis(doc)} disabled={Boolean(busy)} className="underline underline-offset-2 disabled:opacity-50">
+                {busy === doc.id ? 'Saving…' : 'Not part of this plan'}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {mayEdit && (
+        <button
+          type="button"
+          onClick={() => saveBillingPlan({ ...plan, otherCharges: true })}
+          className="mt-3 text-sm font-medium text-amber-900 underline underline-offset-2"
+        >
+          This supplier also bills for other things — stop flagging them
+        </button>
+      )}
+      {error && <p className="mt-1 text-sm text-destructive">{error}</p>}
     </div>
   );
 }
@@ -247,23 +300,7 @@ export default function BillingPlans() {
                 <div className="divide-y">
                   {view.stages.map((row) => <Stage key={row.stage.id} row={row} currency={plan.currency} />)}
                 </div>
-                {view.differing.length > 0 && (
-                  <div className="border-t bg-amber-50 px-5 py-4">
-                    <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-800">
-                      <TriangleAlert className="h-4 w-4" /> Differs from the plan
-                    </h3>
-                    <ul className="mt-2 space-y-1 text-sm text-amber-900">
-                      {view.differing.map(({ doc, reason }) => (
-                        <li key={doc.id}>
-                          <Link to={costPath(doc)} className="font-medium underline-offset-2 hover:underline">
-                            {doc.invoiceNumber || `Item ${doc.displayId}`}
-                          </Link>
-                          {' '}({formatDate(doc.date) || 'undated'}): {reason}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                <Differing plan={plan} rows={view.differing} mayEdit={mayEdit} />
               </section>
             );
           })

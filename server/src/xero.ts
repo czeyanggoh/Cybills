@@ -2275,6 +2275,14 @@ export async function postBillToXero(
       message: `This document was sent to ${m.kind === 'bill' ? 'a bill' : 'a Spend Money transaction'} already in Xero (${m.contact || 'no contact'}, ${m.currency} ${Number(m.total).toFixed(2)} on ${m.date}), so it is not published again. Unlink it on the document page first if that was wrong.`,
     } };
   }
+  // The asset and accrual were recorded from this document (accrual.ts):
+  // published as a bill too, the same cost would be taken up twice.
+  if (!bill.xeroInvoiceId && bill.accrual) {
+    return { status: 409, body: {
+      error: 'accrual_recorded',
+      message: 'The asset and accrual were recorded in Xero from this document, so it is not published as a bill too. The invoices that follow are published against the accrual.',
+    } };
+  }
   // A supporting document is the paperwork BEHIND an invoice that recharges it
   // (supportingDocs.js): the invoice carries the money, and this beside it
   // would post the same spending twice.
@@ -2933,6 +2941,42 @@ xeroRouter.post('/organisations/:id/record-prepayment', async (req, res) => {
     amount: b.amount,
     by: String(memberForSession(req)?.email ?? ''),
   });
+  res.status(out.status).json(out.body);
+});
+
+// POST /api/xero/organisations/:id/record-accrual — a quotation's asset taken up
+// against an accrual, as a bill of 0.00.
+// { billId, date, accrualAccountCode, lines: [{ accountCode, description, amount }] }
+xeroRouter.post('/organisations/:id/record-accrual', async (req, res) => {
+  if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const scope = bookFor(req);
+  const bill = getBillById(scope, String(req.body?.billId ?? ''));
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  const { recordAccrual } = await import('./accrual.js');
+  const out = await recordAccrual(organisation, workspaceId(req), scope, bill, {
+    date: req.body?.date,
+    accrualAccountCode: req.body?.accrualAccountCode,
+    lines: req.body?.lines,
+    by: String(memberForSession(req)?.email ?? ''),
+    url: `${appOrigin(req)}/costs/${bill.displayId || bill.id}?org=${encodeURIComponent(organisation.id)}`,
+  });
+  res.status(out.status).json(out.body);
+});
+
+// POST /api/xero/organisations/:id/undo-accrual { billId } — void that bill.
+xeroRouter.post('/organisations/:id/undo-accrual', async (req, res) => {
+  if (notConfigured(res)) return;
+  if (!mayPublish(req, res)) return;
+  const organisation = requireOrganisation(req, res);
+  if (!organisation) return;
+  const scope = bookFor(req);
+  const bill = getBillById(scope, String(req.body?.billId ?? ''));
+  if (!bill) return res.status(404).json({ error: 'bill_not_found' });
+  const { undoAccrual } = await import('./accrual.js');
+  const out = await undoAccrual(organisation, scope, bill);
   res.status(out.status).json(out.body);
 });
 

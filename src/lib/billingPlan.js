@@ -87,6 +87,9 @@ export function cleanPlan(raw) {
     reference: text(raw?.reference),
     currency: text(raw?.currency).toUpperCase().slice(0, 3),
     sourceBillId: text(raw?.sourceBillId),
+    // The supplier also bills for things this agreement does not cover: a bill
+    // that matches no stage is none of the plan's business.
+    otherCharges: raw?.otherCharges === true,
     stages,
   };
 }
@@ -236,17 +239,22 @@ export function matchBillingPlan(doc, plans, { printedTax = null, rates = [] } =
       covering.push({ plan, stage });
     }
   }
+  // Only a plan that expects to explain every bill says one disagrees with it.
+  const speaksUp = (p) => p?.otherCharges !== true;
   if (!covering.length) {
+    const plan = mine.find(speaksUp);
+    if (!plan) return null;
     return {
       status: 'outside',
-      plan: mine[0],
-      reason: `No stage of billing plan ${planLabel(mine[0])} covers an invoice dated ${sayDay(date) || 'like this'}.`,
+      plan,
+      reason: `No stage of billing plan ${planLabel(plan)} covers an invoice dated ${sayDay(date) || 'like this'}.`,
     };
   }
 
   const sameCurrency = covering.filter(({ plan }) => !text(plan.currency) || !currency || text(plan.currency).toUpperCase() === currency);
   if (!sameCurrency.length) {
-    const { plan } = covering[0];
+    const plan = covering.find((c) => speaksUp(c.plan))?.plan;
+    if (!plan) return null;
     return { status: 'mismatch', plan, reason: `Billing plan ${planLabel(plan)} is in ${plan.currency}; this document is in ${currency}.` };
   }
 
@@ -257,8 +265,10 @@ export function matchBillingPlan(doc, plans, { printedTax = null, rates = [] } =
     hits = sameCurrency.filter(({ stage }) => stageTotalCents(stage) === total - gst).map((h) => ({ ...h, basis: 'net' }));
   }
   if (!hits.length) {
-    const { plan } = sameCurrency[0];
-    const expected = sameCurrency
+    const strict = sameCurrency.filter((c) => speaksUp(c.plan));
+    if (!strict.length) return null;
+    const { plan } = strict[0];
+    const expected = strict
       .map(({ stage }) => `${money(currency || plan.currency, stageTotalCents(stage))} (${stage.name})`)
       .join(' or ');
     return {

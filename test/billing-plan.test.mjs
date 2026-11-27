@@ -19,6 +19,7 @@ import {
   planRemovalPatch,
   planRestorePatch,
 } from '../src/lib/billingPlan.js';
+import { accountsForAccrual, accrualLinesFrom } from '../src/lib/accrual.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -216,6 +217,32 @@ check('another plan of the supplier still may', matchBillingPlan(gone, [plan, { 
 const without = planOverview(counted, book.map((d) => (d.id === 'a' || d.id === 'f' ? { ...d, notOnPlans: ['p1'] } : d)));
 check('not counted, not flagged, and its copy counts instead', [without.stages[1].invoices.map((i) => i.doc.id), without.differing], [['c', 'b'], []]);
 check('added back', planRestorePatch(gone, plan), { notOnPlans: [] });
+
+// --- a supplier that bills other things --------------------------------------------
+const loose = { ...plan, otherCharges: true };
+check('an unrelated bill is none of the plan’s business', [
+  matchBillingPlan({ ...invoice, total: 300 }, [loose]),
+  matchBillingPlan({ ...invoice, date: '2026-01-05' }, [loose]),
+  matchBillingPlan({ ...invoice, currency: 'USD' }, [loose]),
+], [null, null, null]);
+check('a plan invoice still matches', matchBillingPlan(invoice, [loose]).status, 'match');
+check('another plan that expects every bill still speaks', matchBillingPlan({ ...invoice, total: 300 }, [loose, { ...plan, id: 'p5' }]).plan.id, 'p5');
+check('the choice is kept', [cleanPlan(loose).otherCharges, cleanPlan(plan).otherCharges], [true, false]);
+
+// --- what the asset and accrual dialog offers ---------------------------------------
+const split = accountsForAccrual([
+  { code: '610', name: 'Debtors', type: 'CURRENT', systemAccount: 'DEBTORS' },
+  { code: '720', name: 'Renovation', type: 'FIXED' },
+  { code: '620', name: 'Prepayments', type: 'PREPAYMENT' },
+  { code: '800', name: 'Trade Payables', type: 'CURRLIAB', systemAccount: 'CREDITORS' },
+  { code: '802', name: 'Accrued Expenses', type: 'CURRLIAB' },
+  { code: '485', name: 'Subscriptions', type: 'EXPENSE' },
+]);
+check('assets, fixed first, no system or expense account', split.assets.map((a) => a.code), ['720', '620']);
+check('accrued to a liability, starting on accruals', [split.liabilities.map((a) => a.code), split.accrualDefault], [['802'], '802']);
+const reno = { total: '10900', tax: '900', invoiceNumber: 'Q-7', description: '* Renovation', readLines: [{ description: 'Carpentry', net: 6000, total: 6540 }, { description: 'Painting', total: 4000 }] };
+check('one line, before GST', accrualLinesFrom(reno), [{ description: 'Q-7: Renovation', amount: '10000.00', accountCode: '' }]);
+check('or the items read off it', accrualLinesFrom(reno, { itemised: true }).map((l) => [l.description, l.amount]), [['Carpentry', '6000.00'], ['Painting', '4000.00']]);
 
 check('no rows: a read may write them', planMayWriteLines([], 2400), true);
 check('rows that do not add up: replaced', planMayWriteLines([{ total: '100' }], 2400), true);

@@ -1458,6 +1458,23 @@ Lines that are still the plan's are cleared with the account and projects it set
 (`planRemovalPatch`; the account falls back to the supplier rule's, else blank);
 lines somebody changed, and anything in Xero, are left alone.
 
+**A supplier that bills other things** (`otherCharges` on the plan, a tick in
+the dialog): a bill matching no stage is ignored — no flag, badge or publish hold
+— at the price of a wrong plan amount going unflagged too. The page's differing
+list also answers one bill at a time (**Not part of this plan**).
+
+**The opening asset and accrual is a bill of 0.00** (Cze, 27 Nov 2026; a
+renovation quotation invoiced in stages). **Record asset and accrual** on a
+quotation / pro-forma / Other document posts an approved ACCPAY bill: asset lines
+positive, the accrued-expense line the same negative, No Tax
+(`server/src/accrual.ts`, `record-accrual` / `undo-accrual`, the publish
+privilege, not in cash mode). Asset and liability accounts are checked against
+the live chart, never a system one, and the assets may not exceed the quotation.
+Kept as `Bill.accrual`, never `xeroInvoiceId`, so the paper can still be saved to
+Billing plans; publishing, moving it or offering it to a payment run is refused
+while it stands. Later invoices go to the accrual by billing plan. **Not yet run
+against a real Xero.** Covered by `server/test/accrual.test.mts`.
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

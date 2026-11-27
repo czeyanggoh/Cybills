@@ -77,6 +77,7 @@ import SupportingDocsPanel from '@/components/SupportingDocsPanel';
 import PrepaymentPanel from '@/components/PrepaymentPanel';
 import BillingPlanPanel from '@/components/BillingPlanPanel';
 import BillingPlanModal from '@/components/BillingPlanModal';
+import AccrualPanel from '@/components/AccrualPanel';
 import { useBillingPlans, saveDocumentToPlan, moveDocumentBackToCosts, removeDocumentFromPlan, restoreDocumentToPlan } from '@/lib/billingPlans';
 import { plansForSupplier, isPlanSource, isFiledOnPlan } from '@/lib/billingPlan';
 import PaperworkMatchPanel from '@/components/PaperworkMatchPanel';
@@ -3227,6 +3228,32 @@ Publish anyway?`
               <SectionHeading>Line items</SectionHeading>
               {/* The supplier's billing plan: recorded from its quotation, and
                   what an invoice is split by — or how it differs. */}
+              {/* A quotation for an asset invoiced in stages: take it up
+                  against accrued expenses now. Not where there are no bills. */}
+              {persisted && !isSales && !bridge && (
+                <div className="col-span-full mb-3 empty:hidden">
+                  <AccrualPanel
+                    doc={{
+                      ...persisted,
+                      type: data.type || persisted.type,
+                      supplier: data.supplier,
+                      total: data.total,
+                      tax: data.tax,
+                      currency: data.currency || persisted.currency,
+                      description: data.description,
+                      invoiceNumber: data.ref,
+                      lineItems: data.lineItems,
+                    }}
+                    mayPublish={mayPublish && !cashMode}
+                    xeroShortCode={xeroShortCode}
+                    onBeforeRecord={() => persistStatus(persisted?.status ?? 'new')}
+                    onChanged={async () => {
+                      const bill = await fetchBillById(persisted.id);
+                      if (bill) setPersisted(billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) }));
+                    }}
+                  />
+                </div>
+              )}
               {persisted && !isSales && (
                 <div className="col-span-full mb-3 empty:hidden">
                   <BillingPlanPanel

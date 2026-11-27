@@ -187,6 +187,9 @@ function payable(b: Bill, advance = false): boolean {
     return Boolean(supplier) && supplier.toLowerCase() !== 'unknown supplier'
       && Boolean(String(b.date ?? '').trim()) && parseAmount(b.total) > 0;
   }
+  // An agreement whose asset and accrual are recorded is never published as a
+  // bill (accrual.ts), so a payment run is not offered it as one.
+  if (b.accrual) return false;
   // A cost nobody could name is complete enough to PUBLISH (to the contact
   // "Unknown supplier"), but not to PAY: a payment run sends money to a payee,
   // and there is nobody here to send it to.

@@ -464,6 +464,8 @@ export function billToDoc(b) {
     // supplier, and the invoices it has been applied to; on an invoice, the
     // prepayments it used (src/lib/prepayment.js).
     prepayment: b.prepayment || null,
+    // The asset taken up against an accrual from this quotation (accrual.ts).
+    accrual: b.accrual || null,
     // The Xero transaction this document was sent to (src/lib/paperworkMatch.js).
     paperworkMatch: b.paperworkMatch || null,
     // Supporting documents (src/lib/supportingDocs.js): the invoice this one is

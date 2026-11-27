@@ -26,6 +26,7 @@ const toForm = (plan) => ({
   reference: plan?.reference || '',
   currency: plan?.currency || '',
   sourceBillId: plan?.sourceBillId || '',
+  otherCharges: plan?.otherCharges === true,
   stages: plan?.stages?.length
     ? plan.stages.map((s) => ({
         ...emptyStage(''),
@@ -211,6 +212,17 @@ export default function BillingPlanModal({
               <input value={form.currency} onChange={(e) => set({ currency: e.target.value.toUpperCase().slice(0, 3) })} className={inputCls} />
             </Labelled>
           </div>
+
+          <label className="flex items-start gap-3 rounded-md border px-4 py-3 text-sm">
+            <input type="checkbox" checked={form.otherCharges} onChange={(e) => set({ otherCharges: e.target.checked })} className="mt-0.5 h-4 w-4" />
+            <span>
+              <span className="font-medium">This supplier also bills for other things</span>
+              <span className="block text-muted-foreground">
+                A bill that matches no stage is ignored: not flagged, and not held from automatic publishing. A plan
+                invoice with a wrong amount is then not flagged either.
+              </span>
+            </span>
+          </label>
 
           {form.stages.map((s) => {
             const progress = stageProgress(form, s, docs);

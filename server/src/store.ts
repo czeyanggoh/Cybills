@@ -305,6 +305,18 @@ export type Bill = {
   // The billing plans a person has removed this bill from: never counted against
   // them, matched or flagged by them again.
   notOnPlans?: string[];
+  // The asset taken up against an accrual from this quotation, posted to Xero as
+  // a bill of 0.00 (accrual.ts). Its own writer, never EDITABLE.
+  accrual?: {
+    invoiceId: string;
+    amount: number;
+    currency: string;
+    date: string;
+    accrualAccount: { code: string; name: string };
+    lines: Array<{ accountCode: string; description: string; amount: number }>;
+    recordedAt: string;
+    recordedBy: string;
+  };
   // Set on a merged document: the ids of the originals it combined. Their own
   // status becomes 'merged' (out of the active inbox); Unmerge restores them.
   mergedFrom?: string[];
@@ -1952,6 +1964,18 @@ export function setBillPaperworkMatch(orgId: string, id: string, match: Paperwor
 }
 
 // Record (or, with null, forget) the Xero overpayment a quotation was paid as.
+// The opening asset-and-accrual bill recorded from a quotation (accrual.ts);
+// null forgets it.
+export function setBillAccrual(orgId: string, id: string, accrual: Bill['accrual'] | null): Bill | null {
+  const bills = load();
+  const bill = bills.find((b) => b.orgId === orgId && b.id === id);
+  if (!bill) return null;
+  if (accrual) bill.accrual = accrual;
+  else delete bill.accrual;
+  persist(bills);
+  return bill;
+}
+
 export function setBillPrepayment(orgId: string, id: string, prepayment: Bill['prepayment'] | null): Bill | null {
   const bills = load();
   const bill = bills.find((b) => b.orgId === orgId && b.id === id);
