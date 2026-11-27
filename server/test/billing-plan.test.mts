@@ -208,5 +208,16 @@ check('an ordinary edit keeps it there', filed?.billingPlanId, 'p1');
 filed = await patch({ status: 'new' });
 check('Unarchive takes it off the plan', filed?.billingPlanId, '');
 
+// --- 6) An invoice removed from the plan ----------------------------------------------
+filed = await patch({ notOnPlans: ['p1', 'p1', ''] });
+check('removed from a plan', filed?.notOnPlans, ['p1']);
+filed = await patch({ notOnPlans: [] });
+check('and added back', filed?.notOnPlans, []);
+put('cybills.billing-plans.v1', { plans: [{ id: 'p1', supplier: 'The Bridgers Pte Ltd', stages: [{ id: 'sub', name: 'Subscription', lines: [{ amount: 2400, category: SUB }] }] }] });
+const { billingPlanPatchFor, billingPlanHold } = await import('../src/billingPlan.ts');
+const off = { kind: 'cost', documentType: 'Invoice', supplier: 'The Bridgers Pte Ltd', total: 2400, tax: 0, date: '2026-09-16', notOnPlans: ['p1'] };
+check('a read does not code a removed bill', await billingPlanPatchFor(WORKSPACE_ID, 'org_one0001', off, { existingLines: [] }), null);
+check('…nor is its publish held', await billingPlanHold(WORKSPACE_ID, 'org_one0001', off), '');
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL PASS');
 await finish(failures, reader, relay, server);

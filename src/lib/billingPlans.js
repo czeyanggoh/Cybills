@@ -2,7 +2,8 @@
 // read that drafts one off a quotation.
 import { useEffect, useState } from 'react';
 import { blobStore } from '@/lib/blobStore';
-import { cleanPlan } from '@/lib/billingPlan';
+import { cleanPlan, planRemovalPatch, planRestorePatch } from '@/lib/billingPlan';
+import { matchSupplierRule } from '@/lib/supplierRules';
 import { notifyBillsChanged, updateBill } from '@/lib/bills';
 
 const KEY = 'cybills.billing-plans.v1';
@@ -48,6 +49,19 @@ export async function saveDocumentToPlan(docId, plan) {
 /** Put a saved document back in the Costs inbox. The plan itself stays. */
 export async function moveDocumentBackToCosts(docId) {
   await updateBill(docId, { status: 'new', billingPlanId: '' });
+  notifyBillsChanged();
+}
+
+/** Take a bill off a plan (planRemovalPatch has the rules). */
+export async function removeDocumentFromPlan(doc, plan) {
+  const fallbackCategory = String(matchSupplierRule(doc.supplier)?.category || '');
+  await updateBill(doc.id, planRemovalPatch(doc, plan, { fallbackCategory }));
+  notifyBillsChanged();
+}
+
+/** Put a removed bill back on a plan. */
+export async function restoreDocumentToPlan(doc, plan) {
+  await updateBill(doc.id, planRestorePatch(doc, plan));
   notifyBillsChanged();
 }
 

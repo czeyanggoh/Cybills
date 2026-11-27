@@ -16,6 +16,8 @@ import {
   isPlanSource,
   isFiledOnPlan,
   planFilingBlock,
+  planRemovalPatch,
+  planRestorePatch,
 } from '../src/lib/billingPlan.js';
 
 let failures = 0;
@@ -199,6 +201,21 @@ check(
   stageProgress(counted, run, [{ ...invoice, id: 'q', documentType: 'Other', status: 'archived', billingPlanId: 'p1', invoiceNumber: 'AGR-2' }]).invoices.length,
   0
 );
+
+// --- removed from a plan ----------------------------------------------------------
+const taken = planRemovalPatch(coded, plan);
+check('lines and account the plan set are cleared', [taken.notOnPlans, taken.lineItems, taken.category, taken.categoryReason], [
+  ['p1'], [], '', 'Removed from billing plan TB_QU_YAKSON_0001: choose the category.',
+]);
+check('the supplier rule’s account takes its place', planRemovalPatch(coded, plan, { fallbackCategory: SUB }).category, SUB);
+check('lines somebody changed are kept', planRemovalPatch({ ...coded, lineItems: [{ ...coded.lineItems[0], category: SUB }, coded.lineItems[1]] }, plan), { notOnPlans: ['p1'] });
+check('a published bill’s lines are kept', planRemovalPatch({ ...coded, xeroInvoiceId: 'x' }, plan), { notOnPlans: ['p1'] });
+const gone = { ...invoice, notOnPlans: ['p1'] };
+check('the plan says nothing about it any more', [matchBillingPlan(gone, [plan]), billingPlanStatus(gone, [plan])], [null, null]);
+check('another plan of the supplier still may', matchBillingPlan(gone, [plan, { ...plan, id: 'p9' }]).plan.id, 'p9');
+const without = planOverview(counted, book.map((d) => (d.id === 'a' || d.id === 'f' ? { ...d, notOnPlans: ['p1'] } : d)));
+check('not counted, not flagged, and its copy counts instead', [without.stages[1].invoices.map((i) => i.doc.id), without.differing], [['c', 'b'], []]);
+check('added back', planRestorePatch(gone, plan), { notOnPlans: [] });
 
 check('no rows: a read may write them', planMayWriteLines([], 2400), true);
 check('rows that do not add up: replaced', planMayWriteLines([{ total: '100' }], 2400), true);

@@ -856,6 +856,10 @@ billsRouter.patch('/bills/:id', async (req, res) => {
   if (typeof b.motorVehicle === 'boolean') patch.motorVehicle = b.motorVehicle;
   if (typeof b.medicalProvider === 'boolean') patch.medicalProvider = b.medicalProvider;
   restatementPatch(b, patch);
+  // Removed from a billing plan, or put back: the whole list as it now stands.
+  if (Array.isArray(b.notOnPlans)) {
+    patch.notOnPlans = [...new Set((b.notOnPlans as unknown[]).filter((v): v is string => typeof v === 'string' && Boolean(v)))].slice(-50);
+  }
   // "Not a duplicate" — the reviewer's verdict, which clears the flag and
   // survives every later re-check.
   if (b.duplicateDismissed === true) {

@@ -302,6 +302,9 @@ export type Bill = {
   // (src/lib/billingPlan.js): archived, and shown under the plan rather than in
   // any Costs list. Cleared by whatever takes it out of Archived.
   billingPlanId?: string;
+  // The billing plans a person has removed this bill from: never counted against
+  // them, matched or flagged by them again.
+  notOnPlans?: string[];
   // Set on a merged document: the ids of the originals it combined. Their own
   // status becomes 'merged' (out of the active inbox); Unmerge restores them.
   mergedFrom?: string[];
@@ -1298,6 +1301,8 @@ const EDITABLE: (keyof Bill)[] = [
   'readLines',
   // Saved to Billing plans (see Bill.billingPlanId).
   'billingPlanId',
+  // Removed from a billing plan (see Bill.notOnPlans).
+  'notOnPlans',
 ];
 
 // Attach (or replace) the stored file on an existing bill. Returns null if not
@@ -1663,6 +1668,7 @@ export function moveBillToScope(
   bill.movedFrom = { orgId: from.orgId, orgName: from.orgName, at: new Date().toISOString(), by: from.by };
   // A billing plan is one entity's own agreement; it does not travel.
   bill.billingPlanId = '';
+  bill.notOnPlans = [];
   bill.category = '';
   bill.categoryReason = '';
   bill.taxRate = '';

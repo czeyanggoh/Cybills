@@ -1451,6 +1451,13 @@ never one in Xero or on a claim (`planFilingBlock`). **Move back to Costs**,
 Unarchive, or any write of another status clears it, and so do a move to another
 entity or workspace; deleting a plan hands its documents back first.
 
+**Remove from billing plan** (the invoice's page, for one uploaded in error)
+adds the plan's id to `notOnPlans`: it is never counted against that plan,
+matched, applied, flagged or held by it again, on any road, until **Add back**.
+Lines that are still the plan's are cleared with the account and projects it set
+(`planRemovalPatch`; the account falls back to the supplier rule's, else blank);
+lines somebody changed, and anything in Xero, are left alone.
+
 **A tax code is chosen, or the blank says why.** `src/lib/taxRateRules.js` (pure,
 re-exported by `extractionSettings.js`, tested by `npm test`) decides in order:
 the ACCOUNT's own default tax code in Xero when the printed GST matches its rate

@@ -77,7 +77,7 @@ import SupportingDocsPanel from '@/components/SupportingDocsPanel';
 import PrepaymentPanel from '@/components/PrepaymentPanel';
 import BillingPlanPanel from '@/components/BillingPlanPanel';
 import BillingPlanModal from '@/components/BillingPlanModal';
-import { useBillingPlans, saveDocumentToPlan, moveDocumentBackToCosts } from '@/lib/billingPlans';
+import { useBillingPlans, saveDocumentToPlan, moveDocumentBackToCosts, removeDocumentFromPlan, restoreDocumentToPlan } from '@/lib/billingPlans';
 import { plansForSupplier, isPlanSource, isFiledOnPlan } from '@/lib/billingPlan';
 import PaperworkMatchPanel from '@/components/PaperworkMatchPanel';
 import { usePaperworkMatches, xeroTxnUrl } from '@/lib/paperworkStore';
@@ -1431,6 +1431,25 @@ export default function CostDetail() {
     }
   };
 
+  // Removed from a billing plan, or put back: the server holds the answer, so
+  // the form takes what that changed off the saved document.
+  const changePlanMembership = async (write) => {
+    await write();
+    const bill = await fetchBillById(persisted.id);
+    if (!bill) return;
+    const pd = billToDoc({ ...bill, hasFile: Boolean(bill.storageKey ?? persisted.hasFile) });
+    setPersisted(pd);
+    setData((d) => ({
+      ...d,
+      lineItems: pd.lineItems,
+      category: pd.category,
+      categoryReason: pd.categoryReason,
+      project: pd.project,
+      projectReason: pd.projectReason,
+      project2: pd.project2,
+    }));
+  };
+
   // Save + set status, then return to the inbox (default) or a given route.
   const saveWithStatus = async (status, to = listPath) => {
     await persistStatus(status);
@@ -1852,7 +1871,7 @@ Publish anyway?`
       // (readDecisions), so this page and the inbox's bulk re-read agree.
       const {
         patch, rule, descr, supplierName, categoryReason, projectReason, ruleLines, planned,
-      } = readDecisions({ ...data, kind: doc.kind }, ex, {
+      } = readDecisions({ ...data, kind: doc.kind, notOnPlans: doc.notOnPlans }, ex, {
         gstRegistered,
         taxRates: taxRateSource,
         allTaxRates,
@@ -3231,6 +3250,25 @@ Publish anyway?`
                     mayEdit={mayEditPlans}
                     onEdit={(plan) => setBillingEdit({ plan })}
                     onApply={setMany}
+                    onRemove={(plan) =>
+                      // Judged on what is on screen: the lines and the reasons
+                      // as they stand, which are what has been saved.
+                      changePlanMembership(() =>
+                        removeDocumentFromPlan(
+                          {
+                            ...persisted,
+                            supplier: data.supplier,
+                            total: data.total,
+                            lineItems: data.lineItems,
+                            categoryReason: data.categoryReason,
+                            projectReason: data.projectReason,
+                            project2: data.project2,
+                          },
+                          plan
+                        )
+                      )
+                    }
+                    onRestore={(plan) => changePlanMembership(() => restoreDocumentToPlan(persisted, plan))}
                     onSaveToPlan={async (plan) => {
                       // Flush what is on screen first, then file it and show
                       // where it went.

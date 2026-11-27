@@ -291,6 +291,7 @@ export function readDecisions(
     const match = matchBillingPlan(
       {
         kind: current.kind,
+        notOnPlans: current.notOnPlans,
         documentType: patch.documentType || current.documentType || current.type,
         supplier: patch.supplier || current.supplier,
         date: patch.date || current.date,

@@ -158,6 +158,13 @@ export function plansForSupplier(supplier, plans) {
   return (Array.isArray(plans) ? plans : []).filter((p) => sameSupplier(supplier, p?.supplier));
 }
 
+/** Whether a person has taken this document off a plan. */
+export const removedFromPlan = (doc, plan) => Array.isArray(doc?.notOnPlans) && doc.notOnPlans.includes(plan?.id);
+
+// The supplier's plans that may still speak about a document: not the ones a
+// person has removed it from.
+const openPlans = (doc, plans) => plansForSupplier(doc.supplier, plans).filter((p) => !removedFromPlan(doc, p));
+
 // `total` cents shared over `weights`, largest remainder, so the parts sum to the
 // whole exactly (the same sharing the publish path does with a stated GST figure).
 function apportion(total, weights) {
@@ -215,7 +222,7 @@ function stageRows(stage, doc, basis, printedTax, rates) {
  */
 export function matchBillingPlan(doc, plans, { printedTax = null, rates = [] } = {}) {
   if (!doc || !takesBillingPlan(doc)) return null;
-  const mine = plansForSupplier(doc.supplier, plans);
+  const mine = openPlans(doc, plans);
   const total = cents(doc.total);
   if (!mine.length || total <= 0) return null;
   const currency = text(doc.currency).toUpperCase().slice(0, 3);
@@ -321,7 +328,7 @@ function followsStage(doc, stage) {
 export function billingPlanStatus(doc, plans, opts) {
   if (!doc || !takesBillingPlan(doc)) return null;
   const date = isoDay(doc.date);
-  for (const plan of plansForSupplier(doc.supplier, plans)) {
+  for (const plan of openPlans(doc, plans)) {
     // Two stages can carry the same lines (a renewal): the one covering the
     // invoice's date is the one it is billed under.
     const same = cleanPlan(plan).stages.filter((s) => followsStage(doc, s));
@@ -346,7 +353,8 @@ function countable(plan, docs) {
       if (isFiledOnPlan(d)) return false;
       if (!sameSupplier(d.supplier, plan.supplier)) return false;
       const number = text(d.invoiceNumber).toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if (!number || !takesBillingPlan(asBill(d))) return true;
+      // A copy removed from the plan must not take the number from the one kept.
+      if (!number || !takesBillingPlan(asBill(d)) || removedFromPlan(d, plan)) return true;
       if (seen.has(number)) return false;
       seen.add(number);
       return true;
@@ -436,6 +444,40 @@ export function planOverview(plan, docs, allPlans = [plan]) {
     differing,
     leftCents: stated.length ? stated.reduce((s, x) => s + x.leftCents, 0) : null,
   };
+}
+
+/**
+ * What removing a document from a plan writes. It stops counting against that
+ * plan and the plan stops matching or flagging it. Where the document's lines are
+ * the plan's and it is not yet in Xero they are cleared with whatever else the
+ * plan set — the account (back to `fallbackCategory`, the supplier rule's, or
+ * blank for a person to choose) and the projects. Lines somebody has changed, and
+ * anything already in Xero, are left alone.
+ */
+export function planRemovalPatch(doc, plan, { fallbackCategory = '' } = {}) {
+  const removed = Array.isArray(doc?.notOnPlans) ? doc.notOnPlans : [];
+  const patch = { notOnPlans: [...new Set([...removed, plan.id])] };
+  if (doc?.xeroInvoiceId || doc?.paperworkMatch) return patch;
+  const stage = cleanPlan(plan).stages.find((s) => followsStage(doc, s));
+  if (!stage) return patch;
+  patch.lineItems = [];
+  const fromPlan = (reason) => text(reason).startsWith('Billing plan ');
+  if (fromPlan(doc.categoryReason)) {
+    patch.category = fallbackCategory;
+    patch.categoryReason = `Removed from billing plan ${planLabel(plan)}${fallbackCategory ? '' : ': choose the category'}.`;
+  }
+  if (fromPlan(doc.projectReason)) {
+    patch.project = '';
+    patch.projectReason = '';
+  }
+  const second = stage.lines[0]?.project2;
+  if (second && doc.project2 === second && stage.lines.every((l) => l.project2 === second)) patch.project2 = '';
+  return patch;
+}
+
+/** Put a document back within a plan's reach; applying it is the next click. */
+export function planRestorePatch(doc, plan) {
+  return { notOnPlans: (Array.isArray(doc?.notOnPlans) ? doc.notOnPlans : []).filter((id) => id !== plan.id) };
 }
 
 /**

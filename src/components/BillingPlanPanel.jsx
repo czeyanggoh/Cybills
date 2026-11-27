@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CalendarClock, Check, TriangleAlert } from 'lucide-react';
-import { billingPlanPatch, billingPlanStatus, isFiledOnPlan, planFilingBlock, planLabel, plansForSupplier, progressText, stageProgress, stageTotalCents, takesBillingPlan } from '@/lib/billingPlan';
+import { billingPlanPatch, billingPlanStatus, isFiledOnPlan, planFilingBlock, planLabel, plansForSupplier, progressText, stageProgress, stageTotalCents, takesBillingPlan, removedFromPlan } from '@/lib/billingPlan';
 import { isAdvanceDocument } from '@/lib/prepayment';
 import { cn } from '@/lib/utils';
 
@@ -17,7 +17,7 @@ const actionCls =
   'inline-flex h-9 items-center rounded-md border-2 border-foreground px-4 text-sm font-semibold transition-colors hover:bg-muted';
 const linkCls = 'text-sm text-muted-foreground underline-offset-2 hover:underline';
 
-export default function BillingPlanPanel({ doc, plans, docs = [], rates, published, mayEdit, onEdit, onApply, onSaveToPlan, onMoveBack }) {
+export default function BillingPlanPanel({ doc, plans, docs = [], rates, published, mayEdit, onEdit, onApply, onSaveToPlan, onMoveBack, onRemove, onRestore }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const attempt = async (fn) => {
@@ -108,12 +108,29 @@ export default function BillingPlanPanel({ doc, plans, docs = [], rates, publish
 
   if (!mine.length || !takesBillingPlan({ ...doc, documentType: doc.type })) return null;
   const status = billingPlanStatus({ ...doc, documentType: doc.type }, plans, { rates });
-  if (!status) return null;
+  // The plans a person has taken this bill off, each with the way back.
+  const removed = mine.filter((p) => removedFromPlan(doc, p));
+  const takenOff = removed.length ? (
+    <div className="rounded-lg border bg-background p-4 text-sm">
+      {removed.map((p) => (
+        <div key={p.id} className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-muted-foreground">Removed from billing plan {planLabel(p)}. It is not counted.</span>
+          {mayEdit && (
+            <button type="button" className={linkCls} disabled={busy} onClick={() => attempt(() => onRestore(p))}>
+              Add back
+            </button>
+          )}
+        </div>
+      ))}
+      {error && <p className="mt-1 text-destructive">{error}</p>}
+    </div>
+  ) : null;
+  if (!status) return takenOff;
   const applied = status.status === 'applied';
   const match = status.status === 'match';
   // A published bill is in the ledger; what is left to say is only that it
   // followed the plan.
-  if (published && !applied) return null;
+  if (published && !applied) return takenOff;
   // Where this invoice sits in its stage's run, and what is still to come.
   const progress = mayEdit && (applied || match) ? stageProgress(status.plan, status.stage, book) : null;
   const nth = progress ? progress.invoices.findIndex((d) => d.id === doc.id) + 1 : 0;
@@ -121,7 +138,15 @@ export default function BillingPlanPanel({ doc, plans, docs = [], rates, publish
   const place = nth ? progress.billedBefore + nth : 0;
   const beyond = Boolean(progress?.quantity && place > progress.quantity);
 
-  return (
+  const remove = () => {
+    const name = planLabel(status.plan);
+    const lines = applied && !published ? ' The line items the plan added are cleared.' : '';
+    const ledger = published ? ' The bill in Xero is not changed.' : '';
+    if (!window.confirm(`Remove this invoice from billing plan ${name}? It stops counting towards the plan.${lines}${ledger}`)) return;
+    attempt(() => onRemove(status.plan));
+  };
+
+  const box = (
     <div className="rounded-lg border bg-background p-4">
       <div
         className={cn(
@@ -159,7 +184,21 @@ export default function BillingPlanPanel({ doc, plans, docs = [], rates, publish
           </button>
         )}
         {mayEdit && <button type="button" className={linkCls} onClick={() => onEdit(status.plan)}>Edit plan</button>}
+        {mayEdit && (
+          <button type="button" className={linkCls} disabled={busy} onClick={remove}>
+            {busy ? 'Removing…' : 'Remove from billing plan'}
+          </button>
+        )}
       </div>
+      {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
     </div>
+  );
+  return takenOff ? (
+    <div className="space-y-3">
+      {box}
+      {takenOff}
+    </div>
+  ) : (
+    box
   );
 }
